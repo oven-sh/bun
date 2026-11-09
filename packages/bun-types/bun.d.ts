@@ -50,6 +50,9 @@ declare module "bun" {
    * The labels of the `replacement` encoding are excluded: the `TextDecoder`
    * constructor rejects them with a `RangeError`.
    *
+   * The labels are listed in lower case. A `new TextDecoder(...)` expression
+   * also accepts each label in any ASCII case, such as `"UTF-8"`.
+   *
    * @see https://encoding.spec.whatwg.org/#names-and-labels
    */
   type Encoding =
@@ -347,6 +350,33 @@ declare module "bun" {
           ? T
           : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
         : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
+
+    type EncodingLabelSpace = " " | "\t" | "\n" | "\f" | "\r";
+    type TrimEncodingLabel<S extends string> = S extends `${EncodingLabelSpace}${infer R}`
+      ? TrimEncodingLabel<R>
+      : S extends `${infer R}${EncodingLabelSpace}`
+        ? TrimEncodingLabel<R>
+        : S;
+
+    /**
+     * The parameter type for a `TextDecoder` label of type `L`: `L` itself when
+     * the runtime resolves the label to an encoding, otherwise
+     * {@link Bun.Encoding}, which makes the call an error.
+     *
+     * The runtime removes ASCII whitespace from both ends of a label and
+     * ignores ASCII case, so `"UTF-8"` and `" Shift_JIS "` are labels. Only a
+     * label whose type is a string literal, or a union of them, is checked: a
+     * value of type `string` is not accepted. `Lowercase` maps U+212A KELVIN
+     * SIGN to `"k"` and the runtime does not, so a label that contains it is
+     * rejected first.
+     */
+    type EncodingLabel<L extends string> = [L] extends [Bun.Encoding]
+      ? L
+      : L extends `${string}\u212A${string}`
+        ? Bun.Encoding
+        : Lowercase<TrimEncodingLabel<L>> extends Bun.Encoding
+          ? L
+          : Bun.Encoding;
 
     /**
      * Like Omit, but correctly distributes over unions. Most useful for removing

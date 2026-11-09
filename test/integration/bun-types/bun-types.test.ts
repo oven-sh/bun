@@ -843,10 +843,47 @@ describe("@types/bun integration test", () => {
            new TextDecoder("utf8");
            new TextDecoder("latin1");
            new TextDecoder("gb18030", { fatal: true, ignoreBOM: true });
+           // The runtime ignores ASCII case and removes ASCII whitespace from both ends of a label.
+           new TextDecoder("UTF-8");
+           new TextDecoder("Shift_JIS", { fatal: true });
+           new TextDecoder(" \\t\\n\\f\\rutf-8 ");
+           new TextDecoderStream("LATIN1");
            // @ts-expect-error - the TextDecoder constructor rejects the replacement encoding
            "hz-gb-2312" satisfies Bun.Encoding;
            // @ts-expect-error - not a label the Encoding Standard defines
-           "utf-99" satisfies Bun.Encoding;`,
+           "utf-99" satisfies Bun.Encoding;
+           // @ts-expect-error - not a label the Encoding Standard defines
+           new TextDecoder("utf-99");
+           // @ts-expect-error - the TextDecoder constructor rejects the replacement encoding
+           new TextDecoder("REPLACEMENT");
+           // @ts-expect-error - the empty label
+           new TextDecoder("");
+           // @ts-expect-error - U+000B is not ASCII whitespace
+           new TextDecoder("\\vutf-8");
+           // @ts-expect-error - U+212A KELVIN SIGN is not an ASCII "k"
+           new TextDecoder("\\u212Aoi8-r");
+           // @ts-expect-error - not a label the Encoding Standard defines
+           new TextDecoderStream("utf-99");
+           declare const charset: string;
+           // @ts-expect-error - a value of type string can be a label that throws
+           new TextDecoder(charset);
+           // @ts-expect-error - a value of type string can be a label that throws
+           new TextDecoderStream(charset);
+
+           // A class below TextDecoder takes the lower-case labels only.
+           class Sub extends TextDecoder {}
+           new Sub("utf-8");
+           // @ts-expect-error
+           new Sub("UTF-8");
+           // @ts-expect-error
+           new Sub("utf-99");
+           class SubStream extends TextDecoderStream {}
+           // @ts-expect-error
+           new SubStream("utf-99");
+           // @ts-expect-error - the parameter tuple rejects it too
+           export const args: ConstructorParameters<typeof TextDecoder> = ["utf-99"];
+           // @ts-expect-error - the parameter tuple rejects it too
+           export const streamArgs: ConstructorParameters<typeof TextDecoderStream> = ["utf-99"];`,
       });
 
       await using proc = Bun.spawn({
@@ -899,6 +936,19 @@ describe("@types/bun integration test", () => {
       ]) {
         expect(() => new TextDecoder(label as Bun.Encoding)).toThrow(RangeError);
       }
+
+      // The spellings that the check above accepts, then the ones it rejects.
+      const spellings = ["UTF-8", "Shift_JIS", " \t\n\f\rutf-8 ", "LATIN1"];
+      const rejectedSpellings = ["utf-99", "REPLACEMENT", "", "\vutf-8", "\u212Aoi8-r"];
+      const encodingOrError = (label: string) => {
+        try {
+          return new TextDecoder(label as Bun.Encoding).encoding;
+        } catch (e) {
+          return (e as Error).name;
+        }
+      };
+      expect(spellings.map(encodingOrError)).toEqual(["utf-8", "shift_jis", "utf-8", "windows-1252"]);
+      expect(rejectedSpellings.map(encodingOrError)).toEqual(rejectedSpellings.map(() => "RangeError"));
     });
   });
 

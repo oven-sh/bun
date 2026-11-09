@@ -348,7 +348,14 @@ declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoder",
   {
     prototype: TextDecoder;
+    // The first signature keeps `<E extends Bun.Encoding>(e: E) => new TextDecoder(e)` compiling and
+    // resolves a lower-case label with no inference. The generic one takes a label in another ASCII
+    // case, or with ASCII whitespace around it.
     new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
+    new <const L extends string = Bun.Encoding>(
+      encoding?: Bun.__internal.EncodingLabel<L>,
+      options?: { fatal?: boolean; ignoreBOM?: boolean },
+    ): TextDecoder;
   }
 >;
 
@@ -1917,7 +1924,12 @@ declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
   {
     prototype: TextDecoderStream;
+    // The same two signatures as `TextDecoder`, for the same reasons.
     new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoderStream;
+    new <const L extends string = Bun.Encoding>(
+      encoding?: Bun.__internal.EncodingLabel<L>,
+      options?: { fatal?: boolean; ignoreBOM?: boolean },
+    ): TextDecoderStream;
   }
 >;
 

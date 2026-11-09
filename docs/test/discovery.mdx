@@ -85,7 +85,9 @@ For this test, `bun test` matches the pattern against the string "Math operation
 
 - It finds no test file.
 - The [filters](#position-arguments-as-filters) or [paths](#specifying-exact-file-paths) you pass select no test file.
-- `--test-name-pattern` matches no test.
+- The test files define tests, and `--test-name-pattern` matches none of them.
+
+A test file that defines no test is not one of these cases: `bun test` exits with code 0.
 
 Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared CI step that runs before a package has any tests:
 

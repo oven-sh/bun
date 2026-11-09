@@ -1297,6 +1297,7 @@ describe.concurrent("bun lint", () => {
       ["class A { static { await 08 } }", "1:26: Parsing error: Invalid number"],
       ["enum 08", "1:6: Parsing error: Invalid number"],
       ["var enum = 08;", "1:5: Parsing error: The keyword 'enum' is reserved"],
+      ["var enum @", "1:10: Parsing error: Unexpected character '@'"],
       ["var if = 08;", "1:5: Parsing error: Unexpected keyword 'if'"],
       ["a: a: 08", "1:7: Parsing error: Invalid number"],
       ["a: a: }", "1:4: Parsing error: Label 'a' is already declared"],
@@ -1307,6 +1308,29 @@ describe.concurrent("bun lint", () => {
       ["let [a]\n}", "1:8: Parsing error: Complex binding patterns require an initialization value"],
       ["export let a; export let a;", "1:26: Parsing error: Identifier 'a' has already been declared"],
       ["export var a; export var a = eval = 1", "1:30: Parsing error: Assigning to eval in strict mode"],
+      [
+        'export { missing }; export { x as a } from "m"; export const a = 1;',
+        "1:62: Parsing error: Duplicate export 'a'",
+      ],
+      // Two errors deferred to one token come in source order.
+      ["export var a; export var b; export var b, a;", "1:40: Parsing error: Duplicate export 'b'"],
+      [
+        "class A { m() { #y in this; this.#x } }",
+        "1:17: Parsing error: Private field '#y' must be declared in an enclosing class",
+      ],
+      ["#x in o;", "1:1: Parsing error: Unexpected token #x"],
+      ["new.foo\n08", "2:1: Parsing error: Invalid number"],
+      ["new.foo\n}", "1:5: Parsing error: The only valid meta property for new is 'new.target'"],
+      // Inside an operand with no record, each item of a list gets its own.
+      ["void [{p: {a = 0}, q: /x/gg}]", "1:24: Parsing error: Duplicate regular expression flag"],
+      [
+        "void [{p: {a = 0}}, 08]",
+        "1:14: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      [
+        "new ({a = 1}.x)()",
+        "1:9: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
       ["export var a; export var a\n08", "2:1: Parsing error: Invalid number"],
       // Two checks deferred to one token: acorn's order is the inner node's first.
       [
@@ -1348,6 +1372,8 @@ describe.concurrent("bun lint", () => {
       ['"use strict"; try {} catch ([e, e]) { 08 }', "1:33: Parsing error: Identifier 'e' has already been declared"],
       // acorn declares the names before it looks for the `=`.
       ['"use strict"; let [a, a];', "1:23: Parsing error: Identifier 'a' has already been declared"],
+      ['"use strict"; let a, b; let [b, a] = x;', "1:30: Parsing error: Identifier 'b' has already been declared"],
+      ['"use strict"; import.meta\n08', "2:1: Parsing error: Invalid number"],
     ];
     // With an older `ecmaVersion`, newer syntax is a tokenizer error, which comes before a deferred check.
     const editions: [ecmaVersion: number, code: string, error: string][] = [

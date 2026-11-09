@@ -1021,9 +1021,11 @@ impl<'a, 'c> Checks<'a, 'c> {
     }
 
     /// TypeScript's parser treats `@` as the start of a decorator and fails later, or at it, but acorn can't tokenize
-    /// it. This tokenizes the text up to `limit` without context, which is good enough to locate the error.
+    /// it. This tokenizes the text up to the token after `limit` without context, which is good enough to locate the
+    /// error: acorn has read that token when it reports an error about the one at `limit`.
     fn at_sign_before(&mut self, limit: u32) {
         let text = self.file.text();
+        let limit = self.after_token(limit);
         let until = (limit as usize).saturating_add(1).min(text.len());
         if !strings::contains_char(&text[..until], b'@') {
             return;
@@ -1311,12 +1313,16 @@ impl<'a, 'c> Checks<'a, 'c> {
                 "'import' and 'export' may appear only with 'sourceType: module'",
             );
         }
-        if let Some(first) = file
-            .exprs_of_kind(ExprTag::ImportMeta)
-            .map(|it| it.span().start)
-            .min()
+        if let Some(first) =
+            (file.exprs_of_kind(ExprTag::ImportMeta)).min_by_key(|it| it.span().start)
         {
-            self.fail(first, "Cannot use 'import.meta' outside a module");
+            // acorn reports it once it has read `meta` and the token after it.
+            self.when_read_to(first.span().end, |checks| {
+                checks.fail(
+                    first.span().start,
+                    "Cannot use 'import.meta' outside a module",
+                )
+            });
         }
     }
 
@@ -1721,29 +1727,41 @@ impl<'a, 'c> Checks<'a, 'c> {
                     | ScopeKind::Module
                     | ScopeKind::ClassStaticBlock
             );
+            // acorn reports the names of one pattern in source order.
+            let mut redeclared: SmallVec<[Declaration<'a>; 2]> = SmallVec::new();
             for symbol in scope.symbols() {
                 let declarations = symbol.declarations();
                 if declarations.len() > 1 {
-                    self.declarations_in_one_scope(scope, declarations);
+                    redeclared.extend(self.declarations_in_one_scope(scope, declarations));
                 }
                 if catch.is_some_and(|it| it.get_name(symbol.name()).is_some())
                     && let Some(first) = (symbol.declarations())
                         .filter_map(|it| Some((it.name_span()?.start, it)))
                         .min_by_key(|it| it.0)
                 {
-                    self.already_declared(first.1);
+                    redeclared.push(first.1);
                 }
                 if has_var && is_block {
-                    self.var_through(scope, symbol.name(), symbol.declarations());
+                    redeclared.extend(Self::var_through(
+                        scope,
+                        symbol.name(),
+                        symbol.declarations(),
+                    ));
                 }
+            }
+            let mut redeclared: SmallVec<[(u32, Declaration<'a>); 2]> = redeclared
+                .into_iter()
+                .filter_map(|it| Some((it.name_span()?.start, it)))
+                .collect();
+            crate::utils::sort::sort_unstable_by_key(&mut redeclared, |it| it.0);
+            for (at, declaration) in redeclared {
+                self.already_declared(at, declaration);
             }
         }
     }
 
-    fn already_declared(&mut self, declaration: Declaration<'a>) {
-        let Some(at) = declaration.name_span().map(|it| it.start) else {
-            return;
-        };
+    /// `declaration` declares the name at `at` again.
+    fn already_declared(&mut self, at: u32, declaration: Declaration<'a>) {
         let name = self.token_at(at);
         let message = [b"Identifier '", name, b"' has already been declared"].concat();
         // acorn declares a name where it checks the binding, once it has read the token after it.
@@ -1754,12 +1772,12 @@ impl<'a, 'c> Checks<'a, 'c> {
         self.when_read_to(end, |checks| checks.fail(at, message));
     }
 
-    /// Checks the declarations of one name in `scope`, in source order.
+    /// Checks the declarations of one name in `scope`, in source order. Returns the first that redeclares it.
     fn declarations_in_one_scope(
-        &mut self,
+        &self,
         scope: Scope<'a>,
         declarations: impl Iterator<Item = Declaration<'a>>,
-    ) {
+    ) -> Option<Declaration<'a>> {
         let mut sorted: SmallVec<[(u32, Binding, Declaration<'a>); 4]> = declarations
             .filter_map(|it| Some((it.name_span()?.start, Binding::of(it, scope)?, it)))
             .collect();
@@ -1773,7 +1791,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                 Binding::Var => lexical || !as_var && function,
             };
             if is_redeclared {
-                return self.already_declared(declaration);
+                return Some(declaration);
             }
             match binding {
                 Binding::Lexical => lexical = true,
@@ -1781,19 +1799,17 @@ impl<'a, 'c> Checks<'a, 'c> {
                 Binding::Var => var = true,
             }
         }
+        None
     }
 
     /// A `var` inside the block `scope`, at any depth, declares its name in every scope up to the function, so it
-    /// clashes with a declaration of that name in `scope`.
+    /// clashes with a declaration of that name in `scope`. Returns the later of the two declarations.
     fn var_through(
-        &mut self,
         scope: Scope<'a>,
         name: crate::ast::Name<'a>,
         here: impl Iterator<Item = Declaration<'a>>,
-    ) {
-        let Some(hoisted) = scope.variable_scope().get_name(name) else {
-            return;
-        };
+    ) -> Option<Declaration<'a>> {
+        let hoisted = scope.variable_scope().get_name(name)?;
         // `catch (e) { var e }` is allowed.
         let is_simple_catch = |it: Declaration<'a>| {
             it.is_catch_parameter()
@@ -1803,9 +1819,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             all.filter_map(|it| Some((it.name_span()?.start, it)))
                 .min_by_key(|it| it.0)
         };
-        let Some(here) = first(&mut here.filter(|&it| !is_simple_catch(it))) else {
-            return;
-        };
+        let here = first(&mut here.filter(|&it| !is_simple_catch(it)))?;
         let span = scope.span();
         let mut vars = (hoisted.declarations()).filter(|&it| {
             Binding::of(it, scope) == Some(Binding::Var)
@@ -1813,9 +1827,8 @@ impl<'a, 'c> Checks<'a, 'c> {
                     .name_span()
                     .is_some_and(|name| span.contains_offset(name.start))
         });
-        if let Some(var) = first(&mut vars) {
-            self.already_declared(if var.0 > here.0 { var.1 } else { here.1 });
-        }
+        let var = first(&mut vars)?;
+        Some(if var.0 > here.0 { var.1 } else { here.1 })
     }
 }
 

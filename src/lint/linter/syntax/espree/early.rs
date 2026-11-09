@@ -978,12 +978,14 @@ impl<'a> Checks<'a, '_> {
             // The parser compares the raw text, so an escaped `meta` fails. The diagnostic's argument is the decoded
             // name.
             let is_meta = it.code == 17012 && it.args.first().is_some_and(|it| **it == *b"meta");
+            // acorn checks the property once it has read it, and the token after it.
+            let end = name + self.token_at(name).len() as u32;
             match self.token_at(keyword) {
-                b"import" if is_meta && !self.is_babel => {
-                    self.fail(keyword, "'import.meta' must not contain escaped characters");
-                }
-                b"import" => self.fail(name, import_message),
-                b"new" => self.fail(name, new_message),
+                b"import" if is_meta && !self.is_babel => self.when_read_to(end, |checks| {
+                    checks.fail(keyword, "'import.meta' must not contain escaped characters")
+                }),
+                b"import" => self.when_read_to(end, |checks| checks.fail(name, import_message)),
+                b"new" => self.when_read_to(end, |checks| checks.fail(name, new_message)),
                 _ => {}
             }
         }
@@ -1008,8 +1010,10 @@ impl<'a> Checks<'a, '_> {
                 self.report(SyntaxError::oxc_error(it.span(), message).stage(Stage::Fatal));
                 continue;
             }
+            // acorn checks the property once it has read it, and the token after it.
+            let end = it.span().end;
             if !is_target || self.is_babel && self.token_at(name) != b"target" {
-                self.fail(name, new_message);
+                self.when_read_to(end, |checks| checks.fail(name, new_message));
                 continue;
             }
             if self.token_at(name) != b"target" && self.is_oxc {
@@ -1019,10 +1023,12 @@ impl<'a> Checks<'a, '_> {
                 continue;
             }
             if self.token_at(name) != b"target" {
-                self.fail(
-                    it.span().start,
-                    "'new.target' must not contain escaped characters",
-                );
+                self.when_read_to(end, |checks| {
+                    checks.fail(
+                        it.span().start,
+                        "'new.target' must not contain escaped characters",
+                    )
+                });
                 continue;
             }
             // `allowNewDotTarget`: in a non-arrow function, a field initializer or a static block.
@@ -1613,6 +1619,8 @@ impl<'a> Checks<'a, '_> {
         }
         // Collect each class's private names once, since there can be as many names as uses.
         let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::default();
+        // acorn reports the undeclared names of a class body in source order: `(noticed, at, message)`.
+        let mut undeclared_names: SmallVec<[(u32, u32, Vec<u8>); 2]> = SmallVec::new();
         let mut is_declared = |tops: &mut Tops<'a>, node: Node<'a>, name: &[u8]| {
             let mut inside = node;
             tops.outward(node).any(|it| {
@@ -1685,8 +1693,11 @@ impl<'a> Checks<'a, '_> {
                     self.report(error.help(help));
                     continue;
                 }
-                let message = undeclared(name.bytes());
-                self.undeclared_private_name(outermost, it.span(), name.start(), message);
+                // acorn collects the names a class body uses, and when it leaves the body it hands the undeclared
+                // ones to the enclosing class body, or throws if there is none. Outside a class it throws once it
+                // has read the name.
+                let noticed = outermost.map_or_else(|| it.span().end, |it| it.span().end);
+                undeclared_names.push((noticed, name.start(), undeclared(name.bytes())));
             }
         }
         for it in self.exprs_of(ExprTag::PrivateIdentifier) {
@@ -1719,9 +1730,18 @@ impl<'a> Checks<'a, '_> {
                     self.report(error.help(help));
                     continue;
                 }
-                let message = undeclared(name.bytes());
-                self.undeclared_private_name(outermost, it.span(), it.span().start, message);
+                // Outside a class body, `parseMaybeUnary` rejects the token before it reads the name.
+                let Some(outermost) = outermost else {
+                    self.unexpected(it.span().start);
+                    continue;
+                };
+                let noticed = outermost.span().end;
+                undeclared_names.push((noticed, it.span().start, undeclared(name.bytes())));
             }
+        }
+        crate::utils::sort::sort_by_key(&mut undeclared_names, |it| it.1);
+        for (noticed, at, message) in undeclared_names {
+            self.when_read_to(noticed, |checks| checks.fail(at, message));
         }
     }
 
@@ -1737,20 +1757,6 @@ impl<'a> Checks<'a, '_> {
             }
         });
         classes.last()
-    }
-
-    /// acorn's error for the private name at `at` in the expression `expr`, which no enclosing class declares. acorn
-    /// collects the names a class body uses, and when it leaves the body it hands the undeclared ones to the enclosing
-    /// class body, or throws if there is none. Outside a class it throws once it has read the name.
-    fn undeclared_private_name(
-        &mut self,
-        outermost: Option<Class<'a>>,
-        expr: crate::span::Span,
-        at: u32,
-        message: Vec<u8>,
-    ) {
-        let noticed = outermost.map_or(expr.end, |it| it.span().end);
-        self.when_read_to(noticed, |checks| checks.fail(at, message));
     }
 
     /// For oxc: "Did you mean '#a'?", if a class enclosing `node` declares a private name similar to `name`. On a tie,
@@ -1792,14 +1798,18 @@ impl<'a> Checks<'a, '_> {
             return RecordOwner::None;
         }
         let mut node = object;
+        // The node below `node` on the way up.
+        let mut inner = object;
         loop {
             if node.is_parenthesized() {
                 return RecordOwner::ReadTo(node.outer_span().end);
             }
-            // Inside an operand with no record, the literal's own `parseMaybeAssign` creates one.
+            // Inside an operand with no record, a list passes none down, so the `parseMaybeAssign` of each of its
+            // items creates one.
             if node != object && Self::has_no_record(node) {
-                return RecordOwner::ReadTo(object.span().end);
+                return RecordOwner::ReadTo(inner.span().end);
             }
+            inner = node;
             let parent = match node.parent() {
                 Node::Expr(parent) => parent,
                 Node::Prop(prop) if Self::is_property_value(prop, node) => {
@@ -1897,6 +1907,9 @@ impl<'a> Checks<'a, '_> {
     ) -> RecordOwner {
         let mut top = first;
         loop {
+            if top.is_parenthesized() {
+                return RecordOwner::ReadTo(top.outer_span().end);
+            }
             let Node::Expr(parent) = top.parent() else {
                 break;
             };
@@ -1911,7 +1924,7 @@ impl<'a> Checks<'a, '_> {
                 }
                 _ => false,
             };
-            if !continues || top.is_parenthesized() {
+            if !continues {
                 break;
             }
             top = parent;
@@ -2390,6 +2403,8 @@ impl<'a> Checks<'a, '_> {
         // Each exported name, where it is, and where acorn checks it: after the `default` keyword, after the name in a
         // list, or after the whole declaration.
         let mut exported: Vec<(&'a [u8], u32, u32)> = Vec::new();
+        // acorn checks these at the end of the file, after every other check.
+        let mut undefined: SmallVec<[(u32, Vec<u8>); 2]> = SmallVec::new();
         for it in file.body() {
             match it.kind() {
                 StmtKind::ExportDefault(_) => {
@@ -2417,9 +2432,7 @@ impl<'a> Checks<'a, '_> {
                         {
                             let message =
                                 [b"Export '", local.bytes(), b"' is not defined"].concat();
-                            self.when_read_to(file.text().len() as u32, |checks| {
-                                checks.fail(local.start(), message)
-                            });
+                            undefined.push((local.start(), message));
                         }
                     }
                 }
@@ -2445,11 +2458,20 @@ impl<'a> Checks<'a, '_> {
             }
         }
         crate::utils::sort::sort_unstable(&mut exported);
+        // acorn reports the duplicates in source order.
+        let mut duplicates: SmallVec<[(&'a [u8], u32, u32); 2]> = SmallVec::new();
         for (first, second) in exported.iter().zip(exported.iter().skip(1)) {
             if first.0 == second.0 {
-                let message = [b"Duplicate export '", second.0, b"'"].concat();
-                self.when_read_to(second.2, |checks| checks.fail(second.1, message));
+                duplicates.push(*second);
             }
+        }
+        crate::utils::sort::sort_by_key(&mut duplicates, |it| it.1);
+        for (name, at, noticed) in duplicates {
+            let message = [b"Duplicate export '", name, b"'"].concat();
+            self.when_read_to(noticed, |checks| checks.fail(at, message));
+        }
+        for (at, message) in undefined {
+            self.when_read_to(file.text().len() as u32, |checks| checks.fail(at, message));
         }
     }
 

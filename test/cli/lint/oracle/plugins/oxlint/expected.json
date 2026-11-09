@@ -970,7 +970,8 @@
   "a.js:6:17+1 eslint(no-control-regex)",
   "a.js:7:7+4 eslint(no-control-regex)",
   "a.js:8:6+6 eslint(no-control-regex)",
-  "a.js:9:7+1 eslint(no-control-regex)"
+  "a.js:9:7+1 eslint(no-control-regex)",
+  "b.js:1:18+1 eslint(no-control-regex)"
  ],
  "no-regex-spaces/written": [
   "a.ts:12:3+3 eslint(no-regex-spaces)",

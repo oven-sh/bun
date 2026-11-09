@@ -12,7 +12,12 @@ export interface Project {
   typed?: boolean;
   /** Directory symlinks, as link path -> target. Both are relative to the project's directory. */
   links?: Record<string, string>;
+  /** The version of oxlint the project is recorded with, if not `OXLINT_VERSION`. */
+  oxlint?: string;
 }
+
+/** The version of oxlint that `bun lint` follows with an oxlint config, and that the recordings are made with. */
+export const OXLINT_VERSION = "1.87.0";
 
 type Label = { label?: string; span: { line: number; column: number; length: number } };
 
@@ -2334,6 +2339,7 @@ const hand: Project[] = [
     name: "no-control-regex/place",
     about: "the first of the characters as they are written, or the character itself (oxlint 1.91)",
     config: rules([], { "no-control-regex": "error" }),
+    oxlint: "1.92.0",
     files: {
       "a.js": lines(
         String.raw`a = /b\x1bc\x1f/;`,
@@ -2355,13 +2361,18 @@ const hand: Project[] = [
         `a = new RegExp("\\n\x1f\bb");`,
         `a = new RegExp("\u{1F600}\bb");`,
         `a = / /;`,
+        String.raw`a = /(a)(b)[\2]/;`,
+        String.raw`a = new RegExp("(a)(b)[\\2]");`,
       ),
+      // A line break in a template: only the LF is the character itself.
+      "b.js": "a = new RegExp(`a\nb`);\na = new RegExp(`a\r\nb`);\na = new RegExp(`a\rb`);\n",
     },
   },
   {
     name: "no-control-regex/written",
     about: "how a character is written counts, in a string too; an octal escape whose first digit is the value",
     config: rules([], { "no-control-regex": "error" }),
+    oxlint: "1.92.0",
     files: {
       "a.ts": lines(
         String.raw`/\1/;`,
@@ -2425,6 +2436,7 @@ const hand: Project[] = [
     name: "no-control-regex/calls",
     about: "run_on_regex_node: which calls, which arguments, which flags",
     config: rules([], { "no-control-regex": "error" }),
+    oxlint: "1.92.0",
     files: {
       "a.ts": lines(
         String.raw`RegExp('\x1f');`,

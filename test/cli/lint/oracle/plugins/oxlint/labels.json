@@ -592,7 +592,8 @@
   "a.js eslint(no-control-regex) 6:17+1 \"'U+0009' is a control character.\"",
   "a.js eslint(no-control-regex) 7:7+4 \"'U+0000' is a control character.\" | 7:12+4 \"'U+001F' is a control character.\"",
   "a.js eslint(no-control-regex) 8:6+6 \"'U+001B' is a control character.\"",
-  "a.js eslint(no-control-regex) 9:7+1 \"'U+0008' is a control character.\""
+  "a.js eslint(no-control-regex) 9:7+1 \"'U+0008' is a control character.\"",
+  "b.js eslint(no-control-regex) 1:18+1 \"'U+000A' is a control character.\""
  ],
  "no-control-regex/written": [
   "a.ts eslint(no-control-regex) 10:2+2 \"'\\\\2' is a control character. It looks like a backreference, but there is no corresponding capture group.\"",

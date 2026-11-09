@@ -4,10 +4,9 @@
 //   BUN_LINT="bun lint" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun compare.ts [--record] [name..]
 //
 // Without OXLINT_BIN, oxlint's reports are read from expected.json, which `--record` writes. It was recorded with
-// oxlint 1.87.0 and tsgolint 7.0.2003, except `no-control-regex/place`, `/written` and `/calls`, which were recorded with
-// oxlint 1.92.0: since 1.91.0 the rule reports a control character that is written as itself, and `bun lint` follows
-// that. To record everything again, run `--record` with oxlint 1.87.0 and no names, then `--record` with oxlint 1.92.0
-// and those three names. A report is `file:line:column+length rule`. Duplicates are kept, because two
+// oxlint 1.87.0 (`OXLINT_VERSION`) and tsgolint 7.0.2003. A project with `oxlint` is recorded with that version instead,
+// because `bun lint` follows a later oxlint for its rule. `--record` keeps the recording of a project whose version is
+// not OXLINT_BIN's, so to record everything again run it once per version. A report is `file:line:column+length rule`. Duplicates are kept, because two
 // reports can start at the same position. labels.json likewise has `file rule line:column+length "text" | ..` for each
 // report with more than one label or with label text.
 
@@ -15,7 +14,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { labelsOf, projects } from "./projects.ts";
+import { labelsOf, OXLINT_VERSION, projects } from "./projects.ts";
 
 const args = process.argv.slice(2);
 const names = args.filter(it => !it.startsWith("--"));
@@ -23,11 +22,13 @@ const expectedPath = join(import.meta.dir, "expected.json");
 const labelsPath = join(import.meta.dir, "labels.json");
 const oxlint = process.env.OXLINT_BIN;
 const [ours, ...oursArgs] = (process.env.BUN_LINT ?? "bun lint").split(" ");
+const recorded: Record<string, string[]> = JSON.parse(readFileSync(expectedPath, "utf8"));
+const recordedLabels: Record<string, string[]> = JSON.parse(readFileSync(labelsPath, "utf8"));
 // With names, `--record` keeps the other projects' recordings.
-const expected: Record<string, string[]> =
-  oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(expectedPath, "utf8"));
-const expectedLabels: Record<string, string[]> =
-  oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(labelsPath, "utf8"));
+const expected: Record<string, string[]> = oxlint && names.length === 0 ? {} : recorded;
+const expectedLabels: Record<string, string[]> = oxlint && names.length === 0 ? {} : recordedLabels;
+/** `1.92.0` of `Version: 1.92.0`. */
+const oxlintVersion = oxlint && spawnSync(oxlint, ["--version"], { encoding: "utf8" }).stdout.trim().split(" ").pop();
 
 /**
  * `reports` has `file:line:column+length rule` for each diagnostic, at its first label, which is where oxlint prints
@@ -101,7 +102,13 @@ for (const project of projects) {
       mkdirSync(dirname(join(cwd, path)), { recursive: true });
       symlinkSync(join(cwd, target), join(cwd, path), "junction");
     }
-    if (oxlint) {
+    if (oxlint && (project.oxlint ?? OXLINT_VERSION) !== oxlintVersion) {
+      console.log(`${project.name}: recorded with oxlint ${project.oxlint ?? OXLINT_VERSION}, kept`);
+      const labels = recordedLabels[project.name];
+      expected[project.name] = recorded[project.name] ?? [];
+      delete expectedLabels[project.name];
+      if (labels) expectedLabels[project.name] = labels;
+    } else if (oxlint) {
       const { reports, labels } = run(oxlint, typed, cwd);
       expected[project.name] = reports;
       // The file only lists projects that have labels.

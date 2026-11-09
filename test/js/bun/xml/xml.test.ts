@@ -649,6 +649,27 @@ describe("document type declaration", () => {
     expect(XML.parse(`<!DOCTYPE d [<!ENTITY nl "&#38;#10;">]><d x="a&nl;b"/>`)).toEqual({ d: { "@x": "a\nb" } });
   });
 
+  test("tokenized attribute types trim and collapse #x20 only, not referenced whitespace characters", () => {
+    // §3.3.3: for a type other than CDATA, discard leading and trailing
+    // space (#x20) characters. A \n, \t or \r from a character reference
+    // is not a space and stays at either edge.
+    const decls = (type: string) => `<!DOCTYPE r [<!ATTLIST r v ${type} #IMPLIED>]>`;
+    expect(XML.parse(`${decls("NMTOKEN")}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
+    expect(XML.parse(`${decls("NMTOKEN")}<r v="&#x9;a&#xD;"/>`)).toEqual({ r: { "@v": "\ta\r" } });
+    expect(XML.parse(`${decls("NMTOKENS")}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
+    expect(XML.parse(`${decls("ID")}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
+    expect(XML.parse(`${decls("(a|b)")}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
+    // Spaces around the referenced character are still trimmed, and a
+    // referenced #x20 is a space like any other.
+    expect(XML.parse(`${decls("NMTOKEN")}<r v=" &#xA;a "/>`)).toEqual({ r: { "@v": "\na" } });
+    expect(XML.parse(`${decls("NMTOKEN")}<r v=" a&#32; "/>`)).toEqual({ r: { "@v": "a" } });
+    expect(XML.parse(`${decls("NMTOKEN")}<r v="&#x20;&#xA;  a  &#xA;&#x20;"/>`)).toEqual({ r: { "@v": "\n a \n" } });
+    // A default value declared with a tokenized type gets the same treatment.
+    expect(XML.parse(`<!DOCTYPE r [<!ATTLIST r v NMTOKEN " a&#xA; ">]><r/>`)).toEqual({ r: { "@v": "a\n" } });
+    // CDATA keeps everything.
+    expect(XML.parse(`${decls("CDATA")}<r v=" a&#xA; "/>`)).toEqual({ r: { "@v": " a\n " } });
+  });
+
   test("internal parameter entities are expanded between declarations", () => {
     const doc = `<!DOCTYPE d [
       <!ENTITY % decls "<!ENTITY e 'from pe'><!ATTLIST d a CDATA 'default'>">

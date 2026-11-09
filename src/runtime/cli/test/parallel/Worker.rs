@@ -77,8 +77,6 @@ pub(crate) struct Worker {
     /// Consecutive (re)spawns of this slot that exited before `.ready`;
     /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.
     pub(crate) startup_failures: u8,
-    /// `bun test --aot` over several programs: which of `Parts::list` this worker runs.
-    pub(crate) part: u32,
     /// Only files that take over a gigabyte are left, and one of them runs.
     pub(crate) waits_for_heavy_file_to_end: bool,
     /// `runner::first_loads` as of the last file that ran in this slot. The next process of the slot starts from there, as one process that ran all of them would.
@@ -94,11 +92,6 @@ pub(crate) struct SpawnContext<'a> {
     /// Windows hands it over as an inherited handle, which the worker's arguments name.
     #[cfg_attr(windows, expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
-    /// `Parts::layers`: the worker gets them behind `compiled_program`.
-    #[cfg_attr(windows, expect(dead_code))]
-    pub(crate) programs_below: &'a [bun_sys::Fd],
-    /// A run of test files one after another prints to the stdout and stderr of `bun test`, as without workers.
-    pub(crate) inherits_output: bool,
     #[cfg(windows)]
     pub(crate) windows_job: Option<*mut c_void>,
 }
@@ -171,22 +164,12 @@ impl Worker {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
             let compiled_program = coord.compiled_program.map(Stdio::Pipe);
-            let programs_below = coord.programs_below.iter().copied().map(Stdio::Pipe);
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: if coord.inherits_output {
-                    Stdio::Inherit
-                } else {
-                    Stdio::Buffer
-                },
-                stderr: if coord.inherits_output {
-                    Stdio::Inherit
-                } else {
-                    Stdio::Buffer
-                },
+                stdout: Stdio::Buffer,
+                stderr: Stdio::Buffer,
                 extra_fds: core::iter::once(Stdio::Buffer)
                     .chain(compiled_program)
-                    .chain(programs_below)
                     .collect(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 stream: true,
@@ -267,20 +250,12 @@ impl Worker {
 
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: if coord.inherits_output {
-                    Stdio::Inherit
-                } else {
-                    Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-                        uv::Pipe,
-                    >())))
-                },
-                stderr: if coord.inherits_output {
-                    Stdio::Inherit
-                } else {
-                    Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-                        uv::Pipe,
-                    >())))
-                },
+                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+                    uv::Pipe,
+                >()))),
+                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+                    uv::Pipe,
+                >()))),
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
@@ -401,22 +376,11 @@ impl Worker {
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status, peak_rss_mb) };
     }
 
-    pub(crate) fn dispatch(
-        &mut self,
-        f: &mut Frame,
-        file_idx: u32,
-        file: &[u8],
-        exit_code_left_by_tests: Option<u8>,
-        stands_for_one_process: bool,
-        failures_until_bail: u32,
-    ) {
+    pub(crate) fn dispatch(&mut self, f: &mut Frame, file_idx: u32, file: &[u8]) {
         f.begin(frame::Kind::Run);
         f.u32(file_idx);
         f.str(file);
-        f.u32(exit_code_left_by_tests.map_or(0, |code| u32::from(code) + 1));
         f.str(&self.first_loads);
-        f.u32(u32::from(stands_for_one_process));
-        f.u32(failures_until_bail);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
         self.dispatched_at = bun_core::time::milli_timestamp();

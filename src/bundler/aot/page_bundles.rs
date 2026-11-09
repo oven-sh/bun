@@ -1,7 +1,6 @@
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-use bstr::BStr;
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::Failed;
 use bun_ast::{Loc, Log, Source};
@@ -9,12 +8,9 @@ use bun_event_loop::AnyEventLoop;
 use bun_js_printer::Encoding;
 use bun_paths::fs::Path;
 use bun_resolver::compiled_program::compare_source_paths;
-use bun_sema::atom::Interner;
-use bun_sema::hir_from_data::DataValue;
 use bun_sema::util::SharedSort;
 
 use super::assets::EmbeddedFiles;
-use super::data_values::{data_value_from_expr, report_not_data};
 use super::services::{BuildContext, with_ast_scope};
 use crate::bundle_v2::bv2_impl::generate_unique_key;
 use crate::mal_prelude::*;
@@ -30,14 +26,13 @@ struct PageOutputs {
     output_files: Vec<OutputFile>,
 }
 
-pub(crate) fn bundle_pages<'s>(
+/// `SourceProvider::bundle_pages`
+pub(crate) fn bundle_pages(
     context: &BuildContext,
     embedded: &EmbeddedFiles,
     pages: &[&[u8]],
-    arena: &'s Arena,
-    atoms: &Interner<'s>,
     log: &mut Log,
-) -> Result<Vec<&'s DataValue<'s>>, Failed> {
+) -> Result<Vec<Vec<u8>>, Failed> {
     if pages.is_empty() {
         return Ok(Vec::new());
     }
@@ -46,11 +41,7 @@ pub(crate) fn bundle_pages<'s>(
         output_files,
     } = create_page_outputs(context, pages, log)?;
     embedded.embed_page_outputs(collect_client_files(output_files));
-    pages
-        .iter()
-        .zip(&manifests)
-        .map(|(page, manifest)| parse_page_manifest(manifest, page, arena, atoms, log))
-        .collect()
+    Ok(manifests)
 }
 
 fn create_page_outputs(
@@ -194,16 +185,7 @@ fn run<'h>(
     bundle.process_files_to_copy(&reachable_files)?;
     bundle.add_server_component_boundaries_as_extra_entry_points()?;
 
-    // SAFETY: as in `run_from_js_in_new_thread`: every borrow comes from the one raw pointer, so projecting `linker`
-    // does not invalidate `entry_points` or `boundaries`.
-    let mut chunks = unsafe {
-        let bundle_pointer: *mut BundleV2<'_> = &raw mut *bundle;
-        let entry_points = (*bundle_pointer).graph.entry_points.as_slice();
-        let boundaries = &(*bundle_pointer).graph.server_component_boundaries;
-        (*bundle_pointer)
-            .linker
-            .link(bundle_pointer, entry_points, boundaries, &reachable_files)?
-    };
+    let mut chunks = bundle.link(&reachable_files)?;
     if bundle.transpiler.log().errors > 0 {
         return Err(crate::Error::BuildFailed);
     }
@@ -281,31 +263,6 @@ fn report_page_count(
     crate::Error::BuildFailed
 }
 
-fn parse_page_manifest<'s>(
-    manifest: &[u8],
-    path: &[u8],
-    arena: &'s Arena,
-    atoms: &Interner<'s>,
-    log: &mut Log,
-) -> Result<&'s DataValue<'s>, Failed> {
-    let source = Source::init_path_string(path, manifest);
-    with_ast_scope(|scratch| {
-        let Ok(root) = bun_parsers::json::parse_json_into_arena(&source, log, scratch) else {
-            let path = BStr::new(path);
-            log.add_error_fmt(
-                Some(&source),
-                Loc::EMPTY,
-                format_args!("the manifest of \"{path}\" is not JSON"),
-            );
-            return Err(Failed);
-        };
-        data_value_from_expr(&root, scratch, arena, atoms).map_err(|error| {
-            report_not_data(log, path, "the manifest", error);
-            Failed
-        })
-    })
-}
-
 fn is_client_output(file: &OutputFile) -> bool {
     match file.output_kind {
         OutputKind::Chunk | OutputKind::EntryPoint | OutputKind::Asset => {
@@ -355,8 +312,6 @@ fn collect_client_files(outputs: Vec<OutputFile>) -> Vec<OutputFile> {
 
 #[cfg(test)]
 mod tests {
-    use bun_sema::session::Session;
-
     use super::super::services::with_test_context;
     use super::*;
 
@@ -499,13 +454,10 @@ mod tests {
         with_test_context(
             |_| {},
             |context| {
-                let session = Session::new();
-                let atoms = Interner::new_in(&session);
-                let arena = Arena::new();
                 let embedded = EmbeddedFiles::default();
                 let mut log = Log::init();
 
-                let manifests = bundle_pages(context, &embedded, &[], &arena, &atoms, &mut log);
+                let manifests = bundle_pages(context, &embedded, &[], &mut log);
 
                 assert!(manifests.unwrap().is_empty());
                 assert!(log.msgs.is_empty());

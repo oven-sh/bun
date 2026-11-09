@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="allSynchronous"
 // CHECK-COUNT-5: role=DisposalCleanup
 // CHECK-NOT: role=DisposalCleanup
@@ -18,6 +19,7 @@
 
 declare function resource(): Disposable;
 declare function asyncResource(): AsyncDisposable;
+declare function use(value: unknown): void;
 
 export function allSynchronous() {
   using a = resource();
@@ -25,6 +27,7 @@ export function allSynchronous() {
   using c = resource();
   using d = resource();
   using e = resource();
+  use(0);
 }
 
 export async function oneAsynchronous() {
@@ -33,4 +36,5 @@ export async function oneAsynchronous() {
   await using c = asyncResource();
   using d = resource();
   using e = resource();
+  use(0);
 }

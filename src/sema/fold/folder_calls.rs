@@ -1,6 +1,7 @@
 use super::evaluate::{Primitive, Value};
 use super::feature_flags::find_feature_flag;
 use super::folder::{Effects, Folded, Folder};
+use super::known_constructors::KnownConstruction;
 use super::known_sets::{name_of_join, name_of_replace, name_of_split};
 use super::{Constant, Decision, MadeByCall, slice_in};
 use crate::atom::{Atom, known};
@@ -270,6 +271,11 @@ impl<'s> Folder<'_, 's> {
     pub(super) fn fold_construction(&mut self, e: ExprId, call: Call) -> Folded {
         let hir = self.hir;
         let known = self.holds_under_minify_syntax(|folder| folder.find_known_construction(call));
+        if let Some(KnownConstruction::Argument(argument)) = known {
+            self.note_operand_in_place(e, argument, |folder| {
+                folder.minifies_syntax() && folder.find_known_construction(call) == known
+            });
+        }
         if known.is_some_and(|known| known.is_literal()) {
             self.conditions.insert(e, true);
             self.mark_folded_under_minify_syntax_alone(e);

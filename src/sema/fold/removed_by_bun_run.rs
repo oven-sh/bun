@@ -8,8 +8,9 @@ use super::known_constructors::KnownConstruction;
 use crate::atom::known;
 use crate::bind::{Binding, BindingKind, CommonJsVariable};
 use crate::hir::{
-    BinOp, Chain, ExprId, ExprKind, File, Flags, MemberKey, NameKind, PatId, PatKind, PropKey,
-    PropKind, StmtId, StmtKind, UnOp, VarKind,
+    BinOp, Chain, ClassId, ExprId, ExprKind, File, Flags, FnBody, MemberKey, MemberKind,
+    ModifierId, ModifierKind, NameKind, PatId, PatKind, PropKey, PropKind, Span, StmtId, StmtKind,
+    UnOp, VarKind,
 };
 use smallvec::SmallVec;
 
@@ -281,6 +282,9 @@ impl Folder<'_, '_> {
                 parts.extend(arguments.map(|argument| (TreeNode::Expr(argument), rule)));
                 true
             }
+            ExprKind::Class(class) if matches!(rule, Rule::UndecidedTest) => {
+                self.push_parts_of_unused_class(class, parts)
+            }
             ExprKind::Object(props) => props.iter().all(|prop| {
                 let prop = hir[prop];
                 push(&[prop.value]);
@@ -293,6 +297,48 @@ impl Folder<'_, '_> {
             }),
             _ => false,
         }
+    }
+
+    /// What `class_can_be_removed_if_unused` of the parser asks: what a class runs where it is written.
+    fn push_parts_of_unused_class(
+        &self,
+        class: ClassId,
+        parts: &mut Vec<(TreeNode, Rule)>,
+    ) -> bool {
+        let hir = self.hir;
+        let class = &hir[class];
+        let has_decorator = |modifiers: Span<ModifierId>| {
+            let mut kinds = modifiers.iter().map(|modifier| hir[modifier].kind);
+            kinds.any(|kind| matches!(kind, ModifierKind::Decorator(_)))
+        };
+        let mut push = |part: ExprId| {
+            parts.extend(
+                part.some()
+                    .map(|part| (TreeNode::Expr(part), Rule::UndecidedTest)),
+            );
+        };
+        push(class.extends);
+        !has_decorator(class.modifiers)
+            && class.members.iter().all(|member| {
+                let member = &hir[member];
+                let is_key_left_out = match member.key {
+                    PropKey::Computed(key) => {
+                        push(key);
+                        let is_reference = matches!(
+                            hir[self.as_written(key)].kind,
+                            ExprKind::Ident(_) | ExprKind::Dot { .. }
+                        );
+                        is_reference || self.is_literal_to_bun_run(key)
+                    }
+                    PropKey::None | PropKey::Name(_) | PropKey::Private(_) => true,
+                };
+                if member.flags.contains(Flags::STATIC) {
+                    push(member.init);
+                }
+                let runs_nothing_in_block = member.kind != MemberKind::StaticBlock
+                    || matches!(hir[member.func].body, FnBody::Block(list) if list.is_empty());
+                is_key_left_out && runs_nothing_in_block && !has_decorator(member.modifiers)
+            })
     }
 
     fn is_listed_read(&self, e: ExprId) -> bool {

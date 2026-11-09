@@ -607,6 +607,11 @@ impl<'s> Folder<'_, 's> {
                 {
                     true
                 }
+                BinOp::Nullish
+                    if self.is_nullish(left).is_some() && self.seen_by_bun_run(e) == e =>
+                {
+                    true
+                }
                 _ if !by_build_alone(left) && !by_build_alone(right) => false,
                 BinOp::And | BinOp::Or if self.tells_condition_without_effects(left) => {
                     let selects_right = self.is_truthy_in_bun_run(left) == Some(op == BinOp::And);

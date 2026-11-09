@@ -1,11 +1,13 @@
 use super::Constant;
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
-use crate::atom::known;
+use super::known_constructors::KnownConstruction;
+use crate::atom::{Atom, known};
 use crate::hir::{
-    BinOp, Chain, ExprId, ExprKind, IdList, MemberKey, NameKind, PropId, PropKey, PropKind, Span,
-    UnOp,
+    BinOp, CallId, Chain, ExprId, ExprKind, IdList, MemberKey, NameKind, PropId, PropKey, PropKind,
+    Span, UnOp,
 };
+use bun_core::identifier::is_identifier;
 use bun_core::strings;
 use smallvec::SmallVec;
 
@@ -15,8 +17,11 @@ struct Read {
     access: ExprId,
     object: ExprId,
     literal: ExprId,
+    /// The index or the key where a fold yields it.
     index: Option<ExprId>,
     has_other_items: bool,
+    /// `new Array(..)` where the parser makes the list of its arguments.
+    list_made_of: Option<CallId>,
     /// What the object arm of the parser asks and its array arm does not: it puts nothing in place of a callee or behind a `?.`.
     is_kept_by_its_form: bool,
 }
@@ -37,14 +42,41 @@ impl Folder<'_, '_> {
             literal,
             index: None,
             has_other_items: false,
+            list_made_of: None,
             is_kept_by_its_form: false,
         };
         match hir[literal].kind {
             ExprKind::Array(items) => self.fold_item_read(read, items, key),
             ExprKind::Object(properties) => self.fold_only_property_read(read, properties, key),
+            ExprKind::New(call) if self.makes_list_under_minify_syntax(call) => {
+                let read = Read {
+                    list_made_of: Some(call),
+                    ..read
+                };
+                self.fold_item_read(read, hir[call].args, key)
+            }
             _ if chain != Chain::Continue => self.fold_member_of_text(access, object, key),
             _ => Folded::UNKNOWN,
         }
+    }
+
+    fn find_text(&self, e: ExprId) -> Option<Atom> {
+        let Value::Known(value) = self.folded(e).value else {
+            return None;
+        };
+        match self.evaluator.to_constant(value) {
+            Constant::String(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    fn makes_list(&self, call: CallId) -> bool {
+        let known = self.find_known_construction(self.hir[call]);
+        known == Some(KnownConstruction::ArrayOfArguments)
+    }
+
+    fn makes_list_under_minify_syntax(&self, call: CallId) -> bool {
+        self.holds_under_minify_syntax(|folder| folder.makes_list(call))
     }
 
     fn find_index(&self, key: MemberKey) -> Option<(usize, ExprId)> {
@@ -132,9 +164,17 @@ impl Folder<'_, '_> {
         key: MemberKey,
     ) -> Folded {
         let hir = self.hir;
-        let (MemberKey::Name(name), 1) = (key, properties.len()) else {
-            return Folded::UNKNOWN;
+        let (name, index) = match key {
+            MemberKey::Name(name) => (name, None),
+            MemberKey::Computed(index) => match self.find_text(index) {
+                Some(name) => (name, Some(index)),
+                None => return Folded::UNKNOWN,
+            },
+            MemberKey::PrivateName(_) => return Folded::UNKNOWN,
         };
+        if properties.len() != 1 {
+            return Folded::UNKNOWN;
+        }
         let property = hir[properties.at(0)];
         let text = self.atoms.bytes(name);
         let is_replaced = property.kind == PropKind::Init
@@ -144,9 +184,14 @@ impl Folder<'_, '_> {
             )
             && property.key == PropKey::Name(name)
             && name != known::__proto__;
-        let is_same_to_parser = hir.is_name_resolved_by_transpiler(read.access, text)
+        let is_key_same_to_parser = match index {
+            Some(_) => text.is_ascii() && !is_identifier(text),
+            None => hir.is_name_resolved_by_transpiler(read.access, text),
+        };
+        let is_same_to_parser = is_key_same_to_parser
             && (property.name_kind == NameKind::Identifier || text.is_ascii());
         let read = Read {
+            index,
             is_kept_by_its_form: !is_same_to_parser
                 || self.is_callee(read.access)
                 || self.is_link_of_kept_chain(read.access),
@@ -233,13 +278,16 @@ impl Folder<'_, '_> {
                 && folder.minifies_syntax()
                 && index.is_none_or(|index| folder.is_folded_by_bun_run(index))
                 && folder.seen_by_bun_run(read.object) == read.literal
+                && read.list_made_of.is_none_or(|call| folder.makes_list(call))
                 && (!read.has_other_items || folder.is_removed_if_unused_by_bun_run(read.literal))
         };
         let folded = match hir[member].kind {
             ExprKind::Missing => Folded::constant(Constant::Undefined),
-            _ => self.folded(member),
+            _ => {
+                self.note_member_in_place(access, member, is_in_place);
+                self.folded(member)
+            }
         };
-        self.note_member_in_place(access, member, is_in_place);
         if matches!(folded.value, Value::Unknown) && self.conditions.get(&member).is_none() {
             return Folded::UNKNOWN;
         }

@@ -53,7 +53,8 @@ impl Folder<'_, '_> {
             ExprKind::Dot { .. }
             | ExprKind::Index { .. }
             | ExprKind::Binary { .. }
-            | ExprKind::Cond { .. } => self.seen_by_bun_run.0.get(&e),
+            | ExprKind::Cond { .. }
+            | ExprKind::New(_) => self.seen_by_bun_run.0.get(&e),
             _ => None,
         }
     }

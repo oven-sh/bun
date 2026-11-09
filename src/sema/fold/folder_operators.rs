@@ -166,8 +166,9 @@ impl<'s> Folder<'_, 's> {
         match op {
             BinOp::Add => {
                 let sum = self.fold_addition(e);
+                let find_text = |folder: &Self| folder.find_text_joined_with_nothing(left, right);
                 if let (Value::Unknown, Some(text)) =
-                    (sum.value, self.find_text_joined_with_nothing(left, right))
+                    (sum.value, self.holds_under_minify_syntax(find_text))
                 {
                     self.copy_condition(e, text);
                     self.mark_folded_under_minify_syntax_alone(e);

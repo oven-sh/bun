@@ -910,7 +910,8 @@ pub struct PlanOptions {
     pub project_is_fallback: bool,
     /// `CreateProgram` of tsgolint: there's no program for a configuration file that has an error, either in itself or
     /// in what the program reports about its options and files (`GetProgramDiagnostics`). No file is checked in it. See
-    /// `Report::rejected_programs`.
+    /// `Report::rejected_programs`. A content mapper that the caller may not run (TS18068) isn't such an error: the
+    /// caller has no `--runExternalCode`, and the program is built without the mappers, as tsgo builds it.
     pub rejects_broken_configurations: bool,
     /// A program's `lib.*.d.ts` files come from the `typescript` installed for it: the first `node_modules/typescript`
     /// from the configuration file's directory upwards, if it has the files that `lib` and `target` require. Otherwise
@@ -4530,6 +4531,17 @@ fn check_named_files(
     let conditions = request.conditions.iter().map(|it| it.to_vec());
     project.options.custom_conditions.extend(conditions);
     let config_path = project.config_path.clone();
+    let is_fallback_project = request.plan_options.project_is_fallback
+        && request.project.is_some_and(|it| {
+            let it = host::from_argument(&host::from_native(request.cwd), it);
+            is_same_path(&it, &config_path, host.is_case_sensitive())
+        });
+    let rejects_broken = request.plan_options.rejects_broken_configurations && !is_fallback_project;
+    if rejects_broken {
+        // The caller has no `--runExternalCode`, so a content mapper it may not run isn't a broken configuration file:
+        // TypeScript drops the mappers and builds the program too.
+        project.errors.retain(|e| e.code != 18068);
+    }
     let last = RefCell::new(None);
     let config_diagnostic = |error: &ConfigError| {
         diagnostic_from_config_error(host, &config_path, error, &mut last.borrow_mut())
@@ -4544,12 +4556,6 @@ fn check_named_files(
             .map(config_diagnostic),
     );
     let always_reported = report.diagnostics.len();
-    let is_fallback_project = request.plan_options.project_is_fallback
-        && request.project.is_some_and(|it| {
-            let it = host::from_argument(&host::from_native(request.cwd), it);
-            is_same_path(&it, &config_path, host.is_case_sensitive())
-        });
-    let rejects_broken = request.plan_options.rejects_broken_configurations && !is_fallback_project;
     let rejected_program = |diagnostics: Vec<Diagnostic>| RejectedProgram {
         config_path: config_path.clone(),
         diagnostics,

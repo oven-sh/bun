@@ -92,7 +92,7 @@ pub enum Lookup<A> {
 }
 
 pub struct Memo<T: Text + ?Sized, A> {
-    /// None until an answer is kept or `FIRST_SIGHTS` pairs were resolved: a small program needs no table.
+    /// Empty until an answer is kept or `FIRST_SIGHTS` pairs were resolved: a small program needs no table.
     buckets: Box<[Bucket<T, A>]>,
     /// Until there are buckets, the pairs resolved once. Afterwards `Way::missed` says it.
     first_sights: [u16; FIRST_SIGHTS],

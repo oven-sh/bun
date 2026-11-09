@@ -2205,10 +2205,13 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
       `Claimed(z=1, m=2, b=3, id=Any<Number>, Symbol(k)=Any<Number>)`,
       `Claimed(id=Any<Number>)`,
       `\nClaimed(list=[\n  Any<Number>,\n  2,\n])\n`,
+      `Claimed(0=Any<Number>, 1=2, length=3)`,
       `Claimed(at=1970-01-01T00:00:00.000Z, id=Any<Number>)`,
       `\nClaimed(list=[\n  ObjectContaining {\n    "sku": "x",\n  },\n])\n`,
+      `Claimed(fn=[Function])`,
       `Claimed(second=Any<Number>, first=Any<Number>)`,
       `Claimed(id=Any<Number>)`,
+      `\nClaimed(inner={\n  "id": Any<Number>,\n})\n`,
     ];
     // With a serializer that is for no value, Bun prints what it prints without one.
     const unclaimed = [
@@ -2277,14 +2280,21 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
               expect({ claimed: true, id: a }).toMatchSnapshot(Object.create({ id: number }));
               // An array that is compared with an object.
               expect({ claimed: true, list: [a, 2] }).toMatchSnapshot({ list: { 0: number } });
+              // An array is offered as an array, which has the length of the value and so the hole at its end.
+              expect(Object.assign([a, 2], { claimed: true, length: 3 })).toMatchSnapshot({ 0: number, length: number });
               // A Date among the property matchers is no matcher, so the Date of the value stays.
               expect({ claimed: true, at: new Date(0), id: a }).toMatchSnapshot({ at: new Date(0), id: number });
               // The matcher is there in place of the element that it matched.
               expect({ claimed: true, list: [{ sku: "x", amount: a }] }).toMatchSnapshot({ list: [expect.objectContaining({ sku: "x" })] });
+              // A function is offered as it is.
+              expect({ claimed: true, fn: Object.assign(() => {}, { id: a }) }).toMatchSnapshot({ fn: { id: number } });
               // What matched in the prototype comes after the own keys, in the order of the property matchers.
               expect({ claimed: true, __proto__: { get second() { return a; }, get first() { return a; } } }).toMatchSnapshot({ second: number, first: number });
               // A getter that throws leaves its property out.
               expect({ claimed: true, id: a, get boom() { throw new Error("boom"); } }).toMatchSnapshot({ id: number });
+              // An object whose keys cannot be listed has only what matched.
+              const unlisted = new Proxy({ id: a }, { ownKeys() { throw new Error("ownKeys"); } });
+              expect({ claimed: true, inner: unlisted }).toMatchSnapshot({ inner: { id: number } });
             }
             expect(new Tagged(3, "print")).toMatchInlineSnapshot({ a: number }, \`print(Any<Number>)\`);
             expect(offered).toEqual(Array(15).fill({ isPlain: true, a: "the matcher" }));

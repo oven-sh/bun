@@ -366,11 +366,11 @@ void JestMatchedRows::fillMergedOf(JSC::JSGlobalObject* globalObject, uint32_t p
             }
         }
         merged->putDirectMayBeIndex(globalObject, name, value);
-        TRY_CLEAR_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, );
     }
     if (array) {
         array->setLength(globalObject, uncheckedDowncast<JSC::JSArray>(holder)->length());
-        TRY_CLEAR_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 
@@ -419,7 +419,7 @@ extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValu
     return JSC::JSValue::encode(row.value);
 }
 
-// What snapshot serializers are offered in place of the object of `place`, built once for the place. It reads the properties of the matched objects that have no row, which runs their getters, and fails for no exception that it can clear. Undefined if there is no such place.
+// What snapshot serializers are offered in place of the object of `place`, built once for the place. It reads the properties of the matched objects that have no row, which runs their getters, and what those throw does not fail it. Undefined if there is no such place.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JestMatchedRows__forSerializers(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rows, uint32_t place)
 {
     auto* cell = Bun::JestMatchedRows::from(rows);

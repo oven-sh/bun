@@ -685,6 +685,24 @@ const manualMocks = {
   `,
 };
 
+// For a fixture that compares what a load fails with to what the same load of a module that nothing mocks fails with. The two names differ by "-either".
+const failures = {
+  "failures.ts": `
+    export async function failure(load) {
+      try {
+        await load();
+      } catch (error) {
+        return { class: error.constructor.name, code: error.code, message: error.message };
+      }
+      return "loaded";
+    }
+    export async function unmocked(load) {
+      const failed = await failure(load);
+      return { ...failed, message: failed.message.replaceAll("-either", "") };
+    }
+  `,
+};
+
 describe.concurrent("the original of a mocked module", () => {
   test("importOriginal and vi.importActual load a module that was never loaded, once", async () => {
     await expectFixturesToPass(
@@ -932,6 +950,137 @@ describe.concurrent("the original of a mocked module", () => {
         `,
       },
       3,
+    );
+  });
+
+  test("of a module that the resolver does not find is what the resolver says", async () => {
+    await expectFixturesToPass(
+      {
+        ...failures,
+        "imports-pending.mjs": `export { mocked } from "not-installed-pending";`,
+        "missing-original.test.ts": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          import { failure, unmocked } from "./failures";
+
+          test("vi.importActual, jest.requireActual and jest.createMockFromModule", async () => {
+            vi.doMock("not-installed-factory", () => ({ mocked: true }));
+            expect((await import("not-installed-factory")).mocked).toBe(true);
+            for (const load of [name => vi.importActual(name), name => jest.requireActual(name), name => jest.createMockFromModule(name)])
+              expect(await failure(() => load("not-installed-factory"))).toEqual(await unmocked(() => load("not-installed-either-factory")));
+          });
+
+          test.each([
+            ["vi.doMock()", "not-installed-partial-vi", "not-installed-either-partial-vi", (name, factory) => vi.doMock(name, factory)],
+            ["mock.module()", "not-installed-partial-bun", "not-installed-either-partial-bun", (name, factory) => mock.module(name, factory)],
+          ])("importOriginal() of %s", async (_, name, either, mockModule) => {
+            mockModule(name, async importOriginal => ({ ...(await importOriginal()), extra: true }));
+            expect(await failure(() => import(name))).toEqual(await unmocked(() => import(either)));
+          });
+
+          test("jest.requireActual() in a factory", async () => {
+            jest.doMock("./no-such-partial.js", () => ({ ...jest.requireActual("./no-such-partial.js"), extra: true }));
+            expect(await failure(() => require("./no-such-partial.js"))).toEqual(await unmocked(() => jest.requireActual("./no-such-either-partial.js")));
+          });
+
+          test("require() ahead of an async factory", async () => {
+            mock.module("not-installed-async", async () => {
+              await 1;
+              return { mocked: true };
+            });
+            expect(await failure(() => require("not-installed-async"))).toEqual(await unmocked(() => require("not-installed-either-async")));
+            expect((await import("not-installed-async")).mocked).toBe(true);
+          });
+
+          test("the factory's own import of the module", async () => {
+            let own;
+            vi.doMock("not-installed-self", async () => {
+              own = await failure(() => import("not-installed-self"));
+              return { mocked: true };
+            });
+            expect((await import("not-installed-self")).mocked).toBe(true);
+            expect(own).toEqual(await unmocked(() => import("not-installed-either-self")));
+          });
+
+          test("an import that the rest of the file makes while the factory runs waits for the mock", async () => {
+            const called = Promise.withResolvers();
+            const gate = Promise.withResolvers();
+            mock.module("not-installed-pending", async () => {
+              called.resolve();
+              await gate.promise;
+              return { mocked: true };
+            });
+            const first = import("not-installed-pending");
+            await called.promise;
+            const loads = [first, import("not-installed-pending"), import("./imports-pending.mjs")];
+            gate.resolve();
+            expect((await Promise.all(loads)).map(loaded => loaded.mocked)).toEqual([true, true, true]);
+          });
+
+          test("a fetch that the mock is taken from fails", async () => {
+            vi.doMock("not-installed-unmocked", async () => {
+              await 1;
+              return { mocked: true };
+            });
+            const loading = import("not-installed-unmocked");
+            vi.doUnmock("not-installed-unmocked");
+            expect(await failure(() => loading)).toEqual(await unmocked(() => import("not-installed-either-unmocked")));
+          });
+        `,
+      },
+      8,
+    );
+  });
+
+  test("of a package that is not installed, for a package that requires it", async () => {
+    const user = (name: string) => ({
+      [`node_modules/uses-${name}/package.json`]: JSON.stringify({ name: `uses-${name}`, main: "./index.js" }),
+      [`node_modules/uses-${name}/index.js`]: `
+        exports.optional = null;
+        try {
+          exports.optional = require("${name}");
+        } catch (error) {
+          if (error.code !== "MODULE_NOT_FOUND") throw error;
+        }
+      `,
+    });
+    await expectFixturesToPass(
+      {
+        ...user("optional-a"),
+        ...user("optional-b"),
+        ...user("optional-c"),
+        ...user("optional-d"),
+        "node_modules/imports-optional/package.json": JSON.stringify({
+          name: "imports-optional",
+          type: "module",
+          main: "./index.js",
+        }),
+        "node_modules/imports-optional/index.js": `
+          export let optional = null;
+          try {
+            optional = await import("optional-e");
+          } catch (error) {
+            if (error.code !== "ERR_MODULE_NOT_FOUND") throw error;
+          }
+        `,
+        "optional.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+
+          test("vi.doMock() leaves it missing for the package, as in Vitest", async () => {
+            vi.doMock("optional-a", () => ({ mocked: true }));
+            vi.doMock("optional-b");
+            vi.doMock("optional-e", () => ({ mocked: true }));
+            expect([require("uses-optional-a").optional, require("uses-optional-b").optional, (await import("imports-optional")).optional]).toEqual([null, null, null]);
+            expect(require("optional-a").mocked).toBe(true);
+          });
+
+          test("jest.doMock() mocks it for the package too, as in Jest, if it has a factory", () => {
+            jest.doMock("optional-c", () => ({ mocked: true }));
+            jest.doMock("optional-d");
+            expect([require("uses-optional-c").optional, require("uses-optional-d").optional]).toEqual([{ mocked: true }, null]);
+          });
+        `,
+      },
+      2,
     );
   });
 
@@ -1251,6 +1400,298 @@ describe.concurrent("a module mocked without a factory", () => {
         `,
       },
       2,
+    );
+  });
+
+  test("of a module that the resolver does not find: every load fails as it does where nothing is mocked", async () => {
+    await expectFixturesToPass(
+      {
+        ...failures,
+        "load.cjs": `exports.load = name => require(name);`,
+        "load.mjs": `export const load = name => import(name);`,
+        "missing.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { failure, unmocked } from "./failures";
+          import * as esm from "./load.mjs";
+          const cjs = require("./load.cjs");
+
+          const loads = [
+            ["require()", "MODULE_NOT_FOUND", name => require(name)],
+            ["import()", "ERR_MODULE_NOT_FOUND", name => import(name)],
+            ["require() in another file", "MODULE_NOT_FOUND", name => cjs.load(name)],
+            ["import() in another file", "ERR_MODULE_NOT_FOUND", name => esm.load(name)],
+            ["require.resolve()", "MODULE_NOT_FOUND", name => require.resolve(name)],
+            ["import.meta.resolveSync()", "ERR_MODULE_NOT_FOUND", name => import.meta.resolveSync(name)],
+            ["vi.importMock()", "ERR_MODULE_NOT_FOUND", name => vi.importMock(name)],
+            ["jest.requireMock()", "MODULE_NOT_FOUND", name => jest.requireMock(name)],
+            ["vi.importActual()", "ERR_MODULE_NOT_FOUND", name => vi.importActual(name)],
+            ["jest.requireActual()", "MODULE_NOT_FOUND", name => jest.requireActual(name)],
+            ["jest.createMockFromModule()", "MODULE_NOT_FOUND", name => jest.createMockFromModule(name)],
+          ];
+
+          test.each([
+            ["jest.doMock()", name => jest.doMock(name)],
+            ["vi.doMock()", name => vi.doMock(name)],
+            ["vi.doMock() with { spy: true }", name => vi.doMock(name, { spy: true })],
+            ["a file: URL", name => vi.doMock(name.startsWith(".") ? new URL(name, import.meta.url).href : name)],
+          ])("%s", async (title, mockModule) => {
+            const id = title.replace(/\\W+/g, "-");
+            for (const [name, either] of [
+              ["not-installed-" + id, "not-installed-either-" + id],
+              ["./no-such-" + id + ".js", "./no-such-either-" + id + ".js"],
+            ]) {
+              mockModule(name);
+              for (const [load, code, run] of loads) {
+                const failed = await failure(() => run(name));
+                expect([load, failed]).toEqual([load, await unmocked(() => run(either))]);
+                expect([load, failed.class, failed.code]).toEqual([load, "ResolveMessage", code]);
+              }
+            }
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("of a module that the resolver does not find: hoisted calls", async () => {
+    await expectFixturesToPass(
+      {
+        ...failures,
+        "hoisted.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { failure, unmocked } from "./failures";
+
+          vi.mock("not-installed-vi");
+          jest.mock("./no-such-jest.js");
+          vi.mock(import("./no-such-import.js"));
+
+          test("do not throw, and the loads fail", async () => {
+            expect(await failure(() => import("not-installed-vi"))).toEqual(await unmocked(() => import("not-installed-either-vi")));
+            expect(await failure(() => require("./no-such-jest.js"))).toEqual(await unmocked(() => require("./no-such-either-jest.js")));
+            expect(await failure(() => import("./no-such-import.js"))).toEqual(await unmocked(() => import("./no-such-either-import.js")));
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("of a module that the resolver does not find: a static import fails the file with what the resolver says", async () => {
+    using dir = tempDir("mock-module-missing-static", {
+      "static.test.ts": `
+        import { test, vi } from "bun:test";
+        import "not-installed-static";
+
+        vi.mock("not-installed-static");
+
+        test("does not run", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Cannot find package 'not-installed-static'");
+    expect(exitCode).toBe(1);
+  });
+
+  test("of a module that is written after the call", async () => {
+    await expectFixturesToPass(
+      {
+        ...failures,
+        "late.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          import { failure, unmocked } from "./failures";
+
+          const write = (name, source) => writeFileSync(join(import.meta.dir, name), source);
+          const source = 'export const value = "real"; export function fn() { return "real"; }';
+
+          test("import() gets the mock", async () => {
+            vi.doMock("./late.js");
+            write("late.js", source);
+            const late = await import("./late.js");
+            expect([late.value, vi.isMockFunction(late.fn), late.fn()]).toEqual(["real", true, undefined]);
+          });
+
+          test("require() gets the mock", () => {
+            jest.doMock("./late-required.js");
+            write("late-required.js", 'exports.fn = () => "real";');
+            expect(jest.isMockFunction(require("./late-required.js").fn)).toBe(true);
+          });
+
+          test("a specifier without the extension names it too", async () => {
+            vi.doMock("./late-short");
+            write("late-short.js", source);
+            expect(vi.isMockFunction((await import("./late-short")).fn)).toBe(true);
+            expect(require("./late-short").fn).toBe((await import("./late-short")).fn);
+          });
+
+          test("an import that failed before it was written does not stand in the way", async () => {
+            vi.doMock("./late-retried.js");
+            expect(await failure(() => import("./late-retried.js"))).toEqual(await unmocked(() => import("./late-either-retried.js")));
+            write("late-retried.js", source);
+            expect(vi.isMockFunction((await import("./late-retried.js")).fn)).toBe(true);
+          });
+
+          test("vi.doUnmock() removes the mock", async () => {
+            vi.doMock("./late-unmocked");
+            write("late-unmocked.js", source);
+            vi.doUnmock("./late-unmocked");
+            expect((await import("./late-unmocked")).fn()).toBe("real");
+          });
+
+          test("a later call with a factory takes its place", async () => {
+            vi.doMock("./late-again");
+            write("late-again.js", source);
+            vi.doMock("./late-again", () => ({ value: "from the factory" }));
+            expect((await import("./late-again")).value).toBe("from the factory");
+          });
+        `,
+      },
+      6,
+    );
+  });
+
+  test("is the file in __mocks__ where the resolver does not find the module", async () => {
+    await expectFixturesToPass(
+      {
+        ...failures,
+        "__mocks__/not-installed-manual.js": `exports.manual = "for the package";`,
+        "sub/__mocks__/no-such-manual.js": `exports.manual = "for the file";`,
+        "manual-missing.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { failure, unmocked } from "./failures";
+
+          vi.mock("not-installed-manual");
+          jest.mock("./sub/no-such-manual.js");
+
+          test("for a package and for a file", async () => {
+            expect((await import("not-installed-manual")).manual).toBe("for the package");
+            expect(require("./sub/no-such-manual.js").manual).toBe("for the file");
+          });
+
+          test("and there is no original", async () => {
+            expect(await failure(() => vi.importActual("not-installed-manual"))).toEqual(await unmocked(() => vi.importActual("not-installed-either-manual")));
+            expect(await failure(() => jest.requireActual("./sub/no-such-manual.js"))).toEqual(await unmocked(() => jest.requireActual("./sub/no-such-either-manual.js")));
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("of a specifier that only something other than the resolver knows", async () => {
+    await expectFixturesToPass(
+      {
+        ...failures,
+        "aliased.js": `exports.fn = () => "real";`,
+        "cwd-file.js": `exports.fromWorkingDirectory = true;`,
+        "loaded.js": `export function fn() { return "real"; }`,
+        "other.test.ts": `
+          import { plugin } from "bun";
+          import { expect, jest, test, vi } from "bun:test";
+          import Module from "node:module";
+          import { join } from "node:path";
+          import { failure, unmocked } from "./failures";
+
+          plugin({
+            name: "virtual modules",
+            setup(build) {
+              build.module("virtual-loaded", () => ({ exports: { fn: () => "real" }, loader: "object" }));
+              build.onResolve({ filter: /^renamed-by-plugin$/ }, () => ({ path: "not-installed-renamed" }));
+            },
+          });
+
+          test("a module of a plugin that is loaded is mocked", async () => {
+            expect((await import("virtual-loaded")).fn()).toBe("real");
+            vi.doMock("virtual-loaded");
+            expect(vi.isMockFunction((await import("virtual-loaded")).fn)).toBe(true);
+          });
+
+          test("a file: URL of a module is mocked", async () => {
+            vi.doMock(new URL("./loaded.js", import.meta.url).href);
+            expect(vi.isMockFunction((await import("./loaded.js")).fn)).toBe(true);
+          });
+
+          test("a name that Module._resolveFilename gives a path is mocked for require()", () => {
+            const resolveFilename = Module._resolveFilename;
+            Module._resolveFilename = function (request, ...rest) {
+              return resolveFilename.call(this, request === "@alias/aliased" ? join(import.meta.dir, "aliased.js") : request, ...rest);
+            };
+            try {
+              jest.doMock("@alias/aliased");
+              expect(jest.isMockFunction(require("@alias/aliased").fn)).toBe(true);
+              expect(jest.requireActual("@alias/aliased").fn()).toBe("real");
+            } finally {
+              Module._resolveFilename = resolveFilename;
+            }
+          });
+
+          test("a name that a plugin resolves to a module that is not there fails as that module does", async () => {
+            vi.doMock("not-installed-renamed");
+            expect(await failure(() => import("renamed-by-plugin"))).toEqual(await unmocked(() => import("not-installed-either-renamed")));
+          });
+
+          test("a bare name is no path in the working directory", async () => {
+            vi.doMock("cwd-file.js");
+            expect(await failure(() => import("cwd-file.js"))).toEqual(await unmocked(() => import("cwd-either-file.js")));
+          });
+        `,
+      },
+      5,
+    );
+  });
+
+  test("of a module that only another importer can find", async () => {
+    await expectFixturesToPass(
+      {
+        ...failures,
+        "packages/lib/index.js": `exports.dependency = require("only-for-lib");`,
+        "packages/lib/node_modules/only-for-lib/package.json": JSON.stringify({
+          name: "only-for-lib",
+          main: "./index.js",
+        }),
+        "packages/lib/node_modules/only-for-lib/index.js": `exports.fn = () => "real";`,
+        "app.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { failure, unmocked } from "./failures";
+
+          vi.mock("only-for-lib");
+
+          test("that importer gets the module, and this file gets what the resolver says to it", async () => {
+            expect(require("./packages/lib").dependency.fn()).toBe("real");
+            expect(await failure(() => import("only-for-lib"))).toEqual(await unmocked(() => import("only-for-either-lib")));
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("in place of a mock with a factory of a module that the resolver does not find", async () => {
+    await expectFixturesToPass(
+      {
+        ...failures,
+        "replaced.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          import { failure, unmocked } from "./failures";
+
+          test("ends that mock, and throws nothing", async () => {
+            jest.doMock("not-installed-replaced", () => ({ mocked: true }));
+            expect(require("not-installed-replaced").mocked).toBe(true);
+            jest.doMock("not-installed-replaced");
+            expect(await failure(() => require("not-installed-replaced"))).toEqual(await unmocked(() => require("not-installed-either-replaced")));
+          });
+        `,
+      },
+      1,
     );
   });
 

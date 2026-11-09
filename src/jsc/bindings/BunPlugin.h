@@ -148,6 +148,8 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // The specifier that jest.requireActual() requires to find the original of its mock: see Bun::isRequireOfOriginal().
+        String originalIsRequiredOf;
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -163,7 +165,9 @@ public:
 
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
 
-        std::optional<String> resolveVirtualModule(const String& path, const String& from);
+        // The key of the virtual module that `path` names for an importer in `from`. A module mock that has nothing for its importers names none:
+        // the resolver is asked, and `declined` is given the key of the mock for Bun::keyOfImportThatModuleMockDeclined().
+        std::optional<String> resolveVirtualModule(const String& path, const String& from, String* declined = nullptr);
 
         void clear()
         {
@@ -276,16 +280,27 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);
 // Nothing has called it, and no import is loading the original, which a require() would disturb.
 bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
-// What jest.requireActual() returns for the mocked module.
-JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
+// What jest.requireActual() returns for the mocked module, asked for from the file `from`.
+JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& from);
 // "node:fs" for "node:fs?actual", the key of the original of a mocked builtin.
 std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key);
 JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);
 // Whether sourceCodeOfModuleMock() generated module `key`. Its import specifiers are NUL-prefixed registry keys.
 bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 // Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
-String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
-String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
+// A null key: the importer is owed the original of a mock whose module the resolver has yet to find, so the resolver is asked, as for any import.
+// `isAnswerOfResolver`: it was, and gave `key`. Then the key is not null.
+String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM, bool isAnswerOfResolver);
+String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer, bool isESM, bool isAnswerOfResolver);
+// The resolver gave `resolved` for an import in `importer` that names the mock under `declined`, which had nothing to give (resolveVirtualModule()).
+// Returns the key that the importer is given. It is the mock's if that module is what the mock's own specifier names: the mock is the mock of it from then on.
+String keyOfImportThatModuleMockDeclined(Zig::GlobalObject*, const String& declined, const String& resolved, const String& importer, bool isESM);
+// Whether this require() of `specifier` is how jest.requireActual() finds the original of a mock, which the mock is not asked for. True once.
+bool isRequireOfOriginal(Zig::GlobalObject*, const String& specifier);
+// The key that such a require() loads, for the path that the resolver, or a replaced Module._resolveFilename, gave it.
+String keyOfRequiredOriginal(Zig::GlobalObject*, const String& specifier, const String& path);
+// A fetch of `key` waited for `moduleMock`, which is gone. What is fetched in its place: the key, or where the resolver finds the module if the key says nothing of that.
+String keyToFetchInPlaceOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)

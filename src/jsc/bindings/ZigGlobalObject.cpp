@@ -4155,6 +4155,45 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
+
+// What GlobalObject::moduleLoaderResolve() asks the resolver. False: it threw.
+static ALWAYS_INLINE bool resolveImport(Zig::GlobalObject* globalObject, const String& specifier, const String& importer, String& resolved)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    ErrorableString res;
+    BunString keyZ = Bun::toString(specifier);
+    BunString referrerZ = Bun::toString(importer);
+    BunString queryZ = BunStringEmpty;
+    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!res.success) {
+        throwException(scope, res.result.err, globalObject);
+        return false;
+    }
+    resolved = res.result.value.transferToWTFString();
+    auto query = queryZ.transferToWTFString();
+
+    if (!query.isEmpty())
+        resolved = makeString(resolved, query);
+    return true;
+}
+
+// The module mock that answers an import has nothing for this importer, which the resolver answers instead. What the resolver gives has a key for every importer.
+NEVER_INLINE static String resolveImportPastModuleMock(Zig::GlobalObject* globalObject, const String& specifier, const String& importer, bool hasModuleMocks, bool moduleMocksRun)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String resolved;
+    if (!resolveImport(globalObject, specifier, importer, resolved))
+        RELEASE_AND_RETURN(scope, String());
+    scope.assertNoException();
+    if (hasModuleMocks)
+        resolved = Bun::keyOfImportByPackage(globalObject, resolved, importer, true, true);
+    if (moduleMocksRun)
+        resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, importer, true, true);
+    ASSERT(!resolved.isNull());
+    return resolved;
+}
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
@@ -4215,38 +4254,52 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     // Not implied by hasVirtualModules(), since a factory keeps running after Bun.plugin.clearAll() removes every mock.
     bool moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
-    if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString)) [[unlikely]]
-        return Identifier::fromString(vm, moduleMocksRun ? Bun::keyOfImportWhileModuleMocksRun(globalObject, keyString.substring(1), referrerString, true) : keyString.substring(1));
+    if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString)) [[unlikely]] {
+        // The key of a module that is there already, which the resolver has nothing to say of.
+        String key = keyString.substring(1);
+        if (String given = moduleMocksRun ? Bun::keyOfImportWhileModuleMocksRun(globalObject, key, referrerString, true, false) : String(); !given.isNull())
+            key = given;
+        return Identifier::fromString(vm, key);
+    }
     WTF::String resolved;
     bool hasModuleMocks = globalObject->onLoadPlugins.hasVirtualModules();
-    if (hasModuleMocks) {
-        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyString, referrerString))
-            resolved = resolvedString.value();
+    if (hasModuleMocks || moduleMocksRun) [[unlikely]] {
+        // A virtual module that has something for the importer is the answer, and the resolver is not asked.
+        String declined;
+        if (hasModuleMocks) {
+            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyString, referrerString, &declined))
+                resolved = resolvedString.value();
+        } else {
+            ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
+        }
+
+        bool isAnswerOfResolver = resolved.isNull();
+        if (isAnswerOfResolver) {
+            if (!resolveImport(globalObject, keyString, referrerString, resolved))
+                RELEASE_AND_RETURN(scope, Identifier());
+            scope.assertNoException();
+            if (!declined.isNull()) [[unlikely]] {
+                String given = Bun::keyOfImportThatModuleMockDeclined(globalObject, declined, resolved, referrerString, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                isAnswerOfResolver = given == resolved;
+                resolved = WTF::move(given);
+            }
+        }
+        if (hasModuleMocks)
+            resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString, true, isAnswerOfResolver);
+        if (moduleMocksRun && !resolved.isNull())
+            resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true, isAnswerOfResolver);
+        if (resolved.isNull()) [[unlikely]] {
+            ASSERT(!isAnswerOfResolver);
+            resolved = resolveImportPastModuleMock(globalObject, keyString, referrerString, hasModuleMocks, moduleMocksRun);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     } else {
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
+        if (!resolveImport(globalObject, keyString, referrerString, resolved))
+            RELEASE_AND_RETURN(scope, Identifier());
+        scope.assertNoException();
     }
-
-    if (resolved.isNull()) {
-        ErrorableString res;
-        BunString keyZ = Bun::toString(keyString);
-        BunString referrerZ = Bun::toString(referrerString);
-        BunString queryZ = BunStringEmpty;
-        Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!res.success) {
-            throwException(scope, res.result.err, globalObject);
-            return {};
-        }
-        resolved = res.result.value.transferToWTFString();
-        auto query = queryZ.transferToWTFString();
-
-        if (!query.isEmpty())
-            resolved = makeString(resolved, query);
-    }
-    if (hasModuleMocks) [[unlikely]]
-        resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString, true);
-    if (moduleMocksRun) [[unlikely]]
-        resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
     if (hasModuleMocks) [[unlikely]] {
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);

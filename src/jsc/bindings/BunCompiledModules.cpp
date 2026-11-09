@@ -1565,7 +1565,9 @@ static bool givesOriginalBesideMock(JSGlobalObject* globalObject, const String& 
         if (!Bun__isESModuleByExtensionOrPackageType(globalObject, &borrowedPath))
             return false;
     }
-    return keyOfImportByPackage(defaultGlobalObject(globalObject), path, importer, isImport) != path;
+    // A null key: the mock has no original to give beside it.
+    String given = keyOfImportByPackage(defaultGlobalObject(globalObject), path, importer, isImport, false);
+    return !given.isNull() && given != path;
 }
 
 static std::optional<bool> isInPreload(JSGlobalObject* globalObject)

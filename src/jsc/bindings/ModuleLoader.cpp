@@ -456,7 +456,8 @@ static JSValue handleVirtualModuleResult(
     if (wasModuleMock) {
         if (commonJSModule && Bun::canRequireOriginalOfModuleMock(globalObject, moduleMock)) {
             // As in Vitest. Otherwise require() of a mock with a pending factory throws below.
-            JSValue exports = Bun::requireOriginalOfModuleMock(globalObject, moduleMock);
+            String requirer = referrer ? referrer->toWTFString() : String();
+            JSValue exports = Bun::requireOriginalOfModuleMock(globalObject, moduleMock, requirer.isEmpty() ? String("."_s) : requirer);
             RETURN_IF_EXCEPTION(scope, {});
             commonJSModule->setExportsObject(exports);
             commonJSModule->hasEvaluated = true;
@@ -1563,8 +1564,18 @@ static JSValue didFulfillPendingVirtualModule(Zig::GlobalObject* globalObject, P
     const ModuleFetch fetch { graph ? uncheckedDowncast<Bun::JSModuleGraph>(graph) : nullptr, specifierJS, typeAttributeWtf.isNull() ? nullptr : &typeAttribute, matches };
     ErrorableResolvedSource res;
 
-    if (!value)
+    if (!value) {
+        if (fetchesAgain) {
+            // The mock is gone, and its key may be no path of a module: see JSModuleMock::OriginalState.
+            String fetched = Bun::keyToFetchInPlaceOfModuleMock(globalObject, moduleMock.getObject(), specifierWtf);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (fetched != specifierWtf) {
+                specifierWtf = fetched;
+                specifier = Bun::toString(specifierWtf);
+            }
+        }
         RELEASE_AND_RETURN(scope, fetchESMSourceCode<true>(globalObject, fetch.graph, specifierJS, &res, &specifier, &referrer, fetch.typeAttribute, !fetchesAgain));
+    }
 
     JSValue result = handleVirtualModuleResult<false>(globalObject, value, &res, &specifier, &referrer, fetch, !!moduleMock);
     RETURN_IF_EXCEPTION(scope, {});

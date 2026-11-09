@@ -230,7 +230,11 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         JSC::throwException(globalObject, scope, error);
 }
 
-extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+static JSC::EncodedJSValue resolveSyncWithVirtualModules(JSC::JSGlobalObject*, JSC::CallFrame*, Zig::GlobalObject*, JSC::JSValue moduleName, JSC::JSValue from, bool isRequireDotResolve);
+
+// `asksVirtualModules` is false where resolveSyncPastModuleMock() asks for what answers a require() that no virtual module answers.
+// `isAnswerOfResolver`: that was the resolver, and neither a replaced Module._resolveFilename nor `paths`.
+static ALWAYS_INLINE JSC::EncodedJSValue resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, bool asksVirtualModules, bool& isAnswerOfResolver)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -244,31 +248,24 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue parentModule = callFrame->argument(5);
     JSValue resolveFilenameOptions = callFrame->argument(6);
 
-    // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
-    if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
-        Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    if (!isRequireDotResolve) {
-        Bun::willRequire(lexicalGlobalObject, moduleName);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        if (moduleName.isString()) {
-            auto moduleString = moduleName.toWTFString(globalObject);
+    if (asksVirtualModules) {
+        // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
+        if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
+            Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
             RETURN_IF_EXCEPTION(scope, {});
-            auto fromString = from.toWTFString(globalObject);
+        }
+
+        if (!isRequireDotResolve) {
+            Bun::willRequire(lexicalGlobalObject, moduleName);
             RETURN_IF_EXCEPTION(scope, {});
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
-                if (!isRequireDotResolve)
-                    resolvedString = Bun::keyOfImportByPackage(globalObject, resolvedString.value(), fromString, false);
-                if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
-                    return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
-                if (moduleString == resolvedString.value())
-                    return JSC::JSValue::encode(moduleName);
-                return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
+        }
+
+        if (globalObject->onLoadPlugins.hasVirtualModules()) {
+            if (moduleName.isString()) {
+                JSC::EncodedJSValue answer = resolveSyncWithVirtualModules(lexicalGlobalObject, callFrame, globalObject, moduleName, from, isRequireDotResolve);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (answer)
+                    return answer;
             }
         }
     }
@@ -405,26 +402,106 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (!isRequireDotResolve && globalObject->onLoadPlugins.hasVirtualModules()) [[unlikely]] {
+    isAnswerOfResolver = true;
+    // The resolver gave the key, so whichever of these is asked has a key to give.
+    if (asksVirtualModules && !isRequireDotResolve && globalObject->onLoadPlugins.hasVirtualModules()) [[unlikely]] {
         String key = asString(JSC::JSValue::decode(result))->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto fromString = from.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        String given = Bun::keyOfImportByPackage(globalObject, key, fromString, false);
+        String given = Bun::keyOfImportByPackage(globalObject, key, fromString, false, true);
         if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
-            given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false);
+            given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false, true);
+        ASSERT(!given.isNull());
         if (given != key)
             return JSC::JSValue::encode(jsString(vm, given));
-    } else if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {
+    } else if (asksVirtualModules && !isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {
         auto key = asString(JSC::JSValue::decode(result))->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto fromString = from.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false)));
+        return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false, true)));
     }
 
     scope.release();
     return result;
+}
+
+// A require() that names a module mock which gives it no key: the mock has nothing for its importers (BunPlugin::OnLoad::resolveVirtualModule()) or for this one
+// (`declined` is null), or the require() is how jest.requireActual() finds the original. It is answered as if there were no mock, and the answer says what it gets.
+NEVER_INLINE static JSC::EncodedJSValue resolveSyncPastModuleMock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* globalObject, const String& moduleString, const String& fromString, const String& declined, bool isForOriginal)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool isAnswerOfResolver = false;
+    JSC::EncodedJSValue result = resolveSyncPrivate(lexicalGlobalObject, callFrame, false, isAnswerOfResolver);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!JSC::JSValue::decode(result).isString())
+        return result;
+
+    String key = asString(JSC::JSValue::decode(result))->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    String given = key;
+    if (isForOriginal)
+        given = Bun::keyOfRequiredOriginal(globalObject, moduleString, key);
+    else if (!declined.isNull()) {
+        given = Bun::keyOfImportThatModuleMockDeclined(globalObject, declined, key, fromString, false);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    // What the resolver answers is redirected as the key of a virtual module is, and so is the key of a mock that answers after all.
+    bool isKeyOfMock = !isForOriginal && given != key;
+    if (isAnswerOfResolver || isKeyOfMock) {
+        String redirected = Bun::keyOfImportByPackage(globalObject, given, fromString, false, given == key);
+        if (!redirected.isNull() && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
+            redirected = Bun::keyOfImportWhileModuleMocksRun(globalObject, redirected, fromString, false, given == key);
+        // A mock that answers after all, and has nothing for this requirer: it gets what the resolver gave.
+        given = redirected.isNull() ? key : redirected;
+    }
+    if (given == key)
+        return result;
+    return JSC::JSValue::encode(jsString(vm, given));
+}
+
+// require() and require.resolve() where virtual modules exist. One that has something for the requirer answers ahead of everything else.
+// Returns nothing where none answers: the caller goes on.
+NEVER_INLINE static JSC::EncodedJSValue resolveSyncWithVirtualModules(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* globalObject, JSC::JSValue moduleName, JSC::JSValue from, bool isRequireDotResolve)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& plugins = globalObject->onLoadPlugins;
+    auto moduleString = moduleName.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto fromString = from.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // The original of a module mock is not for a mock to give.
+    bool isForOriginal = !isRequireDotResolve && !plugins.originalIsRequiredOf.isNull() && Bun::isRequireOfOriginal(globalObject, moduleString);
+    String declined;
+    if (auto claimed = isForOriginal ? std::nullopt : plugins.resolveVirtualModule(moduleString, fromString, &declined)) {
+        String given = WTF::move(*claimed);
+        if (!isRequireDotResolve) {
+            given = Bun::keyOfImportByPackage(globalObject, given, fromString, false, false);
+            if (!given.isNull() && !plugins.runningModuleMocks.isEmpty()) [[unlikely]]
+                given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false, false);
+            // The mock has nothing for this requirer.
+            if (given.isNull()) [[unlikely]]
+                RELEASE_AND_RETURN(scope, resolveSyncPastModuleMock(lexicalGlobalObject, callFrame, globalObject, moduleString, fromString, declined, false));
+        }
+        if (moduleString == given)
+            return JSC::JSValue::encode(moduleName);
+        return JSC::JSValue::encode(jsString(vm, given));
+    }
+    // require.resolve() says where the module is, and no more.
+    if (!isRequireDotResolve && (isForOriginal || !declined.isNull())) [[unlikely]]
+        RELEASE_AND_RETURN(scope, resolveSyncPastModuleMock(lexicalGlobalObject, callFrame, globalObject, moduleString, fromString, declined, isForOriginal));
+    return {};
+}
+
+extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    bool isAnswerOfResolver = false;
+    return resolveSyncPrivate(lexicalGlobalObject, callFrame, true, isAnswerOfResolver);
 }
 
 extern "C" bool Bun__resolveWithOnResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);

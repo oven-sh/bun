@@ -1,3 +1,4 @@
+use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, BuiltinKind, MemberLookup, Mutability};
 use bun_sema::atom::{Atom, Interner, known};
@@ -8,24 +9,29 @@ use bun_sema::hir::{
     PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 
-/// Tells the code that runs nothing of its file: it calls no function, stores to nothing that was there before it and hands nothing of the file to anybody.
 pub struct Quiet<'a, 's> {
     pub atoms: &'a Interner<'s>,
     pub hir: &'a hir::File<'s>,
     pub bound: &'a Bound<'s>,
     pub decisions: &'a Decisions<'s>,
-    /// A read of a global, or of a member of one, that start-up does not lock counts as quiet.
+    pub builtins: &'a ResolvedBuiltins,
     pub allows_reads_of_open_globals: bool,
-    /// A call that runs nothing of the program once its arguments are there.
     pub runs_nothing: &'a dyn Fn(hir::CallId) -> bool,
 }
 
-/// A plain object that has no such property of its own answers `undefined`: `Object.prototype` has none and takes none.
-pub(super) fn is_absent_from_object_prototype(atoms: &Interner<'_>, name: Atom) -> bool {
+pub(super) fn is_absent_from_object_prototype(
+    atoms: &Interner<'_>,
+    added: &[(BuiltinId, Atom)],
+    name: Atom,
+) -> bool {
     let known_name = table::find_name(atoms.bytes(name));
     let is_inherited = known_name
         .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
-    !is_inherited && name != known::__proto__
+    let sought = (BuiltinId::ObjectPrototype, atoms.bytes(name));
+    let is_added = added
+        .binary_search_by(|&(holder, laid)| (holder, atoms.bytes(laid)).cmp(&sought))
+        .is_ok();
+    !is_inherited && !is_added && name != known::__proto__
 }
 
 pub(super) fn enclosing_statement(bound: &Bound<'_>, mut expression: ExprId) -> Option<StmtId> {
@@ -44,7 +50,6 @@ pub(super) fn is_in_statement_of_file(bound: &Bound<'_>, expression: ExprId) -> 
         .is_some_and(|statement| bound.parent_of_stmt(statement) == Parent::File)
 }
 
-/// Neither `with` nor evaluated text decides at run time what the name means.
 pub(super) fn has_fixed_binding(bound: &Bound<'_>, name: ExprId) -> bool {
     bound.dynamic_lookup_scope(NodeData::Expr(name)).is_none()
 }
@@ -53,7 +58,6 @@ pub(super) fn is_global_name(bound: &Bound<'_>, name: ExprId) -> bool {
     bound.binding(name) == Binding::Free && has_fixed_binding(bound, name)
 }
 
-/// `object.name` and `object["name"]` outside an optional chain.
 pub(super) fn plain_member(hir: &hir::File<'_>, expression: ExprId) -> Option<(ExprId, Atom)> {
     let (ExprKind::Dot {
         chain: Chain::No, ..
@@ -71,7 +75,6 @@ pub(super) fn plain_member(hir: &hir::File<'_>, expression: ExprId) -> Option<(E
 }
 
 impl Quiet<'_, '_> {
-    /// The built-in that a path of names from a global leads to, where every step is locked and none is an accessor.
     pub fn find_locked_builtin(&self, expression: ExprId) -> Option<BuiltinId> {
         let (hir, bound) = (self.hir, self.bound);
         let expression = hir.skip_type_assertions(expression);
@@ -90,12 +93,12 @@ impl Quiet<'_, '_> {
             }
         };
         let entry = table::entry(found);
-        let is_fixed_value =
-            entry.mutability == Mutability::AlwaysLocked && entry.kind != BuiltinKind::Accessor;
+        let is_fixed_value = entry.mutability == Mutability::AlwaysLocked
+            && entry.kind != BuiltinKind::Accessor
+            && !self.builtins.is_unlocked(found);
         is_fixed_value.then_some(found)
     }
 
-    /// A locked path that leads to an object, which is truthy.
     pub fn names_locked_object(&self, expression: ExprId) -> bool {
         self.find_locked_builtin(expression).is_some_and(|found| {
             !matches!(
@@ -114,7 +117,6 @@ impl Quiet<'_, '_> {
             && is_in_statement_of_file(self.bound, expression)
     }
 
-    // While nothing but quiet code has run, the object that a CommonJS file exports is as it was made: empty.
     fn is_untouched_exports(&self, expression: ExprId) -> bool {
         let expression = self.hir.skip_type_assertions(expression);
         let is_exports_variable = matches!(self.hir[expression].kind, ExprKind::Ident(_))
@@ -138,7 +140,6 @@ impl Quiet<'_, '_> {
         }
     }
 
-    // `Object.getOwnPropertyNames`, `import.meta.require`
     fn is_path_from_global(&self, expression: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let expression = hir.skip_type_assertions(expression);
@@ -172,7 +173,6 @@ impl Quiet<'_, '_> {
         })
     }
 
-    // `(function () { var inner = function () { .. }; return function () { .. }; })()`
     fn is_quiet_when_called(&self, function: FnId) -> bool {
         let record = self.hir[function];
         if record.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || !record.params.is_empty() {
@@ -291,10 +291,13 @@ impl Quiet<'_, '_> {
         }
     }
 
-    /// Where the first statement of the file starts that is not quiet, or the first such declaration of that statement.
     pub fn find_end_of_head(&self) -> u32 {
+        self.find_end_of_head_in(self.hir.body)
+    }
+
+    pub fn find_end_of_head_in(&self, statements: hir::IdList<StmtId>) -> u32 {
         let hir = self.hir;
-        let mut statements = hir.ids(hir.body);
+        let mut statements = hir.ids(statements);
         let Some(first) = statements.find(|&statement| !self.is_quiet_statement(statement)) else {
             return u32::MAX;
         };

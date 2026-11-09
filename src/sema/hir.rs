@@ -8,10 +8,12 @@ use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
 use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use bun_alloc::ChunkOfBlocks;
 use std::borrow::Cow;
 use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
+use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU16;
 
@@ -24,8 +26,8 @@ mod tests;
 pub use crate::check::aot::DiagnosticClass;
 pub use expr_flags::{ExprFlags, MemberKey, TemplatePart, kind_flags};
 pub use runtime_syntax::{
-    find_transpiled_mark, has_runtime_member, is_marked_as_commonjs, is_moved_to_file_start,
-    is_proto_setter,
+    find_runtime_constructor, find_super_call_statement, find_transpiled_mark, has_runtime_member,
+    is_marked_as_commonjs, is_moved_to_file_start, is_proto_setter, parameter_properties,
 };
 
 macro_rules! define_id {
@@ -178,7 +180,7 @@ macro_rules! impl_run {
             }
             #[inline]
             pub fn range(self) -> std::ops::Range<usize> {
-                self.start as usize..(self.start + self.len) as usize
+                self.start as usize..self.start as usize + self.len as usize
             }
         }
     };
@@ -351,23 +353,51 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
 /// found by binary search. It's one word, where a hash map is five.
 pub struct ArenaFewMap<'s, K, V>(ArenaFew<'s, (K, V)>);
 
+impl<K, V> Default for ArenaFewMap<'_, K, V> {
+    #[inline]
+    fn default() -> Self {
+        ArenaFewMap(ArenaFew::default())
+    }
+}
+
 impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
+    #[inline]
     pub fn from_iter_in(entries: impl Iterator<Item = (K, V)>, arena: &'s Arena) -> Self {
+        match entries.size_hint().1 {
+            Some(0) => ArenaFewMap::default(),
+            _ => ArenaFewMap::sorted_in(entries, arena),
+        }
+    }
+
+    fn sorted_in(entries: impl Iterator<Item = (K, V)>, arena: &'s Arena) -> Self {
         let mut entries: Vec<(K, V)> = entries.collect();
+        if entries.is_empty() {
+            return ArenaFewMap::default();
+        }
         entries.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
         ArenaFewMap(ArenaFew::from_iter_in(entries.into_iter(), arena))
     }
 
+    #[inline]
     pub fn get(&self, key: &K) -> Option<&V> {
+        match self.0.is_empty() {
+            true => None,
+            false => self.find(key),
+        }
+    }
+
+    fn find(&self, key: &K) -> Option<&V> {
         let at = self.0.binary_search_by(|entry| entry.0.cmp(key)).ok()?;
         Some(&self.0[at].1)
     }
 
+    #[inline]
     pub fn contains_key(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
 
     /// `contains_key`, under the name a set uses.
+    #[inline]
     pub fn contains(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
@@ -468,19 +498,52 @@ impl<'s, K, V> Deref for FixedMap<'s, K, V> {
 /// A list that neither grows nor shrinks. It either owns an arena block, which it frees when dropped, or borrows from
 /// an owner that still has the list (`FileBuilder::lend`), or belongs to a file that several programs share
 /// (`File::share`).
-pub struct Fixed<'s, T>(FixedIn<'s, T>);
-
-enum FixedIn<'s, T> {
-    /// No block if it's empty, because a file without nodes can also be created by a thread that doesn't own the arena
-    /// (`File::empty_in`).
-    Arena(ArenaBox<'s, [T]>),
-    Lent(&'s mut [T]),
-    Shared(&'s [T]),
+///
+/// A file has some ninety of them, and a program tens of thousands of files, most of whose lists are empty. So it's two
+/// words, not the three of an enum of slices.
+pub struct Fixed<'s, T> {
+    first: NonNull<T>,
+    len: u32,
+    owner: FixedOwner,
+    held: PhantomData<FixedHeld<'s, T>>,
 }
 
+#[derive(Copy, Clone, PartialEq)]
+enum FixedOwner {
+    /// An `ArenaBox<[T]>`. No block if it's empty, because a file without nodes can also be created by a thread that
+    /// doesn't own the arena (`File::empty_in`).
+    Arena,
+    /// A `&mut [T]`.
+    Lent,
+    /// A `&[T]`.
+    Shared,
+}
+
+/// What a `Fixed` stands for.
+type FixedHeld<'s, T> = (ArenaBox<'s, [T]>, &'s mut [T], &'s [T]);
+
+const _: () = assert!(size_of::<Fixed<'static, u32>>() == 16);
+
+// SAFETY: it is one of the three, and is used like it.
+unsafe impl<'s, T> Send for Fixed<'s, T> where FixedHeld<'s, T>: Send {}
+// SAFETY: as above.
+unsafe impl<'s, T> Sync for Fixed<'s, T> where FixedHeld<'s, T>: Sync {}
+
 impl<T> Default for Fixed<'_, T> {
+    #[inline]
     fn default() -> Self {
-        Fixed(FixedIn::Lent(&mut []))
+        Fixed::lent(&mut [])
+    }
+}
+
+impl<T> Drop for Fixed<'_, T> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.owner == FixedOwner::Arena {
+            let list = std::ptr::slice_from_raw_parts_mut(self.first.as_ptr(), self.len as usize);
+            // SAFETY: it is the box of `owning`.
+            drop(unsafe { ArenaBox::from_raw(list) });
+        }
     }
 }
 
@@ -490,20 +553,43 @@ impl<'s, T: Copy> Fixed<'s, T> {
         if list.is_empty() {
             return Fixed::default();
         }
-        Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
+        Fixed::owning(ArenaBox::copy_from_slice_in(list, arena))
     }
 
     /// Call before writing into it. Turns a shared list into a copy in `arena`.
     pub(crate) fn make_owned_in(&mut self, arena: &'s Arena) {
-        if let FixedIn::Shared(list) = self.0 {
-            *self = Fixed::copied_in(arena, list);
+        if self.owner == FixedOwner::Shared {
+            *self = Fixed::copied_in(arena, self);
         }
     }
 }
 
 impl<'s, T> Fixed<'s, T> {
+    #[inline]
+    fn new(list: NonNull<[T]>, owner: FixedOwner) -> Self {
+        Fixed {
+            first: list.cast(),
+            len: u32::try_from(list.len()).expect("ids of nodes are 32 bits wide"),
+            owner,
+            held: PhantomData,
+        }
+    }
+
+    fn owning(list: ArenaBox<'s, [T]>) -> Self {
+        // SAFETY: a box is never null.
+        Fixed::new(
+            unsafe { NonNull::new_unchecked(list.into_raw()) },
+            FixedOwner::Arena,
+        )
+    }
+
+    #[inline]
+    fn lent(list: &'s mut [T]) -> Self {
+        Fixed::new(NonNull::from(list), FixedOwner::Lent)
+    }
+
     pub(crate) fn shared(list: &'s [T]) -> Self {
-        Fixed(FixedIn::Shared(list))
+        Fixed::new(NonNull::from(list), FixedOwner::Shared)
     }
 }
 
@@ -514,6 +600,8 @@ pub struct ListBlock<'s> {
     /// In bytes.
     size: usize,
     used: usize,
+    /// `Arena::lay`. Null: the block lies by itself.
+    chunk: *mut ChunkOfBlocks,
     arena: PhantomData<&'s Arena>,
 }
 
@@ -528,6 +616,7 @@ impl Default for ListBlock<'_> {
             first: std::ptr::null_mut(),
             size: 0,
             used: 0,
+            chunk: std::ptr::null_mut(),
             arena: PhantomData,
         }
     }
@@ -536,6 +625,7 @@ impl Default for ListBlock<'_> {
 impl<'s> ListBlock<'s> {
     pub(crate) const ALIGNMENT: usize = align_of::<u128>();
 
+    #[inline]
     pub(crate) fn room_for<T>(list: &[T]) -> usize {
         size_of_val(list).next_multiple_of(ListBlock::ALIGNMENT)
     }
@@ -545,11 +635,21 @@ impl<'s> ListBlock<'s> {
         if size == 0 {
             return ListBlock::default();
         }
+        if let Some((first, chunk)) = arena.lay(size) {
+            return ListBlock {
+                first: first.as_ptr().cast(),
+                size,
+                used: 0,
+                chunk: chunk.as_ptr(),
+                arena: PhantomData,
+            };
+        }
         let words = Box::<[u128], _>::new_uninit_slice_in(size / ListBlock::ALIGNMENT, arena);
         ListBlock {
             first: ArenaBox::from_box(words).into_raw().cast(),
             size,
             used: 0,
+            chunk: std::ptr::null_mut(),
             arena: PhantomData,
         }
     }
@@ -568,7 +668,7 @@ impl<'s> ListBlock<'s> {
             std::slice::from_raw_parts_mut(first, list.len())
         };
         self.used += room;
-        Fixed(FixedIn::Lent(copy))
+        Fixed::lent(copy)
     }
 
     fn is_empty(&self) -> bool {
@@ -580,7 +680,7 @@ impl<'s> ListBlock<'s> {
         if self.first.is_null() {
             return &mut [];
         }
-        // SAFETY: the block is that long. What lies between the lists may never have been written, and is only copied.
+        // SAFETY: the block is that long. What lies between the lists may never have been written, and is never read.
         unsafe { std::slice::from_raw_parts_mut(self.first.cast(), self.size) }
     }
 
@@ -592,7 +692,7 @@ impl<'s> ListBlock<'s> {
     ) -> Fixed<'s, T> {
         let room = (items.len() * size_of::<T>()).next_multiple_of(ListBlock::ALIGNMENT);
         if room == 0 || room > self.size - self.used {
-            return Fixed(FixedIn::Arena(ArenaBox::from_iter_in(items, arena)));
+            return Fixed::owning(ArenaBox::from_iter_in(items, arena));
         }
         let count = items.len();
         // SAFETY: as in `copy`. An iterator that yields less than it said leaves the list shorter.
@@ -606,11 +706,19 @@ impl<'s> ListBlock<'s> {
             std::slice::from_raw_parts_mut(first, written)
         };
         self.used += room;
-        Fixed(FixedIn::Lent(copy))
+        Fixed::lent(copy)
     }
 
     /// `copy`, and clears `list`, which keeps its capacity.
+    #[inline]
     pub(crate) fn take<T: Copy>(&mut self, list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
+        if list.is_empty() {
+            return Fixed::default();
+        }
+        self.take_items(list, arena)
+    }
+
+    fn take_items<T: Copy>(&mut self, list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
         let exact = self.copy(list, arena);
         list.clear();
         exact
@@ -622,38 +730,13 @@ impl Drop for ListBlock<'_> {
         if self.first.is_null() {
             return;
         }
+        if let Some(chunk) = NonNull::new(self.chunk) {
+            // SAFETY: `new_in` has laid the block in it, and the arena outlives `'s`.
+            return unsafe { ChunkOfBlocks::stop_using(chunk) };
+        }
         let words = self.size / ListBlock::ALIGNMENT;
         // SAFETY: it is the block of `new_in`.
         drop(unsafe { ArenaBox::from_raw(std::ptr::slice_from_raw_parts_mut(self.first, words)) });
-    }
-}
-
-/// A list of plain data in a `ListBlock`, as `program::retire` sees it.
-pub(crate) trait LongList {
-    /// Where the elements are, and their size in bytes. Nothing of a list that owns its block or shares another's.
-    fn lent_bytes(&self) -> (*const u8, usize);
-    fn release(&mut self);
-    /// # Safety
-    /// The bytes are those of a list of this type, and outlive what is read through the list.
-    unsafe fn lend(&mut self, first: *mut u8, size: usize);
-}
-
-impl<T: Copy> LongList for Fixed<'_, T> {
-    fn lent_bytes(&self) -> (*const u8, usize) {
-        match &self.0 {
-            FixedIn::Lent(list) => (list.as_ptr().cast(), size_of_val(&**list)),
-            FixedIn::Arena(_) | FixedIn::Shared(_) => (std::ptr::null(), 0),
-        }
-    }
-
-    fn release(&mut self) {
-        *self = Fixed::default();
-    }
-
-    unsafe fn lend(&mut self, first: *mut u8, size: usize) {
-        let count = size / size_of::<T>();
-        // SAFETY: caller contract.
-        self.0 = FixedIn::Lent(unsafe { std::slice::from_raw_parts_mut(first.cast::<T>(), count) });
     }
 }
 
@@ -661,24 +744,19 @@ impl<T> Deref for Fixed<'_, T> {
     type Target = [T];
     #[inline(always)]
     fn deref(&self) -> &[T] {
-        match &self.0 {
-            FixedIn::Arena(list) => list,
-            FixedIn::Lent(list) => list,
-            FixedIn::Shared(list) => list,
-        }
+        // SAFETY: it stands for a slice that lives as long as it does.
+        unsafe { std::slice::from_raw_parts(self.first.as_ptr(), self.len as usize) }
     }
 }
 
 impl<T> DerefMut for Fixed<'_, T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [T] {
-        match &mut self.0 {
-            FixedIn::Arena(list) => list,
-            FixedIn::Lent(list) => list,
-            FixedIn::Shared(_) => {
-                unreachable!("a file is only shared once nothing writes to it anymore")
-            }
+        if self.owner == FixedOwner::Shared {
+            unreachable!("a file is only shared once nothing writes to it anymore")
         }
+        // SAFETY: it stands for a box or a unique reference that lives as long as it does.
+        unsafe { std::slice::from_raw_parts_mut(self.first.as_ptr(), self.len as usize) }
     }
 }
 
@@ -749,7 +827,7 @@ impl<'s, T: Id> Narrow<'s, T> {
             };
         }
         let short = list.iter().map(|&id| id.into().wrapping_add(1) as u16);
-        let short = Fixed(FixedIn::Arena(ArenaBox::from_iter_in(short, arena)));
+        let short = Fixed::owning(ArenaBox::from_iter_in(short, arena));
         list.clear();
         Narrow {
             short,
@@ -758,9 +836,8 @@ impl<'s, T: Id> Narrow<'s, T> {
     }
 
     fn all_fit(list: &[T]) -> bool {
-        let fits =
-            |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
-        list.iter().fold(true, fits)
+        let bits = |found: u32, &id: &T| found | id.into().wrapping_add(1);
+        list.iter().fold(0, bits) <= u32::from(u16::MAX)
     }
 
     /// `ListBlock::room_for` of what `moved_into` makes of `list`.
@@ -769,11 +846,6 @@ impl<'s, T: Id> Narrow<'s, T> {
             true => (list.len() * size_of::<u16>()).next_multiple_of(ListBlock::ALIGNMENT),
             false => ListBlock::room_for(list),
         }
-    }
-
-    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
-        each(&mut self.short);
-        each(&mut self.long);
     }
 
     /// `moved_in`, into `block`.
@@ -847,6 +919,7 @@ pub struct LazyCells {
     pub(crate) class_extends_ranges: LazyCell<RangeSet<Box<[TextRange]>>>,
     /// `File::keyword_identifiers`
     pub(crate) keyword_identifiers: LazyCell<Box<[Node]>>,
+    pub(crate) has_ambient_nodes: LazyCell<bool>,
 }
 
 /// A `OnceLock` that can be emptied while nothing reads the file.
@@ -856,12 +929,14 @@ pub(crate) struct LazyCell<T>(std::cell::UnsafeCell<OnceLock<T>>);
 unsafe impl<T: Send + Sync> Sync for LazyCell<T> {}
 
 impl<T> Default for LazyCell<T> {
+    #[inline]
     fn default() -> Self {
         LazyCell::new()
     }
 }
 
 impl<T> LazyCell<T> {
+    #[inline]
     const fn new() -> LazyCell<T> {
         LazyCell(std::cell::UnsafeCell::new(OnceLock::new()))
     }
@@ -895,17 +970,26 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     type_query_ranges: LazyCell::new(),
     class_extends_ranges: LazyCell::new(),
     keyword_identifiers: LazyCell::new(),
+    has_ambient_nodes: LazyCell::new(),
 };
 
 /// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
+#[inline]
 pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
+    if list.is_empty() {
+        return Fixed::default();
+    }
     let exact = Fixed::copied_in(arena, list);
     list.clear();
     exact
 }
 
+#[inline]
 pub(crate) fn few_to_arena<'s, T>(list: Vec<T>, arena: &'s Arena) -> ArenaFew<'s, T> {
-    ArenaFew::from_iter_in(list.into_iter(), arena)
+    match list.is_empty() {
+        true => ArenaFew::default(),
+        false => ArenaFew::from_iter_in(list.into_iter(), arena),
+    }
 }
 
 bitflags::bitflags! {
@@ -1379,17 +1463,19 @@ pub struct ExprsByKind {
 impl ExprsByKind {
     pub fn new(file: &File) -> ExprsByKind {
         let mut starts = [0u32; ExprTag::COUNT + 1];
-        let tag_of = |i: usize| file.checked_kind(ExprId(i as u32)).tag();
-        for i in 0..file.exprs.len() {
-            starts[tag_of(i) as usize + 1] += 1;
-        }
+        let tags = (0..file.exprs.len()).map(|i| {
+            let tag = file.checked_kind(ExprId(i as u32)).tag();
+            starts[tag as usize + 1] += 1;
+            tag
+        });
+        let tags: Vec<ExprTag> = tags.collect();
         for i in 0..ExprTag::COUNT {
             starts[i + 1] += starts[i];
         }
         let mut next = starts;
-        let mut ids = vec![ExprId::NONE; file.exprs.len()];
-        for i in 0..file.exprs.len() {
-            let at = &mut next[tag_of(i) as usize];
+        let mut ids = vec![ExprId::NONE; tags.len()];
+        for (i, &tag) in tags.iter().enumerate() {
+            let at = &mut next[tag as usize];
             ids[*at as usize] = ExprId(i as u32);
             *at += 1;
         }
@@ -1584,12 +1670,10 @@ pub mod rare {
     pub const ODD_PRIVATE_NAME: u32 = 1 << 5;
     /// `delete a`, `delete a.#b`
     pub const DELETES_A_NAME: u32 = 1 << 6;
-    /// The body of a function starts with a string, which may be a directive, in text whose function directives count.
+    /// The body of a function starts with a string, which may be a directive.
     pub const DIRECTIVE_IN_FUNCTION: u32 = 1 << 7;
     /// A type parameter has a modifier: `<const T>`, `<in T>`.
     pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
-    /// A function has a `"use strict"` directive that does not count.
-    pub const DROPPED_STRICT_DIRECTIVE: u32 = 1 << 14;
     /// `T?`, `?T`, `T!` or `!T` as a type, outside a comment.
     pub const JSDOC_TYPE: u32 = 1 << 9;
     /// A type predicate: `a is T`, `asserts a`.
@@ -1862,6 +1946,34 @@ pub enum StmtKind {
         expr: ExprId,
         raw: Atom,
     },
+}
+
+impl StmtKind {
+    #[inline]
+    pub fn may_have_modifiers(&self) -> bool {
+        !matches!(
+            self,
+            StmtKind::Empty
+                | StmtKind::Debugger
+                | StmtKind::Expr(_)
+                | StmtKind::Return(_)
+                | StmtKind::If { .. }
+                | StmtKind::For { .. }
+                | StmtKind::ForIn { .. }
+                | StmtKind::ForOf { .. }
+                | StmtKind::While { .. }
+                | StmtKind::DoWhile { .. }
+                | StmtKind::Block(_)
+                | StmtKind::Switch { .. }
+                | StmtKind::Try { .. }
+                | StmtKind::Throw(_)
+                | StmtKind::Break(_)
+                | StmtKind::Continue(_)
+                | StmtKind::Labeled { .. }
+                | StmtKind::With { .. }
+                | StmtKind::Directive { .. }
+        )
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2209,6 +2321,9 @@ pub struct Import {
     pub stmt: StmtId,
     /// The `Object` of `with { .. }`. `NONE` if there is none.
     pub attributes: ExprId,
+    /// A rewrite has turned the statement into `const <loaded_as> = await import(spec)` and kept the declaration for its types alone. What names one of its
+    /// names at run time and does not spell it reads the name from that variable. `NONE` in what the parser makes.
+    pub loaded_as: Atom,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2583,6 +2698,8 @@ pub enum FileKind {
 pub struct JsxPragmas {
     /// `Some(true)`: classic. `Some(false)`: automatic.
     pub classic: Option<bool>,
+    /// `@jsxRuntime react-jsxdev`: `Some(true)`. `@jsxRuntime react-jsx`: `Some(false)`. Only `bun run` reads the two.
+    pub is_development: Option<bool>,
     pub factory: Atom,
     /// `@jsxFrag`
     pub fragment_factory: Atom,
@@ -2593,6 +2710,7 @@ impl Default for JsxPragmas {
     fn default() -> Self {
         JsxPragmas {
             classic: None,
+            is_development: None,
             factory: Atom::NONE,
             fragment_factory: Atom::NONE,
             import_source: Atom::NONE,
@@ -2665,12 +2783,70 @@ pub enum CommentDirectiveKind {
     Ignore,
 }
 
+/// What a value may be besides the `require` that a way through the text leads to, and besides nothing at all.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum OtherValues {
+    None,
+    /// `flag && made` is `flag` where that is falsy.
+    Falsy,
+    /// `given || require`
+    Any,
+}
 /// `import { export } from "specifier"` binds the `require` of the file at `path`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ImportedRequire {
     pub specifier: Atom,
     pub export: Atom,
     pub path: Atom,
+    /// `createRequire` made it for that file. Otherwise it is the file's own.
+    pub is_made: bool,
+    /// Of what the export holds.
+    pub other_values: OtherValues,
+}
+
+impl ImportedRequire {
+    fn first_place(specifier: Atom, export: Atom, place_count: usize) -> usize {
+        let names = u64::from(specifier.0) << 32 | u64::from(export.0);
+        (names.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize & (place_count - 1)
+    }
+
+    pub fn hash_by_names(imported: &[ImportedRequire]) -> Vec<u32> {
+        let mut places = vec![0; (imported.len() * 2).next_power_of_two()];
+        for (index, it) in imported.iter().enumerate() {
+            let mut place = ImportedRequire::first_place(it.specifier, it.export, places.len());
+            while let Some(earlier) = (places[place] as usize).checked_sub(1) {
+                let earlier = &imported[earlier];
+                if earlier.specifier == it.specifier && earlier.export == it.export {
+                    break;
+                }
+                place = (place + 1) & (places.len() - 1);
+            }
+            if places[place] == 0 {
+                places[place] = index as u32 + 1;
+            }
+        }
+        places
+    }
+
+    pub fn find_by_names<'a>(
+        imported: &'a [ImportedRequire],
+        places: &[u32],
+        specifier: Atom,
+        export: Atom,
+    ) -> Option<&'a ImportedRequire> {
+        let is_named = |it: &&ImportedRequire| it.specifier == specifier && it.export == export;
+        if places.is_empty() {
+            return imported.iter().find(is_named);
+        }
+        let mut place = ImportedRequire::first_place(specifier, export, places.len());
+        loop {
+            let found = &imported[(places[place] as usize).checked_sub(1)?];
+            if is_named(&found) {
+                return Some(found);
+            }
+            place = (place + 1) & (places.len() - 1);
+        }
+    }
 }
 
 /// What code reads through the import statement `import`: the export `export` of the file that the statement names, or, with a
@@ -2687,6 +2863,35 @@ pub struct ImportedName {
 pub struct ImportedConstant {
     pub name: ImportedName,
     pub value: crate::fold::Constant,
+}
+
+/// The export `export` of the module that the file writes as `specifier` is a function that writes, moves or removes the file which its argument at `place` names,
+/// between `start` and `end`. `start` may be written from the folder of the file that calls it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ImportedFileChanger {
+    pub specifier: Atom,
+    pub export: Atom,
+    pub place: u32,
+    pub reaches_below: bool,
+    pub start: Atom,
+    pub end: Atom,
+    pub starts_at_own_directory: bool,
+}
+
+/// The export `export` of the module that the file writes as `specifier` holds `text`, which may be written from the folder of the file that reads it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TextOfOtherFile {
+    pub specifier: Atom,
+    pub export: Atom,
+    pub text: Atom,
+    pub starts_at_own_directory: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TextOfDataFile {
+    pub specifier: Atom,
+    pub path: Atom,
+    pub text: Atom,
 }
 
 /// The parser's output for one source file.
@@ -2709,12 +2914,21 @@ pub struct FileIn<S: Storage> {
     /// A module even without module syntax: by its extension, or because the options force every
     /// file to be a module. Such a file can still be a CommonJS module.
     pub is_forced_module: bool,
-    /// A script for its project that a build runs as a module: what `bun run` drops of it stays global. Set by the loader.
+    /// A script for its project that a build runs as a module. Set by the loader.
+    pub is_script_for_project: bool,
+    /// `is_script_for_project`, and what `bun run` drops of it stays global. Set by the loader.
     pub is_script_with_code: bool,
+    pub runs_beside_loader: bool,
     /// The imports that bind the `require` of another file. Set by the loader.
     pub imported_requires: S::Few<ImportedRequire>,
+    pub places_of_imported_requires: S::Few<u32>,
     /// The names of other files that hold a constant, among those that folding the file asked for. Set by the loader.
     pub imported_constants: S::Few<ImportedConstant>,
+    pub texts_of_data_files: S::Few<TextOfDataFile>,
+    /// Set by the loader.
+    pub imported_file_changers: S::Few<ImportedFileChanger>,
+    /// Among those that `FileAnalysis::asked_of_other_files` names. Set by the loader.
+    pub texts_of_other_files: S::Few<TextOfOtherFile>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3007,7 +3221,14 @@ impl<S: Storage> FileIn<S> {
             .unwrap_or(Span::EMPTY)
     }
     /// Returns `node.Modifiers()` of the statement `s`.
+    #[inline]
     pub fn stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
+        match self.stmts.get(s.idx()) {
+            Some(statement) if statement.kind.may_have_modifiers() => self.find_stmt_modifiers(s),
+            _ => Span::EMPTY,
+        }
+    }
+    fn find_stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
         stmt_modifiers_in(&self.modifiers_of_stmts, s)
     }
     /// `node.Modifiers()` of the member `p` of an object literal.
@@ -3118,7 +3339,12 @@ impl<S: Storage> FileIn<S> {
         }
     }
     /// `NodeFlagsInWithStatement` for the node at `pos`.
+    #[inline]
     pub fn is_in_with(&self, pos: u32) -> bool {
+        !self.with_bodies.is_empty() && self.is_in_with_body(pos)
+    }
+
+    fn is_in_with_body(&self, pos: u32) -> bool {
         self.with_bodies
             .iter()
             .any(|&(start, end)| (start..end).contains(&pos))
@@ -3126,9 +3352,22 @@ impl<S: Storage> FileIn<S> {
 
     /// `NodeFlagsJSDoc`, `NodeFlagsReparsed` for the node at `pos`: true if it's in a JSDoc comment of a JavaScript
     /// file.
+    #[inline]
     pub fn is_in_jsdoc(&self, pos: u32) -> bool {
+        !self.jsdoc_comments.is_empty() && self.is_in_jsdoc_comment(pos)
+    }
+
+    fn is_in_jsdoc_comment(&self, pos: u32) -> bool {
         let after = self.jsdoc_comments.partition_point(|c| c.0 <= pos);
         after > 0 && pos < self.jsdoc_comments[after - 1].1
+    }
+
+    pub fn syntax_errors(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter().filter(|it| {
+            it.kind == DiagnosticKind::Parse
+                && it.class == DiagnosticClass::EarlyError
+                && !self.is_in_jsdoc(it.start)
+        })
     }
 
     /// `NodeFlagsHasJSDoc` for a node whose first token is at `token`. See `jsdoc_hosts`.
@@ -3140,7 +3379,15 @@ impl<S: Storage> FileIn<S> {
     }
 
     /// Returns the type that a `@type` tag assigns to `owner`, or `NONE` if there is none.
+    #[inline]
     pub fn jsdoc_type(&self, owner: JsDocTypeOwner) -> TypeNodeId {
+        match self.jsdoc_types.is_empty() {
+            true => TypeNodeId::NONE,
+            false => self.find_jsdoc_type(owner),
+        }
+    }
+
+    fn find_jsdoc_type(&self, owner: JsDocTypeOwner) -> TypeNodeId {
         match self.jsdoc_types.binary_search_by_key(&owner, |t| t.0) {
             Ok(index) => self.jsdoc_types[index].1,
             Err(_) => TypeNodeId::NONE,
@@ -3257,7 +3504,8 @@ impl FileBuilder {
     }
     pub fn store_branches(&mut self, branches: Branches) -> BranchesAt {
         let at = self.ids.len() as u32;
-        self.ids.extend([branches.yes.0, branches.no.0]);
+        self.ids.push(branches.yes.0);
+        self.ids.push(branches.no.0);
         BranchesAt(at)
     }
     pub fn store_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
@@ -3312,8 +3560,9 @@ impl FileBuilder {
     /// `A.B.C`: each name with its position.
     pub fn entity_name(&mut self, names: impl Iterator<Item = (Atom, u32)>) -> Span<NameId> {
         let start = self.names.len();
-        self.names
-            .extend(names.map(|(text, packed_pos)| Name { text, packed_pos }));
+        for (text, packed_pos) in names {
+            self.names.push(Name { text, packed_pos });
+        }
         for name in self.names.iter_mut().skip(start + 1) {
             name.packed_pos |= Name::QUALIFIED;
         }
@@ -3393,9 +3642,15 @@ macro_rules! file_in_storage {
             is_flow: $this.is_flow,
             check_directive: $this.check_directive,
             is_forced_module: $this.is_forced_module,
+            is_script_for_project: $this.is_script_for_project,
             is_script_with_code: $this.is_script_with_code,
+            runs_beside_loader: $this.runs_beside_loader,
             imported_requires: $few!($this.imported_requires),
+            places_of_imported_requires: $few!($this.places_of_imported_requires),
             imported_constants: $few!($this.imported_constants),
+            texts_of_data_files: $few!($this.texts_of_data_files),
+            imported_file_changers: $few!($this.imported_file_changers),
+            texts_of_other_files: $few!($this.texts_of_other_files),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3525,20 +3780,244 @@ impl FileBuilder {
         self.diagnostics.push(diagnostic);
     }
 
-    /// Returns the file with every list at its final size in `arena`, which belongs to `session`. Also returns the long
-    /// lists, emptied, so the next file the thread parses reuses their capacity.
-    pub fn into_arena<'s>(self, arena: &'s Arena, session: &'s Session) -> (File<'s>, FileBuilder) {
-        self.into_arena_with(arena, session, session.keep(LazyCells::default()))
+    pub fn clear(&mut self) {
+        let FileBuilder {
+            exprs,
+            stmts,
+            types,
+            fns,
+            members,
+            kind,
+            is_js,
+            is_flow,
+            check_directive,
+            is_forced_module,
+            is_script_for_project,
+            is_script_with_code,
+            runs_beside_loader,
+            imported_requires,
+            places_of_imported_requires,
+            imported_constants,
+            texts_of_data_files,
+            imported_file_changers,
+            texts_of_other_files,
+            has_module_syntax,
+            has_errors,
+            ran_out_of_stack,
+            decorators,
+            legacy_decorators,
+            may_bind_a_parameter_twice,
+            rare_syntax,
+            diagnostics,
+            has_parse_diagnostics,
+            syntax_errors,
+            error_pos,
+            source_len,
+            text,
+            body,
+            references,
+            comment_directives,
+            comments,
+            mentioned,
+            with_bodies,
+            detached_semicolons,
+            body_starts,
+            after_skipped,
+            modifiers_of_params,
+            modifiers_of_stmts,
+            modifiers_of_props,
+            unclosed_literals,
+            stray_decorators,
+            specifier_uses,
+            deferred_import_calls,
+            import_call_type_args,
+            import_attributes,
+            specifier_expressions,
+            exports_from_expressions,
+            parens,
+            non_null_ends,
+            far_names,
+            tagged_templates,
+            jsx_expressions,
+            jsx_pragmas,
+            jsdoc_comments,
+            jsdoc_asterisks,
+            jsdoc_hosts,
+            jsdoc_types,
+            jsdoc_modifiers,
+            jsdoc_member_comments,
+            jsdoc_param_errors,
+            functions_with_param_tags,
+            unmatched_augments_tags,
+            ids,
+            numbers,
+            pats,
+            pat_props,
+            pat_elems,
+            params,
+            type_params,
+            classes,
+            interfaces,
+            aliases,
+            enums,
+            enum_members,
+            modules,
+            props,
+            var_decls,
+            calls,
+            cases,
+            jsx,
+            imports,
+            import_specs,
+            import_equals,
+            exports,
+            export_specs,
+            tuple_elems,
+            mapped,
+            modifiers,
+            names,
+            bases,
+            lazy,
+            keyword_identifier_positions,
+            expr_flags,
+            template_parts,
+            template_part_starts,
+            jsx_attribute_texts,
+            export_star_attributes,
+            bigint_names,
+            is_strict,
+            is_strict_by_syntax,
+        } = self;
+        exprs.clear();
+        stmts.clear();
+        types.clear();
+        fns.clear();
+        members.clear();
+        *kind = Default::default();
+        *is_js = Default::default();
+        *is_flow = Default::default();
+        *check_directive = Default::default();
+        *is_forced_module = Default::default();
+        *is_script_for_project = Default::default();
+        *is_script_with_code = Default::default();
+        *runs_beside_loader = Default::default();
+        imported_requires.clear();
+        places_of_imported_requires.clear();
+        imported_constants.clear();
+        texts_of_data_files.clear();
+        imported_file_changers.clear();
+        texts_of_other_files.clear();
+        *has_module_syntax = Default::default();
+        *has_errors = Default::default();
+        *ran_out_of_stack = Default::default();
+        decorators.clear();
+        *legacy_decorators = Default::default();
+        *may_bind_a_parameter_twice = Default::default();
+        *rare_syntax = Default::default();
+        diagnostics.clear();
+        *has_parse_diagnostics = Default::default();
+        *syntax_errors = Default::default();
+        *error_pos = Default::default();
+        *source_len = Default::default();
+        *text = Default::default();
+        *body = Default::default();
+        references.clear();
+        comment_directives.clear();
+        comments.clear();
+        mentioned.clear();
+        with_bodies.clear();
+        detached_semicolons.clear();
+        body_starts.clear();
+        after_skipped.clear();
+        modifiers_of_params.clear();
+        modifiers_of_stmts.clear();
+        modifiers_of_props.clear();
+        unclosed_literals.clear();
+        stray_decorators.clear();
+        specifier_uses.clear();
+        deferred_import_calls.clear();
+        import_call_type_args.clear();
+        import_attributes.clear();
+        specifier_expressions.clear();
+        exports_from_expressions.clear();
+        parens.clear();
+        non_null_ends.clear();
+        far_names.clear();
+        tagged_templates.clear();
+        jsx_expressions.clear();
+        *jsx_pragmas = Default::default();
+        jsdoc_comments.clear();
+        jsdoc_asterisks.clear();
+        jsdoc_hosts.clear();
+        jsdoc_types.clear();
+        jsdoc_modifiers.clear();
+        jsdoc_member_comments.clear();
+        jsdoc_param_errors.clear();
+        functions_with_param_tags.clear();
+        unmatched_augments_tags.clear();
+        ids.clear();
+        numbers.clear();
+        pats.clear();
+        pat_props.clear();
+        pat_elems.clear();
+        params.clear();
+        type_params.clear();
+        classes.clear();
+        interfaces.clear();
+        aliases.clear();
+        enums.clear();
+        enum_members.clear();
+        modules.clear();
+        props.clear();
+        var_decls.clear();
+        calls.clear();
+        cases.clear();
+        jsx.clear();
+        imports.clear();
+        import_specs.clear();
+        import_equals.clear();
+        exports.clear();
+        export_specs.clear();
+        tuple_elems.clear();
+        mapped.clear();
+        modifiers.clear();
+        names.clear();
+        *bases = Default::default();
+        *lazy = Default::default();
+        keyword_identifier_positions.clear();
+        expr_flags.clear();
+        template_parts.clear();
+        template_part_starts.clear();
+        jsx_attribute_texts.clear();
+        export_star_attributes.clear();
+        bigint_names.clear();
+        *is_strict = Default::default();
+        *is_strict_by_syntax = Default::default();
     }
 
-    fn into_arena_with<'s>(
+    /// Returns the file with every list at its final size in `arena`, which belongs to `session`. Also returns the long
+    /// lists, emptied, so the next file the thread parses reuses their capacity.
+    pub fn into_arena<'s>(
         mut self,
         arena: &'s Arena,
         session: &'s Session,
-        cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
+        let file = self.move_to_arena(arena, session);
+        (file, self)
+    }
+
+    pub fn move_to_arena<'s>(&mut self, arena: &'s Arena, session: &'s Session) -> File<'s> {
+        self.move_to_arena_with(arena, session, session.keep(LazyCells::default()))
+    }
+
+    fn move_to_arena_with<'s>(
+        &mut self,
+        arena: &'s Arena,
+        session: &'s Session,
+        cells: &'s LazyCells,
+    ) -> File<'s> {
         // Most callers drop the comments at once, so they get a block of their own.
-        let comments = std::mem::take(&mut self.comments);
+        let mut comments = std::mem::take(&mut self.comments);
         let mut room = 0;
         macro_rules! measure {
             ($($f:ident),*) => { $(room += ListBlock::room_for(&self.$f);)* };
@@ -3564,12 +4043,9 @@ impl FileBuilder {
         );
         file.lazy.block = block;
         file.comments = Fixed::copied_in(arena, &comments);
-        let mut emptied = FileBuilder::default();
-        macro_rules! each {
-            ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
-        }
-        long_lists!(each);
-        (file, emptied)
+        comments.clear();
+        self.comments = comments;
+        file
     }
 
     /// Returns a file that's valid as long as `self` isn't touched. The long lists stay where they are. Everything else
@@ -3578,7 +4054,7 @@ impl FileBuilder {
         self.lazy = LazyCells::default();
         macro_rules! lent {
             ($list:expr) => {
-                Fixed(FixedIn::Lent(&mut $list[..]))
+                Fixed::lent(&mut $list[..])
             };
         }
         moved_lists!(arena);
@@ -3660,10 +4136,8 @@ impl<'s> File<'s> {
     /// Returns a file without nodes. It allocates nothing, so any thread can create one for another thread's arena
     /// (`Files::free_tree`). Only the thread that owns an arena can allocate in it.
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
-        let no_nodes = FileBuilder::default();
-        no_nodes
-            .into_arena_with(arena, session, &EMPTY_FILE_CELLS)
-            .0
+        let mut no_nodes = FileBuilder::default();
+        no_nodes.move_to_arena_with(arena, session, &EMPTY_FILE_CELLS)
     }
 
     /// The arena that holds the lists.
@@ -3674,13 +4148,6 @@ impl<'s> File<'s> {
     /// False for a file that several programs share, and for one without nodes.
     pub(crate) fn owns_its_lists(&self) -> bool {
         !self.lazy.block.is_empty()
-    }
-
-    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
-        macro_rules! lists {
-            ($($list:ident),*) => { $(each(&mut self.$list);)* };
-        }
-        long_lists!(lists);
     }
 
     /// Frees the long lists, which is most of the file, and leaves them empty.
@@ -3707,6 +4174,7 @@ impl<'s> File<'s> {
             cells.type_query_ranges.clear();
             cells.class_extends_ranges.clear();
             cells.keyword_identifiers.clear();
+            cells.has_ambient_nodes.clear();
         }
     }
 }
@@ -3733,6 +4201,13 @@ pub fn non_null_ends_in<S: Storage>(hir: &FileIn<S>, e: ExprId) -> &[(ExprId, u3
 /// The parentheses around `e`, innermost first.
 #[inline]
 pub fn parentheses_around<S: Storage>(hir: &FileIn<S>, e: ExprId) -> &[(ExprId, u32, u32)] {
+    match hir.expr_flags(e).contains(ExprFlags::PARENTHESIZED) {
+        true => find_parentheses_around(hir, e),
+        false => &[],
+    }
+}
+
+fn find_parentheses_around<S: Storage>(hir: &FileIn<S>, e: ExprId) -> &[(ExprId, u32, u32)] {
     let first = hir.parens.partition_point(|p| p.0.0 < e.0);
     let count = hir.parens[first..].partition_point(|p| p.0 == e);
     &hir.parens[first..first + count]

@@ -1,11 +1,15 @@
-import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isASAN, isGlibc, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
 import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
 import { findImage, imageHeader } from "./cli/compiled-image";
 import { refusesExecuteOnlyStart } from "./execute-only-start";
-import { test } from "./supported";
+import { isHardened } from "./hardened";
+import { afterAll } from "./harness/default-timeout";
+import "./harness/real-executables";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 const program = `import { readFileSync } from "node:fs";
 class Point {
@@ -236,7 +240,7 @@ async function buildWithMap(directory: string) {
 const buildTables = builtOnce({ "program.ts": programWithTables }, buildWithMap);
 
 test.skipIf(!isLinux || process.arch !== "x64")(
-  "what lies between two functions is breakpoints",
+  "what lies between two functions halts",
   async () => {
     const { executable, map } = await buildTables();
     const file = readFileSync(executable);
@@ -259,7 +263,25 @@ test.skipIf(!isLinux || process.arch !== "x64")(
       end = Math.max(end, piece.start + piece.size);
     }
     expect(numberOfGaps).toBeGreaterThan(10);
-    expect([...paddingBytes]).toEqual([0xcc]);
+    expect([...paddingBytes]).toEqual([0xf4]);
+  },
+  120_000,
+);
+
+// A program may listen for SIGTRAP, and then a breakpoint stops nothing. Instructions are whole words here, so each can be asked.
+test.skipIf(!isLinux || process.arch !== "arm64")(
+  "no word of the code is a breakpoint",
+  async () => {
+    const { executable } = await buildTables();
+    const file = readFileSync(executable);
+    const image = findImage(file);
+    const codeOffset = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
+    const executableSize = Number(file.readBigUInt64LE(image + imageHeader.executableSize));
+    expect(executableSize).toBeGreaterThan(100_000);
+    const breakpoints: number[] = [];
+    for (let offset = 0; offset < executableSize; offset += 4)
+      if ((file.readUInt32LE(codeOffset + offset) & 0xffe0001f) >>> 0 === 0xd4200000) breakpoints.push(offset);
+    expect(breakpoints).toEqual([]);
   },
   120_000,
 );
@@ -322,7 +344,9 @@ console.log(names.length, names.at(-1));
       exitCode: 0,
       signalCode: null,
     });
-    expect(rowsOfMap(map, "T").filter(fields => fields.at(-1) === "ThrowAtSite.WordsAfterCall").length).toBe(1);
+    const stubs = rowsOfMap(map, "T").map(fields => fields.at(-1)!);
+    expect(stubs.filter(name => name.startsWith("ThrowAtSite.WordInRegister"))).not.toEqual([]);
+    expect(stubs.filter(name => name.startsWith("ThrowAtSite.WordsAfterCall"))).toEqual([]);
   },
   120_000,
 );
@@ -337,12 +361,14 @@ test.skipIf(!isLinux)(
     const executableSize = Number(file.readBigUInt64LE(image + imageHeader.executableSize));
     const dataSize = image + Number(file.readBigUInt64LE(image + imageHeader.size)) - codeOffset - executableSize;
 
-    const constants = rowsOfMap(map, "K").map(([, offset, size]) => ({ offset: Number(offset), size: Number(size) }));
-    expect(constants).toEqual([{ offset: expect.any(Number), size: expect.any(Number) }]);
-    expect(constants[0].size).toBeGreaterThan(0);
-    expect(constants[0].offset).toBeGreaterThanOrEqual(executableSize);
-    expect(constants[0].offset + constants[0].size).toBeLessThanOrEqual(executableSize + dataSize);
-    for (const kind of ["F", "U", "X", "XR"]) {
+    const constants = {
+      offset: file.readUInt32LE(image + imageHeader.constantsOffset),
+      size: file.readUInt32LE(image + imageHeader.constantsSize),
+    };
+    expect(constants.size).toBeGreaterThan(0);
+    expect(constants.offset).toBeGreaterThanOrEqual(executableSize);
+    expect(constants.offset + constants.size).toBeLessThanOrEqual(executableSize + dataSize);
+    for (const kind of ["F", "X", "XR"]) {
       const [offsetField, sizeField] = kind === "F" ? [2, 3] : [1, 2];
       const ends = rowsOfMap(map, kind).map(fields => Number(fields[offsetField]) + Number(fields[sizeField]));
       expect({ kind, isExecutable: ends.every(end => end <= executableSize) }).toEqual({ kind, isExecutable: true });
@@ -515,6 +541,95 @@ test.skipIf(!isLinux || refusesExecuteOnlyStart)(
   120_000,
 );
 
+// A further block of entries is mapped out of the executable's file. Where the file cannot be had the block is copied into fresh memory that is then made executable.
+// An executable forbids itself just that at its start where the kernel knows how (PR_SET_MDWE with PR_MDWE_NO_INHERIT, Linux 6.7): there no more than the entries loaded with the code can be had.
+// So each program asks the kernel what holds for it and says so in front of what it did.
+const makes600Callbacks = `const { prctl } = dlopen(${JSON.stringify(isLinux ? libcPathForDlopen() : "")}, {
+  prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+}).symbols;
+const getMDWE = 66;
+const mayMakeMemoryExecutable = prctl(getMDWE, 0, 0, 0, 0) <= 0;
+function make600Callbacks() {
+  let sum = 0, made = 0;
+  try {
+    for (; made < 600; made++) { const n = made; sum += CFunction({ ptr: new JSCallback(() => n, { returns: "int32_t", args: [] }).ptr, returns: "int32_t", args: [] })(); }
+  } catch (error) {
+    return [mayMakeMemoryExecutable, "made", made, (error as Error).name].join(" ");
+  }
+  return [mayMakeMemoryExecutable, "called", sum].join(" ");
+}
+`;
+const allOrWhatIsLoaded = ["true called 179700", "false made 256 RangeError"];
+
+test.skipIf(!isLinux || refusesExecuteOnlyStart || process.geteuid!() === 0)(
+  "an executable that may be run but not read makes more callbacks for native code than are loaded with its code",
+  async () => {
+    using dir = tempDir("aot-callbacks-unreadable", {
+      "program.ts": `import { CFunction, dlopen, FFIType, JSCallback } from "bun:ffi";
+${makes600Callbacks}console.log(make600Callbacks());
+`,
+    });
+    const executable = await build(String(dir));
+    const file = readFileSync(executable);
+    chmodSync(executable, 0o111);
+    if (!canMoveFileMappings && isLinkedAtFixedAddress(file)) return;
+    const { stdout, exitCode } = await run([executable]);
+    expect({ said: allOrWhatIsLoaded.indexOf(stdout.trimEnd()) >= 0 ? "one of the two" : stdout, exitCode }).toEqual({
+      said: "one of the two",
+      exitCode: 0,
+    });
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  "an executable that has no descriptor left makes more callbacks for native code than are loaded with its code",
+  async () => {
+    using dir = tempDir("aot-callbacks-without-descriptors", {
+      "program.ts": `import { CFunction, dlopen, FFIType, JSCallback } from "bun:ffi";
+import { openSync } from "node:fs";
+${makes600Callbacks}let end = "no limit in sight";
+try { for (let n = 0; n < 5000; n++) openSync("/dev/null", "r"); } catch (error) { end = (error as { code: string }).code; }
+console.log(end, make600Callbacks());
+`,
+    });
+    const executable = await build(String(dir));
+    const { stdout, exitCode } = await run(["sh", "-c", `ulimit -n 300 && exec "$0"`, executable]);
+    const said = stdout.trimEnd().replace(/^EMFILE /, "");
+    expect({
+      said: said !== stdout.trimEnd() && allOrWhatIsLoaded.includes(said) ? "one of the two" : stdout,
+      exitCode,
+    }).toEqual({ said: "one of the two", exitCode: 0 });
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux || !isGlibc)(
+  "attempts to make a callback for native code that are refused leave no address space behind",
+  async () => {
+    using dir = tempDir("aot-callbacks-refused", {
+      "program.ts": `import { JSCallback } from "bun:ffi";
+import { readFileSync } from "node:fs";
+const mapped = () => Number(/VmSize:\\s+(\\d+)/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
+const held: JSCallback[] = [];
+let refused = 0;
+const attempt = () => { try { held.push(new JSCallback(() => 1, { returns: "int32_t", args: [] })); } catch { refused++; } };
+for (let n = 0; n < 300; n++) attempt();
+const before = mapped();
+for (let n = 0; n < 20000; n++) attempt();
+console.log("made", held.length, "refused", refused, "grown by 64 MB", mapped() - before > 65536);
+`,
+      "launcher.ts": seccompLauncher,
+    });
+    const executable = await build(String(dir));
+    expect(await run([bunExe(), join(String(dir), "launcher.ts"), executable])).toMatchObject({
+      stdout: "made 256 refused 20044 grown by 64 MB false\n",
+      exitCode: 0,
+    });
+  },
+  120_000,
+);
+
 test.skipIf(!isLinux)(
   "an executable that the dynamic loader is started with runs its own code, not bytes of the loader's file",
   async () => {
@@ -536,6 +651,32 @@ test.skipIf(!isLinux)(
       return;
     }
     expectCodeAtAnotherAddressEachTime(await placesOfCode(executable, codeOffset, cmd));
+  },
+  120_000,
+);
+
+// A hardened build runs no compiled code out of another file: a-hardened-build-runs-no-compiled-code-out-of-another-file.test.ts.
+test.skipIf(!isLinux || isHardened)(
+  "a program that is compiled and run in one go lies at another address in every run",
+  async () => {
+    using dir = tempDir("aot-address-of-a-program", {
+      "program.ts": `import { readFileSync } from "node:fs";
+console.log(readFileSync("/proc/self/maps", "utf8"));
+`,
+    });
+    const starts: number[][] = [];
+    for (let turn = 0; turn < 3; turn++) {
+      const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", join(String(dir), "program.ts")]);
+      expect(exitCode).toBe(0);
+      starts.push(
+        mappingsOf(stdout)
+          .filter(mapping => mapping.path.includes("bun-compiled-program"))
+          .map(mapping => mapping.start),
+      );
+    }
+    expect(starts.map(ofRun => ofRun.length > 0)).toEqual([true, true, true]);
+    const seen = starts.flat();
+    expect(new Set(seen).size).toBe(seen.length);
   },
   120_000,
 );

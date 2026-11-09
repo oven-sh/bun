@@ -34,7 +34,9 @@ inline bool hasCompiledModules() { return !!JSC::AOT::Image::current(); }
 std::optional<JSC::AOT::ModuleID> compiledModuleForPath(const WTF::String& path);
 std::optional<JSC::AOT::ModuleID> moduleThatMockReplaces(const WTF::String& path);
 inline bool isCompiledModule(const WTF::String& path) { return compiledModuleForPath(path).has_value(); }
-bool isHiddenFromRequireCache(const WTF::String& key);
+// The file that called the native function of this frame, where it is a file on disk and none of the compiled ones: the loader brought it when the program ran. Else null: the origin of a text that node:vm runs is no file.
+WTF::String fileOfCallerThatWasNotCompiled(JSC::VM&, JSC::CallFrame*);
+std::optional<bool> isHiddenFromRequireCache(const WTF::String& key);
 
 // The attributes say as what the file is asked for, and the executable may hold it as that. Null: the import has none.
 JSC::JSPromise* importCompiledModule(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, int64_t referrerAsyncOrder);
@@ -45,7 +47,17 @@ bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule* target, const W
 JSC::JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const WTF::String& path, bool hasImportAttributes);
 
 JSC::JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const WTF::String& path);
+// Whom the engine is to hear of as the asker of a require() that loads into `target`: JSC::AOT::AskerOfModule. `written` is what the program can store over.
+WTF::String pathOfRequirer(JSCommonJSModule* target, const WTF::String& written);
+void didCreateRequire(JSC::VM&, JSC::CallFrame*, JSC::JSObject* require);
+void didCreateRequireOfCompiledModule(JSC::JSObject* require);
+// bun:main is the host's own module: where it imports the entry point, the host starts the program, and names no asker. No text gets that key.
+inline const WTF::String& askerOfImport(const WTF::String& importer) { return importer == "bun:main"_s ? WTF::emptyString() : importer; }
+// The loader answers an import from what it holds and asks nobody, and it holds the entry point. Throws where the importer is refused the file under the key.
+void willResolveImport(Zig::GlobalObject*, const WTF::String& key, JSC::JSValue importer);
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool isTypeScriptLoader);
+// require() has handed the object that it made for a compiled file to the program's loader of the extension, and that loader goes on to a default one.
+bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path);
 // True where the compiled modules have the paths of their source files, for which `bun run` asks the plugins of the run time. An executable is a bundle: no plugin is asked for a module in it.
 bool compiledModulesRunInPlaceOfFiles();
 bool compiledProgramRunsInSeveralRealmsAtOnce();
@@ -59,6 +71,10 @@ JSC::JSValue createNotInExecutableError(JSC::JSGlobalObject*, ErrorCode, const W
 // The compiled program asks the loader why a module fails to load, and runs nothing of it.
 bool isAskingWhyFileFailsToLoad();
 JSC::JSValue errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
+// `bun test --aot`: a native addon that was not compiled with the program loads, and the run lists it when it ends.
+bool letsTestRunLoadAddon(JSC::JSGlobalObject*, const WTF::String& path);
+// The executable holds a file at the path. A native addon that lies there is no code from disk, under whatever name it is asked for.
+bool isFileInExecutable(const WTF::String& path);
 // The same for a file that loads as a database or a page, under a name the compiler could not follow.
 JSC::JSValue errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
 // What process.mainModule and require.main answer in an ahead-of-time executable: the module object of the file at `Bun.main`.
@@ -69,6 +85,8 @@ WTF::String pathInExecutable(const WTF::String& path);
 void willStorePathOfMainModule(Zig::GlobalObject*, JSC::JSValue path);
 // A file of an ahead-of-time executable has a module object only once its code uses `module` or `require` as a value.
 bool appendNewChildrenOfCompiledModule(JSC::JSGlobalObject*, JSCommonJSModule* parent);
+// A store to `children` clears the list, with what was required and not shown yet.
+void dropNewChildrenOfCompiledModule(JSCommonJSModule* parent);
 // The module object of the file that required the module first, or null.
 JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*);
 // What `module.parent` is in a file with the path `id` that `parent` has required.
@@ -81,16 +99,29 @@ inline void willRequire(JSC::JSGlobalObject* globalObject, JSC::JSValue specifie
 }
 // For a built-in that runs machine code or script the compiler did not see, or hands out objects it took for unreachable.
 JSC::JSValue errorIfUnseenCodeIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);
+JSC::JSValue errorIfBuildSawNoPlugin(JSC::JSGlobalObject*);
+std::optional<JSC::EncodedJSValue> takeAnswerKeptForLoader(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, bool& engineAsks);
+void keepAnswerForLoader(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, JSC::JSValue answerOrWhatWasThrown, bool isThrown);
+bool holdsAnswersForLoader();
+void forgetAnswersKeptForLoader(JSC::JSGlobalObject*);
 // False in an executable whose program was compiled ahead of time without --compile-inspector: a debugger reaches what the compiler took for unreachable.
 bool isDebuggerAdmitted();
 JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);
 
+// `jest.requireActual("./a")` and its neighbors: what require() answers for the compiled module under the key. Empty: the host's own require() answers.
+JSC::JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const WTF::String& key);
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
-bool requireCacheListsCompiledFiles(Zig::GlobalObject*);
+// `call`: "vi.resetModules()". Each file of the program that has run loads again, from disk, as behind a `delete` of its entry.
+void willResetModules(Zig::GlobalObject*, WTF::ASCIILiteral call, bool keepsPackages);
+// At the end of a test file. The files that a preload ran and the test file reset are the program's again. Returns their paths: the loader may hold copies from disk under them.
+WTF::Vector<WTF::String> bringBackFilesOfPreloads(Zig::GlobalObject*);
+bool requireCacheListsCompiledFiles();
 bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const WTF::String& key);
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::String& key);
 JSC::JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
 bool isRecordOfCompiledModule(JSC::AbstractModuleRecord*);
+// Of a file of the program, or of what stands for one in the loader. forEachEvaluatedCompiledFile() lists the files, in the order in which plain comes to them.
+bool isRecordOfCompiledFile(JSC::AbstractModuleRecord*);
 void forEachEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::Function<void(const WTF::String&)>&);
 
 // These two come before the change they announce, and throw: the code of an ahead-of-time executable calls the module that each name stood for when it was compiled.

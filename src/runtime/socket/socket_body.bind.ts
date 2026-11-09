@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { socketOptions } from "../../codegen/builtins/host/socket-options.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 import { ServerWebSocket } from "../server/server.bind.ts";
 import { SocketHandler } from "./SocketConfig.bind.ts";
@@ -107,11 +108,16 @@ export const BunSocket = b.union({ tcp: TCPSocket, tls: TLSSocket });
 /** The `_handle` of a `net.Socket`: `new net.Socket({ handle })` keeps any object. */
 export const SocketHandle = b.union({ tcp: TCPSocket, tls: TLSSocket, ignored: b.any });
 
+const newListOf = (element: table.TableType) => table.instance("Array").holding({ element }).fresh;
+/** `upgradeTLS()` for node:tls: `upgrade_tls_impl`. Returns the raw socket and the `TLSSocket`, or undefined for a socket that is detached. */
 export const upgradeTLSDeferred = b.fn({
   args: { socket: BunSocket, options: b.any },
-  returns: b.any,
+  returns: b.any.returning(
+    table.union(newListOf(table.union(table.instance("TCPSocket"), table.instance("TLSSocket"))), table.undefined).spec,
+  ),
   capability: "js",
   throws: true,
+  uses: { socket: table.handedOver, options: [...socketOptions, table.runs(table.named("isServer", "initialData"))] },
 });
 export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
@@ -128,13 +134,37 @@ export const DuplexTLSOptions = b.dictionary({
   tls: b.any.emptyStringAsNull,
   data: b.any,
 });
-/** Returns the `TLSSocket` and the listeners for the duplex's `data`, `end`, `drain` and `close`. */
-/** `data` of the options is `data` of the new socket. */
+/**
+ * Returns the `TLSSocket` and the listeners for the duplex's `data`, `end`, `drain` and `close`.
+ * The options are those of a connection. UpgradedDuplex.rs keeps the duplex, calls its `pause`, `resume`, `write` and `end`
+ * and reads `_readableState.ended`, `writableEnded` and `destroyed`.
+ */
 export const upgradeDuplexToTLS = b.fn({
   ...js,
   args: { duplex: b.any, options: DuplexTLSOptions },
-  returns: b.any,
-  uses: { options: [table.everything, table.memberStoredIn(["data"], table.nativeCell("Socket.data"))] },
+  returns: b.any.returning(
+    newListOf(table.union(table.instance("TLSSocket"), table.instance("Array").holding({ element: table.callable })))
+      .spec,
+  ),
+  uses: {
+    duplex: [
+      ...table.handedOver,
+      ...["pause", "resume"].map(name =>
+        table.memberCalled([name], { times: "PerEvent", this: table.operand("duplex"), args: [], result: "Ignored" }),
+      ),
+      ...["write", "end"].map(name =>
+        table.memberCalled([name], {
+          times: "PerEvent",
+          this: table.operand("duplex"),
+          args: [table.union(table.instance("Buffer"), table.strictNull).fresh],
+          result: "Ignored",
+        }),
+      ),
+      table.runsTransitively(table.named("_readableState", "ended", "writableEnded", "destroyed")),
+      table.membersOnlyInspected,
+    ],
+    options: socketOptions,
+  },
 });
 
 // `bun:internal-for-testing`

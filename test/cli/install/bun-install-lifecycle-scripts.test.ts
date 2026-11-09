@@ -2266,6 +2266,33 @@ describe("the trusted set", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent.each([
+      ["string", "npm:dep-with-file-bin@1.0.0", "tool"],
+      ["directory", "npm:dep-with-directory-bins@1.0.0", "directory-bin-1"],
+    ])("aliased dependency with a %s bin", async (_, specifier, binName) => {
+      using ctx = await project("hoisted", {
+        "package.json": {
+          name: "foo",
+          dependencies: { native: "file:./native", payload: "file:./payload" },
+          trustedDependencies: ["native"],
+        },
+        "native/package.json": {
+          name: "native",
+          version: "1.0.0",
+          dependencies: { tool: specifier },
+          scripts: { postinstall: `${binName} > out.txt` },
+        },
+        "payload/package.json": { name: "payload", version: "1.0.0", bin: { [binName]: "run.js" } },
+        "payload/run.js": `#!/usr/bin/env node\nconsole.log("payload");\n`,
+      });
+      const { err, exitCode } = await bun(ctx, ["install"]);
+      expect(err).not.toContain("error:");
+      const output = await textOf(ctx.packageDir, "node_modules", "native", "out.txt");
+      expect(output).toBeString();
+      expect(output).not.toContain("payload");
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("keeps bins of other dependencies", async () => {
       using ctx = await project("hoisted", {
         "package.json": { name: "foo", dependencies: { native: "file:./native" }, trustedDependencies: ["native"] },

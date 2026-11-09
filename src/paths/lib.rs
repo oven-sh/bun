@@ -918,7 +918,8 @@ pub mod fs {
 
         /// Checks for a package in `node_modules` (in any case) or in the install cache.
         pub fn is_dependency(&self) -> bool {
-            let mut components = crate::strings::split_any(self.name().dir, b"/\\").peekable();
+            let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+            let mut components = crate::strings::split_any(self.name().dir, separators).peekable();
             while let Some(component) = components.next() {
                 if crate::strings::contains(component, b"@@@")
                     || component.starts_with(b"@G@")

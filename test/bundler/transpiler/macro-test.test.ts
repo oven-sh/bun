@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -747,6 +747,7 @@ describe("macros in data: URL modules", () => {
 });
 
 describe("macros in dependency paths", () => {
+  const isCaseInsensitive = existsSync(import.meta.path.toUpperCase());
   const macroFiles = (folder: string) => ({
     [`${folder}/caller.js`]: `import { f } from "./macro.js" with { type: "macro" };\nexport const value = f();\n`,
     [`${folder}/macro.js`]: `import { writeFileSync } from "node:fs";\nexport function f() {\n  writeFileSync("MACRO_RAN", "");\n  return "INLINED";\n}\n`,
@@ -789,7 +790,7 @@ describe("macros in dependency paths", () => {
     expect(await runBuild(String(dir))).toEqual(refused);
   });
 
-  test.concurrent.skipIf(!isWindows && !isMacOS)("errors for a path with different case", async () => {
+  test.concurrent.skipIf(!isCaseInsensitive)("errors for a path with different case", async () => {
     using dir = tempDir("macro-dependency-case", {
       "entry.js": `import "dep";\n`,
       "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),

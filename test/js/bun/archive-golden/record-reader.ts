@@ -6,6 +6,7 @@
 // No Bun that read archives with libarchive has `readTar`. The logs in the repository were compared
 // with what libarchive itself reports, line by line, when they were recorded. Only the wording
 // behind `error:` and `refused:` is Bun's own, and the permissions of an entry that has an ACL.
+// The npm modes also fail on a pax size that is not all digits.
 import { readTar } from "bun:internal-for-testing";
 import { join } from "node:path";
 import { readerArchives, readerModes, type ReaderFixture } from "./observe";

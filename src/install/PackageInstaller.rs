@@ -1035,7 +1035,10 @@ impl<'a> PackageInstaller<'a> {
     fn spawn_scripts(&mut self, entry: PendingLifecycleScript, log_level: Options::LogLevel) {
         let name = entry.list.package_name.clone();
         let output_in_foreground = false;
-        bin::link_dependency_bins(self.manager(), entry.package_id, &entry.list);
+        if let Err(err) = bin::link_dependency_bins(self.manager(), entry.package_id, &entry.list) {
+            self.on_scripts_error(log_level, "link bins for", &name, err);
+            return;
+        }
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
             self.command_ctx,
             entry.list,
@@ -1679,8 +1682,12 @@ impl<'a> PackageInstaller<'a> {
         let mut count: usize = 0;
         let (scripts, gypfile) = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
-            // A folder may have no package.json.
-            if scripts.filled && resolution_tag == resolution::Tag::Folder {
+            // These may have no package.json.
+            let is_folder = matches!(
+                resolution_tag,
+                resolution::Tag::Folder | resolution::Tag::Symlink
+            );
+            if scripts.filled && is_folder {
                 break 'brk (scripts, None);
             }
 

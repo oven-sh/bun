@@ -584,11 +584,8 @@ impl<'a> NamesIterator<'a> {
             let dir = self.destination_node_modules;
 
             let joined = resolve_path::join_string_buf::<PlatformAuto>(&mut self.buf[..], &parts);
-            let joined_len = joined.len();
-            self.buf[joined_len] = 0;
-            let joined_ = ZStr::from_buf_mut(&mut self.buf, joined_len);
             let child_dir = sys::Dir::borrow(&dir)
-                .open_at(joined_)
+                .open_at(joined)
                 .map_err(Error::from)?
                 .into_raw();
             self.dir_iterator = Some(sys::iterate_dir(child_dir));
@@ -1974,56 +1971,66 @@ pub fn link_dependency_bins(
     manager: &PackageManager,
     package_id: PackageID,
     scripts: &crate::lockfile::package::scripts::List,
-) {
+) -> Result<(), Error> {
     let lockfile = &*manager.lockfile;
     let pkgs = lockfile.packages.slice();
+    let cwd = scripts.cwd.as_bytes();
+    // The isolated linker gives each package its own `.bin`.
+    let store_path = path::path_literal!("/node_modules/.bun/").as_bytes();
     if !scripts.is_dependency
         || pkgs.items_resolution()[package_id as usize].tag == resolution::Tag::Symlink
+        || strings::contains(cwd, store_path)
     {
-        return;
+        return Ok(());
     }
-    let cwd = scripts.cwd.as_bytes();
     let dirs = node_modules_dirs(cwd);
     let Some(own_dir) = dirs.first() else {
-        return;
+        return Ok(());
     };
     let own_bin_dir = [own_dir, &[SEP][..], b".bin"].concat();
     if is_symlink(own_dir) || is_symlink(&own_bin_dir) {
-        return;
+        return Ok(());
     }
     let env_path =
         crate::lifecycle_script_runner::strip_bin_dirs(manager.env().get(b"PATH").unwrap_or(b""));
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let mut dependency_names: Option<StringHashMap<()>> = None;
+    let find_package = |dirs: &[Vec<u8>], alias: &[u8]| {
+        (dirs.iter()).position(|dir| sys::exists(&[&dir[..], &[SEP][..], alias].concat()))
+    };
     let mut seen: StringHashMap<()> = StringHashMap::default();
     let mut which_buf = path::path_buffer_pool::get();
 
-    for (alias, dependency_id) in resolved_dependencies(lockfile, package_id) {
+    for (dependency, dependency_id) in resolved_dependencies(lockfile, package_id) {
+        let alias = dependency.name.slice(string_buf);
         let bin = pkgs.items_bin()[dependency_id as usize];
         let meta = &pkgs.items_meta()[dependency_id as usize];
         let options = &manager.options;
         if bin.tag == Tag::None || meta.is_disabled(options.cpu, options.os, options.libc) {
             continue;
         }
-        let Some(depth) =
-            (dirs.iter()).position(|dir| sys::exists(&[&dir[..], &[SEP][..], alias].concat()))
-        else {
+        let Some(depth) = find_package(&dirs, alias) else {
             continue;
         };
-        let (Ok(target_node_modules_path), Ok(mut node_modules_path), Ok(target_dir)) = (
-            AbsPath::from(&dirs[depth]),
-            AbsPath::from(own_dir),
-            sys::Dir::open(&dirs[depth]),
-        ) else {
-            continue;
+        // A platform-specific bin belongs to a dependency of `dependency`.
+        let is_dependency = |owner: &[u8], owner_depth: usize| {
+            resolved_dependencies(lockfile, package_id).any(|(other, _)| {
+                other.name.slice(string_buf) == owner
+                    && find_package(&dirs, owner) == Some(owner_depth)
+            }) || resolved_dependencies(lockfile, dependency_id).any(|(other, _)| {
+                other.name.slice(string_buf) == owner
+                    && find_package(&dirs[depth..], owner).map(|i| i + depth) == Some(owner_depth)
+            })
         };
+        let target_node_modules_path = AbsPath::from(&dirs[depth])?;
+        let mut node_modules_path = AbsPath::from(own_dir)?;
+        let target_dir = sys::Dir::open(&dirs[depth])?;
 
         let mut names = NamesIterator {
             bin,
             i: 0,
             done: false,
             dir_iterator: None,
-            package_name: pkgs.items_name()[dependency_id as usize],
+            package_name: dependency.name,
             destination_node_modules: target_dir.fd(),
             buf: path::path_buffer_pool::get(),
             string_buffer: string_buf,
@@ -2036,16 +2043,10 @@ pub fn link_dependency_bins(
             if seen.contains_key(&dest[..]) {
                 continue;
             }
-            let owner = if bun_which::which(&mut which_buf, &env_path, cwd, name).is_some() {
-                None
-            } else {
-                dirs[..=depth].iter().find_map(|dir| bin_owner(dir, name))
-            };
-            let is_conflict = owner.is_some_and(|owner| {
-                !dependency_names
-                    .get_or_insert_with(|| transitive_dependency_names(lockfile, package_id))
-                    .contains_key(&owner[..])
-            });
+            let is_conflict = bun_which::which(&mut which_buf, &env_path, cwd, name).is_none()
+                && (dirs.iter().enumerate())
+                    .find_map(|(i, dir)| Some((bin_owner(dir, name)?, i)))
+                    .is_some_and(|(owner, owner_depth)| !is_dependency(&owner, owner_depth));
             if is_conflict {
                 has_conflict = true;
             } else {
@@ -2080,45 +2081,24 @@ pub fn link_dependency_bins(
         };
         linker.link(false);
         if let Some(err) = linker.err {
-            bun_core::warn!(
-                "failed to link {} for {}: {}",
-                bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
-                bun_core::fmt::for_terminal(bstr::BStr::new(&scripts.package_name)),
-                err.name(),
-            );
+            return Err(err);
         }
     }
+    Ok(())
 }
 
 fn resolved_dependencies(
     lockfile: &Lockfile,
     package_id: PackageID,
-) -> impl Iterator<Item = (&[u8], PackageID)> {
+) -> impl Iterator<Item = (&Dependency, PackageID)> {
     let pkgs = lockfile.packages.slice();
-    let string_buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = pkgs.items_dependencies()[package_id as usize]
         .get(lockfile.buffers.dependencies.as_slice());
     let resolutions =
         pkgs.items_resolutions()[package_id as usize].get(lockfile.buffers.resolutions.as_slice());
     (dependencies.iter().zip(resolutions))
-        .filter(|&(_, &id)| (id as usize) < lockfile.packages.len())
-        .map(|(dependency, &id)| (dependency.name.slice(string_buf), id))
-}
-
-fn transitive_dependency_names(lockfile: &Lockfile, package_id: PackageID) -> StringHashMap<()> {
-    let mut names: StringHashMap<()> = StringHashMap::default();
-    let mut visited = vec![false; lockfile.packages.len()];
-    visited[package_id as usize] = true;
-    let mut stack = vec![package_id];
-    while let Some(current) = stack.pop() {
-        for (alias, id) in resolved_dependencies(lockfile, current) {
-            let _ = names.put(alias, ());
-            if !core::mem::replace(&mut visited[id as usize], true) {
-                stack.push(id);
-            }
-        }
-    }
-    names
+        .map(|(dependency, &id)| (dependency, id))
+        .filter(|&(_, id)| (id as usize) < lockfile.packages.len())
 }
 
 /// The `node_modules` of `cwd` and of each parent directory up to the project's.

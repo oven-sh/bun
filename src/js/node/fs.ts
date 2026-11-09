@@ -735,7 +735,7 @@ const realpathSync: RealpathSync =
         let encoding: string | null | undefined;
         if (options) {
           if (typeof options === "string") encoding = options;
-          else encoding = options?.encoding;
+          else if (!$isCallable(options)) encoding = options?.encoding;
           if (encoding) {
             ($bindgen("node_util_binding.bind.ts", "assertEncodingValid") as (encoding: unknown) => void)(encoding);
           }

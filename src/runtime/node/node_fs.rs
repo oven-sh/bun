@@ -3628,9 +3628,13 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
+            let options = get_options(ctx, arguments.peek_at(1), Encoding::Utf8)?;
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
-            Ok(Readlink { path, encoding })
+            arguments.eat();
+            Ok(Readlink {
+                path,
+                encoding: options.encoding,
+            })
         }
     }
 
@@ -3643,50 +3647,50 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
+            let options = get_options(ctx, arguments.peek_at(1), Encoding::Utf8)?;
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
-            Ok(Realpath { path, encoding })
-        }
-    }
-
-    fn get_encoding(
-        object: JSValue,
-        global_object: &JSGlobalObject,
-        default: Encoding,
-    ) -> JsResult<Encoding> {
-        if let Some(value) = object.fast_get(global_object, bun_jsc::BuiltinName::Encoding)? {
-            return Encoding::assert(value, global_object, default);
-        }
-        Ok(default)
-    }
-
-    /// Consume the next positional argument as a Node.js fs `encoding` option.
-    /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
-    /// object with an `.encoding` property. Any other value (including `undefined`
-    /// / `null` / numbers / functions) is silently ignored and `default` is returned.
-    /// Shared by `Readlink`/`Realpath`/`MkdirTemp::from_js`.
-    fn parse_encoding_arg(
-        ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
-        default: Encoding,
-    ) -> JsResult<Encoding> {
-        let mut encoding = default;
-        if let Some(val) = arguments.next() {
             arguments.eat();
-            match val.js_type() {
-                bun_jsc::JSType::String
-                | bun_jsc::JSType::StringObject
-                | bun_jsc::JSType::DerivedStringObject => {
-                    encoding = Encoding::assert(val, ctx, encoding)?;
-                }
-                _ => {
-                    if val.is_object() {
-                        encoding = get_encoding(val, ctx, encoding)?;
-                    }
-                }
-            }
+            Ok(Realpath {
+                path,
+                encoding: options.encoding,
+            })
         }
-        Ok(encoding)
+    }
+
+    /// What `get_options` makes of the options argument.
+    struct Options {
+        encoding: Encoding,
+        /// The options object, for the members that each parser reads itself.
+        object: Option<JSValue>,
+    }
+
+    /// Node's `getOptions()`, without its throws for the type of `options` and for `options.signal`: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/utils.js#L407-L428
+    fn get_options(
+        ctx: &JSGlobalObject,
+        options: Option<JSValue>,
+        default: Encoding,
+    ) -> JsResult<Options> {
+        let mut parsed = Options {
+            encoding: default,
+            object: None,
+        };
+        let Some(options) = options else {
+            return Ok(parsed);
+        };
+        if options.is_string_literal() {
+            parsed.encoding = Encoding::assert(options, ctx, default)?;
+        } else if options.is_object() && !is_function(options) {
+            if let Some(encoding) = options.fast_get(ctx, bun_jsc::BuiltinName::Encoding)? {
+                parsed.encoding = Encoding::assert(encoding, ctx, default)?;
+            }
+            parsed.object = Some(options);
+        }
+        Ok(parsed)
+    }
+
+    /// A plain object is never callable: the type test keeps it out of the call into JSC.
+    fn is_function(object: JSValue) -> bool {
+        object.js_type() != bun_jsc::JSType::FinalObject && object.is_callable()
     }
 
     pub(crate) struct Unlink<'a> {
@@ -3892,6 +3896,7 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
+            let options = get_options(ctx, arguments.peek_at(1), Encoding::Utf8)?;
             let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"prefix",
@@ -3899,8 +3904,11 @@ pub(crate) mod args {
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
-            let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
-            Ok(MkdirTemp { prefix, encoding })
+            arguments.eat();
+            Ok(MkdirTemp {
+                prefix,
+                encoding: options.encoding,
+            })
         }
     }
 
@@ -3929,34 +3937,22 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
+            let options = get_options(ctx, arguments.peek_at(1), Encoding::Utf8)?;
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let mut encoding = Encoding::Utf8;
+            arguments.eat();
             let mut with_file_types = false;
             let mut recursive = false;
-            if let Some(val) = arguments.next() {
-                arguments.eat();
-                match val.js_type() {
-                    bun_jsc::JSType::String
-                    | bun_jsc::JSType::StringObject
-                    | bun_jsc::JSType::DerivedStringObject => {
-                        encoding = Encoding::assert(val, ctx, encoding)?;
-                    }
-                    _ => {
-                        if val.is_object() {
-                            encoding = get_encoding(val, ctx, encoding)?;
-                            if let Some(r) = val.get_boolean_strict(ctx, "recursive")? {
-                                recursive = r;
-                            }
-                            if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
-                                with_file_types = w;
-                            }
-                        }
-                    }
+            if let Some(val) = options.object {
+                if let Some(r) = val.get_boolean_strict(ctx, "recursive")? {
+                    recursive = r;
+                }
+                if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
+                    with_file_types = w;
                 }
             }
             Ok(Readdir {
                 path,
-                encoding,
+                encoding: options.encoding,
                 with_file_types,
                 recursive,
             })
@@ -4521,6 +4517,7 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
+            let options = get_options(ctx, arguments.peek_at(1), Encoding::Buffer)?;
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -4528,40 +4525,34 @@ pub(crate) mod args {
                     "path must be a string or a file descriptor"
                 ))
             })?;
-            let mut encoding = Encoding::Buffer;
+            arguments.eat();
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
                 if let Some(signal) = s {
                     signal.pending_activity_unref(); /* unref via Drop */
                 }
             });
-            if let Some(arg) = arguments.next() {
-                arguments.eat();
-                if arg.is_string() {
-                    encoding = Encoding::assert(arg, ctx, encoding)?;
-                } else if arg.is_object() {
-                    encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
-                    }
-                    if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
-                        } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
-                                b"signal",
-                                b"AbortSignal",
-                                value,
-                            ));
-                        }
+            if let Some(arg) = options.object {
+                if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
+                    flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                }
+                if let Some(value) = arg.get_truthy(ctx, "signal")? {
+                    if let Some(signal) = AbortSignal::ref_from_js(value) {
+                        signal.pending_activity_ref();
+                        *abort_signal = Some(signal);
+                    } else {
+                        return Err(ctx.throw_invalid_argument_type_value(
+                            b"signal",
+                            b"AbortSignal",
+                            value,
+                        ));
                     }
                 }
             }
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(ReadFile {
                 path,
-                encoding,
+                encoding: options.encoding,
                 flag,
                 limit_size_for_javascript: true,
                 signal: abort_signal,
@@ -4608,6 +4599,11 @@ pub(crate) mod args {
             arguments: &mut ArgumentsSlice,
             default_flag: FileSystemFlags,
         ) -> JsResult<Self> {
+            let default_encoding = match arguments.peek_at(1) {
+                Some(data) if data.is_string() => Encoding::Utf8,
+                _ => Encoding::Buffer,
+            };
+            let options = get_options(ctx, arguments.peek_at(2), default_encoding)?;
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -4618,7 +4614,7 @@ pub(crate) mod args {
             let data_value = arguments
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
-            let mut encoding = Encoding::Buffer;
+            arguments.eat();
             let mut flag = default_flag;
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -4627,41 +4623,32 @@ pub(crate) mod args {
                 }
             });
             let mut flush = false;
-            if data_value.is_string() {
-                encoding = Encoding::Utf8;
-            }
-            if let Some(arg) = arguments.next() {
-                arguments.eat();
-                if arg.is_string() {
-                    encoding = Encoding::assert(arg, ctx, encoding)?;
-                } else if arg.is_object() {
-                    encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+            if let Some(arg) = options.object {
+                if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
+                    flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                }
+                if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
+                    mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
+                }
+                if let Some(value) = arg.get_truthy(ctx, "signal")? {
+                    if let Some(signal) = AbortSignal::ref_from_js(value) {
+                        signal.pending_activity_ref();
+                        *abort_signal = Some(signal);
+                    } else {
+                        return Err(ctx.throw_invalid_argument_type_value(
+                            b"signal",
+                            b"AbortSignal",
+                            value,
+                        ));
                     }
-                    if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                    }
-                    if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
-                        } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
-                                b"signal",
-                                b"AbortSignal",
-                                value,
-                            ));
-                        }
-                    }
-                    if let Some(flush_) = arg.get(ctx, "flush")? {
-                        if flush_.is_boolean() || flush_.is_undefined_or_null() {
-                            flush = flush_ == JSValue::TRUE;
-                        } else {
-                            return Err(
-                                ctx.throw_invalid_argument_type_value(b"flush", b"boolean", flush_)
-                            );
-                        }
+                }
+                if let Some(flush_) = arg.get(ctx, "flush")? {
+                    if flush_.is_boolean() || flush_.is_undefined_or_null() {
+                        flush = flush_ == JSValue::TRUE;
+                    } else {
+                        return Err(
+                            ctx.throw_invalid_argument_type_value(b"flush", b"boolean", flush_)
+                        );
                     }
                 }
             }
@@ -4672,7 +4659,7 @@ pub(crate) mod args {
             };
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
-            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, flavor, StringObjects::Reject)?
+            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, options.encoding, flavor, StringObjects::Reject)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile {

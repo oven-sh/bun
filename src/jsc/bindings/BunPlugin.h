@@ -260,6 +260,7 @@ class GlobalObject;
 namespace JSC {
 class JSModuleNamespaceObject;
 class JSSourceCode;
+class ScriptExecutable;
 }
 
 namespace Bun {
@@ -283,6 +284,10 @@ std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key);
 JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);
 // Whether sourceCodeOfModuleMock() generated module `key`. Its import specifiers are NUL-prefixed registry keys.
 bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
+// The mock that spies on the module it loads under `key`, an instance of the original of its own. Null if `key` is no such module.
+JSC::JSObject* moduleMockThatSpiesOn(Zig::GlobalObject*, const String& key);
+// That instance is a CommonJS module, and `program` made its wrapper. See Bun::SpiedModule.
+void setProgramOfSpiedModule(JSC::JSObject* moduleMock, JSC::ScriptExecutable* program);
 // Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);

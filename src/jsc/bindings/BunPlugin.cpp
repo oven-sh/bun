@@ -509,6 +509,8 @@ public:
     // These outlive the patched module's eviction, so unmocking still restores it for whatever stays linked to it (a preload, say).
     WriteBarrier<JSC::JSModuleNamespaceObject> patchedNamespace;
     WriteBarrier<JSObject> originalExportsOfEvictedModule;
+    // Of a spy whose own instance of the original is a CommonJS module: the program that made the wrapper of that instance. See Bun::SpiedModule.
+    WriteBarrier<JSC::ScriptExecutable> programOfOriginal;
     // Patches are undone newest first: two modules can export one variable (`export *`), and each patch saved what it found there.
     unsigned patchOrder { 0 };
     State state { State::NotCalled };
@@ -755,6 +757,12 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
 static String originalModuleKey(const String& specifier)
 {
     return makeString(specifier, specifier.contains('?') ? '&' : '?', "actual"_s);
+}
+
+// A spy puts its mocks onto the classes that the original made and onto their instances, so it gets an instance of the original that nothing else imports.
+static String spiedModuleKey(const String& specifier)
+{
+    return makeString(originalModuleKey(specifier), "&spy"_s);
 }
 
 // Removes what originalModuleKey() and friends append ("?actual", any number of "&actual", "&spy"), leaving the file path.
@@ -1072,8 +1080,7 @@ static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSMod
         RELEASE_AND_RETURN(scope, asString(manualMock)->value(globalObject));
     String specifier = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // Spying mutates the objects nested in the exports, so it gets its own instance of the original.
-    return mock->spy ? makeString(originalModuleKey(specifier), "&spy"_s) : originalModuleKey(specifier);
+    return mock->spy ? spiedModuleKey(specifier) : originalModuleKey(specifier);
 }
 
 static JSC::JSPromise* thenWithContext(Zig::GlobalObject*, JSC::JSPromise*, JSC::NativeFunction onFulfilled, JSC::NativeFunction onRejected, JSValue context);
@@ -1314,20 +1321,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockImportOriginal, (JSC::JSGlobalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock)));
 }
 
-static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const String& key, JSValue moduleNamespace, bool spy, bool& isCommonJS)
+// `spy` is the mock that spies on the module, which it loaded under `key` as an instance of its own. Null: the mocks return undefined.
+static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const String& key, JSValue moduleNamespace, JSModuleMock* spy, bool& isCommonJS)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue exports = moduleNamespace;
+    Bun::SpiedModule original;
     auto* commonJSModule = loadedCommonJSModule(globalObject, key);
     RETURN_IF_EXCEPTION(scope, {});
     if (commonJSModule) {
         isCommonJS = true;
         exports = commonJSModule->exportsObject();
-    } else if (JSObject* object = moduleNamespace.getObject())
+        if (spy)
+            original.program = spy->programOfOriginal.get();
+    } else if (JSObject* object = moduleNamespace.getObject()) {
+        if (auto* esModule = spy ? dynamicDowncast<JSC::JSModuleNamespaceObject>(object) : nullptr; esModule && isModuleOrCopyOfIt(esModule->moduleRecord()->moduleKey().string(), key))
+            original.scope = esModule->moduleRecord()->moduleEnvironmentMayBeNull();
         exports = withoutUninitializedExports(globalObject, object);
+    }
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy));
+    RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, !!spy, original));
 }
 
 static JSObject* exportsOfModuleMockWithoutFactory(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSValue moduleNamespace)
@@ -1353,7 +1367,7 @@ static JSObject* exportsOfModuleMockWithoutFactory(Zig::GlobalObject* globalObje
     String key = dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, nullptr);
     bool isCommonJS = false;
-    JSValue mocked = mockExportsOfLoadedModule(globalObject, key, moduleNamespace, mock->spy, isCommonJS);
+    JSValue mocked = mockExportsOfLoadedModule(globalObject, key, moduleNamespace, mock->spy ? mock : nullptr, isCommonJS);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!isCommonJS)
         return mocked.getObject();
@@ -1423,9 +1437,9 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
                 RETURN_IF_EXCEPTION(scope, {});
                 exports = withoutUninitializedExports(globalObject, exports);
                 RETURN_IF_EXCEPTION(scope, {});
-                RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy, true));
+                RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy, {}));
             }
-            JSValue mocked = Bun::mockObject(globalObject, JSC::AOT::moduleExports(globalObject, *compiled), spy, true);
+            JSValue mocked = Bun::mockObject(globalObject, JSC::AOT::moduleExports(globalObject, *compiled), spy, {});
             RETURN_IF_EXCEPTION(scope, {});
             RELEASE_AND_RETURN(scope, Bun::JSCommonJSModule::create(globalObject, specifier.get(), mocked, true, jsUndefined()));
         }
@@ -1438,7 +1452,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
             JSObject* exports = esmExportsBeforePatches(globalObject, this);
             RETURN_IF_EXCEPTION(scope, {});
             if (exports)
-                RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy, true));
+                RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy, {}));
             String specifierString = specifier->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             BunString key = Bun::toString(specifierString);
@@ -1446,7 +1460,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
             RETURN_IF_EXCEPTION(scope, {});
         }
         if (commonJSExports) {
-            JSValue mocked = Bun::mockObject(globalObject, commonJSExports, spy, true);
+            JSValue mocked = Bun::mockObject(globalObject, commonJSExports, spy, {});
             RETURN_IF_EXCEPTION(scope, {});
             RELEASE_AND_RETURN(scope, Bun::JSCommonJSModule::create(globalObject, specifier.get(), mocked, true, jsUndefined()));
         }
@@ -2932,6 +2946,9 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
     if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier)))
         evict.packagesToBringBack.append(specifier);
+    // Its classes have the mocks of this spy on them, so the next spy loads an instance of its own.
+    if (mock->spy)
+        evict.modules.append(spiedModuleKey(specifier));
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
     if (auto* patched = mock->patchedNamespace.get(); patched && saved) {
@@ -4110,7 +4127,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportMockDidLoad, (JSC::JSGlobalObject * lex
     String key = asString(callframe->argument(1))->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     bool isCommonJS = false;
-    JSValue mocked = mockExportsOfLoadedModule(globalObject, key, callframe->argument(0), false, isCommonJS);
+    JSValue mocked = mockExportsOfLoadedModule(globalObject, key, callframe->argument(0), nullptr, isCommonJS);
     RETURN_IF_EXCEPTION(scope, {});
     if (isCommonJS)
         RELEASE_AND_RETURN(scope, JSValue::encode(esmExportsOfCommonJSExports(globalObject, mocked)));
@@ -4173,7 +4190,7 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
 
     JSValue original = mock ? requireOriginalModule(globalObject, mock) : requireModuleKey(globalObject, from, specifier.key);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mockObject(globalObject, original, false)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mockObject(globalObject, original, false, {})));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireMockModule, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -4849,6 +4866,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->originalNamespace);
     visitor.append(mock->patchedNamespace);
     visitor.append(mock->originalExportsOfEvictedModule);
+    visitor.append(mock->programOfOriginal);
 #if ENABLE(AOT)
     visitor.append(mock->errorOfLateFailure);
     visitor.append(mock->errorOwedToImports);
@@ -5496,6 +5514,24 @@ __attribute__((minsize)) JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalOb
     Ref provider = JSC::StringSourceProvider::create(text.toString(), JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(key)), key, JSC::SourceTaintedOrigin::Untainted, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
     provider->setModuleHasLiveExports();
     return JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)));
+}
+
+JSC::JSObject* moduleMockThatSpiesOn(Zig::GlobalObject* globalObject, const String& key)
+{
+    // The specifier that spiedModuleKey() made `key` of.
+    if (!key.endsWith("&spy"_s))
+        return nullptr;
+    StringView original = StringView(key).left(key.length() - "&spy"_s.length());
+    if (!original.endsWith("?actual"_s) && !original.endsWith("&actual"_s))
+        return nullptr;
+    auto* mock = Zig::registeredModuleMock(globalObject, original.left(original.length() - "?actual"_s.length()).toString());
+    return mock && mock->spy ? mock : nullptr;
+}
+
+void setProgramOfSpiedModule(JSC::JSObject* moduleMock, JSC::ScriptExecutable* program)
+{
+    auto* mock = uncheckedDowncast<Zig::JSModuleMock>(moduleMock);
+    mock->programOfOriginal.setMayBeNull(mock->vm(), mock, program);
 }
 
 bool moduleMockImportsByKey(Zig::GlobalObject* globalObject, const String& key)

@@ -206,7 +206,9 @@ private:
     const unsigned m_overlayShape;
 };
 
-static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
+// With `programOfWrapper`, the program that makes the wrapper makes it for this module alone, and is returned there. The functions
+// whose code is part of that program are then the ones that this evaluation of the file makes, and no other one.
+static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, JSC::ScriptExecutable** programOfWrapper = nullptr)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
@@ -217,7 +219,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     FunctionExecutable* sharedWrapper = nullptr;
     if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider()) {
         sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceURL());
-        if (CodeBlock* linked = globalObject->m_moduleGraphs->commonJSWrappers.get(sharedWrapperKey)) {
+        if (CodeBlock* linked = programOfWrapper ? nullptr : globalObject->m_moduleGraphs->commonJSWrappers.get(sharedWrapperKey)) {
             auto* executable = uncheckedDowncast<FunctionExecutable>(linked->ownerExecutable());
             if (static_cast<GraphCommonJSSourceProvider*>(executable->source().provider())->hasTextOf(*code.provider())) {
                 sharedWrapper = executable;
@@ -338,6 +340,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     initializeModuleObject();
     RETURN_IF_EXCEPTION(scope, false);
 
+    if (programOfWrapper) {
+        if (auto* wrapper = dynamicDowncast<JSC::JSFunction>(fn); wrapper && !wrapper->isHostFunction())
+            *programOfWrapper = wrapper->jsExecutable()->topLevelExecutable();
+    }
+
     MarkedArgumentBuffer args;
     auto exports = moduleObject->exportsObject();
     RETURN_IF_EXCEPTION(scope, false);
@@ -367,7 +374,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
     RETURN_IF_EXCEPTION(scope, false);
 
-    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
+    if (auto* wrapper = graph && !sharedWrapper && !programOfWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
         if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
             linked = linked->baselineAlternative();
             globalObject->m_moduleGraphs->commonJSWrappers.set(sharedWrapperKey, linked);
@@ -1837,12 +1844,18 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
+                            // A mock that spies on this module has to know the classes that this evaluation makes from those of another instance of the file.
+                            JSC::JSObject* spy = globalObject->onLoadPlugins.hasVirtualModules() ? Bun::moduleMockThatSpiesOn(globalObject, moduleKey.string()) : nullptr;
+                            JSC::ScriptExecutable* program = nullptr;
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,
                                 moduleObject,
                                 moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
+                                moduleObject->m_filename.get(),
+                                spy ? &program : nullptr);
+                            if (spy)
+                                Bun::setProgramOfSpiedModule(spy, program);
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
                                     return;

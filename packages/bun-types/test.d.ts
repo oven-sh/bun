@@ -42,6 +42,10 @@ declare module "bun:test" {
   export interface ModuleMockOptions {
     /**
      * Keep each exported function's real implementation and record its calls.
+     *
+     * The module is evaluated a second time for the mock. The spies go onto the classes that this copy of the module
+     * defines and onto their instances. A plain object is copied, and nothing that another module or a builtin made is
+     * modified.
      */
     spy?: boolean | undefined;
   }

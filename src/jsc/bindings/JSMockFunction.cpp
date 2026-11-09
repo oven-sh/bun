@@ -2534,14 +2534,19 @@ enum class AutomockRole : uint8_t {
 struct Automocker {
     Zig::GlobalObject* globalObject;
     bool spy;
-    bool leaveOriginalAlone;
+    // vi.mockObject(value, { spy: true }) spies in place on every object it reaches. The spy of a module does so only on what `spiedModule` made.
+    bool spiesInPlaceEverywhere;
+    SpiedModule spiedModule;
     JSC::JSMap* replacements;
     // Work list of (original, replacement, AutomockKind) triples.
     JSC::MarkedArgumentBuffer pending {};
     JSC::JSFunction* accessor { nullptr };
 
     AutomockKind kindOf(JSValue);
-    JSValue replacementFor(JSValue, AutomockRole = AutomockRole::Member);
+    // `constructor` is the function that has `value` as its `prototype`.
+    JSValue replacementFor(JSValue value, AutomockRole = AutomockRole::Member, JSObject* constructor = nullptr);
+    bool isMadeBySpiedModule(JSValue function);
+    bool isPrototypeOfClassMadeBySpiedModule(JSObject* prototype);
     void mockElements(JSObject* original, JSC::JSArray* replacement);
     void mockMembers(JSObject* original, JSObject* replacement, AutomockKind);
 };
@@ -2588,7 +2593,39 @@ AutomockKind Automocker::kindOf(JSValue value)
     return AutomockKind::Keep;
 }
 
-__attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, AutomockRole role)
+// Whether the code of `spiedModule` made `value`, a function: it closes over the scope of the ES module, or its code is part of the program that made
+// the wrapper of the CommonJS module. Each is of one instance of the module, so nothing of another instance of the same file passes.
+bool Automocker::isMadeBySpiedModule(JSValue value)
+{
+    auto* function = dynamicDowncast<JSC::JSFunction>(value);
+    if (!function || function->isHostFunction())
+        return false;
+    if (spiedModule.program)
+        return function->jsExecutable()->topLevelExecutable() == spiedModule.program;
+    for (JSC::JSScope* scope = function->scope(); scope; scope = scope->next()) {
+        if (scope == spiedModule.scope)
+            return true;
+    }
+    return false;
+}
+
+// Whether an object with `prototype` is an instance of a class that the code of `spiedModule` made.
+bool Automocker::isPrototypeOfClassMadeBySpiedModule(JSObject* prototype)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Spied in place already, so its `constructor` is a mock by now.
+    JSValue known = replacements->get(globalObject, prototype);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (known == JSValue(prototype))
+        return true;
+
+    JSValue constructor = prototype->getDirect(vm, vm.propertyNames->constructor);
+    return constructor && isMadeBySpiedModule(constructor) && asObject(constructor)->getDirect(vm, vm.propertyNames->prototype) == JSValue(prototype);
+}
+
+__attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, AutomockRole role, JSObject* constructor)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2615,20 +2652,29 @@ __attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, Autom
         break;
     case AutomockKind::Object: {
         // Spy in place, so that spied methods still find the private fields, internal slots and prototype of their `this`.
-        bool inPlace = spy;
-        if (spy && leaveOriginalAlone && role == AutomockRole::Prototype) {
-            replacement = JSC::constructEmptyObject(globalObject, original);
-            break;
-        }
-        if (role == AutomockRole::Exports || (spy && leaveOriginalAlone)) {
+        // The spy of a module does that to the classes that the module's own code made and to their instances. Another module, or a
+        // builtin, may hold any other object, and the mocks would stay on it when the mock of the module is gone.
+        bool ofModule = spy && !spiesInPlaceEverywhere;
+        bool inPlace = spy && !ofModule;
+        if (ofModule && role == AutomockRole::Prototype) {
+            inPlace = isMadeBySpiedModule(constructor);
+            if (!inPlace) {
+                replacement = JSC::constructEmptyObject(globalObject, original);
+                break;
+            }
+        } else if (role == AutomockRole::Exports || ofModule) {
             JSValue prototype = original->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (!prototype.isObject() || prototype == globalObject->objectPrototype()) {
                 inPlace = false;
                 if (role == AutomockRole::Exports)
                     kind = AutomockKind::Module;
-            } else if (spy && leaveOriginalAlone) {
-                return value;
+            } else if (ofModule) {
+                // An instance of a class: a copy would have none of its private fields.
+                inPlace = isPrototypeOfClassMadeBySpiedModule(asObject(prototype));
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!inPlace)
+                    return value;
             }
         }
         replacement = inPlace ? original : JSC::constructEmptyObject(globalObject);
@@ -2753,11 +2799,14 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
                 continue;
             }
 
-            JSValue mocked = replacementFor(value, isFunction && key == vm.propertyNames->prototype ? AutomockRole::Prototype : AutomockRole::Member);
+            JSValue mocked = isFunction && key == vm.propertyNames->prototype ? replacementFor(value, AutomockRole::Prototype, holder) : replacementFor(value);
             RETURN_IF_EXCEPTION(scope, );
 
             if (inPlace) {
                 if (mocked == value)
+                    continue;
+                // The spy of a module puts nothing but mocks onto what the module's code made. A copy would take the place of an object that the code still reads.
+                if (!spiesInPlaceEverywhere && !mocked.inherits<JSMockFunction>())
                     continue;
                 JSC::PutPropertySlot slot(replacement);
                 replacement->methodTable()->put(replacement, globalObject, key, mocked, slot);
@@ -2780,12 +2829,12 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
     }
 }
 
-__attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject, JSValue value, AutomockRole role, bool spy, bool leaveOriginalAlone)
+__attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject, JSValue value, AutomockRole role, bool spy, bool spiesInPlaceEverywhere, const SpiedModule& spiedModule)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Automocker automocker { globalObject, spy, leaveOriginalAlone, JSC::JSMap::create(vm, globalObject->mapStructure()) };
+    Automocker automocker { globalObject, spy, spiesInPlaceEverywhere, spiedModule, JSC::JSMap::create(vm, globalObject->mapStructure()) };
     JSValue result = automocker.replacementFor(value, role);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2803,9 +2852,9 @@ __attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject
     return result;
 }
 
-JSC::JSValue mockObject(Zig::GlobalObject* globalObject, JSC::JSValue value, bool spy, bool leaveOriginalAlone)
+JSC::JSValue mockObject(Zig::GlobalObject* globalObject, JSC::JSValue value, bool spy, const SpiedModule& original)
 {
-    return automock(globalObject, value, AutomockRole::Exports, spy, leaveOriginalAlone);
+    return automock(globalObject, value, AutomockRole::Exports, spy, false, original);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockObject, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -2822,7 +2871,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockObject, (JSC::JSGlobalObject * lexica
         spy = spyValue.toBoolean(globalObject);
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(automock(globalObject, callframe->argument(0), AutomockRole::Member, spy, false)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(automock(globalObject, callframe->argument(0), AutomockRole::Member, spy, true, {})));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionIsMockFunction, (JSC::JSGlobalObject*, JSC::CallFrame* callframe))

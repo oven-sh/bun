@@ -491,6 +491,14 @@ test("automock", () => {
 
 `vi.importMock(path)`, `jest.requireMock(path)` and `jest.createMockFromModule(path)` return the same kind of mock without mocking the module.
 
+For `{ spy: true }`, Bun evaluates the module a second time, for the mock alone. The spies go onto the classes that this second copy defines and onto instances of those classes, so a spied method still finds its private fields. Nothing else is written to:
+
+- A class that the module takes from another module or a builtin becomes a mock class. Instances made with the mock class have spied methods, and the class itself stays as it was.
+- A plain object becomes a copy with spied functions.
+- An instance of a class from another module or a builtin is kept as it is, without spies.
+
+Vitest puts the spies onto all of these, which changes them for every module that uses them.
+
 ### Removing a Mock
 
 | Function                                                   | What it does                                                   |

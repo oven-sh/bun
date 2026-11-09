@@ -3311,6 +3311,285 @@ if (isBun) {
         expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
       });
 
+      test.concurrent.each([
+        [[], 10],
+        // A module graph shares the wrapper of a CommonJS module between the instances of the file.
+        [["--isolate=modules", "./own.test.js", "./the-next.test.js"], 8],
+      ])(
+        "vi.mock(path, { spy: true }) puts its mocks onto nothing but its own instance of the module %j",
+        async (args, pass) => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          using dir = tempDir("mock-object-spy", {
+            "models.js": `
+              export class User { name() { return "real"; } }
+              export const settings = { theme() { return "dark"; } };
+              export default class Account { id() { return 1; } }
+            `,
+            "logger.js": `export const logger = { info(message) { return "info: " + message; } };`,
+            "models.cjs": `
+              class Item { label() { return "real"; } }
+              module.exports = { Item, tools: { run() { return "ran"; } } };
+            `,
+            "node_modules/made-up/package.json": JSON.stringify({
+              name: "made-up",
+              type: "module",
+              main: "./index.js",
+            }),
+            "node_modules/made-up/index.js": `export class Pkg { hello() { return "real"; } }`,
+            "written.js": `
+              import { vi } from "bun:test";
+              import { EventEmitter } from "node:events";
+              import { Pkg } from "made-up";
+              import { logger } from "./logger.js";
+              import Account, { User, settings } from "./models.js";
+              import { Item, tools } from "./models.cjs";
+
+              // What a spy changed in the modules above and in builtins.
+              export function written() {
+                const functions = {
+                  "User.prototype.name": User.prototype.name,
+                  "settings.theme": settings.theme,
+                  "Account.prototype.id": Account.prototype.id,
+                  "logger.info": logger.info,
+                  "EventEmitter.prototype.on": EventEmitter.prototype.on,
+                  "EventEmitter.prototype.emit": EventEmitter.prototype.emit,
+                  "process.stdout.write": process.stdout.write,
+                  "Pkg.prototype.hello": Pkg.prototype.hello,
+                  "Item.prototype.label": Item.prototype.label,
+                  "tools.run": tools.run,
+                };
+                const names = Object.keys(functions).filter(name => vi.isMockFunction(functions[name]));
+                if (User.prototype.constructor !== User) names.push("User.prototype.constructor");
+                return names;
+              }
+            `,
+
+            // What these modules export is what another module or a builtin made.
+            "barrel-star.js": `export * from "./models.js";`,
+            "barrel-named.js": `export { User, default as Account } from "./models.js";`,
+            "barrel-namespace.js": `export * as models from "./models.js";`,
+            "barrel-package.js": `export { Pkg } from "made-up";`,
+            "barrel.cjs": `
+              const { Item, tools } = require("./models.cjs");
+              module.exports = { Item, tools };
+            `,
+            "holds.js": `
+              import { EventEmitter } from "node:events";
+              import { logger } from "./logger.js";
+              export const services = { logger };
+              export class Bus extends EventEmitter {}
+              export const emitter = new EventEmitter();
+              export const stdout = process.stdout;
+            `,
+
+            // What these modules export is what their own code made.
+            "own.js": `
+              import { EventEmitter } from "node:events";
+              class Service {
+                #secret = "secret";
+                reveal() { return this.#secret; }
+              }
+              export class Own { method() { return "own"; } }
+              export class Bus extends EventEmitter {}
+              export const service = new Service();
+              export const bus = new Bus();
+              export const store = { items: [], add(item) { return this.items.push(item); } };
+              export const stored = () => store.items.length;
+              export const makeOwn = () => new Own();
+            `,
+            "own.cjs": `
+              const { EventEmitter } = require("node:events");
+              class Service {
+                #secret = "secret";
+                reveal() { return this.#secret; }
+              }
+              class Own { method() { return "own"; } }
+              class Bus extends EventEmitter {}
+              const store = { items: [], add(item) { return this.items.push(item); } };
+              module.exports = { Own, Bus, service: new Service(), bus: new Bus(), store, stored: () => store.items.length, makeOwn: () => new Own() };
+            `,
+
+            // Every instance of these files puts its class into a registry that they share.
+            "registry.js": `export const registry = [];`,
+            "registered.js": `
+              import { registry } from "./registry.js";
+              export class K { m() { return "real"; } }
+              registry.push(K);
+              export { registry };
+            `,
+            "registry.cjs": `module.exports = [];`,
+            "registered.cjs": `
+              const registry = require("./registry.cjs");
+              class K { m() { return "real"; } }
+              registry.push(K);
+              module.exports = { K, registry };
+            `,
+
+            "counted.js": `
+              globalThis.loads = (globalThis.loads ?? 0) + 1;
+              export class K { m() { return "real"; } }
+            `,
+
+            "barrels.test.js": `
+              import { expect, jest, test, vi } from "bun:test";
+              import * as named from "./barrel-named.js";
+              import * as star from "./barrel-star.js";
+              import * as holds from "./holds.js";
+              import { User } from "./models.js";
+              import { written } from "./written.js";
+
+              vi.mock("./barrel-star.js", { spy: true });
+              jest.mock("./barrel-named.js", { spy: true });
+              vi.mock("./holds.js", { spy: true });
+
+              test("what another module or a builtin made is spied on through the mock", async () => {
+                vi.doMock("./barrel-namespace.js", { spy: true });
+                vi.doMock("./barrel-package.js", { spy: true });
+                jest.doMock("./barrel.cjs", { spy: true });
+                const { models } = await import("./barrel-namespace.js");
+                const { Pkg } = await import("./barrel-package.js");
+                const cjs = require("./barrel.cjs");
+
+                const user = new star.User();
+                const bus = new holds.Bus();
+                const listener = vi.fn();
+                bus.on("event", listener);
+                expect([
+                  user.name(),
+                  star.settings.theme(),
+                  new named.Account().id(),
+                  new models.User().name(),
+                  models.settings.theme(),
+                  holds.services.logger.info("message"),
+                  bus.emit("event", 1),
+                  new Pkg().hello(),
+                  new cjs.Item().label(),
+                  cjs.tools.run(),
+                ]).toEqual(["real", "dark", 1, "real", "dark", "info: message", true, "real", "real", "ran"]);
+                expect(listener).toHaveBeenCalledWith(1);
+                const spies = {
+                  "user.name": user.name,
+                  "star.settings.theme": star.settings.theme,
+                  "named.Account.prototype.id": named.Account.prototype.id,
+                  "models.User.prototype.name": models.User.prototype.name,
+                  "models.settings.theme": models.settings.theme,
+                  "holds.services.logger.info": holds.services.logger.info,
+                  "bus.emit": bus.emit,
+                  "Pkg.prototype.hello": Pkg.prototype.hello,
+                  "cjs.Item.prototype.label": cjs.Item.prototype.label,
+                  "cjs.tools.run": cjs.tools.run,
+                };
+                expect(Object.keys(spies).filter(name => !vi.isMockFunction(spies[name]) || spies[name].mock.calls.length !== 1)).toEqual([]);
+                expect(user).toBeInstanceOf(User);
+
+                // An instance of a class that another module or a builtin made is the instance itself, and isn't spied on.
+                expect(holds.stdout).toBe(process.stdout);
+                expect(vi.isMockFunction(holds.emitter.emit)).toBe(false);
+              });
+
+              test("and has none of the mocks", () => {
+                expect(written()).toEqual([]);
+              });
+            `,
+            "own.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { K } from "./counted.js";
+              import * as esm from "./own.js";
+              import { written } from "./written.js";
+
+              vi.mock("./own.js", { spy: true });
+              vi.mock("./own.cjs", { spy: true });
+              vi.mock("./counted.js", { spy: true });
+
+              test.each([
+                ["an ES module", () => esm],
+                ["a CommonJS module", () => require("./own.cjs")],
+              ])("the classes that %s made and their instances have the mocks", (_, load) => {
+                const own = load();
+                // On the instance itself, so its private field is still there.
+                expect(own.service.reveal()).toBe("secret");
+                expect(own.service.reveal).toHaveBeenCalledTimes(1);
+
+                // On the prototype itself, so an instance that the module makes later has the mocks too.
+                const made = own.makeOwn();
+                expect(made).toBeInstanceOf(own.Own);
+                expect(made.method()).toBe("own");
+                expect(own.Own.prototype.method).toHaveBeenCalledTimes(1);
+
+                // The instance has mocks of the methods of the builtin class, which still read the state that the instance had.
+                const listener = vi.fn();
+                own.bus.on("event", listener);
+                expect([own.bus.emit("event", 1), own.bus.emit("toString"), own.bus.listenerCount("constructor")]).toEqual([true, false, 0]);
+                expect(listener).toHaveBeenCalledWith(1);
+                expect(own.bus.emit).toHaveBeenCalledWith("event", 1);
+
+                // Nothing says who made a plain object, so the spy is on a copy of it.
+                expect(own.store.add("item")).toBe(1);
+                expect(own.store.add).toHaveBeenCalledWith("item");
+                expect(own.stored()).toBe(0);
+              });
+
+              test.each([
+                ["an ES module", "./registered.js", specifier => import(specifier)],
+                ["a CommonJS module that is required", "./registered.cjs", specifier => require(specifier)],
+                ["a CommonJS module that is imported", "./registered.cjs", specifier => import(specifier)],
+              ])("the classes that another instance of %s made have none", async (_, specifier, load) => {
+                const first = await load(specifier);
+                vi.doMock(specifier, { spy: true });
+                const spied = await load(specifier);
+
+                expect(spied.registry.length).toBeGreaterThan(1);
+                for (const K of spied.registry) K.prototype.m.mockReturnValue("mocked");
+                expect(new spied.K().m()).toBe("mocked");
+                expect([new first.K().m(), vi.isMockFunction(first.K.prototype.m), first.K.prototype.constructor === first.K]).toEqual(["real", false, true]);
+
+                vi.doUnmock(specifier);
+              });
+
+              test("the next spy on a module loads an instance of its own", async () => {
+                K.prototype.m.mockReturnValue("from the first spy");
+                expect([new K().m(), globalThis.loads]).toEqual(["from the first spy", 1]);
+
+                vi.doUnmock("./counted.js");
+                vi.doMock("./counted.js", { spy: true });
+                const again = await import("./counted.js");
+                expect([new again.K().m(), globalThis.loads]).toEqual(["real", 2]);
+                again.K.prototype.m.mockReturnValue("from the second spy");
+              });
+
+              test("what the builtins and the other modules made has none of the mocks", () => {
+                expect(written()).toEqual([]);
+              });
+            `,
+            "the-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { K } from "./counted.js";
+              import { User } from "./models.js";
+              import { written } from "./written.js";
+
+              vi.mock("./counted.js", { spy: true });
+
+              test("nor in the next test file, whose spy loads an instance of its own too", () => {
+                expect(written()).toEqual([]);
+                expect(new User().name()).toBe("real");
+                expect(new K().m()).toBe("real");
+                expect(K.prototype.constructor).toBe(K);
+              });
+            `,
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test", ...args],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toContain(` ${pass} pass\n 0 fail\n`);
+          expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+        },
+      );
+
       test("vi.mock(builtin) mocks the exports that are accessors", async () => {
         const { bunEnv, bunExe, tempDir } = require("harness");
         using dir = tempDir("mock-object-builtin-automock", {

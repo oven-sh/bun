@@ -11,6 +11,11 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace JSC {
+class JSScope;
+class ScriptExecutable;
+}
+
 namespace Bun {
 
 using namespace JSC;
@@ -18,8 +23,16 @@ using namespace WebCore;
 
 class JSMockFunction;
 
-// Automocks a module's exports. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
-JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
+// The instance of a module that a spy loaded for itself, as the functions that its code made know it: the scope of an ES module, or the program that
+// made the wrapper of a CommonJS module.
+struct SpiedModule {
+    JSC::JSScope* scope { nullptr };
+    JSC::ScriptExecutable* program { nullptr };
+};
+
+// Automocks a module's exports. With `spy` the mocks call through. A spy puts its mocks onto the prototype of a class that `original` made and onto an
+// instance of such a class. It copies every other object, or keeps it as it is: another module can hold it. So with no `original` it writes to nothing.
+JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, const SpiedModule& original);
 
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.

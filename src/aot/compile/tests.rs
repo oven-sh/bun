@@ -1454,9 +1454,37 @@ fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
     let expected = BStr::new(
         "function area() {\n    \
         let Inner; ((Inner) => [Inner[Inner[\"A\"] = 7] = \"A\", Inner[Inner[\"B\"] = 8] = \"B\", Inner[\"c-d\"] = \"s\", \
-        Inner[Inner[\"C\"] = f()] = \"C\", Inner[Inner[\"D\"] = Inner.A + f()] = \"D\", ])(Inner ||= {});\n    \
+        typeof (Inner[\"C\"] = f()) !== \"string\" && (Inner[Inner[\"C\"]] = \"C\"), \
+        typeof (Inner[\"D\"] = Inner.A + f()) !== \"string\" && (Inner[Inner[\"D\"]] = \"D\"), ])(Inner ||= {});\n    \
         ;((Inner) => [Inner[Inner[\"E\"] = (-1)] = \"E\" ])(Inner ||= {});\n    \
         Box.side++;\n    return [{ side: Box.side }, Box.side * (Box.side), Inner];\n  }",
+    );
+    assert!(shown.contains(&expected), "{shown:?}");
+}
+
+#[test]
+fn function_text_checks_at_run_time_whether_a_member_of_an_unknown_type_is_a_string() {
+    let text = "declare function f(): any;\n\
+        export function make() {\n  \
+        enum Inner { A = f(), B = f() + f().length, C = 7 }\n  \
+        return Inner;\n}\n\
+        console.log(make());";
+    let linked = link_successfully(&[("a.ts", text), GLOBALS]);
+    let (program, texts) = (&linked.program, &linked.summary.texts);
+    let module = program.entries[0].module;
+    let source = texts.get(module).expect("a compiled file has its text");
+    let function_text = source.function_text();
+    let of_module = (program.functions.iter()).filter(|function| function.module == module);
+    let shown: Vec<&BStr> = of_module
+        .map(|function| (function.text.start as usize, function.text.end as usize))
+        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .collect();
+    let expected = BStr::new(
+        "function make() {\n  \
+        let Inner; ((Inner) => [typeof (Inner[\"A\"] = f()) !== \"string\" && (Inner[Inner[\"A\"]] = \"A\"), \
+        typeof (Inner[\"B\"] = f() + f().length) !== \"string\" && (Inner[Inner[\"B\"]] = \"B\"), \
+        Inner[Inner[\"C\"] = 7] = \"C\" ])(Inner ||= {});\n  \
+        return Inner;\n}",
     );
     assert!(shown.contains(&expected), "{shown:?}");
 }

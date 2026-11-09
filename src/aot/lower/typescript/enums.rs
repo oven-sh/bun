@@ -8,7 +8,7 @@ use bun_sema::hir::{
 use smallvec::SmallVec;
 
 use super::enum_values::EnumMemberValue;
-use crate::ir::{FunctionKey, ValueId};
+use crate::ir::{FunctionKey, TypeTable, ValueId};
 use crate::lower::function::{print_number, print_string};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, object};
@@ -90,6 +90,25 @@ impl FileLowering<'_, '_, '_, '_> {
                     parts.push((member.pos, start_of(hir, initializer), in_front));
                     let behind = end_in_front_of_types(hir, initializer);
                     parts.push((behind, behind, [&b"] = "[..], &key].concat()));
+                    previous = slot;
+                    continue;
+                }
+                EnumMemberValue::ComputedUnknown(initializer) => {
+                    // `typeof (E["A"] = init) !== "string" && (E[E["A"]] = "A")`
+                    let in_front = [&b"typeof ("[..], &slot, b" = "].concat();
+                    parts.push((member.pos, start_of(hir, initializer), in_front));
+                    let behind = end_in_front_of_types(hir, initializer);
+                    let text = [
+                        &b") !== \"string\" && ("[..],
+                        name,
+                        b"[",
+                        &slot,
+                        b"] = ",
+                        &key,
+                        b")",
+                    ]
+                    .concat();
+                    parts.push((behind, behind, text));
                     previous = slot;
                     continue;
                 }
@@ -185,6 +204,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 EnumMemberValue::Number(number) => self.emit_constant(Constant::Number(number)),
                 EnumMemberValue::String(text) => self.emit_constant(Constant::String(text)),
                 EnumMemberValue::Computed(initializer)
+                | EnumMemberValue::ComputedUnknown(initializer)
                 | EnumMemberValue::ComputedNumber(initializer)
                 | EnumMemberValue::ComputedString(initializer) => {
                     self.lower_expression(initializer)
@@ -200,6 +220,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             put_property(self, name, lowered);
             let reverse_name = match value {
                 EnumMemberValue::String(_) | EnumMemberValue::ComputedString(_) => continue,
+                EnumMemberValue::ComputedUnknown(_) => {
+                    // A string member has no reverse mapping: check the type at run time.
+                    let is_string = self.builder.type_test(lowered, TypeTable::STRING);
+                    let done = self.create_block();
+                    self.go_on_if(is_string, false, done);
+                    let reverse_name =
+                        PropertyName::Computed(self.builder.to_property_key(lowered));
+                    let text = self.emit_constant(Constant::String(data.name));
+                    put_property(self, reverse_name, text);
+                    self.jump(done);
+                    self.continue_in(done);
+                    continue;
+                }
                 EnumMemberValue::Computed(_) => {
                     PropertyName::Computed(self.builder.to_property_key(lowered))
                 }

@@ -2285,6 +2285,40 @@ describe("bundler", () => {
       `,
     },
   });
+  // https://github.com/oven-sh/bun/issues/37257
+  // A member whose value the parser cannot see (the other module is inlined
+  // later, by the printer) must not get a reverse mapping when it is a string.
+  itBundled("edgecase/TsEnumCrossModuleStringMemberHasNoReverseMapping", {
+    files: {
+      "/entry.ts": `
+        import { Enum1 } from './enum';
+        enum Enum2 { K2 = Enum1.K1, K3 = Enum1.K1 + Enum1.K2, N = Enum1.Seven }
+        console.log(JSON.stringify(Enum2));
+      `,
+      "/enum.ts": `
+        export enum Enum1 { K1 = "V", K2 = "W", Seven = 7 }
+      `,
+    },
+    run: {
+      stdout: `{"7":"N","K2":"V","K3":"VW","N":7}`,
+    },
+  });
+  itBundled("edgecase/TsEnumCrossModuleStringMemberHasNoReverseMappingMinified", {
+    files: {
+      "/entry.ts": `
+        import { Enum1 } from './enum';
+        enum Enum2 { K2 = Enum1.K1, K3 = Enum1.K1 + Enum1.K2, N = Enum1.Seven }
+        console.log(JSON.stringify(Enum2));
+      `,
+      "/enum.ts": `
+        export enum Enum1 { K1 = "V", K2 = "W", Seven = 7 }
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: `{"7":"N","K2":"V","K3":"VW","N":7}`,
+    },
+  });
   itBundled("edgecase/TsEnumTreeShakingUseAndInlineNamespace", {
     files: {
       "/entry.ts": `

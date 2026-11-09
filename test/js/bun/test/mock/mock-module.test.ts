@@ -3349,6 +3349,104 @@ describe.concurrent("an export the factory did not return", () => {
   });
 });
 
+describe.concurrent("require() of a mock whose factory's object is marked __esModule", () => {
+  const dep = { "dep.ts": `export const named = 1; export default { real: true };` };
+  const mockFunctions = ["mock.module", "jest.mock", "jest.doMock", "vi.mock", "vi.doMock"];
+
+  // As in Jest. `__esModule` only shapes a default import; require() gets what the factory returned, named exports included.
+  test.each(mockFunctions)("returns the factory's object, not its default: %s", async mockFunction => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        "marked.test.ts": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          test.each(["./dep", "node:os"])("of %s, which nothing has loaded", specifier => {
+            const reads = [];
+            const fake = { fake: true };
+            const exports = {
+              get __esModule() { reads.push("__esModule"); return true; },
+              get default() { reads.push("default"); return fake; },
+              named: 2,
+            };
+            ${mockFunction}(specifier, () => exports);
+            const required = require(specifier);
+            expect(reads).toEqual([]);
+            expect(required).toBe(exports);
+            expect([required.named, required.default]).toEqual([2, fake]);
+            expect(Object.keys(required)).toEqual(["__esModule", "default", "named"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("the same object as before, when require() loaded the module first", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        "required-first.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("require(), mock.module(), require()", () => {
+            expect(require("./dep").named).toBe(1);
+            const exports = { __esModule: true, default: { fake: true }, named: 2 };
+            mock.module("./dep", () => exports);
+            expect(require("./dep")).toBe(exports);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  const importedFirst = (body: string) => ({
+    ...dep,
+    "imported-first.test.ts": `
+      import { expect, mock, test } from "bun:test";
+      import * as dep from "./dep";
+      test("import, mock.module()", () => {
+        const fake = { fake: true };
+        mock.module("./dep", () => ({ __esModule: true, default: fake, named: 2 }));
+        ${body}
+      });
+    `,
+  });
+
+  test("the import sees the mock, when an import loaded the module first", async () => {
+    await expectFixturesToPass(importedFirst(`expect([dep.named, dep.default]).toEqual([2, fake]);`), 1);
+  });
+
+  test("its named exports too, when an import loaded the module first", async () => {
+    await expectFixturesToPass(
+      importedFirst(`
+        const required = require("./dep");
+        expect([required.named, required.default]).toEqual([2, fake]);
+      `),
+      1,
+    );
+  });
+
+  test("import() still gets a namespace whose default is the object's default", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        "imported.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("mock.module(), then require() and import()", async () => {
+            const fake = { fake: true };
+            const exports = { __esModule: true, default: fake, named: 2 };
+            mock.module("./dep", () => exports);
+            expect(require("./dep")).toBe(exports);
+            const namespace = await import("./dep");
+            expect([namespace.named, namespace.default]).toEqual([2, fake]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+});
+
 describe.concurrent("import cycles through a mocked module", () => {
   // m0 imports m1, m1 imports m2, and so on. The last one imports m0, which is the mocked module.
   function cycleOf(length: number, only?: string[]) {

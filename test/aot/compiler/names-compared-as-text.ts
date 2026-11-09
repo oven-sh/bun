@@ -207,6 +207,11 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   },
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,
+    lines: /contains_char\(inputs\.atoms\.bytes\(name\), b'\?'\)/,
+    reason: "whether a specifier has a query is a question about a path",
+  },
+  {
+    paths: /^src\/sema\/import_sites\/call_sites\.rs$/,
     lines: /name == known::Worker\b/,
     reason:
       "`Worker` behind the global object, and a read off `unknown` (section 8): a constructor that neither the binder nor the record of an import leads to may be the platform's, so its name counts, which only takes more in",

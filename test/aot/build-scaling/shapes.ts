@@ -7720,6 +7720,27 @@ export {};
         `console.log(used);\n`,
     }),
   },
+  // Each statement makes an object and calls what a map has just given. Where the map gave nothing the call only throws; heard as a call, that arm ended, holder by holder, all that the
+  // statements in front had left in the walk's state, on a copy that nobody reads: statements x statements. The engine took 552 M, 1,266 M and 3,679 M instructions for 400, 800 and 1,600
+  // statements, then 419 M, 681 M and 1,211 M; what a doubling adds grew 3.4 times, then 2.0 times.
+  {
+    name: "statements in one loop that each make an object and call what a map has just given",
+    counted: "statements",
+    size: 800,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `type Thing = { id: number; payload: number[] };\nlet made = 0, sum = 0;\nconst turns: number = JSON.parse("3");\n` +
+        `function make(): Thing { return { id: ++made, payload: [made, made] }; }\n` +
+        `function use(thing: Thing | null | undefined, more: number): void { sum += (thing?.payload.length ?? 0) + more; }\n` +
+        `function other(): number { sum += made; return sum & 1; }\n` +
+        `const unseen = new Map<string, () => void>([["tick", () => { sum++; }]]);\n` +
+        `function first(x: Thing | null, more: number): boolean { use(x, 0); use(x, more); x = null; unseen.get("tick")!(); return made > 3; }\n` +
+        `function long(): boolean {\n  let all = true;\n  for (let i = 0; i < turns; i++) {\n` +
+        lines(size, () => `    all = first(make(), other() + i) && all;`) +
+        `  }\n  return all;\n}\nconsole.log(long(), made, sum);\n`,
+    }),
+  },
 ];
 
 if (import.meta.main) {

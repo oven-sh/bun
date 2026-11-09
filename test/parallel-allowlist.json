@@ -1752,11 +1752,16 @@
     "aot/a-few-of-every-sweep-2.test.ts",
     "aot/a-few-of-every-sweep-3.test.ts",
     "aot/a-few-of-every-sweep-4.test.ts",
+    "aot/everyday-awaiting-programs-1.test.ts",
+    "aot/everyday-awaiting-programs-2.test.ts",
+    "aot/everyday-awaiting-programs-3.test.ts",
+    "aot/everyday-awaiting-programs-4.test.ts",
     "aot/a-class-of-buns-modules-over-a-constructor-function-names-it-as-its-base.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",
     "aot/asking-the-global-object-for-a-written-name-hands-it-to-nobody.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts",
+    "aot/the-late-failure-of-a-factory-is-reported-as-often-as-under-bun-test.test.ts"
   ]
 }

@@ -98,6 +98,5 @@ test/js/bun/test/mock/mock-module.test.ts: the next --rerun-each run gets the or
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while another running factory imports a module that waits for this one's mock
 # The next one never ends compiled: an import cycle is first loaded by vi.importActual() of the mocked module, whose factory takes importOriginal.
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the cycle is first loaded by vi.importActual() of the mocked module
-# These: a require() gives up on a mock whose factory has not settled, and the mock is removed or replaced. Every test of the fixture passes. Plain runs what the require() had begun to load once more.
-test/js/bun/test/mock/mock-module.test.ts: a module that is being fetched as a mock whose factory has not returned > loads as the real module or the new mock once the mock is removed or replaced
+# This one: a require() gives up on a mock whose factory has not settled, and the mock is removed or replaced. Every test of the fixture passes. Plain runs what the require() had begun to load once more.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them

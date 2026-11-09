@@ -220,6 +220,9 @@ public:
             bool isWaitedForByLoadThatRequireLeft { false };
             // The newest earlier call of a factory for the module had not settled: under `bun test` the module's entry is still being fetched for that call, and nothing takes this one's promise.
             bool cameToFetchInFlight { false };
+            bool cameToFetchInFlightWhenCalled { false };
+            unsigned numberOfRequiresRefusedMeanwhile { 0 };
+            bool isOfWalkUnderWay { false };
             // An import() of the module itself waits for its factory and for nothing else. A load that comes to the module from another one goes on with what stands there once the mock has gone, and then so does whoever waits beside it.
             bool isWaitedForByImporter { false };
             // What the run time has noted of one call of a factory says nothing of the next.

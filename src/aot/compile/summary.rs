@@ -13,7 +13,7 @@ use crate::statistics::{Stage, StepClock};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::hir::ExprKind;
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedFrom};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedFrom, is_load_found_late};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
@@ -172,9 +172,15 @@ pub(super) fn collect_names_followed(
             }
         }
         let hir = files.hir(file);
+        let decisions = &files.analysis(file).decisions;
         for site in files.analysis(file).import_sites {
             let names_parent = match site.kind {
                 ImportSiteKind::RequireResolve(_) => false,
+                ImportSiteKind::Require(call)
+                    if is_load_found_late(hir, files.bound(file), decisions, call) =>
+                {
+                    false
+                }
                 ImportSiteKind::ImportMetaResolve(call) => {
                     !matches!(hir[call].kind, ExprKind::Call(call) if hir[call].args.len() == 1)
                 }

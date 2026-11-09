@@ -337,6 +337,67 @@ export function make(level: number) { return { name: "made", level }; }
         assert_eq!(required_names(program, branded), ["level"]);
     }
 
+    const MADE_OUTSIDE: &str = r#"
+interface Parsed { kind: string; left: number[]; _parsedBrand: any; extra?: number }
+interface Gate { kind: string; limit: number }
+interface Laid { kind: string; unread: number }
+export function make(kind: string) { return { kind }; }
+export function read(parsed: Parsed, gate: Gate): number {
+  return parsed.left.length + (parsed.extra ?? 0) + gate.limit;
+}
+export function define(gate: Gate, laid: Laid): void {
+  Object.defineProperty(gate, "limit", { value: 1 });
+  Object.defineProperty(laid, "unread", { value: 2 });
+}
+"#;
+
+    fn flags_in_made_outside(record: &str, name: &str) -> FieldFlags {
+        let linked = link_sources_without_bun_modules(&[("main.ts", MADE_OUTSIDE)]);
+        let program = &linked.expect("the program links").program;
+        let declaration = format!("interface {record} ");
+        let written = MADE_OUTSIDE.find(&declaration).unwrap() + "interface ".len();
+        let is_written_there =
+            |layout: &&Layout| layout.module.is_some() && layout.position == written as u32;
+        let layout = program.layouts.iter().find(is_written_there).expect(record);
+        flags_of_field(program, layout, name)
+    }
+
+    #[test]
+    fn a_required_name_that_is_read_and_never_written_says_so() {
+        assert_eq!(
+            flags_in_made_outside("Parsed", "left"),
+            FieldFlags::IS_NEVER_WRITTEN | FieldFlags::IS_REQUIRED_AND_READ_THOUGH_NEVER_WRITTEN
+        );
+        assert_eq!(
+            flags_in_made_outside("Parsed", "_parsedBrand"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
+        assert_eq!(
+            flags_in_made_outside("Parsed", "extra"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
+        assert_eq!(
+            flags_in_made_outside("Parsed", "kind"),
+            FieldFlags::IS_REQUIRED
+        );
+    }
+
+    #[test]
+    fn a_name_that_is_read_and_laid_by_a_descriptor_under_a_written_key_does_not_say_so() {
+        assert_eq!(
+            flags_in_made_outside("Gate", "limit"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
+    }
+
+    #[test]
+    fn a_name_that_a_descriptor_lays_and_nobody_reads_does_not_say_so() {
+        assert_eq!(
+            flags_in_made_outside("Laid", "unread"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
+    }
+
     fn record_with_keys(count: usize) -> Layout {
         let field_under = |key: usize| Field {
             key: Some(PropertyKeyId::new(key)),

@@ -33,7 +33,7 @@ use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
 use bun_sema::hir::{ExprId, ExprKind};
-use bun_sema::import_sites::ImportSpecifier;
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_load_found_late};
 use bun_sema::node::NodeData;
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
@@ -180,6 +180,41 @@ fn warn_of_guesses_left_out(
             let code = Code::FilesLeftOutByPattern;
             let warning = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..]), &why]);
             diagnostics.add(Some(view), warning);
+        }
+    }
+}
+
+fn warn_of_names_unread_at_loads_found_late(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        for site in analysis.import_sites {
+            let (ImportSiteKind::Require(call) | ImportSiteKind::RequireResolve(call)) = site.kind
+            else {
+                continue;
+            };
+            let mut written = analysis.alternatives_of(&site.specifier).iter();
+            if written.any(|it| matches!(it, ImportSpecifier::Unknown))
+                && is_load_found_late(hir, files.bound(file), &analysis.decisions, call)
+            {
+                let span = Span::of_node(hir, file, NodeData::Expr(site.specifier_node));
+                let code = Code::ModuleMayBeNamedAtRunTime;
+                diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+            }
+        }
+    }
+}
+
+fn warn_of_folders_unread_at_resolves(diagnostics: &mut Diagnostics, view: ProgramView<'_, '_>) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        for &options in files.analysis(file).options_of_resolves_with_unread_folders {
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(options));
+            let code = Code::FoldersOfResolveAreNotRead;
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
         }
     }
 }
@@ -677,6 +712,10 @@ impl<'a> Build<'a> {
         if !options.aot.checks_only && !options.aot.runs_in_place {
             warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
             warn_of_guesses_left_out(&mut self.diagnostics, view, host);
+            if !options.aot.loads_code_from_disk {
+                warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
+                warn_of_folders_unread_at_resolves(&mut self.diagnostics, view);
+            }
         }
         if !options.aot.checks_only {
             self.started_workers.code = code_of_workers(&contents);

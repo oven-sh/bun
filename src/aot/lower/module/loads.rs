@@ -14,8 +14,9 @@ use bun_sema::import_sites::{
     find_other_values_of_own_require, find_own_require, find_require_call,
     holds_import_meta_require, is_call_of_create_require,
     is_create_require_behind_get_builtin_module, is_create_require_called_through_call,
-    is_made_require, is_require_made_for_own_file, may_call_have_made_base_of_require,
-    may_call_have_made_path, may_require_get_members, may_still_be_undefined,
+    is_load_found_late, is_made_require, is_require_made_for_own_file,
+    may_call_have_made_base_of_require, may_call_have_made_path, may_require_get_members,
+    may_still_be_undefined,
 };
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::ExternalKind;
@@ -508,6 +509,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             return self.try_lower_choice_of_builtin_modules(call, id, chain_exit);
         };
+        if is_load_found_late(hir, self.file.bound, self.file.decisions(), call) {
+            return None;
+        }
         let path_to_resolve_from = analysis.path_to_resolve_from(site);
         let resolved_from = path_to_resolve_from.and_then(|from| match from {
             ResolvedFrom::File(path) => {

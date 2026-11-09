@@ -1,5 +1,5 @@
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
-use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
+use super::made_requires::{find_imported_export, may_be_modified, names_own_file, settled_symbol};
 use super::parameters::{ExportedNames, find_values_passed_for_pattern, is_exported};
 use super::touched_exports::{is_only_tested, stands_in_function_with_arguments};
 use super::{
@@ -474,6 +474,29 @@ pub(super) fn find_alternatives(
     follower.asked_of_other_files = asked_of_other_files;
     follower.asked_of_own_exports = asked_of_own_exports;
     find_alternatives_with(follower, argument)
+}
+
+pub(super) fn find_elements_of_list_that_nothing_changes(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    list: ExprId,
+) -> Option<IdList<ExprId>> {
+    let &ScanInputs { hir, bound, .. } = inputs;
+    let list = hir.skip_type_assertions(list);
+    if let ExprKind::Array(elements) = hir[list].kind {
+        return Some(elements);
+    }
+    let holder = settled_symbol(hir, bound, list)?;
+    let BindingInitializer::Expression(written) = bound.binding_initializer(hir, holder) else {
+        return None;
+    };
+    let ExprKind::Array(elements) = hir[hir.skip_type_assertions(written)].kind else {
+        return None;
+    };
+    let asked = AskedOfDataFiles::default();
+    let mut follower = Follower::new(inputs, written_names, &asked, false, Folder::OfFile);
+    let held = follower.values_of_argument(list)?;
+    matches!(&held[..], [Held::List(places)] if places.len() == elements.len()).then_some(elements)
 }
 
 pub(super) fn find_names_as_written(
@@ -1808,6 +1831,15 @@ impl Follower<'_, '_, '_> {
         }
     }
 
+    fn stands_in_options_of_resolve(&self, property: PropId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let options = self.outermost_cast(bound.prop_owner[property.idx()]);
+        matches!(bound.parent_of_expr(options), Parent::Expr(call)
+            if matches!(call_site_kind(hir, bound, call), Some(ImportSiteKind::RequireResolve(_)))
+                && matches!(hir[call].kind, ExprKind::Call(call)
+                    if hir[call].args.len() == 2 && hir.id_at(hir[call].args, 1) == options))
+    }
+
     fn holds_what_cannot_be_changed(&mut self, e: ExprId) -> bool {
         let values = self.values_of(e);
         values.is_some_and(|values| !values.iter().any(Held::can_be_changed))
@@ -1828,6 +1860,7 @@ impl Follower<'_, '_, '_> {
                 };
             }
             Parent::FnBody(function) => return self.is_answer_only_tested(function),
+            Parent::Prop(property) => return self.stands_in_options_of_resolve(property),
             Parent::Stmt(statement) => {
                 return match hir[statement].kind {
                     StmtKind::Return(_) => match self.find_function_around(statement) {

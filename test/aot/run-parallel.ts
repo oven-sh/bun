@@ -144,6 +144,7 @@ import { measureHere, openInstructionCounter } from "./analysis-scaling/measure-
 import { lineThatLeavesOut, whyLineThatLeavesOutIsNotRead } from "./harness/lines-that-leave-out";
 import { runtimeEnvironment } from "./harness/flags";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
+import { stacksOf } from "./harness/stacks-of-a-run";
 import { ways } from "./harness/ways";
 import { withoutCoreDump } from "./harness/without-core-dump";
 import "./harness/without-installing-packages";
@@ -582,8 +583,11 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
   using held = memory.watch({ pid, leadsAGroup: true }, cmd[1] !== "build", answers);
   let ranOver = false;
   let threadsAtLimit = "";
+  let stacksAtLimit = "";
   const end = (signal: "SIGTERM" | "SIGKILL") => {
     if (!ranOver) threadsAtLimit = describeThreads(pid);
+    // They stand behind what the run itself has said. A build says what its threads are at.
+    if (!ranOver && cmd[1] !== "build") stacksAtLimit = stacksOf(pid);
     ranOver = true;
     endGroup(pid, signal);
   };
@@ -600,7 +604,7 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
       exitCode: child.signalCode ? null : exitCode,
       signal: child.signalCode,
       stdout,
-      stderr,
+      stderr: stderr + stacksAtLimit,
       overLimit: held.exceeded
         ? held.held
         : ranOver

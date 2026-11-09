@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/the-late-failure-of-a-factory-is-reported-as-often-as-under-bun-test.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1483,6 +1487,22 @@
   "aot/every-way-to-change-the-prototype-of-a-generator-function.test.ts": {
     "default": 5700,
     "asan": 22800
+  },
+  "aot/everyday-awaiting-programs-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-awaiting-programs-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-awaiting-programs-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-awaiting-programs-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/everyday-failing-tests-1.test.ts": {
     "default": 60000,

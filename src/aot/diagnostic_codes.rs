@@ -51,6 +51,8 @@ diagnostic_codes! {
         TextOfFunctionIsNotItsTree = 100090, Error, "A check of the compiler itself failed: the text that is kept of a function is not its tree: {0}";
         WorkerFilesGoByOnePath = 100086, Warning, "In the executable \"{0}\" is all that is left of the paths of two files: \"{1}\" and \"{2}\". A \"..\" above the root of the executable takes nothing away, so nothing tells the two apart, and a Worker that starts from either fails to load. Pass both files to the build as entry points";
         FilesLeftOutByPattern = 100089, Warning, "The executable doesn't embed {0}, which this path may name. {1}";
+        ModuleMayBeNamedAtRunTime = 100094, Warning, "This call may load a module, and the build can't work out its name. If it names code that isn't in the executable, the call throws at run time. Import the module by its name to keep it, or build with --aot-allow-code-from-disk";
+        FoldersOfResolveAreNotRead = 100095, Warning, "The build can't work out the folders that this call looks in, so what they hold may not be in the executable. The call may then find a module of the same name in a folder above them, or none. Write the list of folders in the call, each as a path from __dirname or import.meta.dirname";
         DataFilesFoundByPattern = 100088, Note, "This path isn't a constant, so the executable embeds every file that it may name. These aren't code: {0}";
 
 

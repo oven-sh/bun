@@ -57,6 +57,10 @@ pub(crate) fn collect_import_sites<'s>(
             &calls.names_resolved_from_listed_folders,
             arena,
         ),
+        options_of_resolves_with_unread_folders: slice_in(
+            &calls.options_of_resolves_with_unread_folders,
+            arena,
+        ),
         keys_stored_in_caches: slice_in(&calls.keys_stored_in_caches, arena),
         first_call_site,
         sites_by_kind: slice_in(&sites_by_kind, arena),

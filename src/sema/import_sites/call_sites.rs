@@ -1,12 +1,13 @@
 use super::alternatives::{
     AskedOfDataFiles, AskedOfOwnExports, Folder, WrittenNames, find_alternatives,
-    find_names_as_written, find_path_around_parameter, find_texts_of_key,
+    find_elements_of_list_that_nothing_changes, find_names_as_written, find_path_around_parameter,
+    find_texts_of_key,
 };
 use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
-    follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
-    settled_symbol,
+    follow_to_own_require, holds_import_meta_require, is_nothing, may_be_modified,
+    may_require_get_members, settled_symbol,
 };
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
@@ -23,9 +24,10 @@ use crate::fold::{
 };
 use crate::hir::{
     BinOp, Branches, CallId, ClassId, ExprFlags, ExprId, ExprKind, File, IdList,
-    ImportedFileChanger, MemberKey, NodeData, PropKey, PropKind, UnOp,
+    ImportedFileChanger, MemberKey, NodeData, PropId, PropKey, PropKind, UnOp,
 };
 use crate::util::SharedSort;
+use bun_core::strings;
 
 pub const WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY: [&[u8]; 3] =
     [b"importOriginal", b"importActual", b"requireActual"];
@@ -789,32 +791,49 @@ fn find_path_to_resolve_from(
     Ok(None)
 }
 
+struct UnreadFolders;
+
 fn find_folders_listed_for_resolve(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
     arguments: IdList<ExprId>,
-) -> Option<Vec<Atom>> {
-    let &ScanInputs { hir, atoms, .. } = inputs;
-    if arguments.len() != 2 {
-        return None;
+) -> Result<Vec<Atom>, UnreadFolders> {
+    let &ScanInputs {
+        hir, bound, atoms, ..
+    } = inputs;
+    if arguments.len() < 2 {
+        return Ok(Vec::new());
     }
     let options = hir.skip_type_assertions(hir.id_at(arguments, 1));
+    if is_nothing(hir, bound, options) {
+        return Ok(Vec::new());
+    }
     let ExprKind::Object(properties) = hir[options].kind else {
-        return None;
-    };
-    let paths = PropKey::Name(atoms.intern(b"paths"));
-    let mut listed = properties.iter().filter(|&id| hir[id].key == paths);
-    let (Some(property), None) = (listed.next(), listed.next()) else {
-        return None;
+        return Err(UnreadFolders);
     };
     let is_plain = |kind: PropKind| matches!(kind, PropKind::Init | PropKind::Shorthand);
-    if !properties.iter().all(|id| is_plain(hir[id].kind)) {
-        return None;
+    let is_named = |key: PropKey| matches!(key, PropKey::Name(_));
+    if !(properties.iter()).all(|id| is_plain(hir[id].kind) && is_named(hir[id].key)) {
+        return Err(UnreadFolders);
     }
-    let list = hir.skip_type_assertions(hir[property].value);
-    let ExprKind::Array(folders) = hir[list].kind else {
-        return None;
+    let paths = PropKey::Name(atoms.intern(b"paths"));
+    let mut listed = properties.iter().filter(|&id| hir[id].key == paths);
+    let property = match (listed.next(), listed.next()) {
+        (None, _) => return Ok(Vec::new()),
+        (Some(property), None) if arguments.len() == 2 => property,
+        _ => return Err(UnreadFolders),
     };
+    find_folders_listed_under(inputs, written_names, property).ok_or(UnreadFolders)
+}
+
+fn find_folders_listed_under(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    property: PropId,
+) -> Option<Vec<Atom>> {
+    let hir = inputs.hir;
+    let list = hir[property].value;
+    let folders = find_elements_of_list_that_nothing_changes(inputs, written_names, list)?;
     let folders = hir.ids(folders).map(|folder| {
         let asked = AskedOfDataFiles::default();
         let from = Folder::OfFile;
@@ -843,6 +862,7 @@ pub(super) struct ScannedCalls {
     pub(super) asked_of_own_exports: Vec<Atom>,
     pub(super) names_out_of_data_files: Vec<(Atom, ExprId, bool)>,
     pub(super) names_resolved_from_listed_folders: Vec<(Atom, Atom, ExprId)>,
+    pub(super) options_of_resolves_with_unread_folders: Vec<ExprId>,
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, ResolvedFrom)>,
@@ -865,6 +885,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut exported_file_changers: Vec<ExportedFileChanger> = Vec::new();
     let mut keys_stored_in_caches = Vec::new();
     let mut names_resolved_from_listed_folders = Vec::new();
+    let mut options_of_resolves_with_unread_folders = Vec::new();
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
         let Some(form) = find_call_form(hir, call) else {
@@ -930,10 +951,22 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             module_require_objects.extend(found.module_require_object);
             continue;
         }
-        let site = create_call_site(inputs, &found, &mut alternatives);
+        let mut site = create_call_site(inputs, &found, &mut alternatives);
         if !is_ordinary_builtin_call(&site) {
             module_require_objects.extend(found.module_require_object);
+            let has_query = matches!(site.specifier, ImportSpecifier::Constant(name)
+                if strings::contains_char(inputs.atoms.bytes(name), b'?'));
+            let is_found_late = is_load_found_late(hir, bound, decisions, call);
+            if has_query && is_found_late {
+                site.specifier = ImportSpecifier::Unknown;
+                site.is_host_value = false;
+            }
             let argument = site.specifier_node;
+            if let (true, ImportSpecifier::Constant(name)) = (is_found_late, site.specifier) {
+                alternatives
+                    .names_out_of_data_files
+                    .push((name, argument, true));
+            }
             let starts_at_own_directory = decisions.is_path_from_own_directory(argument)
                 || alternatives.paths_from_own_directory.last() == Some(&argument);
             let written_names = &alternatives.written_names;
@@ -944,13 +977,19 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                 Ok(None) => {}
                 Err(UnreadPath) => continue,
             }
-            if let (ImportSiteKind::RequireResolve(_), ImportSpecifier::Constant(name)) =
-                (site.kind, site.specifier)
-            {
-                let folders = find_folders_listed_for_resolve(inputs, written_names, found.args);
-                let folders = folders.into_iter().flatten();
-                let asked = folders.map(|folder| (name, folder, site.specifier_node));
-                names_resolved_from_listed_folders.extend(asked);
+            if let ImportSiteKind::RequireResolve(_) = site.kind {
+                match find_folders_listed_for_resolve(inputs, written_names, found.args) {
+                    Ok(folders) => {
+                        if let ImportSpecifier::Constant(name) = site.specifier {
+                            let folders = folders.into_iter();
+                            let asked = folders.map(|folder| (name, folder, site.specifier_node));
+                            names_resolved_from_listed_folders.extend(asked);
+                        }
+                    }
+                    Err(UnreadFolders) => {
+                        options_of_resolves_with_unread_folders.push(hir.id_at(found.args, 1));
+                    }
+                }
             }
             sites.push(site);
         }
@@ -977,11 +1016,25 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         asked_of_own_exports: alternatives.asked_of_own_exports.take(),
         names_out_of_data_files: alternatives.names_out_of_data_files,
         names_resolved_from_listed_folders,
+        options_of_resolves_with_unread_folders,
         keys_stored_in_caches,
         module_require_objects,
         requires_of_other_files,
         paths_given_to_create_require,
     }
+}
+
+pub fn is_load_found_late(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    call: ExprId,
+) -> bool {
+    let Some(form) = find_call_form(hir, call) else {
+        return false;
+    };
+    let text = Text::of(hir, bound, Some(decisions));
+    find_call_site(text, call, form, StepsLeft::ALL.without_late()).is_none()
 }
 
 fn names_module_cache(inputs: &ScanInputs<'_, '_>, table: ExprId) -> bool {

@@ -134,6 +134,7 @@ fn create_analysis<'s>(
         asked_of_own_exports: scan.asked_of_own_exports,
         names_out_of_data_files: scan.names_out_of_data_files,
         names_resolved_from_listed_folders: scan.names_resolved_from_listed_folders,
+        options_of_resolves_with_unread_folders: scan.options_of_resolves_with_unread_folders,
         keys_stored_in_caches: scan.keys_stored_in_caches,
         jsx_imports: scan.jsx_imports,
         unused_import_symbols: scan.unused_import_symbols,

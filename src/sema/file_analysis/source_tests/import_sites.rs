@@ -156,6 +156,127 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (
+        "a.cjs",
+        r#"let aliased; function load() { try { aliased = require; aliased("a"); } catch {} } load();"#,
+        &["a"],
+    ),
+    ("a.cjs", r#"with (scope) { require("a"); }"#, &["a"]),
+    (
+        "a.cjs",
+        r#"function load(require) { with (scope) { require("a"); } }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"var aliased; aliased = require; aliased = other; aliased("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"for (let load of others) { load("a"); load = require; }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"for (var load in others) { load("a"); load = require; }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"for (let load; ; ) { load = require; load("a"); break; }"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"try { run(); } catch (load) { load("a"); load = require; }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"function take(load) { load("a"); load = require; } take(other);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("module"); let load = require; load = createRequire(__filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const get = () => createRequire(import.meta.url); get()("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function get() { return createRequire(import.meta.url); } get()("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let get = () => createRequire(import.meta.url); get = other; get()("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const get = async () => createRequire(import.meta.url); get()("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; function ask() { load ??= createRequire(import.meta.url); return load("a"); } ask();"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; const get = () => (load ??= createRequire(import.meta.url)); get()("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; try { load = createRequire(import.meta.url); } catch { load = undefined; } load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; try { load = createRequire(import.meta.url); } catch { load = other; } load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; load = createRequire(import.meta.url); [load] = others; load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; export let load; load = createRequire(import.meta.url); load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; load = createRequire(import.meta.url); eval(text); load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; load = createRequire(elsewhere); load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = typeof createRequire === "function" ? createRequire(import.meta.url) : undefined; load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = c ? createRequire(import.meta.url) : other; load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = c ? createRequire(import.meta.url) : null; load?.("a");"#,
+        &["a"],
+    ),
+    (
         "a.mts",
         r#"import { createRequire } from "node:module"; const load = createRequire(elsewhere); load("a");"#,
         &[],

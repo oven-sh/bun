@@ -47,6 +47,7 @@ pub struct FileAnalysis<'s> {
     pub asked_of_own_exports: &'s [Atom],
     pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
     pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
+    pub options_of_resolves_with_unread_folders: &'s [ExprId],
     keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],

@@ -107,6 +107,29 @@ console.log(list.join(), list.length);
     "1,2,3,9,,, 7 true\n",
     stopInSortAt("const inserted: T = $getOwnContiguousIndex<T>(from, i);"),
   ],
+  // As built, the first of these two answers 5 under the lie, without a sound.
+  [
+    "the most of a list of whole numbers that is spread",
+    oneFurther,
+    `const list: number[] = [];
+list.push(7, 3, 5, 1, 9, 9, 9, 9);
+list.length = 4;
+console.log(Math.max(...list), list.join(), list.length);
+`,
+    "7 7,3,5,1 4\n",
+    stopAtWhatIsVouchedFor("1"),
+  ],
+  [
+    "the least of a list of fractions that is spread",
+    oneFurther,
+    `const list: number[] = [];
+list.push(7.5, 3.5, 5.5, 1.5, 0.5, 0.5, 0.5, 0.5);
+list.length = 4;
+console.log(Math.min(...list), list.join(), list.length);
+`,
+    "1.5 7.5,3.5,5.5,1.5 4\n",
+    stopAtWhatIsVouchedFor("1"),
+  ],
 ];
 // The compiler takes the turns of a loop to leave the storage of lists and of views, and so their lengths, as they were in front of it: what a turn reads of them is read once, in front.
 // Each program stays inside memory that is still there: it reads no element, or it reads one where it lay before, and it stores nothing.

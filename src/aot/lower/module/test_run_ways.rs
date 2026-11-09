@@ -425,7 +425,6 @@ impl<'a> WayToDeclaration<'a> {
         }
     }
 
-    /// The read without mocks reads what the import is bound to. A way that has left the files behind that binding, past a mock that lacks the name, ends at another declaration: the run is asked for it.
     fn end_at_declaration(&mut self, file: FileId, name: Atom) -> bool {
         let is_of_binding = (self.declared_in).is_none_or(|end| self.path.contains(&end));
         self.steps.push(match is_of_binding {

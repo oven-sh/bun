@@ -177,8 +177,7 @@ pub(crate) struct FileMarks {
     layout_allocated_in: Vec<u32>,
     layout_written_under_dictionary_type_in: Vec<u32>,
     key_written_in: Vec<u32>,
-    key_read_in: Vec<u32>,
-    key_laid_by_descriptor_in: Vec<u32>,
+    keys_read: Vec<u64>,
 }
 
 #[inline]
@@ -496,13 +495,17 @@ impl FragmentBuilder {
     }
 
     pub(crate) fn note_key_laid_by_descriptor(&mut self, key: PropertyKeyId) {
-        if set_mark(&mut self.marks.key_laid_by_descriptor_in, key, self.visit) {
-            self.keys_laid_by_descriptors.push(key);
-        }
+        self.keys_laid_by_descriptors.push(key);
     }
 
     pub(crate) fn note_read(&mut self, key: PropertyKeyId) {
-        if set_mark(&mut self.marks.key_read_in, key, self.visit) {
+        let (word, bit) = (key.index() / 64, 1u64 << (key.index() % 64));
+        let words = &mut self.marks.keys_read;
+        if words.len() <= word {
+            words.resize(word + 1, 0);
+        }
+        if words[word] & bit == 0 {
+            words[word] |= bit;
             self.read_keys.push(key);
         }
     }
@@ -603,8 +606,12 @@ impl FragmentBuilder {
         self.layouts_named_in_file.sort_unstable();
         self.allocated_layouts.sort_unstable();
         self.written_keys.sort_unstable();
-        self.read_keys.sort_unstable();
+        for key in &self.read_keys {
+            self.marks.keys_read[key.index() / 64] = 0;
+        }
+        self.read_keys.shrink_to_fit();
         self.keys_laid_by_descriptors.sort_unstable();
+        self.keys_laid_by_descriptors.dedup();
 
         let tables = Box::new(UnitTables {
             strings: self.strings,

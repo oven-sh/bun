@@ -12,7 +12,7 @@ use bun_sema::program::Sym;
 use super::{FunctionLowering, parameters};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::ir::generated::ECMAMode;
+use crate::ir::generated::{ECMAMode, ModuleKind};
 use crate::ir::{BlockId, FunctionKey, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 
 pub(in crate::lower) use self::key::find_function_name;
@@ -91,7 +91,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn emit_get(&mut self, object: ValueId, name: PropertyName) -> ValueId {
         match self.resolve_access(name) {
             PropertyName::Constant(key) => {
-                self.file.fragment.note_read(key);
+                let (modules, reader) = (self.file.inputs.modules, self.file.file);
+                if modules.kind(reader) != ModuleKind::RuntimeSource && !modules.is_library(reader)
+                {
+                    self.file.fragment.note_read(key);
+                }
                 self.builder.prop_get(object, key, false, false)
             }
             PropertyName::Computed(property) => self.builder.elem_get(object, property),

@@ -560,6 +560,33 @@ impl Bound<'_> {
         self.runtime.file_uses_arguments
     }
 
+    pub fn lets_made_requires_out_of_sight(&self, ask: impl FnOnce() -> bool) -> bool {
+        *self
+            .runtime
+            .lets_made_requires_out_of_sight
+            .get_or_init(ask)
+    }
+
+    pub fn names_used_otherwise_than_called(
+        &self,
+        list: impl FnOnce() -> Box<[(SymbolId, bool)]>,
+    ) -> &[(SymbolId, bool)] {
+        self.runtime
+            .names_used_otherwise_than_called
+            .get_or_init(list)
+    }
+
+    pub fn names_that_hold_own_requires(
+        &self,
+        list: impl FnOnce() -> Box<[(SymbolId, bool)]>,
+    ) -> &[(SymbolId, bool)] {
+        self.runtime.names_that_hold_own_requires.get_or_init(list)
+    }
+
+    pub fn stores(&self) -> &[SymbolStore] {
+        &self.runtime.references.stores[..]
+    }
+
     pub fn may_require_get_members(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.runtime.may_require_get_members.get_or_init(compute)
     }

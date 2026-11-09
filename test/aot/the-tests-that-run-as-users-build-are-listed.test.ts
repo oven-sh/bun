@@ -7,6 +7,7 @@ import { join } from "path";
 
 const listed = [
   "from-source/machine/a-save-at-a-head-that-a-cold-operand-alone-reads-and-that-is-left-out-stops-the-build-by-name.ir",
+  "from-source/machine/a-save-at-a-head-that-a-cold-operand-alone-reads-where-more-values-wait-than-registers-are-kept-stops-the-build-by-name.ir",
   "from-source/machine/a-slot-whose-store-is-left-out-though-it-is-read-stops-the-build-by-name.ir",
   "from-source/machine/an-owner-that-the-collector-alone-reads-and-whose-slot-is-left-unwritten-stops-the-build-by-name.ir",
   "from-source/machine/what-a-hint-releases-though-a-way-on-reads-it-stops-the-build-by-name.ir",

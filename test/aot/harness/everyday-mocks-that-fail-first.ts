@@ -32,16 +32,8 @@ const partsWhereFileFailsFirst: [cases: RegExp, what: string][] = [
     "the same, for the next test file",
   ],
   [
-    /^an-es-package--imported-by-a-file--a-factory-over-(the-original|import-actual)--mocked-the-second-time--nothing-between--/,
-    "the factory is called, and runs the body of the kiln a second time, where the potter still gets the first failure",
-  ],
-  [
     /^an-es-package--imported-by-a-file--a-factory--mocked-the-second-time--nothing-between--in-the-next-test-file$/,
     "the potter keeps the first failure of the kiln for the next test file",
-  ],
-  [
-    /^an-es-package--imported-at-run-time--mock-module--mocked-the-second-time--nothing-between--/,
-    "import() gets the mock where `bun test` keeps the first failure",
   ],
 ];
 

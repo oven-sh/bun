@@ -1,0 +1,19 @@
+# -- source: main.ts
+# import type { Pair } from "./types";
+# declare function print(value: unknown): void;
+# function lengths(pair: Pair): number { return pair.left.length * 10 + pair.right.length; }
+# const listeners: any[] = [{ kind: "idle", run: lengths }];
+# const pair: any = JSON.parse('{"kind":"pair","left":[1,2,3],"right":[4]}');
+# print(listeners[0].run(pair));
+# -- source: types.ts
+# export interface Pair { kind: string; left: number[]; right: number[] }
+# -- end of source
+# As most projects write it: the record stands in a file that holds only types and is reached by `import type`. Such a file leaves no module in the program, and the record no module in the wire: asked where it was WRITTEN, the record
+# kept the family of every literal with a `kind`, and the function its test for those shapes. WHO READS decides: `left` and `right` are required, read by name in a file of the program, and written nowhere: the pairs are made outside.
+# f1 = lengths
+# REQUIRES: entries-of-bun
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: ShapeTest
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 31
+# RIGHT-NEXT: exited with 0

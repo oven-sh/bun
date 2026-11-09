@@ -14,6 +14,7 @@ mod tests;
 mod touched_exports;
 mod written_arms;
 
+pub use call_sites::is_load_found_late;
 pub use call_sites::{
     RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
     does_import_meta_resolve_ask_resolver, ends_in_call_that_reads_frame_of_caller,
@@ -198,6 +199,7 @@ pub(crate) struct ImportScan<'s> {
     pub asked_of_own_exports: &'s [Atom],
     pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
     pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
+    pub options_of_resolves_with_unread_folders: &'s [ExprId],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],

@@ -955,14 +955,13 @@ const KINDS_AND_ORDER: &str = r#"import("c1"); import a from "s1"; export { b } 
 const NOT_SITES: &[&str] = &[
     r#"function f(require) { require("a"); }"#,
     r#"const require = f; require("a");"#,
-    r#"with (o) require("a");"#,
+    r#"function f(require) { with (o) require("a"); }"#,
     r#"let r = require; r = f; r("a");"#,
     r#"const r = require; f(r);"#,
     r#"new require("a");"#,
     r#"require();"#,
     r#"x.require("a");"#,
     r#"function f(module) { module.require("a"); }"#,
-    r#"with (o) { (function () { eval(s); require("a"); }); }"#,
 ];
 
 const DEAD_SITES: &[&str] = &[
@@ -974,6 +973,11 @@ const DEAD_SITES: &[&str] = &[
 const ONE_SITE: &[(&str, &str)] = &[
     ("a.ts", r#"require("a");"#),
     ("a.cjs", r#"require?.("a");"#),
+    ("a.cjs", r#"with (o) require("a");"#),
+    (
+        "a.cjs",
+        r#"with (o) { (function () { eval(s); require("a"); }); }"#,
+    ),
     ("a.cjs", r#"const r = require; r("a");"#),
     ("a.ts", r#"(require as any)("a");"#),
     ("a.ts", r#"(module as any).require!("a");"#),

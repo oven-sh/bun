@@ -2461,6 +2461,63 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
   });
 
+  test("passes when it is what an older Bun wrote where the property matchers became properties of the object", async () => {
+    // Bun 1.4.2 wrote these. To add one, run its test under that version.
+    const printed = {
+      "Headers": `Headers \nHeaders {\n  "id": Any<String>,\n}\n`,
+      "Event": `Event \nEvent {\n  "isTrusted": false,\n  "timeStamp": Any<Number>,\n}\n`,
+      "URL": `URL \nURL {\n  "href": Any<String>,\n}\n`,
+      "CryptoHasher": `CryptoHasher \nCryptoHasher {\n  "algorithm": Any<String>,\n}\n`,
+      "URL in an object": `\n{\n  "n": 1,\n  "u": URL URL {\n    "href": Any<String>,\n  },\n}\n`,
+      "MessageEvent": `MessageEvent {\n  type: "message",\n  data: Any<String>, \n}`,
+      "object in a MessageEvent": `MessageEvent {\n  type: "message",\n  data: {\n    "id": Any<Number>,\n    "k": 2,\n  }, \n}`,
+      "type of a MessageEvent": `MessageEvent \nMessageEvent {\n  "isTrusted": false,\n  "type": Any<String>,\n}\n`,
+      "ErrorEvent": `ErrorEvent {\n  type: "error",\n  error: Any<Error>\n}`,
+      "class with a private tag": `T \nTagged {\n  "a": Any<Number>,\n  "b": 2,\n}\n`,
+      "own getter": `\n{\n  "a": Any<Number>,\n  "total": [native code],\n}\n`,
+    };
+    const older =
+      headers.bun +
+      Object.entries(printed)
+        .map(([name, text]) => `\nexports[\`${name} 1\`] = \`${text}\`;\n`)
+        .join("");
+    using dir = tempDir("snapshot-older-bun-matchers", {
+      "a.test.js": `
+          class Tagged {
+            #name = "T";
+            a = 1;
+            b = 2;
+            get [Symbol.toStringTag]() {
+              return this.#name;
+            }
+          }
+          const string = expect.any(String);
+          const number = expect.any(Number);
+          const withGetter = () => ({ a: 1, get total() { return this.a + 1; } });
+          test("Headers", () => { expect(Object.assign(new Headers(), { id: "v1" })).toMatchSnapshot({ id: string }); });
+          test("Event", () => { expect(new Event("x")).toMatchSnapshot({ timeStamp: number }); });
+          test("URL", () => { expect(new URL("http://example.com/a")).toMatchSnapshot({ href: string }); });
+          test("CryptoHasher", () => { expect(new Bun.CryptoHasher("sha1")).toMatchSnapshot({ algorithm: string }); });
+          test("URL in an object", () => { expect({ u: new URL("http://example.com/a"), n: 1 }).toMatchSnapshot({ u: { href: string } }); });
+          test("MessageEvent", () => { expect(new MessageEvent("message", { data: "x" })).toMatchSnapshot({ data: string }); });
+          test("object in a MessageEvent", () => { expect(new MessageEvent("message", { data: { id: 1, k: 2 } })).toMatchSnapshot({ data: { id: number } }); });
+          test("type of a MessageEvent", () => { expect(new MessageEvent("message", { data: "x" })).toMatchSnapshot({ type: string }); });
+          test("ErrorEvent", () => { expect(new ErrorEvent("error", { message: "m", error: new Error("e") })).toMatchSnapshot({ message: string, error: expect.any(Error) }); });
+          test("class with a private tag", () => { expect(new Tagged()).toMatchSnapshot({ a: number }); });
+          test("own getter", () => {
+            expect(withGetter()).toMatchSnapshot({ a: number });
+            expect(withGetter()).toMatchInlineSnapshot({ a: number }, \`${printed["own getter"]}\`);
+          });
+        `,
+      "__snapshots__/a.test.js.snap": older,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "true" });
+    const count = Object.keys(printed).length;
+    expect({ pass, stderr: pass === count ? "" : stderr }).toEqual({ pass: count, stderr: "" });
+    expect(readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8")).toBe(older);
+    expect(exitCode).toBe(0);
+  });
+
   test("what an older Bun wrote counts as passed, stays as it is, and --update-snapshots rewrites it once", async () => {
     const older = headers.bun + `\nexports[\`in a file 1\`] = \`\n${olderBun}\n\`;\n`;
     using dir = tempDir("snapshot-older-bun", {

@@ -763,6 +763,36 @@ describe("bundler", () => {
         'TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received object',
     },
   });
+  // A stream schedules its events with process.nextTick. They must use the
+  // queue of the process polyfill, so they run in tick order and before timers.
+  itBundled("browser/NodeStreamUsesProcessPolyfillTickQueue", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Readable } from "node:stream";
+        import { nextTick } from "node:process";
+        const log = [];
+        globalThis.DONE = new Promise(resolve => {
+          setTimeout(() => { log.push("timeout"); resolve(log.join(" < ")); }, 0);
+          const stream = new Readable({ read() {} });
+          stream.on("data", () => log.push("stream data"));
+          stream.push("x");
+          nextTick(() => log.push("process tick"));
+        });
+      `,
+    },
+    target: "browser",
+    runtimeFiles: {
+      "/exec.js": /* js */ `
+        delete globalThis.process;
+        await import("./out.js");
+        console.log(await globalThis.DONE);
+      `,
+    },
+    run: {
+      file: "/exec.js",
+      stdout: "stream data < process tick < timeout",
+    },
+  });
   // Each tick queues the next and forwards its payload as an argument, so the
   // whole chain runs in one drain. A tick that already ran must not stay
   // reachable until the chain ends.

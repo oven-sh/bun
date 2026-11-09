@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient, spawn } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { join } from "node:path";
 import {
   ctx as _ctx,
@@ -17,6 +17,7 @@ import {
 } from "./test-utils";
 import type { RedisTestStartMessage } from "./valkey.failing-subscriber";
 import type { Message } from "./valkey.failing-subscriber-no-ipc";
+import { numberArguments } from "./valkey.number-arguments.fixture";
 
 for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
   const ctx = { ..._ctx, redis: connectionType ? _ctx.redis : (_ctx.redisTLS as RedisClient) };
@@ -7519,55 +7520,11 @@ describe("RedisClient argument validation", () => {
     }
   });
 
-  test("a number is accepted as a value, a list element, a member and an option value", () => {
-    // packages/bun-types/redis.d.ts declares `number` at each of these positions, so no call here has a cast.
+  test("a number is accepted as a value, a list element, a member and an option value", async () => {
     const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
     try {
-      const calls = [
-        () => client.set("k", 0),
-        () => client.set("k", 1, "EX", 60, "NX"),
-        () => client.append("k", 1),
-        () => client.getset("k", 1),
-        () => client.setnx("k", 1),
-        () => client.setex("k", 60, 1),
-        () => client.psetex("k", 60_000, 1),
-        () => client.setrange("k", 0, 1),
-        () => client.mset("a", 1, "b", 2),
-        () => client.msetnx("a", 1, "b", 2),
-        () => client.lpush("list", 1, 2),
-        () => client.rpush("list", 1, 2),
-        () => client.lpushx("list", 1),
-        () => client.rpushx("list", 1),
-        () => client.lset("list", 0, 1),
-        () => client.lrem("list", 0, 1),
-        () => client.linsert("list", "BEFORE", 1, 2),
-        () => client.lpos("list", 1),
-        () => client.sadd("set", 1, 2),
-        () => client.srem("set", 1, 2),
-        () => client.sismember("set", 1),
-        () => client.smove("set", "set2", 1),
-        () => client.smismember("set", 1, 2),
-        () => client.zscore("zset", 1),
-        () => client.zincrby("zset", 1.5, 2),
-        () => client.zmscore("zset", 1, 2),
-        () => client.zrem("zset", 1, 2),
-        () => client.zrank("zset", 1),
-        () => client.zrevrank("zset", 1),
-        () => client.zrange("zset", 0, 10, "BYSCORE", "LIMIT", 0, 2),
-        () => client.zrangestore("dest", "zset", 1, 3, "BYSCORE", "LIMIT", 0, 2),
-        () => client.zrevrangebylex("zset", "+", "-", "LIMIT", 0, 2),
-        () => client.zscan("zset", 0, "COUNT", 10),
-        () => client.pfadd("hll", 1),
-        () => client.geodist("geo", 1, 2),
-        () => client.geohash("geo", 1),
-        () => client.geopos("geo", 1),
-        () => client.hset("hash", "f", 1, "g", 2),
-        () => client.hsetnx("hash", "f", 1),
-        () => client.hmset("hash", "f", 1, "g", 2),
-        () => client.hmset("hash", ["f", 1]),
-        () => client.hsetex("hash", "EX", 60, "FIELDS", 1, "f", 1),
-      ];
-      expect(calls.filter(call => syncThrow(call) !== undefined).map(String)).toEqual([]);
+      const refused = numberArguments(client).filter(call => syncThrow(call) !== undefined);
+      expect(refused.map(String)).toEqual([]);
 
       // The types refuse these (test/integration/bun-types/fixture/redis.ts), and so does the client.
       for (const call of [
@@ -7584,6 +7541,35 @@ describe("RedisClient argument validation", () => {
     } finally {
       client.close();
     }
+
+    // The declarations of this repository accept the same calls. `bun check` prints each diagnostic on stdout.
+    using dir = tempDir("redis-number-arguments", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+          target: "esnext",
+          module: "esnext",
+          moduleResolution: "bundler",
+          lib: ["esnext"],
+          typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")],
+          types: ["bun-types"],
+          skipLibCheck: true,
+        },
+      }),
+      "calls.ts": await Bun.file(join(import.meta.dir, "valkey.number-arguments.fixture.ts")).text(),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("No type errors in 1 file");
+    expect(exitCode).toBe(0);
   });
 });
 

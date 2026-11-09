@@ -1,5 +1,5 @@
 diff --git a/src/win/internal.h b/src/win/internal.h
-index 0a941b9..c4d3835 100644
+index 0a941b92..c4d3835e 100644
 --- a/src/win/internal.h
 +++ b/src/win/internal.h
 @@ -283,6 +283,7 @@ void uv__stdio_destroy(BYTE* buffer);
@@ -11,7 +11,7 @@ index 0a941b9..c4d3835 100644
  
  
 diff --git a/src/win/process-stdio.c b/src/win/process-stdio.c
-index 181db92..d92b355 100644
+index 181db92e..d92b3553 100644
 --- a/src/win/process-stdio.c
 +++ b/src/win/process-stdio.c
 @@ -412,6 +412,11 @@ WORD uv__stdio_size(BYTE* buffer) {
@@ -27,7 +27,7 @@ index 181db92..d92b355 100644
    HANDLE handle;
    memcpy(&handle, CHILD_STDIO_HANDLE(buffer, fd), sizeof(HANDLE));
 diff --git a/src/win/process.c b/src/win/process.c
-index 267f0c8..dc608d9 100644
+index 267f0c84..602f6a55 100644
 --- a/src/win/process.c
 +++ b/src/win/process.c
 @@ -890,6 +890,47 @@ void uv__process_endgame(uv_loop_t* loop, uv_process_t* handle) {
@@ -184,7 +184,15 @@ index 267f0c8..dc608d9 100644
      /* Avoid creating console window if stdio is not inherited. */
      for (i = 0; i < options->stdio_count; i++) {
        if (options->stdio[i].flags & UV_INHERIT_FD)
-@@ -1111,7 +1171,7 @@ int uv_spawn(uv_loop_t* loop,
+@@ -1107,11 +1167,15 @@ int uv_spawn(uv_loop_t* loop,
+     process_flags |= CREATE_SUSPENDED;
+   }
+ 
++  fprintf(stderr, "uv_spawn probe: stdio_count=%d handle_count=%d attr_list=%p flags=%lx inherit=%d cb=%lu sizeof=%u\n",
++          child_stdio_buffer ? uv__stdio_count(child_stdio_buffer) : -1, handle_count, (void*) attr_list,
++          (unsigned long) process_flags, (int) inherit_handles, (unsigned long) startup.StartupInfo.cb, (unsigned) sizeof(startup));
++  fflush(stderr);
+   if (!CreateProcessW(application_path,
                       arguments,
                       NULL,
                       NULL,
@@ -193,7 +201,7 @@ index 267f0c8..dc608d9 100644
                       process_flags,
                       env,
                       cwd,
-@@ -1211,6 +1271,7 @@ int uv_spawn(uv_loop_t* loop,
+@@ -1211,6 +1275,7 @@ int uv_spawn(uv_loop_t* loop,
      DeleteProcThreadAttributeList(attr_list);
      uv__free(attr_list);
    }

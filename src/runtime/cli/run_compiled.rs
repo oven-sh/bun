@@ -1032,9 +1032,8 @@ fn parse_descriptor(text: &[u8]) -> Option<Fd> {
     }
     let text = core::str::from_utf8(text).ok()?;
     let number = text.parse::<i32>().ok()?;
+    // A number with no handle behind it is a closed descriptor. `_get_osfhandle` would end the process over it.
     #[cfg(windows)]
-    // A number that the parent put no handle behind is a closed descriptor. The C runtime ends the process when it
-    // is asked for the handle of one, so it is not asked.
     if !is_open_in_descriptor_block(inherited_descriptor_block(), number as usize) {
         return Some(Fd::INVALID);
     }

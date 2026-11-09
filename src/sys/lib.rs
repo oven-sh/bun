@@ -4090,10 +4090,7 @@ mod windows_impl {
         super::openat_windows_a(dir, path.as_bytes(), flags, mode)
     }
     /// `DuplicateHandle` with `bInheritHandle = FALSE`, the equivalent of the
-    /// POSIX arm's `F_DUPFD_CLOEXEC`. A child inherits only the handles its
-    /// spawn names (libuv duplicates the stdio it is given, inheritable, and
-    /// lists those for `CreateProcessW`), so nothing needs an inheritable
-    /// duplicate.
+    /// POSIX arm's `F_DUPFD_CLOEXEC`. A spawn duplicates the stdio it hands on.
     pub fn dup(fd: Fd) -> Maybe<Fd> {
         // DuplicateHandle on the underlying HANDLE.
         let process = w::kernel32::GetCurrentProcess();

@@ -116,6 +116,24 @@ test.skipIf(!isWindows)("probe", async () => {
     report.a = { stdout, stderr, exitCode, child: read("a") };
   }
 
+  // A2: Bun.spawn from a child bun, whose stderr (where uv_spawn prints) is captured
+  {
+    const script = `
+      const extra = process.argv[1];
+      const proc = Bun.spawn({ cmd: [${JSON.stringify(bunExe())}, ${JSON.stringify(join(String(dir), "fixture.ts"))}, extra, ${JSON.stringify(out("a2"))}], stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+      await proc.exited;
+      console.log("child exit " + proc.exitCode);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, String(extra)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    report.a2 = { stdout, stderr, exitCode, child: read("a2") };
+  }
+
   const spawnFfi = (name: string, inherit: number, handleList: bigint[] | null) => {
     const startup = new DataView(new ArrayBuffer(112));
     startup.setUint32(0, 112, true);

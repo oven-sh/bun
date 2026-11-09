@@ -26,8 +26,13 @@ test.skipIf(!isLinux)(
 
     const said: string[] = [];
     using where = saysWhereItIs(child.pid, cmd, { first: 0, every: 20, span: 20, say: text => said.push(text) });
-    // The shell sleeps in its read, and no list differs from the one before it.
-    while (where.lists < 5) await Bun.sleep(5);
+    // The shell sleeps in its read, and no list differs from the one before it. A shell that has ended gets no more lists.
+    while (where.lists < 5 && child.exitCode === null && child.signalCode === null) await Bun.sleep(5);
+    expect({ lists: where.lists >= 5, exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({
+      lists: true,
+      exitCode: null,
+      signalCode: null,
+    });
     expect(said.length).toBeLessThanOrEqual(2);
     expect(said.at(-1)).toMatch(
       // Behind it: what the shell waits on in the kernel and the system call it is in, where the machine lets a parent read them.

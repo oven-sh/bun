@@ -71,6 +71,44 @@ describe("UTF-8 BOM should be ignored", () => {
       const formData = await response.formData();
       expect(formData.get("hello")).toBe("world");
     });
+
+    // https://github.com/oven-sh/bun/issues/48380
+    describe("with a string body", () => {
+      it("in text()", async () => {
+        expect(await new Response("\uFEFFHello, World! 🌎").text()).toBe("Hello, World! 🌎");
+      });
+
+      it("in json()", async () => {
+        expect(await new Response('\uFEFF{"hello":"World 🌎"}').json()).toEqual({ hello: "World 🌎" } as any);
+      });
+
+      it("keeps the BOM in arrayBuffer()", async () => {
+        const bytes = new Uint8Array(await new Response("\uFEFFa").arrayBuffer());
+        expect(Array.from(bytes)).toEqual([0xef, 0xbb, 0xbf, 0x61]);
+      });
+
+      it("handles a body that is only the BOM", async () => {
+        expect(await new Response("\uFEFF").text()).toBe("");
+        expect(async () => await new Response("\uFEFF").json()).toThrow();
+      });
+
+      it("keeps a BOM that is not at the start", async () => {
+        expect(await new Response("a\uFEFFb").text()).toBe("a\uFEFFb");
+      });
+
+      it("drops exactly one BOM", async () => {
+        expect(await new Response("\uFEFF\uFEFFa").text()).toBe("\uFEFFa");
+      });
+
+      it("keeps a Latin-1 tail after the BOM", async () => {
+        expect(await new Response("\uFEFFh\u00e9llo").text()).toBe("h\u00e9llo");
+      });
+
+      it("in textStream()", async () => {
+        const chunks = await Array.fromAsync(new Response("\uFEFFHello").textStream());
+        expect(chunks.join("")).toBe("Hello");
+      });
+    });
   });
 
   describe("Request", () => {
@@ -97,6 +135,19 @@ describe("UTF-8 BOM should be ignored", () => {
       });
       const formData = await request.formData();
       expect(formData.get("hello")).toBe("world");
+    });
+
+    // https://github.com/oven-sh/bun/issues/48380
+    describe("with a string body", () => {
+      it("in text()", async () => {
+        const request = new Request("https://example.com", { method: "POST", body: "\uFEFFHello, World! 🌎" });
+        expect(await request.text()).toBe("Hello, World! 🌎");
+      });
+
+      it("in json()", async () => {
+        const request = new Request("https://example.com", { method: "POST", body: '\uFEFF{"hello":"World 🌎"}' });
+        expect(await request.json()).toEqual({ hello: "World 🌎" } as any);
+      });
     });
   });
 

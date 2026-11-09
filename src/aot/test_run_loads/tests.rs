@@ -192,9 +192,13 @@ fn call_that_fails_on_a_folder_changes_nothing_below_it() {
 
 #[test]
 fn path_that_is_spelled_in_part_marks_the_files_that_fit() {
-    let changes: [(&str, &[&str]); 4] = [
+    let changes: [(&str, &[&str]); 5] = [
         (
             r#"writeFileSync(import.meta.dir + "/lib/" + process.argv[2] + ".js", "")"#,
+            &["lib/one.js", "lib/two.js"],
+        ),
+        (
+            r#"writeFileSync((import.meta.dir + "/lib/").concat(process.argv[2], ".js"), "")"#,
             &["lib/one.js", "lib/two.js"],
         ),
         (
@@ -747,7 +751,7 @@ fn key_known_in_part_takes_out_the_files_that_fit() {
             then(files_of(loaded), &loaded.contents.run.loads)
         });
     };
-    let known: [(&str, &[&str]); 6] = [
+    let known: [(&str, &[&str]); 8] = [
         (
             "exports.f = root => { delete require.cache[path.join(root, \"a.cjs\")]; };\n",
             &["lib/a.cjs", "other/a.cjs"],
@@ -770,6 +774,14 @@ fn key_known_in_part_takes_out_the_files_that_fit() {
         ),
         (
             "exports.f = name => { delete require.cache[__dirname + \"/other/\" + name]; };\n",
+            &["other/a.cjs", "other/c.cjs"],
+        ),
+        (
+            "exports.f = name => { delete require.cache[\"/project/lib/\".concat(name)]; };\n",
+            &["lib/a.cjs"],
+        ),
+        (
+            "exports.f = name => { let key = __dirname + \"/other/\"; key += name; delete require.cache[key]; };\n",
             &["other/a.cjs", "other/c.cjs"],
         ),
     ];

@@ -2344,6 +2344,15 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "for (const name in table) require(name);",
     "for await (const name of ['./a']) require(name);",
     "let name = './a'; name += name; require(name);",
+    "let n = 0; n += x; require(n);",
+    "let name; name = './a/'; name += x; require(name);",
+    "var name = './a/'; name += x; require(name);",
+    "let name = ''; name += x; require(name);",
+    "let name = __dirname; name += x; require(name);",
+    "require('./a/'.concat(...x));",
+    "require(x.concat('.js'));",
+    "let name = './a/'; name = name.concat(x); require(name);",
+    "const { name } = require('./config'); require('./a/'.concat(name, '.js'));",
     "let name = './a'; [name] = x; require(name);",
     "const load = id => require(id); load('./a'); hand(load);",
     "function find() { return find(); } require(find());",
@@ -2355,6 +2364,37 @@ const NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE: &[(&str, &[&str])] = &[
     (
         "let name = './a'; while (c) name += 'b'; require(name);",
         &["./a*"],
+    ),
+    ("let name = './a/'; name += x; require(name);", &["./a/*"]),
+    (
+        "let name = './a/'; name += x; name += '.js'; require(name);",
+        &["./a/*", "./a/*.js"],
+    ),
+    (
+        "let name = c ? './a/' : './b/'; name += x; require(name + '.js');",
+        &["./a/*.js", "./b/*.js"],
+    ),
+    (
+        "let n = 0; n += x; require('./shard' + n + '.js');",
+        &["./shard*.js"],
+    ),
+    (
+        "let name = './'; name += 'a/'; name += x; require(name);",
+        &["./*", "./a/*"],
+    ),
+    (
+        "let name = 'pkg'; name += '/a/'; name += x; require(name);",
+        &["pkg*", "pkg/a/*"],
+    ),
+    (
+        "let name = '.'; name += '/a/'; name += x; require(name);",
+        &[".*", "./a/*"],
+    ),
+    ("require('./a/'.concat(x, '.js'));", &["./a/*.js"]),
+    ("require('./a/'.concat(x, '/', y, '.js'));", &["./a/*.js"]),
+    (
+        "require('./a/'.concat(x, '/').concat(y, '.js'));",
+        &["./a/*.js"],
     ),
     (
         "let name = './a'; const grow = () => { name += 'b'; }; require(name);",
@@ -2713,6 +2753,7 @@ fn answer_of_a_resolver_that_is_changed_or_mixed_is_not_followed() {
 
 const NAMES_OF_WORKERS_THAT_ARE_KNOWN_IN_PART: &[(&str, &[&str])] = &[
     ("new Worker('./a/' + x + '.js');", &["./a/*.js"]),
+    ("new Worker('./a/'.concat(x, '.js'));", &["./a/*.js"]),
     (
         "new threads.Worker(c ? './a.js' : './b.js');",
         &["./a.js", "./b.js"],

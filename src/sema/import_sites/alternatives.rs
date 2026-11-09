@@ -1411,7 +1411,11 @@ impl Follower<'_, '_, '_> {
         }
         appended.shared_sort_unstable_by_key(|it| hir[it.0].pos);
         for (assignment, value) in appended {
-            if !self.runs_once_for_each_binding(assignment, symbol, pattern) {
+            let read = match self.runs_once_for_each_binding(assignment, symbol, pattern) {
+                true => self.values_of(value),
+                false => None,
+            };
+            let Some(value) = read else {
                 let mut open_at_end = Distinct::new();
                 for held in values.all {
                     let Held::Text(mut text) = held else {
@@ -1422,8 +1426,7 @@ impl Follower<'_, '_, '_> {
                 }
                 values = open_at_end;
                 continue;
-            }
-            let value = self.values_of(value)?;
+            };
             let before = values.len();
             for sum in self.add_values(&values, &value)? {
                 add(&mut values, sum);
@@ -3604,7 +3607,11 @@ impl Follower<'_, '_, '_> {
             if matches!(expr_kind(hir, argument), None | Some(ExprKind::Spread(_))) {
                 return None;
             }
-            given.push(self.values_of(argument)?);
+            let read = self.values_of(argument);
+            given.push(match method == b"concat" {
+                true => read.unwrap_or_else(some_text),
+                false => read?,
+            });
         }
         if method == b"concat" {
             let is_joined = |value: &Held| matches!(value, Held::Text(_) | Held::Primitive(_));

@@ -5,7 +5,7 @@ use super::vi_utils;
 use bun_core::lexer::end_of_run;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::strings;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
@@ -224,6 +224,10 @@ pub(crate) fn move_replacements(cx: &mut JsScope<'_>, on: bool) {
     if let Err(err) = vi_utils::move_stubs_of_preloads(global, on) {
         let _ = global.take_exception(err);
     }
+}
+
+pub(crate) fn is_only_a_stub(cx: &mut JsScope<'_>, name: JsLocal<'_>) -> bool {
+    vi_utils::is_only_a_stub_of_preload(cx.global(), name.to_js())
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

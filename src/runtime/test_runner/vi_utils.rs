@@ -11,6 +11,7 @@ unsafe extern "C" {
     safe fn ViUtils__unstubAllGlobals(global: &JSGlobalObject);
     safe fn ViUtils__stubWhatPreloadStubbed(global: &JSGlobalObject);
     safe fn ViUtils__stubGlobalsOfPreload(global: &JSGlobalObject);
+    safe fn ViUtils__isOnlyAStubOfPreload(global: &JSGlobalObject, name: JSValue) -> bool;
     safe fn ViUtils__forgetDynamicImports(global: &JSGlobalObject);
     safe fn JSMock__restoreAllMocks(global: &JSGlobalObject);
     safe fn JSMock__resetAllMocks(global: &JSGlobalObject);
@@ -93,6 +94,15 @@ pub(crate) fn move_stubs_of_preloads(global: &JSGlobalObject, on: bool) -> JsRes
         ViUtils__unstubAllGlobals
     };
     bun_jsc::from_js_host_call_generic(global, || step(global))
+}
+
+/// Whether the global has `name` only as a stub of a preload, with nothing under it.
+pub(crate) fn is_only_a_stub_of_preload(global: &JSGlobalObject, name: JSValue) -> bool {
+    bun_jsc::from_js_host_call_generic(global, || ViUtils__isOnlyAStubOfPreload(global, name))
+        .unwrap_or_else(|err| {
+            let _ = global.take_exception(err);
+            false
+        })
 }
 
 /// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.

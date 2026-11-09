@@ -422,6 +422,33 @@ extern "C" void ViUtils__unstubAllGlobals(Zig::GlobalObject* globalObject)
     Bun::unstubAllGlobals(globalObject);
 }
 
+// Whether globalThis has `name` only as a stub of a preload: the stub is on it, and it replaced nothing.
+extern "C" bool ViUtils__isOnlyAStubOfPreload(Zig::GlobalObject* globalObject, JSC::EncodedJSValue name)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::JSValue stubs = globalObject->mockModule.globalsOfPreload.get();
+    JSC::JSValue originals = globalObject->mockModule.stubbedGlobals.get();
+    if (!stubs || !originals)
+        return false;
+    JSC::JSValue key = JSC::JSValue::decode(name);
+    bool isRemembered = Bun::hasOriginal(globalObject, uncheckedDowncast<JSC::JSMap>(originals), key);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isRemembered)
+        return false;
+    JSC::JSValue original = JSC::JSValue::decode(JSC__JSMap__get(uncheckedDowncast<JSC::JSMap>(originals), globalObject, name));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!original.isUndefined())
+        return false;
+    JSC::JSValue stub = JSC::JSValue::decode(JSC__JSMap__get(uncheckedDowncast<JSC::JSMap>(stubs), globalObject, name));
+    RETURN_IF_EXCEPTION(scope, false);
+    auto propertyName = Bun::propertyKeyOf(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSC::PropertyDescriptor current;
+    bool exists = globalObject->globalThis()->getOwnPropertyDescriptor(globalObject, propertyName, current);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, exists && current.isDataDescriptor() && JSC::sameValue(globalObject, current.value(), stub));
+}
+
 // The globals half of ViUtils__stubWhatPreloadStubbed. The test environment calls it alone, after it moved a window's names.
 extern "C" void ViUtils__stubGlobalsOfPreload(Zig::GlobalObject* globalObject)
 {

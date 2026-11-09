@@ -6,6 +6,7 @@ const types = require("node:util/types");
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $bindgen("environment.bind.ts", "isInPreload");
 const moveReplacements: (on: boolean) => void = $bindgen("environment.bind.ts", "moveReplacements");
+const isOnlyAStub: (name: string) => boolean = $bindgen("environment.bind.ts", "isOnlyAStub");
 // This module's copy in a global that outlives the test files.
 const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   "TestEnvironment.cpp",
@@ -477,8 +478,6 @@ let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unk
 
 // Without --isolate, a preload's vi.stubGlobal() stubs keep what they replaced, so they come off while a window's names move.
 let areReplacementsOff = false;
-// The stubs put a `document` on a globalThis that had none. That is no DOM that a preload set up.
-let isDocumentAStub = false;
 
 function takeOffReplacements() {
   if (areReplacementsOff) return;
@@ -489,9 +488,7 @@ function takeOffReplacements() {
 function putOnReplacements() {
   if (!areReplacementsOff) return;
   areReplacementsOff = false;
-  const hadDocument = "document" in globalThis;
   moveReplacements(true);
-  isDocumentAStub = !hadDocument && "document" in globalThis;
 }
 
 function enter(name: string, environment: Environment, keep: boolean) {
@@ -669,11 +666,8 @@ function setup(
   }
   try {
     if (name === "node") return last && leaveLast();
-    if (!last && "document" in globalThis) {
-      if (!isDocumentAStub) return;
-      takeOffReplacements();
-      if ("document" in globalThis) return;
-    }
+    // A `document` that is only a stub of a preload is no DOM that the preload set up.
+    if (!last && "document" in globalThis && !isOnlyAStub("document")) return;
 
     let result;
     try {

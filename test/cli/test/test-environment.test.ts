@@ -1410,32 +1410,45 @@ describe.concurrent("test environment", () => {
       test.each([
         [
           "after a node file",
+          documentStub,
           ["--environment=happy-dom"],
           { "1.test.js": logs("1", "where(), document"), "2.test.js": `${inNode}${logs("2", "where(), document")}` },
           ["1 happy-dom#1 stub", "2 node stub", "3 happy-dom#1 stub"],
         ],
+        ["in a project without one", documentStub, [], {}, ["3 happy-dom#1 stub"]],
         [
           "after a window that can't stay until the next file",
+          documentStub,
           ["--environment=happy-dom"],
           {
             "1.test.js": file("1", `Object.defineProperty(globalThis, "scrollTo", { value: 1, configurable: false });`),
           },
           ["3 happy-dom#1 stub"],
         ],
-      ])("a stub of document doesn't keep a file from its window %s", async (_, args, files, stdout) => {
+        [
+          "when a hook of the preload made it in a node file",
+          `import { beforeAll, vi } from "bun:test"; beforeAll(() => vi.stubGlobal("document", "stub"));`,
+          ["--environment=happy-dom"],
+          { "1.test.js": `${inNode}${logs("1", "where(), document")}` },
+          ["1 node stub", "3 happy-dom#1 stub"],
+        ],
+      ])("a stub of document doesn't keep a file from its window %s", async (_, preload, args, files, stdout) => {
         const ran = await run(
-          { "preload.js": documentStub, ...files, "3.test.js": `${inWindow}${logs("3", "where(), document")}` },
+          { "preload.js": preload, ...files, "3.test.js": `${inWindow}${logs("3", "where(), document")}` },
           ...args,
         );
         expect(ran).toEqual(passed(...stdout));
       });
 
-      test("a stub of document in a project without a window is a DOM that the preload set up", async () => {
+      test.each([
+        ["over a document of its own", `globalThis.document = "own"; vi.stubGlobal("document", "stub");`, "stub"],
+        ["under a document of its own", `vi.stubGlobal("document", "stub"); globalThis.document = "own";`, "own"],
+      ])("a preload with a stub %s has set up a DOM", async (_, preload, document) => {
         const ran = await run({
-          "preload.js": `${documentStub} vi.stubGlobal("matchMedia", () => "stub");`,
-          "1.test.js": `${inWindow}${logs("1", "where(), document, media()")}`,
+          "preload.js": `import { vi } from "bun:test"; ${preload}`,
+          "1.test.js": `${inWindow}${logs("1", "where(), document")}`,
         });
-        expect(ran).toEqual(passed("1 node stub stub"));
+        expect(ran).toEqual(passed(`1 node ${document}`));
       });
 
       test("a stub is on a node file after a window that can't stay until the next file", async () => {

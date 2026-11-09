@@ -471,6 +471,19 @@ struct DeepMatchState {
         recordedNames.append(name);
     }
 };
+
+// JestMatchedRows.cpp. A place is an object together with the pattern it was compared with. 0 is no place and 1 is the root.
+struct MatchedRow {
+    JSC::JSValue value;
+    uint32_t childPlace { 0 };
+};
+JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
+// The rows cell for what `state` recorded, or the empty value if the root leads to no matched matcher. Takes the names out of `state`.
+JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
+// `value` is empty if the place has no row of that name: the printer then reads the property from the object.
+MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, const JSC::Identifier& name);
+// Appends to `missing` the names of the rows of the place that are not among `names`, in the order of the walk.
+void appendMissingMatchedRowNames(JSC::JSCell* rows, uint32_t place, std::span<const JSC::Identifier> names, WTF::Vector<JSC::Identifier>& missing);
 }
 
 /**

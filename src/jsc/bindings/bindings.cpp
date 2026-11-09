@@ -3672,91 +3672,7 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object)
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSObject* copy = nullptr;
-    if (isJSArray(object)) {
-        copy = constructEmptyArray(globalObject, nullptr, 0);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    } else if (object->type() == FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(object)) {
-        JSValue prototype = object->getPrototypeDirect();
-        copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    } else {
-        return nullptr;
-    }
-    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    for (const auto& name : names) {
-        PropertyDescriptor descriptor;
-        bool exists = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (!exists)
-            continue;
-        descriptor.setConfigurable(true);
-        if (descriptor.isDataDescriptor())
-            descriptor.setWritable(true);
-        copy->methodTable()->defineOwnProperty(copy, globalObject, name, descriptor, false);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    // The loop can't define `length` (it's not configurable), and trailing holes only exist through it.
-    if (auto* array = dynamicDowncast<JSArray>(copy)) {
-        array->setLength(globalObject, uncheckedDowncast<JSArray>(object)->length(), false);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    return copy;
-}
-
-// Returns `root` with matched properties replaced by their asymmetric matchers, copying only the objects that change.
-static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern)
-{
-    using Pair = std::pair<EncodedJSValue, EncodedJSValue>;
-    auto pairAt = [&](size_t index) { return Pair { JSValue::encode(state.recorded.at(index)), JSValue::encode(state.recorded.at(index + 1)) }; };
-    auto matchedMatcher = [&](size_t record) { return state.recorded.at(record * 4 + 3).isUndefined(); };
-    size_t records = state.recordedNames.size();
-
-    // Keyed by (object, pattern), since an object that appears twice can meet a different pattern in each place.
-    std::map<Pair, JSObject*> copies;
-    for (size_t i = 0; i < records; i++) {
-        if (matchedMatcher(i))
-            copies.emplace(pairAt(i * 4), nullptr);
-    }
-    // Also copy every object that leads to one of those. Runs to a fixed point because of cycles.
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (size_t i = records; i-- > 0;) {
-            if (!matchedMatcher(i) && copies.contains(pairAt(i * 4 + 2)) && copies.emplace(pairAt(i * 4), nullptr).second)
-                changed = true;
-        }
-    }
-
-    MarkedArgumentBuffer keepAlive;
-    for (auto& [pair, copy] : copies) {
-        copy = shallowCopyForDeepMatch(globalObject, scope, asObject(JSValue::decode(pair.first)));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (copy)
-            keepAlive.append(copy);
-    }
-    for (size_t i = 0; i < records; i++) {
-        auto holder = copies.find(pairAt(i * 4));
-        if (holder == copies.end() || !holder->second)
-            continue;
-        JSValue value = state.recorded.at(i * 4 + 2);
-        if (!matchedMatcher(i)) {
-            auto nested = copies.find(pairAt(i * 4 + 2));
-            if (nested == copies.end() || !nested->second)
-                continue;
-            value = nested->second;
-        }
-        holder->second->putDirectMayBeIndex(globalObject, state.recordedNames[i], value);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    auto copyOfRoot = copies.find({ JSValue::encode(root), JSValue::encode(rootPattern) });
-    return copyOfRoot != copies.end() && copyOfRoot->second ? JSValue(copyOfRoot->second) : root;
-}
-
-bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replaceWhen, JSC::EncodedJSValue* replaced)
+bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool rowsWhen, JSC::EncodedJSValue* rows)
 {
     JSValue obj = JSValue::decode(JSValue0);
     JSValue subset = JSValue::decode(JSValue1);
@@ -3764,14 +3680,11 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     Bun::DeepMatchState state;
-    state.records = !!replaced;
+    state.records = !!rows;
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
-    if (replaced) {
-        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;
-        RETURN_IF_EXCEPTION(scope, false);
-        *replaced = JSValue::encode(shown);
-    }
+    if (rows)
+        *rows = JSValue::encode(matched == rowsWhen ? Bun::matchedRowsFrom(globalObject, state, obj, subset) : JSValue());
     return matched;
 }
 
@@ -6401,7 +6314,22 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false)
+namespace {
+// What the bun:test printer walks with: the matched rows of the place it prints, and a callback that is also told the place of each value.
+struct MatchedRowsVisitor {
+    void (*callback)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace);
+    JSC::JSCell* rows;
+    uint32_t place;
+
+    void operator()(JSC::JSGlobalObject* globalObject, void* ctx, EncodedSlice* key, JSC::EncodedJSValue value, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace = 0) const
+    {
+        callback(globalObject, ctx, key, value, isSymbol, isPrivateSymbol, childPlace);
+    }
+};
+}
+
+template<typename Visitor>
+static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, Visitor iter, bool callGetters, bool withNonEnumerable = false)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -6422,6 +6350,16 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         else
             object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
+        if constexpr (std::is_same_v<Visitor, MatchedRowsVisitor>) {
+            // A matched name that is not an own property, such as a getter of the class, gets a line at its sorted place.
+            WTF::Vector<Identifier> missing;
+            Bun::appendMissingMatchedRowNames(iter.rows, iter.place, properties.data()->propertyNameVector().span(), missing);
+            for (auto& name : missing)
+                properties.add(name);
+            auto& names = properties.data()->propertyNameVector();
+            // Strings stay ahead of symbols, as in the names of an object that owns the row. It shows where a string and a symbol have the same text.
+            std::stable_partition(names.begin(), names.end(), [](const Identifier& name) { return !name.isSymbol(); });
+        }
     }
 
     auto vector = properties.data()->propertyNameVector();
@@ -6435,6 +6373,17 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         // ignore constructor
         if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
             continue;
+
+        if constexpr (std::is_same_v<Visitor, MatchedRowsVisitor>) {
+            // A matched row is shown in place of the property, which is not read.
+            if (auto row = Bun::matchedRow(iter.rows, iter.place, property); row.value) {
+                EncodedSlice key = toEncodedSlice(property.impl());
+                JSC::EnsureStillAliveScope ensureStillAliveScope(row.value);
+                iter(globalObject, arg2, &key, JSC::JSValue::encode(row.value), property.isSymbol(), false, row.childPlace);
+                RETURN_IF_EXCEPTION(scope, );
+                continue;
+            }
+        }
 
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
         bool hasProperty = object->getPropertySlot(globalObject, property, slot);
@@ -6496,6 +6445,20 @@ extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJ
 extern "C" void JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false, true);
+}
+
+// Returns true if Bun__JestMatchedRows__forEachPropertyOrderedWithNonEnumerable is sure to visit the same properties.
+extern "C" bool Bun__JestMatchedRows__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace), JSC::EncodedJSValue rows, uint32_t place)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+    bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, MatchedRowsVisitor { iter, JSC::JSValue::decode(rows).asCell(), place }, true);
+    return hasOnlyEnumerableValues;
+}
+
+extern "C" void Bun__JestMatchedRows__forEachPropertyOrderedWithNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace), JSC::EncodedJSValue rows, uint32_t place)
+{
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, MatchedRowsVisitor { iter, JSC::JSValue::decode(rows).asCell(), place }, false, true);
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)

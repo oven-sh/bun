@@ -69,6 +69,8 @@ pub mod js_runtime_type;
 pub mod js_uint8_array;
 #[path = "MarkedArgumentBuffer.rs"]
 pub mod marked_argument_buffer;
+#[path = "MatchedRows.rs"]
+pub mod matched_rows;
 #[path = "RegularExpression.rs"]
 pub mod regular_expression;
 #[path = "ScriptExecutionStatus.rs"]
@@ -386,6 +388,7 @@ pub use self::js_map::JSMap;
 pub use self::js_runtime_type::JSRuntimeType;
 pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
+pub use self::matched_rows::{MatchedPlace, MatchedPlaceScope, MatchedRows};
 pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;

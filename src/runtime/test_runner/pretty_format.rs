@@ -6,7 +6,8 @@ use bun_core::fmt as bun_fmt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSType, JSValue, JsClass as _, JsError, JsResult, StringJsc as _, VM,
+    JSPropertyIterator, JSType, JSValue, JsClass as _, JsError, JsResult, MatchedPlace, MatchedPlaceScope,
+    MatchedRows, StringJsc as _, VM,
 };
 use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
@@ -85,6 +86,8 @@ pub(crate) struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// The matchers that a failed `toMatchObject` prints in place of what they matched in the value.
+    pub(crate) matched_rows: MatchedRows,
 }
 
 struct CountedWriter<'a, W: bun_io::Write> {
@@ -146,6 +149,7 @@ impl JestPrettyFormat {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
             fmt.output_length = Some(output_length);
+            fmt.place = MatchedPlaceScope::at_root(options.matched_rows);
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -340,6 +344,8 @@ pub(crate) struct Formatter<'a> {
     items: u32,
     /// Vitest's `_outputLengthPerDepth`. Only tracked when `is_inline`.
     output_at_depth: [usize; 12],
+    /// Where the value being printed is among the matched rows of `toMatchObject()` or of a snapshot's property matchers.
+    place: MatchedPlaceScope,
 }
 
 impl<'a> Formatter<'a> {
@@ -372,6 +378,7 @@ impl<'a> Formatter<'a> {
             call_to_json: true,
             items: 0,
             output_at_depth: [0; 12],
+            place: MatchedPlaceScope::default(),
         }
     }
 
@@ -1072,6 +1079,22 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         ctx.i += 1;
     }
+
+    /// `for_each` for an object that has matched rows: `child` is the place of `value`.
+    extern "C" fn for_each_row(
+        global_this: &JSGlobalObject,
+        ctx_ptr: *mut c_void,
+        key: &EncodedSlice,
+        value: JSValue,
+        is_symbol: bool,
+        is_private_symbol: bool,
+        child: jsc::matched_rows::PlaceHandle,
+    ) {
+        // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each_row.
+        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
+        ctx.formatter.place.hand_child(child);
+        Self::for_each(global_this, ctx_ptr, key, value, is_symbol, is_private_symbol);
+    }
 }
 
 impl<'a> Formatter<'a> {
@@ -1462,6 +1485,7 @@ impl<'a> Formatter<'a> {
                     }
 
                     let mut was_good_time = self.always_newline_scope;
+                    let place = self.place.current();
                     {
                         self.indent += 1;
 
@@ -1475,7 +1499,7 @@ impl<'a> Formatter<'a> {
                         // a closure and restore unconditionally afterward.
                         let inner: JsResult<()> = (|| {
                             {
-                                let element = value.get_index(self.global_this, 0)?;
+                                let element = self.element_to_print(place, value, 0)?;
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 was_good_time = was_good_time
@@ -1514,7 +1538,7 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b"\n");
                                 self.write_indent(writer.ctx).expect("unreachable");
 
-                                let element = value.get_index(self.global_this, i)?;
+                                let element = self.element_to_print(place, value, i)?;
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
@@ -1638,10 +1662,11 @@ impl<'a> Formatter<'a> {
                                 .as_bytes(),
                             );
 
+                            let entries = to_json_function.call(self.global_this, value, &[])?;
+                            // The matched rows are those of the FormData, not of the object it returned.
+                            self.place.clear();
                             return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                                writer.ctx,
-                                to_json_function.call(self.global_this, value, &[])?,
-                                JSType::Object,
+                                writer.ctx, entries, JSType::Object,
                             );
                         }
 
@@ -1898,8 +1923,9 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("{}", str));
                 }
                 Tag::Event => {
+                    let place = self.place.current();
                     let event_type_value: JSValue = 'brk: {
-                        let value_: JSValue = match value.get(self.global_this, "type")? {
+                        let value_: JSValue = match place.row_or("type", || value.get(self.global_this, "type"))?.0 {
                             Some(v) => v,
                             None => break 'brk JSValue::UNDEFINED,
                         };
@@ -1948,8 +1974,9 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                         ));
 
-                        if let Some(message_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+                        if let Some(message_value) = place
+                            .row_or("message", || value.fast_get(self.global_this, jsc::BuiltinName::Message))?
+                            .0
                         {
                             if message_value.is_string() {
                                 self.write_indent(writer.ctx).expect("unreachable");
@@ -1977,20 +2004,21 @@ impl<'a> Formatter<'a> {
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 ));
-                                let data: JSValue = value
-                                    .fast_get(self.global_this, jsc::BuiltinName::Data)?
-                                    .unwrap_or(JSValue::UNDEFINED);
+                                let (data, data_place) =
+                                    place.row_or("data", || value.fast_get(self.global_this, jsc::BuiltinName::Data))?;
+                                let data: JSValue = data.unwrap_or(JSValue::UNDEFINED);
                                 let tag = Tag::get(data, self.global_this)?;
 
+                                self.place.hand(data_place);
                                 self.format::<W, ENABLE_ANSI_COLORS>(
                                     tag, writer.ctx, data, self.global_this,
                                 )?;
                                 writer.write_all(b", \n");
                             }
                             EventType::ErrorEvent => {
-                                if let Some(data) =
-                                    value.fast_get(self.global_this, jsc::BuiltinName::Error)?
-                                {
+                                let (error, error_place) =
+                                    place.row_or("error", || value.fast_get(self.global_this, jsc::BuiltinName::Error))?;
+                                if let Some(data) = error {
                                     self.write_indent(writer.ctx).expect("unreachable");
                                     writer.print(format_args!(
                                         "{}error{}:{} ",
@@ -2000,6 +2028,7 @@ impl<'a> Formatter<'a> {
                                     ));
 
                                     let tag = Tag::get(data, self.global_this)?;
+                                    self.place.hand(error_place);
                                     self.format::<W, ENABLE_ANSI_COLORS>(
                                         tag, writer.ctx, data, self.global_this,
                                     )?;
@@ -2020,6 +2049,15 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"}");
                 }
                 Tag::JSX => {
+                    let place = self.place.current();
+                    // An element whose `$$typeof` matched a matcher prints as an object, which shows that row.
+                    if place.row("$$typeof").is_some() {
+                        let _ = self.map.remove(&value);
+                        return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
+                            writer.ctx, value, js_type,
+                        );
+                    }
+
                     writer.write_all(pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>").as_bytes());
 
                     writer.write_all(b"<");
@@ -2030,7 +2068,7 @@ impl<'a> Formatter<'a> {
                     let tag_name_slice: Utf8Bytes;
                     let mut is_tag_kind_primitive = false;
 
-                    if let Some(type_value) = value.get(self.global_this, "type")? {
+                    if let Some(type_value) = place.row_or("type", || value.get(self.global_this, "type"))?.0 {
                         let _tag = Tag::get(type_value, self.global_this)?;
 
                         if _tag.cell == JSType::Symbol {
@@ -2074,7 +2112,8 @@ impl<'a> Formatter<'a> {
                         );
                     }
 
-                    if let Some(key_value) = value.get(self.global_this, "key")? {
+                    let (key_value, key_place) = place.row_or("key", || value.get(self.global_this, "key"))?;
+                    if let Some(key_value) = key_value {
                         if !key_value.is_undefined_or_null() {
                             if needs_space {
                                 writer.write_all(b" key=");
@@ -2086,12 +2125,9 @@ impl<'a> Formatter<'a> {
                             self.quote_strings = true;
 
                             let inner: JsResult<()> = (|| {
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    Tag::get(key_value, self.global_this)?,
-                                    writer.ctx,
-                                    key_value,
-                                    self.global_this,
-                                )
+                                let tag = Tag::get(key_value, self.global_this)?;
+                                self.place.hand(key_place);
+                                self.format::<W, ENABLE_ANSI_COLORS>(tag, writer.ctx, key_value, self.global_this)
                             })();
                             self.quote_strings = old_quote_strings;
                             inner?;
@@ -2099,7 +2135,8 @@ impl<'a> Formatter<'a> {
                         }
                     }
 
-                    if let Some(props) = value.get(self.global_this, "props")? {
+                    let (props, props_place) = place.row_or("props", || value.get(self.global_this, "props"))?;
+                    if let Some(props) = props {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
@@ -2118,7 +2155,8 @@ impl<'a> Formatter<'a> {
                             },
                         )?;
 
-                        let children_prop = props.get(self.global_this, "children")?;
+                        let (children_prop, children_place) =
+                            props_place.row_or("children", || props.get(self.global_this, "children"))?;
                         if props_iter.len > 0 {
                             {
                                 self.indent += 1;
@@ -2134,6 +2172,10 @@ impl<'a> Formatter<'a> {
                                     if prop.eq_ascii(b"children") {
                                         continue;
                                     }
+                                    let (property_value, property_place) = match props_place.row_named(&prop) {
+                                        Some(row) => row,
+                                        None => (property_value, MatchedPlace::default()),
+                                    };
 
                                     let tag = Tag::get(property_value, self.global_this)?;
 
@@ -2162,6 +2204,7 @@ impl<'a> Formatter<'a> {
                                         }
                                     }
 
+                                    self.place.hand(property_place);
                                     self.format::<W, ENABLE_ANSI_COLORS>(
                                         tag, writer.ctx, property_value, self.global_this,
                                     )?;
@@ -2200,8 +2243,9 @@ impl<'a> Formatter<'a> {
                             if let Some(children) = children_prop {
                                 let tag = Tag::get(children, self.global_this)?;
 
-                                let print_children =
-                                    matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
+                                // An element whose `$$typeof` matched a matcher is no child to print, as an object is not.
+                                let print_children = matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array)
+                                    && children_place.row("$$typeof").is_none();
 
                                 if print_children {
                                     'print_children: {
@@ -2241,11 +2285,10 @@ impl<'a> Formatter<'a> {
                                                     let r: JsResult<()> = (|| {
                                                         self.write_indent(writer.ctx)
                                                             .expect("unreachable");
+                                                        let tag = Tag::get(children, self.global_this)?;
+                                                        self.place.hand(children_place);
                                                         self.format::<W, ENABLE_ANSI_COLORS>(
-                                                            Tag::get(children, self.global_this)?,
-                                                            writer.ctx,
-                                                            children,
-                                                            self.global_this,
+                                                            tag, writer.ctx, children, self.global_this,
                                                         )
                                                     })();
                                                     self.indent = self.indent.saturating_sub(1);
@@ -2274,16 +2317,18 @@ impl<'a> Formatter<'a> {
                                                     let r: JsResult<()> = (|| {
                                                         let mut j: usize = 0;
                                                         while j < length {
-                                                            let child = JSObject::get_index(
-                                                                children,
-                                                                self.global_this,
-                                                                u32::try_from(j).unwrap(),
-                                                            )?;
+                                                            let Ok(index) = u32::try_from(j) else { break };
+                                                            let (child, child_place) = match children_place.element(index) {
+                                                                Some(row) => row,
+                                                                None => (
+                                                                    JSObject::get_index(children, self.global_this, index)?,
+                                                                    MatchedPlace::default(),
+                                                                ),
+                                                            };
+                                                            let tag = Tag::get(child, self.global_this)?;
+                                                            self.place.hand(child_place);
                                                             self.format::<W, ENABLE_ANSI_COLORS>(
-                                                                Tag::get(child, self.global_this)?,
-                                                                writer.ctx,
-                                                                child,
-                                                                self.global_this,
+                                                                tag, writer.ctx, child, self.global_this,
                                                             )?;
                                                             if j + 1 < length {
                                                                 writer.write_all(b"\n");
@@ -2380,12 +2425,15 @@ impl<'a> Formatter<'a> {
                     };
 
                     let each = PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each;
-                    let result = if iter.formatter.like_older_bun.is_some() {
-                        value
-                            .for_each_property_ordered_with_non_enumerable(global, (&raw mut iter).cast::<c_void>(), each)
-                            .map(|()| true)
-                    } else {
-                        value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                    let each_row = PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each_row;
+                    let place = iter.formatter.place.current();
+                    let is_like_older_bun = iter.formatter.like_older_bun.is_some();
+                    let ctx = (&raw mut iter).cast::<c_void>();
+                    let result = match (place.is_none(), is_like_older_bun) {
+                        (true, true) => value.for_each_property_ordered_with_non_enumerable(global, ctx, each).map(|()| true),
+                        (true, false) => value.for_each_property_ordered_calling_getters(global, ctx, each),
+                        (false, true) => place.for_each_property_ordered_with_non_enumerable(value, global, ctx, each_row).map(|()| true),
+                        (false, false) => place.for_each_property_ordered_calling_getters(value, global, ctx, each_row),
                     };
 
                     let iter_i = iter.i;
@@ -2537,7 +2585,32 @@ impl<'a> Formatter<'a> {
         result
     }
 
+    /// The element of `array` to print at `index`: its matched row if `place` has one, which also gives the element its place.
+    #[inline]
+    fn element_to_print(&mut self, place: MatchedPlace, array: JSValue, index: u32) -> JsResult<JSValue> {
+        if let Some((element, child)) = place.element(index) {
+            self.place.hand(child);
+            return Ok(element);
+        }
+        array.get_index(self.global_this, index)
+    }
+
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        result: TagResult,
+        writer: &mut W,
+        value: JSValue,
+        global_this: &'a JSGlobalObject,
+    ) -> JsResult<()> {
+        // `value` is at the place that its parent handed over, and the values it prints start with none.
+        let outer_place = self.place.enter();
+        let printed = self.format_entered::<W, ENABLE_ANSI_COLORS>(result, writer, value, global_this);
+        self.place.leave(outer_place);
+        printed
+    }
+
+    #[inline(always)]
+    fn format_entered<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         result: TagResult,
         writer: &mut W,
@@ -3535,12 +3608,13 @@ impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
     /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
     #[cold]
-    pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
+    pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8], rows: MatchedRows) -> JsResult<bool> {
         let differs = core::cell::Cell::new(false);
         let mut expected = ExpectedText { rest: saved, differs: &differs };
         let mut formatter = Formatter::new(global);
         formatter.quote_strings = true;
         formatter.like_older_bun = Some(&differs);
+        formatter.place = MatchedPlaceScope::at_root(rows);
         let tag = Tag::get(value, global)?;
         let mut bridge = AsFmt::new(&mut expected);
         formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;
@@ -3556,12 +3630,14 @@ impl JestPrettyFormat {
         property_matchers: Option<JSValue>,
         out: &mut Vec<u8>,
         format: SnapshotFormat,
+        rows: MatchedRows,
     ) -> JsResult<bool> {
         let mut formatter = Formatter::new(global);
         formatter.snapshot_format = format;
         formatter.serializers = Self::serializers(global)?;
         if !format.is_pretty_format() {
             formatter.quote_strings = true;
+            formatter.place = MatchedPlaceScope::at_root(rows);
             let tag = Tag::get(value, global)?;
             let mut bridge = AsFmt::new(out);
             formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;
@@ -4813,6 +4889,7 @@ impl Formatter<'_> {
     fn print_with_serializer(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
         let global = self.global_this;
         let Some(serializers) = self.serializers else { return Ok(false) };
+        let value = self.value_for_serializers(value)?;
         let mut iter = serializers.array_iterator(global)?;
         while let Some(plugin) = iter.next()? {
             if !plugin.is_object() {
@@ -4827,6 +4904,19 @@ impl Formatter<'_> {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// What the serializers are offered for `value`. If it has matched rows, that is a plain object: jest-snapshot's merge of the property matchers into it.
+    #[cold]
+    fn value_for_serializers(&mut self, value: JSValue) -> JsResult<JSValue> {
+        let place = self.place.current();
+        let Some(pattern) = place.pattern() else { return Ok(value) };
+        if let Some(merged) = place.merged() {
+            return Ok(merged);
+        }
+        let merged = deep_merge(self.global_this, value, pattern, SnapshotFormat::Jest)?;
+        place.set_merged(merged);
+        Ok(merged)
     }
 
     #[optimize(size)]

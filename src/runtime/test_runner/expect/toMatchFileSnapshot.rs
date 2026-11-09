@@ -1,5 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSPromise, JSValue, JsResult};
+use bun_jsc::{JSPromise, JSValue, JsResult, MatchedRows};
 use bun_sys_jsc::ErrorJsc as _;
 
 use super::super::jest::Jest;
@@ -62,7 +62,7 @@ impl Expect {
         if value.is_string_literal() {
             received.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
         } else {
-            JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest)?;
+            JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest, MatchedRows::default())?;
             if received.len() > 2 && received.starts_with(b"\n") && received.ends_with(b"\n") {
                 received.pop();
                 received.remove(0);

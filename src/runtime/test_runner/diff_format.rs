@@ -2,7 +2,7 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, MatchedRows};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
@@ -24,11 +24,24 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
+        Self::with_matched_rows(global_this, received, expected, not, MatchedRows::default())
+    }
+
+    /// Like [`DiffFormatter::new`], but `received` prints the matchers in `rows` in place of what they matched.
+    #[optimize(size)]
+    pub(crate) fn with_matched_rows(
+        global_this: &JSGlobalObject,
+        received: JSValue,
+        expected: JSValue,
+        not: bool,
+        rows: MatchedRows,
+    ) -> JsResult<DiffFormatter<'static>> {
         let fmt_options = FormatOptions {
             enable_colors: false,
             add_newline: false,
             flush: false,
             quote_strings: true,
+            matched_rows: MatchedRows::default(),
         };
         let mut received_buf: Vec<u8> = Vec::new();
         JestPrettyFormat::format(
@@ -37,7 +50,7 @@ impl<'a> DiffFormatter<'a> {
             core::slice::from_ref(&received),
             1,
             &mut received_buf,
-            fmt_options,
+            FormatOptions { matched_rows: rows, ..fmt_options },
         )?;
         let mut expected_buf: Vec<u8> = Vec::new();
         JestPrettyFormat::format(

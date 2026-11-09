@@ -1319,6 +1319,9 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
         Structure* implementation = ActiveSpySet::createStructure(init.vm, init.owner, jsNull());
         init.set(implementation);
     });
+    mock.matchedRowsStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+        init.set(createMatchedRowsStructure(init.vm, init.owner));
+    });
 
     mock.mockModuleStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {

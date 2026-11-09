@@ -7,7 +7,7 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsError, JsResult,
-    ConsoleObject, JSFunction, JSPropertyIterator,
+    ConsoleObject, JSFunction, JSPropertyIterator, MatchedRows,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_jsc::js_promise;
@@ -1150,7 +1150,7 @@ impl Expect {
         let format = if is_vitest { SnapshotFormat::Vitest } else { SnapshotFormat::Bun };
         let mut pretty_value: Vec<u8> = Vec::new();
         let value = Self::value_to_snapshot(global_this, received, format)?;
-        let (shown, same_as_older_bun) =
+        let (rows, same_as_older_bun) =
             this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
         if this.bun_test().is_some() {
             match runner.snapshots.format_of(&runner.files, this).and_then(|format| runner.snapshots.add_count(this, format, b"")) {
@@ -1186,7 +1186,7 @@ impl Expect {
                 !same_as_older_bun || property_matchers.is_some(),
                 global_this,
                 received,
-                shown,
+                rows,
                 property_matchers,
                 trim_res.trimmed,
             )? {
@@ -1264,7 +1264,7 @@ impl Expect {
         or_older_bun: bool,
         global_this: &JSGlobalObject,
         received: Received,
-        with_matchers: JSValue,
+        rows: MatchedRows,
         property_matchers: Option<JSValue>,
         saved: &[u8],
     ) -> JsResult<bool> {
@@ -1273,11 +1273,11 @@ impl Expect {
                 let value = Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))?;
                 let Some(format) = format else {
                     // Older Bun wrote the matchers into the object in place, which didn't stick for getters or frozen objects.
-                    return Ok((property_matchers.is_some() && JestPrettyFormat::did_older_bun_print(global_this, with_matchers, saved)?)
-                        || JestPrettyFormat::did_older_bun_print(global_this, value, saved)?);
+                    return Ok((property_matchers.is_some() && JestPrettyFormat::did_older_bun_print(global_this, value, saved, rows)?)
+                        || JestPrettyFormat::did_older_bun_print(global_this, value, saved, MatchedRows::default())?);
                 };
                 let mut printed: Vec<u8> = Vec::new();
-                JestPrettyFormat::print_snapshot(global_this, value, property_matchers, &mut printed, format)?;
+                JestPrettyFormat::print_snapshot(global_this, value, property_matchers, &mut printed, format, MatchedRows::default())?;
                 Ok(printed == saved)
             })();
             match is_it {
@@ -1290,7 +1290,7 @@ impl Expect {
         Ok(false)
     }
 
-    /// Returns `value` with `property_matchers` substituted in, and `print_snapshot`'s result.
+    /// Returns the rows of `property_matchers` that `value` matched, and `print_snapshot`'s result.
     #[optimize(size)]
     pub(crate) fn match_and_fmt_snapshot(
         &self,
@@ -1300,17 +1300,17 @@ impl Expect {
         pretty_value: &mut Vec<u8>,
         fn_name: &'static str,
         format: SnapshotFormat,
-    ) -> JsResult<(JSValue, bool)> {
-        let mut shown = value;
+    ) -> JsResult<(MatchedRows, bool)> {
+        let mut rows = MatchedRows::default();
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(|_| (value, true));
+                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(|_| (rows, true));
             }
 
             let prop_matchers = _prop_matchers;
 
-            let (matched, with_matchers) = value.jest_deep_match(prop_matchers, global_this, true)?;
+            let (matched, matched_rows) = value.jest_deep_match(prop_matchers, global_this, Some(true))?;
             if !matched {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
@@ -1319,14 +1319,13 @@ impl Expect {
                     self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
                     value.to_fmt(&mut formatter),
-                ).map(|_| (value, true));
+                ).map(|_| (rows, true));
             }
-            shown = with_matchers;
+            rows = matched_rows;
         }
 
-        let printed = if format.is_pretty_format() { value } else { shown };
-        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, pretty_value, format)?;
-        Ok((shown, same_as_older_bun))
+        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, value, property_matchers, pretty_value, format, rows)?;
+        Ok((rows, same_as_older_bun))
     }
 
     #[optimize(size)]
@@ -1345,7 +1344,7 @@ impl Expect {
             Err(err) => return Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
         };
         let value = Self::value_to_snapshot(global_this, received, format)?;
-        let (shown, same_as_older_bun) =
+        let (rows, same_as_older_bun) =
             self.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
 
         match runner.snapshots.match_or_write(&runner.files, self, &pretty_value, hint) {
@@ -1357,7 +1356,7 @@ impl Expect {
                         !same_as_older_bun || property_matchers.is_some(),
                         global_this,
                         received,
-                        shown,
+                        rows,
                         property_matchers,
                         &saved,
                     )?
@@ -2648,6 +2647,7 @@ impl ExpectCustomAsymmetricMatcher {
                 None,
                 &mut printed,
                 SnapshotFormat::Vitest,
+                MatchedRows::default(),
             ) {
                 return Self::maybe_clear(global_this, e, dont_throw);
             }

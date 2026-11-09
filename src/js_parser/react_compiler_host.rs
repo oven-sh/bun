@@ -231,6 +231,10 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 }
                 // A block around the statement of a label would take the label from a loop.
                 if scope.kind != Kind::Label {
+                    // Beside a direct `eval` a block keeps a function declaration, and a `case` can skip a `let`.
+                    if scope.contains_direct_eval && !scope.kind_stops_hoisting() {
+                        break;
+                    }
                     return OutlinedPlace::List(scope);
                 }
             } else if !matches!(scope.kind, Kind::Block | Kind::Label) || scope.members.count() > 0
@@ -321,7 +325,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Moves what was outlined since `start` into the visited list: to its end, or as a `let` each to the start of a block.
+    /// Moves what was outlined since `start` into the visited list. A block gets each as a `let`, through `before`.
     #[cold]
     #[inline(never)]
     pub(crate) fn append_outlined_from_nested(
@@ -335,39 +339,12 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         if scope.kind == js_ast::scope::Kind::Label {
             return;
         }
-        if scope.kind_stops_hoisting() {
-            visited.extend(self.react_compiler_outlined_from_nested.drain(start..));
-            return;
-        }
-        // Where the code is not strict, a function declared in a block is a variable of the function around it too.
-        for at in start..self.react_compiler_outlined_from_nested.len() {
-            let stmt = self.react_compiler_outlined_from_nested[at];
-            before.push(self.let_of_function_declaration(stmt));
-        }
-        self.react_compiler_outlined_from_nested.truncate(start);
-    }
-
-    fn let_of_function_declaration(&mut self, stmt: js_ast::Stmt) -> js_ast::Stmt {
-        let js_ast::StmtData::SFunction(mut declaration) = stmt.data else {
-            return stmt;
+        let list = if scope.kind_stops_hoisting() {
+            visited
+        } else {
+            before
         };
-        let Some(name) = declaration.func.name.take() else {
-            return stmt;
-        };
-        let func = core::mem::take(&mut declaration.func);
-        let value = self.new_expr(js_ast::E::Function { func }, stmt.loc);
-        let binding = self.b(js_ast::B::Identifier { r#ref: name.ref_ }, name.loc);
-        self.s(
-            js_ast::S::Local {
-                kind: js_ast::s::Kind::KLet,
-                decls: js_ast::G::DeclList::init_one(js_ast::G::Decl {
-                    binding,
-                    value: Some(value),
-                }),
-                ..Default::default()
-            },
-            stmt.loc,
-        )
+        list.extend(self.react_compiler_outlined_from_nested.drain(start..));
     }
 
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.

@@ -141,8 +141,11 @@ reach it and where it can reach those variables:
   declare a name of the module.
 - In the nested function's own body when it stands in a head that declares a
   name: a parameter list, a `catch` binding, a `for` that declares, the test of
-  a `case` in a `switch` that declares, the initializer of an enum member. It
-  is then a new function at each call. With no renamer, no local of the
+  a `case` in a `switch` that declares, the initializer of an enum member. Also
+  in a block that holds a direct `eval`: that block keeps a function
+  declaration as written, which is a `var` too where the code is not strict,
+  and a `let` in a `case` is not set when another `case` calls the function.
+  It is then a new function at each call. With no renamer, no local of the
   compiled function takes a name that a scope around it declares.
 
 The parser lists the name in the scope of that declaration, and the renamer

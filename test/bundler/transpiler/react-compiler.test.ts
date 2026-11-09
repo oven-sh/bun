@@ -4376,14 +4376,17 @@ describe("bundler", () => {
   // body of a function behind the component, or in the body behind a head, which the head can't see. The first render
   // threw `ReferenceError: _temp is not defined`. They are declared in the list of the statement that holds the
   // component, once for all calls of the component. A component in a head that declares a name gets them in its own
-  // body, at each call.
+  // body, at each call. So does one in a block that holds a direct `eval`: that block keeps its function declarations,
+  // and `Leaf` of the last form is called with no statement of its `case` run.
   const nestedComponentForms = {
     "/entry.js": /* js */ `
       import { sizes } from "react/compiler-runtime";
       import * as forms from "./forms";
       import * as typed from "./forms-typed";
+      import * as withEval from "./forms-with-eval";
       const lines = [];
-      for (const [name, form] of Object.entries({ ...forms, ...typed }).sort(([a], [b]) => (a < b ? -1 : 1))) {
+      const all = { ...forms, ...typed, ...withEval };
+      for (const [name, form] of Object.entries(all).sort(([a], [b]) => (a < b ? -1 : 1))) {
         try {
           const Leaf = form("red");
           const caches = sizes().length;
@@ -4657,6 +4660,28 @@ describe("bundler", () => {
         return Leaf;
       }
     `,
+    "/forms-with-eval.jsx": /* jsx */ `
+      const x0 = "!";
+      export function blockWithAnEval(k) {
+        {
+          eval("");
+          const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+            other = () => 1;
+          return Leaf;
+        }
+      }
+      export function caseBesideAnEval(k) {
+        switch (k) {
+          case "never":
+            eval("");
+            function Leaf({ x }) {
+              return <i x={x} on={() => k + x0} at={() => x0} />;
+            }
+          default:
+            return Leaf;
+        }
+      }
+    `,
     ...reactWithMemo,
   };
   const nestedComponentsInAList = [
@@ -4689,6 +4714,8 @@ describe("bundler", () => {
     "twoStatements",
   ];
   const nestedComponentsInAHead = [
+    "blockWithAnEval",
+    "caseBesideAnEval",
     "caseTestBesideALet",
     "catchDefault",
     "defaultArgument",
@@ -4848,7 +4875,8 @@ describe("bundler", () => {
   }
 
   // A block that holds a direct `eval` keeps its function declarations as they are written. There the callback stayed
-  // a function declaration, which is a variable of the whole cjs bundle too, and `Top` called it.
+  // a function declaration, which is a variable of the whole cjs bundle too, and `Top` called it. It is now declared
+  // in the component.
   for (const runtime of ["bun", "node"] as const) {
     itBundled(`react-compiler/NestedComponentInABlockWithADirectEval-cjs-${runtime}`, {
       files: {

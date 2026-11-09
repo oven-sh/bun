@@ -300,6 +300,9 @@ impl Host for RecordingHost<'_> {
         self.referenced.push(reference);
         reference
     }
+    fn is_unbound_global(&mut self, name: &'static [u8]) -> bool {
+        self.host.is_unbound_global(name)
+    }
     fn record_usage(&mut self, ref_: Ref) {
         self.referenced.push(ref_);
         self.host.record_usage(ref_);

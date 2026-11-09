@@ -3980,388 +3980,521 @@ describe("bundler", () => {
   // name. A statement that mutates the receiver then decided which function
   // ran, or whether the read threw. The key of `o[key](...)` was read there
   // too. Now such a method is read where the source reads it, and called with
-  // the receiver given. Each form renders with a new cache, with the same
+  // the receiver given. Each function renders with a new cache, with the same
   // cache and equal props, and with the same cache and other props.
-  for (const [name, options] of [
-    ["plain", { reactCompiler: false, target: "browser" }],
-    ["browser", { reactCompiler: true, target: "browser" }],
-    ["bun", { reactCompiler: true, target: "bun" }],
-    ["minify-syntax", { reactCompiler: true, target: "browser", minifySyntax: true }],
-  ] as const) {
-    itBundled(`react-compiler/MethodIsReadAheadOfAStatementThatCanChangeIt-${name}`, {
-      files: {
-        "/entry.ts": /* ts */ `
-          import { render } from "react";
-          import * as forms from "./forms";
-          const who = function (this: { name: string } | undefined) {
-            return (this === undefined ? "no this" : this.name) + ":old";
-          };
-          const lines: string[] = [];
-          for (const [name, Form] of Object.entries(forms)) {
-            const results: string[] = [];
-            for (const props of [{ name: "A", n: 2 }, { name: "A", n: 2 }, { name: "C", n: 3 }]) {
-              try {
-                results.push(String(render(Form, { ...props, api: { name: props.name, who } }).props.children));
-              } catch (e) {
-                results.push("threw " + e.message);
-              }
-            }
-            lines.push(name + "=" + results.join(" | "));
-          }
-          console.log(lines.join("\\n"));
-        `,
-        "/forms.jsx": /* jsx */ `
-          import { useMemo } from "react";
+  {
+    type Cell = { name: string; source: string; expected: (name: string) => string };
+    const cells: Cell[] = [];
 
-          // A method says which object it ran on, and which of the two functions it is.
-          function who(...suffix) {
-            return (this === undefined ? "no this" : this.name) + ":old" + suffix.filter(s => typeof s === "string").join("");
-          }
-          function other() {
-            return (this === undefined ? "no this" : this.name) + ":new";
-          }
-          const make = name => ({ name, who, alt: other, inner: { name: name + ".inner", who } });
-          const replace = o => {
-            o.who = other;
-            return "";
-          };
-          const replaceAndCount = o => {
-            o.who = other;
-            return 1;
-          };
-          const withGetter = o =>
-            Object.defineProperty(o, "who", {
-              get() {
-                const name = this.name;
-                return () => name + ":old";
-              },
-            });
-          const guarded = o =>
-            Object.defineProperty(o, "who", {
-              get() {
-                if (!this.ok) throw new Error("the read of the method");
-                return () => "called";
-              },
-            });
-          const iterable = name => ({
-            name,
-            who,
-            *[Symbol.iterator]() {
-              this.who = other;
-              yield 1;
-            },
+    // Each callee reads a method of `target`. Each producer puts a statement
+    // that replaces that method between the read and the call.
+    const callees = {
+      Member: { setup: `const o = make(p.name);`, target: `o`, callee: `o.who` },
+      ComputedMember: { setup: `const o = make(p.name); const key = "who";`, target: `o`, callee: `o[key]` },
+      MemberOfAMember: { setup: `const o = make(p.name);`, target: `o.inner`, callee: `o.inner.who` },
+      MemberOfACall: { setup: `const o = make(p.name);`, target: `o`, callee: `same(o).who` },
+      MemberOfALogical: { setup: `const o = make(p.name); const b = make("B");`, target: `o`, callee: `(o ?? b).who` },
+    };
+    const producers = {
+      BehindAnInlinedFunction: (t: string) => `(() => { ${t}.who = other; return ""; })()`,
+      BehindAManualMemo: (t: string) => `useMemo(() => { ${t}.who = other; return ""; }, [])`,
+      // An inlined function with two returns is a labeled block.
+      BehindALabeledBlock: (t: string) =>
+        `(() => { if (p.n > 2) { ${t}.who = other; return ""; } ${t}.who = other; return ""; })()`,
+      // The first argument has a name, because a statement or a memo block follows it.
+      BehindAnArgumentAndAStatement: (t: string) => `replace(${t}), (() => { local.n = 1; return ""; })()`,
+      BehindAnArgumentAndAMemberUpdate: (t: string) => `replace(${t}), local.n++`,
+      BehindAnArgumentAndAMemoBlock: (t: string) => `replace(${t}), <i>{p.n}</i>`,
+      // The memo block of the element depends on the sum, so the sum has a name.
+      BehindADependencyOfAMemoBlock: (t: string) => `<i>{replaceAndCount(${t}) + p.n}</i>`,
+      BehindASpreadAndAMemoBlock: (t: string) => `...replaceAndList(${t}), <i>{p.n}</i>`,
+    };
+    for (const [calleeName, { setup, target, callee }] of Object.entries(callees)) {
+      for (const [producerName, producer] of Object.entries(producers)) {
+        cells.push({
+          name: calleeName + producerName,
+          source: `
+            export function ${calleeName + producerName}(p) {
+              ${setup}
+              const local = { n: 0 };
+              return <div>{${callee}(${producer(target)})}</div>;
+            }`,
+          expected: name => name + ":old",
+        });
+      }
+    }
+
+    // Each key is read ahead of a statement that changes what it evaluates
+    // to, or that shows when it ran. Nothing mutates a prop, so the method of
+    // a prop stays in the call and only its key gets a name.
+    const keys = {
+      KeyIsACall: {
+        setup: `const log = [];`,
+        key: `pick(log)`,
+        statement: `log.push("statement")`,
+        argument: `note(log)`,
+        count: `noteAndCount(log)`,
+        result: `result + " " + log`,
+        expected: (name: string) => name + ":old key,statement",
+      },
+      KeyIsAMember: {
+        setup: `const selector = { key: "who" };`,
+        key: `selector.key`,
+        statement: `selector.key = "alt"`,
+        argument: `retarget(selector)`,
+        count: `retargetAndCount(selector)`,
+        result: `result`,
+        expected: (name: string) => name + ":old",
+      },
+    };
+    const receivers = {
+      OfALocal: { setup: `const o = make(p.name);`, receiver: `o` },
+      OfAProp: { setup: ``, receiver: `p.api` },
+    };
+    const keyProducers = {
+      BehindAnInlinedFunction: (key: (typeof keys)["KeyIsACall"]) => `(() => { ${key.statement}; return ""; })()`,
+      BehindAnArgumentAndAMemoBlock: (key: (typeof keys)["KeyIsACall"]) => `${key.argument}, <i>{p.n}</i>`,
+      BehindADependencyOfAMemoBlock: (key: (typeof keys)["KeyIsACall"]) => `<i>{${key.count} + p.n}</i>`,
+    };
+    for (const [keyName, key] of Object.entries(keys)) {
+      for (const [receiverName, { setup, receiver }] of Object.entries(receivers)) {
+        for (const [producerName, producer] of Object.entries(keyProducers)) {
+          cells.push({
+            name: keyName + receiverName + producerName,
+            source: `
+              export function ${keyName + receiverName + producerName}(p) {
+                ${setup}
+                ${key.setup}
+                const result = ${receiver}[${key.key}](${producer(key)});
+                return <div>{${key.result}}</div>;
+              }`,
+            expected: key.expected,
           });
-          const same = o => o;
-          const pick = log => {
-            log.push("key");
-            return "who";
-          };
-          const tick = log => {
-            log.push("argument");
-            return 1;
-          };
-          const retarget = selector => {
-            selector.key = "alt";
-            return "";
-          };
-          // Answers every read, also a read of "call".
-          const answersEveryRead = new Proxy(who, { get: () => () => "a read of the method" });
-          const withItsOwnCall = Object.assign(
-            function () {
-              return this.name + ":old";
-            },
-            { call: () => "its own call" },
-          );
-          const sortBy = name => [name, "z"];
-          const size = list => list.length;
-          class Box {
-            constructor(v) {
-              this.v = v;
-            }
-          }
-          const format = box => "v" + box.v;
+        }
+      }
+    }
+    // A namespace lists its exports by name.
+    const expectedOfCells = cells
+      .map(({ name, expected }) => `${name}=${expected("A")} | ${expected("A")} | ${expected("C")}`)
+      .sort();
 
-          // The body of an inlined IIFE is a statement between the read of the method and the call.
-          export function StatementReplacesTheMethod(p) {
-            const o = make(p.name);
-            return <div>{o.who((() => { o.who = other; return ""; })())}</div>;
-          }
-          export function StatementReplacesAComputedMethod(p) {
-            const o = make(p.name);
-            const key = "who";
-            return <div>{o[key]((() => { o[key] = other; return ""; })())}</div>;
-          }
-          // A manual memo callback is inlined too.
-          export function MemoCallbackReplacesTheMethod(p) {
-            const o = make(p.name);
-            return <div>{o.who(useMemo(() => { o.who = other; return ""; }, []))}</div>;
-          }
-          // An IIFE with two returns is a labeled block.
-          export function LabeledBlockReplacesTheMethod(p) {
-            const o = make(p.name);
-            return <div>{o.who((() => { if (p.n > 2) { o.who = other; return "!"; } o.who = other; return ""; })())}</div>;
-          }
-          // The getter reads what the statement changes.
-          export function StatementChangesWhatAGetterReads(p) {
-            const o = withGetter({ name: p.name });
-            return <div>{o.who((() => { o.name = "changed"; return ""; })())}</div>;
-          }
-          // The read of the method throws, and the statement would stop that.
-          export function StatementBehindAReadThatThrows(p) {
-            const o = guarded({ ok: false, name: p.name });
-            return <div>{o.who((() => { o.ok = true; return ""; })())}</div>;
-          }
-          // The receiver is null, so the statement must not run.
-          export function StatementBehindANullReceiver(p) {
-            const box = { inner: null, ran: [p.name] };
-            let out;
-            try {
-              out = box.inner.who((() => { box.ran.push("statement"); return ""; })());
-            } catch (e) {
-              out = (e instanceof TypeError ? "TypeError" : e) + ", ran: " + box.ran;
+    // The forms that are not a cell of the tables, with what each prints.
+    const expectedOfForms = [
+      "DependencyThatIteratesTheReceiver=A:old | A:old | C:old",
+      "DependencyWithACallInATest=A:old | A:old | C:old",
+      "EarlierArgumentIsAChainOfMethods=A:olda | A:olda | C:oldc",
+      "EarlierArgumentIsAMethodOfAProp=A:oldA:old | A:oldA:old | C:oldC:old",
+      "EarlierArgumentOverAnotherLocal=A:old1 | A:old1 | C:old1",
+      "KeyInAScopeThatAHookPrunes=A:old 0,key,statement | A:old 0,key,statement | C:old 0,key,statement",
+      "KeyIsAConversionOfAMemberThatIsUpdated=A:first | A:first | C:first",
+      "KeyIsAMemberThatIsUpdated=A:first | A:first | C:first",
+      "KeyIsReassigned=A:old | A:old | C:old",
+      "KeyOfAMethodOfAProp=A:old | A:old | C:old",
+      "LaterArgumentBehindADependency=A:old | A:old | C:old",
+      "LaterArgumentBehindAStatement=A:old | A:old | C:old",
+      "MemoBlocksAheadOfTheReceiver=A:old16 | A:old16 | C:old16",
+      "MethodHasItsOwnCall=A:old | A:old | C:old",
+      "MethodIsAProxy=A:old | A:old | C:old",
+      "MethodIsMissing=TypeError after statement,argument | TypeError after statement,argument | TypeError after statement,argument",
+      "MethodOfAPropBehindAStatement=A:old | A:old | C:old",
+      "PushBehindAMemberUpdate=A0,x1 | A0,x1 | C0,x1",
+      "PushOfAnElementWithComputedProps=1:2 | 1:2 | 1:3",
+      "PushOfAnObjectWithACallInALogical=2:true | 2:true | 2:false",
+      "SpreadOfAStatementThatReplacesTheMethod=A:oldxy | A:oldxy | C:oldxy",
+      "StatementBehindANullReceiver=TypeError, ran: A | TypeError, ran: A | TypeError, ran: C",
+      "StatementBehindAReadThatThrows=threw the read of the method | threw the read of the method | threw the read of the method",
+      "StatementChangesWhatAGetterReads=A:old | A:old | C:old",
+      "StatementReassignsTheReceiver=A:old | A:old | C:old",
+    ];
+
+    // Where no statement can mutate the receiver, the call is the member call
+    // that the source has. The names of the temporaries are normalized.
+    const memberCalls = {
+      browser: {
+        // The memo block of the receiver holds nothing that the statement mutates.
+        EarlierArgumentIsAMethodOfAProp: "o.who(t, t)",
+        EarlierArgumentOverAnotherLocal: "o.who(t, t)",
+        KeyIsAConversionOfAMemberThatIsUpdated: "fns[t](t)",
+        // The argument that replaces the method prints inside the call, behind the read of the method.
+        LaterArgumentBehindADependency: "o.who(t, replace(o))",
+        LaterArgumentBehindAStatement: 'o.who("", replace(o))',
+        // Nothing mutates a prop.
+        KeyInAScopeThatAHookPrunes: 't[t]("")',
+        KeyOfAMethodOfAProp: "t[t](t)",
+        MethodOfAPropBehindAStatement: 't.who("")',
+        // The inference takes `push` of an array for that method.
+        PushBehindAMemberUpdate: "items.push(row + t)",
+        PushOfAnElementWithComputedProps: "items.push(t)",
+        PushOfAnObjectWithACallInALogical: "items.push(t)",
+      },
+      // Without memo blocks no two values share a mutable range, and every mutation between the read and the call counts.
+      bun: {
+        KeyInAScopeThatAHookPrunes: 't[t]("")',
+        KeyOfAMethodOfAProp: "t[t](t)",
+        MethodOfAPropBehindAStatement: 't.who("")',
+        PushBehindAMemberUpdate: "items.push(row + t)",
+      },
+    };
+    const memberCall =
+      /\bitems\.push\((?:row \+ )?t\d+\)|\bfns\[t\d+\]\(t\d+\)|\bt\d+\[t\d+\]\((?:t\d+|"")\)|\b(?:t\d+|o)\.who\((?:t\d+|""|replace\(o\)|, )*\)/;
+
+    for (const [name, options] of [
+      ["plain", { reactCompiler: false, target: "browser" }],
+      ["browser", { reactCompiler: true, target: "browser" }],
+      ["bun", { reactCompiler: true, target: "bun" }],
+      ["minify-syntax", { reactCompiler: true, target: "browser", minifySyntax: true }],
+      ["bun-minify-syntax", { reactCompiler: true, target: "bun", minifySyntax: true }],
+    ] as const) {
+      itBundled(`react-compiler/MethodIsReadAheadOfAStatementThatCanChangeIt-${name}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import { render } from "react";
+            import * as cells from "./cells";
+            import * as forms from "./forms";
+            const who = function (this: { name: string } | undefined) {
+              return (this === undefined ? "no this" : this.name) + ":old";
+            };
+            const lines: string[] = [];
+            for (const [name, Form] of [...Object.entries(cells), ...Object.entries(forms)]) {
+              const results: string[] = [];
+              for (const props of [{ name: "A", n: 2 }, { name: "A", n: 2 }, { name: "C", n: 3 }]) {
+                try {
+                  results.push(String(render(Form, { ...props, api: { name: props.name, who } }).props.children));
+                } catch (e) {
+                  results.push("threw " + e.message);
+                }
+              }
+              lines.push(name + "=" + results.join(" | "));
             }
-            return <div>{out}</div>;
-          }
-          // The first argument has a name, because the statement of the second one follows it.
-          export function EarlierArgumentReplacesTheMethod(p) {
-            const o = make(p.name);
-            const local = { n: 0 };
-            return <div>{o.who(replace(o), (() => { local.n = 1; return ""; })())}</div>;
-          }
-          // A postfix update of a member is a statement too.
-          export function EarlierArgumentAheadOfAMemberUpdate(p) {
-            const o = make(p.name);
-            const state = { i: 0 };
-            return <div>{o.who(replace(o), state.i++)}</div>;
-          }
-          // Client mode: the first argument has a name, because the memo block of the second one follows it.
-          export function ArgumentAheadOfAMemoBlock(p) {
-            const o = make(p.name);
-            return <div>{o.who(replace(o), <i>{p.n}</i>)}</div>;
-          }
-          // Client mode: the memo block of the element depends on the sum, so the sum has a name.
-          export function DependencyOfAMemoBlock(p) {
-            const o = make(p.name);
-            return <div>{o.who(<i>{replaceAndCount(o) + p.n}</i>)}</div>;
-          }
-          // The call is the test of a ternary, which has no record of what it mutates.
-          export function DependencyWithACallInATest(p) {
-            const o = make(p.name);
-            return <div>{o.who(<i>{replace(o) ? p.n : -p.n}</i>)}</div>;
-          }
-          // The spread runs the iterator of the receiver.
-          export function DependencyThatIteratesTheReceiver(p) {
-            const o = iterable(p.name);
-            return <div>{o.who(<i>{[...o].length + p.n}</i>)}</div>;
-          }
-          // The receiver is an expression. It runs once.
-          export function ReceiverIsAPropertyLoad(p) {
-            const o = make(p.name);
-            return <div>{o.inner.who((() => { o.inner.who = other; return ""; })())}</div>;
-          }
-          export function ReceiverIsACall(p) {
-            const o = make(p.name);
-            let calls = 0;
-            const result = (calls++, same(o)).who((() => { o.who = other; return ""; })());
-            return <div>{result + calls}</div>;
-          }
-          // The statement assigns the variable of the receiver, and then replaces the method of the new object.
-          export function StatementReassignsTheReceiver(p) {
-            let o = make(p.name);
-            return <div>{o.who((() => { o = make("B"); o.who = other; return ""; })())}</div>;
-          }
-          // The call with the receiver given must not read "call" of the method.
-          export function MethodIsAProxy(p) {
-            const o = { name: p.name, who: answersEveryRead };
-            return <div>{o.who((() => { o.touched = true; return ""; })())}</div>;
-          }
-          export function MethodHasItsOwnCall(p) {
-            const o = { name: p.name, who: withItsOwnCall };
-            return <div>{o.who((() => { o.touched = true; return ""; })())}</div>;
-          }
-          // The arguments run before the call throws.
-          export function MethodIsMissing(p) {
-            const o = { name: p.name };
-            const log = [];
-            let out;
-            try {
-              out = o.missing((() => { o.touched = true; log.push("statement"); return ""; })(), tick(log));
-            } catch (e) {
-              out = (e instanceof TypeError ? "TypeError" : e) + " after " + log;
+            console.log(lines.join("\\n"));
+          `,
+          "/helpers.js": /* js */ `
+            // A method says which object it ran on, and which of the two functions it is.
+            export function who(...suffix) {
+              return (this === undefined ? "no this" : this.name) + ":old" + suffix.filter(s => typeof s === "string").join("");
             }
-            return <div>{out}</div>;
-          }
-          // The key of a computed method is read where it stands, too.
-          export function KeyIsACall(p) {
-            const o = make(p.name);
-            const log = [];
-            const result = o[pick(log)]((() => { log.push("statement"); return ""; })());
-            return <div>{result + " " + log}</div>;
-          }
-          export function KeyIsReassigned(p) {
-            const o = make(p.name);
-            let key = "who";
-            return <div>{o[key]((() => { key = "alt"; return ""; })())}</div>;
-          }
-          export function KeyIsAMemberThatIsUpdated(p) {
-            const fns = [() => p.name + ":first", () => p.name + ":second"];
-            const state = { i: 0 };
-            return <div>{fns[state.i](state.i++)}</div>;
-          }
-          export function KeyAheadOfADependency(p) {
-            const o = make(p.name);
-            const log = [];
-            const result = o[pick(log)](<i>{tick(log) + p.n}</i>);
-            return <div>{result + " " + log}</div>;
-          }
-          export function KeyAheadOfAnEarlierArgument(p) {
-            const o = make(p.name);
-            const selector = { key: "who" };
-            return <div>{o[selector.key](retarget(selector), <i>{p.n}</i>)}</div>;
-          }
-          // Nothing mutates the receiver here, so the method stays in the call and only the key gets a name.
-          export function KeyIsAConversionOfAMemberThatIsUpdated(p) {
-            const fns = { 0: () => p.name + ":first", 1: () => p.name + ":second" };
-            const state = { i: 0 };
-            return <div>{fns[String(state.i)](state.i++)}</div>;
-          }
-          // Statements stand between the read of the method and the call, and none of them can mutate the receiver.
-          export function PushOfAnElementWithComputedProps(p) {
-            const items = [];
-            items.push(<i key={String(p.n)} title={Math.max(p.n, 1)} />);
-            return <div>{items.length + ":" + items[0].props.title}</div>;
-          }
-          export function PushOfAnElementOverAnotherLocal(p) {
-            const sorted = sortBy(p.name);
-            const out = [];
-            out.push(<i title={size(sorted)} />);
-            return <div>{out.length + ":" + out[0].props.title + ":" + sorted}</div>;
-          }
-          export function PushOfAnElementOverANewObject(p) {
-            const items = [];
-            items.push(<i title={format(new Box(p.n))} />);
-            return <div>{items.length + ":" + items[0].props.title}</div>;
-          }
-          export function MethodOfAPropBehindAStatement(p) {
-            const local = { n: 0 };
-            return <div>{p.api.who((() => { local.n = 1; return ""; })())}</div>;
-          }
-        `,
-        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
-        "/node_modules/react/index.js": /* js */ `
-          const caches = new Map();
-          let current;
-          export const render = (Component, props) => {
-            current = Component;
-            return Component(props);
-          };
-          export const memoCache = size => {
-            let cache = caches.get(current);
-            if (!cache) caches.set(current, (cache = new Array(size).fill(Symbol.for("react.memo_cache_sentinel"))));
-            return cache;
-          };
-          export const useMemo = fn => fn();
-        `,
-        "/node_modules/react/compiler-runtime.js": /* js */ `
-          import { memoCache } from "./index.js";
-          export const c = size => memoCache(size);
-        `,
-        "/node_modules/react/jsx-runtime.js": /* js */ `
-          export const jsx = (type, props) => ({ type, props });
-          export const jsxs = jsx;
-        `,
-        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
-          export const jsxDEV = (type, props) => ({ type, props });
-        `,
-      },
-      ...options,
-      backend: "cli",
-      onAfterBundle(api) {
-        if (name !== "browser") return;
-        const functions = Array.from(
-          api.readFile("/out.js").matchAll(/^function (\w+)\(p\) \{$([\s\S]*?)^\}$/gm),
-          ([, name, body]) => ({ name, body }),
-        );
-        // A compiled function starts with its memo cache.
-        expect(functions.filter(({ body }) => !/^\s*let \$ = c\(\d+\);/.test(body)).map(({ name }) => name)).toEqual(
-          [],
-        );
-        // Where no statement can mutate the receiver, the call is the member call that the source has.
-        // The names of the temporaries are normalized.
-        expect(
-          functions
-            .filter(({ body }) => !body.includes("Function.prototype.call.call("))
-            .map(({ name, body }) => {
-              const call = body.match(/\b(?:items|out)\.push\(t\d+\)|\bfns\[t\d+\]\(t\d+\)|\bt\d+\.who\(""\)/);
-              return name + ": " + call?.[0].replace(/\bt\d+\b/g, "t");
-            }),
-        ).toEqual([
-          "KeyIsAConversionOfAMemberThatIsUpdated: fns[t](t)",
-          "PushOfAnElementWithComputedProps: items.push(t)",
-          "PushOfAnElementOverAnotherLocal: out.push(t)",
-          "PushOfAnElementOverANewObject: items.push(t)",
-          'MethodOfAPropBehindAStatement: t.who("")',
-        ]);
-      },
-      run: {
-        stdout: `
-          ArgumentAheadOfAMemoBlock=A:old | A:old | C:old
-          DependencyOfAMemoBlock=A:old | A:old | C:old
-          DependencyThatIteratesTheReceiver=A:old | A:old | C:old
-          DependencyWithACallInATest=A:old | A:old | C:old
-          EarlierArgumentAheadOfAMemberUpdate=A:old | A:old | C:old
-          EarlierArgumentReplacesTheMethod=A:old | A:old | C:old
-          KeyAheadOfADependency=A:old key,argument | A:old key,argument | C:old key,argument
-          KeyAheadOfAnEarlierArgument=A:old | A:old | C:old
-          KeyIsACall=A:old key,statement | A:old key,statement | C:old key,statement
-          KeyIsAConversionOfAMemberThatIsUpdated=A:first | A:first | C:first
-          KeyIsAMemberThatIsUpdated=A:first | A:first | C:first
-          KeyIsReassigned=A:old | A:old | C:old
-          LabeledBlockReplacesTheMethod=A:old | A:old | C:old!
-          MemoCallbackReplacesTheMethod=A:old | A:old | C:old
-          MethodHasItsOwnCall=A:old | A:old | C:old
-          MethodIsAProxy=A:old | A:old | C:old
-          MethodIsMissing=TypeError after statement,argument | TypeError after statement,argument | TypeError after statement,argument
-          MethodOfAPropBehindAStatement=A:old | A:old | C:old
-          PushOfAnElementOverANewObject=1:v2 | 1:v2 | 1:v3
-          PushOfAnElementOverAnotherLocal=1:2:A,z | 1:2:A,z | 1:2:C,z
-          PushOfAnElementWithComputedProps=1:2 | 1:2 | 1:3
-          ReceiverIsACall=A:old1 | A:old1 | C:old1
-          ReceiverIsAPropertyLoad=A.inner:old | A.inner:old | C.inner:old
-          StatementBehindANullReceiver=TypeError, ran: A | TypeError, ran: A | TypeError, ran: C
-          StatementBehindAReadThatThrows=threw the read of the method | threw the read of the method | threw the read of the method
-          StatementChangesWhatAGetterReads=A:old | A:old | C:old
-          StatementReassignsTheReceiver=A:old | A:old | C:old
-          StatementReplacesAComputedMethod=A:old | A:old | C:old
-          StatementReplacesTheMethod=A:old | A:old | C:old
-        `,
-      },
-    });
+            export function other() {
+              return (this === undefined ? "no this" : this.name) + ":new";
+            }
+            export const make = name => ({ name, who, alt: other, inner: { name, who } });
+            export const same = o => o;
+            export const replace = o => {
+              o.who = other;
+              return "";
+            };
+            export const replaceAndCount = o => {
+              o.who = other;
+              return 1;
+            };
+            export const replaceAndList = o => {
+              o.who = other;
+              return ["", ""];
+            };
+            export const pick = log => {
+              log.push("key");
+              return "who";
+            };
+            export const note = log => {
+              log.push("statement");
+              return "";
+            };
+            export const noteAndCount = log => {
+              log.push("statement");
+              return 1;
+            };
+            export const retarget = selector => {
+              selector.key = "alt";
+              return "";
+            };
+            export const retargetAndCount = selector => {
+              selector.key = "alt";
+              return 1;
+            };
+            export const tick = log => {
+              log.push("argument");
+              return 1;
+            };
+            export const size = list => list.length;
+          `,
+          "/cells.jsx":
+            `
+            import { useMemo } from "react";
+            import { make, note, noteAndCount, other, pick, replace, replaceAndCount, replaceAndList, retarget, retargetAndCount, same } from "./helpers";
+            ` + cells.map(cell => cell.source).join(""),
+          "/forms.jsx": /* jsx */ `
+            import { useState } from "react";
+            import { make, other, pick, replace, size, tick, who } from "./helpers";
+
+            const withGetter = o =>
+              Object.defineProperty(o, "who", {
+                get() {
+                  const name = this.name;
+                  return () => name + ":old";
+                },
+              });
+            const guarded = o =>
+              Object.defineProperty(o, "who", {
+                get() {
+                  if (!this.ok) throw new Error("the read of the method");
+                  return () => "called";
+                },
+              });
+            const iterable = name => ({
+              name,
+              who,
+              *[Symbol.iterator]() {
+                this.who = other;
+                yield 1;
+              },
+            });
+            // Answers every read, also a read of "call".
+            const answersEveryRead = new Proxy(who, { get: () => () => "a read of the method" });
+            const withItsOwnCall = Object.assign(
+              function () {
+                return this.name + ":old";
+              },
+              { call: () => "its own call" },
+            );
+
+            // The getter reads what the statement changes.
+            export function StatementChangesWhatAGetterReads(p) {
+              const o = withGetter({ name: p.name });
+              return <div>{o.who((() => { o.name = "changed"; return ""; })())}</div>;
+            }
+            // The read of the method throws, and the statement would stop that.
+            export function StatementBehindAReadThatThrows(p) {
+              const o = guarded({ ok: false, name: p.name });
+              return <div>{o.who((() => { o.ok = true; return ""; })())}</div>;
+            }
+            // The receiver is null, so the statement must not run.
+            export function StatementBehindANullReceiver(p) {
+              const box = { inner: null, ran: [p.name] };
+              let out;
+              try {
+                out = box.inner.who((() => { box.ran.push("statement"); return ""; })());
+              } catch (e) {
+                out = (e instanceof TypeError ? "TypeError" : e) + ", ran: " + box.ran;
+              }
+              return <div>{out}</div>;
+            }
+            // The statement assigns the variable of the receiver, and then replaces the method of the new object.
+            export function StatementReassignsTheReceiver(p) {
+              let o = make(p.name);
+              return <div>{o.who((() => { o = make("B"); o.who = other; return ""; })())}</div>;
+            }
+            // The call is the test of a ternary, which has no record of what it mutates.
+            export function DependencyWithACallInATest(p) {
+              const o = make(p.name);
+              return <div>{o.who(<i>{replace(o) ? p.n : -p.n}</i>)}</div>;
+            }
+            // The spread runs the iterator of the receiver.
+            export function DependencyThatIteratesTheReceiver(p) {
+              const o = iterable(p.name);
+              return <div>{o.who(<i>{[...o].length + p.n}</i>)}</div>;
+            }
+            // Memo blocks stand ahead of the receiver, and another value shares its memo block.
+            export function MemoBlocksAheadOfTheReceiver(p) {
+              const a1 = <i>{p.n + 1}</i>;
+              const a2 = <i>{p.n + 2}</i>;
+              const a3 = <i>{p.n + 3}</i>;
+              const a4 = <i>{p.n + 4}</i>;
+              const a5 = <i>{p.n + 5}</i>;
+              const a6 = <i>{p.n + 6}</i>;
+              const list = [];
+              const o = make(p.name);
+              list.push(p.n);
+              const result = o.who((() => { o.who = other; return ""; })());
+              return <div>{result + list.length + [a1, a2, a3, a4, a5, a6].length}</div>;
+            }
+            // The call with the receiver given must not read "call" of the method.
+            export function MethodIsAProxy(p) {
+              const o = { name: p.name, who: answersEveryRead };
+              return <div>{o.who((() => { o.touched = true; return ""; })())}</div>;
+            }
+            export function MethodHasItsOwnCall(p) {
+              const o = { name: p.name, who: withItsOwnCall };
+              return <div>{o.who((() => { o.touched = true; return ""; })())}</div>;
+            }
+            // The arguments run before the call throws.
+            export function MethodIsMissing(p) {
+              const o = { name: p.name };
+              const log = [];
+              let out;
+              try {
+                out = o.missing((() => { o.touched = true; log.push("statement"); return ""; })(), tick(log));
+              } catch (e) {
+                out = (e instanceof TypeError ? "TypeError" : e) + " after " + log;
+              }
+              return <div>{out}</div>;
+            }
+            // A spread argument prints in the call with the receiver given.
+            export function SpreadOfAStatementThatReplacesTheMethod(p) {
+              const o = make(p.name);
+              return <div>{o.who(...(() => { o.who = other; return ["x", "y"]; })())}</div>;
+            }
+            export function KeyIsReassigned(p) {
+              const o = make(p.name);
+              let key = "who";
+              return <div>{o[key]((() => { key = "alt"; return ""; })())}</div>;
+            }
+            // A postfix update of a member is a statement too.
+            export function KeyIsAMemberThatIsUpdated(p) {
+              const fns = [() => p.name + ":first", () => p.name + ":second"];
+              const state = { i: 0 };
+              return <div>{fns[state.i](state.i++)}</div>;
+            }
+            export function KeyIsAConversionOfAMemberThatIsUpdated(p) {
+              const fns = { 0: () => p.name + ":first", 1: () => p.name + ":second" };
+              const state = { i: 0 };
+              return <div>{fns[String(state.i)](state.i++)}</div>;
+            }
+            export function KeyOfAMethodOfAProp(p) {
+              const keys = ["who", "alt"];
+              const state = { i: 0 };
+              return <div>{p.api[keys[state.i]](state.i++)}</div>;
+            }
+            // A hook stands in the scope of \`log\`, so that scope is pruned. The call does not mutate \`log\`: it stands
+            // behind the scope, and the load of its method in it.
+            export function KeyInAScopeThatAHookPrunes(p) {
+              const log = [];
+              const [n] = useState(0);
+              log.push(n);
+              const result = p.api[pick(log)]((() => { log.push("statement"); return ""; })());
+              return <div>{result + " " + log}</div>;
+            }
+            export function MethodOfAPropBehindAStatement(p) {
+              const local = { n: 0 };
+              return <div>{p.api.who((() => { local.n = 1; return ""; })())}</div>;
+            }
+            // The earlier argument gets a name ahead of the memo block, and it cannot mutate the receiver.
+            export function EarlierArgumentOverAnotherLocal(p) {
+              const o = make(p.name);
+              const log = [];
+              return <div>{o.who(String(tick(log)), <i>{p.n}</i>)}</div>;
+            }
+            export function EarlierArgumentIsAMethodOfAProp(p) {
+              const o = make(p.name);
+              return <div>{o.who(p.api.who(), <i>{p.n}</i>)}</div>;
+            }
+            // The call mutates its arguments together with the receiver, so the mutation of one of them counts.
+            export function EarlierArgumentIsAChainOfMethods(p) {
+              const o = make(p.name);
+              return <div>{o.who(p.name.trim().toLowerCase(), <i>{p.n}</i>)}</div>;
+            }
+            // The statement mutates another object, and the argument that replaces the method prints inside the call.
+            export function LaterArgumentBehindAStatement(p) {
+              const o = make(p.name);
+              const local = { n: 0 };
+              return <div>{o.who((() => { local.n = 1; return ""; })(), replace(o))}</div>;
+            }
+            export function LaterArgumentBehindADependency(p) {
+              const o = make(p.name);
+              return <div>{o.who(<i>{size(Object.keys(p)) + p.n}</i>, replace(o))}</div>;
+            }
+            // The commonest member call behind a statement.
+            export function PushOfAnElementWithComputedProps(p) {
+              const items = [];
+              items.push(<i key={String(p.n)} title={Math.max(p.n, 1)} />);
+              return <div>{items.length + ":" + items[0].props.title}</div>;
+            }
+            export function PushBehindAMemberUpdate(p) {
+              const items = [];
+              const state = { i: 0 };
+              for (const row of [p.name, "x"]) {
+                items.push(row + state.i++);
+              }
+              return <div>{items.join()}</div>;
+            }
+            // The test of the logical expression is a call on a value that shares the memo block of the receiver.
+            export function PushOfAnObjectWithACallInALogical(p) {
+              const others = p.name.split("").map(letter => letter + "!");
+              const items = [{ value: "a", disabled: others.includes("a!") }];
+              items.push({ value: "b", disabled: others.includes("A!") || p.n > 5 });
+              return <div>{items.length + ":" + items[1].disabled}</div>;
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/index.js": /* js */ `
+            const caches = new Map();
+            let current;
+            export const render = (Component, props) => {
+              current = Component;
+              return Component(props);
+            };
+            export const memoCache = size => {
+              let cache = caches.get(current);
+              if (!cache) caches.set(current, (cache = new Array(size).fill(Symbol.for("react.memo_cache_sentinel"))));
+              return cache;
+            };
+            export const useMemo = fn => fn();
+            export const useState = value => [value, () => {}];
+          `,
+          "/node_modules/react/compiler-runtime.js": /* js */ `
+            import { memoCache } from "./index.js";
+            export const c = size => memoCache(size);
+          `,
+          "/node_modules/react/jsx-runtime.js": /* js */ `
+            export const jsx = (type, props) => ({ type, props });
+            export const jsxs = jsx;
+          `,
+          "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+            export const jsxDEV = (type, props) => ({ type, props });
+          `,
+        },
+        ...options,
+        backend: "cli",
+        onAfterBundle(api) {
+          if (name !== "browser" && name !== "bun") return;
+          const bodies = Object.fromEntries(
+            Array.from(api.readFile("/out.js").matchAll(/^function (\w+)\(p\) \{$([\s\S]*?)^\}$/gm), match => [
+              match[1],
+              match[2],
+            ]),
+          );
+          expect(
+            Object.fromEntries(
+              Object.keys(memberCalls[name]).map(form => [
+                form,
+                bodies[form].includes("Function.prototype.call.call(")
+                  ? "Function.prototype.call.call"
+                  : bodies[form].match(memberCall)?.[0].replace(/\bt\d+\b/g, "t"),
+              ]),
+            ),
+          ).toEqual(memberCalls[name]);
+          if (name !== "browser") return;
+          // A compiled function starts with its memo cache. In these two the load of the method is in the memo block
+          // of `log` and the call is behind that block, which codegen cannot print.
+          expect(Object.keys(bodies).filter(form => !/^\s*let \$ = c\(\d+\);/.test(bodies[form]))).toEqual([
+            "KeyIsACallOfAPropBehindAnInlinedFunction",
+            "KeyIsACallOfAPropBehindADependencyOfAMemoBlock",
+          ]);
+        },
+        run: { stdout: [...expectedOfCells, ...expectedOfForms].join("\n") },
+      });
+    }
   }
 
   // The call with the receiver given is `Function.prototype.call.call(method, receiver, ...)`.
-  // A function that can see another `Function` is left as it is written.
+  // A function that can see another `Function` is left as it is written, and
+  // a binding that only a type uses stays unused.
   itBundled("react-compiler/MethodReadAheadOfAStatementNeedsTheGlobalFunction", {
     files: {
       "/entry.jsx": /* jsx */ `
+        import { other, shadow, who } from "./shared";
         import { ShadowedInTheFile } from "./shadowed";
+        import { InterfaceInTheFile } from "./interface";
+        import { ImportOfAType } from "./import-of-a-type";
+        import { TypeImport } from "./type-import";
 
-        function who() {
-          return this.name + ":old";
-        }
-        function other() {
-          return this.name + ":new";
-        }
         function ShadowedInTheBody(p) {
-          const Function = { prototype: { call: { call: () => "the Function of the body" } } };
+          const Function = shadow;
           const o = { name: p.name, who };
           return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Function}</div>;
         }
-        function ShadowedInABlock(p) {
+        function ShadowedInALoop(p) {
           const o = { name: p.name, who };
           let out = "";
-          if (p.name) {
-            const Function = { prototype: { call: { call: () => "the Function of the block" } } };
+          for (const Function of [shadow]) {
             out = o.who((() => { o.who = other; return ""; })()) + " " + typeof Function;
           }
           return <div>{out}</div>;
@@ -4370,21 +4503,63 @@ describe("bundler", () => {
           const o = { name: p.name, who };
           return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Function}</div>;
         }
-        for (const Form of [ShadowedInTheFile, ShadowedInTheBody, ShadowedInABlock, UsesTheGlobal]) {
+        for (const Form of [
+          ShadowedInTheFile,
+          ShadowedInTheBody,
+          ShadowedInALoop,
+          ImportOfAType,
+          UsesTheGlobal,
+          InterfaceInTheFile,
+          TypeImport,
+        ]) {
           console.log(Form.name + "=" + Form({ name: "A" }).props.children);
         }
       `,
-      "/shadowed.jsx": /* jsx */ `
-        const Function = { prototype: { call: { call: () => "the Function of the file" } } };
-        function who() {
+      "/shared.ts": /* ts */ `
+        export type Named = { name: string; who: (this: Named, suffix?: string) => string };
+        export function who(this: Named) {
           return this.name + ":old";
         }
-        function other() {
+        export function other(this: Named) {
           return this.name + ":new";
         }
+        export const shadow = { prototype: { call: { call: () => "shadowed" } } };
+        export interface Function {
+          (): string;
+        }
+      `,
+      "/shadowed.jsx": /* jsx */ `
+        import { other, shadow, who } from "./shared";
+        const Function = shadow;
         export function ShadowedInTheFile(p) {
           const o = { name: p.name, who };
           return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Function}</div>;
+        }
+      `,
+      "/interface.tsx": /* tsx */ `
+        import { type Named, other, who } from "./shared";
+        interface Function {
+          (): string;
+        }
+        export function InterfaceInTheFile(p: { name: string; callback?: Function }) {
+          const o: Named = { name: p.name, who };
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof globalThis.Function}</div>;
+        }
+      `,
+      "/type-import.tsx": /* tsx */ `
+        import type { Function } from "./shared";
+        import { type Named, other, who } from "./shared";
+        export function TypeImport(p: { name: string; callback?: Function }) {
+          const o: Named = { name: p.name, who };
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof globalThis.Function}</div>;
+        }
+      `,
+      // Only types use the import, so it names nothing when the file runs. A use on record would keep it.
+      "/import-of-a-type.tsx": /* tsx */ `
+        import { Function, type Named, other, who } from "./shared";
+        export function ImportOfAType(p: { name: string; callback?: Function }) {
+          const o: Named = { name: p.name, who };
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof globalThis.Function}</div>;
         }
       `,
       "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
@@ -4404,14 +4579,21 @@ describe("bundler", () => {
     onAfterBundle(api) {
       // A compiled function starts with its memo cache.
       const compiled = api.readFile("/out.js").matchAll(/function (\w+)\(p\) \{\s*let \$ = c\(\d+\);/g);
-      expect(Array.from(compiled, match => match[1])).toEqual(["UsesTheGlobal"]);
+      expect(Array.from(compiled, match => match[1]).sort()).toEqual([
+        "InterfaceInTheFile",
+        "TypeImport",
+        "UsesTheGlobal",
+      ]);
     },
     run: {
       stdout: `
         ShadowedInTheFile=A:old object
         ShadowedInTheBody=A:old object
-        ShadowedInABlock=A:old object
+        ShadowedInALoop=A:old object
+        ImportOfAType=A:old function
         UsesTheGlobal=A:old function
+        InterfaceInTheFile=A:old function
+        TypeImport=A:old function
       `,
     },
   });

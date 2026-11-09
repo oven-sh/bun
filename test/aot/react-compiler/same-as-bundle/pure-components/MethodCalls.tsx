@@ -23,6 +23,19 @@ export function StatementReplacesTheMethod({ a, text }: Props) {
   ];
 }
 
+export function StatementInASpreadArgument({ a, text }: Props) {
+  "use memo";
+  const named = make(text + a);
+  return [
+    named.who(
+      ...((): [string] => {
+        named.who = other;
+        return ["!"];
+      })(),
+    ),
+  ];
+}
+
 export function ReceiverIsAPropertyLoad({ a, text }: Props) {
   "use memo";
   const outer = { inner: make(text + a) };

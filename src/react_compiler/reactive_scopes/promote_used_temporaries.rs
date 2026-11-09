@@ -620,8 +620,6 @@ struct InterState<'a> {
     /// fbt wants these inside the macro call: they stay inline and their operands get the names.
     inline_macro_operands: &'a HashSet<IdentifierId>,
     operands_of_macro_operands: IdMap<DeclarationId, Places>,
-    /// The last operand that kept its place as a const while a statement behind it can mutate an object.
-    late_const: Option<IdentifierId>,
 }
 
 impl<'a> InterState<'a> {
@@ -633,7 +631,6 @@ impl<'a> InterState<'a> {
             value_block_statements: None,
             inline_macro_operands,
             operands_of_macro_operands: IdMap::new(),
-            late_const: None,
         }
     }
 
@@ -787,15 +784,7 @@ fn promote_interposed_place(
     let Some(temporary) = inline_temporary(place, state, inter_state, env) else {
         return Effect::None;
     };
-    let conflicts = inter_state.conflicts(temporary);
-    if !conflicts && !inter_state.iterates_behind(temporary) {
-        return temporary.effect;
-    }
-    if consts.contains(place.identifier) {
-        inter_state.late_const = Some(place.identifier);
-        return temporary.effect;
-    }
-    if !conflicts {
+    if !inter_state.conflicts(temporary) || consts.contains(place.identifier) {
         return temporary.effect;
     }
     if inter_state
@@ -999,10 +988,21 @@ fn promote_interposed_instruction(
             }
             let effect =
                 promote_interposed_value(&instr.value, state, inter_state, consts, globals, env);
+            // The operands are decided: an argument that got a name is a statement behind the method now.
             if let InstructionValue::MethodCall { property, .. } = iv
-                && inter_state.late_const == Some(property.identifier)
+                && let Some(temporary) = inline_temporary(property, state, inter_state, env)
+                && (inter_state.conflicts(temporary) || inter_state.iterates_behind(temporary))
             {
-                promote_late_method(iv, before, state, inter_state, consts, globals, env);
+                promote_late_method(
+                    iv,
+                    before,
+                    temporary,
+                    state,
+                    inter_state,
+                    consts,
+                    globals,
+                    env,
+                );
             }
             effect
         }
@@ -1112,11 +1112,14 @@ fn promote_interposed_value(
 /// Not in upstream. Codegen prints the property of a MethodCall inside the call, so that the call has its
 /// receiver. So the method is read behind every statement between its load and the call. When such a statement
 /// can mutate the receiver, the property gets a name here, and codegen calls it with the receiver given.
+/// Otherwise the method stays in the call, and a computed key gets a name like any other operand.
 /// A statement that writes stands there in most member calls. Only the mutation analysis tells the few that can.
 #[cold]
+#[allow(clippy::too_many_arguments)]
 fn promote_late_method(
     call: &InstructionValue,
     before: &[ReactiveStatement],
+    temporary: Temporary,
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &IdBitSet<IdentifierId>,
@@ -1129,14 +1132,10 @@ fn promote_late_method(
     else {
         return;
     };
-    let Some(temporary) = inline_temporary(property, state, inter_state, env) else {
-        return;
-    };
     let declaration_of =
         |place: &Place| env.identifiers[place.identifier.0 as usize].declaration_id;
     let mut behind = Behind {
         property: declaration_of(property),
-        receiver: declaration_of(receiver),
         state,
         inter_state,
         mutations: Mutations {
@@ -1149,36 +1148,25 @@ fn promote_late_method(
                     .id
             }),
         },
-        in_call: IdBitSet::with_ids(env.identifiers.len()),
+        in_call: crate::hir::visitors::operands(call, &env.functions)
+            .map(declaration_of)
+            .collect(),
         is_mutated: false,
         load: None,
-        is_receiver_a_local: false,
     };
-    for operand in crate::hir::visitors::operands(call, &env.functions) {
-        behind.in_call.insert(declaration_of(operand));
-    }
     behind.walk(before);
     let Behind {
-        is_mutated,
-        load,
-        is_receiver_a_local,
-        ..
+        is_mutated, load, ..
     } = behind;
     let Some(load) = load else {
         return;
     };
-    // Without memoization every mutation counts. The receiver still has the range in which something mutates it.
-    let mutated_until = env.identifiers[receiver.identifier.0 as usize]
-        .mutable_range
-        .end;
-    if is_mutated && mutated_until.0 > load.id.0 + 1 {
+    if is_mutated && can_method_change(receiver, property, env) {
         promote_identifier(property.identifier, state, env);
         inter_state.promoted(temporary);
         env.explicit_receiver_calls.insert(property.identifier);
-        // The call prints the receiver again. Only the name of a local can print twice.
-        if !is_receiver_a_local
-            && let Some(temporary) = inline_temporary(receiver, state, inter_state, env)
-        {
+        // The call prints the receiver again, so the receiver needs a name too.
+        if let Some(temporary) = inline_temporary(receiver, state, inter_state, env) {
             promote_identifier(receiver.identifier, state, env);
             inter_state.promoted(temporary);
         }
@@ -1191,85 +1179,75 @@ fn promote_late_method(
     }
 }
 
+/// What the inference says without a look at the statements. A receiver that nothing mutates once it is made keeps
+/// its methods. A property that has the signature of a method is taken for that method, whatever a statement does
+/// to the receiver. A hook has its signature from its name alone, so it does not count.
+fn can_method_change(receiver: &Place, property: &Place, env: &Environment) -> bool {
+    let range = &env.identifiers[receiver.identifier.0 as usize].mutable_range;
+    let type_ = &env.types[env.identifiers[property.identifier.0 as usize].type_.0 as usize];
+    range.end.0 > range.start.0 + 1
+        && !(env.get_function_signature(type_).ok().flatten())
+            .is_some_and(|signature| signature.hook_kind.is_none())
+}
+
 /// What prints between the load of a method and its call, read from the call back to the load.
 struct Behind<'a, 'b> {
     property: DeclarationId,
-    receiver: DeclarationId,
     state: &'b State,
     inter_state: &'b InterState<'b>,
     mutations: Mutations<'b>,
     /// The temporaries that print inside the call. They run behind the read of the method in the source too.
-    in_call: IdBitSet<DeclarationId>,
+    in_call: HashSet<DeclarationId>,
     is_mutated: bool,
     load: Option<&'a ReactiveInstruction>,
-    is_receiver_a_local: bool,
 }
 
 impl<'a> Behind<'a, '_> {
-    /// Goes back to the load, and then on to what defines the receiver. Returns true at the end of the search.
+    /// Returns true at the load of the method.
     fn walk(&mut self, statements: &'a [ReactiveStatement]) -> bool {
-        if !self.mutations.env.has_stack() {
+        let env = self.mutations.env;
+        if !env.has_stack() {
             return true;
         }
         for statement in statements.iter().rev() {
-            let is_at_the_end = match statement {
-                ReactiveStatement::Instruction(instruction) => self.instruction(instruction),
-                // A pruned scope prints its statements in the block around it.
-                ReactiveStatement::PrunedScope(scope) => self.walk(&scope.instructions),
-                ReactiveStatement::Scope(scope) => {
-                    if self.load.is_none() {
-                        self.mutations.visit_scope(scope, &mut self.is_mutated);
+            match statement {
+                ReactiveStatement::Instruction(instruction) => {
+                    let lvalue = instruction.lvalue.as_ref();
+                    let declaration_id = lvalue
+                        .map(|lvalue| env.identifiers[lvalue.identifier.0 as usize].declaration_id);
+                    if declaration_id == Some(self.property) {
+                        self.load = Some(instruction);
+                        return true;
                     }
-                    false
+                    if let Some(lvalue) = lvalue
+                        && declaration_id.is_some_and(|id| self.in_call.contains(&id))
+                        && inline_temporary(lvalue, self.state, self.inter_state, env).is_some()
+                    {
+                        Operands(env).visit_value(
+                            instruction.id,
+                            &instruction.value,
+                            &mut self.in_call,
+                        );
+                    } else {
+                        self.mutations
+                            .visit_instruction(instruction, &mut self.is_mutated);
+                    }
+                }
+                // A pruned scope prints its statements in the block around it.
+                ReactiveStatement::PrunedScope(scope) => {
+                    if self.walk(&scope.instructions) {
+                        return true;
+                    }
+                }
+                ReactiveStatement::Scope(scope) => {
+                    self.mutations.visit_scope(scope, &mut self.is_mutated);
                 }
                 ReactiveStatement::Terminal(terminal) => {
-                    if self.load.is_none() {
-                        self.mutations
-                            .visit_terminal(terminal, &mut self.is_mutated);
-                    }
-                    false
+                    self.mutations
+                        .visit_terminal(terminal, &mut self.is_mutated);
                 }
-            };
-            if is_at_the_end {
-                return true;
             }
         }
-        false
-    }
-
-    fn instruction(&mut self, instruction: &'a ReactiveInstruction) -> bool {
-        let env = self.mutations.env;
-        let declaration_id = instruction
-            .lvalue
-            .as_ref()
-            .map(|lvalue| env.identifiers[lvalue.identifier.0 as usize].declaration_id);
-        if self.load.is_some() {
-            if declaration_id != Some(self.receiver) {
-                return false;
-            }
-            self.is_receiver_a_local = matches!(
-                &instruction.value,
-                ReactiveValue::Instruction(InstructionValue::LoadLocal { place, .. })
-                    if matches!(
-                        env.identifiers[place.identifier.0 as usize].name,
-                        Some(IdentifierName::Named(_))
-                    )
-            );
-            return true;
-        }
-        if declaration_id == Some(self.property) {
-            self.load = Some(instruction);
-            return false;
-        }
-        if let Some(lvalue) = &instruction.lvalue
-            && declaration_id.is_some_and(|id| self.in_call.contains(id))
-            && inline_temporary(lvalue, self.state, self.inter_state, env).is_some()
-        {
-            Operands(env).visit_value(instruction.id, &instruction.value, &mut self.in_call);
-            return false;
-        }
-        self.mutations
-            .visit_instruction(instruction, &mut self.is_mutated);
         false
     }
 }
@@ -1278,7 +1256,7 @@ impl<'a> Behind<'a, '_> {
 struct Operands<'a>(&'a Environment);
 
 impl ReactiveFunctionVisitor for Operands<'_> {
-    type State = IdBitSet<DeclarationId>;
+    type State = HashSet<DeclarationId>;
 
     fn env(&self) -> &Environment {
         self.0
@@ -1295,7 +1273,8 @@ struct Mutations<'a> {
     consts: &'a IdBitSet<IdentifierId>,
     globals: &'a IdBitSet<IdentifierId>,
     /// The values that are mutated together have one mutable range. A memo block mutates only what it declares,
-    /// so what is in a memo block has another range. `None` without memoization: there no two values share a range.
+    /// so what is in a memo block has another range. `None` without memoization: no two values share a range
+    /// there, and every mutation counts.
     receiver: Option<MutableRangeId>,
 }
 

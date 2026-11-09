@@ -229,6 +229,21 @@ pub(crate) fn codegen_function(
     context: &mut ProgramContext,
     unique_identifiers: HashSet<String>,
 ) -> Result<CodegenFunction, CompilerError> {
+    // Not in upstream: `codegen_explicit_receiver_call` prints the global `Function`. The identifiers say what the
+    // function binds, and the host what is around it. The question comes first, so that a function that stays as
+    // it is written has no use of that name on record.
+    if !env.explicit_receiver_calls.is_empty() {
+        let binds_function = env.identifiers.iter().any(|identifier| {
+            (identifier.name.as_ref()).is_some_and(|name| name.value() == b"Function")
+        });
+        if binds_function || !cg.host.is_unbound_global(b"Function") {
+            return Err(crate::diagnostics::cold_todo(
+                "A method call that reads its method ahead of its arguments needs the global `Function`",
+                None,
+            ));
+        }
+    }
+
     let mut cx = Context::new(env, cg, unique_identifiers);
 
     // Fast Refresh: Bun handles HMR via its own React Refresh transform; the
@@ -2327,7 +2342,9 @@ fn codegen_base_instruction_value(
 /// Not in upstream: the call of a method that PromoteUsedTemporaries read ahead of a statement, as
 /// `Function.prototype.call.call(method, receiver, ...args)`. `method.call(receiver, ...args)` reads `call` of the
 /// method, which a member call does not: a proxy or a method with a `call` of its own answers that read.
-/// `Reflect.apply(method, receiver, [...args])` makes an array for each call, and JavaScriptCore does not inline it.
+/// `Reflect.apply(method, receiver, [...args])` makes an array for each call, and is many times slower under
+/// JavaScriptCore. A method that is not callable throws from `Function.prototype.call`, and the message does not
+/// name the member.
 fn codegen_explicit_receiver_call(
     cx: &mut Context,
     method: Expr,
@@ -2335,37 +2352,18 @@ fn codegen_explicit_receiver_call(
     args: &[PlaceOrSpread],
     loc: Loc,
 ) -> Result<Expr, CompilerError> {
-    let function = cx.cg.well_known_global(WellKnown::Function, b"Function");
-    // `find_symbol` of the host sees what the file and the body of the function declare, not a nested block.
-    let is_global = cx
-        .cg
-        .host
-        .symbols()
-        .get(function.inner_index() as usize)
-        .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Unbound)
-        && !cx.env.identifiers.iter().any(|identifier| {
-            identifier
-                .name
-                .as_ref()
-                .is_some_and(|name| name.value() == b"Function")
-        });
-    if !is_global {
-        return Err(method_call_property_err(receiver.loc, method));
-    }
-    let this_value = codegen_place_to_expression(cx, receiver)?;
-    // The read of the method printed the receiver once. PromoteUsedTemporaries leaves only a local without a name.
+    // The load of the method printed the receiver once, so only a name can print it again.
     if cx.env.identifiers[receiver.identifier.0 as usize]
         .name
         .is_none()
     {
-        let ExprData::EIdentifier(local) = this_value.data else {
-            return Err(method_call_property_err(receiver.loc, this_value));
-        };
-        cx.cg.host.record_usage(local.ref_);
+        return Err(method_call_property_err(receiver.loc, method));
     }
+    // `codegen_function` checked that the name is the global.
+    let function = cx.cg.well_known_global(WellKnown::Function, b"Function");
     let mut call_args: ExprNodeList = AstAlloc::vec_with_capacity(args.len() + 2);
     call_args.push(method);
-    call_args.push(this_value);
+    call_args.push(codegen_place_to_expression(cx, receiver)?);
     for arg in args {
         call_args.push(codegen_argument(cx, arg)?);
     }

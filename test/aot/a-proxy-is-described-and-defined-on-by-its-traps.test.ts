@@ -5,12 +5,13 @@
 // console.log prints the target of a proxy and asks nothing. Each scene has a proxy and a handler of its own.
 //
 // Behind its text a scene has what it says: how it ended, and the lines that it logged, as the program of all scenes prints them behind
-// the name of the scene. A scene that prints through console itself has what its own program writes to stdout behind that, and to stderr.
+// the name of the scene. A scene that prints through console itself has behind that what console writes for it, to stdout and to stderr.
 // Plain Bun has to say that, and so has the compiled program.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned, told } from "./harness/commands";
+import { withThreads } from "./harness/flags";
 import { sayGoal } from "./harness/goals";
 import { test } from "./supported";
 
@@ -332,7 +333,6 @@ a text {
   },
   onlyPrinted: 2,
 }
-[]
 `,
     `{
   a: {
@@ -356,13 +356,11 @@ a text {
      console.log(proxy);
      console.log(new Proxy(proxy, {}));`,
     "returned: the target's own printer runs for the target true | the target's own printer runs for the target true",
-    `the target's own printer runs for the target true
-{
+    `{
   printed: {
     mark: "by the target",
   },
 }
-the target's own printer runs for the target true
 {
   printed: {
     mark: "by the target",
@@ -381,20 +379,11 @@ the target's own printer runs for the target true
      console.log("%j", proxy);
      console.log("%o and %d", proxy, proxy);`,
     "returned: get Symbol(Symbol.toPrimitive) | get toString | get toJSON | ownKeys | describe a | get a | get Symbol(Symbol.toPrimitive) | get valueOf | get toString",
-    `get Symbol(Symbol.toPrimitive)
-get toString
-converted
-get toJSON
-ownKeys
-describe a
-get a
+    `converted
 {"a":1}
 {
   a: 1,
-} and get Symbol(Symbol.toPrimitive)
-get valueOf
-get toString
-NaN
+} and NaN
 `,
   ],
   [
@@ -402,9 +391,7 @@ NaN
     `const proxy = new Proxy({ a: 1 }, { get(t, k) { log("get", k); return k === "toString" ? () => "converted" : k === Symbol.toPrimitive ? undefined : t[k]; } });
      console.log(process.argv[2] ?? "%s", proxy);`,
     "returned: get Symbol(Symbol.toPrimitive) | get toString",
-    `get Symbol(Symbol.toPrimitive)
-get toString
-converted
+    `converted
 `,
   ],
   [
@@ -420,15 +407,9 @@ converted
     c: 2,
   },
 }
-the options are asked for depth
-the options are asked for colors
 {
   a: [Object ...],
 }
-get Symbol(Symbol.iterator)
-ownKeys
-get a
-get b
 ┌───┬───┬────────┐
 │   │ c │ Values │
 ├───┼───┼────────┤
@@ -511,21 +492,16 @@ function saidBy(says: string) {
   return { ended: says.slice(0, behindEnd), logged: logged ? logged.split(" | ") : [] };
 }
 
-/** What the program of one scene prints when nothing but `log` prints: its lines, and behind them the name of the error that ended it. */
-function printedAlone(says: string) {
-  const { ended, logged } = saidBy(says);
-  return [...logged, ...(ended === "returned" ? [] : [ended])].map(line => line + "\n").join("");
-}
-
 /**
- * What console itself prints for a scene: `stdout` without the lines of `log`, which the program of all scenes keeps for its end.
- * A line of `log` may begin in the middle of a line of console, so it is looked for anywhere behind the last one.
+ * What a program printed, without the lines that its scene logged: what console itself wrote. Where the line of a trap falls between what
+ * console writes for the call that asked it is console's own matter, so a line is looked for anywhere behind the last one, also in the
+ * middle of a line of console. A line that is not there is named in front of the text.
  */
-function printedByConsole(stdout: string, says: string) {
+function withoutLogged(stdout: string, logged: string[]) {
   let at = 0;
-  for (const line of saidBy(says).logged) {
+  for (const line of logged) {
     at = stdout.indexOf(line + "\n", at);
-    if (at === -1) throw new Error(`${JSON.stringify(line)} is no line of what the scene prints`);
+    if (at === -1) return `${JSON.stringify(line)} is not logged behind the lines before it:\n${stdout}`;
     stdout = stdout.slice(0, at) + stdout.slice(at + line.length + 1);
   }
   return stdout;
@@ -553,12 +529,21 @@ await 0;
 for (const line of lines) console.log(line);
 `;
 
-// The programs of one scene ask what compiled code does, and nothing of the file that holds it. So on Linux each of their builds writes
-// its program alone (harness/program-alone.ts), as the builds of the stored programs do (run-parallel.ts): the compile is the same, and
-// no copy of Bun is written for each of them. AOT_REAL_EXECUTABLES=1 around a run asks for the executables, as it does there. The
-// program of all scenes is built as before: an executable, unless AOT_PROGRAMS_ALONE asks for every program alone.
+// The program of all scenes is built as anybody builds it. The programs of one scene ask what compiled code does, and nothing of the
+// file that holds it or of the threads that made it. So each is built as run-parallel.ts builds a stored program:
+// - on one thread, for the slot that its build holds. CI has as many cases under way as the machine has processors, so more threads for
+//   one build are taken from the build beside it. The bytes are the same on any number of threads
+//   (builds-on-one-thread-and-on-several-give-the-same-bytes.test.ts).
+// - on Linux, as the program alone (harness/program-alone.ts): the compile is the same, and no copy of Bun is written for each scene.
+// AOT_REAL_EXECUTABLES=1 around a run asks for an executable of every build of this file. Without it the program of all scenes is an
+// executable too, unless AOT_PROGRAMS_ALONE asks for every program alone.
+const atTheBuildOfAllScenes = process.env.AOT_REAL_EXECUTABLES
+  ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: undefined }
+  : bunEnv;
 const atTheBuildOfOneScene =
-  isLinux && !process.env.AOT_REAL_EXECUTABLES ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: "1" } : bunEnv;
+  isLinux && !process.env.AOT_REAL_EXECUTABLES
+    ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: "1" }
+    : atTheBuildOfAllScenes;
 
 test.concurrent(
   "the two traps get and answer what they do in plain Bun",
@@ -566,17 +551,21 @@ test.concurrent(
     using dir = tempDir("aot-own-property-traps", { "main.mjs": program });
     const folder = String(dir);
     const executable = join(folder, isWindows ? "main.exe" : "main");
-    // What console prints for a scene comes as the scene runs, and the line of each scene at the end.
+    // What console writes for a scene comes as the scene runs, and the line of each scene at the end.
     const said = {
       stdout:
-        scenes.map(([, , says, stdout]) => (stdout === undefined ? "" : printedByConsole(stdout, says))).join("") +
+        scenes.map(([, , , stdout = ""]) => stdout).join("") +
         scenes.map(([name, , says]) => `${name}: ${says}\n`).join(""),
       stderr: scenes.map(([, , , , stderr = ""]) => stderr).join(""),
       exitCode: 0,
     };
     await slot(async () => {
       built(
-        await spawned([bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable], folder, bunEnv),
+        await spawned(
+          [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable],
+          folder,
+          atTheBuildOfAllScenes,
+        ),
       );
       const plain = told(await spawned([bunExe(), "./main.mjs"], folder, bunEnv));
       const compiled = told(await spawned([executable], folder, bunEnv));
@@ -590,7 +579,7 @@ test.concurrent(
 test.concurrent.each(scenes)(
   "alone: %s",
   // bun:test hands `done` to a case that declares more parameters than its row has, so the two that not every row has get a default.
-  async (name, does, says, stdout = printedAlone(says), stderr = "") => {
+  async (name, does, says, stdout: string | undefined = undefined, stderr = "") => {
     const alone = `
 function show(value) {
   if (typeof value === "symbol") return String(value);
@@ -607,18 +596,30 @@ ${does}
     using dir = tempDir("aot-own-property-trap", { "main.mjs": alone });
     const folder = String(dir);
     const executable = join(folder, isWindows ? "main.exe" : "main");
-    const said = { stdout, stderr, exitCode: 0 };
+    const { ended, logged } = saidBy(says);
+    // Here `log` prints too: the lines of the scene one by one, and behind them the name of the error that ended it. A scene that prints
+    // through console itself is held to its lines and to what console wrote, and not to where its lines fall between that.
+    const printsItself = stdout !== undefined;
+    const said = {
+      stdout: (stdout ?? logged.map(line => line + "\n").join("")) + (ended === "returned" ? "" : ended + "\n"),
+      stderr,
+      exitCode: 0,
+    };
+    const heard = (run: ReturnType<typeof told>) =>
+      printsItself ? { ...run, stdout: withoutLogged(run.stdout, logged) } : run;
     await slot(async () => {
       built(
         await spawned(
-          [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable],
+          [bunExe(), "build", "--compile", "--aot", withThreads(1), "./main.mjs", "--outfile", executable],
           folder,
           atTheBuildOfOneScene,
         ),
       );
       const plain = told(await spawned([bunExe(), "./main.mjs"], folder, bunEnv));
       const compiled = told(await spawned([executable], folder, bunEnv));
-      expect({ plain, compiled }).toEqual({ plain: said, compiled: said });
+      expect({ plain: heard(plain), compiled: heard(compiled) }).toEqual({ plain: said, compiled: said });
+      // Where its lines fall, the compiled program is held to plain Bun.
+      expect(compiled).toEqual(plain);
     });
   },
   240_000,
@@ -658,14 +659,15 @@ const answersInUpperCase = `{
   defineProperty(target, key, descriptor) { target[key] = String(descriptor.value); return true; },
 }`;
 type Report = { lines: string[]; exitCode: number };
-// One run of `bun check --aot --explain=trim` for the cases that read its lines.
+// One run of `bun check --aot --explain=trim` for the cases that read its lines. On one thread, as the build of one scene: the report
+// is the same on any number.
 function explainTrim(main: string): () => Promise<Report> {
   let report: Promise<Report> | undefined;
   return () =>
     (report ??= (async () => {
       using dir = tempDir("aot-own-property-report", { "main.js": main });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.js"],
+        cmd: [bunExe(), "check", "--aot", "--threads=1", "--no-pretty", "--explain=trim", "main.js"],
         cwd: String(dir),
         env: { ...bunEnv, NO_COLOR: "1" },
         stdout: "pipe",

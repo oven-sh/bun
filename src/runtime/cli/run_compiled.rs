@@ -831,39 +831,61 @@ unsafe extern "system" {
 /// descriptor, then a handle for each. The answer starts at descriptor 3.
 #[cfg(any(windows, test))]
 fn list_open_extra_descriptors(block: &[u8]) -> Vec<bool> {
-    const IS_OPEN: u8 = 1;
     const MOST_THAT_LIBUV_HANDS_ON: usize = 255;
-    let Some((count, rest)) = block.split_first_chunk::<4>() else {
-        return Vec::new();
-    };
-    let count = (u32::from_ne_bytes(*count) as usize)
-        .min(rest.len() / (1 + size_of::<usize>()))
-        .min(MOST_THAT_LIBUV_HANDS_ON);
-    let flags_from_3_up = rest[..count].iter().skip(3);
-    flags_from_3_up
-        .map(|flags| (flags & IS_OPEN) != 0)
+    let count = count_of_descriptor_block(block).min(MOST_THAT_LIBUV_HANDS_ON);
+    (3..count)
+        .map(|number| is_open_in_descriptor_block(block, number))
         .collect()
 }
 
+/// How many descriptors `block` describes. See `list_open_extra_descriptors`.
+#[cfg(any(windows, test))]
+fn count_of_descriptor_block(block: &[u8]) -> usize {
+    let Some((count, rest)) = block.split_first_chunk::<4>() else {
+        return 0;
+    };
+    (u32::from_ne_bytes(*count) as usize).min(rest.len() / (1 + size_of::<usize>()))
+}
+
+/// Whether the parent put an open handle behind descriptor `number` of `block`.
+#[cfg(any(windows, test))]
+fn is_open_in_descriptor_block(block: &[u8], number: usize) -> bool {
+    const IS_OPEN: u8 = 1;
+    const INVALID_HANDLE_VALUE: usize = usize::MAX;
+    let count = count_of_descriptor_block(block);
+    if number >= count {
+        return false;
+    }
+    let flags = &block[4..];
+    let handles = &flags[count..];
+    let handle = bun_core::read_prefix::<usize>(&handles[number * size_of::<usize>()..]);
+    (flags[number] & IS_OPEN) != 0 && !matches!(handle, None | Some(0) | Some(INVALID_HANDLE_VALUE))
+}
+
+/// The block that the parent of this process handed to its C runtime. Empty when there is none.
 #[cfg(windows)]
-fn list_inherited_extra_descriptors() -> Vec<bool> {
+fn inherited_descriptor_block() -> &'static [u8] {
     // SAFETY: integers and null pointers are a valid STARTUPINFOW.
     let mut startup_info: bun_sys::windows::STARTUPINFOW =
         unsafe { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: the call fills the structure it is given.
     unsafe { GetStartupInfoW(&mut startup_info) };
     if startup_info.lpReserved2.is_null() {
-        return Vec::new();
+        return &[];
     }
     // SAFETY: the block is part of the parameters of this process, which are never freed.
-    let block = unsafe {
+    unsafe {
         core::slice::from_raw_parts(
             startup_info.lpReserved2,
             usize::from(startup_info.cbReserved2),
         )
-    };
+    }
+}
+
+#[cfg(windows)]
+fn list_inherited_extra_descriptors() -> Vec<bool> {
     let is_still_open = |index: usize| Fd::from_uv(3 + index as i32).native() as isize > 0;
-    list_open_extra_descriptors(block)
+    list_open_extra_descriptors(inherited_descriptor_block())
         .into_iter()
         .enumerate()
         .map(|(index, was_open)| was_open && is_still_open(index))
@@ -1003,13 +1025,20 @@ fn start_second_process(
     Global::exit(exit_code)
 }
 
-/// A descriptor number, as the C runtime of the process counts them.
+/// A descriptor number, as the C runtime of the process counts them. None when `text` is not a number.
 fn parse_descriptor(text: &[u8]) -> Option<Fd> {
     if text.is_empty() || !text.iter().all(u8::is_ascii_digit) {
         return None;
     }
     let text = core::str::from_utf8(text).ok()?;
-    text.parse::<i32>().ok().map(Fd::from_uv)
+    let number = text.parse::<i32>().ok()?;
+    #[cfg(windows)]
+    // A number that the parent put no handle behind is a closed descriptor. The C runtime ends the process when it
+    // is asked for the handle of one, so it is not asked.
+    if !is_open_in_descriptor_block(inherited_descriptor_block(), number as usize) {
+        return Some(Fd::INVALID);
+    }
+    Some(Fd::from_uv(number))
 }
 
 #[cold]

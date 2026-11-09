@@ -509,22 +509,25 @@ impl NamesOfChai {
             if kept == len {
                 continue;
             }
-            let of_chai = ImportId(file.imports.len() as u32);
-            for name in &mut names[kept as usize..] {
-                name.import = of_chai;
+            // The written statement imports the names of chai. A statement of its own imports what else it named from "vitest".
+            if kept > 0 || import.default != Atom::NONE {
+                let of_vitest = ImportId(file.imports.len() as u32);
+                for name in &mut names[..kept as usize] {
+                    name.import = of_vitest;
+                }
+                file.add_import(Import {
+                    named: Span::new(start, kept),
+                    has_named_imports: kept > 0,
+                    stmt: StmtId::NONE,
+                    ..import
+                });
+                added.push(file.stmt(StmtKind::Import(of_vitest), POSITION));
             }
-            file.imports[index].named = Span::new(start, kept);
-            file.add_import(Import {
-                spec: atoms.intern(MODULE_OF_CHAI),
-                default: Atom::NONE,
-                namespace: Atom::NONE,
-                named: Span::new(start + kept, len - kept),
-                has_named_imports: true,
-                stmt: StmtId::NONE,
-                attributes: ExprId::NONE,
-                ..import
-            });
-            added.push(file.stmt(StmtKind::Import(of_chai), POSITION));
+            let of_chai = &mut file.imports[index];
+            of_chai.spec = atoms.intern(MODULE_OF_CHAI);
+            of_chai.default = Atom::NONE;
+            of_chai.named = Span::new(start + kept, len - kept);
+            of_chai.attributes = ExprId::NONE;
         }
         added
     }

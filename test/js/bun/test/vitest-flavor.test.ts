@@ -3226,6 +3226,18 @@ describe.concurrent("exports", () => {
     });
   });
 
+  test(`an unused import of "assert" or "should" next to module.exports loads`, async () => {
+    const { log, results, exitCode } = await runTests({
+      "helper.ts": `import { assert, should } from "vitest"; module.exports = { inAHelper: "a CommonJS helper" };`,
+      "a.test.ts": `test("test", () => console.log(require("./helper.ts").inAHelper));`,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["a CommonJS helper"],
+      results: ["(pass) test"],
+      exitCode: 0,
+    });
+  });
+
   test(`"assert" and "should" come from chai wherever they stand in the import`, async () => {
     const file = `
       import vitest, { test, vi, assert, expect, should as renamed } from "vitest";

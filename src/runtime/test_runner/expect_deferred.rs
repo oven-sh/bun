@@ -293,8 +293,8 @@ enum Role {
 pub(crate) struct Pass {
     outer: Cell<*const Pass>,
     role: Role,
-    /// The module whose rules a comparison under this pass follows. A pass that states none takes that of the pass around it.
-    flavor: Cell<Option<Flavor>>,
+    /// The module whose rules a comparison under this pass follows. A pass that states none has that of the pass it was made under.
+    flavor: Option<Flavor>,
     /// Number of `once()` calls so far. For `Role::Replaying`, how many were answered from the journal.
     cursor: Cell<u32>,
     /// Four bits per `recent` entry: `Asked << 1 | threw`.
@@ -327,7 +327,7 @@ impl Pass {
         Pass {
             outer: Cell::new(core::ptr::null()),
             role,
-            flavor: Cell::new(flavor),
+            flavor,
             cursor: Cell::new(0),
             recent_kinds: Cell::new(0),
             journal: Cell::new(journal),
@@ -341,18 +341,18 @@ impl Pass {
     }
 
     fn replaying(deferred: JSValue) -> Pass {
-        Self::new(Role::Replaying, deferred, None)
+        Self::new(Role::Replaying, deferred, Self::flavor())
     }
 
     pub(crate) fn barrier(flavor: Option<Flavor>) -> Pass {
-        Self::new(Role::Barrier, JSValue::ZERO, flavor)
+        Self::new(Role::Barrier, JSValue::ZERO, flavor.or_else(Self::flavor))
     }
 
     /// The module whose rules a comparison follows now. `None` with no matcher and no `equals()` on the stack.
     #[inline]
     pub(crate) fn flavor() -> Option<Flavor> {
         // SAFETY: as in `current`.
-        unsafe { Self::innermost().get().as_ref() }.and_then(|pass| pass.flavor.get())
+        unsafe { Self::innermost().get().as_ref() }.and_then(|pass| pass.flavor)
     }
 
     #[inline]
@@ -363,12 +363,7 @@ impl Pass {
 
     #[inline]
     pub(crate) fn enter(&self) -> EnteredPass<'_> {
-        let outer = Self::innermost().replace(self);
-        self.outer.set(outer);
-        if self.flavor.get().is_none() {
-            // SAFETY: as in `current`.
-            self.flavor.set(unsafe { outer.as_ref() }.and_then(|outer| outer.flavor.get()));
-        }
+        self.outer.set(Self::innermost().replace(self));
         EnteredPass(self)
     }
 

@@ -19,8 +19,7 @@ export interface BaseQueryHandle<Connection> {
 export type { Query, SQLQueryResultMode };
 export type QueryStrings = string | TemplateStringsArray | SQLHelper<any> | Query<any, any>;
 
-/// The query that `value` is, that a Proxy of one wraps, or that an object inherits from. Undefined for every other
-/// value: `Query.prototype` has the methods of a query and none of its state.
+/// The query that `value` is, wraps as a Proxy, or inherits from.
 let queryOf: (value: object | null) => Query<any, any> | undefined;
 /// Calls `callback` in a microtask once the query has settled, before the reactions of the caller.
 let onQuerySettled: (query: Query<any, any>, callback: () => void) => void;
@@ -28,9 +27,7 @@ let onQuerySettled: (query: Query<any, any>, callback: () => void) => void;
 let adapterOf: (query: Query<any, any>) => DatabaseAdapter<any, any, any>;
 
 class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
-  // Private fields: what lists the own properties of a query, as `util.inspect()` with `customInspect: false` and a
-  // failed `node:assert` do, then finds nothing that leads to the adapter and its connection options. The adapters
-  // and the pool go through the accessors below.
+  // Private: what lists the own properties of a query must not reach the adapter and its connection options.
   #resolve: (value: T) => void;
   #reject: (reason?: Error) => void;
   #handle: Handle | null = null;
@@ -55,8 +52,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return undefined;
     };
     onQuerySettled = (query, callback) => {
-      // A query that is only started, sql`...`.execute(), does not end the process when it fails. What the caller
-      // makes of it with then() or catch() is a promise like any other.
+      // A query that is only started, sql`...`.execute(), does not end the process when it fails.
       $pokePromiseAsHandled(query);
       let settled = query.#settled;
       if (settled === null) {

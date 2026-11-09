@@ -316,10 +316,10 @@ export const lazy = () => import("./key");
     expect(own).toEqual({ said: null, exitCode: 0 });
   });
 
-  // Both declarations are written with `override`, which `declare` does not take (TS1243). Once the file type checks
-  // this test fails: change `test.failing` to `test`.
-  test.failing("a member with override that is written as a declaration type checks", async () => {
-    const { logs, own } = await typedFile({
+  // Both declarations are written with `override`, which `declare` does not take (TS1243).
+  let overridden: ReturnType<typeof typedFile> | undefined;
+  const withOverride = () =>
+    (overridden ??= typedFile({
       ...withoutFields({ noImplicitOverride: true }),
       "src/index.ts": `export class Base {
   label: string = "base";
@@ -336,9 +336,17 @@ export class Shape extends Base {
   }
 }
 `,
-    });
-    expect(logs).toEqual([]);
-    expect(own).toEqual({ said: null, exitCode: 0 });
+    }));
+
+  // What holds today: the test below fails for these two errors and for nothing else.
+  test("a member with override that is written as a declaration type checks but for its override", async () => {
+    const { logs, own } = await withOverride();
+    expect({ logs, own }).toEqual({ logs: [], own: { said: ["TS1243", "TS1243"], exitCode: 1 } });
+  });
+
+  // Once the file type checks this test fails: change `test.failing` to `test`, and take the test above out.
+  test.failing("a member with override that is written as a declaration type checks", async () => {
+    expect((await withOverride()).own).toEqual({ said: null, exitCode: 0 });
   });
 
   test("cannot be used with compile", () => {

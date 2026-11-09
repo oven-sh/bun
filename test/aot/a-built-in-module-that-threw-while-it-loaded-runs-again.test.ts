@@ -36,7 +36,7 @@ runsAsPlain(
   `
         const real = Object.keys;
         let first, second;
-        Object.keys = () => ["nonsense"];
+        Object.keys = () => undefined;
         try { first = typeof require("node:zlib").gzipSync; } catch (error) { first = error.name; } finally { Object.keys = real; }
         try { second = typeof require("node:zlib").gzipSync; } catch (error) { second = error.name; }
         console.log(first, second);`,
@@ -128,7 +128,7 @@ for (const [title, specifier] of [
             return error.name;
           }
         };
-        Object.keys = () => ["nonsense"];
+        Object.keys = () => undefined;
         const first = await imported();
         Object.keys = real;
         console.log(first, await imported(), load("node:zlib"), await imported());`,

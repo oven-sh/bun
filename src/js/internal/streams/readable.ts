@@ -29,6 +29,7 @@ const isStandardOutputStream: (value: unknown) => boolean | undefined = $newCppF
 );
 
 const ObjectDefineProperties = Object.defineProperties;
+const ObjectDefineProperty = Object.defineProperty;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
@@ -943,12 +944,7 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
   $debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts);
 
   let doEnd = !pipeOpts || pipeOpts.end !== false;
-  if (doEnd) {
-    const isStandardOutput = isStandardOutputStream(dest);
-    // Making process.stdout or process.stderr would have loaded all of node:stream.
-    if (isStandardOutput === undefined) require("internal/stream");
-    doEnd = !isStandardOutput;
-  }
+  if (doEnd) doEnd = !isStandardOutputStream(dest);
 
   const endFn = doEnd ? onend : unpipe;
   if ((state[kState] & Flag.EndEmitted) !== 0) process.nextTick(endFn);
@@ -1993,6 +1989,57 @@ Readable.wrap = function (src, options?) {
   }).wrap(src);
 };
 
-if (IS_COMPILED_AHEAD_OF_TIME) require("internal/streams/load_all").rest = () => void require("internal/stream");
+// Node defines the operators below in lib/stream.js. Here a user of this class may never load node:stream.
+type Operators = typeof import("internal/streams/operators").default;
+// Function.length of each operator. internal/streams/operators loads when one is first called.
+type Lengths<Kind extends keyof Operators> = Record<keyof Operators[Kind], number> & { __proto__: null };
+const streamOperatorLengths = {
+  __proto__: null,
+  drop: 1,
+  filter: 2,
+  flatMap: 2,
+  map: 2,
+  take: 1,
+} satisfies Lengths<"streamReturningOperators">;
+const promiseOperatorLengths = {
+  __proto__: null,
+  every: 1,
+  forEach: 2,
+  reduce: 3,
+  toArray: 1,
+  some: 1,
+  find: 2,
+} satisfies Lengths<"promiseReturningOperators">;
+type Operator = (this: $Node.Readable, ...args: any[]) => any;
+let operators: Operators | undefined;
+
+function installOperator(key: string, length: number, returnsPromise: boolean) {
+  let op: Operator | undefined;
+  const fn = function (this: $Node.Readable, ...args: unknown[]) {
+    if (new.target) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    if (returnsPromise) {
+      return Promise.$resolve().$then(() => {
+        op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key] as Operator;
+        return op.$apply(this, args);
+      });
+    }
+    op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key] as Operator;
+    // node:stream is `Stream` with its members: what a program has stored under `Readable` there, once node:stream is loaded.
+    return ($getByIdDirect(Stream, "Readable") ?? Readable).from(op.$apply(this, args));
+  };
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: length });
+  ObjectDefineProperty(Readable.prototype, key, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+for (const key in streamOperatorLengths) installOperator(key, streamOperatorLengths[key], false);
+for (const key in promiseOperatorLengths) installOperator(key, promiseOperatorLengths[key], true);
 
 export default Readable as $Node.ReadableConstructor;

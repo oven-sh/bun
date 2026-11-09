@@ -1,0 +1,12 @@
+nothing: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+console.log: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+process.stdout: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+process.stderr: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+node:fs: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+node:http: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe, end: false: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe, end: true: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe twice: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe, both replaced: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe to a replaced stdout: function function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0

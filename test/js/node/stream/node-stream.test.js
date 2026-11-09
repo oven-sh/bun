@@ -1954,6 +1954,329 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
   });
 });
 
+// Node defines the operator methods when lib/stream.js loads, and its net, tls, crypto, child_process and
+// worker_threads load that file. In Bun those modules, _http_incoming and the _stream_* modules reach the class
+// and never load node:stream. Each script below runs in a fresh process that has not loaded node:stream.
+// Neither does a read of process.stdout, process.stderr or process.stdin, nor console.log (process-stdio.test.ts pins that).
+describe("Readable operators in a process that has not loaded node:stream", () => {
+  const lengths = {
+    drop: 1,
+    filter: 2,
+    flatMap: 2,
+    map: 2,
+    take: 1,
+    every: 1,
+    forEach: 2,
+    reduce: 3,
+    toArray: 1,
+    some: 1,
+    find: 2,
+  };
+  const operators = Object.keys(lengths);
+
+  async function run(script) {
+    // `bun -e` exposes the builtin modules as globals, and a top-level `const stream = ...` in the
+    // script would be enough to load node:stream. Block scoping the script keeps it away from them.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `{${script}}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Each row: a title, a setup statement, and the streams to check as { name: expression }.
+  it.concurrent.each([
+    ["node:net", ``, { socket: `new (require("node:net").Socket)()` }],
+    ["node:tls", ``, { socket: `new (require("node:tls").TLSSocket)()` }],
+    [
+      "node:crypto",
+      `const crypto = require("node:crypto"), key = Buffer.alloc(16);`,
+      {
+        hash: `crypto.createHash("sha256")`,
+        hmac: `crypto.createHmac("sha256", key)`,
+        cipher: `crypto.createCipheriv("aes-128-cbc", key, key)`,
+        decipher: `crypto.createDecipheriv("aes-128-cbc", key, key)`,
+      },
+    ],
+    [
+      "node:child_process, stdin not a pipe",
+      `const child = require("node:child_process").spawn(process.execPath, ["-e", ""], {
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+      });`,
+      { stdout: `child.stdout`, stderr: `child.stderr`, "stdio[3]": `child.stdio[3]` },
+    ],
+    [
+      "node:worker_threads, the parent's end",
+      `const worker = new (require("node:worker_threads").Worker)("", { eval: true, stdout: true, stderr: true });`,
+      { stdout: `worker.stdout`, stderr: `worker.stderr` },
+    ],
+    ["node:_http_incoming", ``, { prototype: `require("node:_http_incoming").IncomingMessage.prototype` }],
+    ["node:_stream_readable", ``, { prototype: `require("node:_stream_readable").prototype` }],
+    ["node:_stream_duplex", ``, { prototype: `require("node:_stream_duplex").prototype` }],
+    ["node:_stream_transform", ``, { prototype: `require("node:_stream_transform").prototype` }],
+    ["node:_stream_passthrough", ``, { prototype: `require("node:_stream_passthrough").prototype` }],
+  ])("%s has all eleven", async (_, setup, targets) => {
+    const names = Object.keys(targets);
+    const result = await run(`
+      ${setup}
+      const targets = { ${names.map(name => `${JSON.stringify(name)}: ${targets[name]}`).join(", ")} };
+      const missing = {};
+      for (const name in targets) {
+        missing[name] = ${JSON.stringify(operators)}.filter(operator => typeof targets[name][operator] !== "function");
+      }
+      console.log(JSON.stringify(missing));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify(Object.fromEntries(names.map(name => [name, []]))) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("process.stdin inside a Worker has all eleven", async () => {
+    const inWorker = `
+      const stdin = process.stdin;
+      const missing = ${JSON.stringify(operators)}.filter(operator => typeof stdin[operator] !== "function");
+      require("node:worker_threads").parentPort.postMessage(missing);
+    `;
+    const result = await run(`
+      const worker = new (require("node:worker_threads").Worker)(${JSON.stringify(inWorker)}, { eval: true });
+      worker.on("message", missing => console.log(JSON.stringify({ stdin: missing })));
+    `);
+    expect(result).toEqual({ stdout: JSON.stringify({ stdin: [] }) + "\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("they are the last eleven own properties, with Node's names, lengths and attributes", async () => {
+    const result = await run(`
+      const { prototype } = require("node:_stream_readable");
+      const found = Object.getOwnPropertyNames(prototype).slice(-11).map(key => {
+        const { value, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(prototype, key);
+        return { key, name: value.name, length: value.length, writable, enumerable, configurable };
+      });
+      const duplexHasOwnCopy = Object.hasOwn(require("node:_stream_duplex").prototype, "map");
+      console.log(JSON.stringify({ found, duplexHasOwnCopy }));
+    `);
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: {
+        found: operators.map(key => ({
+          key,
+          name: key,
+          length: lengths[key],
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        })),
+        duplexHasOwnCopy: false,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("all eleven work when the first call is what loads their implementation", async () => {
+    const result = await run(`
+      const Readable = require("node:_stream_readable");
+      const source = () => Readable.from([1, 2, 3, 4]);
+      (async () => {
+        let forEach = 0;
+        await source().forEach(n => {
+          forEach += n;
+        });
+        console.log(
+          JSON.stringify({
+            drop: await source().drop(3).toArray(),
+            filter: await source().filter(n => n % 2 === 0).toArray(),
+            flatMap: await source().flatMap(n => [n, -n]).toArray(),
+            map: await source().map(n => n * 10).toArray(),
+            take: await source().take(2).toArray(),
+            every: await source().every(n => n < 4),
+            forEach,
+            reduce: await source().reduce((total, n) => total + n, 0),
+            some: await source().some(n => n === 4),
+            find: await source().find(n => n > 2),
+            borrowed: await Readable.prototype.toArray.call((async function* () { yield "a"; })()),
+          }),
+        );
+      })();
+    `);
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: {
+        drop: [4],
+        filter: [2, 4],
+        flatMap: [1, -1, 2, -2, 3, -3, 4, -4],
+        map: [10, 20, 30, 40],
+        take: [1, 2],
+        every: false,
+        forEach: 10,
+        reduce: 10,
+        some: true,
+        find: 3,
+        borrowed: ["a"],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("bad arguments throw or reject as in Node", async () => {
+    const result = await run(`
+      const Readable = require("node:_stream_readable");
+      const stream = new Readable({ read() {} });
+      const thrown = fn => {
+        try {
+          fn();
+          return "nothing";
+        } catch (error) {
+          return error.code;
+        }
+      };
+      let rejected;
+      const found = {
+        "map(123) throws": thrown(() => stream.map(123)),
+        "drop(-1) throws": thrown(() => stream.drop(-1)),
+        "new map() throws": thrown(() => new stream.map(x => x)),
+        "new toArray() throws": thrown(() => new stream.toArray()),
+        "forEach(123) throws": thrown(() => (rejected = stream.forEach(123))),
+      };
+      rejected.catch(error => console.log(JSON.stringify({ ...found, "forEach(123) rejects with": error.code })));
+    `);
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: {
+        "map(123) throws": "ERR_INVALID_ARG_TYPE",
+        "drop(-1) throws": "ERR_OUT_OF_RANGE",
+        "new map() throws": "ERR_ILLEGAL_CONSTRUCTOR",
+        "new toArray() throws": "ERR_ILLEGAL_CONSTRUCTOR",
+        "forEach(123) throws": "nothing",
+        "forEach(123) rejects with": "ERR_INVALID_ARG_TYPE",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a global replaced during the first call is not used after it is restored", async () => {
+    const result = await run(`
+      const Readable = require("node:_stream_readable");
+      const replaced = [
+        [Math, "floor"],
+        [Number, "isNaN"],
+        [Array.prototype, "push"],
+      ];
+      const callsAfterRestore = {};
+      let restored = false;
+      const originals = replaced.map(([object, key]) => {
+        const original = object[key];
+        callsAfterRestore[key] = 0;
+        object[key] = function (...args) {
+          if (restored) callsAfterRestore[key]++;
+          return Reflect.apply(original, this, args);
+        };
+        return original;
+      });
+      const collect = () =>
+        Readable.from([1.5, 2.5, 3.5])
+          .map(n => n * 2, { concurrency: 2 })
+          .drop(1)
+          .take(1)
+          .toArray();
+      collect().then(async first => {
+        replaced.forEach(([object, key], i) => {
+          object[key] = originals[i];
+        });
+        restored = true;
+        const second = await collect();
+        console.log(JSON.stringify({ first, second, callsAfterRestore }));
+      });
+    `);
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: {
+        first: [5],
+        second: [5],
+        callsAfterRestore: { floor: 0, isNaN: 0, push: 0 },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("nothing is defined on Readable.prototype after the class loads", async () => {
+    const result = await run(`
+      const Readable = require("node:_stream_readable");
+      const { prototype } = Readable;
+      const mine = () => {};
+      prototype.map = mine;
+      delete prototype.filter;
+      Object.preventExtensions(prototype);
+      Readable.from([1]).toArray().then(toArray => {
+        require("node:stream");
+        console.log(JSON.stringify({ toArray, mapIsMine: prototype.map === mine, hasFilter: "filter" in prototype }));
+      });
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ toArray: [1], mapIsMine: true, hasFilter: false }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("map() calls from() of the current stream.Readable, as in Node", async () => {
+    const result = await run(`
+      const Readable = require("node:_stream_readable");
+      const source = Readable.from([1]);
+      const calls = [];
+      const from = Readable.from;
+      Readable.from = function (iterable) {
+        calls.push("Readable.from");
+        return from.call(this, iterable);
+      };
+      source.map(x => x).destroy();
+      Readable.from = from;
+
+      const stream = require("node:stream");
+      stream.Readable = {
+        from(iterable) {
+          calls.push("a replaced stream.Readable");
+          return from.call(Readable, iterable);
+        },
+      };
+      source.map(x => x).destroy();
+      console.log(JSON.stringify(calls));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify(["Readable.from", "a replaced stream.Readable"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("toArray() collects a child's stdout", async () => {
+    const result = await run(`
+      const child = require("node:child_process").spawn(process.execPath, ["-e", "console.log('hi')"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      child.stdout.toArray().then(chunks => console.log(JSON.stringify(Buffer.concat(chunks).toString())));
+    `);
+    expect(result).toEqual({ stdout: JSON.stringify("hi\n") + "\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("map() and toArray() collect a net.Socket", async () => {
+    const result = await run(`
+      const net = require("node:net");
+      const server = net.createServer(socket => socket.end("hello"));
+      server.listen(0, "127.0.0.1", async () => {
+        const socket = net.connect(server.address().port, "127.0.0.1");
+        const chunks = await socket.map(chunk => chunk.toString().toUpperCase()).toArray();
+        server.close();
+        console.log(chunks.join(""));
+      });
+    `);
+    expect(result).toEqual({ stdout: "HELLO\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("duplexPair teardown (test-duplex-error.js)", () => {
   const once = (emitter, event) => new Promise(resolve => emitter.once(event, resolve));
 
@@ -2040,4 +2363,325 @@ it("Readable.fromWeb's native source accepts pull(view) without the flags array"
   } finally {
     delete Object.prototype.setFlowing;
   }
+});
+
+// A built-in module that needs one stream class takes it from the module of that class. node:stream as a whole (the
+// operators, pipeline, compose, the other classes) loads when something asks for node:stream. oven-sh/bun#48005.
+// node:http is the exception: its classes extend what a program has laid on node:stream when it loads.
+describe.concurrent("a built-in module that needs one stream class does not load all of node:stream", () => {
+  const loadsTheRest = (module, expression) => `
+    const m = process.getBuiltinModule(${JSON.stringify(module)});
+    let Stream = ${expression};
+    while (Stream.name !== "Stream") Stream = Object.getPrototypeOf(Stream);
+    console.log(typeof Stream.pipeline, typeof Stream.compose, "Readable" in Stream);
+  `;
+  it.each([
+    ["node:zlib", "m.Gzip"],
+    ["node:http2", "m.Http2ServerResponse"],
+  ])("%s", async (module, expression) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", loadsTheRest(module, expression)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "undefined undefined false\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A program that has loaded node:stream may store a class or a function of its own under a name there. A built-in module
+// takes what lies under the name when that module loads, and never asks again. It does so without loading node:stream.
+describe.concurrent("a built-in module uses what a program stored on node:stream before the module loaded", () => {
+  // around(load) runs `load` with the program's classes stored before it or behind it.
+  const script = (when, text) => `{
+    const stream = require("node:stream");
+    const mine = {};
+    let finishedCalls = 0;
+    function store() {
+      for (const name of ["Stream", "Readable", "Writable", "Duplex", "Transform"]) {
+        const Was = stream[name];
+        function Mine(...given) {
+          return Was.apply(this, given);
+        }
+        Object.setPrototypeOf(Mine.prototype, Was.prototype);
+        Object.setPrototypeOf(Mine, Was);
+        stream[name] = mine[name] = Mine;
+      }
+      const finished = stream.finished;
+      stream.finished = function (...given) {
+        finishedCalls++;
+        return finished.apply(this, given);
+      };
+    }
+    function around(load) {
+      if (${JSON.stringify(when)} === "before") store();
+      const loaded = load();
+      if (${JSON.stringify(when)} === "after") store();
+      return loaded;
+    }
+    const print = uses => console.log(JSON.stringify({ uses, finishedCalls }));
+    ${text}
+  }`;
+  // [what loads, what the program asks of it, how often that calls the program's finished(), the program]
+  const modules = [
+    [
+      "node:fs and the standard streams",
+      ["fs.createWriteStream()", "fs.createReadStream()", "process.stdout", "process.stdin"],
+      1,
+      `const nodeFs = around(() => {
+        const nodeFs = require("node:fs");
+        void nodeFs.ReadStream;
+        void nodeFs.WriteStream;
+        void process.stdout;
+        void process.stdin;
+        return nodeFs;
+      });
+      const readStream = nodeFs.createReadStream(process.execPath);
+      const writeStream = nodeFs.createWriteStream(require("node:os").devNull);
+      const uses = {
+        "fs.createWriteStream()": writeStream instanceof mine.Writable,
+        "fs.createReadStream()": readStream instanceof mine.Readable,
+        "process.stdout": process.stdout instanceof mine.Writable,
+        "process.stdin": process.stdin instanceof mine.Readable,
+      };
+      readStream.close(() => {
+        writeStream.destroy();
+        print(uses);
+      });`,
+    ],
+    [
+      "node:zlib",
+      ["zlib.createGzip()"],
+      1,
+      `const gzip = around(() => require("node:zlib")).createGzip();
+      const uses = { "zlib.createGzip()": gzip instanceof mine.Transform };
+      gzip.close(() => print(uses));`,
+    ],
+    [
+      "node:http",
+      ["http.OutgoingMessage", "the socket of a ServerResponse"],
+      0,
+      `const nodeHttp = around(() => require("node:http"));
+      const response = new nodeHttp.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 });
+      print({
+        "http.OutgoingMessage": Object.getPrototypeOf(nodeHttp.OutgoingMessage.prototype) === mine.Stream.prototype,
+        "the socket of a ServerResponse": response.socket instanceof mine.Duplex,
+      });`,
+    ],
+    [
+      "node:http2",
+      ["http2.Http2ServerRequest"],
+      0,
+      `const nodeHttp2 = around(() => require("node:http2"));
+      print({ "http2.Http2ServerRequest": Object.getPrototypeOf(nodeHttp2.Http2ServerRequest) === mine.Readable });`,
+    ],
+  ];
+  it.each(
+    modules.flatMap(([module, names, finishedCalls, text]) => [
+      [module, "before", names, true, finishedCalls, text],
+      [module, "after", names, false, 0, text],
+    ]),
+  )("%s, stored %s", async (module, when, names, used, finishedCalls, text) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script(when, text)],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ uses: Object.fromEntries(names.map(name => [name, used])), finishedCalls }) + "\n",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A test may lay a stub under a name for a while. The fs streams cannot stand below it: their load fails while the
+  // stub lies there, and runs again once the class is back.
+  it.each([
+    ["an arrow function", "() => {}"],
+    ["an object", "{}"],
+  ])("%s under stream.Readable fails the load of the fs streams, which load again behind it", async (_, stub) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `{
+          const stream = require("node:stream");
+          const nodeFs = require("node:fs");
+          const Readable = stream.Readable;
+          stream.Readable = ${stub};
+          let whileStubbed;
+          try {
+            nodeFs.createWriteStream(require("node:os").devNull).destroy();
+            whileStubbed = "a stream";
+          } catch (error) {
+            whileStubbed = error.name + ": " + error.message;
+          }
+          stream.Readable = Readable;
+          const readStream = nodeFs.createReadStream(process.execPath);
+          console.log(JSON.stringify({ whileStubbed, afterwards: readStream instanceof Readable }));
+          readStream.destroy();
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout:
+        JSON.stringify({ whileStubbed: "TypeError: Base class must have a prototype property", afterwards: true }) +
+        "\n",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A read of process.stdout loads the fs streams. From then on fs.ReadStream stands below the library's own Readable,
+  // whatever a program stores under stream.Readable later, as when that read loaded all of node:stream.
+  it.concurrent(
+    "behind a read of process.stdout, fs.ReadStream does not take what stream.Readable holds at its first use",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{
+            void process.stdout;
+            const nodeStream = require("node:stream");
+            const nodeFs = require("node:fs");
+            const Was = nodeStream.Readable;
+            nodeStream.Readable = {};
+            let whileStubbed;
+            try {
+              nodeFs.createReadStream(process.execPath).destroy();
+              whileStubbed = "a stream";
+            } catch (error) {
+              whileStubbed = error.name;
+            }
+            function Mine(...given) {
+              return Was.apply(this, given);
+            }
+            Object.setPrototypeOf(Mine.prototype, Was.prototype);
+            Object.setPrototypeOf(Mine, Was);
+            nodeStream.Readable = Mine;
+            const readStream = nodeFs.createReadStream(process.execPath);
+            nodeStream.Readable = Was;
+            const later = nodeFs.createReadStream(process.execPath);
+            console.log(
+              JSON.stringify({
+                whileStubbed,
+                used: readStream instanceof Mine,
+                above: Object.getPrototypeOf(nodeFs.ReadStream) === Mine,
+                later: later instanceof Mine,
+              }),
+            );
+            readStream.destroy();
+            later.destroy();
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({
+        stdout: JSON.stringify({ whileStubbed: "a stream", used: false, above: false, later: false }) + "\n",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The first read of process.stdin is a first use of fs.ReadStream. A stub under stream.Readable then does not cost the program its stdin.
+  it.concurrent(
+    "behind a read of process.stdout, a stub under stream.Readable leaves process.stdin a stream",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{
+          void process.stdout;
+          const nodeStream = require("node:stream");
+          const Was = nodeStream.Readable;
+          nodeStream.Readable = {};
+          const whileStubbed = typeof process.stdin?.on;
+          nodeStream.Readable = Was;
+          console.log(
+            JSON.stringify({ whileStubbed, afterwards: typeof process.stdin?.on, readable: process.stdin instanceof Was }),
+          );
+        }`,
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({
+        stdout: JSON.stringify({ whileStubbed: "function", afterwards: "function", readable: true }) + "\n",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Where no class lies under the name, the fs streams stand below the library's own Readable.
+  it.each([
+    ["null", "stream.Readable = null"],
+    ["undefined", "stream.Readable = undefined"],
+    ["deleted", "delete stream.Readable"],
+  ])("stream.Readable %s: the fs streams stand below the library's own class", async (_, line) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `{
+          const stream = require("node:stream");
+          const nodeFs = require("node:fs");
+          const Readable = stream.Readable;
+          ${line};
+          const first = nodeFs.createReadStream(process.execPath);
+          stream.Readable = Readable;
+          const second = nodeFs.createReadStream(process.execPath);
+          console.log(JSON.stringify([first instanceof Readable, typeof first.on, second instanceof Readable]));
+          first.destroy();
+          second.destroy();
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify([true, "function", true]) + "\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // node:stream sets its members on `Stream`, the function that every stream class stands on. node:http has loaded all
+  // of node:stream, so a program that freezes the chain of its classes can still load node:stream.
+  it("node:stream loads behind a frozen class chain of node:http", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `{
+          let above = require("node:http").ServerResponse;
+          for (; above !== Function.prototype; above = Object.getPrototypeOf(above)) Object.freeze(above);
+          console.log(typeof require("node:stream").Readable);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "function\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });

@@ -23,10 +23,7 @@ export function getLightStdioWriteStreams(
   // queued by the first read of it comes earlier than any other. And node:events puts its EventEmitter.prototype above the prototype of `process`.
   const nextTick = process.nextTick;
   require("node:events");
-  // And all of node:stream puts its operators on Readable.prototype, which a program that has loaded a part of it reaches.
-  const streams = require("internal/streams/load_all");
-  streams.rest?.();
-  const served: ServedByLightStream = streams.servedByLightOutputs;
+  const served: ServedByLightStream = require("internal/streams/load_all").servedByLightOutputs;
   // What writeFast() of internal/fs/streams does with a receiver that is not a stream: it asks for the state of a stream and then calls _write().
   function writeToForeignReceiver(receiver: any): never {
     if (receiver === undefined)
@@ -163,9 +160,7 @@ export function getLightStdinStream(isTTY: boolean, needsWholeStream: NeedsWhole
   // As in getLightStdioWriteStreams().
   void process.nextTick;
   require("node:events");
-  const streams = require("internal/streams/load_all");
-  streams.rest?.();
-  const served: ServedByLightStream = streams.servedByLightInput;
+  const served: ServedByLightStream = require("internal/streams/load_all").servedByLightInput;
   return new Proxy(
     {
       get "%the whole stream%"() {

@@ -71,8 +71,9 @@ export function getStdioWriteStream(
     });
     stream._type = "tty";
   } else {
-    const fs = require("node:fs");
-    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
+    // The class itself, not fs.WriteStream: the stream does not load node:fs.
+    const { WriteStream } = require("internal/fs/streams");
+    stream = new WriteStream(null, { autoClose: false, fd, $fastPath: true });
     stream.readable = false;
     stream._type = "fs";
 
@@ -701,10 +702,8 @@ export function createOnWarning(
     // process.stderr.write, not console.error: under an inspector Session console.* emits
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. writeWarning reads process.stderr per call, as Node does.
-    // A compiled program may write without making the stream, whose modules put the operators of node:stream on Readable.prototype.
-    if (IS_COMPILED_AHEAD_OF_TIME && !redirectPath) require("internal/streams/load_all").rest?.();
     const wroteInPlaceOfStream = writeWarning(message + "\n", redirectPath);
-    // Those modules also load node:events, which puts its EventEmitter.prototype above the prototype of `process`. Behind writeWarning(), which reads the members
+    // The modules of the stream load node:events, which puts its EventEmitter.prototype above the prototype of `process`. Behind writeWarning(), which reads the members
     // of built-in objects that they read, in their order. A program that cannot tell does without the module.
     if (IS_COMPILED_AHEAD_OF_TIME && WARNINGS_LOAD_NODE_EVENTS && wroteInPlaceOfStream) require("node:events");
   }

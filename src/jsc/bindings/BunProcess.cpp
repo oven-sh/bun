@@ -1869,18 +1869,15 @@ static void readMembersThatMakingStandardErrorReads(Zig::GlobalObject* globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    static constexpr ASCIILiteral membersOfObject[] = { "freeze"_s, "create"_s, "defineProperty"_s, "keys"_s, "setPrototypeOf"_s, "getPrototypeOf"_s, "defineProperties"_s, "assign"_s, "getOwnPropertyDescriptor"_s, "is"_s };
-    static constexpr ASCIILiteral membersOfReflect[] = { "getPrototypeOf"_s, "ownKeys"_s, "getOwnPropertyDescriptor"_s, "defineProperty"_s };
+    static constexpr ASCIILiteral membersOfObject[] = { "freeze"_s, "create"_s, "defineProperty"_s, "getPrototypeOf"_s, "defineProperties"_s, "assign"_s, "setPrototypeOf"_s, "is"_s };
+    static constexpr ASCIILiteral membersOfReflect[] = { "ownKeys"_s, "getPrototypeOf"_s, "getOwnPropertyDescriptor"_s, "defineProperty"_s };
     static constexpr ASCIILiteral membersOfSymbol[] = { "for"_s };
-    static constexpr ASCIILiteral membersOfNumber[] = { "isNaN"_s };
     static constexpr ASCIILiteral membersOfPromisePrototype[] = { "finally"_s };
     readMembersOfGlobal(globalObject, "Object"_s, membersOfObject);
     RETURN_IF_EXCEPTION(scope, void());
     readMembersOfGlobal(globalObject, "Reflect"_s, membersOfReflect);
     RETURN_IF_EXCEPTION(scope, void());
     readMembersOfGlobal(globalObject, "Symbol"_s, membersOfSymbol);
-    RETURN_IF_EXCEPTION(scope, void());
-    readMembersOfGlobal(globalObject, "Number"_s, membersOfNumber);
     RETURN_IF_EXCEPTION(scope, void());
     JSValue promise = globalObject->get(globalObject, Identifier::fromString(vm, "Promise"_s));
     RETURN_IF_EXCEPTION(scope, void());

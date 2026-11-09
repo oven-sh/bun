@@ -437,6 +437,53 @@ describe("FileHandle", () => {
     expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
   });
 
+  // A program puts its own read, write, writev and fsync on node:fs, as a file system held in memory does. Node's
+  // stream over a FileHandle does its I/O through the handle (FileHandleOperations in lib/internal/fs/streams.js): it
+  // calls none of them and reaches the file. A stream over a path or a raw descriptor calls them. The fixture prints
+  // the same under Node.js.
+  it.concurrent.each([
+    "first",
+    "after the stream classes",
+    "after process.stdout",
+    "under an accessor named fs on Object.prototype",
+  ])("a stream over a FileHandle does not call what a program puts on node:fs %s", async when => {
+    using dir = tempDir("fs-filehandle-stream-replaced-fs", { "lines.txt": "a\nb\nc\n" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fs-filehandle-stream-replaced-fs-fixture.cjs"), when],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout), stderr }).toEqual({
+      result: {
+        overHandle: {
+          "handle.createWriteStream()": "abc",
+          "fs.createWriteStream(null, { fd })": "abc",
+          "a corked batch": "abc",
+          "flush": "abc",
+          "handle.createReadStream()": "a\nb\nc\n",
+          "fs.createReadStream(null, { fd })": "a\nb\nc\n",
+          calls: { read: 0, write: 0, writev: 0, fsync: 0 },
+        },
+        overPath: {
+          "fs.createWriteStream(path)": "",
+          "fs.createReadStream(path)": "",
+          calls: { read: 1, write: 1 },
+        },
+        overDescriptor: {
+          "fs.createWriteStream(null, { fd: number })": "",
+          "fs.createReadStream(null, { fd: number })": "",
+          calls: { read: 1, write: 1 },
+        },
+        setterCalls: 0,
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // Node.js closes a FileHandle's fd in its native finalizer and raises
   // ERR_INVALID_STATE (DEP0137 end-of-life) when the handle is collected
   // without close(). Bun must reclaim the fd and surface the same diagnostic.

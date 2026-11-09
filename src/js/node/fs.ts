@@ -24,7 +24,7 @@ const fs = require("internal/fs/binding");
 
 const constants = $processBindingConstants.fs;
 
-const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
+const { guardCallback, kCustomPromisifyArgsSymbol, originals } = require("internal/shared");
 
 // Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
 const nextTick = process.nextTick;
@@ -680,6 +680,9 @@ defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
 defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
 
+// The functions as they are written here: a stream over a FileHandle calls these, whatever a program assigns to the exports.
+originals.fs = { read, write, fsync, writev };
+
 // The implementation (StatWatcher and friends) is lazily loaded from "internal/fs/watchfile"
 // the first time fs.watchFile or fs.unwatchFile is called.
 function watchFile(filename, options, listener?) {
@@ -1298,12 +1301,19 @@ function globSync(pattern: string | string[], options?) {
   return Array.from(require("internal/fs/glob").globSync(pattern, options ?? kEmptyObject));
 }
 
-// The stream classes are accessors on `exports` so that loading node:fs does not load node:stream. The first read, or
+// The stream classes are accessors on `exports` so that loading node:fs does not load the stream classes. The first read, or
 // an assignment, replaces the accessor with a data property. Once user code has sealed or frozen `exports` the accessor
 // is not configurable: Reflect.defineProperty returns false instead of throwing and the accessor stays in place.
 function materializeStream<T>(name: string, value: T): T {
   Reflect.defineProperty(exports, name, { value, writable: true, configurable: true });
   return value;
+}
+
+// The read of `prototype` puts the class below Readable (internal/fs/streams defers that for process.stdout).
+function readStream() {
+  const { ReadStream } = require("internal/fs/streams");
+  void ReadStream.prototype;
+  return ReadStream;
 }
 
 var exports = {
@@ -1411,7 +1421,7 @@ var exports = {
   Dir,
   Stats,
   get ReadStream() {
-    return materializeStream("ReadStream", require("internal/fs/streams").ReadStream);
+    return materializeStream("ReadStream", readStream());
   },
   set ReadStream(value) {
     materializeStream("ReadStream", value);
@@ -1423,7 +1433,7 @@ var exports = {
     materializeStream("WriteStream", value);
   },
   get FileReadStream() {
-    return materializeStream("FileReadStream", require("internal/fs/streams").ReadStream);
+    return materializeStream("FileReadStream", readStream());
   },
   set FileReadStream(value) {
     materializeStream("FileReadStream", value);

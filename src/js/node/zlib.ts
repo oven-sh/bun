@@ -22,7 +22,12 @@ const MathMax = Math.max;
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
-const { Transform, finished } = require("node:stream");
+const { Stream } = require("internal/streams/legacy");
+// node:stream is `Stream` with its members: what a program has stored there, where node:stream is loaded. Else the two load alone.
+const Transform: $Node.TransformConstructor =
+  $getByIdDirect(Stream, "Transform") ?? require("internal/streams/transform");
+const finished: typeof Stream.finished =
+  $getByIdDirect(Stream, "finished") ?? require("internal/streams/end-of-stream");
 const owner_symbol = Symbol("owner_symbol");
 const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 

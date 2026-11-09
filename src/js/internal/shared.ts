@@ -461,7 +461,9 @@ const originals: {
         "emit" | "addListener" | "once" | "removeListener" | "removeAllListeners" | "listenerCount"
       > & { storeEmitWithRejectionCapture(emitter: $Node.EventEmitter): void })
     | undefined;
-} = { eventEmitter: undefined };
+  // What internal/fs/streams calls for a stream over a FileHandle.
+  fs: Pick<$BunModules["node:fs"], "read" | "write" | "fsync" | "writev"> | undefined;
+} = { eventEmitter: undefined, fs: undefined };
 
 export default {
   isStoppedModuleGraphRunning,

@@ -496,8 +496,9 @@ var require_src = __commonJS<QueryStringExports>((exports, module) => {
             if (lastPos < i) key += StringPrototypeSlice.$call(qs, lastPos, i);
             key += plusChar;
             lastPos = i + 1;
-            continue;
           }
+          // Don't let key characters affect value encoding.
+          continue;
         }
         if (code === 43 /* + */) {
           if (lastPos < i) value += StringPrototypeSlice.$call(qs, lastPos, i);

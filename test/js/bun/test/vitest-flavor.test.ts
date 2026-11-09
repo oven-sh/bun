@@ -3210,29 +3210,25 @@ describe.concurrent("exports", () => {
     });
   });
 
-  test(`an unused import of "assert" or "should" needs no chai`, async () => {
+  test(`an unused import of "assert" or "should" needs no chai, also next to module.exports`, async () => {
+    const commonjs = `import { assert, should } from "vitest"; module.exports = { inAHelper: "a CommonJS helper" };`;
     const { log, results, exitCode } = await runTests({
       "helper.ts": `import { assert, should } from "vitest"; export const inAHelper = "a helper without chai";`,
+      "commonjs.ts": commonjs,
       "a.test.ts": `
         import { assert } from "vitest";
+        import { writeFileSync } from "node:fs";
         import { inAHelper } from "./helper.ts";
-        test("test", () => console.log(inAHelper));
+        test("test", () => {
+          // A run with --aot has compiled commonjs.ts. It reads written.ts as a run without the flag does: no build has seen that file.
+          writeFileSync("written.ts", ${JSON.stringify(commonjs)});
+          const written = "./written.ts";
+          console.log(inAHelper, "|", require("./commonjs.ts").inAHelper, "|", require(written).inAHelper);
+        });
       `,
     });
     expect({ log, results, exitCode }).toEqual({
-      log: ["a helper without chai"],
-      results: ["(pass) test"],
-      exitCode: 0,
-    });
-  });
-
-  test(`an unused import of "assert" or "should" next to module.exports loads`, async () => {
-    const { log, results, exitCode } = await runTests({
-      "helper.ts": `import { assert, should } from "vitest"; module.exports = { inAHelper: "a CommonJS helper" };`,
-      "a.test.ts": `test("test", () => console.log(require("./helper.ts").inAHelper));`,
-    });
-    expect({ log, results, exitCode }).toEqual({
-      log: ["a CommonJS helper"],
+      log: ["a helper without chai | a CommonJS helper | a CommonJS helper"],
       results: ["(pass) test"],
       exitCode: 0,
     });
@@ -3241,6 +3237,25 @@ describe.concurrent("exports", () => {
   test(`"assert" and "should" come from chai wherever they stand in the import`, async () => {
     const file = `
       import vitest, { test, vi, assert, expect, should as renamed } from "vitest";
+      import alone, { assert as again, should } from "vitest";
+      import * as fromChai from "chai";
+      test("test", () => {
+        console.log(assert === fromChai.assert, renamed === fromChai.should, typeof vi.fn, typeof expect, vitest.test === test);
+        console.log(again === assert, should === renamed, alone === vitest);
+      });
+    `;
+    const { log, results, exitCode } = await runTests({ ...chai, "a.test.js": file, "b.test.ts": file });
+    const lines = ["true true function function true", "true true true"];
+    expect({ log, results, exitCode }).toEqual({
+      log: [...lines, ...lines],
+      results: ["(pass) test", "(pass) test"],
+      exitCode: 0,
+    });
+  });
+
+  test(`"assert" and "should" come from chai beside the names that a file takes as globals`, async () => {
+    const file = `
+      import vitest, { vi, assert, should as renamed } from "vitest";
       import * as fromChai from "chai";
       test("test", () => {
         console.log(assert === fromChai.assert, renamed === fromChai.should, typeof vi.fn, typeof expect, vitest.test === test);
@@ -3252,6 +3267,18 @@ describe.concurrent("exports", () => {
       results: ["(pass) test", "(pass) test"],
       exitCode: 0,
     });
+  });
+
+  test(`an import of "assert" inside a declare block takes no name out of the block`, async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.ts": `
+        import { test } from "vitest";
+        const vi = { fn: "the file's own vi" };
+        declare module "ambient" { import { assert, vi } from "vitest"; export const a: typeof assert; export const v: typeof vi; }
+        test("test", () => console.log(vi.fn));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({ log: ["the file's own vi"], results: ["(pass) test"], exitCode: 0 });
   });
 
   const globals = {

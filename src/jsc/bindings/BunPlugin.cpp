@@ -55,7 +55,7 @@
 namespace Zig {
 
 static void evictModulesAndTheirImporters(Zig::GlobalObject*, Vector<String>&& modules);
-static void endModuleMockMadeBeforeModule(Zig::GlobalObject*, const String& name);
+static void endModuleMockOfGivenModule(Zig::GlobalObject*, const String& name);
 
 static bool isValidNamespaceCharacter(char16_t c)
 {
@@ -192,7 +192,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
-    endModuleMockMadeBeforeModule(global, moduleId);
+    endModuleMockOfGivenModule(global, moduleId);
     RETURN_IF_EXCEPTION(scope, {});
     global->onLoadPlugins.setProvider(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue));
 #if ENABLE(AOT)
@@ -2949,20 +2949,16 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, co
     RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
 }
 
-// build.module() gives a module for `name`. Of a mock and build.module(), the later call has the name, as in every release.
-// vi.mock() and jest.mock() are hoisted above the calls that their file wrote first, so such a mock stays. A preload's is above no call of a test file.
-static void endModuleMockMadeBeforeModule(Zig::GlobalObject* globalObject, const String& name)
+// build.module() gives a module for `name`. Of a mock and build.module(), the later call has the name: the mock ends as where unmock() removes it.
+static void endModuleMockOfGivenModule(Zig::GlobalObject* globalObject, const String& name)
 {
     JSModuleMock* mock = registeredModuleMock(globalObject, name);
     if (!mock)
         return;
-    if (!mock->isHoisted() || mock->isFromPreload != JSMock__isInPreload(globalObject)) {
-        unmockModule(globalObject, mock, name);
-        return;
-    }
-    // The function that is replaced made the module that the mock set aside. Back under the name, it goes with what the name has loaded.
-    if (std::exchange(mock->hasSetLoadedModuleAside, false))
-        moveLoadedModule(globalObject, originalModuleKey(name), name);
+    // A test file takes a mock of a preload away until the file ends.
+    if (mock->isFromPreload && !JSMock__isInPreload(globalObject))
+        globalObject->onLoadPlugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { JSC::getVM(globalObject), mock });
+    unmockModule(globalObject, mock, name);
 }
 
 static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)

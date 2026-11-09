@@ -30,6 +30,7 @@ pub use inputs::{
     RuntimeValueKind, StoredByMocks,
 };
 pub use known_sets::KnownSets;
+pub(crate) use known_sets::outermost_cast;
 pub use removed_by_bun_run::is_removed_where_never_run;
 pub(crate) use string_affixes::{
     MembersBehindNames, PathBelowFolder, find_export_of_module, find_export_of_module_with,

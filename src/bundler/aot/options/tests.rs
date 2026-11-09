@@ -644,6 +644,31 @@ fn root_does_not_lie_inside_node_modules() {
 }
 
 #[test]
+fn root_right_under_a_root_of_the_file_system_stays_an_absolute_path() {
+    let cases: [(&str, &str); 9] = [
+        ("/node_modules/kit", "/node_modules/kit"),
+        ("/project/node_modules/kit", "/project"),
+        (r"C:\node_modules\kit", r"C:\node_modules\kit"),
+        ("C:/node_modules/kit", "C:/node_modules/kit"),
+        (r"C:\project\node_modules\kit", r"C:\project"),
+        (
+            r"\\server\share\node_modules\kit",
+            r"\\server\share\node_modules\kit",
+        ),
+        (
+            r"\\server\share\project\node_modules\kit",
+            r"\\server\share\project",
+        ),
+        (r"\\?\C:\node_modules\kit", r"\\?\C:\node_modules\kit"),
+        (r"\\?\C:\project\node_modules\kit", r"\\?\C:\project"),
+    ];
+    for (directory, root_directory) in cases {
+        let widened = widen_out_of_packages(directory.as_bytes().to_vec());
+        assert_eq!(widened, root_directory.as_bytes(), "{directory}");
+    }
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
 fn common_entry_point_directory_is_root() {
     let cases: [(&[&[u8]], &[u8]); 6] = [

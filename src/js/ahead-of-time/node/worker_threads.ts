@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9a89ce45452ad59e1fe73f4ebf61feab05678e243dc28a8ec84c2c43b8ef17d7.
+// Written against that file with the SHA-256 4b1d2dfce35036bd4b694be3a8983426d217479f024b4892787b351a84305ca9.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -1094,16 +1094,17 @@ class Worker extends EventEmitter {
   }
 
   terminate(callback?: (error: null, exitCode: number) => unknown) {
+    const onExitPromise = this.#onExitPromise;
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
         "DeprecationWarning",
         "DEP0132",
       );
-      this.#worker.addEventListener("close", (event: any) => callback(null, event.code), { once: true });
+      // node: a one-time 'exit' listener, and nothing once the worker has exited.
+      if (typeof onExitPromise !== "number") this.once("exit", (exitCode: number) => callback(null, exitCode));
     }
 
-    const onExitPromise = this.#onExitPromise;
     // Not a truthy test: after exit #onExitPromise is the exit code, which can be 0;
     // falling through would wait on a 'close' event that never fires again.
     if (onExitPromise !== undefined) {

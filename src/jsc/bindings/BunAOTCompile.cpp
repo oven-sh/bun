@@ -5,6 +5,7 @@
 #include "BunAOTCompile.h"
 
 #include "AOTSchemaHash.h"
+#include "BunCompiledModules.h"
 #include <JavaScriptCore/AOTBuiltinTableBindings.h>
 #include <JavaScriptCore/AOTCompileOptionWords.h>
 #include <JavaScriptCore/AOTCurrentWork.h>
@@ -106,14 +107,6 @@ static size_t compressText(std::span<uint8_t> compressed, std::span<const uint8_
     return ZSTD_isError(written) ? 0 : written;
 }
 
-static bool openCompressedText(std::span<uint8_t> text, std::span<const uint8_t> compressed)
-{
-    ZSTD_DCtx* context = ZSTD_createDCtx();
-    bool isOpened = context && ZSTD_decompressDCtx(context, text.data(), text.size(), compressed.data(), compressed.size()) == text.size();
-    ZSTD_freeDCtx(context);
-    return isOpened;
-}
-
 static void ensureHostBindings()
 {
     static std::once_flag onceFlag;
@@ -165,7 +158,7 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
 
 extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport))
 {
-    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, openCompressedText);
+    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, Bun::openCompressedText);
     take(stored, read.strings.span().data(), read.strings.size(), read.report.span().data(), read.report.size());
     return static_cast<uint32_t>(read.verdict);
 }

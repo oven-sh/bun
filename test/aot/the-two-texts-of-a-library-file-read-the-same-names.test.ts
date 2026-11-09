@@ -19,10 +19,6 @@ const expected: string[] = [
   "node/path.ts extname",
   "node/path.ts relative",
   "node/path.ts toNamespacedPath",
-  // `Bun.jest`: to name it would keep the test runner in every executable with a computed `require()`. A function of its own gives the same module.
-  "builtins/CommonJS.ts jest",
-  // A getter under a symbol of its own that the first text lays on `Blob.prototype`. It answers `this`.
-  "internal/quic/quic.ts kBlobHandle",
   // It answers false, always.
   "internal/repl/history.ts isEnabled",
   // `globalThis.TypeError` and `Function.prototype.call`, each kept in a variable.

@@ -79,6 +79,17 @@ function zlibBuffer(engine, buffer, callback) {
   engine.end(buffer);
 }
 
+const emptyOutBuffer = Buffer.from(new ArrayBuffer());
+function ignoreResult() {}
+
+function takeCallback(engine) {
+  const callback = engine.cb;
+  engine.cb = ignoreResult;
+  engine.buffers = null;
+  engine._outBuffer = emptyOutBuffer;
+  return callback;
+}
+
 function zlibBufferOnData(chunk) {
   if (!this.buffers) this.buffers = [chunk];
   else ArrayPrototypePush.$call(this.buffers, chunk);
@@ -87,13 +98,13 @@ function zlibBufferOnData(chunk) {
   if (this.nread > maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    this.cb($ERR_BUFFER_TOO_LARGE(maxOutputLength));
+    takeCallback(this).$call(this, $ERR_BUFFER_TOO_LARGE(maxOutputLength));
   }
 }
 
 function zlibBufferOnError(err) {
   this.removeAllListeners("end");
-  this.cb(err);
+  takeCallback(this).$call(this, err);
 }
 
 function zlibBufferOnEnd() {
@@ -105,8 +116,9 @@ function zlibBufferOnEnd() {
     buf = bufs.length === 1 ? bufs[0] : Buffer.concat(bufs, this.nread);
   }
   this.close();
-  if (this._info) this.cb(null, { buffer: buf, engine: this });
-  else this.cb(null, buf);
+  const callback = takeCallback(this);
+  if (this._info) callback.$call(this, null, { buffer: buf, engine: this });
+  else callback.$call(this, null, buf);
 }
 
 function zlibBufferSync(engine, buffer) {

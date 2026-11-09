@@ -1959,7 +1959,7 @@ static void stopWithReport(std::span<const char> reason)
     Bun__panic(reason.data(), reason.size());
 }
 
-static bool openCompressedText(std::span<uint8_t> text, std::span<const uint8_t> compressed)
+bool openCompressedText(std::span<uint8_t> text, std::span<const uint8_t> compressed)
 {
     ZSTD_DCtx* context = ZSTD_createDCtx();
     bool isOpened = context && ZSTD_decompressDCtx(context, text.data(), text.size(), compressed.data(), compressed.size()) == text.size();

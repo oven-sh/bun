@@ -146,7 +146,10 @@ fn hands_module_cache_to_code_out_of_sight(
     if flags.contains(FunctionFlags::USES_ARGUMENTS) || !bound.runtime.eval_scopes().is_empty() {
         return true;
     }
-    let Some(parameter) = hir[called.function].params.iter().nth(index) else {
+    let parameters = hir[called.function].params;
+    let rest = parameters.iter().last();
+    let rest = rest.filter(|&last| hir[last].flags.contains(Flags::REST));
+    let Some(parameter) = parameters.iter().nth(index).or(rest) else {
         return false;
     };
     let parameter = &hir[parameter];

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/CommonJS.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d3db0900c2e4313c8ba7a27cb3c008218461ea03c8a0a4f4749755a478761177.
+// Written against that file with the SHA-256 95ac8d6909365c4356d91fe384a398c9b82408b51da163daaf336ff302afc74f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This file contains functions used for the CommonJS module loader

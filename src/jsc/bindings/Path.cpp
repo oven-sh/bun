@@ -52,6 +52,10 @@ static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject
         }
         args.append(arg);
     }
+    if (args.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     const auto result = Function(globalObject, isWindows, args.data(), args.size());
     RETURN_IF_EXCEPTION(scope, {});
     return result;

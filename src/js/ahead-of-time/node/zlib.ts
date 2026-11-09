@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/zlib.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f2d65136136e4d59574eccee4c353aadb9edbf6954a227e21eb4f92aa5744d37.
+// Written against that file with the SHA-256 6997f904f05a9f680c064dcbca4ebf2f2a307b7516235df132fcee5dada8e0c7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:zlib"

@@ -26,3 +26,27 @@ test.each(["asked", "at the end"])("no handler, the exit %s", async how => {
   const { lines, names } = await run("unhandled", how);
   expect({ lines, names }).toEqual({ lines: ["the hook runs", "a listener of exit: 0"], names: true });
 });
+
+test.each([0, 5])("no handler, reallyExit(%d)", async code => {
+  expect(await run("unhandled", "really", String(code))).toEqual({
+    lines: ["the hook runs"],
+    names: true,
+    exitCode: 1,
+  });
+});
+
+test.each([0, 5])("a handler of uncaughtException that returns, reallyExit(%d)", async code => {
+  expect(await run("noted", "really", String(code))).toEqual({
+    lines: ["the hook runs", "reported: made up"],
+    names: false,
+    exitCode: code,
+  });
+});
+
+test("a handler of uncaughtException that exits, reallyExit(0)", async () => {
+  expect(await run("handled", "really", "0")).toEqual({
+    lines: ["the hook runs", "reported: made up"],
+    names: false,
+    exitCode: 3,
+  });
+});

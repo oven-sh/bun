@@ -167,14 +167,6 @@ function InternalSocketAddress(handle): void {
   return handle;
 }
 
-const kBlobHandle = Symbol("kBlobHandle");
-Object.defineProperty(Blob.prototype, kBlobHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
-});
 function isBlob(value) {
   return value instanceof Blob;
 }
@@ -1267,7 +1259,7 @@ function validateBody(body) {
   if (isArrayBuffer(body) || isSharedArrayBuffer(body) || isArrayBufferView(body)) {
     return body;
   }
-  if (isBlob(body)) return body[kBlobHandle];
+  if (isBlob(body)) return body;
 
   if (typeof body === "string") {
     return Buffer.from(body, "utf8");

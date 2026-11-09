@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/quic/quic.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 8a6271de69868b85fb03b99cc48c5d081de5b10b106f522bb16118202959bc81.
+// Written against that file with the SHA-256 ce27da795f85a490a6aed9ea0169e8fd02bb75db30971d3fe59af804e99e8510.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Ported from Node.js lib/internal/quic/quic.js (v26.3.0).

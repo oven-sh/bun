@@ -436,9 +436,10 @@ fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) ->
 }
 
 fn widen_out_of_packages(directory: Vec<u8>) -> Vec<u8> {
+    let first_below_root = resolve_path::windows_volume_name_len(&directory).0 + 1;
     let mut start = 0;
     for folder in directory.split(|&byte| bun_paths::is_sep_any(byte)) {
-        if folder == b"node_modules" && start > 1 {
+        if folder == b"node_modules" && start > first_below_root {
             return directory[..start - 1].to_vec();
         }
         start += folder.len() + 1;

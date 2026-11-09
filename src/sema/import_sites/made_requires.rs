@@ -9,7 +9,7 @@ use crate::bind::{
     Decl, FnOwner, InitialState, Parent, PatParent, StoreKind, SymbolId, SymbolStore,
     has_mapped_arguments,
 };
-use crate::fold::Decisions;
+use crate::fold::{Decisions, outermost_cast};
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
     ImportedRequire, MemberKey, NodeData, OtherValues, PatKind, StmtKind, UnOp,
@@ -847,15 +847,6 @@ fn is_answer_used_otherwise_than_called(
 
 thread_local! {
     static IS_ASKING_WHOLE_FILE: Cell<bool> = const { Cell::new(false) };
-}
-
-fn outermost_cast(hir: &File<'_>, bound: &Bound<'_>, mut e: ExprId) -> ExprId {
-    while let Parent::Expr(parent) = bound.parent_of_expr(e)
-        && hir.type_assertion_operand(parent).is_some()
-    {
-        e = parent;
-    }
-    e
 }
 
 fn is_called_or_asked_to_resolve(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {

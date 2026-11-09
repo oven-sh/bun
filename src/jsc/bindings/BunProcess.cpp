@@ -4868,8 +4868,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     auto* process = zigGlobal->processObject();
     if (!std::exchange(process->m_isExiting, true)) {
         JSC::Exception* thrown = nullptr;
-        if (runWhatRunsWhenProcessExits(zigGlobal, process, thrown) && thrown) [[unlikely]]
+        if (runWhatRunsWhenProcessExits(zigGlobal, process, thrown) && thrown) [[unlikely]] {
+            Bun__setExitCode(bunVM(zigGlobal), exitCode);
             Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(zigGlobal, thrown);
+            exitCode = Bun__getExitCode(bunVM(zigGlobal));
+        }
     }
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the

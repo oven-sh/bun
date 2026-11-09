@@ -20,6 +20,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-validators-answer-alike-on-either-side-of-what-they-pass-at-once.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000

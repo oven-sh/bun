@@ -7,6 +7,7 @@
 #include <JavaScriptCore/AOTModuleHost.h>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <span>
 #include <wtf/Function.h>
 
 namespace Zig {
@@ -28,6 +29,7 @@ class JSCommonJSModule;
 enum class ErrorCode : uint16_t;
 
 extern const JSC::AOT::ModuleHost compiledModuleHost;
+bool openCompressedText(std::span<uint8_t> text, std::span<const uint8_t> compressed);
 
 // On this thread: a Worker that starts from text runs no compiled program.
 inline bool hasCompiledModules() { return !!JSC::AOT::Image::current(); }

@@ -11,4 +11,6 @@ if (process.argv[2] === "handled") {
     process.exit(3);
   });
 }
+if (process.argv[2] === "noted") process.on("uncaughtException", error => console.log("reported: " + error.message));
 if (process.argv[3] === "asked") process.exit(0);
+if (process.argv[3] === "really") process.reallyExit(Number(process.argv[4]));

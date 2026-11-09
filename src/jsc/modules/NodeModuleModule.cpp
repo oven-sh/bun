@@ -565,6 +565,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
         dirname = JSValue::decode(
             Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
 #endif
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         dirname = jsString(vm, String("."_s));
     }

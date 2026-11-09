@@ -714,8 +714,8 @@ impl JSGlobalObject {
     }
 
     /// Whether a module is loaded under `key`, as ESM or as CommonJS.
-    pub(crate) fn is_key_of_loaded_module(&self, key: &BunString) -> bool {
-        Bun__isKeyOfLoadedModule(self, key)
+    pub(crate) fn is_key_of_loaded_module(&self, key: &BunString) -> JsResult<bool> {
+        crate::from_js_host_call_generic(self, || Bun__isKeyOfLoadedModule(self, key))
     }
 
     /// Whether an `onResolve` or `onLoad` is registered.

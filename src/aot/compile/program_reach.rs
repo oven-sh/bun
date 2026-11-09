@@ -3275,6 +3275,16 @@ impl Reacher<'_, '_, '_> {
             }
             ExportLookup::Absent => {
                 self.evaluate(module);
+                let graph = walk.input.graph;
+                if let ModuleRef::File(file) = module
+                    && graph.ambiguous_names(file).contains(&name)
+                    && walk.names_asked_of_stars.insert((file, name))
+                {
+                    let stars = graph.requests(file).iter();
+                    for star in stars.filter(|it| it.is_dynamic_star_export) {
+                        self.reach_export(star.target, name);
+                    }
+                }
                 false
             }
         }

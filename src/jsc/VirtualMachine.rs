@@ -8431,7 +8431,7 @@ fn run_on_resolve(
     ) {
         (Some(key), Some(key_with_query))
             if !ModuleLoader::namespace_and_path(key).0.is_empty()
-                && (is_loaded(key_with_query) || is_loaded(key)) =>
+                && (is_loaded(key_with_query)? || is_loaded(key)?) =>
         {
             key
         }

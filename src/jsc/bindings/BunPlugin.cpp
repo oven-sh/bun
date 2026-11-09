@@ -7422,10 +7422,11 @@ extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globa
 extern "C" bool Bun__isKeyOfLoadedModule(Zig::GlobalObject* globalObject, const BunString* key)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     String string = key->toWTFString();
     if (Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, string)))
         return true;
-    return Bun::testFileRequireMap(globalObject)->has(globalObject, jsString(vm, string));
+    RELEASE_AND_RETURN(scope, Bun::testFileRequireMap(globalObject)->has(globalObject, jsString(vm, string)));
 }
 
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)

@@ -1090,9 +1090,10 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         is_private_symbol: bool,
         child: jsc::matched_rows::PlaceHandle,
     ) {
-        // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each_row.
-        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
-        ctx.formatter.place.hand_child(child);
+        // SAFETY: as in `for_each`, ctx_ptr is the iterator that the Object arm gave to the walker. This borrow ends before `for_each` takes its own.
+        if let Some(ctx) = unsafe { ctx_ptr.cast::<Self>().as_mut() } {
+            ctx.formatter.place.hand_child(child);
+        }
         Self::for_each(global_this, ctx_ptr, key, value, is_symbol, is_private_symbol);
     }
 }

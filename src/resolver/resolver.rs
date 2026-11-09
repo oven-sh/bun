@@ -7235,10 +7235,7 @@ fn is_node_modules_copy(package_json: &[u8], name: &[u8]) -> bool {
     let Some(mut rest) = bun_paths::dirname(package_json) else {
         return false;
     };
-    for part in name
-        .rsplit(|&c| c == b'/')
-        .chain([b"node_modules".as_slice()])
-    {
+    for part in strings::rsplit(name, b"/").chain([b"node_modules".as_slice()]) {
         let Some((&separator, above)) = rest.strip_suffix(part).and_then(<[u8]>::split_last) else {
             return false;
         };

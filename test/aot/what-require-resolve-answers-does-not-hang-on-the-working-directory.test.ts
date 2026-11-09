@@ -74,5 +74,9 @@ test("a refusal by the exports of the copy on disk stands for a relative entry, 
     String(dir),
   );
   expect(built.exitCode).toBe(0);
-  expect((await run([program], String(dir))).stdout).toBe("MODULE_NOT_FOUND MODULE_NOT_FOUND MODULE_NOT_FOUND\n");
+  const ran = await run([program], String(dir));
+  expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+    stdout: "MODULE_NOT_FOUND MODULE_NOT_FOUND MODULE_NOT_FOUND\n",
+    exitCode: 0,
+  });
 });

@@ -94,19 +94,31 @@ bun test --isolate=modules
 
 Keeps one global object for the whole run and gives each file its own copy of every module. JIT-compiled code belongs to a global object, so with `--isolate` every file starts over in the interpreter. With `--isolate=modules`, a file reuses the code that was compiled for earlier files.
 
-|                                                                      | `--isolate`  | `--isolate=modules` |
-| -------------------------------------------------------------------- | ------------ | ------------------- |
-| Modules, module mocks, `--preload` scripts                           | new per file | new per file        |
-| The window of a [DOM environment](/test/dom)                         | new per file | new per file        |
-| Servers, sockets, watchers, subprocesses and timers a file left open | closed       | closed              |
-| `globalThis`, built-ins (`Array.prototype`, `console`, `Date.now`)   | new per file | changes are undone  |
-| `process.env`, `process.cwd()`, listeners on `process`               | restored     | restored            |
-| Built-in modules (`node:fs`, `bun:sqlite`)                           | new per file | shared              |
-| JIT-compiled code                                                    | discarded    | kept                |
+|                                                                      | `--isolate`  | `--isolate=modules`                        |
+| -------------------------------------------------------------------- | ------------ | ------------------------------------------ |
+| Modules, module mocks, `--preload` scripts                           | new per file | new per file                               |
+| The window of a [DOM environment](/test/dom)                         | new per file | new per file                               |
+| Servers, sockets, watchers, subprocesses and timers a file left open | closed       | closed                                     |
+| `globalThis`, built-ins (`Array.prototype`, `console`, `Date.now`)   | new per file | changes are undone, except as listed below |
+| `process.env`, `process.cwd()`, listeners on `process`               | restored     | restored                                   |
+| Built-in modules (`node:fs`, `bun:sqlite`)                           | new per file | shared                                     |
+| JIT-compiled code                                                    | discarded    | kept                                       |
 
 Use it with `--parallel` too: `bun test --parallel --isolate=modules`.
 
-Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. It doesn't restore a built-in module's exports (`fs.readFileSync = ...`) or state hidden inside a built-in object, so those changes carry over to the next file.
+Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. So `Date.now = ...`, `console.log = ...` and `Array.prototype.last = ...` are undone.
+
+The restore stops there. These changes carry over to the next file:
+
+- A change to an object stored deeper, unless that object is a function or a prototype: `Temporal.Now.instant = ...`, `Bun.password.verify = ...`, `process.release.name = ...`.
+- A change to an object that only a getter or a call returns, such as `crypto.subtle` or the prototype of array iterators: `crypto.subtle.digest = ...`.
+- A change to, or a replacement of, a standard stream or a default client: `process.stdin`, `process.stdout`, `process.stderr`, the same three on `Bun`, `Bun.sql`, `Bun.postgres`, `Bun.redis`, `Bun.s3` and `Bun.secrets`. Bun creates these on first use, and the restore leaves them alone, so `process.stdout.write = ...` and `Bun.sql = ...` stay. A value assigned to `process.mainModule` stays too.
+- A property whose name starts with an underscore, on any object but `globalThis`. Bun treats it as internal state, like `process._events`.
+- `Object.freeze()`, `Object.seal()` or `Object.preventExtensions()` on a built-in.
+- A change to a built-in module's exports (`fs.readFileSync = ...`).
+- State hidden inside a built-in object.
+
+A spy from [`spyOn()`](/test/mocks#cleanup-after-each-test-file) is removed when its file ends, wherever the object is, so prefer a spy to an assignment there. Undo any other change in `afterAll()`, or use `--isolate`.
 
 ## Concurrent tests within a file
 

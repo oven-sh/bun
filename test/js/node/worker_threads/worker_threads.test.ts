@@ -730,6 +730,29 @@ describe("error event", () => {
     expect(err.message).toBe("oh no");
   });
 
+  // The text of the report comes from the console formatter, which runs code of the thrown error.
+  test.each([
+    ["its inspect hook throws", `e[Symbol.for("nodejs.util.inspect.custom")] = thrower;`],
+    ["a property throws", `e.property = hostile();`],
+    ["a property of an Error property throws", `e.first = Object.assign(new Error("first"), { property: hostile() });`],
+    [
+      "a property of an Error property throws and another Error property follows",
+      `e.first = Object.assign(new Error("first"), { property: hostile() }); e.second = new Error("second");`,
+    ],
+  ])("is fired with a copy of the error value when formatting it throws: %s", async (_name, makeHostile) => {
+    const worker = new Worker(
+      `const thrower = () => { throw new Error("thrown by the formatter"); };
+       const hostile = () => Object.defineProperty(/a/, "source", { get: thrower });
+       const e = new TypeError("oh no");
+       ${makeHostile}
+       throw e;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.message).toBe("oh no");
+  });
+
   test("falls back to string when the error cannot be serialized", async () => {
     const worker = new Worker(
       /* js */ `

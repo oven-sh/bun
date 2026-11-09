@@ -5600,6 +5600,46 @@ describe("expect()", () => {
     });
   });
 
+  // The error printer prints the properties of an Error. What one of them throws is the error of the matcher too.
+  describe("an Error with a property that throws while it is printed", () => {
+    const thrown = new Error("thrown while printing");
+    let calls = 0;
+    const hostile = () =>
+      Object.assign(new Error("hostile"), {
+        property: Object.defineProperty(/a/, "source", {
+          get() {
+            calls++;
+            throw thrown;
+          },
+        }),
+      });
+    const caught = async (/** @type {() => unknown} */ run) => {
+      try {
+        await run();
+      } catch (error) {
+        return error;
+      }
+      return "did not throw";
+    };
+
+    test_skipIf(!isBun).each([
+      ["toHaveLength(1)", v => expect(v).toHaveLength(1)],
+      ["toHaveLength(value) on [1]", v => expect([1]).toHaveLength(v)],
+      ["toMatch(/a/)", v => expect(v).toMatch(/a/)],
+      ["toMatch(value) on a string", v => expect("a").toMatch(v)],
+      ["toBeInstanceOf(value) on 1", v => expect(1).toBeInstanceOf(v)],
+      ["toHaveBeenCalled()", v => expect(v).toHaveBeenCalled()],
+      ["toHaveReturned()", v => expect(v).toHaveReturned()],
+      ["resolves.toBe(1)", v => expect(v).resolves.toBe(1)],
+      ["expect.assertions(value)", v => expect.assertions(v)],
+      ["a custom matcher that returns the value", v => ANY(expect(1))._toReturnItsArgument(v)],
+    ])("%s throws that error", async (_, run) => {
+      calls = 0;
+      expect(await caught(() => run(hostile()))).toBe(thrown);
+      expect(calls).toBe(1);
+    });
+  });
+
   test("expect.hasAssertions doesn't throw when valid", () => {
     expect.hasAssertions();
     expect("a").toEqual("a");

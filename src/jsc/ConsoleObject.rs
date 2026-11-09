@@ -1084,7 +1084,7 @@ impl<'a> TablePrinter<'a> {
 
 /// Adapter: erase a `&mut dyn bun_io::Write` behind the `bun_core::io::Writer`
 /// vtable header so it can be handed to `VirtualMachine::print_stack_trace` /
-/// `print_errorlike_object`, which take the concrete `io::Writer` type.
+/// `format_errorlike_object`, which take the concrete `io::Writer` type.
 ///
 /// `bun_core::io::Writer` is the first `#[repr(C)]` field, so the vtable thunks
 /// recover `&mut Self` from the `*mut io::Writer` they receive (same pattern as
@@ -1291,7 +1291,23 @@ impl FormatOptions {
 // format2
 // ───────────────────────────────────────────────────────────────────────────
 
+/// `Ok` means that no exception is pending: every exception that formatting leaves on the VM comes
+/// back as the `Err`.
+#[inline]
 pub fn format2(
+    level: MessageLevel,
+    global: &JSGlobalObject,
+    vals: &[JSValue],
+    writer: &mut dyn bun_io::Write,
+    options: FormatOptions,
+) -> JsResult<()> {
+    crate::validation_scope!(scope, global);
+    let result = format2_(level, global, vals, writer, options);
+    scope.assert_no_exception_after_ok(result);
+    result
+}
+
+fn format2_(
     level: MessageLevel,
     global: &JSGlobalObject,
     vals: &[JSValue],
@@ -2799,12 +2815,14 @@ pub mod formatter {
                     return;
                 };
 
-                let _ = this.formatter.format::<C>(
-                    key_tag,
-                    this.writer,
-                    key,
-                    this.formatter.global_this,
-                );
+                // With the key's exception pending the value is not read: the iteration ends here.
+                if this
+                    .formatter
+                    .format::<C>(key_tag, this.writer, key, this.formatter.global_this)
+                    .is_err()
+                {
+                    return;
+                }
                 this.writer.write_all(b": ").expect("unreachable");
                 let Ok(value_tag) = Tag::get_advanced(value, global_object, opts) else {
                     return;
@@ -3807,12 +3825,7 @@ pub mod formatter {
             })?;
             // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
-                if writer_
-                    .write_fmt(format_args!("{}", result.fmt_string(self.global_this)))
-                    .is_err()
-                {
-                    self.failed = true;
-                }
+                self.print_custom_inspect_string(writer_, result)?;
             } else {
                 // A custom inspector that returns its own `this` would recurse
                 // forever; re-tag without the custom hook so it falls through to
@@ -3823,6 +3836,22 @@ pub mod formatter {
                     Tag::get(result, self.global_this)?
                 };
                 self.format::<C>(tag, writer_, result, self.global_this)?;
+            }
+            Ok(())
+        }
+
+        /// Outlined so that the converted string is not in the frame of
+        /// `print_custom_formatted_object`, which nests once per inspect hook.
+        #[inline(never)]
+        fn print_custom_inspect_string(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            result: JSValue,
+        ) -> JsResult<()> {
+            // A String object converts through its `toString`, which can throw.
+            let str = result.to_bun_string(self.global_this)?;
+            if writer_.write_fmt(format_args!("{str}")).is_err() {
+                self.failed = true;
             }
             Ok(())
         }
@@ -3876,8 +3905,7 @@ pub mod formatter {
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
-            vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
-            Ok(())
+            vm.format_errorlike_object(value, self, adapter.interface(), C)
         }
 
         #[inline(never)]
@@ -5669,7 +5697,8 @@ pub mod formatter {
         /// Use this instead of the `Display` adapter ([`ZigFormatter`]) when a
         /// `JsResult` caller needs the error: `Display` can only report
         /// `fmt::Error`, which panics inside `io::Write::write_fmt` when the
-        /// sink itself did not fail.
+        /// sink itself did not fail. As for [`format2`], `Ok` means that no
+        /// exception is pending.
         pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             value: JSValue,
@@ -5678,8 +5707,10 @@ pub mod formatter {
             let one = [value];
             self.remaining_values = bun_ptr::RawSlice::new(&one);
             let global = self.global_this;
+            crate::validation_scope!(scope, global);
             let result = Tag::get(value, global)
                 .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
+            scope.assert_no_exception_after_ok(result);
             self.remaining_values = bun_ptr::RawSlice::EMPTY;
             result
         }

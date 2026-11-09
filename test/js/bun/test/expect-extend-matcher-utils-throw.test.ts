@@ -1,16 +1,24 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// Inspecting a value can run user code (a custom inspect method) that throws.
+// Inspecting a value can run user code (a custom inspect method, a getter of
+// a value that the error printer formats) that throws.
 // The matcher utils must surface that as a catchable JS exception. The
 // unfixed build aborts the process instead, so the input runs in a child.
-test("matcher utils propagate exceptions thrown while inspecting the value", async () => {
+test.concurrent.each([
+  ["a custom inspect method", `{ [Symbol.for("nodejs.util.inspect.custom")]: thrower }`],
+  [
+    "a property of a nested Error",
+    `[Object.assign(new Error("nested"), { property: Object.defineProperty(/a/, "source", { get: thrower }) })]`,
+  ],
+])("matcher utils propagate exceptions thrown while inspecting the value: %s", async (_name, value) => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
         import { expect } from "bun:test";
+        const thrower = () => { throw new Error("inspect failed"); };
         const caught = {};
         expect.extend({
           _printThrowingValue(received) {
@@ -25,11 +33,7 @@ test("matcher utils propagate exceptions thrown while inspecting the value", asy
             return { pass: true, message: () => "" };
           },
         });
-        expect({
-          [Symbol.for("nodejs.util.inspect.custom")]() {
-            throw new Error("inspect failed");
-          },
-        })._printThrowingValue();
+        expect(${value})._printThrowingValue();
         console.log(JSON.stringify(caught));
       `,
     ],

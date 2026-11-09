@@ -6,6 +6,9 @@ import path from "path";
 
 const stripAnsi = Bun.stripANSI;
 
+// Source of an Error with an own property that throws when the error printer formats it.
+const hostileError = `Object.assign(new Error("outer"), { property: Object.defineProperty(/a/, "source", { get() { throw new Error("property failed"); } }) })`;
+
 /**
  * Runs `bun repl` with piped stdin (non-TTY mode) and captures its output.
  *
@@ -567,8 +570,8 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("a throwing inspect hook does not crash the loop", async () => {
-      // format2 catches custom-inspect throws internally, but we verify no exception
-      // leaks (BUN_JSC_validateExceptionChecks in CI) and the loop continues.
+      // The hook's error is printed as the error of that line. No exception leaks
+      // (BUN_JSC_validateExceptionChecks in CI) and the loop continues.
       const { outputs, stderr, exitCode } = await runRepl([
         `globalThis.__bad = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom"); } }; __bad`,
         // Products that do not appear in the echoed input (7*6=42, 100+23=123).
@@ -577,7 +580,56 @@ describe.concurrent("Bun REPL", () => {
         "100 + 23",
         ".exit",
       ]);
-      expect(outputs).toEqual(["[native code: Exception]", "42", "{}", "123"]);
+      expect(outputs).toEqual(["error: boom", "42", "{}", "123"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an exception thrown while a result is printed or copied is the error of that line only", async () => {
+      const { stdout, outputs, stderr, exitCode } = await runRepl([
+        `globalThis.hostile = ${hostileError}; 0`,
+        "hostile",
+        // Copies the last result, which is the value that failed to print.
+        ".copy",
+        "1 + 1",
+        "_error.message",
+        // The error printer throws on the thrown value itself: what it printed up to there is shown.
+        "throw hostile",
+        `throw [1, 2, { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("hook failed"); } }]`,
+        "1 + 2",
+        ".copy hostile",
+        "1 + 3",
+        // The ";" makes this a block: `({ hostile; })` does not parse, so the line is evaluated as it is written.
+        "{ hostile; }",
+        "1 + 4",
+        // The read of the result throws.
+        `return new Proxy({}, { getOwnPropertyDescriptor() { throw new Error("trap failed"); } })`,
+        "_error.message",
+        // The same read, before a copy.
+        `.copy return new Proxy({}, { getOwnPropertyDescriptor() { throw new Error("copy trap failed"); } })`,
+        "_error.message",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "0",
+        "error: property failed",
+        "error: property failed",
+        "2",
+        '"property failed"',
+        "error: outer\n property: \nerror: [failed to format error]",
+        "[ 1, 2, \nerror: [failed to format error]",
+        "3",
+        "error: property failed",
+        "4",
+        "error: property failed",
+        "5",
+        "error: trap failed",
+        '"trap failed"',
+        "error: copy trap failed",
+        '"copy trap failed"',
+      ]);
+      // Nothing of the value that failed to print reached the clipboard.
+      expect(stdout).not.toContain("\x1b]52;");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -841,9 +893,10 @@ describe.concurrent("Bun REPL", () => {
   });
 
   describe("-e / --eval and -p / --print", () => {
-    async function runReplWith(args: string[]) {
+    async function runReplWith(args: string[], cwd?: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "repl", ...args],
+        cwd,
         stdout: "pipe",
         stderr: "pipe",
         env: { ...bunEnv, NO_COLOR: "1" },
@@ -930,6 +983,46 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("-e with a thrown value that fails to print shows what was printed and says that it is cut off", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        `throw [1, 2, { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("hook failed"); } }]`,
+      ]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: "[ 1, 2, \nerror: [failed to format error]\n",
+        exitCode: 1,
+      });
+    });
+
+    // The print of a String object starts a colour before the conversion that throws. That colour
+    // is not left open for the last line, nor for what the terminal prints next.
+    test.each([
+      [
+        "nothing visible was printed",
+        `throw Object.assign(new String("q"), { toString() { throw new Error("string failed"); }, [Symbol.toPrimitive]() { throw new Error("string failed"); } })`,
+        /^error: \[failed to format error\]\n$/,
+      ],
+      [
+        "the print stopped inside a colour",
+        `throw [Object.assign(new String("\\u{1F600}"), { toJSON() { throw new Error("toJSON failed"); } })]`,
+        /^\[ (\x1b\[\d+m)+\n\x1b\[0merror: \[failed to format error\]\n$/,
+      ],
+    ])("-e with colours and a thrown value that fails to print: %s", async (_name, script, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", "-e", script],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(expected),
+        exitCode: 1,
+      });
+    });
+
     test("-e with syntax error writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "const ="]);
       expect(stdout).toBe("");
@@ -942,6 +1035,72 @@ describe.concurrent("Bun REPL", () => {
       expect(stdout).toBe("");
       expect(stderr).toMatch(/^error: async fail\n +at /m);
       expect(exitCode).toBe(1);
+    });
+
+    // Native code prints the result of -p: there is no JavaScript caller to take what the print throws.
+    describe("-p reports an exception thrown while the result is printed", () => {
+      const inspectHook = (body: string) => `({ [Symbol.for("nodejs.util.inspect.custom")]() { ${body} } })`;
+      const throwingString = `Object.assign(new String("q"), { toString() { throw new Error("string failed"); }, [Symbol.toPrimitive]() { throw new Error("string failed"); } })`;
+      const printThrows: Record<string, [script: string, message: string]> = {
+        "an inspect hook throws": [inspectHook(`throw new Error("hook failed");`), "hook failed"],
+        "an inspect hook returns a String object whose conversion throws": [
+          inspectHook(`return ${throwingString};`),
+          "string failed",
+        ],
+        "a property of an Error throws": [hostileError, "property failed"],
+        "a property of an Error throws and a second Error property follows": [
+          `Object.assign(new Error("top"), { first: ${hostileError}, second: new Error("second") })`,
+          "property failed",
+        ],
+        "a property of a member of an AggregateError throws": [
+          `new AggregateError([${hostileError}, new Error("second member")], "aggregate")`,
+          "property failed",
+        ],
+        // A Map prints a key and then its value. The value is not read when the key threw.
+        "a property of an Error that is a Map key throws": [
+          `Object.assign(new Error("holder"), { map: new Map([[${hostileError}, {}]]) })`,
+          "property failed",
+        ],
+        "a property of a member of an AggregateError that is a Map key throws": [
+          `Object.assign(new Error("holder"), { map: new Map([[new AggregateError([${hostileError}], "aggregate"), {}]]) })`,
+          "property failed",
+        ],
+        "the read of the result throws": [
+          `return new Proxy({}, { getOwnPropertyDescriptor() { throw new Error("trap failed"); } })`,
+          "trap failed",
+        ],
+        "process.exitCode was set before": [
+          `process.exitCode = 5; ${inspectHook(`throw new Error("hook failed");`)}`,
+          "hook failed",
+        ],
+      };
+
+      test.each(Object.entries(printThrows))("%s", async (_name, [script, message]) => {
+        const { stdout, stderr, exitCode } = await runReplWith(["-p", script]);
+        expect(stdout).toBe("");
+        expect(stderr).toMatch(new RegExp(`^error: ${message}\\n +at `, "m"));
+        expect(exitCode).toBe(1);
+      });
+
+      // The listener is a function of an ES module and reads a global. When JavaScriptCore links it
+      // for its first call, a release build asserts that no exception is pending.
+      test.each(["a property of an Error throws", "an inspect hook returns a String object whose conversion throws"])(
+        "with a beforeExit listener from an imported module: %s",
+        async name => {
+          using dir = tempDir("repl-print-throws", {
+            "listener.mjs": `process.on("beforeExit", () => console.log("beforeExit"));`,
+          });
+          const [script, message] = printThrows[name];
+          const { stdout, stderr, exitCode } = await runReplWith(
+            ["-p", `await import("./listener.mjs"); ${script}`],
+            String(dir),
+          );
+          // As for every other error of -e / -p, beforeExit is not emitted.
+          expect(stdout).toBe("");
+          expect(stderr).toMatch(new RegExp(`^error: ${message}\\n +at `, "m"));
+          expect(exitCode).toBe(1);
+        },
+      );
     });
 
     test("-e preserves process.exitCode set by the script", async () => {

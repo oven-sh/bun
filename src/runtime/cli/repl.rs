@@ -24,7 +24,7 @@ use bun_core::tty;
 use bun_core::{Environment, Output, env_var, fmt, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, ProtectedJSValue};
 use bun_paths as path;
 use bun_sys::{self as sys, Fd};
 
@@ -700,11 +700,7 @@ fn cmd_copy(repl: &mut Repl, args: &[u8]) -> ReplResult {
     if code.is_empty() {
         // .copy with no args - copy _ (last result) to clipboard
         if let Err(err) = repl.copy_value_to_clipboard(repl.last_result.value()) {
-            if let Some(global) = repl.global {
-                let exc = global.take_exception(err);
-                repl.set_last_error(exc);
-                repl.print_js_error(exc);
-            }
+            repl.report_thrown(err);
         }
         return ReplResult::SkipEval;
     }
@@ -1705,9 +1701,7 @@ impl<'a> Repl<'a> {
                 match resolved_result.get_own(global, &bun_core::String::static_("value")) {
                     Ok(v) => v,
                     Err(err) => {
-                        let exc = global.take_exception(err);
-                        self.set_last_error(exc);
-                        self.print_js_error(exc);
+                        self.report_thrown(err);
                         vm.as_mut().tick();
                         return;
                     }
@@ -1733,8 +1727,8 @@ impl<'a> Repl<'a> {
             } else {
                 self.print(format_args!("undefined\n"));
             }
-        } else {
-            self.print_formatted_value(actual_result);
+        } else if let Err(err) = self.print_formatted_value(actual_result) {
+            self.report_thrown(err);
         }
 
         // Tick the event loop to handle any pending work
@@ -1842,8 +1836,7 @@ impl<'a> Repl<'a> {
                 match resolved_result.get_own(global, &bun_core::String::static_("value")) {
                     Ok(v) => v,
                     Err(err) => {
-                        let exc = global.take_exception(err);
-                        self.print_js_error_to(exc, Output::error_writer(), stderr_colors);
+                        self.report_thrown_to_stderr(err, stderr_colors);
                         return true;
                     }
                 };
@@ -1868,8 +1861,9 @@ impl<'a> Repl<'a> {
                 } else {
                     self.print(format_args!("undefined\n"));
                 }
-            } else {
-                self.print_formatted_value(actual_result);
+            } else if let Err(err) = self.print_formatted_value(actual_result) {
+                self.report_thrown_to_stderr(err, stderr_colors);
+                return true;
             }
         }
 
@@ -1906,7 +1900,9 @@ impl<'a> Repl<'a> {
         self.set_last_result(result);
 
         if !result.is_undefined() {
-            self.print_formatted_value(result);
+            if let Err(err) = self.print_formatted_value(result) {
+                self.report_thrown(err);
+            }
         } else if self.use_colors {
             self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
         } else {
@@ -1990,9 +1986,7 @@ impl<'a> Repl<'a> {
                 match resolved_result.get_own(global, &bun_core::String::static_("value")) {
                     Ok(v) => v,
                     Err(err) => {
-                        let exc = global.take_exception(err);
-                        self.set_last_error(exc);
-                        self.print_js_error(exc);
+                        self.report_thrown(err);
                         vm.as_mut().tick();
                         return;
                     }
@@ -2009,9 +2003,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Err(err) = self.copy_value_to_clipboard(actual_result) {
-            let exc = global.take_exception(err);
-            self.set_last_error(exc);
-            self.print_js_error(exc);
+            self.report_thrown(err);
         }
         vm.as_mut().tick();
     }
@@ -2254,7 +2246,7 @@ impl<'a> Repl<'a> {
         };
         let mut buf: Vec<u8> = Vec::new();
         // Use .Error level for proper error formatting with Bun.inspect
-        if jsc::ConsoleObject::format2(
+        if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Error,
             global,
             core::slice::from_ref(&error_value),
@@ -2268,27 +2260,65 @@ impl<'a> Repl<'a> {
                 max_depth: 4,
                 ..Default::default()
             },
-        )
-        .is_err()
-        {
-            // Formatting the error itself threw — clear it to avoid recursion and show a fallback.
-            global.clear_exception();
-            let _ = writer.write_all(b"error: [failed to format error]\n");
-            return;
+        ) {
+            // Formatting the error itself threw. That exception is not the one being reported:
+            // show what was formatted up to there, and say that it is cut off.
+            if global.take_error(err).is_termination_exception() {
+                return;
+            }
+            // The cut-off text can end inside a colour, or be nothing but the start of one.
+            if strings::visible::width::exclude_ansi_colors::utf8(&buf) == 0 {
+                buf.clear();
+            } else {
+                if buf.last() != Some(&b'\n') {
+                    buf.push(b'\n');
+                }
+                if enable_colors {
+                    buf.extend_from_slice(Color::RESET.as_bytes());
+                }
+            }
+            buf.extend_from_slice(b"error: [failed to format error]\n");
         }
         let _ = writer.write_all(&buf);
     }
 
-    /// Format and print a JS value using Bun's console formatter (same as console.log)
-    fn print_formatted_value(&mut self, value: JSValue) {
+    /// An exception from the REPL's own work on a result (the print, the copy) is the last error,
+    /// as an exception that the evaluated code threw is.
+    fn report_thrown(&mut self, err: JsError) {
         let Some(global) = self.global else {
             return;
+        };
+        let error = global.take_error(err);
+        if error.is_termination_exception() {
+            return;
+        }
+        self.set_last_error(error);
+        global.to_js_value().put(global, b"_error", error);
+        self.print_js_error(error);
+    }
+
+    /// [`Self::report_thrown`] for `-e` / `-p`: stderr, as for an exception that the script threw.
+    fn report_thrown_to_stderr(&self, err: JsError, stderr_colors: bool) {
+        let Some(global) = self.global else {
+            return;
+        };
+        let error = global.take_error(err);
+        if !error.is_termination_exception() {
+            self.print_js_error_to(error, Output::error_writer(), stderr_colors);
+        }
+    }
+
+    /// Format and print a JS value using Bun's console formatter (same as console.log).
+    /// Nothing is printed when formatting throws.
+    fn print_formatted_value(&self, value: JSValue) -> JsResult<()> {
+        let Some(global) = self.global else {
+            return Ok(());
         };
         let writer = Output::writer();
         // Note: see `print_js_error_to` — buffer because
         // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
         let mut buf: Vec<u8> = Vec::new();
-        if let Err(err) = jsc::ConsoleObject::format2(
+        jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
             core::slice::from_ref(&value),
@@ -2302,14 +2332,9 @@ impl<'a> Repl<'a> {
                 max_depth: 4,
                 ..Default::default()
             },
-        ) {
-            // A getter on the value threw during inspection — show that error.
-            let exc = global.take_exception(err);
-            self.set_last_error(exc);
-            self.print_js_error(exc);
-            return;
-        }
+        )?;
         let _ = writer.write_all(&buf);
+        Ok(())
     }
 
     // ========================================================================

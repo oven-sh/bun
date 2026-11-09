@@ -1525,11 +1525,13 @@ fn on_unhandled_rejection(
             ..Default::default()
         },
     );
-    if let Err(err) = format_result {
-        error_instance = global_object.take_exception(err);
-    }
+    // What formatting threw costs only the text: the thrown value stays the error.
+    let stopped = match format_result {
+        Ok(()) => error_instance.is_termination_exception(),
+        Err(err) => global_object.take_exception(err).is_termination_exception(),
+    };
     // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
-    if error_instance.is_termination_exception() {
+    if stopped {
         return;
     }
     jsc::mark_binding();

@@ -478,3 +478,26 @@ it("throws the error that rows that are not an array throw while they are printe
   // @ts-expect-error
   expect(caught(() => describe.for(rows))).toBe(thrown);
 });
+
+it("throws the error that rows that are an Error throw while their properties are printed", () => {
+  const thrown = new Error("thrown while printing");
+  const rows = Object.assign(new Error("rows"), {
+    property: Object.defineProperty(/a/, "source", {
+      get() {
+        throw thrown;
+      },
+    }),
+  });
+  const caught = (each: () => unknown) => {
+    try {
+      each();
+    } catch (error) {
+      return error;
+    }
+    return "did not throw";
+  };
+  // @ts-expect-error
+  expect(caught(() => it.each(rows))).toBe(thrown);
+  // @ts-expect-error
+  expect(caught(() => describe.each(rows))).toBe(thrown);
+});

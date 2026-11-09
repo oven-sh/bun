@@ -1788,3 +1788,146 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
 });
+
+describe("a value that an Error holds throws while the error printer formats it", () => {
+  it.concurrent("console.log, console.error, console.trace and Bun.inspect throw what it threw", async () => {
+    // console.log writes what it printed before the throw, so the calls run in a child and the
+    // outcomes come back on the last line of stdout.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const hostileProperty = () => ({
+           property: Object.defineProperty(/a/, "source", { get() { throw new Error("property failed"); } }),
+         });
+         const hostile = () => Object.assign(new Error("outer"), hostileProperty());
+         const values = {
+           "a property": hostile,
+           "a property of the first of two Error properties": () =>
+             Object.assign(new Error("top"), { first: hostile(), second: new Error("second") }),
+           "a property of the cause": () => new Error("top", { cause: hostile() }),
+           "a property of an Error in an array": () => [1, hostile()],
+           "a property of an Error in an object": () => ({ nested: hostile() }),
+           "a property of an Error in a Map": () => new Map([[1, hostile()]]),
+           "a property of a member of an AggregateError": () =>
+             new AggregateError([hostile(), new Error("second member")], "aggregate"),
+         };
+         const print = {
+           "console.log": value => console.log(value),
+           "console.error": value => console.error(value),
+           "console.trace": value => console.trace(value),
+           "Bun.inspect": value => Bun.inspect(value),
+         };
+         const outcomes = {};
+         const outcomeOf = fn => {
+           try {
+             fn();
+             return "returned";
+           } catch (e) {
+             return e.message;
+           }
+         };
+         for (const [shape, make] of Object.entries(values)) {
+           outcomes[shape] = {};
+           for (const [name, fn] of Object.entries(print)) outcomes[shape][name] = outcomeOf(() => fn(make()));
+         }
+         // The own properties of an AggregateError are printed when its members are past the depth.
+         const aggregate = Object.assign(new AggregateError([new Error("member")], "aggregate"), hostileProperty());
+         outcomes.aggregate = outcomeOf(() => Bun.inspect(aggregate, { depth: 0 }));
+         process.stdout.write("\\n" + JSON.stringify(outcomes));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const all = {
+      "console.log": "property failed",
+      "console.error": "property failed",
+      "console.trace": "property failed",
+      "Bun.inspect": "property failed",
+    };
+    expect({ outcomes: JSON.parse(stdout.slice(stdout.lastIndexOf("\n") + 1) || "null"), exitCode }).toEqual({
+      outcomes: {
+        "a property": all,
+        "a property of the first of two Error properties": all,
+        "a property of the cause": all,
+        "a property of an Error in an array": all,
+        "a property of an Error in an object": all,
+        "a property of an Error in a Map": all,
+        "a property of a member of an AggregateError": all,
+        aggregate: "property failed",
+      },
+      exitCode: 0,
+    });
+  });
+
+  it("Bun.inspect.table throws what a cell throws while it is printed", () => {
+    const thrown = new Error("thrown while printing");
+    const thrower = () => {
+      throw thrown;
+    };
+    const cells = {
+      "an inspect hook throws": { [Bun.inspect.custom]: thrower },
+      "an inspect hook returns a String object whose conversion throws": {
+        [Bun.inspect.custom]: () =>
+          Object.assign(new String("q"), { toString: thrower, [Symbol.toPrimitive]: thrower }),
+      },
+      "a property of an Error throws": Object.assign(new Error("cell"), {
+        property: Object.defineProperty(/a/, "source", { get: thrower }),
+      }),
+      // The members are past the depth of a cell, so the own properties are printed.
+      "a property of an AggregateError throws": Object.assign(new AggregateError([new Error("member")], "aggregate"), {
+        property: Object.defineProperty(/a/, "source", { get: thrower }),
+      }),
+    };
+    const caught = rows => {
+      try {
+        Bun.inspect.table(rows);
+      } catch (error) {
+        return error;
+      }
+      return "did not throw";
+    };
+    for (const [name, cell] of Object.entries(cells)) {
+      const rows = { "a property": [{ a: cell }], "an element": [[cell]], "a Map value": new Map([[1, cell]]) };
+      for (const [position, value] of Object.entries(rows)) {
+        expect(caught(value), `${name}, as ${position}`).toBe(thrown);
+      }
+    }
+  });
+
+  it("a String object that an inspect hook returns is converted, and what the conversion throws is thrown", () => {
+    const hook = result => ({ [Bun.inspect.custom]: () => result });
+    const throws = () => {
+      throw new Error("string failed");
+    };
+    const hostile = Object.assign(new String("q"), { toString: throws, [Symbol.toPrimitive]: throws });
+    expect(() => Bun.inspect(hook(hostile))).toThrow("string failed");
+    expect(() => console.trace(hook(hostile))).toThrow("string failed");
+    expect(Bun.inspect(hook(new String("text of a String object")))).toBe("text of a String object");
+  });
+
+  it.concurrent("the report of an uncaught value marks the Error that stopped it", async () => {
+    // An array is not an Error: the reporter prints it, and the Errors in it, with the console formatter.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const hostile = Object.assign(new Error("outer"), {
+           property: Object.defineProperty(/a/, "source", { get() { throw new Error("property failed"); } }),
+         });
+         reportError([1, new AggregateError([hostile, new Error("second member")], "aggregate"), 2]);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.replace(/\n+Bun v.*\n$/, "\n"), exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringMatching(/\n property: \[threw while printing\]\n$/),
+      exitCode: 1,
+    });
+  });
+});

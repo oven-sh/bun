@@ -1314,21 +1314,13 @@ fn print_exception(
         // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
         // JSC heap; we only read through it for the duration of this call.
         let exception = unsafe { &*exception };
-        vm_ref.print_exception(exception, exception_list, writer, true);
+        vm_ref.print_exception(exception, exception_list, writer);
     } else {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
         // `Formatter::new` already
         // defaults `error_display_level` to `Full` (ConsoleObject.rs:1176).
         let colors = bun_core::Output::enable_ansi_colors_stderr();
-        vm_ref.print_errorlike_object(
-            value,
-            None,
-            exception_list,
-            &mut formatter,
-            writer,
-            colors,
-            true,
-        );
+        vm_ref.print_errorlike_object(value, None, exception_list, &mut formatter, writer, colors);
         // `defer formatter.deinit()` → Drop.
     }
 

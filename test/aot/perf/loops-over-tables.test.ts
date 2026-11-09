@@ -32,7 +32,7 @@ const rows: [loop: string, instructionsPerEntry: number][] = [
 const [few, many] = [200, 800];
 
 // A debug or ASAN build counts other instructions, and the allowances are those of x64.
-const isJudged = !isDebug && !isASAN && process.arch === "x64";
+const isSlowBuild = isDebug || isASAN;
 
 describe("compile/aot/perf/loops-over-tables", () => {
   const folder = String(tempDir("aot-loops-over-tables", {}));
@@ -81,7 +81,7 @@ describe("compile/aot/perf/loops-over-tables", () => {
   }
 
   for (const [loop, instructions] of rows) {
-    test.skipIf(!isJudged || !!without("a counter of instructions"))(
+    test.skipIf(isSlowBuild || process.arch !== "x64" || !!without("a counter of instructions"))(
       `${loop}: at most ${instructions} instructions an entry`,
       async () => {
         const perEntry = Math.round((await costOfEntry(loop)) * 10) / 10;

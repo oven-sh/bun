@@ -1243,9 +1243,10 @@ static std::array<JSMockFunction*, 2> spiesIn(SlotContent content, JSObject* tar
     // A mock is an InternalFunction.
     auto mockOf = [](JSValue value) { return value.isCell() && value.asCell()->type() == InternalFunctionType ? dynamicDowncast<JSMockFunction>(value.asCell()) : nullptr; };
     if (auto* accessor = dynamicDowncast<GetterSetter>(content.storage.asCell())) {
-        // A spy on a method that a getter returns is installed as a bound getter that returns the spy.
-        auto* bound = dynamicDowncast<JSBoundFunction>(accessor->getter());
-        spies[0] = mockOf(bound ? bound->boundThis() : JSValue(accessor->getter()));
+        // A spy on a method that a getter returns is installed as a bound getter that returns the spy. A bound function is a host function.
+        JSObject* getter = accessor->getter();
+        auto* bound = getter->type() == JSFunctionType && uncheckedDowncast<JSFunction>(getter)->isHostFunction() ? dynamicDowncast<JSBoundFunction>(getter) : nullptr;
+        spies[0] = mockOf(bound ? bound->boundThis() : JSValue(getter));
         spies[1] = mockOf(accessor->setter());
     } else {
         spies[0] = mockOf(content.storage);
@@ -1278,13 +1279,15 @@ static SlotContent contentOfDescriptor(JSGlobalObject* globalObject, const Prope
     return { storage, descriptor.attributes() & descriptorAttributes };
 }
 
-// False if the property cannot have a spy: a spy is an InternalFunction, and on an accessor a half of it or what a bound getter returns.
+// False if the property cannot have a spy. A spy is an InternalFunction. On an accessor it is a half, or what a bound getter returns, and a bound function is a host function.
 static bool mayHaveSpy(const PropertyDescriptor& descriptor)
 {
-    auto mayBeOfSpy = [](JSValue half) { return half.isCell() && (half.asCell()->type() == InternalFunctionType || half.inherits<JSBoundFunction>()); };
-    if (descriptor.isAccessorDescriptor())
-        return mayBeOfSpy(descriptor.getter()) || mayBeOfSpy(descriptor.setter());
-    return descriptor.value().isCell() && descriptor.value().asCell()->type() == InternalFunctionType;
+    auto isMock = [](JSValue value) { return value.isCell() && value.asCell()->type() == InternalFunctionType; };
+    if (!descriptor.isAccessorDescriptor())
+        return isMock(descriptor.value());
+    JSValue getter = descriptor.getter();
+    bool mayBeBound = getter.isCell() && getter.asCell()->type() == JSFunctionType && uncheckedDowncast<JSFunction>(getter.asCell())->isHostFunction();
+    return mayBeBound || isMock(getter) || isMock(descriptor.setter());
 }
 
 // What the stub with this entry of JSMockModule::stubbedGlobals replaced. Reads the object that constructObjectFromPropertyDescriptor() made, so no script runs.
@@ -1467,22 +1470,7 @@ static void takeOffUninstalledFake(Zig::GlobalObject* globalObject, JSObject* ta
     }
 }
 
-// Reads `target[key]` as script reads it. Sets `accessor` if it is an own accessor.
-static JSValue readForFake(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, SlotContent& accessor)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertySlot slot(target, PropertySlot::InternalMethodType::Get);
-    bool exists = Bun::getNonIndexPropertySlotPrototypePollutionMitigation(vm, target, globalObject, key, slot);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!exists)
-        return jsUndefined();
-    if (slot.isAccessor() && slot.slotBase() == target) [[unlikely]]
-        accessor = { slot.getterSetter(), slot.attributes() };
-    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, key));
-}
-
-// useFakeTimers() is about to replace `owner[name]` with a fake timer function. Returns the value that the fake replaces.
+// useFakeTimers() is about to replace `owner[name]` with a fake timer function. Returns the value that the fake replaces, as script reads it.
 // `entry` is set if a spy or a stub can take that value off the property while the clock is on: see EntryOfFake.
 extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue originals, JSC::EncodedJSValue* entry)
 {
@@ -1491,31 +1479,44 @@ extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObje
     JSObject* target = asObject(JSValue::decode(owner));
     auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
 
-    SlotContent accessor;
-    JSValue value = readForFake(globalObject, target, key, accessor);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (JSValue ofFake = JSValue::decode(Bun__FakeTimers__originalOf(originals, JSValue::encode(value)))) [[unlikely]] {
-        takeOffUninstalledFake(globalObject, target, key, originals, ofFake);
-        accessor = {};
-        value = readForFake(globalObject, target, key, accessor);
+    // Only an own accessor with a spy, a spy and what a stub put have an entry.
+    SlotContent content;
+    bool isOwnAccessor = false;
+    for (bool isSecondRead = false;; isSecondRead = true) {
+        PropertySlot slot(target, PropertySlot::InternalMethodType::Get);
+        bool exists = Bun::getNonIndexPropertySlotPrototypePollutionMitigation(vm, target, globalObject, key, slot);
         RETURN_IF_EXCEPTION(scope, {});
+        isOwnAccessor = exists && slot.isAccessor() && slot.slotBase() == target;
+        SlotContent accessor = isOwnAccessor ? SlotContent { slot.getterSetter(), slot.attributes() } : SlotContent {};
+        content = { exists ? slot.getValue(globalObject, key) : jsUndefined(), 0 };
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue ofFake = isSecondRead ? JSValue() : JSValue::decode(Bun__FakeTimers__originalOf(originals, JSValue::encode(content.storage)));
+        if (ofFake) [[unlikely]] {
+            // A spy or a stub put an uninstalled fake back after useRealTimers(). What that fake stands for is read in its place.
+            takeOffUninstalledFake(globalObject, target, key, originals, ofFake);
+            continue;
+        }
+        JSValue value = content.storage;
+        bool mayBeSpy = value.isCell() && value.asCell()->type() == InternalFunctionType;
+        if (!isOwnAccessor && !mayBeSpy && (target != globalObject || !globalObject->mockModule.stubbedGlobals)) [[likely]] {
+            *entry = {};
+            return JSValue::encode(value);
+        }
+        // An accessor that has a spy goes back as it is. The fake would put back what its getter returned, which the restore of the spy leaves alone.
+        if (isOwnAccessor && lastSpyIn(accessor, target, key))
+            content = accessor;
+        bool hasSpy = false;
+        auto* link = cover(globalObject, target, key, content, hasSpy);
+        if (link || content.storage != value) {
+            auto* pair = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
+            pair->putInternalField(vm, 0, content.storage);
+            pair->putInternalField(vm, 1, link ? JSValue(link) : jsNumber(content.attributes));
+            *entry = JSValue::encode(pair);
+        } else {
+            *entry = hasSpy ? JSValue::encode(value) : JSC::EncodedJSValue {};
+        }
+        return JSValue::encode(value);
     }
-
-    // An accessor that has a spy goes back as it is. The fake would put back what its getter returned, which the restore of the spy leaves alone.
-    SlotContent content { value, 0 };
-    if (accessor.storage && lastSpyIn(accessor, target, key)) [[unlikely]]
-        content = accessor;
-    bool hasSpy = false;
-    auto* link = cover(globalObject, target, key, content, hasSpy);
-    if (link || content.storage != value) [[unlikely]] {
-        auto* pair = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
-        pair->putInternalField(vm, 0, content.storage);
-        pair->putInternalField(vm, 1, link ? JSValue(link) : jsNumber(content.attributes));
-        *entry = JSValue::encode(pair);
-    } else {
-        *entry = hasSpy ? JSValue::encode(value) : JSC::EncodedJSValue {};
-    }
-    return JSValue::encode(value);
 }
 
 // Puts back what a fake timer function with this entry replaced on `owner[name]`: for useRealTimers(), or at the end of a test file for an uninstalled one
@@ -3683,12 +3684,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     RETURN_IF_EXCEPTION(scope, {});
 
     mock->didInstall(object, propertyKey, storage, spyAttributes | JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0));
-    bool hasSpy;
-    auto* link = cover(globalObject, object, propertyKey, mock->replaced(), hasSpy);
-    if (hasSpy)
-        mock->didReplaceSpy();
-    if (link)
-        mock->setStubLink(globalObject, link);
+    if (mayHaveSpy(descriptor) || (object == globalObject && globalObject->mockModule.stubbedGlobals)) [[unlikely]] {
+        bool hasSpy;
+        auto* link = cover(globalObject, object, propertyKey, mock->replaced(), hasSpy);
+        if (hasSpy)
+            mock->didReplaceSpy();
+        if (link)
+            mock->setStubLink(globalObject, link);
+    }
     return JSValue::encode(mock);
 }
 

@@ -77,6 +77,12 @@ const callsLater = overload({
   capability: "heap",
   throws: true,
 });
+const flattensResultOfCallback = overload({
+  parameters: [parameter(first, { accepted: anyFunction, uses: ["Inspects", "Calls"] })],
+  callbacks: [callback(first, { resultUse: "Flattened", resultTo: { place: "ResultSlot", slot: "ArrayElement" } })],
+  throws: true,
+  ...returning(instanceOf("Array", { freshness: "Yes" })),
+});
 const returnsOperand = overload({
   parameters: [parameter(first, { uses: ["Inspects", "Returns"] })],
   transfers: [{ from: operandPlace(first), to: { place: "Result" } }],
@@ -283,6 +289,26 @@ const cases: Case[] = [
     column: "callbacks[0].arguments",
   },
   {
+    title: "that an argument of a callback is more than what a call throws",
+    double: (called: Function) => void called(new Map()),
+    declared: { ...callsOnce, callbacks: [callback(first, { arguments: [newValue(anything)] })] },
+    wrong: {
+      ...callsOnce,
+      callbacks: [callback(first, { arguments: [{ ...newValue(anything), holdsWhatIsThrown: true }] })],
+    },
+    column: "callbacks[0].arguments",
+  },
+  {
+    title: "nothing, where an argument of a callback is an error in place of a throw",
+    double: (called: Function) => void called(new RangeError("made up")),
+    declared: {
+      ...callsOnce,
+      callbacks: [callback(first, { arguments: [{ ...newValue(anything), holdsWhatIsThrown: true }] })],
+    },
+    wrong: callsOnce,
+    column: "",
+  },
+  {
     title: "this of a callback",
     double: (called: Function) => void Reflect.apply(called, shared, [1]),
     declared: {
@@ -312,6 +338,13 @@ const cases: Case[] = [
     declared: callsLater,
     wrong: { ...callsLater, callbacks: [callback(first)] },
     column: "callbacks[0].times",
+  },
+  {
+    title: "the result of a callback in the result",
+    double: (called: Function) => [called()].flat(),
+    declared: flattensResultOfCallback,
+    wrong: { ...flattensResultOfCallback, callbacks: [callback(first, { resultUse: "Tested" })] },
+    column: "callbacks.resultUse",
   },
   {
     title: "an operand that is kept",

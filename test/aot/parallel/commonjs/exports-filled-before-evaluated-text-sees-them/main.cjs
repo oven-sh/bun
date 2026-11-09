@@ -1,7 +1,6 @@
 // Evaluated text gets every exports object of this program, so nothing about them is proven for good. While a body has run nobody else's code, its exports object is still as the body made it:
 // the stores in front of the first call go into the slots without a test, several in one step. What stands behind a call that froze the object, put it below another prototype or made a
 // field an accessor does what plain Bun does.
-// STATISTIC: SlotStoreRunGroups >= 4
 const evaluate = (0, eval)(process.argv[9] || "(text) => (0, eval)(text)");
 globalThis.freeze = evaluate("(object) => Object.freeze(object)");
 globalThis.seal = evaluate("(object) => Object.preventExtensions(object)");

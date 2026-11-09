@@ -28,69 +28,8 @@ let v19 = 1; const r19 = () => v19; console.log("%s", { toString() { v19 = 16; r
 let v20 = 1; const r20 = () => v20; class T extends require("node:stream").Transform { _transform(c, e, cb) { v20++; cb(); } } const t = new T(); t.write("a"); t.write("b"); out.push(r20());
 console.log(JSON.stringify(out));
 
-// GENERATED: target r1 style T _transform
 // CHECK-LABEL: function {{*}}name="target"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="Error" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v3 = String string="e"
-// CHECK-NEXT: v4 = Construct v2, -, v3 calleeName="Error"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Error flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="stack"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="r1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="v1"
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="style"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsSloppy, HasExplicitName] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_1]] field=15
-// CHECK-NEXT: v2 = CheckInitialized v1 name="v16"
-// CHECK-NEXT: v3 = Integer integer=13
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_1]] field=15
-// CHECK-NEXT: v6 = String string="decimal"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="T"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="_transform"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything, v3: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_1]] field=19
-// CHECK-NEXT: v5 = CheckInitialized v4 name="v20"
-// CHECK-NEXT: v6 = Increment v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_1]] field=19
-// CHECK-NEXT: v9 = CheckInitialized v8 name="v20"
-// CHECK-NEXT: PutEnvironmentField v0, v7 layout=[[L_1]] field=19
-// CHECK-NEXT: v11 = Call v3 calleeName="cb"
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

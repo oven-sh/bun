@@ -22,7 +22,8 @@ async function whatIsMade(dir: string, entry: string) {
   const made = readFileSync(path, "utf8")
     .split("\n")
     .filter(line => line.includes("\tmade:"))
-    .map(line => line.split("\tmade:").reverse().join(" "));
+    .map(line => line.split("\tmade:").reverse().join(" "))
+    .sort();
   return { stdout, exitCode, made };
 }
 

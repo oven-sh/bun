@@ -4,32 +4,27 @@ mod tests;
 use bun_sema::bind::SymbolId;
 use bun_sema::hir::{self, ClassId, MemberId, StmtId, StmtKind, VarDeclId};
 use bun_sema::program::FileId;
-use rustc_hash::FxHashSet;
+use core::hash::BuildHasher;
+use rustc_hash::{FxBuildHasher, FxHashSet};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Declaration {
     Declarator(VarDeclId),
     Class(ClassId),
     Statement(StmtId),
-    // Not left out, where the class itself is: the check of what it extends, the conversion of a computed key to a property key.
     HeritageCheck(ClassId),
     KeyConversion(MemberId),
-    // Not left out by itself: the variable of an enum or of the value of a module of data, whose object nothing that the program can run gets hold of.
     ObjectNeverHandedOn(SymbolId),
 }
 
-/// One declarator of `const a = f(), b = 1` can go while the other stays, so a declarator is named by itself.
 #[derive(Default, Clone, PartialEq, Eq)]
 pub struct LeftOutDeclarations(FxHashSet<(FileId, Declaration)>);
 
 impl LeftOutDeclarations {
-    /// The same declarations under the numbers that another program gives the files.
-    pub fn in_other_program(
-        &self,
-        file_of: &dyn Fn(FileId) -> Option<FileId>,
-    ) -> LeftOutDeclarations {
-        let renumbered = (self.0.iter()).filter_map(|&(file, id)| Some((file_of(file)?, id)));
-        LeftOutDeclarations(renumbered.collect())
+    pub fn fingerprint(&self, hash_of_file: &dyn Fn(FileId) -> u64) -> u64 {
+        let hashes = (self.0.iter())
+            .map(|&(file, declaration)| FxBuildHasher.hash_one((hash_of_file(file), declaration)));
+        hashes.fold(0, u64::wrapping_add)
     }
 
     pub fn leave_out_declarator(&mut self, file: FileId, declarator: VarDeclId) {
@@ -67,7 +62,6 @@ impl LeftOutDeclarations {
             .insert((file, Declaration::ObjectNeverHandedOn(variable)));
     }
 
-    /// Nothing stores to the object, so each member holds what it was made with.
     pub fn is_object_never_handed_on(&self, file: FileId, variable: SymbolId) -> bool {
         self.0
             .contains(&(file, Declaration::ObjectNeverHandedOn(variable)))

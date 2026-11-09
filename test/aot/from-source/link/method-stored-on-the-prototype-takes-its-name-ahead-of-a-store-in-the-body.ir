@@ -1,0 +1,18 @@
+# -- source: main.js
+# function Base(special) { this.total = 0; if (special) this.step = function () { return 100; }; }
+# Base.prototype.step = function () { this.total += 1; return this.total; };
+# var plain = new Base(false), odd = new Base(true), sum = 0;
+# for (var i = 0; i < 10; i++) sum = (sum + plain.step() + (i & 3 ? 0 : odd.step())) | 0;
+# print(sum, odd.step(), Object.keys(plain).join(), Object.keys(odd).join());
+# -- end of source
+# A method of a class has its name whatever the constructor stores on some objects under it. A constructor function is written the other way round: the store in the body stands in front of
+# `Base.prototype.step = ..` in the text. Taken in that order the name became a field that most objects leave out, and every call of the method a read of that field.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: field L0.0 "total"
+# FIELDS-NOT: "step"
+# RUN(MEMBERS): link members mechanisms=all
+# MEMBERS: on-prototype L0 "step" function=f2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 355 100 total total,step
+# RUN(CLOSED): run-in-shell mechanisms=all-Guesses
+# CLOSED: 355 100 total total,step

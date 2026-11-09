@@ -1,5 +1,5 @@
 // RUN(INSTANCE): lower
-// INSTANCE-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}} flags=[IsFromCompiler]}
+// INSTANCE-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}}}
 // INSTANCE: b0([[received]]
 // INSTANCE: [[this]] = Convert [[received]] declared={type=object flags=[IsFromCompiler, IsClaim]}
 // INSTANCE: [[initial]] = Call {{*}}calleeName="f"

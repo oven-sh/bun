@@ -814,6 +814,131 @@ test.concurrent("default trusted dependencies require the canonical registry tar
   expect(await exited).toBe(0);
 });
 
+test.concurrent("trustedDependencies require a tarball URL from the configured registry", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  const run = async (...args: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  };
+  const ranScripts = () => exists(join(packageDir, "node_modules", "electron", "preinstall.txt"));
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: { "electron": "1.0.0" },
+      trustedDependencies: ["electron"],
+    }),
+  );
+  expect((await run("install")).err).not.toContain("error:");
+  expect(await ranScripts()).toBeTrue();
+
+  // The same tarball, from another origin.
+  using proxy = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      return fetch(`http://localhost:${verdaccio.port}${url.pathname}${url.search}`, {
+        method: req.method,
+        headers: req.headers,
+      });
+    },
+  });
+  const lockfilePath = join(packageDir, "bun.lock");
+  const lockfile = await file(lockfilePath).text();
+  const registryUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+  expect(lockfile).toContain(registryUrl);
+  await writeFile(
+    lockfilePath,
+    lockfile.replace(registryUrl, `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`),
+  );
+
+  for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+    const { err, exitCode } = await run(...args);
+    expect(err).not.toContain("error:");
+    expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+    expect(await ranScripts()).toBeFalse();
+    expect(exitCode).toBe(0);
+  }
+
+  const cannot = "cannot trust by name: its tarball URL in the lockfile is not from its configured registry";
+  expect((await run("pm", "untrusted")).out).toContain(cannot);
+  const trust = await run("pm", "trust", "electron");
+  expect(trust.err).toContain(`"electron" ${cannot}`);
+  expect(await ranScripts()).toBeFalse();
+  expect(trust.exitCode).toBe(1);
+});
+
+// Nothing is downloaded: `bun pm ls` reads bun.lock and node_modules.
+test.concurrent.each([
+  [
+    "https://registry.npmjs.org/",
+    {
+      "": true,
+      "https://registry.npmjs.org/dep/-/dep-1.0.0.tgz": true,
+      "https://registry.npmjs.org/other/-/other-1.0.0.tgz": false,
+      "https://registry.npmjs.org/@other/dep/-/dep-1.0.0.tgz": false,
+    },
+  ],
+  [
+    "https://registry.example.com/npm/",
+    {
+      "": true,
+      "https://registry.example.com/npm/dep/-/dep-1.0.0.tgz": true,
+      "https://registry.example.com/download/dep/1.0.0/abc": true,
+      "https://registry.example.com:443/npm/dep/-/dep-1.0.0.tgz": true,
+      "https://registry.example.com:8443/npm/dep/-/dep-1.0.0.tgz": false,
+      "http://registry.example.com/npm/dep/-/dep-1.0.0.tgz": false,
+      "https://registry.example.com.example.net/npm/dep/-/dep-1.0.0.tgz": false,
+      "https://registry.example.com@example.net/npm/dep/-/dep-1.0.0.tgz": false,
+      "https://registry.npmjs.org/dep/-/dep-1.0.0.tgz": false,
+    },
+  ],
+])("the tarball URLs that trustedDependencies accepts with the registry %s", async (registry, expected) => {
+  using dir = tempDir("trusted-tarball-urls", {
+    "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "1.0.0" }, trustedDependencies: ["dep"] }),
+    "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
+    "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  });
+
+  const trusted: Record<string, boolean> = {};
+  for (const url of Object.keys(expected)) {
+    await write(
+      join(String(dir), "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "foo", dependencies: { dep: "1.0.0" } } },
+        trustedDependencies: ["dep"],
+        packages: { dep: ["dep@1.0.0", url, {}, "sha512-" + Buffer.alloc(64).toString("base64")] },
+      }),
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "ls", "--trusted"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: baseEnv,
+    });
+    const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    trusted[url] = out.includes("dep@1.0.0");
+    expect(exitCode).toBe(0);
+  }
+  expect(trusted).toEqual(expected);
+});
+
 describe("default trusted dependencies after yarn.lock migration", () => {
   const electronIntegrity =
     "sha512-GkuwCdn6o8Krsxb3DIIqYP+TAi8Y5jYUadmseZ6nR2op2k5ssdKRYo4JjYDGopa1ACrGAcQuWViz/+vX/WjYnA==";

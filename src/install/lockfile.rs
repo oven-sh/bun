@@ -29,7 +29,8 @@ use crate::config_version::ConfigVersion;
 use crate::migration;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
-    Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache,
+    Options as PackageManagerOptions, options::LogLevel, package_manager_options::same_origin,
+    populate_manifest_cache,
 };
 use crate::resolution_real::{self as resolution, Resolution};
 use crate::string_builder;
@@ -3796,17 +3797,42 @@ impl Lockfile {
                 Some(name) => !name.is_empty() && **name == *trusted_name,
                 None => false,
             };
-            return name_is_trusted && self.can_trust_by_name(alias, resolution);
+            return name_is_trusted && self.can_trust_by_name(alias, pkg_name, resolution);
         }
 
         // Only allow default trusted dependencies for npm packages. Check the
         // resolved package's real name, not the dependency alias, so an
         // `npm:`-aliased package can't inherit trust from a default-trusted
         // name.
-        if resolution.tag != ResolutionTag::Npm || !default_trusted_dependencies::has(pkg_name) {
-            return false;
-        }
+        resolution.tag == ResolutionTag::Npm
+            && default_trusted_dependencies::has(pkg_name)
+            && self.is_registry_tarball(pkg_name, resolution)
+    }
 
+    /// Returns true if listing the dependency in `trustedDependencies` can make
+    /// `has_trusted_dependency` return true.
+    pub fn can_trust_by_name(
+        &self,
+        alias: &[u8],
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        if resolution.tag != ResolutionTag::Npm {
+            return self.declared_by_root_or_workspace(alias, resolution);
+        }
+        if self.is_registry_tarball(pkg_name, resolution) {
+            return true;
+        }
+        // registry.npmjs.org has one URL for a tarball. Other registries choose their own paths.
+        let scope = PackageManager::get().scope_for_package_name(pkg_name);
+        scope.url_hash != *crate::npm::registry::DEFAULT_URL_HASH
+            && crate::npm::registry::normalize_tarball_url(self.str(&resolution.npm().url))
+                .is_some_and(|url| same_origin(&bun_url::URL::parse(&url), &scope.url.url()))
+    }
+
+    /// Returns true if the tarball URL of an npm `resolution` is the one that the registry
+    /// configured for `pkg_name` has for that name and version.
+    fn is_registry_tarball(&self, pkg_name: &[u8], resolution: &Resolution) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
         let npm = resolution.npm();
         let url = npm.url.slice(buf);
@@ -3818,13 +3844,6 @@ impl Lockfile {
             .url
             .href();
         url == registry_tarball_url(registry, pkg_name, npm.version, buf).as_slice()
-    }
-
-    /// Returns true if listing `alias` in `trustedDependencies` can make `has_trusted_dependency`
-    /// return true.
-    pub fn can_trust_by_name(&self, alias: &[u8], resolution: &Resolution) -> bool {
-        resolution.tag == ResolutionTag::Npm
-            || self.declared_by_root_or_workspace(alias, resolution)
     }
 
     fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {

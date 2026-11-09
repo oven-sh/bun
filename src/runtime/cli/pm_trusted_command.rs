@@ -44,7 +44,10 @@ pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<Trust
     }
 }
 
-const CANNOT_TRUST: &str = "cannot trust by name: add it to your package.json dependencies";
+const CANNOT_TRUST_UNDECLARED: &str =
+    "cannot trust by name: add it to your package.json dependencies";
+const CANNOT_TRUST_TARBALL_URL: &str =
+    "cannot trust by name: its tarball URL in the lockfile is not from its configured registry";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -223,13 +226,19 @@ impl Blocked {
         (alias, trusted_name)
     }
 
-    /// Returns true if an install runs the package's scripts once its name is in
+    /// Returns `None` if an install runs the package's scripts once its name is in
     /// `trustedDependencies`. `bun pm trust` doesn't run the scripts of any other package.
-    fn can_trust(&self, lockfile: &Lockfile) -> bool {
-        lockfile.can_trust_by_name(
-            self.names(lockfile).0,
-            &lockfile.packages.items_resolution()[self.package_id as usize],
-        )
+    fn cannot_trust(&self, lockfile: &Lockfile) -> Option<&'static str> {
+        let resolution = &lockfile.packages.items_resolution()[self.package_id as usize];
+        let pkg_name = lockfile.str(&lockfile.packages.items_name()[self.package_id as usize]);
+        if lockfile.can_trust_by_name(self.names(lockfile).0, pkg_name, resolution) {
+            return None;
+        }
+        Some(if resolution.tag == ResolutionTag::Npm {
+            CANNOT_TRUST_TARBALL_URL
+        } else {
+            CANNOT_TRUST_UNDECLARED
+        })
     }
 
     fn print(&self, lockfile: &Lockfile, format: PrintFormat) {
@@ -243,8 +252,8 @@ impl Blocked {
         if trusted_name != alias {
             bun_core::pretty!(" <d>alias of<r> {}\n", bun_core::fmt::quote(trusted_name));
         }
-        if !self.can_trust(lockfile) {
-            bun_core::pretty!(" <d>{}<r>\n", CANNOT_TRUST);
+        if let Some(reason) = self.cannot_trust(lockfile) {
+            bun_core::pretty!(" <d>{}<r>\n", reason);
         }
         bun_core::pretty!("\n");
     }
@@ -435,7 +444,7 @@ impl TrustCommand {
         let mut package_names_to_add: StringArrayHashMap<()> = StringArrayHashMap::new();
         // alias given on the command line -> the name its package is trusted under
         let mut aliased_args: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
-        let mut undeclared_args: StringArrayHashMap<()> = StringArrayHashMap::new();
+        let mut untrustable_args: StringArrayHashMap<&'static str> = StringArrayHashMap::new();
         let mut scripts_count: usize = 0;
 
         let named = |name: &[u8]| {
@@ -451,8 +460,8 @@ impl TrustCommand {
                 }
                 continue;
             }
-            if !info.can_trust(lockfile) {
-                undeclared_args.put(trusted_name, ())?;
+            if let Some(reason) = info.cannot_trust(lockfile) {
+                untrustable_args.put(trusted_name, reason)?;
                 continue;
             }
             package_names_to_add.put(trusted_name, ())?;
@@ -467,8 +476,8 @@ impl TrustCommand {
         if package_names_to_add.count() == 0 {
             Self::print_error_zero_untrusted_dependencies_found(trust_all, packages_to_trust);
             Self::print_aliased_args(&aliased_args);
-            for name in undeclared_args.keys() {
-                bun_core::note!("{} {}", bun_core::fmt::quote(name), CANNOT_TRUST);
+            for (name, reason) in untrustable_args.iter() {
+                bun_core::note!("{} {}", bun_core::fmt::quote(name), reason);
             }
             Global::crash();
         }

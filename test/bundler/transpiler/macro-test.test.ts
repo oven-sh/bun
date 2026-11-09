@@ -709,6 +709,46 @@ describe("--no-macros", () => {
   });
 });
 
+describe("a macro call in a data: URL module", () => {
+  const macro = `
+    import { writeFileSync } from "node:fs";
+    export function f() {
+      writeFileSync("MACRO_RAN", "macro executed");
+      return "INLINED_RESULT";
+    }
+  `;
+  const call = (dir: string) =>
+    `import { f } from ${JSON.stringify(path.join(dir, "macro.ts"))} with { type: "macro" }; console.log(f(), f\`\`);`;
+  const dataUrl = (code: string) => "data:text/javascript;base64," + Buffer.from(code).toString("base64");
+
+  describe.each([
+    ["imported from a file", (dir: string) => dataUrl(call(dir))],
+    [
+      "imported from another data: URL module",
+      (dir: string) => dataUrl(`import ${JSON.stringify(dataUrl(call(dir)))};`),
+    ],
+  ])("%s", (_, url) => {
+    test.concurrent.each([
+      ["bun build", ["build", "./entry.ts", "--outdir", "dist"]],
+      ["bun run", ["run", "./entry.ts"]],
+    ])("is not run by %s", async (_, args) => {
+      using dir = tempDir("macro-data-url", { "macro.ts": macro });
+      await Bun.write(path.join(String(dir), "entry.ts"), `import ${JSON.stringify(url(String(dir)))};\n`);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr.split('error: Macros cannot be run from a "data:" URL module.').length - 1).toBe(2);
+      expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+});
+
 test("bun build of a macro call next to a property read of the same import", async () => {
   using dir = tempDir("bundler-macro-property-read", {
     "macro.ts": `export function m() {\n  return 42;\n}\n`,

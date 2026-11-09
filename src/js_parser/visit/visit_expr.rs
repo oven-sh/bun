@@ -730,12 +730,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return;
                         }
 
-                        if p.source.path.is_node_module() {
-                            p.log().add_error(
-                                Some(p.source),
-                                expr.loc,
-                                b"For security reasons, macros cannot be run from node_modules.",
-                            );
+                        if let Some(message) = p.why_macros_cannot_run_here() {
+                            p.log().add_error(Some(p.source), expr.loc, message);
                             *e = p.new_expr(E::Undefined {}, expr.loc);
                             return;
                         }
@@ -800,6 +796,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
             *e = e_.fold(p.arena, expr.loc);
             return;
+        }
+    }
+
+    fn why_macros_cannot_run_here(&self) -> Option<&'static [u8]> {
+        let path = &self.source.path;
+        if path.is_node_module() {
+            Some(b"For security reasons, macros cannot be run from node_modules.")
+        } else if path.text.starts_with(b"data:") {
+            Some(b"Macros cannot be run from a \"data:\" URL module.")
+        } else {
+            None
         }
     }
 
@@ -2429,12 +2436,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
 
-                if p.source.path.is_node_module() {
-                    p.log().add_error(
-                        Some(p.source),
-                        expr.loc,
-                        b"For security reasons, macros cannot be run from node_modules.",
-                    );
+                if let Some(message) = p.why_macros_cannot_run_here() {
+                    p.log().add_error(Some(p.source), expr.loc, message);
                     *e = p.new_expr(E::Undefined {}, expr.loc);
                     return;
                 }

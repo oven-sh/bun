@@ -75,6 +75,8 @@ beEvil();
 node_modules/evil/index.js:3:1 50
 ```
 
+Code in a `data:` URL module can't invoke macros either.
+
 Your application code can still import macros from `node_modules` and invoke them.
 
 ```ts title="cli.tsx" icon="/icons/typescript.svg"

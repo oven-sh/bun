@@ -4677,7 +4677,7 @@ fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> O
         return None;
     }
     Some(match services.intrinsic_name(ty) {
-        // The name of a type that does not resolve is behind these two.
+        // No type that a typed file can write: a name that does not resolve, and the `intrinsic` of a library.
         Some("error" | "intrinsic") => return None,
         // `boolean` also where the source has an alias of `true | false`, which the printer names.
         Some(keyword) => keyword.as_bytes().into(),

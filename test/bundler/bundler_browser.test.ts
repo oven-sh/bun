@@ -806,6 +806,40 @@ describe("bundler", () => {
       stdout: '["interval","timeout","immediate","required"]',
     },
   });
+  // node gives setTimeout and setImmediate a util.promisify.custom function. Without it,
+  // promisify passes the callback last and a browser takes the delay as the handler.
+  itBundled("browser/NodeTimersPromisify", {
+    files: {
+      "/entry.js": /* js */ `
+        import { promisify } from "node:util";
+        import timers, { setTimeout, setImmediate } from "node:timers";
+        const sleep = promisify(setTimeout);
+        const describe = promise => promise.then(value => "resolved " + value, error => error.name + ":" + error.code);
+        const controller = new AbortController();
+        const aborted = describe(sleep(60_000, "never", { signal: controller.signal }));
+        controller.abort();
+        console.log(JSON.stringify([
+          await sleep(1, "timeout value"),
+          await promisify(timers.setTimeout)(1),
+          await promisify(setImmediate)("immediate value"),
+          await aborted,
+          await describe(sleep(1, "never", { signal: AbortSignal.abort() })),
+          await describe(promisify(setImmediate)("never", { signal: AbortSignal.abort() })),
+        ]));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: JSON.stringify([
+        "timeout value",
+        null,
+        "immediate value",
+        "AbortError:ABORT_ERR",
+        "AbortError:ABORT_ERR",
+        "AbortError:ABORT_ERR",
+      ]),
+    },
+  });
   // A stream schedules its events with process.nextTick. They must use the
   // queue of the process polyfill, so they run in tick order and before timers.
   itBundled("browser/NodeStreamUsesProcessPolyfillTickQueue", {

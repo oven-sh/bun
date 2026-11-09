@@ -730,8 +730,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return;
                         }
 
-                        if let Some(message) = p.why_macros_cannot_run_here() {
-                            p.log().add_error(Some(p.source), expr.loc, message);
+                        if let Some(reason) = p.macro_denied_reason() {
+                            p.log().add_error(Some(p.source), expr.loc, reason);
                             *e = p.new_expr(E::Undefined {}, expr.loc);
                             return;
                         }
@@ -799,7 +799,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn why_macros_cannot_run_here(&self) -> Option<&'static [u8]> {
+    fn macro_denied_reason(&self) -> Option<&'static [u8]> {
         let path = &self.source.path;
         if path.is_node_module() {
             Some(b"For security reasons, macros cannot be run from node_modules.")
@@ -2436,8 +2436,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
 
-                if let Some(message) = p.why_macros_cannot_run_here() {
-                    p.log().add_error(Some(p.source), expr.loc, message);
+                if let Some(reason) = p.macro_denied_reason() {
+                    p.log().add_error(Some(p.source), expr.loc, reason);
                     *e = p.new_expr(E::Undefined {}, expr.loc);
                     return;
                 }

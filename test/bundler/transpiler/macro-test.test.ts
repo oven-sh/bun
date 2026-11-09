@@ -709,31 +709,28 @@ describe("--no-macros", () => {
   });
 });
 
-describe("a macro call in a data: URL module", () => {
-  const macro = `
+describe("macros in data: URL modules", () => {
+  const macroSource = `
     import { writeFileSync } from "node:fs";
     export function f() {
       writeFileSync("MACRO_RAN", "macro executed");
       return "INLINED_RESULT";
     }
   `;
-  const call = (dir: string) =>
+  const callerSource = (dir: string) =>
     `import { f } from ${JSON.stringify(path.join(dir, "macro.ts"))} with { type: "macro" }; console.log(f(), f\`\`);`;
-  const dataUrl = (code: string) => "data:text/javascript;base64," + Buffer.from(code).toString("base64");
+  const toDataUrl = (code: string) => "data:text/javascript;base64," + Buffer.from(code).toString("base64");
 
   describe.each([
-    ["imported from a file", (dir: string) => dataUrl(call(dir))],
-    [
-      "imported from another data: URL module",
-      (dir: string) => dataUrl(`import ${JSON.stringify(dataUrl(call(dir)))};`),
-    ],
-  ])("%s", (_, url) => {
+    ["direct import", (dir: string) => toDataUrl(callerSource(dir))],
+    ["nested data: URL", (dir: string) => toDataUrl(`import ${JSON.stringify(toDataUrl(callerSource(dir)))};`)],
+  ])("%s", (_, getSpecifier) => {
     test.concurrent.each([
       ["bun build", ["build", "./entry.ts", "--outdir", "dist"]],
       ["bun run", ["run", "./entry.ts"]],
-    ])("is not run by %s", async (_, args) => {
-      using dir = tempDir("macro-data-url", { "macro.ts": macro });
-      await Bun.write(path.join(String(dir), "entry.ts"), `import ${JSON.stringify(url(String(dir)))};\n`);
+    ])("%s errors", async (_, args) => {
+      using dir = tempDir("macro-data-url", { "macro.ts": macroSource });
+      await Bun.write(path.join(String(dir), "entry.ts"), `import ${JSON.stringify(getSpecifier(String(dir)))};\n`);
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
         env: bunEnv,

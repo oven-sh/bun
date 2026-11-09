@@ -1826,9 +1826,8 @@ pub mod bv2_impl {
         pub struct CompletionDispatch {
             /// Why the build is cancelled, if it is: stop waiting for the plugins'
             /// answers and fail the build (any thread).
-            pub cancel_cause: unsafe fn(
-                core::ptr::NonNull<super::JSBundleCompletionTask>,
-            ) -> Option<CancelCause>,
+            pub cancel_cause:
+                unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> Option<CancelCause>,
             /// Folds the event-loop field access + enqueue so the bundler
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(

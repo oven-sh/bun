@@ -141,9 +141,7 @@ jsc::impl_abort_handle_owner!(JSBundleCompletionTask, abort_handle, |this, cause
     unsafe {
         let cause = match cause {
             jsc::AbortCause::Signal(reason) => {
-                (*this)
-                    .abort_reason
-                    .set((*this).global_this.get(), reason);
+                (*this).abort_reason.set((*this).global_this.get(), reason);
                 CancelCause::Aborted
             }
             jsc::AbortCause::ContextStopped(_) => CancelCause::ContextStopped,
@@ -781,7 +779,9 @@ impl JSBundleCompletionTask {
         unsafe {
             // Before the plugins are tombstoned: the bundle thread reads the cause as it consumes
             // the answers that produces. `max`: `ContextStopped` wins and is never overwritten.
-            (*this).cancel_cause.fetch_max(cause as u8, Ordering::AcqRel);
+            (*this)
+                .cancel_cause
+                .fetch_max(cause as u8, Ordering::AcqRel);
             if (*this)
                 .stage
                 .compare_exchange(
@@ -825,7 +825,10 @@ impl JSBundleCompletionTask {
 
     #[inline]
     fn cancel_cause(&self) -> Option<CancelCause> {
-        CancelCause::from_u8(self.cancel_cause.load(core::sync::atomic::Ordering::Acquire))
+        CancelCause::from_u8(
+            self.cancel_cause
+                .load(core::sync::atomic::Ordering::Acquire),
+        )
     }
 
     /// For an HTML route's build that will not deliver its result: the plugins are the route's

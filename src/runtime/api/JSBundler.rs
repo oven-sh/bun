@@ -1907,10 +1907,11 @@ pub(crate) mod js_bundler {
         if let Some(signal) = &signal
             && signal.aborted()
         {
-            return Ok(
-                jsc::JSPromise::rejected_promise(global_this, signal.js_reason(global_this))
-                    .to_js(),
-            );
+            return Ok(jsc::JSPromise::rejected_promise(
+                global_this,
+                signal.js_reason(global_this),
+            )
+            .to_js());
         }
 
         let mut plugins: Option<*mut Plugin> = None;

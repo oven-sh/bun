@@ -59,6 +59,19 @@ Bun.build({
   compile: { aot: true, aotTypeErrors: "warn" },
 });
 
+// `jsx.runtime` takes the names that "jsx" has in tsconfig.json, as well as "automatic" and "classic".
+Bun.build({ entrypoints: ["hey"], jsx: { runtime: "automatic" } });
+Bun.build({ entrypoints: ["hey"], jsx: { runtime: "classic" } });
+Bun.build({ entrypoints: ["hey"], jsx: { runtime: "react" } });
+Bun.build({ entrypoints: ["hey"], jsx: { runtime: "react-jsx" } });
+Bun.build({ entrypoints: ["hey"], jsx: { runtime: "react-jsxdev", development: false } });
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  jsx: { runtime: "preserve" },
+});
+
 Bun.build({
   entrypoints: ["hey"],
   plugins: [
@@ -66,6 +79,8 @@ Bun.build({
       name: "my-terrible-plugin",
       setup(build) {
         expectType(build).is<Bun.PluginBuilder>();
+
+        build.config.jsx = { runtime: "react-jsx" };
 
         build.onResolve({ filter: /^hey$/ }, args => {
           expectType(args).is<Bun.OnResolveArgs>();

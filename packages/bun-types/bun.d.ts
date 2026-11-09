@@ -3686,7 +3686,27 @@ declare module "bun" {
      * JSX configuration options
      */
     jsx?: {
-      runtime?: "automatic" | "classic";
+      /**
+       * Which JSX transform to use.
+       *
+       * - `"automatic"`: import the JSX functions from
+       *   `<importSource>/jsx-runtime` or `<importSource>/jsx-dev-runtime`.
+       * - `"classic"`: call `factory`, which is `React.createElement` by
+       *   default.
+       *
+       * `runtime` also takes the names that `"jsx"` has in `tsconfig.json`.
+       * Each name is shorthand for options of this object:
+       *
+       * - `"react"`: `runtime: "classic"`.
+       * - `"react-jsx"`: `runtime: "automatic"` and `development: false`.
+       * - `"react-jsxdev"`: `runtime: "automatic"` and `development: true`.
+       *
+       * When `development` is also set, it wins over the `development` of
+       * the shorthand.
+       *
+       * @default "automatic"
+       */
+      runtime?: "automatic" | "classic" | "react" | "react-jsx" | "react-jsxdev";
       importSource?: string;
       factory?: string;
       fragment?: string;

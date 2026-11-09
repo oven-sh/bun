@@ -183,9 +183,20 @@ fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
     }
 }
 
-/// Extension surface for the canonical `DefineData` — `parse` / `from_input`
-/// need `bun_parsers::json_parser` / `js_lexer::Keywords`.
+/// Extension surface for the canonical `DefineData` — `from_input` needs
+/// `bun_parsers::json_parser` / `js_lexer::Keywords`.
 pub trait DefineDataExt: Sized {
+    /// `Err` when a key or a `drop` name is not valid. The log names each one.
+    fn from_input(
+        defines: &RawDefines,
+        drop: &[&[u8]],
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+    ) -> Result<UserDefines, crate::Error>;
+}
+
+/// Private: `parse` logs a key that is not valid and returns `Ok`. Only `from_input` fails for it.
+trait ParseDefineData: Sized {
     fn parse(
         key: &[u8],
         value_str: &[u8],
@@ -204,13 +215,6 @@ pub trait DefineDataExt: Sized {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<(), crate::Error>;
-
-    fn from_input(
-        defines: &RawDefines,
-        drop: &[&[u8]],
-        log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
-    ) -> Result<UserDefines, crate::Error>;
 }
 
 /// The positions are in the text of the define, and the printer takes them for ones in the file.
@@ -236,7 +240,7 @@ fn clear_locs(expr: &mut bun_ast::Expr) {
     }
 }
 
-impl DefineDataExt for DefineData {
+impl ParseDefineData for DefineData {
     fn from_mergeable_input_entry(
         user_defines: &mut UserDefines,
         key: &[u8],
@@ -248,7 +252,7 @@ impl DefineDataExt for DefineData {
     ) -> Result<(), crate::Error> {
         user_defines.put_assume_capacity(
             key,
-            <Self as DefineDataExt>::parse(
+            <Self as ParseDefineData>::parse(
                 key,
                 value_str,
                 value_is_undefined,
@@ -286,8 +290,8 @@ impl DefineDataExt for DefineData {
                         bun_ast::Loc::default(),
                         format_args!(
                             "define key \"{}\" contains invalid identifier \"{}\"",
-                            bstr::BStr::new(part),
-                            bstr::BStr::new(value_str)
+                            bstr::BStr::new(key),
+                            bstr::BStr::new(part)
                         ),
                     );
                 }
@@ -408,17 +412,20 @@ impl DefineDataExt for DefineData {
             ),
         })
     }
+}
 
+impl DefineDataExt for DefineData {
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, crate::Error> {
+        let errors_before = log.errors;
         let mut user_defines = UserDefines::default();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize);
         for (key, value) in defines.keys().iter().zip(defines.values().iter()) {
-            <Self as DefineDataExt>::from_mergeable_input_entry(
+            <Self as ParseDefineData>::from_mergeable_input_entry(
                 &mut user_defines,
                 key,
                 value,
@@ -431,7 +438,7 @@ impl DefineDataExt for DefineData {
 
         for drop_item in drop {
             if !drop_item.is_empty() {
-                <Self as DefineDataExt>::from_mergeable_input_entry(
+                <Self as ParseDefineData>::from_mergeable_input_entry(
                     &mut user_defines,
                     drop_item,
                     b"",
@@ -443,6 +450,10 @@ impl DefineDataExt for DefineData {
             }
         }
 
+        // Fail after the loops so that one run names every key that is not valid.
+        if log.errors != errors_before {
+            return Err(crate::Error::BuildFailed);
+        }
         Ok(user_defines)
     }
 }

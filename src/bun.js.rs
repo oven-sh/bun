@@ -1,7 +1,7 @@
 //! Entry point for `bun run <file>` / standalone executables.
 //!
-//! Hosts `apply_standalone_runtime_flags` and `fail_with_build_error`; the
-//! `Run` VM driver itself lives in `crate::cli::run_command`.
+//! Hosts `apply_standalone_runtime_flags`, `fail_with_build_error` and
+//! `exit_if_logged`; the `Run` VM driver itself lives in `crate::cli::run_command`.
 
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -49,4 +49,14 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 pub(crate) fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     dump_build_error(vm);
     Global::exit(1);
+}
+
+/// For a command whose `configure_defines` failed: when the log says why, prints it and exits 1.
+#[cold]
+#[inline(never)]
+pub(crate) fn exit_if_logged(log: &bun_ast::Log) {
+    if log.has_errors() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        Global::exit(1);
+    }
 }

@@ -556,7 +556,10 @@ impl BuildCommand {
             unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
         }
 
-        this_transpiler.configure_defines()?;
+        if let Err(err) = this_transpiler.configure_defines() {
+            crate::run_main::exit_if_logged(log_ref);
+            return Err(err.into());
+        }
         this_transpiler.configure_linker();
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.

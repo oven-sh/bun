@@ -67,7 +67,13 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         crate::cli::fuzzilli_compile_loop::compile_programs(ctx);
     }
 
-    let configuration = configuration::configure(&mut *ctx)?;
+    let configuration = match configuration::configure(&mut *ctx) {
+        Ok(configuration) => configuration,
+        Err(err) => {
+            crate::run_main::exit_if_logged(ctx.log_ref());
+            return Err(err);
+        }
+    };
     let location = configuration::output_location(
         &ctx.bundler_options.compile_target,
         &configuration.outfile,

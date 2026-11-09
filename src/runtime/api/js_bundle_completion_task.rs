@@ -1291,7 +1291,12 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
 
         transpiler.configure_linker();
-        transpiler.configure_defines()?;
+        // A define that is not valid is in the log. `init_and_run` stops on it, with every other error of the options.
+        if let Err(err) = transpiler.configure_defines() {
+            if !transpiler.log().has_errors() {
+                return Err(err);
+            }
+        }
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {
@@ -1465,6 +1470,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         let worker_pool = NonNull::new(thread_pool);
 
         if self.compiles_ahead_of_time() {
+            // `run_from_js_in_new_thread` has this stop for the other builds.
+            if transpiler.log().has_errors() {
+                return Err(bun_bundler::Error::BuildFailed);
+            }
             return self.compile_ahead_of_time(transpiler, bump, event_loop, worker_pool);
         }
 

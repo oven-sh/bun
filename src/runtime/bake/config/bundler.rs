@@ -13,6 +13,8 @@ pub(crate) struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
     pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
+    /// `[serve.static] define` as bunfig.toml has it, until [`Self::parse_defines`].
+    pub(crate) define: Option<bun_options_types::schema::api::StringMap>,
     pub(crate) client: BuildConfigSubset,
     pub(crate) server: BuildConfigSubset,
     pub(crate) ssr: BuildConfigSubset,
@@ -21,7 +23,8 @@ pub(crate) struct SplitBundlerOptions {
 pub(crate) struct BuildConfigSubset {
     pub(crate) env: bun_options_types::schema::api::DotEnvBehavior,
     pub(crate) env_prefix: Option<Box<[u8]>>,
-    pub(crate) define: bun_options_types::schema::api::StringMap,
+    /// From [`SplitBundlerOptions::parse_defines`].
+    pub(crate) define: bun_bundler::defines::UserDefines,
     pub(crate) source_map: bun_options_types::schema::api::SourceMapMode,
 
     pub(crate) minify_syntax: Option<bool>,
@@ -35,7 +38,7 @@ impl Default for BuildConfigSubset {
         BuildConfigSubset {
             env: api::DotEnvBehavior::_none,
             env_prefix: None,
-            define: api::StringMap::EMPTY,
+            define: Default::default(),
             source_map: api::SourceMapMode::External,
 
             minify_syntax: None,
@@ -46,6 +49,41 @@ impl Default for BuildConfigSubset {
 }
 
 impl SplitBundlerOptions {
+    /// Parses `define` once, for every graph. Throws each key and value that is not valid.
+    /// The parsed values point into `arena`, so it has to outlive the transpilers.
+    pub(crate) fn parse_defines(
+        &mut self,
+        arena: &bun_alloc::Arena,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        use bun_bundler::DefineDataExt as _;
+        let Some(define) = self.define.take() else {
+            return Ok(());
+        };
+        debug_assert_eq!(define.keys.len(), define.values.len());
+        let mut raw = bun_bundler::defines::RawDefines::default();
+        raw.reserve(define.keys.len());
+        for (key, value) in define.keys.iter().zip(define.values) {
+            raw.insert(key.as_ref(), value);
+        }
+        let mut log = bun_ast::Log::init();
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+        let _ast_scope = ast_memory_allocator.enter();
+        match bun_bundler::defines::DefineData::from_input(&raw, &[], &mut log, arena) {
+            Ok(parsed) => {
+                self.client.define = parsed.clone();
+                self.server.define = parsed.clone();
+                self.ssr.define = parsed;
+                Ok(())
+            }
+            Err(err) if !log.has_errors() => Err(global.throw_error(err, "while loading define")),
+            Err(_) => {
+                let message = format_args!("Failed to load define");
+                Err(global.throw_value(bun_jsc::LogJsc::to_js(&log, global, message)?))
+            }
+        }
+    }
+
     /// `PluginJscExt::destroy` is the paired destructor of `Plugin::create`
     /// in `parse_plugin_array`: it unprotects the JSCell.
     pub(crate) fn destroy_plugin(&mut self) {

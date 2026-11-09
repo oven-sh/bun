@@ -756,7 +756,9 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
         const warm: any = sql`SELECT 1`;
         await warm;
         const prototype = Object.getPrototypeOf(
-          warm[Object.getOwnPropertySymbols(warm).find(symbol => symbol.description === "handle")!],
+          warm[
+            Object.getOwnPropertySymbols(Object.getPrototypeOf(warm)).find(symbol => symbol.description === "handle")!
+          ],
         );
         const run = prototype.run;
         const query: any = sql`SELECT 1`;

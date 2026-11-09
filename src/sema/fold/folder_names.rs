@@ -438,7 +438,7 @@ impl<'s> Folder<'_, 's> {
         scope.is_none()
     }
 
-    fn find_outermost_cast(&self, e: ExprId) -> ExprId {
+    pub(super) fn find_outermost_cast(&self, e: ExprId) -> ExprId {
         let mut outermost = e;
         while let Some(parent) = self.parent_expr(outermost)
             && self.hir.type_assertion_operand(parent).is_some()

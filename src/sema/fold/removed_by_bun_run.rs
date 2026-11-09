@@ -128,12 +128,18 @@ impl Folder<'_, '_> {
 
     fn push_parts_of_unused_value(&self, e: ExprId, rule: Rule, removal: &mut Removal) -> bool {
         let hir = self.hir;
-        let e = hir.skip_type_assertions(e);
+        let e = self.as_written(e);
         let parts = &mut removal.parts;
         let mut push = |operands: &[ExprId]| {
             let present = operands.iter().filter_map(|operand| operand.some());
             parts.extend(present.map(|operand| (TreeNode::Expr(operand), rule)));
         };
+        if self.seen_by_bun_run(e) != e
+            && let Some((literal, _)) = hir.member_key(e)
+        {
+            push(&[literal]);
+            return true;
+        }
         if let Some(DefineValue::Constant(_) | DefineValue::Data(_)) =
             self.find_user_defined_value(e)
         {
@@ -320,7 +326,7 @@ impl Folder<'_, '_> {
     pub(super) fn is_always_string(&self, e: ExprId) -> bool {
         let defined = self.find_user_defined_value(e);
         matches!(
-            self.hir[e].kind,
+            self.hir[self.seen_by_bun_run(e)].kind,
             ExprKind::String(_)
                 | ExprKind::Unary {
                     op: UnOp::Typeof,
@@ -333,7 +339,7 @@ impl Folder<'_, '_> {
         let hir = self.hir;
         let mut pending = vec![e];
         while let Some(e) = pending.pop() {
-            let e = hir.skip_type_assertions(e);
+            let e = self.seen_by_bun_run(e);
             if let Some(DefineValue::Constant(_)) = self.find_user_defined_value(e) {
                 continue;
             }

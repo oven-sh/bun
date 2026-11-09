@@ -130,7 +130,7 @@ impl<'s> Folder<'_, 's> {
             });
             return Folded::new(Value::from(type_name), self.folded(operand).effects);
         }
-        let type_of_literal = match self.hir[operand].kind {
+        let type_of_literal = match self.hir[self.find_in_place(operand)].kind {
             ExprKind::Fn(_) => Some(known::function),
             ExprKind::Regex { .. } => Some(known::object),
             _ => None,
@@ -185,7 +185,6 @@ impl<'s> Folder<'_, 's> {
                 sum
             }
             BinOp::And | BinOp::Or | BinOp::Nullish => {
-                self.note_nullish_logical_result(e, op, left, right);
                 let operator = match op {
                     BinOp::And => LogicalOperator::And,
                     BinOp::Or => LogicalOperator::Or,
@@ -195,6 +194,11 @@ impl<'s> Folder<'_, 's> {
             }
             BinOp::Comma => {
                 self.copy_condition(e, right);
+                if !self.is_callee(e) {
+                    self.note_operand_in_place(e, right, |folder| {
+                        folder.minifies_syntax() && folder.removes_left_of_comma(left)
+                    });
+                }
                 let right = self.folded(right);
                 let effects_of_left = self.effects_where_unused(left, |folder| {
                     matches!(right.value, Value::Known(_))
@@ -309,28 +313,23 @@ impl<'s> Folder<'_, 's> {
                     }
                     LogicalOperator::Nullish => folder.is_nullish_in_bun_run(left).is_some(),
                 };
-                if is_excluded_by_bun_run(self) {
-                    self.stands_alone_in_bun_run.insert(left.idx());
-                }
+                self.note_operand_in_place(e, left, is_excluded_by_bun_run);
                 self.exclude_operand(right, is_excluded_by_bun_run);
                 self.copy_condition(e, left);
                 self.folded(left)
             }
             Some(false) => {
                 self.goes_on_to_the_right.push(e);
-                let is_left_out_by_bun_run = match op {
+                self.note_operand_in_place(e, right, |folder| match op {
                     LogicalOperator::And | LogicalOperator::Or => {
-                        self.is_truthy_in_bun_run(left).is_some()
-                            && self.tells_condition_without_effects(left)
+                        folder.is_truthy_in_bun_run(left).is_some()
+                            && folder.tells_condition_without_effects(left)
                     }
                     LogicalOperator::Nullish => {
-                        self.is_nullish_in_bun_run(left) == Some(true)
-                            && self.is_literal_to_bun_run(left)
+                        folder.is_nullish_in_bun_run(left) == Some(true)
+                            && folder.is_literal_to_bun_run(left)
                     }
-                };
-                if is_left_out_by_bun_run {
-                    self.stands_alone_in_bun_run.insert(right.idx());
-                }
+                });
                 self.copy_condition(e, right);
                 let effects_of_left = self.effects_where_unused(left, |folder| match op {
                     LogicalOperator::And | LogicalOperator::Or => {
@@ -416,9 +415,9 @@ impl<'s> Folder<'_, 's> {
         self.exclude_operand(excluded, |folder| {
             folder.is_test_truthy_in_bun_run(test).is_some()
         });
-        if self.is_test_truthy_in_bun_run(test).is_some() && self.leaves_out_known_test(test) {
-            self.stands_alone_in_bun_run.insert(selected.idx());
-        }
+        self.note_operand_in_place(e, selected, |folder| {
+            folder.is_test_truthy_in_bun_run(test).is_some() && folder.leaves_out_known_test(test)
+        });
         self.copy_condition(e, selected);
         let effects_of_test =
             self.effects_where_unused(test, |folder| folder.leaves_out_known_test(test));

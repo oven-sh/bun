@@ -18,6 +18,7 @@ mod known_sets;
 mod known_to_bun_run;
 mod removed_by_bun_run;
 mod run_order;
+mod seen_by_bun_run;
 mod string_affixes;
 
 pub use children::{TreeNode, push_children};

@@ -31,7 +31,7 @@ impl Folder<'_, '_> {
         if self.bound.binding(callee) != Binding::Free {
             return None;
         }
-        let arguments = hir.ids(call.args).map(|it| hir.skip_type_assertions(it));
+        let arguments = hir.ids(call.args).map(|it| self.seen_by_bun_run(it));
         let arguments: SmallVec<[ExprId; 2]> = arguments.collect();
         let items_of = |e: ExprId| match hir[e].kind {
             ExprKind::Array(items) => Some(items),

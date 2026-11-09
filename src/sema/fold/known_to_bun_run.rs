@@ -206,12 +206,10 @@ impl<'s> Folder<'_, 's> {
                 ExprKind::Template { exprs } => {
                     return exprs.is_empty() || self.atoms.bytes(text).is_ascii();
                 }
-                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    match self.written_in_place.get(&e) {
-                        Some(&written) => Some(written),
-                        None => return true,
-                    }
-                }
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => match self.find_in_place(e) {
+                    member if member != e => Some(member),
+                    _ => return true,
+                },
                 ExprKind::Cond { test, branches } => {
                     let branches = hir.branches(branches);
                     self.condition(test).map(|is_truthy| match is_truthy {
@@ -250,8 +248,7 @@ impl<'s> Folder<'_, 's> {
             let text = Value::from(Constant::String(self.atoms.intern(text)));
             return is_written_by_transpiler.then_some(text);
         }
-        let ExprKind::Regex { pattern, flags } = self.hir[self.hir.skip_type_assertions(e)].kind
-        else {
+        let ExprKind::Regex { pattern, flags } = self.hir[self.find_in_place(e)].kind else {
             return None;
         };
         let (pattern, flags) = (self.atoms.bytes(pattern), self.atoms.bytes(flags));
@@ -289,7 +286,7 @@ impl<'s> Folder<'_, 's> {
         else {
             return None;
         };
-        match hir[hir.skip_type_assertions(object)].kind {
+        match hir[self.find_in_place(object)].kind {
             ExprKind::String(_) => Some(b"function String() { [native code] }"),
             ExprKind::Regex { .. } => Some(b"function RegExp() { [native code] }"),
             _ => None,
@@ -426,12 +423,12 @@ impl<'s> Folder<'_, 's> {
         let hir = self.hir;
         let mut e = e;
         loop {
-            e = hir.skip_type_assertions(e);
+            e = self.seen_by_bun_run(e);
             let kind = hir[e].kind;
             if let ExprKind::Binary { op, .. } = kind
                 && is_logical(op)
             {
-                return self.nullish_logical_results.get(&e).copied();
+                return None;
             }
             if let Value::Known(value) = self.folded(e).value
                 && self.is_folded_by_bun_run(e)
@@ -465,27 +462,17 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    pub(super) fn note_nullish_logical_result(
-        &mut self,
-        e: ExprId,
-        op: BinOp,
-        left: ExprId,
-        right: ExprId,
-    ) {
-        let is_left_result = match op {
-            BinOp::And => self.is_truthy_in_bun_run(left).map(|is_truthy| !is_truthy),
-            BinOp::Or => self.is_truthy_in_bun_run(left),
-            _ => self
-                .is_nullish_in_bun_run(left)
-                .map(|is_nullish| !is_nullish),
-        };
-        let result = match is_left_result {
-            Some(true) => left,
-            Some(false) if self.is_literal_to_bun_run(left) => right,
-            Some(false) | None => return,
-        };
-        if let Some(is_nullish) = self.is_nullish_in_bun_run(result) {
-            self.nullish_logical_results.insert(e, is_nullish);
+    /// Whether the parser leaves nothing of the left side of a comma. It has the right side alone in place of a comma that
+    /// stands there.
+    pub(super) fn removes_left_of_comma(&self, left: ExprId) -> bool {
+        let left = self.as_written(left);
+        match self.hir[left].kind {
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => self.seen_by_bun_run(left) != left && self.removes_unused_value(right),
+            _ => self.removes_unused_value(left),
         }
     }
 
@@ -498,7 +485,7 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn tells_condition_without_effects(&self, e: ExprId) -> bool {
         let hir = self.hir;
-        let mut e = hir.skip_type_assertions(e);
+        let mut e = self.seen_by_bun_run(e);
         loop {
             if self.is_literal_to_bun_run(e) {
                 return true;
@@ -511,7 +498,7 @@ impl<'s> Folder<'_, 's> {
                 ExprKind::Unary {
                     op: UnOp::Not,
                     operand,
-                } => e = hir.skip_type_assertions(operand),
+                } => e = self.seen_by_bun_run(operand),
                 ExprKind::Binary {
                     op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge,
                     ..
@@ -667,7 +654,7 @@ impl<'s> Folder<'_, 's> {
 
     fn find_written_bigint(&self, e: ExprId) -> Option<&[u8]> {
         let hir = self.hir;
-        let e = hir.skip_type_assertions(e);
+        let e = self.seen_by_bun_run(e);
         let ExprKind::BigInt(_) = hir[e].kind else {
             return None;
         };

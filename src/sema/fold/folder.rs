@@ -8,6 +8,7 @@ use super::inputs::{FoldInputs, PathState};
 use super::known_sets::ListHolders;
 use super::known_to_bun_run::ExcludedOperand;
 use super::run_order::RunOrder;
+use super::seen_by_bun_run::SeenByBunRun;
 use super::{
     Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, MadeByCall,
     NodeBits, literal_constant, slice_in,
@@ -94,7 +95,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) this_of_file: OnceCell<PositionSet>,
     pub(super) run_order: OnceCell<RunOrder>,
     pub(super) constant_prefixes: RefCell<ConstLocalPrefixes>,
-    pub(super) written_in_place: FxHashMap<ExprId, ExprId>,
+    pub(super) seen_by_bun_run: SeenByBunRun,
     pub(super) process_imports: OnceCell<Vec<SymbolId>>,
     pub(super) exported_variables: OnceCell<Vec<SymbolId>>,
     pub(super) initializers_of_stable_bindings: Vec<Cell<Option<Option<ExprId>>>>,
@@ -121,11 +122,9 @@ pub(super) struct Folder<'a, 's> {
     pub(super) numbers_of_parser: PositionSet,
     pub(super) places_always_computed: OnceCell<PositionSet>,
     pub(super) conditions_told_by_shape: PositionSet,
-    pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
     pub(super) conditions: Conditions,
     pub(super) short_circuited_links: PositionSet,
     pub(super) goes_on_to_the_right: Vec<ExprId>,
-    pub(super) stands_alone_in_bun_run: PositionSet,
     pub(super) is_main_of_import_meta_written: OnceCell<bool>,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
     pub(super) strings_over_limit: Vec<ExprId>,
@@ -155,7 +154,7 @@ pub(super) fn run<'s>(
         this_of_file: OnceCell::new(),
         run_order: OnceCell::new(),
         constant_prefixes: RefCell::default(),
-        written_in_place: FxHashMap::default(),
+        seen_by_bun_run: SeenByBunRun::default(),
         process_imports: OnceCell::new(),
         exported_variables: OnceCell::new(),
         initializers_of_stable_bindings: vec![Cell::new(None); bound.symbols.len()],
@@ -182,11 +181,9 @@ pub(super) fn run<'s>(
         numbers_of_parser: PositionSet::new(hir.exprs.len()),
         places_always_computed: OnceCell::new(),
         conditions_told_by_shape: PositionSet::new(hir.exprs.len()),
-        nullish_logical_results: FxHashMap::default(),
         conditions: Conditions::new(hir.exprs.len()),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
         goes_on_to_the_right: Vec::new(),
-        stands_alone_in_bun_run: PositionSet::new(hir.exprs.len()),
         is_main_of_import_meta_written: OnceCell::new(),
         call_errors: Vec::new(),
         strings_over_limit: Vec::new(),
@@ -399,7 +396,8 @@ impl<'s> Folder<'_, 's> {
         let DeadRoots { all, in_bun_run } = self.find_dead_roots();
         let folds_more_under_minify_syntax =
             self.folded_under_minify_syntax.iter().next().is_some()
-                || (self.conditions_told_under_minify_syntax.iter().next()).is_some();
+                || (self.conditions_told_under_minify_syntax.iter().next()).is_some()
+                || self.seen_by_bun_run.differs_under_minify_syntax();
         let dead_under_minify_syntax = folds_more_under_minify_syntax
             .then(|| self.holds_under_minify_syntax(|folder| folder.find_dead_roots().in_bun_run))
             .filter(|under_minify_syntax| *under_minify_syntax != in_bun_run)
@@ -463,7 +461,13 @@ impl<'s> Folder<'_, 's> {
                 arena,
             ),
             goes_on_to_the_right: slice_in(&self.goes_on_to_the_right, arena),
-            stands_alone_in_bun_run: NodeBits::freeze(&self.stands_alone_in_bun_run, arena),
+            stands_alone_in_bun_run: NodeBits::of_ascending(
+                (self
+                    .seen_by_bun_run
+                    .find_operands_alone_in_bun_run(self.hir))
+                .into_iter(),
+                arena,
+            ),
             folded_with: *self.inputs,
         };
         let call_errors = self.call_errors.iter();

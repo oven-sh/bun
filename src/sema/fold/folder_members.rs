@@ -3,9 +3,23 @@ use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use crate::atom::known;
 use crate::hir::{
-    Chain, ExprId, ExprKind, IdList, MemberKey, NameKind, PropId, PropKey, PropKind, Span,
+    BinOp, Chain, ExprId, ExprKind, IdList, MemberKey, NameKind, PropId, PropKey, PropKind, Span,
+    UnOp,
 };
 use bun_core::strings;
+use smallvec::SmallVec;
+
+/// A read out of a literal: the parser of `bun run` has the member where it is written.
+#[derive(Copy, Clone)]
+struct Read {
+    access: ExprId,
+    object: ExprId,
+    literal: ExprId,
+    index: Option<ExprId>,
+    has_other_items: bool,
+    /// What the object arm of the parser asks and its array arm does not: it puts nothing in place of a callee or behind a `?.`.
+    is_kept_by_its_form: bool,
+}
 
 impl Folder<'_, '_> {
     pub(super) fn fold_read_out_of_literal(&mut self, access: ExprId, chain: Chain) -> Folded {
@@ -13,26 +27,24 @@ impl Folder<'_, '_> {
         let Some((object, key)) = hir.member_key(access) else {
             return Folded::UNKNOWN;
         };
-        let written = self.find_written_in_place(object);
-        let is_spelled_out = matches!(hir[written].kind, ExprKind::Array(_) | ExprKind::Object(_))
-            || matches!(self.folded(object).value, Value::Known(_));
-        let is_read = is_spelled_out
-            && chain != Chain::Continue
-            && !self.is_assignment_target(access)
-            && !self.is_delete_operand(access);
-        if !is_read {
+        let literal = self.find_in_place(object);
+        if self.is_assignment_target(access) || self.is_delete_operand(access) {
             return Folded::UNKNOWN;
         }
-        match hir[written].kind {
-            ExprKind::Array(items) => self.fold_item_read(access, written, items, key),
-            ExprKind::Object(properties) => self.fold_only_property_read(access, properties, key),
-            _ => self.fold_member_of_text(access, object, key),
+        let read = Read {
+            access,
+            object,
+            literal,
+            index: None,
+            has_other_items: false,
+            is_kept_by_its_form: false,
+        };
+        match hir[literal].kind {
+            ExprKind::Array(items) => self.fold_item_read(read, items, key),
+            ExprKind::Object(properties) => self.fold_only_property_read(read, properties, key),
+            _ if chain != Chain::Continue => self.fold_member_of_text(access, object, key),
+            _ => Folded::UNKNOWN,
         }
-    }
-
-    fn find_written_in_place(&self, e: ExprId) -> ExprId {
-        let e = self.hir.skip_type_assertions(e);
-        self.written_in_place.get(&e).copied().unwrap_or(e)
     }
 
     fn find_index(&self, key: MemberKey) -> Option<(usize, ExprId)> {
@@ -50,37 +62,81 @@ impl Folder<'_, '_> {
         }
     }
 
-    fn fold_item_read(
-        &mut self,
-        access: ExprId,
-        list: ExprId,
-        items: IdList<ExprId>,
-        key: MemberKey,
-    ) -> Folded {
+    /// The item at `position` and the number of items, as the parser has them: where a list that is spread has items, the
+    /// items of every such list stand in the list itself.
+    fn find_item(&self, items: IdList<ExprId>, position: usize) -> Option<(ExprId, usize)> {
         let hir = self.hir;
+        if !hir.ids(items).any(|item| {
+            self.find_items_of_spread(item)
+                .is_some_and(|it| !it.is_empty())
+        }) {
+            let item = (position < items.len()).then(|| hir.id_at(items, position))?;
+            return Some((item, items.len()));
+        }
+        let mut inlined: SmallVec<[ExprId; 8]> = SmallVec::new();
+        self.push_items_of_parser(items, &mut inlined);
+        let item = *inlined.get(position)?;
+        Some((item, inlined.len()))
+    }
+
+    fn find_items_of_spread(&self, item: ExprId) -> Option<IdList<ExprId>> {
+        let hir = self.hir;
+        let ExprKind::Spread(list) = hir[item].kind else {
+            return None;
+        };
+        match hir[self.as_written(list)].kind {
+            ExprKind::Array(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    fn push_items_of_parser(&self, items: IdList<ExprId>, inlined: &mut SmallVec<[ExprId; 8]>) {
+        let hir = self.hir;
+        let spreads = hir
+            .ids(items)
+            .filter_map(|item| self.find_items_of_spread(item));
+        let inlines_lists = spreads.map(|list| list.len()).sum::<usize>() > 0;
+        for item in hir.ids(items) {
+            match self.find_items_of_spread(item).filter(|_| inlines_lists) {
+                Some(list) => self.push_items_of_parser(list, inlined),
+                None => inlined.push(item),
+            }
+        }
+    }
+
+    fn fold_item_read(&mut self, read: Read, items: IdList<ExprId>, key: MemberKey) -> Folded {
         let Some((position, index)) = self.find_index(key) else {
             return Folded::UNKNOWN;
         };
-        let is_spread = |item: ExprId| matches!(hir[item].kind, ExprKind::Spread(_));
-        let is_replaced = position < items.len()
-            && !hir.ids(items).any(is_spread)
-            && (items.len() == 1 || self.is_removed_if_unused_by_bun_run(list));
-        match is_replaced {
-            true => self.put_in_place(access, hir.id_at(items, position), Some(index)),
-            false => Folded::UNKNOWN,
+        let Some((item, count)) = self.find_item(items, position) else {
+            return Folded::UNKNOWN;
+        };
+        let has_other_items = count > 1;
+        let list = read.literal;
+        let is_left_out = |folder: &Self| folder.is_removed_if_unused_by_bun_run(list);
+        if has_other_items && !self.holds_under_minify_syntax(is_left_out) {
+            return Folded::UNKNOWN;
         }
+        let read = Read {
+            index: Some(index),
+            has_other_items,
+            ..read
+        };
+        self.put_in_place(read, item)
     }
 
     fn fold_only_property_read(
         &mut self,
-        access: ExprId,
+        read: Read,
         properties: Span<PropId>,
         key: MemberKey,
     ) -> Folded {
+        let hir = self.hir;
         let (MemberKey::Name(name), 1) = (key, properties.len()) else {
             return Folded::UNKNOWN;
         };
-        let property = self.hir[properties.at(0)];
+        let property = hir[properties.at(0)];
+        let text = self.atoms.bytes(name);
         let is_replaced = property.kind == PropKind::Init
             && matches!(
                 property.name_kind,
@@ -88,37 +144,120 @@ impl Folder<'_, '_> {
             )
             && property.key == PropKey::Name(name)
             && name != known::__proto__;
+        let is_same_to_parser = hir.is_name_resolved_by_transpiler(read.access, text)
+            && (property.name_kind == NameKind::Identifier || text.is_ascii());
+        let read = Read {
+            is_kept_by_its_form: !is_same_to_parser
+                || self.is_callee(read.access)
+                || self.is_link_of_kept_chain(read.access),
+            ..read
+        };
         match is_replaced {
-            true => self.put_in_place(access, property.value, None),
+            true => self.put_in_place(read, property.value),
             false => Folded::UNKNOWN,
         }
     }
 
-    fn put_in_place(&mut self, access: ExprId, part: ExprId, index: Option<ExprId>) -> Folded {
+    pub(super) fn is_callee(&self, e: ExprId) -> bool {
+        let callee = self.find_outermost_cast(e);
+        let parent = self.parent_expr(callee).map(|parent| self.hir[parent].kind);
+        matches!(parent, Some(ExprKind::Call(call)) if self.hir[call].callee == callee)
+    }
+
+    /// Whether `e` is a link of a `?.` chain that the parser keeps: it starts none behind what is never null or undefined by
+    /// the way it is written.
+    fn is_link_of_kept_chain(&self, e: ExprId) -> bool {
         let hir = self.hir;
-        let folded = match hir[part].kind {
-            ExprKind::Missing => Folded::constant(Constant::Undefined),
-            _ => self.folded(part),
+        let mut link = e;
+        loop {
+            let (object, chain) = match hir[link].kind {
+                ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
+                    (obj, chain)
+                }
+                ExprKind::Call(call) => (hir[call].callee, hir[call].chain),
+                _ => return false,
+            };
+            match chain {
+                Chain::No => return false,
+                Chain::Start => return !self.is_never_nullish_as_written(object),
+                Chain::Continue => link = self.as_written(object),
+            }
+        }
+    }
+
+    fn is_never_nullish_as_written(&self, e: ExprId) -> bool {
+        let hir = self.hir;
+        let mut e = e;
+        loop {
+            e = self.as_written(e);
+            return match hir[e].kind {
+                ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::BigInt(_)
+                | ExprKind::Regex { .. }
+                | ExprKind::Fn(_)
+                | ExprKind::Class(_)
+                | ExprKind::Object(_)
+                | ExprKind::Array(_) => true,
+                ExprKind::Unary { op, .. } => op != UnOp::Void,
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => {
+                    e = right;
+                    continue;
+                }
+                ExprKind::Binary { op, .. } => {
+                    !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
+                }
+                _ => false,
+            };
+        }
+    }
+
+    fn put_in_place(&mut self, read: Read, member: ExprId) -> Folded {
+        let hir = self.hir;
+        let Read { access, index, .. } = read;
+        let is_put_by_parser = match hir[self.as_written(member)].kind {
+            ExprKind::Spread(_) => return Folded::UNKNOWN,
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain == Chain::No,
+            ExprKind::Call(call) => hir[call].chain == Chain::No,
+            _ => true,
         };
-        let written = self.find_written_in_place(part);
-        let is_literal = matches!(hir[written].kind, ExprKind::Array(_) | ExprKind::Object(_));
-        if !is_literal && matches!(folded.value, Value::Unknown) {
+        let is_in_place = |folder: &Self| {
+            is_put_by_parser
+                && !read.is_kept_by_its_form
+                && folder.minifies_syntax()
+                && index.is_none_or(|index| folder.is_folded_by_bun_run(index))
+                && folder.seen_by_bun_run(read.object) == read.literal
+                && (!read.has_other_items || folder.is_removed_if_unused_by_bun_run(read.literal))
+        };
+        let folded = match hir[member].kind {
+            ExprKind::Missing => Folded::constant(Constant::Undefined),
+            _ => self.folded(member),
+        };
+        self.note_member_in_place(access, member, is_in_place);
+        if matches!(folded.value, Value::Unknown) && self.conditions.get(&member).is_none() {
             return Folded::UNKNOWN;
         }
-        self.written_in_place.insert(access, written);
-        self.copy_condition(access, part);
-        self.note_who_writes_in_place(access, part, index);
-        self.note_condition_told_in_place(access, part, index);
+        self.copy_condition(access, member);
+        self.note_who_writes_in_place(access, member, is_in_place);
+        self.note_condition_told_in_place(access, member, is_in_place);
         let effects_of_index = index.map_or(Effects::None, |index| self.folded(index).effects);
         Folded::new(folded.value, folded.effects.min(effects_of_index))
     }
 
-    fn note_who_writes_in_place(&mut self, access: ExprId, part: ExprId, index: Option<ExprId>) {
-        let is_written_in_place = |folder: &Self| {
-            folder.minifies_syntax()
-                && folder.is_folded_by_bun_run(part)
-                && index.is_none_or(|index| folder.is_folded_by_bun_run(index))
-        };
+    fn note_who_writes_in_place(
+        &mut self,
+        access: ExprId,
+        member: ExprId,
+        is_in_place: impl Fn(&Self) -> bool,
+    ) {
+        let is_written_in_place =
+            |folder: &Self| is_in_place(folder) && folder.is_folded_by_bun_run(member);
         if !is_written_in_place(&*self) {
             self.mark_folded_by_build_alone(access);
             self.mark_folded_under_minify_syntax_if(access, is_written_in_place);
@@ -128,14 +267,13 @@ impl Folder<'_, '_> {
     fn note_condition_told_in_place(
         &mut self,
         access: ExprId,
-        part: ExprId,
-        index: Option<ExprId>,
+        member: ExprId,
+        is_in_place: impl Fn(&Self) -> bool,
     ) {
         let tells_condition = |folder: &Self| {
-            folder.minifies_syntax()
-                && !folder.is_folded_by_bun_run(part)
-                && folder.is_truthy_in_bun_run(part).is_some()
-                && index.is_none_or(|index| folder.is_folded_by_bun_run(index))
+            is_in_place(folder)
+                && !folder.is_folded_by_bun_run(member)
+                && folder.is_truthy_in_bun_run(member).is_some()
         };
         if tells_condition(&*self) {
             self.conditions_told_by_shape.insert(access.idx());
@@ -183,7 +321,9 @@ impl Folder<'_, '_> {
             }
             _ => return Folded::UNKNOWN,
         };
-        self.note_who_writes_in_place(access, object, index);
+        self.note_who_writes_in_place(access, object, |folder| {
+            folder.minifies_syntax() && index.is_none_or(|index| folder.is_folded_by_bun_run(index))
+        });
         let effects_of_index = index.map_or(Effects::None, |index| self.folded(index).effects);
         Folded::new(Value::from(member), effects.min(effects_of_index))
     }

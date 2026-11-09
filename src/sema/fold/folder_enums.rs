@@ -298,7 +298,7 @@ impl<'s> Folder<'_, 's> {
                     _ => None,
                 },
                 ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    self.written_in_place.get(&e).copied()
+                    Some(self.find_in_place(e)).filter(|&member| member != e)
                 }
                 _ => None,
             };
@@ -313,7 +313,13 @@ impl<'s> Folder<'_, 's> {
         let mut found = PositionSet::new(self.hir.exprs.len());
         self.holds_under_minify_syntax(|folder| {
             for index in folder.folded_under_minify_syntax.iter() {
-                if !folder.is_enum_member_written_in_place(ExprId(index as u32)) {
+                let e = ExprId(index as u32);
+                let is_read_without_value = matches!(folder.values[index], Value::Unknown)
+                    && matches!(
+                        folder.hir[e].kind,
+                        ExprKind::Dot { .. } | ExprKind::Index { .. }
+                    );
+                if !is_read_without_value && !folder.is_enum_member_written_in_place(e) {
                     found.insert(index);
                 }
             }

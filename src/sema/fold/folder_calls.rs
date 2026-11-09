@@ -269,7 +269,8 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn fold_construction(&mut self, e: ExprId, call: Call) -> Folded {
         let hir = self.hir;
-        if (self.find_known_construction(call)).is_some_and(|known| known.is_literal()) {
+        let known = self.holds_under_minify_syntax(|folder| folder.find_known_construction(call));
+        if known.is_some_and(|known| known.is_literal()) {
             self.conditions.insert(e, true);
             self.mark_folded_under_minify_syntax_alone(e);
         }

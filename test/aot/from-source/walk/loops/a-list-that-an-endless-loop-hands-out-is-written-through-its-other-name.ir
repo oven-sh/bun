@@ -1,0 +1,29 @@
+# -- source: a-list-that-an-endless-loop-hands-out-is-written-through-its-other-name.js
+# let kept;
+# let reads = 0;
+# const holder = JSON.parse('{"slice":0}');
+# Object.defineProperty(holder, "NaN", { get() { if (++reads > 3) throw new Error("enough " + kept.length); return 0; } });
+# function walk(a) {
+#   const out = [];
+#   a.slice;
+#   for (let i = a;; i--) {
+#     if (a[i] === 3) ;
+#     kept = out;
+#     out.push(reads);
+#   }
+# }
+# try { walk(holder); } catch (error) { print(error.message, reads, kept.join()); }
+# -- end of source
+# The control: the loop names `out` and hands it out, so it leaves in front of the builds and nothing is believed of it at the closed copy. Under the lie that loops name nothing from in front it stays fresh there, and what arrives says otherwise: the answer stays right.
+# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
+# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: enough 4 4 0,1,2,3
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: enough 4 4 0,1,2,3
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=LoopsAreTakenToNameNothingFromInFront
+# LIE: enough 4 4 0,1,2,3
+# LIE-NEXT: exited with 0

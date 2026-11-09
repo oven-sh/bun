@@ -644,10 +644,11 @@ export const shapes: Shape[] = [
   },
   // A mock's factory may ask for the original, and the search for that word reads a function's text as the printer would write it: with the consts that stand in front of the function's body, of the bodies
   // around it and of the file written out. Each function read all of those anew.
+  // The count of one and the same test run wavers by some 10 M instructions. 3,000 consts add 200 M, and read 2.01, 2.02 and 2.11; 12,000 add 830 M.
   {
     name: "consts that are functions, in front of a callback's body, in a test run with a mock that asks for the original",
     counted: "consts",
-    size: 3000,
+    size: 12000,
     entry: "a.test.mjs",
     isTestRun: true,
     write: size => ({
@@ -1012,10 +1013,11 @@ export const shapes: Shape[] = [
   },
   // A test that copies members onto a built-in is asked where their keys come from, and the way leads through what functions return, also into another file. What is asked of each
   // value on that way may follow no call of its own: it took eight times as long with each doubling. The copies never run: the chain calls itself three times at each step.
+  // 100 functions add 157 M instructions under musl, and 2 M more or less read 2.06 or 2.09; under glibc they add too little to be judged. 400 add 550 M and read 2.02.
   {
     name: "a chain of exported functions whose last result is copied onto a built-in, in a test run",
     counted: "functions",
-    size: 100,
+    size: 400,
     entry: "a.test.js",
     isTestRun: true,
     write: size => ({

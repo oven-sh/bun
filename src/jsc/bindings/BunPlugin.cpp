@@ -4532,11 +4532,17 @@ static bool isWrittenIn(JSModuleMock* mock, JSC::AOT::ModuleID file)
 
 // As keyOfImportWhileModuleMocksRun() has it: a file on the import chain of a running factory counts as that factory asking.
 // A call of import() that is held is made again later: a factory that was called since is nothing to it, see waitsForMockOf().
-static Vector<JSObject*, 2> factoriesThatAskThrough(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID fileThatWroteLoad, uint32_t momentOfCall = UINT32_MAX)
+// As there: a module that was linked as itself is patched in place. Whoever asks for it from below its original gets that module once the patch is on.
+static bool isPatchedInPlaceOver(JSModuleMock* mock, JSC::AOT::ModuleID asked)
+{
+    return mock->importsOriginal && asked && mock->specifier->tryGetValue().data == JSC::AOT::pathOfFileOfModule(asked);
+}
+
+static Vector<JSObject*, 2> factoriesThatAskThrough(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID fileThatWroteLoad, JSC::AOT::ModuleID asked, uint32_t momentOfCall = UINT32_MAX)
 {
     Vector<JSObject*, 2> callers = factoriesInAsyncContext(globalObject);
     for (const auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
-        if (fileThatWroteLoad && running.compiledImportChain.get(fileThatWroteLoad.index()) && uncheckedDowncast<JSModuleMock>(running.mock.get())->calledAt <= momentOfCall && !callers.contains(running.mock.get()))
+        if (fileThatWroteLoad && running.compiledImportChain.get(fileThatWroteLoad.index()) && !isPatchedInPlaceOver(uncheckedDowncast<JSModuleMock>(running.mock.get()), asked) && uncheckedDowncast<JSModuleMock>(running.mock.get())->calledAt <= momentOfCall && !callers.contains(running.mock.get()))
             callers.append(running.mock.get());
     }
     return callers;
@@ -4578,7 +4584,7 @@ static bool waitsForMockOf(Zig::GlobalObject* globalObject, JSModuleMock* runnin
         }
         if (mayWait.contains(running))
             return false;
-        if (entry && (entry->compiledImportChain.get(fileThatWroteImport->index()) || entry->importChain.contains(JSC::AOT::pathOfFileOfModule(*fileThatWroteImport))))
+        if (entry && !isPatchedInPlaceOver(running, *asked) && (entry->compiledImportChain.get(fileThatWroteImport->index()) || entry->importChain.contains(JSC::AOT::pathOfFileOfModule(*fileThatWroteImport))))
             return false;
         if (!isWrittenIn(running, *fileThatWroteImport))
             return true;
@@ -4792,7 +4798,7 @@ JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, 
         auto import = askedBy == JSC::AOT::FactoryAskedForBy::ImportCall ? JSC::AOT::importThatAsks(globalObject) : std::nullopt;
         JSC::MarkedArgumentBuffer callers;
         if (askedBy == JSC::AOT::FactoryAskedForBy::ImportCall) {
-            for (JSObject* factory : factoriesThatAskThrough(globalObject, import ? import->fileThatWroteIt : JSC::AOT::ModuleID(), import ? import->momentOfCall : UINT32_MAX))
+            for (JSObject* factory : factoriesThatAskThrough(globalObject, import ? import->fileThatWroteIt : JSC::AOT::ModuleID(), import ? import->fileAskedFor : JSC::AOT::ModuleID(), import ? import->momentOfCall : UINT32_MAX))
                 callers.append(factory);
         }
         JSC::JSArray* listOfCallers = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), callers);
@@ -4962,7 +4968,7 @@ uint32_t addToImportChainsOfCompiledFactories(Zig::GlobalObject* globalObject, J
 bool isRequiredForSakeOfOwnFactoryOfCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID required, JSC::AOT::ModuleID requirer)
 {
     auto& plugins = globalObject->onLoadPlugins;
-    Vector<JSObject*, 2> callers = factoriesThatAskThrough(globalObject, requirer);
+    Vector<JSObject*, 2> callers = factoriesThatAskThrough(globalObject, requirer, required);
     for (size_t index = 0; index < callers.size(); ++index) {
         auto mocked = uncheckedDowncast<JSModuleMock>(callers[index])->compiledModuleThatNeverRan;
         for (const auto& running : plugins.runningModuleMocks) {
@@ -4991,7 +4997,7 @@ bool isRequiredForSakeOfOwnFactoryOfCompiledMock(Zig::GlobalObject* globalObject
 bool isCalledFromFactoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
 {
     auto import = JSC::AOT::importThatAsks(globalObject);
-    Vector<JSObject*, 2> callers = factoriesThatAskThrough(globalObject, import ? import->fileThatWroteIt : JSC::AOT::ModuleID(), import ? import->momentOfCall : UINT32_MAX);
+    Vector<JSObject*, 2> callers = factoriesThatAskThrough(globalObject, import ? import->fileThatWroteIt : JSC::AOT::ModuleID(), import ? import->fileAskedFor : JSC::AOT::ModuleID(), import ? import->momentOfCall : UINT32_MAX);
     if (callers.isEmpty())
         return false;
     for (const auto& factory : globalObject->onLoadPlugins.factoriesOfCompiledMocks) {

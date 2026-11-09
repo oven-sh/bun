@@ -3,7 +3,7 @@
 // `--aot-testing=VariablesReadInFrontOfLoopsAreTakenToHoldWhatIsProven` takes the read to hold what is proven of the variable. Under `--aot-harden=proof-checks` every such claim is asked at run time:
 // with both the program stops by name, in front of its first turn. `fuzz/fuzzilli/write-variable-that-a-loop-uses-sweep.ts` writes these programs and their neighbors.
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
 import { test } from "./harness/default-timeout";
@@ -75,7 +75,16 @@ describe.skipIf(!!unsupported)("the read that a loop lays in front of itself", (
         expect(counted.stderr).toMatch(/^\s*ReadsInFrontOfLoopsThatGiveTheWordAsItLies\s+[1-9]/m);
         const right = await spawned([executable("right")], folder, env);
         expect({ stdout: right.stdout, exitCode: right.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-        expect((await build("held", CHECKED, WORD)).exitCode).toBe(0);
+        const built = await build("held", CHECKED, WORD);
+        // A Bun that is built with assertions or a sanitizer verifies the code of every unit: there the build itself refuses what the word lays.
+        if (isASAN || isDebug) {
+          expect(built.stderr).toContain(
+            "is typed by a proof that leaves out the word that its variable is born with, and nothing vouches for it",
+          );
+          expect(built.exitCode).not.toBe(0);
+          return;
+        }
+        expect(built.exitCode).toBe(0);
         const held = await spawned([executable("held")], folder, { ...env, ...withoutCrashReport });
         expect(held.stderr).toContain(
           "what a variable holds is not of the type that the compiler has proven of it. It is: undefined.",

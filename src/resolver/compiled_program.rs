@@ -759,6 +759,18 @@ impl CompiledProgram {
         None
     }
 
+    pub fn holds_refused_data_starting_with(&self, start: &[u8]) -> bool {
+        let mut rest = self.refused_data;
+        while !rest.is_empty() {
+            match read_refused_data(&mut rest) {
+                Some((of, _)) if of.starts_with(start) => return true,
+                Some(_) => {}
+                None => return false,
+            }
+        }
+        false
+    }
+
     pub fn asset_named_at_root(&self, base_name: &[u8]) -> Option<&'static [u8]> {
         bun_core::strings::split(self.assets_named_at_root, b"\0")
             .find(|path| !path.is_empty() && bun_paths::basename(path) == base_name)

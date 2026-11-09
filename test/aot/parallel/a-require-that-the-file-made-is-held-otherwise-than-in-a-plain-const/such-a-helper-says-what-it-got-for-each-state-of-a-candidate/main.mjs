@@ -5,8 +5,8 @@ function see(moduleUrl, candidates) {
     try {
       const got = require(candidate);
       console.log("SAID", candidate, typeof got, JSON.stringify(got));
-    } catch {
-      console.log("SAID", candidate, "threw");
+    } catch (error) {
+      console.log("SAID", candidate, "threw", error.name);
     }
 }
 see(import.meta.url, ["./there.json", "./nothing.json", "./blank.json", "./mark.json", "./broken.json", "./null.json", "./list.json"]);

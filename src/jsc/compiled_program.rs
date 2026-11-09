@@ -429,6 +429,7 @@ fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 fn may_hold_module_path_starting_with(start: &[u8]) -> bool {
     let start = with_separators_of_image(start);
     Bun__AOT__mayHoldPathStartingWith(FfiSlice::new(&start))
+        || compiled_program().is_some_and(|it| it.holds_refused_data_starting_with(&start))
 }
 
 fn is_left_to_code_outside_image(specifier: &[u8], directory_of_importer: &[u8]) -> bool {
@@ -445,7 +446,9 @@ fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
         bun_threading::Guarded::new(BTreeSet::new());
     let path = &with_separators_of_image(path)[..];
     // The attributes of the import say which form of the file is asked for, and the resolver does not see them.
-    if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path)) {
+    if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path))
+        && compiled_program().is_none_or(|it| it.find_refused_data(path).is_none())
+    {
         return None;
     }
     let mut paths = PATHS.lock();

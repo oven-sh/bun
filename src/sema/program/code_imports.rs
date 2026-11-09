@@ -86,10 +86,16 @@ pub(super) fn resolve_code_imports<'s, 'r>(
                 }) && !files_of(resolution).all(|file| is_json(file.path))
                     && is_site_of_handed_url(hir, bound, decisions, call) =>
             {
-                SiteResolution::Computed(ComputedResolution::Candidates {
-                    candidates: &[],
-                    spellings: &[],
-                })
+                let not_found = CodeResolution::NotFound(CodeFailure::ModuleNotFound);
+                match resolution {
+                    SiteResolution::Constant(_) => SiteResolution::Constant(not_found),
+                    SiteResolution::Computed(_) => {
+                        SiteResolution::Computed(ComputedResolution::Candidates {
+                            candidates: &[],
+                            spellings: &[],
+                        })
+                    }
+                }
             }
             _ => resolution,
         };

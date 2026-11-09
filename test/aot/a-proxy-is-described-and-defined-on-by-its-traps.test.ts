@@ -11,7 +11,6 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned, told } from "./harness/commands";
-import { withThreads } from "./harness/flags";
 import { sayGoal } from "./harness/goals";
 import { test } from "./supported";
 
@@ -529,14 +528,10 @@ await 0;
 for (const line of lines) console.log(line);
 `;
 
-// The program of all scenes is built as anybody builds it. The programs of one scene ask what compiled code does, and nothing of the
-// file that holds it or of the threads that made it. So each is built as run-parallel.ts builds a stored program:
-// - on one thread, for the slot that its build holds. CI has as many cases under way as the machine has processors, so more threads for
-//   one build are taken from the build beside it. The bytes are the same on any number of threads
-//   (builds-on-one-thread-and-on-several-give-the-same-bytes.test.ts).
-// - on Linux, as the program alone (harness/program-alone.ts): the compile is the same, and no copy of Bun is written for each scene.
-// AOT_REAL_EXECUTABLES=1 around a run asks for an executable of every build of this file. Without it the program of all scenes is an
-// executable too, unless AOT_PROGRAMS_ALONE asks for every program alone.
+// The programs of one scene ask what compiled code does, and nothing of the file that holds it. So on Linux each of their builds writes
+// its program alone (harness/program-alone.ts), as the builds of the stored programs do (run-parallel.ts): the compile is the same, and
+// no copy of Bun is written for each of them. The program of all scenes is built as before: an executable, unless AOT_PROGRAMS_ALONE
+// asks for every program alone. AOT_REAL_EXECUTABLES=1 around a run asks for an executable of every build of this file.
 const atTheBuildOfAllScenes = process.env.AOT_REAL_EXECUTABLES
   ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: undefined }
   : bunEnv;
@@ -610,7 +605,7 @@ ${does}
     await slot(async () => {
       built(
         await spawned(
-          [bunExe(), "build", "--compile", "--aot", withThreads(1), "./main.mjs", "--outfile", executable],
+          [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable],
           folder,
           atTheBuildOfOneScene,
         ),
@@ -659,15 +654,14 @@ const answersInUpperCase = `{
   defineProperty(target, key, descriptor) { target[key] = String(descriptor.value); return true; },
 }`;
 type Report = { lines: string[]; exitCode: number };
-// One run of `bun check --aot --explain=trim` for the cases that read its lines. On one thread, as the build of one scene: the report
-// is the same on any number.
+// One run of `bun check --aot --explain=trim` for the cases that read its lines.
 function explainTrim(main: string): () => Promise<Report> {
   let report: Promise<Report> | undefined;
   return () =>
     (report ??= (async () => {
       using dir = tempDir("aot-own-property-report", { "main.js": main });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "check", "--aot", "--threads=1", "--no-pretty", "--explain=trim", "main.js"],
+        cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.js"],
         cwd: String(dir),
         env: { ...bunEnv, NO_COLOR: "1" },
         stdout: "pipe",

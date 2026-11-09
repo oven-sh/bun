@@ -2535,8 +2535,7 @@ __attribute__((minsize)) NEVER_INLINE JSValue putBackWhatRestoredSpyReplaced(JSG
     toPropertyDescriptor(globalObject, saved, descriptor);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The restored spies are undone as putBackOriginal() undoes them, the one that was installed last first: a spy on an accessor only if the accessor still has it.
-    // `storage` is what getOwnPropertyStorage() gives putBackOriginal() then.
+    // Undoes the restored spies as putBackOriginal() does, the one that was installed last first. `storage` is what getOwnPropertyStorage() gives it then.
     JSValue storage = descriptor.isAccessorDescriptor() ? JSValue(GetterSetter::create(globalObject->vm(), globalObject, descriptor.getterObject(), descriptor.setterObject())) : descriptor.value();
     InternalFieldTuple* undo = nullptr;
     for (auto* next = record; next; next = dynamicDowncast<InternalFieldTuple>(next->getInternalField(1))) {
@@ -2553,7 +2552,7 @@ __attribute__((minsize)) NEVER_INLINE JSValue putBackWhatRestoredSpyReplaced(JSG
     if (!undo)
         return saved;
 
-    // putBack() asks no attribute. So this throws what the define of `saved` throws for a stub with no restored spy under it (restoreGlobal() in ViUtils.cpp). With no object, it only validates.
+    // putBack() asks no attribute. With no object, this only validates: it throws what restoreGlobal()'s define of `saved` throws.
     PropertyDescriptor current;
     bool exists = target->getOwnPropertyDescriptor(globalObject, key, current);
     RETURN_IF_EXCEPTION(scope, {});

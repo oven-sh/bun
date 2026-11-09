@@ -94,12 +94,9 @@ public:
     void finishCreation(JSC::VM&, JSMockFunction* fn, JSValue impl, JSValue tail, JSValue fallback);
 };
 
-// For `vi.stubGlobal()`, which replaces a property of `target` and puts `saved` back later. `own` is the property now.
-// If spies are installed there, returns a record of what each one replaced, which ends in `saved`. Otherwise returns `saved`.
-// A spy on `globalThis` is installed on the global object, so that is its `target`, not the proxy.
+// For a saver of `own`, a property of `target` (the global object, not its proxy): `saved`, or a record of what each spy installed there replaced, which ends in `saved`.
 JSC::JSValue withWhatSpiesReplaced(JSC::JSGlobalObject*, JSC::JSObject* target, const JSC::Identifier& key, const JSC::PropertyDescriptor& own, JSC::JSValue saved);
 
-// If spies of `record` were restored since, puts back what their restores leave with the one that was installed last restored first, and returns empty.
-// Throws what a defineProperty() of `saved` throws, and then puts nothing back. If no spy was restored, returns the record's `saved`.
+// Undoes the restored spies of `record`, the one that was installed last first, and returns empty. With none restored, returns `saved`. Throws what a define of `saved` throws.
 JSC::JSValue putBackWhatRestoredSpyReplaced(JSC::JSGlobalObject*, JSC::JSObject* target, const JSC::Identifier& key, JSC::InternalFieldTuple* record);
 }

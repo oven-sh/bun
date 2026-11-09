@@ -19,7 +19,7 @@ pub(crate) use super::bun_test;
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
 use crate::generated_bindgen::jest::{Bun__Jest__returnUndefined, Bun__Jest__setDefaultTimeout};
 use super::pretty_format::{self, JestPrettyFormat};
-use super::scope_functions::{create_bound, Mode as ScopeKind, ScopeFunctions};
+use super::scope_functions::{create_bound, FunctionKind, Mode as ScopeKind, ScopeFunctions};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
 use super::{vi_utils, vi_wait};
@@ -131,13 +131,15 @@ pub(crate) struct TestRunner<'a> {
 
     pub(crate) snapshots: Snapshots,
 
+    /// `--timeout`. A test file's default is `default_timeout()`. The waits between test files read this one, so that
+    /// no test file can lift their limit.
     pub(crate) default_timeout_ms: u32,
-
-    /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
-    pub(crate) default_timeout_override: u32,
 
     pub(crate) vi_config: vi_utils::Config,
     pub(crate) vi_config_of_preload: vi_utils::Config,
+    /// The timeouts of `vi_config` when a `--rerun-each` repeat starts: what the preloads left, or what
+    /// `setDefaultTimeout()` set since. A repeat doesn't evaluate again a module that made that call for the test file.
+    pub(crate) timeouts_of_each_repeat: vi_utils::Timeouts,
 
     pub(crate) test_options: &'a TestOptions,
 
@@ -157,6 +159,16 @@ pub(crate) struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
+    /// The timeout in ms, 0 for none, of a test or hook of the current test file that has none of its own.
+    pub(crate) fn default_timeout(&self, kind: FunctionKind) -> u32 {
+        self.vi_config.timeout(kind).unwrap_or_else(|| match (self.default_timeout_ms, kind) {
+            (0, _) => 0,
+            // Vitest's default `hookTimeout`
+            (ms, FunctionKind::VitestHook) => ms.max(10_000),
+            (ms, _) => ms,
+        })
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
@@ -621,7 +633,7 @@ pub(crate) fn set_default_timeout(milliseconds: f64) {
     let timeout_ms: u32 = u32::try_from((milliseconds as i32).max(0)).unwrap();
 
     if let Some(test_runner) = Jest::runner() {
-        test_runner.default_timeout_override = timeout_ms;
+        vi_utils::set_default_timeout(test_runner, timeout_ms);
     }
 }
 

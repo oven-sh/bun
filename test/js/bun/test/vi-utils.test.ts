@@ -738,7 +738,7 @@ describe.concurrent("vi.setConfig", () => {
           afterAll(() => vi.resetConfig());
           test("test", () => {});
         });
-        describe("over setDefaultTimeout(), which resetConfig() leaves alone", () => {
+        describe("after setDefaultTimeout(), which resetConfig() leaves alone", () => {
           setDefaultTimeout(10);
           vi.setConfig({ hookTimeout: 0, testTimeout: Infinity });
           beforeAll(slow);
@@ -767,11 +767,364 @@ describe.concurrent("vi.setConfig", () => {
         "(pass) hookTimeout is not for tests > test",
         "(pass) testTimeout is not for hooks > test",
         "(pass) set when the hook is registered already > test",
-        "(pass) over setDefaultTimeout(), which resetConfig() leaves alone > no timeout",
-        "(fail) over setDefaultTimeout(), which resetConfig() leaves alone > the timeout of setDefaultTimeout()",
+        "(pass) after setDefaultTimeout(), which resetConfig() leaves alone > no timeout",
+        "(fail) after setDefaultTimeout(), which resetConfig() leaves alone > the timeout of setDefaultTimeout()",
         "(pass) a config that is refused sets nothing > test",
       ],
       exitCode: 1,
+    });
+  });
+
+  describe("testTimeout and hookTimeout are the default timeout that setDefaultTimeout() and jest.setTimeout() set, so the later call wins", () => {
+    const timeoutsOfTests = (output: string) => output.split("\n").filter(line => /^\w+: \d+$/.test(line));
+    const logsTimeout = (name: string) => `
+      import { test } from "vitest";
+      test("${name}", ({ task }) => console.log("${name}:", task.timeout));
+    `;
+    const oneWorker = "--parallel=2 --parallel-delay=600000";
+
+    test("for tests", async () => {
+      const { stdout, exitCode } = await run(["test", "./order.test.ts"], {
+        "order.test.ts": `
+          import { jest, setDefaultTimeout } from "bun:test";
+          import { afterAll, test, vi } from "vitest";
+          const timeouts = {};
+          const timeoutOf = name => test(name, ({ task }) => void (timeouts[name] = task.timeout));
+          afterAll(() => console.log(JSON.stringify(timeouts)));
+
+          vi.setConfig({ testTimeout: 1000 });
+          setDefaultTimeout(2000);
+          timeoutOf("setDefaultTimeout() after testTimeout");
+          vi.setConfig({ testTimeout: 1000 });
+          jest.setTimeout(3000);
+          timeoutOf("jest.setTimeout() after testTimeout");
+          vi.setConfig({ hookTimeout: 1000, maxConcurrency: 5 });
+          timeoutOf("then a config without testTimeout");
+          vi.setConfig({ testTimeout: 1000 });
+          timeoutOf("testTimeout after jest.setTimeout()");
+          vi.resetConfig();
+          timeoutOf("then resetConfig()");
+          vi.setConfig({ testTimeout: 0 });
+          setDefaultTimeout(4000);
+          timeoutOf("setDefaultTimeout() after testTimeout: 0");
+          vi.resetConfig();
+          timeoutOf("resetConfig() after setDefaultTimeout()");
+        `,
+      });
+      expect({ timeouts: JSON.parse(stdout.split("\n").find(line => line.startsWith("{"))!), exitCode }).toEqual({
+        timeouts: {
+          "setDefaultTimeout() after testTimeout": 2000,
+          "jest.setTimeout() after testTimeout": 3000,
+          "then a config without testTimeout": 3000,
+          "testTimeout after jest.setTimeout()": 1000,
+          "then resetConfig()": 3000,
+          "setDefaultTimeout() after testTimeout: 0": 4000,
+          "resetConfig() after setDefaultTimeout()": 4000,
+        },
+        exitCode: 0,
+      });
+    });
+
+    test("for tests, after every three calls in a row", async () => {
+      type Timeouts = { test?: number; hook?: number; setDefault?: number };
+      const ofSetDefault = (setDefault?: number): Timeouts => ({ test: setDefault, hook: setDefault, setDefault });
+      // No timeout is short enough to fire.
+      const calls: [string, (timeouts: Timeouts) => Timeouts][] = [
+        ["setDefaultTimeout(1000001)", () => ofSetDefault(1000001)],
+        ["vi.setConfig({ testTimeout: 1000002 })", timeouts => ({ ...timeouts, test: 1000002 })],
+        ["vi.setConfig({ hookTimeout: 1000003 })", timeouts => ({ ...timeouts, hook: 1000003 })],
+        [
+          "vi.setConfig({ testTimeout: 1000004, hookTimeout: 1000004 })",
+          timeouts => ({ ...timeouts, test: 1000004, hook: 1000004 }),
+        ],
+        ["vi.setConfig({ testTimeout: 0 })", timeouts => ({ ...timeouts, test: 0 })],
+        ["vi.setConfig({ testTimeout: Infinity })", timeouts => ({ ...timeouts, test: 0 })],
+        ["vi.resetConfig()", timeouts => ofSetDefault(timeouts.setDefault)],
+      ];
+      const windows = calls.flatMap(first => calls.flatMap(second => calls.map(third => [first, second, third])));
+      let timeouts: Timeouts = {};
+      const expected = windows.map(window => {
+        for (const [, call] of window) timeouts = call(timeouts);
+        return timeouts.test ?? 5000;
+      });
+
+      const { stdout, exitCode } = await run(["test", "./windows.test.ts"], {
+        "windows.test.ts": `
+          import { setDefaultTimeout } from "bun:test";
+          import { afterAll, test, vi } from "vitest";
+          const timeouts = [];
+          let tests = 0;
+          const timeoutOfTest = () => test("test " + tests++, ({ task }) => void timeouts.push(task.timeout));
+          afterAll(() => console.log(JSON.stringify(timeouts)));
+          ${windows.map(window => `${window.map(([source]) => source).join("; ")}; timeoutOfTest();`).join("\n")}
+        `,
+      });
+      const actual: number[] = JSON.parse(stdout.split("\n").find(line => line.startsWith("["))!);
+      expect({
+        differing: windows.flatMap((window, index) =>
+          actual[index] === expected[index]
+            ? []
+            : [{ after: window.map(([source]) => source), timeout: expected[index], got: actual[index] }],
+        ),
+        tests: actual.length,
+        exitCode,
+      }).toEqual({ differing: [], tests: calls.length ** 3, exitCode: 0 });
+    });
+
+    test.each(["bun:test", "vitest"])("for the hooks of %j", async module => {
+      const { stderr, exitCode } = await run(["test", "./hooks.test.ts"], {
+        "hooks.test.ts": `
+          import { jest, setDefaultTimeout } from "bun:test";
+          import { beforeEach, describe, test, vi } from "${module}";
+          const slow = () => Bun.sleep(40);
+          describe("setDefaultTimeout() after hookTimeout", () => {
+            vi.setConfig({ hookTimeout: 10 });
+            setDefaultTimeout(5000);
+            beforeEach(slow);
+            test("test", () => {});
+          });
+          describe("jest.setTimeout() after hookTimeout", () => {
+            vi.setConfig({ hookTimeout: 10 });
+            jest.setTimeout(5000);
+            beforeEach(slow);
+            test("test", () => {});
+          });
+          describe("hookTimeout after setDefaultTimeout()", () => {
+            setDefaultTimeout(5000);
+            vi.setConfig({ hookTimeout: 10 });
+            beforeEach(slow);
+            test("test", () => {});
+          });
+          describe("then a config without hookTimeout", () => {
+            vi.setConfig({ testTimeout: 5000 });
+            beforeEach(slow);
+            test("test", () => {});
+          });
+          describe("setDefaultTimeout() after a longer hookTimeout", () => {
+            vi.setConfig({ hookTimeout: 5000 });
+            setDefaultTimeout(10);
+            beforeEach(slow);
+            test("test", () => {}, 5000);
+          });
+          describe("resetConfig() after a longer hookTimeout", () => {
+            vi.setConfig({ hookTimeout: 5000 });
+            vi.resetConfig();
+            beforeEach(slow);
+            test("test", () => {}, 5000);
+          });
+        `,
+      });
+      expect({ results: results(stderr), exitCode }).toEqual({
+        results: [
+          "(pass) setDefaultTimeout() after hookTimeout > test",
+          "(pass) jest.setTimeout() after hookTimeout > test",
+          "(fail) hookTimeout after setDefaultTimeout() > test",
+          "(fail) then a config without hookTimeout > test",
+          "(fail) setDefaultTimeout() after a longer hookTimeout > test",
+          "(fail) resetConfig() after a longer hookTimeout > test",
+        ],
+        exitCode: 1,
+      });
+    });
+
+    test.each(["", "--isolate", "--rerun-each=2", `${oneWorker} --no-isolate`])(
+      "a test file's setDefaultTimeout() replaces a preload's testTimeout, for that file only: bun test %s",
+      async flags => {
+        const { stdout, stderr, exitCode } = await run(
+          ["test", "--preload=./preload.ts", "./a.test.ts", "./b.test.ts", ...flags.split(" ").filter(Boolean)],
+          {
+            "preload.ts": `import { vi } from "bun:test"; vi.setConfig({ testTimeout: 1000 });`,
+            "a.test.ts": `import { setDefaultTimeout } from "bun:test"; setDefaultTimeout(2000); ${logsTimeout("a")}`,
+            "b.test.ts": logsTimeout("b"),
+          },
+        );
+        const repeats = flags === "--rerun-each=2" ? 2 : 1;
+        expect({ timeouts: timeoutsOfTests(stdout + stderr), exitCode }).toEqual({
+          timeouts: [...Array(repeats).fill("a: 2000"), ...Array(repeats).fill("b: 1000")],
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.each([oneWorker, `${oneWorker} --no-isolate`])(
+      "doesn't reach the next test file of a worker: bun test --rerun-each=2 %s",
+      async flags => {
+        const { stdout, stderr, exitCode } = await run(
+          ["test", "--rerun-each=2", "./a.test.ts", "./b.test.ts", ...flags.split(" ")],
+          {
+            "a.test.ts": `
+              import { setDefaultTimeout, vi } from "bun:test";
+              setDefaultTimeout(2000);
+              vi.setConfig({ testTimeout: 3000 });
+              ${logsTimeout("a")}
+            `,
+            "b.test.ts": logsTimeout("b"),
+          },
+        );
+        expect({ timeouts: timeoutsOfTests(stdout + stderr), exitCode }).toEqual({
+          timeouts: ["a: 3000", "a: 3000", "b: 5000", "b: 5000"],
+          exitCode: 0,
+        });
+      },
+    );
+
+    // A repeat evaluates the test file again, but not the modules it imports. The first file to import one evaluates it.
+    test.each([
+      ["no config", "", 5000],
+      ["testTimeout", `import { vi } from "bun:test"; vi.setConfig({ testTimeout: 1000 });`, 1000],
+    ])(
+      "setDefaultTimeout() in a module that the test file imports lasts until the file's last --rerun-each repeat, after a preload that sets %s",
+      async (_, preload, ofPreload) => {
+        const { stdout, exitCode } = await run(
+          ["test", "--preload=./preload.ts", "--rerun-each=3", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+          {
+            "preload.ts": preload,
+            "sets-timeout.ts": `import { setDefaultTimeout } from "bun:test"; setDefaultTimeout(2000);`,
+            "a.test.ts": `import "./sets-timeout.ts"; ${logsTimeout("a")}`,
+            "b.test.ts": logsTimeout("b"),
+            "c.test.ts": `import "./sets-timeout.ts"; ${logsTimeout("c")}`,
+          },
+        );
+        expect({ timeouts: timeoutsOfTests(stdout), exitCode }).toEqual({
+          timeouts: ["a: 2000", "b: " + ofPreload, "c: " + ofPreload].flatMap(line => Array(3).fill(line)),
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("every --rerun-each repeat starts with the timeouts of the preload, whatever vi.setConfig() and vi.resetConfig() did to them", async () => {
+      const { stdout, exitCode } = await run(["test", "--preload=./preload.ts", "--rerun-each=2", "./a.test.ts"], {
+        "preload.ts": `
+          import { setDefaultTimeout, vi } from "bun:test";
+          setDefaultTimeout(2000);
+          vi.setConfig({ testTimeout: 1000 });
+        `,
+        "a.test.ts": `
+          import { afterAll, test, vi } from "vitest";
+          test("above", ({ task }) => console.log("above:", task.timeout));
+          vi.setConfig({ testTimeout: 3000 });
+          test("below", ({ task }) => console.log("below:", task.timeout));
+          afterAll(() => vi.resetConfig());
+        `,
+      });
+      expect({ timeouts: timeoutsOfTests(stdout), exitCode }).toEqual({
+        timeouts: ["above: 1000", "below: 3000", "above: 1000", "below: 3000"],
+        exitCode: 0,
+      });
+    });
+
+    // https://github.com/oven-sh/bun/issues/43787
+    test.each(["vi.setConfig({ maxConcurrency: 5 });", "vi.resetConfig();"])(
+      "a preload's setDefaultTimeout() still lasts until the first test file is done, with %s after it",
+      async then => {
+        const { stdout, exitCode } = await run(["test", "--preload=./preload.ts", "./a.test.ts", "./b.test.ts"], {
+          "preload.ts": `import { setDefaultTimeout, vi } from "bun:test"; setDefaultTimeout(2000); ${then}`,
+          "a.test.ts": logsTimeout("a"),
+          "b.test.ts": logsTimeout("b"),
+        });
+        expect({ timeouts: timeoutsOfTests(stdout), exitCode }).toEqual({
+          timeouts: ["a: 2000", "b: 5000"],
+          exitCode: 0,
+        });
+      },
+    );
+
+    // 0 is no timeout, so then nothing ends the wait but the event loop running out of work.
+    test.each([
+      ["vi.setConfig({ testTimeout: 100 });", "timed out 100ms after its file's tests finished"],
+      ["setDefaultTimeout(50); vi.setConfig({ testTimeout: 100 });", "timed out 100ms after its file's tests finished"],
+      ["vi.setConfig({ testTimeout: 0 });", "An un-awaited matcher's promise never settled"],
+      ["vi.setConfig({ testTimeout: 100 }); setDefaultTimeout(0);", "An un-awaited matcher's promise never settled"],
+    ])("for a matcher that was called outside of a test and never settles: %s", async (setsTimeout, error) => {
+      const { stderr, exitCode } = await run(["test", "--timeout=250", "./a.test.ts"], {
+        "a.test.ts": `
+          import { expect, setDefaultTimeout, test, vi } from "bun:test";
+          ${setsTimeout}
+          expect(new Promise(() => {})).resolves.toBe("not awaited");
+          test("a", () => {});
+        `,
+      });
+      expect({ errors: stderr.split("\n").filter(line => line.startsWith("error: ")), exitCode }).toEqual({
+        errors: [expect.stringContaining(error)],
+        exitCode: 1,
+      });
+    });
+
+    describe("but not for the waits between test files, which only --timeout limits", () => {
+      test.each(["setDefaultTimeout(0);", "vi.setConfig({ hookTimeout: 5000 });"])(
+        "a test environment that doesn't finish closing, after %s",
+        async setsTimeout => {
+          const { stderr, exitCode } = await run(
+            ["test", "--environment=happy-dom", "--isolate", "--timeout=200", "./a.test.ts"],
+            {
+              "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+              "node_modules/happy-dom/index.js": `
+                exports.Window = class Window {
+                  document = {};
+                  happyDOM = { abort: () => new Promise(() => void setInterval(() => {}, 10)) };
+                  close() {}
+                };
+              `,
+              "a.test.ts": `
+                import { setDefaultTimeout, test, vi } from "bun:test";
+                ${setsTimeout}
+                test("a", () => {}, 5000);
+              `,
+            },
+          );
+          expect({ errors: stderr.split("\n").filter(line => line.startsWith("error: ")), exitCode }).toEqual({
+            errors: ["error: The test environment did not finish closing within 200ms"],
+            exitCode: 1,
+          });
+        },
+      );
+
+      test("a module that never finishes loading, after setDefaultTimeout(0)", async () => {
+        const { stderr, exitCode } = await run(
+          ["test", "--timeout=100", "--preload=./preload.js", "./a.test.js", "./b.test.js"],
+          {
+            "k.js": `export const x = "real";`,
+            "slow.js": `export const s = "slow";`,
+            "user.js": `import { x } from "./k.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
+            "preload.js": `
+              globalThis.asked = Promise.withResolvers();
+              let calls = 0;
+              Bun.plugin({
+                name: "does not answer the first time",
+                setup(build) {
+                  build.onLoad({ filter: /slow\\.js$/ }, () => {
+                    globalThis.asked.resolve();
+                    if (++calls === 1) return new Promise(() => {});
+                  });
+                },
+              });
+            `,
+            "a.test.js": `
+              import { setDefaultTimeout, test, vi } from "bun:test";
+              setDefaultTimeout(0);
+              test("leaves an import that never settles, and a timer", async () => {
+                vi.doMock("./k.js", () => ({ x: "mock" }));
+                await import("./k.js");
+                void import("./user.js");
+                await globalThis.asked.promise;
+                setInterval(() => {}, 10);
+              });
+            `,
+            "b.test.js": `
+              import { expect, test } from "bun:test";
+              import { seen } from "./user.js";
+              test("the next file loads the modules", () => expect(seen).toBe("real/slow"));
+            `,
+          },
+        );
+        expect({ results: results(stderr), exitCode }).toEqual({
+          results: [
+            "(pass) leaves an import that never settles, and a timer",
+            "(pass) the next file loads the modules",
+          ],
+          exitCode: 0,
+        });
+      });
     });
   });
 

@@ -76,7 +76,7 @@ test("wat", async () => {
 
 In `bun:test`, a timeout throws an uncatchable exception to force the test to stop running and fail. Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
 
-The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.
+The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`. `setDefaultTimeout()` and `vi.setConfig({ testTimeout })` set the same default as `jest.setTimeout()`. In a test file, the later call wins.
 
 ## Retries and Repeats
 

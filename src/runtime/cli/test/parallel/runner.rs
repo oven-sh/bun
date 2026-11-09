@@ -768,7 +768,7 @@ impl<'a> WorkerLoop<'a> {
             } else {
                 Global::mimalloc_cleanup(false);
             }
-            self.reporter.jest.default_timeout_override = u32::MAX;
+            crate::test_runner::vi_utils::restore_default_timeouts(&mut self.reporter.jest);
             self.cmds.emit_file_done(self.reporter, vm);
         }
     }

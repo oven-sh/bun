@@ -1042,21 +1042,10 @@ pub(crate) fn parse_arguments<'a>(
         return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
     }
 
-    let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match (runner.default_timeout_ms, cfg.kind) {
-        (0, _) => None,
-        // Vitest's default `hookTimeout`
-        (ms, FunctionKind::VitestHook) => Some(ms.max(10_000)),
-        (ms, _) => Some(ms),
-    });
-    let override_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
-        if runner.default_timeout_override != u32::MAX { Some(runner.default_timeout_override) } else { None }
-    });
-    let vi_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match cfg.kind {
-        FunctionKind::TestOrDescribe => runner.vi_config.test_timeout,
-        FunctionKind::Hook | FunctionKind::VitestHook => runner.vi_config.hook_timeout,
-    });
-    result.options.timeout =
-        result.options.inherited.timeout.or(vi_timeout_ms).or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);
+    result.options.timeout = match result.options.inherited.timeout {
+        Some(timeout) => timeout,
+        None => jest::Jest::runner().map_or(0, |runner| runner.default_timeout(cfg.kind)),
+    };
 
     Ok(result)
 }

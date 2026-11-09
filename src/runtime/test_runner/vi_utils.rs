@@ -2,7 +2,8 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use bun_options_types::context::RESETS_BEFORE_EACH_TEST;
 
-use super::jest::Jest;
+use super::jest::{Jest, TestRunner};
+use super::scope_functions::FunctionKind;
 use crate::generated_bindgen::vi_utils as generated;
 
 unsafe extern "C" {
@@ -30,14 +31,44 @@ const RESETS: [Reset; RESETS_BEFORE_EACH_TEST.len()] = [
 ];
 const CLEAR_MOCKS: usize = 2;
 
+/// What a test or a hook gets when it registers without a timeout of its own: in ms, 0 for none, `None` for `--timeout`.
+/// `setDefaultTimeout()` and `vi.setConfig()` both write it, so the later call wins.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Timeouts {
+    test: Option<u32>,
+    hook: Option<u32>,
+    /// What `setDefaultTimeout()` last set, which `vi.resetConfig()` goes back to.
+    set_default: Option<u32>,
+}
+
+impl Timeouts {
+    fn of_set_default(set_default: Option<u32>) -> Self {
+        Self { test: set_default, hook: set_default, set_default }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Config {
-    /// In ms, 0 for no timeout. Only applies to tests and hooks registered afterwards.
-    pub(crate) test_timeout: Option<u32>,
-    pub(crate) hook_timeout: Option<u32>,
+    timeouts: Timeouts,
     /// 0 for no limit.
     pub(crate) max_concurrency: Option<u32>,
     resets: [Option<bool>; RESETS.len()],
+}
+
+impl Config {
+    pub(crate) fn timeout(&self, kind: FunctionKind) -> Option<u32> {
+        match kind {
+            FunctionKind::TestOrDescribe => self.timeouts.test,
+            FunctionKind::Hook | FunctionKind::VitestHook => self.timeouts.hook,
+        }
+    }
+}
+
+/// `setDefaultTimeout()` and `jest.setTimeout()`. A preload's call lasts until the first test file is done:
+/// https://github.com/oven-sh/bun/issues/43787
+pub(crate) fn set_default_timeout(runner: &mut TestRunner<'_>, timeout_ms: u32) {
+    runner.vi_config.timeouts = Timeouts::of_set_default(Some(timeout_ms));
+    runner.timeouts_of_each_repeat = runner.vi_config.timeouts;
 }
 
 /// Reports a thrown error as uncaught, so only call this with no JS on the stack.
@@ -66,13 +97,14 @@ extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
     global.bun_vm().is_in_preload
 }
 
+/// Runs after each load of a test file, so once per `--rerun-each` repeat.
 /// If `next_load_shares_global` is false, `global` is thrown away and the preloads run again, so there's nothing to undo.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global: bool) {
     if let Some(runner) = Jest::runner() {
         if !next_load_shares_global {
             runner.vi_config_of_preload = Config::default();
         }
-        runner.vi_config = runner.vi_config_of_preload;
+        runner.vi_config = Config { timeouts: runner.timeouts_of_each_repeat, ..runner.vi_config_of_preload };
     }
     if !next_load_shares_global {
         return;
@@ -82,6 +114,12 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     run(global, ViUtils__unstubAllGlobals);
     run(global, ViUtils__stubWhatPreloadStubbed);
     ViUtils__forgetDynamicImports(global);
+}
+
+/// Runs after the last load of a test file.
+pub(crate) fn restore_default_timeouts(runner: &mut TestRunner<'_>) {
+    runner.timeouts_of_each_repeat = runner.vi_config_of_preload.timeouts;
+    runner.vi_config.timeouts = runner.timeouts_of_each_repeat;
 }
 
 /// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.
@@ -109,11 +147,12 @@ fn number_option(
 }
 
 /// Config set by a preload applies to every test file, like config set by a Vitest setup file.
-fn commit(global: &JSGlobalObject, config: Config) {
+fn apply(global: &JSGlobalObject, change: impl Fn(&mut Config)) {
     if let Some(runner) = Jest::runner() {
-        runner.vi_config = config;
+        change(&mut runner.vi_config);
         if global.bun_vm().is_in_preload {
-            runner.vi_config_of_preload = config;
+            change(&mut runner.vi_config_of_preload);
+            runner.timeouts_of_each_repeat = runner.vi_config.timeouts;
         }
     }
 }
@@ -132,19 +171,21 @@ pub(crate) fn set_config(cx: &mut JsScope<'_>, config: JsLocal<'_>) -> JsResult<
         *reset = config.get(global, name)?.map(JSValue::to_boolean);
     }
 
-    let mut merged = Jest::runner().map(|runner| runner.vi_config).unwrap_or_default();
-    merged.test_timeout = test_timeout.or(merged.test_timeout);
-    merged.hook_timeout = hook_timeout.or(merged.hook_timeout);
-    merged.max_concurrency = max_concurrency.or(merged.max_concurrency);
-    for (merged, reset) in merged.resets.iter_mut().zip(resets) {
-        *merged = reset.or(*merged);
-    }
-    commit(global, merged);
+    apply(global, |merged| {
+        merged.timeouts.test = test_timeout.or(merged.timeouts.test);
+        merged.timeouts.hook = hook_timeout.or(merged.timeouts.hook);
+        merged.max_concurrency = max_concurrency.or(merged.max_concurrency);
+        for (merged, reset) in merged.resets.iter_mut().zip(resets) {
+            *merged = reset.or(*merged);
+        }
+    });
     Ok(())
 }
 
 pub(crate) fn reset_config(cx: &mut JsScope<'_>) {
-    commit(cx.global(), Config::default());
+    apply(cx.global(), |config| {
+        *config = Config { timeouts: Timeouts::of_set_default(config.timeouts.set_default), ..Config::default() };
+    });
 }
 
 const FNS: &[(&str, u32, JSHostFn)] = &[

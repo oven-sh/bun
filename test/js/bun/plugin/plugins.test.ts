@@ -5136,7 +5136,7 @@ describe.concurrent("AsyncLocalStorage in what an import() loads", () => {
     `,
     "starts-worker.mjs": `
       const worker = new Worker(new URL("./host-entry.mjs", import.meta.url).href, {
-        preload: [new URL("./enters.preload.mjs", import.meta.url).pathname],
+        preload: [new URL("./enters.preload.mjs", import.meta.url).href],
       });
       await new Promise(resolve => worker.addEventListener("close", resolve));
     `,

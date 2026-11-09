@@ -1028,7 +1028,7 @@ impl FakeTimers {
         }
     }
 
-    /// Whether each fake is on its global. A test file takes one off when it undoes or replaces what is there. Runs no JS.
+    /// Whether each fake is on its global, over what it replaced. A test file can undo or replace either. Runs no JS.
     fn is_whole(global: &JSGlobalObject) -> bool {
         let mut index = 0;
         loop {
@@ -1043,6 +1043,10 @@ impl FakeTimers {
             // The builtin `now` is its own fake, so the clock put nothing on that property.
             if fake == original {
                 continue;
+            }
+            // A spy under the fake is restored: the fake is still on its global only when a spy over it went last.
+            if JSMock__isRestoredSpy(original) {
+                return false;
             }
             let owner = api.owner(global);
             let name = bun_core::String::static_(api.property());

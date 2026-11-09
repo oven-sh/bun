@@ -257,8 +257,8 @@ declare module "bun:test" {
      * moves it. A reference saved before this call, such as `const savedSetTimeout = setTimeout`, stays real.
      *
      * The real timers are restored when the test file ends, unless a preload made this call at its top level. Fake
-     * timers from a `beforeAll()` or `aroundAll()` of a preload that runs once for all test files stay on too, while
-     * each faked global still holds its fake function at the end of a test file.
+     * timers from a `beforeAll()` or `aroundAll()` of a preload that runs once for all test files stay on too, as
+     * long as each fake function is still in place at the end of each test file.
      */
     function useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof jest;
     /**
@@ -519,8 +519,8 @@ declare module "bun:test" {
      * moves it. A reference saved before this call, such as `const savedSetTimeout = setTimeout`, stays real.
      *
      * The real timers are restored when the test file ends, unless a preload made this call at its top level. Fake
-     * timers from a `beforeAll()` or `aroundAll()` of a preload that runs once for all test files stay on too, while
-     * each faked global still holds its fake function at the end of a test file.
+     * timers from a `beforeAll()` or `aroundAll()` of a preload that runs once for all test files stay on too, as
+     * long as each fake function is still in place at the end of each test file.
      */
     useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof vi;
     /**

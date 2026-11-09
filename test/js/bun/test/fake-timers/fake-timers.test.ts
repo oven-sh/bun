@@ -2358,6 +2358,31 @@ describe.concurrent("the end of a test file", () => {
       });
     });
 
+    // The fake is on its global again when the spy over it is restored last, but what the fake replaced is gone.
+    // Spies that a file leaves are restored in no fixed order.
+    test.each([
+      [
+        "restores the spy over the fake last",
+        `const over = spyOn(globalThis, "setTimeout");
+        under.mockRestore();
+        over.mockRestore();`,
+      ],
+      ["leaves a spy under the fake and a spy over it", `spyOn(globalThis, "setTimeout");`],
+    ])("fake timers from beforeAll() end with a first file that %s, as before", async (_, inA) => {
+      const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
+        files: {
+          "a.test.ts": `
+            import { spyOn, test } from "bun:test";
+            const under = spyOn(globalThis, "setTimeout");
+            test("a", () => {
+              ${inA}
+            });
+          `,
+        },
+      });
+      expect({ seen, exitCode }, stderr).toEqual({ seen: inEach(["b", "c"], "real now"), exitCode: 0 });
+    });
+
     // The check runs at the end of every file: a later file can also put back a function from before the fakes.
     test.each([
       ["leaves a function over a fake", `globalThis.setTimeout = function assigned() {};`, "assigned"],

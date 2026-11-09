@@ -482,9 +482,9 @@ public:
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
     // isOpaqueProperty() was true at install time, so restore the same way.
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
-    // Another spy, a stub or a fake timer replaced this spy on its property, and has the spy as what that one replaced: see cover().
+    // Another spy, a stub or a fake timer has this spy as what it replaced: see cover().
     static constexpr unsigned SpyAttributeKept = 1 << 27;
-    // The spy is restored, and is kept: it still says where it was and what it had replaced, until the end of the test file.
+    // A kept spy after its restore. It keeps its target, key and original until the test file ends.
     static constexpr unsigned SpyAttributeRestored = 1 << 26;
     // m_spyOriginal is an InternalFieldTuple: what the spy replaced, and the link to the stub that had put it there.
     static constexpr unsigned SpyAttributeOverStub = 1 << 25;
@@ -909,7 +909,7 @@ public:
     }
     void didReplaceSpy() { m_spyAttributes |= SpyAttributeOverSpy; }
     bool isRestored() const { return m_spyAttributes & SpyAttributeRestored; }
-    // Its restore puts back what it replaced only where the accessor still has it. The restore of another spy writes over what is there.
+    // The restore of such a spy writes only if the accessor still has the spy. The restore of another spy always writes.
     bool restoresOnlyItsAccessor() const { return m_spyAttributes & SpyAttributeAccessor; }
     InternalFieldTuple* stubLink() const
     {
@@ -1279,7 +1279,7 @@ static SlotContent contentOfDescriptor(JSGlobalObject* globalObject, const Prope
     return { storage, descriptor.attributes() & descriptorAttributes };
 }
 
-// False if the property cannot have a spy. A spy is an InternalFunction. On an accessor it is a half, or what a bound getter returns, and a bound function is a host function.
+// False if `descriptor` cannot have a spy: see spiesIn().
 static bool mayHaveSpy(const PropertyDescriptor& descriptor)
 {
     auto isMock = [](JSValue value) { return value.isCell() && value.asCell()->type() == InternalFunctionType; };
@@ -1324,8 +1324,7 @@ static InternalFieldTuple* stubOf(Zig::GlobalObject* globalObject, const Identif
     return dynamicDowncast<InternalFieldTuple>(entry);
 }
 
-// A spy or a fake timer that replaces what a stub put keeps this link: the map that vi.unstubAllGlobals() drops, and the entry of the stub.
-// The stub is gone once that map is. If a later stub of the name puts the same value, that value is what a live stub put again.
+// True if the stub of `link` is removed, and no later stub of `key` put `value` again.
 static bool isGone(Zig::GlobalObject* globalObject, const Identifier& key, InternalFieldTuple* link, JSValue value)
 {
     if (globalObject->mockModule.stubbedGlobals.get() == link->getInternalField(0))
@@ -1334,9 +1333,7 @@ static bool isGone(Zig::GlobalObject* globalObject, const Identifier& key, Inter
     return !entry || entry->getInternalField(1) != value;
 }
 
-// A spy, a stub or a fake timer on `target[key]` has `content` as what it replaced, and is about to put it back. `link` is set if a stub had put `content` there.
-// Returns what the property has without that one: each spy in `content` that was restored since is undone as its own restore undoes it,
-// and what a stub put is what that stub had replaced once the stub is gone. `link` is then that of what this returns. Runs no script.
+// What to put back for `content`, which a stub put if `link` is set: what the restored spies in it and a removed stub had replaced.
 static SlotContent whatStandsFor(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, SlotContent content, InternalFieldTuple*& link)
 {
     // Goes from each spy to what it replaced. That was on the property before the spy was made, so this ends.
@@ -1361,8 +1358,7 @@ static SlotContent whatStandsFor(Zig::GlobalObject* globalObject, JSObject* targ
     }
 }
 
-// A spy, a stub or a fake timer is about to replace `content` on `target[key]`, and has it as what that one replaced.
-// Each spy in `content` then has to say what it replaced after its own restore too. Returns the link to keep if `content` is what a stub put.
+// Something is about to replace `content` on `target[key]`. Keeps the spies in it, and returns a link if a live stub put it.
 static InternalFieldTuple* cover(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, SlotContent content, bool& hasSpy)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1377,6 +1373,7 @@ static InternalFieldTuple* cover(Zig::GlobalObject* globalObject, JSObject* targ
     auto* entry = stubOf(globalObject, key);
     if (!entry || entry->getInternalField(1) != content.storage)
         return nullptr;
+    // The map that vi.unstubAllGlobals() drops, then the entry of the stub.
     auto* link = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
     link->putInternalField(vm, 0, globalObject->mockModule.stubbedGlobals.get());
     link->putInternalField(vm, 1, entry);
@@ -1420,12 +1417,9 @@ bool putBackForStub(Zig::GlobalObject* globalObject, const Identifier& key, cons
     return true;
 }
 
-// What useFakeTimers(), useRealTimers() and the end of a test file call for the fake timers.
-
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__originalOf(JSC::EncodedJSValue originals, JSC::EncodedJSValue value);
 
-// Beside the value that a fake timer function replaces, the fake timers keep an entry if a spy or a stub can take that value off the property while the clock is on.
-// The entry is that spy, or a tuple: what the property had, and either the attributes of that or the link to the stub that had put it there.
+// An entry is the spy that a fake timer function replaced, or a tuple: what the property had, then its attributes or the link to its stub.
 struct EntryOfFake {
     SlotContent content;
     InternalFieldTuple* link { nullptr };
@@ -1447,8 +1441,7 @@ struct EntryOfFake {
     }
 };
 
-// What an uninstalled fake timer function stands for: what it replaced. That can be another one, which a spy or a stub put back later.
-// An uninstalled fake is on `target[key]`, where a spy or a stub put it back after useRealTimers(). Puts what it stands for in its place.
+// A spy or a stub put an uninstalled fake back on `target[key]` after useRealTimers(). Puts what that fake replaced in its place.
 static void takeOffUninstalledFake(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, JSC::EncodedJSValue originals, JSValue entryOfFake)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1470,8 +1463,7 @@ static void takeOffUninstalledFake(Zig::GlobalObject* globalObject, JSObject* ta
     }
 }
 
-// useFakeTimers() is about to replace `owner[name]` with a fake timer function. Returns the value that the fake replaces, as script reads it.
-// `entry` is set if a spy or a stub can take that value off the property while the clock is on: see EntryOfFake.
+// Returns what script reads on `owner[name]`, for a fake to replace. Sets `entry` if a spy or a stub can undo that value: see EntryOfFake.
 extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue originals, JSC::EncodedJSValue* entry)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1492,7 +1484,7 @@ extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObje
         RETURN_IF_EXCEPTION(scope, {});
         JSValue ofFake = isSecondRead ? JSValue() : JSValue::decode(Bun__FakeTimers__originalOf(originals, JSValue::encode(content.storage)));
         if (ofFake) [[unlikely]] {
-            // A spy or a stub put an uninstalled fake back after useRealTimers(). What that fake stands for is read in its place.
+            // A spy or a stub put an uninstalled fake back. What that fake replaced is read in its place.
             takeOffUninstalledFake(globalObject, target, key, originals, ofFake);
             continue;
         }
@@ -1520,8 +1512,7 @@ extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObje
     }
 }
 
-// Puts back what a fake timer function with this entry replaced on `owner[name]`: for useRealTimers(), or at the end of a test file for an uninstalled one
-// that is still there (`isUninstalled`). Runs no script.
+// For useRealTimers(), and for an uninstalled fake that is still on `owner[name]` when a test file ends (`isUninstalled`).
 extern "C" void JSMock__putBackForFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue originals, JSC::EncodedJSValue entryOfFake, bool isUninstalled)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1536,7 +1527,7 @@ extern "C" void JSMock__putBackForFake(Zig::GlobalObject* globalObject, JSC::Enc
     scope.assertNoException();
 }
 
-// The end of a test file has undone its spies, its stubs and its fake timers. Nothing has a restored spy of that file as what it replaced any more.
+// A test file ended, and its spies, stubs and fake timers are undone: nothing has a restored spy of that file as what it replaced.
 extern "C" void JSMock__didUndoTestFile(Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));

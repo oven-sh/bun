@@ -25,11 +25,11 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
-// What vi.stubGlobal() and vi.unstubAllGlobals() call.
+// The bit of `name` in JSMockModule::namesOfStubbedGlobals.
 inline uint64_t bitOfStubbedGlobal(const JSC::Identifier& name) { return 1ull << (name.impl()->existingSymbolAwareHash() & 63); }
-// The first stub of the global `name` is about to replace `descriptor`. A spy in it then has to say what it replaced after its own restore too.
+// The first vi.stubGlobal() of `name` is about to replace `descriptor`.
 void willReplaceForStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor& descriptor);
-// vi.unstubAllGlobals() is about to put `descriptor` back on the global `name`. True if a spy in it was restored since, and what the global has without that spy is there now.
+// For vi.unstubAllGlobals(). True if `descriptor` has a restored spy, and this put back what that spy had replaced.
 bool putBackForStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor& descriptor);
 
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
@@ -60,7 +60,7 @@ public:
 
     // Weak sets (ActiveSpySet), created on first use.
     JSC::WriteBarrier<JSC::Unknown> activeSpies;
-    // Spies that another spy, a stub or a fake timer replaced on their property. They say what they replaced after their restore too, until the end of the test file.
+    // Spies that another spy, a stub or a fake timer replaced. They keep what they replaced after their restore, until the test file ends.
     JSC::WriteBarrier<JSC::Unknown> keptSpies;
     // Mocks that were called, or had `.mock` read, since they were last cleared.
     JSC::WriteBarrier<JSC::Unknown> calledMocks;
@@ -68,9 +68,8 @@ public:
     JSC::WriteBarrier<JSC::Unknown> configuredMocks;
 
     // JSMaps from name to original value for `vi.stubEnv()` / `vi.stubGlobal()`, created on first use.
-    // For a global, the value is an InternalFieldTuple: the property descriptor from before the first stub of the name, as an object,
-    // or undefined if the global did not exist. Then the value that the last stub of the name put.
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
+    // Each value is an InternalFieldTuple: the descriptor object from before the first stub (undefined if absent), then the value of the last stub.
     JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
     // One bit for each name in stubbedGlobals: see bitOfStubbedGlobal(). A name whose bit is not set is not stubbed.
     uint64_t namesOfStubbedGlobals { 0 };

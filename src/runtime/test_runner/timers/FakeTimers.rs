@@ -20,9 +20,7 @@ unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
     safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
-    // A spy or a `vi.stubGlobal()` value that a fake replaces can be undone while the clock is on. See `FakeTimers::retractable`.
-    /// The value that a fake for `owner[name]` replaces: what script reads there, or what an uninstalled fake that is there stands for.
-    /// Sets `entry` if a spy or a stub can take that value off the property while the clock is on. Empty if a getter threw.
+    /// The value that a fake for `owner[name]` replaces. Sets `entry` if a spy or a stub can undo that value while the clock is on.
     safe fn JSMock__readForFake(
         global: &JSGlobalObject,
         owner: JSValue,
@@ -30,7 +28,7 @@ unsafe extern "C" {
         originals: JSValue,
         entry: &mut JSValue,
     ) -> JSValue;
-    /// Puts back what the fake with this entry replaced, or what it stands for if `is_uninstalled`. Runs no JS.
+    /// Puts back what the fake with this `entry` replaced. Runs no JS.
     safe fn JSMock__putBackForFake(
         global: &JSGlobalObject,
         owner: JSValue,
@@ -509,8 +507,7 @@ pub(crate) struct FakeTimers {
     date_now_offset: f64,
     loop_limit: u32,
     replaced: Vec<Replaced>,
-    /// For each function in `replaced` whose original a test can take off the property while the clock is on (a spy, or what
-    /// `vi.stubGlobal()` put there): what `JSMock__readForFake` gave for it. Empty unless there was a spy or a stub at `useFakeTimers()`.
+    /// The `entry` of `JSMock__readForFake` for each function in `replaced` that has one: its original was a spy or a `vi.stubGlobal()` value.
     retractable: Vec<(Api, Strong)>,
     /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced, or to its entry in `retractable`.
     originals: StrongOptional,
@@ -982,8 +979,7 @@ impl FakeTimers {
         originals
     }
 
-    /// Each `original` is the value `uninstall(Restore::Always)` will leave on the global, never another fake, unless the function has an
-    /// entry in the second list: then `uninstall` leaves what that entry stands for.
+    /// Each `original` is the value `uninstall(Restore::Always)` will leave on the global, never another fake, unless `retractable` (the second list) has an entry for it.
     fn fakes(
         global: &JSGlobalObject,
         faked: ApiSet,

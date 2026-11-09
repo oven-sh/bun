@@ -20,9 +20,7 @@ JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::J
  * the property not existing and the property being undefined.
  */
 JSC::JSValue getIfPropertyExistsPrototypePollutionMitigationUnsafe(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
-/**
- * The lookup of the two functions above, for a caller that also needs the slot.
- */
+// The lookup of the two functions above, for a caller that also needs the slot.
 bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::PropertySlot& slot);
 
 ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name)

@@ -310,6 +310,13 @@ pub fn is_marked_as_commonjs(mark: &[u8]) -> bool {
     false
 }
 
+/// The bytes of the mark, without its line break, where its line says nothing else. `None` for `// @bun @bun-cjs`, and for a comment that only begins like the mark.
+pub fn find_transpiled_mark_alone(text: &[u8]) -> Option<Range<usize>> {
+    let line = find_transpiled_mark(text)?;
+    let end = line.start + TRANSPILED_MARK.len();
+    matches!(&text[end..line.end], b"" | b"\n" | b"\r\n").then_some(line.start..end)
+}
+
 pub fn is_moved_to_file_start(hir: &File, statement: StmtId) -> bool {
     let can_move = match hir[statement].kind {
         StmtKind::Class(class) => can_move_class(hir, class),

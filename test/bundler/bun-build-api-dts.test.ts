@@ -178,4 +178,111 @@ export { join };
       "dts cannot be used with compile",
     );
   });
+
+  // A bundle for Bun starts with the line `// @bun`: Bun then runs the file as it is written, as an ES module.
+  // An .aot.ts file is TypeScript, which Bun has to transpile.
+  describe("the .aot.ts file of a bundle that starts with // @bun", () => {
+    const build = async (root: string, options: Partial<Bun.BuildConfig>) => {
+      const built = await Bun.build({
+        entrypoints: [join(root, "src/index.ts")],
+        outdir: join(root, "out"),
+        tsconfig: join(root, "tsconfig.json"),
+        target: "bun",
+        dts: true,
+        ...options,
+      });
+      expect(built.logs).toEqual([]);
+      return built.outputs;
+    };
+    const lines = async (outputs: Bun.BuildArtifact[], name: string) =>
+      (await outputs.find(output => output.path.endsWith(name))!.text()).split("\n");
+    const greeting = async (root: string) => {
+      const { greet } = await import(join(root, "out/index.aot.ts"));
+      return greet({ name: "you", times: 1 });
+    };
+    const code = (lines: string[], loader: "ts" | "js") =>
+      new Bun.Transpiler({ loader, target: "bun" })
+        .transformSync(lines.join("\n"))
+        .replace(/\/\/.*$/gm, "")
+        .replace(/\s+/g, "");
+
+    test("has an empty line in place of that line, and Bun runs it", async () => {
+      using dir = tempDir("build-api-dts-target-bun", project);
+      const root = String(dir);
+      const outputs = await build(root, {});
+      const [javascript, typed] = [await lines(outputs, "index.js"), await lines(outputs, "index.aot.ts")];
+      expect(javascript[0]).toBe("// @bun");
+      expect(typed.slice(0, 2)).toEqual(["", javascript[1]]);
+      expect(code(typed, "ts")).toBe(code(javascript, "js"));
+      expect(await greeting(root)).toBe("hello you");
+    });
+
+    test("without outdir: has the empty line in outputs too", async () => {
+      using dir = tempDir("build-api-dts-target-bun-memory", project);
+      const outputs = await build(String(dir), { outdir: undefined });
+      const [javascript, typed] = [await lines(outputs, "index.js"), await lines(outputs, "index.aot.ts")];
+      expect(javascript[0]).toBe("// @bun");
+      expect(typed.slice(0, 2)).toEqual(["", javascript[1]]);
+    });
+
+    test("splitting: the .aot.ts file of a chunk has the empty line too", async () => {
+      using dir = tempDir("build-api-dts-target-bun-chunks", {
+        ...project,
+        "src/other.ts": `import { join } from "./join";\nexport const other: string = join("an", "other");\n`,
+      });
+      const root = String(dir);
+      const entrypoints = [join(root, "src/index.ts"), join(root, "src/other.ts")];
+      const outputs = await build(root, { entrypoints, splitting: true });
+      const texts = (extension: string) =>
+        Promise.all(outputs.filter(output => output.path.endsWith(extension)).map(output => output.text()));
+      expect((await texts(".js")).map(text => text.startsWith("// @bun\n"))).toEqual([true, true, true]);
+      expect((await texts(".aot.ts")).map(text => text.startsWith("\n") && !text.includes("// @bun"))).toEqual([
+        true,
+        true,
+        true,
+      ]);
+      expect(await greeting(root)).toBe("hello you");
+    });
+
+    test("a banner that begins like the line stays on the line below", async () => {
+      using dir = tempDir("build-api-dts-banner", project);
+      const root = String(dir);
+      const outputs = await build(root, { banner: "// @bundled by acme" });
+      expect((await lines(outputs, "index.js")).slice(0, 2)).toEqual(["// @bun", "// @bundled by acme"]);
+      expect((await lines(outputs, "index.aot.ts")).slice(0, 2)).toEqual(["", "// @bundled by acme"]);
+      expect(await greeting(root)).toBe("hello you");
+    });
+
+    test("an entry point that is a module without an export: ends with export {}, and is an ES module as the bundle is", async () => {
+      using dir = tempDir("build-api-dts-module-entry", {
+        ...project,
+        "package.json": JSON.stringify({ name: "greeter", type: "commonjs" }),
+        "src/cli.ts": `#!/usr/bin/env bun\nimport { join } from "./join";\njoin("greeter", "cli");\n`,
+      });
+      const root = String(dir);
+      const outputs = await build(root, { entrypoints: [join(root, "src/cli.ts")] });
+      const [javascript, typed] = [await lines(outputs, "cli.js"), await lines(outputs, "cli.aot.ts")];
+      expect(javascript.slice(0, 2)).toEqual(["#!/usr/bin/env bun", "// @bun"]);
+      expect(typed.slice(0, 2)).toEqual(["#!/usr/bin/env bun", ""]);
+      expect(typed.slice(-2)).toEqual(["export {};", ""]);
+      // What Bun takes for CommonJS has one export, "default": its module.exports.
+      for (const name of ["cli.js", "cli.aot.ts"])
+        expect(Object.keys(await import(join(root, "out", name)))).toEqual([]);
+    });
+
+    test("an entry point that is a script, and one with an export: nothing is added", async () => {
+      using dir = tempDir("build-api-dts-script-entry", {
+        ...project,
+        // In a script this adds to the interface of `window`. In a module it would declare another interface.
+        "src/polyfill.ts": `interface Window {\n  greeter: string;\n}\nwindow.greeter = "hello";\n`,
+      });
+      const root = String(dir);
+      const outputs = await build(root, { entrypoints: [join(root, "src/polyfill.ts"), join(root, "src/index.ts")] });
+      for (const name of ["polyfill", "index"]) {
+        const [javascript, typed] = [await lines(outputs, name + ".js"), await lines(outputs, name + ".aot.ts")];
+        expect(typed[0]).toBe("");
+        expect(typed.at(-2)).toBe(javascript.at(-2));
+      }
+    });
+  });
 });

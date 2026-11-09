@@ -1355,7 +1355,12 @@ impl Insertions {
         }
     }
 
-    fn apply(mut self, javascript: &[u8]) -> Vec<u8> {
+    fn apply(self, javascript: &[u8]) -> Vec<u8> {
+        self.apply_without(javascript, 0..0)
+    }
+
+    /// `apply`, without the bytes of `cut`. What would go in front of the end of `cut` goes behind it.
+    fn apply_without(mut self, javascript: &[u8], cut: std::ops::Range<usize>) -> Vec<u8> {
         self.list.shared_sort_by_key(|a| (a.0, a.1, a.2));
         let mut text = Vec::with_capacity(javascript.len() * 2);
         let append = |text: &mut Vec<u8>, bytes: &[u8]| {
@@ -1368,11 +1373,13 @@ impl Insertions {
             }
             text.extend_from_slice(bytes);
         };
-        let mut at = 0;
+        append(&mut text, &javascript[..cut.start]);
+        let mut at = cut.end;
         for (offset, _, _, inserted) in &self.list {
-            append(&mut text, &javascript[at..*offset as usize]);
+            let offset = (*offset as usize).max(at);
+            append(&mut text, &javascript[at..offset]);
             append(&mut text, inserted);
-            at = *offset as usize;
+            at = offset;
         }
         append(&mut text, &javascript[at..]);
         text
@@ -1946,6 +1953,7 @@ struct Linked {
     modules_of_untyped_values: Vec<Vec<u8>>,
     emitted_enums: FxHashMap<(u32, u32), Vec<u8>>,
     enum_names: FxHashMap<(u32, u32), Vec<u8>>,
+    is_entry_module: bool,
 }
 
 fn link(
@@ -2170,7 +2178,10 @@ fn link(
     let mut names: Vec<FxHashMap<&[u8], Vec<u8>>> = vec![FxHashMap::default(); written.len()];
     let mut values: Vec<FxHashMap<&[u8], &[u8]>> = vec![FxHashMap::default(); written.len()];
     let mut imports: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
-    let mut linked = Linked::default();
+    let mut linked = Linked {
+        is_entry_module: entry.is_some_and(|types| types.is_module),
+        ..Linked::default()
+    };
     let mut ambient_values: Vec<(usize, Vec<Piece>)> = Vec::new();
     let unique = |name: &[u8], taken: &mut FxHashSet<Vec<u8>>| {
         let mut candidate = name.to_vec();
@@ -3990,11 +4001,26 @@ impl<'a> Transfer<'_, 'a, '_> {
             self.insertions
                 .add(first.start, Order::Line, std::mem::take(&mut self.hoisted));
         }
-        let mut text = self.insertions.apply(javascript);
+        // `// @bun` in front of a bundle says that its text runs as it is written, as an ES module. The typed file is TypeScript:
+        // it goes without those bytes. Where the entry point is a module, `export {}` says so if no export of the bundle does.
+        let mark = find_transpiled_mark_alone(javascript);
+        let mut text = self
+            .insertions
+            .apply_without(javascript, mark.clone().unwrap_or_default());
         if !self.hoisted.is_empty() && !text.is_empty() && !text.ends_with(b"\n") {
             return Err(TypedFilesError::NoFinalLineBreak);
         }
         text.extend_from_slice(&self.hoisted);
+        let has_export = || {
+            let mut statements = output_file.ids(output_file.body);
+            statements.any(|statement| output_file.is_export_declaration(statement))
+        };
+        if mark.is_some() && self.linked.is_entry_module && !has_export() {
+            if !text.ends_with(b"\n") {
+                text.push(b'\n');
+            }
+            text.extend_from_slice(b"export {};\n");
+        }
         let has_default_export = output.has_default_export();
         Ok(TypedText {
             text,
@@ -4115,6 +4141,8 @@ pub enum Target {
 pub struct ModuleTypes {
     pub path: Box<[u8]>,
     pub text: Box<[u8]>,
+    /// `Module::is_module`: the declarations at its top level are its own.
+    pub is_module: bool,
     pub references: Vec<(u32, Target)>,
     pub enum_objects: Vec<u32>,
     pub exports: Vec<(Box<[u8]>, Target)>,
@@ -4253,6 +4281,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
     }
     .type_ranges();
     let path = paths[file.idx()].clone()?;
+    let is_module = checker.p.files.module(file).is_module();
     Some(checker.with_services(file, None, |services| {
         let mut references = Vec::new();
         let mut globals = Vec::new();
@@ -4448,6 +4477,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
         ModuleTypes {
             path,
             text: hir.text[..].into(),
+            is_module,
             references,
             enum_objects,
             exports,

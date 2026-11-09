@@ -128,6 +128,40 @@ function expression). The bundler's renamer then numbers the new symbols like
 the locals of any other function. `Host::new_generated` is for a name declared
 at module level, such as an outlined `_temp`.
 
+What is outlined from a function that is nested in another one can read that
+function's variables: `Host::is_module_level` is true for every binding outside
+the compiled function. So the parser declares it where the nested function can
+reach it and where it can reach those variables:
+
+- At the end of the statement list that holds the nested function. In a block
+  it is a `let`, like the block's own function declarations. A label, the head
+  of a `for` that declares nothing and a `switch` with no `let` count as the
+  list around them. When that list is the module's, it goes to the end of the
+  module like what is outlined from a top-level function: only a part can
+  declare a name of the module.
+- In the nested function's own body when it stands in a head that declares a
+  name: a parameter list, a `catch` binding, a `for` that declares, the test of
+  a `case` in a `switch` that declares, the initializer of an enum member. Also
+  in a block of a file that has the word `eval`: beside a direct `eval` a block
+  keeps a function declaration as written, which is a `var` too where the code
+  is not strict, and a `let` in a `case` is not set when another `case` calls
+  the function. A direct `eval` marks its scope only when it is visited, so
+  the parser looks for the word in the text of the file: a comment that has it
+  counts, a longer name such as `evaluate` does not. Also when it is an async
+  or generator function declaration in a block, which a block always keeps. It
+  is then a new function at each call.
+  With no renamer, no local of the compiled function takes a name that a scope
+  around it declares.
+
+The parser lists the name in the scope of that declaration, and the renamer
+numbers it there. The `--aot` loader places these functions itself (`Places` in
+`src/aot/load/react_compiler/writer.rs`), and not always in the same place:
+what is outlined from the test of a `case` goes in front of the statements of
+that `case`. Upstream puts the outlined function after a nested function
+declaration. For a nested arrow function or function expression it puts it at
+the end of the program, where it throws if it reads a variable of an enclosing
+function (facebook/react#34901).
+
 ### The compiler as a linter
 
 `bun lint` has the validations as rules (`react/refs`, `react-hooks/refs`, ...). `lint.rs` is upstream's

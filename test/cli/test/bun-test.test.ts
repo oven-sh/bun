@@ -2245,6 +2245,117 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // These print which components ask the compiler runtime for a cache when they are called. In a run with --aot the
+  // text of a function is its source, so `printCompiled` finds nothing there.
+  const countsCaches = {
+    "node_modules/react/compiler-runtime.js": `
+      export const c = size => {
+        globalThis.caches = (globalThis.caches ?? 0) + 1;
+        return Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+    `,
+  };
+  const printAsksForACache = `
+    console.log("compiled: " + Object.keys(all).filter(name => {
+      const before = globalThis.caches ?? 0;
+      all[name]({ depth: 1, item: "leaf" });
+      return (globalThis.caches ?? 0) > before;
+    }).join(" "));
+  `;
+
+  // The callback is moved out of the component. It was declared in `compare`: "ReferenceError: _temp is not defined".
+  test("a component that is nested in a function calls its callback", async () => {
+    const result = await compiled(
+      {
+        ...countsCaches,
+        "src/Rows.tsx": `
+          const prefix = "clicked ";
+          export function makeRow(colour: string) {
+            const Row = ({ depth }) => <li onClick={() => prefix + colour} title={() => prefix}>{depth}</li>,
+              compare = (a, b) => a.depth === b.depth;
+            return Row;
+          }
+          export function makeRowInABlock(colour: string) {
+            if (colour) {
+              const Row = ({ depth }) => <li onClick={() => prefix + "dark " + colour} title={() => prefix}>{depth}</li>,
+                compare = (a, b) => a.depth === b.depth;
+              return Row;
+            }
+          }
+        `,
+        "compiled.test.tsx": `
+          import { expect, test } from "bun:test";
+          import { makeRow, makeRowInABlock } from "./src/Rows";
+          test("which are compiled", () => {
+            const all = { Row: makeRow("red"), InABlock: makeRowInABlock("red") };
+            ${printAsksForACache}
+            const clicked = Object.values(all).map(Row => Row({ depth: 1 }).props).map(props => props.onClick() + props.title());
+            expect(clicked).toEqual(["clicked redclicked ", "clicked dark redclicked "]);
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("Row InABlock");
+    expect(result.exitCode).toBe(0);
+  });
+
+  // In a head that declares a name the callback is declared in the component itself, whose cache would be named `$`
+  // too. No renamer runs here, so the cache gets another name. The name that the last component gives itself has to
+  // stay: it renders itself by that name.
+  test("a component in a head calls a callback that reads a `$` around it", async () => {
+    const result = await compiled(
+      {
+        ...countsCaches,
+        "node_modules/react/index.js": `export const memo = component => component;`,
+        "src/Rows.tsx": `
+          import { memo } from "react";
+          const $ = "module";
+          export function besideAModuleVariable(k: string, Row = memo(({ depth }) => <li onClick={() => k + " " + $}>{depth}</li>)) {
+            return Row;
+          }
+          export function besideAParameter($: string, Row = memo(({ depth }) => <li onClick={() => "parameter " + $}>{depth}</li>)) {
+            return Row;
+          }
+          export function inAForHead($: string) {
+            for (let Row = memo(({ depth }) => <li onClick={() => "for " + $}>{depth}</li>); ; ) return Row;
+          }
+          export function rendersItself(Tree = memo(function Tree({ item }) {
+            const [name, ...items] = Array.isArray(item) ? item : [item];
+            if (!items.length) return <b name={name} />;
+            return <ul name={name}>{items.map((subItem, index) => <Tree key={index} item={subItem} />)}</ul>;
+          })) {
+            return Tree;
+          }
+        `,
+        "src/Global.tsx": `
+          import { memo } from "react";
+          export function besideAGlobal(Row = memo(({ depth }) => <li onClick={() => "global " + $}>{depth}</li>)) {
+            return Row;
+          }
+        `,
+        "compiled.test.tsx": `
+          import { expect, test } from "bun:test";
+          import { besideAGlobal } from "./src/Global";
+          import { besideAModuleVariable, besideAParameter, inAForHead, rendersItself } from "./src/Rows";
+          test("which are compiled", () => {
+            globalThis.$ = "jQuery";
+            const Tree = rendersItself();
+            const rows = { besideAModuleVariable: besideAModuleVariable("red"), besideAParameter: besideAParameter("red"), inAForHead: inAForHead("red"), besideAGlobal: besideAGlobal() };
+            const all = { ...rows, Tree };
+            ${printAsksForACache}
+            const clicked = Object.values(rows).map(Row => Row({ depth: 1 }).props.onClick());
+            expect(clicked).toEqual(["red module", "parameter red", "for red", "global jQuery"]);
+            expect(Tree({ item: ["root", "leaf"] }).props.children.map(child => child.type === Tree)).toEqual([true]);
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("besideAModuleVariable besideAParameter inAForHead besideAGlobal Tree");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a data: URL that is longer than a path can be is not compiled", async () => {
     const result = await compiled(
       {

@@ -13,6 +13,7 @@ use crate::parser::{
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
     VisitDeclOpts, is_eval_or_arguments,
 };
+use crate::react_compiler_host::OutlinedPlace;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
 use bun_ast::G::{Decl, PropertyKind};
@@ -1572,6 +1573,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `&mut`) so the pointer shares the local's base tag and survives the
             // direct `&mut before` reborrows in the loop below (Stacked Borrows).
             p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
+            let prev_list_scope =
+                core::mem::replace(&mut p.react_compiler_list_scope, p.current_scope);
+            let outlined_start = p.react_compiler_outlined_from_nested.len();
 
             let mut preprocessed_enum_i: usize = 0;
 
@@ -1613,8 +1617,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'list_getter &mut visited;
                 };
                 p.visit_and_append_stmt(list, stmt)?;
-                // Outlined functions can use variables from this scope, so they can't go at the end of the module.
-                visited.extend(p.react_compiler_outlined_from_nested.drain(..));
+            }
+            p.react_compiler_list_scope = prev_list_scope;
+            // Outlined functions can use variables from this scope: they go to the end of its list.
+            if p.react_compiler_outlined_from_nested.len() > outlined_start {
+                p.append_outlined_from_nested(outlined_start, &mut visited, &mut before);
             }
 
             // Transform block-level function declarations into variable declarations
@@ -1798,6 +1805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `Host::new_local` appends the locals of the compiled function here.
             let generated_len = p.current_scope().generated.len();
             let outlined_len = rc.outlined_len();
+            let outlined_place = p.react_compiler_place_of_outlined(&pending);
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
@@ -1808,19 +1816,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     name,
                 )
             };
-            if !pending.is_top_level {
-                p.react_compiler_outlined_from_nested
-                    .extend(rc.take_outlined_from(outlined_len));
-            }
-            p.react_compiler = Some(rc);
             if let Some((new_body, result)) = compiled {
                 stmts.clear();
                 stmts.extend(new_body);
+                if !matches!(outlined_place, OutlinedPlace::ModuleEnd)
+                    && rc.outlined_len() > outlined_len
+                {
+                    p.declare_outlined_from_nested(&mut rc, outlined_len, outlined_place, stmts);
+                }
                 p.react_compiler_result = Some(result);
                 p.drop_symbols_of_replaced_function(pending.own_name);
             } else {
                 p.current_scope_mut().generated.truncate(generated_len);
             }
+            p.react_compiler = Some(rc);
         }
 
         if !p.should_remove_dead_statements() || !p.options.features.dead_code_elimination {

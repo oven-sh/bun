@@ -8,6 +8,7 @@ use bun_ast as js_ast;
 use bun_collections::VecExt;
 
 use crate::JSXImport;
+use crate::lexer::is_identifier_continue;
 use crate::p::P;
 
 /// What [`P::enter_react_compiler_candidate`] decided about a function.
@@ -20,6 +21,20 @@ pub(crate) struct ReactCompilerCandidate {
     pub(crate) binding: Option<js_ast::Ref>,
     pub(crate) in_react_hoc: bool,
     pub(crate) is_top_level: bool,
+}
+
+/// Where what the compiler outlines from a function is declared ([`P::react_compiler_place_of_outlined`]).
+#[derive(Clone, Copy)]
+pub(crate) enum OutlinedPlace {
+    /// In the part that `bun_react_compiler::finish` makes, which declares each name at the top level of the module.
+    ModuleEnd,
+    /// At the end of the statement list of this scope.
+    List(js_ast::StoreRef<js_ast::Scope>),
+    /// In the body of the function itself, whose scope lists its locals from `first_local` on.
+    OwnBody {
+        first_local: usize,
+        own_name: Option<js_ast::Ref>,
+    },
 }
 
 pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
@@ -191,7 +206,189 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
+/// Whether `eval` stands in `source` as a name of its own. In `evaluate` and `retrieval` it is a part of a longer name.
+fn has_the_word_eval(source: &[u8]) -> bool {
+    use bun_core::lexer::{char_and_size, last_char};
+    let mut searched = 0;
+    while let Some(found) = bun_core::strings::index_of(&source[searched..], b"eval") {
+        let start = searched + found;
+        searched = start + b"eval".len();
+        // The character in front of the word is four bytes at most.
+        let (before, _) = last_char(&source[start.saturating_sub(4)..start]);
+        let (after, _) = char_and_size(source, searched);
+        if !is_identifier_continue(before) && !is_identifier_continue(after) {
+            return true;
+        }
+    }
+    false
+}
+
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+    /// `current_scope` is the body of the function being compiled, and its parent holds the arguments.
+    fn scope_around_compiled_function(&self) -> Option<js_ast::StoreRef<js_ast::Scope>> {
+        self.current_scope().parent.and_then(|args| args.parent)
+    }
+
+    /// Where what is outlined from the function being compiled is declared. src/react_compiler/DESIGN.md has the rule.
+    pub(crate) fn react_compiler_place_of_outlined(
+        &mut self,
+        pending: &bun_react_compiler::PendingCompile,
+    ) -> OutlinedPlace {
+        use js_ast::scope::Kind;
+        if pending.is_top_level {
+            return OutlinedPlace::ModuleEnd;
+        }
+        let mut around = self.scope_around_compiled_function();
+        let mut is_in_list = false;
+        while let Some(scope) = around {
+            is_in_list |= scope == self.react_compiler_list_scope;
+            if is_in_list {
+                // Only a part can declare a name of the module.
+                if scope == self.module_scope {
+                    return OutlinedPlace::ModuleEnd;
+                }
+                // A block around the statement of a label would take the label from a loop.
+                if scope.kind != Kind::Label {
+                    // A `case` can call a declaration that its block keeps, and skip the `let` of its callback.
+                    if !scope.kind_stops_hoisting()
+                        && (Self::is_kept_in_a_block(pending)
+                            || self.may_hold_a_direct_eval(&scope))
+                    {
+                        break;
+                    }
+                    return OutlinedPlace::List(scope);
+                }
+            } else if !matches!(scope.kind, Kind::Block | Kind::Label) || scope.members.count() > 0
+            {
+                break;
+            }
+            around = scope.parent;
+        }
+        OutlinedPlace::OwnBody {
+            first_local: self.current_scope().generated.len(),
+            own_name: pending.own_name,
+        }
+    }
+
+    /// Beside a direct `eval` a block keeps every function declaration. The `eval` marks its scope only once visited.
+    fn may_hold_a_direct_eval(&mut self, scope: &js_ast::Scope) -> bool {
+        if scope.contains_direct_eval {
+            return true;
+        }
+        if self.react_compiler_source_has_eval.is_none() {
+            let has_eval = has_the_word_eval(&self.source.contents);
+            self.react_compiler_source_has_eval = Some(has_eval);
+        }
+        self.react_compiler_source_has_eval == Some(true)
+    }
+
+    /// A block makes a `let` of a function declaration, but not of one that is async or a generator.
+    fn is_kept_in_a_block(pending: &bun_react_compiler::PendingCompile) -> bool {
+        use js_ast::flags::Function;
+        pending.own_name.is_some()
+            && pending.binding == pending.own_name
+            && (pending.flags.contains(Function::IsAsync)
+                || pending.flags.contains(Function::IsGenerator))
+    }
+
+    fn is_declared_around_compiled_function(&self, name: &[u8]) -> bool {
+        let mut around = self.scope_around_compiled_function();
+        while let Some(scope) = around {
+            if scope.members.get(name).is_some() {
+                return true;
+            }
+            around = scope.parent;
+        }
+        false
+    }
+
+    /// With no renamer, a local would hide a variable of the same name that a function outlined into this body reads.
+    fn rename_locals_named_like_a_variable_around(
+        &mut self,
+        first_local: usize,
+        own_name: Option<js_ast::Ref>,
+    ) {
+        if self.will_use_renamer() {
+            return;
+        }
+        let own_name = own_name.map(|own| self.load_name_from_ref(own));
+        for at in first_local..self.current_scope().generated.len() {
+            let local = self.current_scope().generated[at];
+            let name = self.load_name_from_ref(local);
+            // A read of the function's own name is a local that nothing declares: it keeps its spelling.
+            if own_name != Some(name) && self.is_declared_around_compiled_function(name) {
+                let renamed = self.temp_var_name(name);
+                self.symbols[local.inner_index() as usize].original_name =
+                    js_ast::StoreStr::new(renamed);
+            }
+        }
+    }
+
+    /// Declares in `place` what the nested function that was just compiled outlined. `body` is that function's own.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn declare_outlined_from_nested(
+        &mut self,
+        rc: &mut bun_react_compiler::ReactCompilerState,
+        outlined_len: usize,
+        place: OutlinedPlace,
+        body: &mut bun_alloc::ArenaVec<'a, js_ast::Stmt>,
+    ) {
+        let (is_in_list, mut declared_in) = match place {
+            OutlinedPlace::ModuleEnd => return,
+            OutlinedPlace::List(scope) => (true, scope),
+            OutlinedPlace::OwnBody {
+                first_local,
+                own_name,
+            } => {
+                self.rename_locals_named_like_a_variable_around(first_local, own_name);
+                (false, self.current_scope)
+            }
+        };
+        for stmt in rc.take_outlined_from(outlined_len) {
+            if let js_ast::StmtData::SFunction(function) = stmt.data
+                && let Some(name) = function.func.name
+            {
+                // The renamer numbers a name with the scope that lists it: take it out of the module scope.
+                let in_module_scope = &mut self.module_scope_mut().generated;
+                if let Some(at) = in_module_scope
+                    .iter()
+                    .rposition(|listed| *listed == name.ref_)
+                {
+                    in_module_scope.remove(at);
+                }
+                VecExt::append(&mut declared_in.generated, name.ref_);
+            }
+            if is_in_list {
+                self.react_compiler_outlined_from_nested.push(stmt);
+            } else {
+                body.push(stmt);
+            }
+        }
+    }
+
+    /// Moves what was outlined since `start` into the visited list. A block gets each as a `let`, through `before`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn append_outlined_from_nested(
+        &mut self,
+        start: usize,
+        visited: &mut bun_alloc::ArenaVec<'a, js_ast::Stmt>,
+        before: &mut bun_alloc::ArenaVec<'a, js_ast::Stmt>,
+    ) {
+        let scope = self.current_scope();
+        // The list around the label takes them.
+        if scope.kind == js_ast::scope::Kind::Label {
+            return;
+        }
+        let list = if scope.kind_stops_hoisting() {
+            visited
+        } else {
+            before
+        };
+        list.extend(self.react_compiler_outlined_from_nested.drain(start..));
+    }
+
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
         let mut body = self.current_scope;

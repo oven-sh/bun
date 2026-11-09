@@ -185,7 +185,6 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_trim",
- "bun_zstd",
  "hashbrown 0.15.5",
  "rustc-hash",
  "smallvec",

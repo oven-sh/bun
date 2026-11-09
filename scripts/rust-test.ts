@@ -56,7 +56,6 @@ const crates = [
   "bun_sema_standalone",
   "bun_shell_parser",
   "bun_sort_by_number",
-  "bun_sql_jsc",
   "bun_standalone_graph",
   "bun_threading",
   "bun_trim",
@@ -169,9 +168,6 @@ if (extraArgs.length) {
 // The crates of the list whose documentation has examples that run. `--no-run` builds none of them.
 const cratesWithExamples = ["bun_pod"];
 
-// It asks for a path below `/` that a test cannot create.
-const programArgs = ["--skip", "realpath_under_the_marked_root_stays_under_it"];
-
 // The test program of a crate of macros loads Rust's standard library when it starts.
 const libraryPath =
   { win32: "PATH", darwin: "DYLD_FALLBACK_LIBRARY_PATH" }[process.platform as string] ?? "LD_LIBRARY_PATH";
@@ -184,7 +180,7 @@ const libraryFolders = [
 /** As `cargo test` starts it: in the folder of its package, with the libraries of the toolchain in reach. */
 function startProgram(executable: string, manifestPath: string, target: string) {
   const cwd = dirname(manifestPath);
-  return start(`${relative(repo, cwd)} ${target}`, executable, programArgs, {
+  return start(`${relative(repo, cwd)} ${target}`, executable, [], {
     cwd,
     env: {
       ...env,

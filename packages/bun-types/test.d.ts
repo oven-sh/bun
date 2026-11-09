@@ -605,6 +605,8 @@ declare module "bun:test" {
     stubGlobal(name: string | symbol | number, value: unknown): typeof vi;
     /**
      * Restore every global changed by `vi.stubGlobal()` to the property descriptor it had before it was first stubbed.
+     * A spy that was on the global then, and that you restored since, doesn't come back: the global gets what that spy
+     * had replaced.
      */
     unstubAllGlobals(): typeof vi;
     /**

@@ -16,7 +16,7 @@ using namespace JSC;
 // see test cases in test-fs-rm.js where the `force` argument needs to throw
 // when it is `undefined`, but implementing that code makes cases where `force`
 // is omitted will make it think it is defined.
-static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     // This method only supports non-index PropertyNames.
     ASSERT(!parseIndex(propertyName));

@@ -38,6 +38,11 @@ static NEVER_INLINE bool hasOriginal(JSGlobalObject* globalObject, JSMap* origin
     return originals->has(globalObject, key);
 }
 
+static NEVER_INLINE JSValue originalOf(JSGlobalObject* globalObject, JSMap* originals, JSValue key)
+{
+    return originals->get(globalObject, key);
+}
+
 static NEVER_INLINE Identifier propertyKeyOf(JSGlobalObject* globalObject, JSValue value)
 {
     return value.toPropertyKey(globalObject);
@@ -84,6 +89,13 @@ static void didStub(Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& stub
         JSC__JSMap__set(ensureMap(getVM(globalObject), globalObject, stubsOfPreload), globalObject, JSValue::encode(key), JSValue::encode(stub));
 }
 
+// A spy is an InternalFunction, or a half of an accessor.
+static bool mayHaveSpy(const PropertyDescriptor& descriptor)
+{
+    return descriptor.isAccessorDescriptor() || (descriptor.value().isCell() && descriptor.value().asCell()->type() == InternalFunctionType);
+}
+
+// `original` is an entry of JSMockModule::stubbedGlobals.
 static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValue key, JSValue original)
 {
     auto& vm = getVM(globalObject);
@@ -91,8 +103,7 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
 
     auto name = propertyKeyOf(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
-    if (original.inherits<InternalFieldTuple>())
-        RELEASE_AND_RETURN(scope, removeStubbedGlobalFromLayers(defaultGlobalObject(globalObject), name, original));
+    original = uncheckedDowncast<InternalFieldTuple>(original)->getInternalField(0);
     if (original.isUndefined()) {
         scope.release();
         JSCell::deleteProperty(target, globalObject, name);
@@ -101,6 +112,12 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
     PropertyDescriptor descriptor;
     toPropertyDescriptor(globalObject, original, descriptor);
     RETURN_IF_EXCEPTION(scope, );
+    if (mayHaveSpy(descriptor)) {
+        bool isBack = putBackForStub(defaultGlobalObject(globalObject), name, descriptor);
+        RETURN_IF_EXCEPTION(scope, );
+        if (isBack)
+            return;
+    }
     scope.release();
     target->methodTable()->defineOwnProperty(target, globalObject, name, descriptor, true);
 }
@@ -108,6 +125,7 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
 static void unstubAllGlobals(Zig::GlobalObject* globalObject)
 {
     auto& stubbedGlobals = globalObject->mockModule.stubbedGlobals;
+    globalObject->mockModule.namesOfStubbedGlobals = 0;
     if (stubbedGlobals)
         restoreOriginals(globalObject, stubbedGlobals, globalObject->mockModule.globalsOfPreload, globalObject->globalThis(), restoreGlobal);
 }
@@ -123,35 +141,30 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
 
     JSObject* target = globalObject->globalThis();
     JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
-    bool isRemembered = hasOriginal(globalObject, originals, key);
+    // Undefined if the name is not stubbed: see JSMockModule::stubbedGlobals.
+    JSValue remembered = originalOf(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, );
-    // Only a spy or a fake timer can share the global with the stub.
-    bool mayShare = globalObject->mockModule.activeSpies || globalObject->mockModule.hasUsedFakeTimers;
-    if (isRemembered && mayShare) {
-        JSValue remembered = originals->get(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, );
-        if (remembered.inherits<InternalFieldTuple>()) {
-            isRemembered = !restubInLayers(globalObject, name, remembered, value);
-            RETURN_IF_EXCEPTION(scope, );
-        }
-    }
-    if (!isRemembered) {
-        JSValue original;
-        if (mayShare) {
-            original = layersOfStubbedGlobal(globalObject, name, value);
-            RETURN_IF_EXCEPTION(scope, );
-        }
+    if (auto* stubbed = dynamicDowncast<InternalFieldTuple>(remembered)) {
+        stubbed->putInternalField(vm, 1, value);
+    } else {
+        JSValue original = jsUndefined();
         PropertyDescriptor descriptor;
-        bool exists = !original && target->getOwnPropertyDescriptor(globalObject, name, descriptor);
+        bool exists = target->getOwnPropertyDescriptor(globalObject, name, descriptor);
         RETURN_IF_EXCEPTION(scope, );
         if (exists) {
             JSObject* object = constructObjectFromPropertyDescriptor(globalObject, descriptor);
             RETURN_IF_EXCEPTION(scope, );
             object->setPrototypeDirect(vm, jsNull());
             original = object;
+            if (mayHaveSpy(descriptor))
+                willReplaceForStub(globalObject, name, descriptor);
         }
-        JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original ? original : jsUndefined()));
+        auto* entry = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
+        entry->putInternalField(vm, 0, original);
+        entry->putInternalField(vm, 1, value);
+        JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(entry));
         RETURN_IF_EXCEPTION(scope, );
+        globalObject->mockModule.namesOfStubbedGlobals |= bitOfStubbedGlobal(name);
     }
 
     target->methodTable()->defineOwnProperty(target, globalObject, name, PropertyDescriptor(value, 0), true);

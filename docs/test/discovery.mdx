@@ -85,9 +85,12 @@ For this test, `bun test` matches the pattern against the string "Math operation
 
 - It finds no test file.
 - The [filters](#position-arguments-as-filters) or [paths](#specifying-exact-file-paths) you pass select no test file.
-- The test files define tests, and `--test-name-pattern` matches none of them.
+- `--test-name-pattern` filters out at least one test, and the run counts nothing else: no passed, failed, skipped or todo test, and no `expect()` call.
 
-A test file that defines no test is not one of these cases: `bun test` exits with code 0.
+Two kinds of run are not in these cases, and `bun test` exits with code 0 for them:
+
+- A run whose test files define no test.
+- A run with `--test-name-pattern` that includes a test inside a skipped or todo `describe` block. Bun reports that test as skipped or todo whether the pattern matches it or not.
 
 Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared CI step that runs before a package has any tests:
 

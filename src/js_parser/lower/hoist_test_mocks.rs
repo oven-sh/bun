@@ -61,6 +61,37 @@ pub(crate) fn drop_namespace_of_lowered_callee(
     is_lowered
 }
 
+/// A package name starts with a letter, a digit, `-`, or `@scope/` and a name, so `#cfg`, `~/cfg`, `@cfg` and `@/cfg` are aliases.
+fn is_alias_name(path: &[u8]) -> bool {
+    match path {
+        [b'@', name @ ..] => !matches!(
+            strings::index_of_char_usize(name, b'/'),
+            Some(slash) if slash > 0 && slash + 1 < name.len()
+        ),
+        [first, ..] => first.is_ascii() && !first.is_ascii_alphanumeric() && *first != b'-',
+        [] => false,
+    }
+}
+
+fn import_bindings(import: &S::Import) -> impl Iterator<Item = (Ref, js_ast::StoreStr)> + '_ {
+    import
+        .default_name
+        .iter()
+        .map(|name| (name.ref_, js_ast::StoreStr::new(b"default")))
+        .chain(import.items.iter().map(|item| (item.name.ref_, item.alias)))
+}
+
+/// The second argument of `import()` for an import whose attribute picked the loader: `{ with: { type: "json" } }`.
+#[optimize(size)]
+fn import_options_of(loader: Option<js_ast::Loader>, loc: js_ast::Loc) -> Expr {
+    let Some(loader) = loader else {
+        return Expr::EMPTY;
+    };
+    let r#type = loader.import_attribute_type().as_bytes();
+    let r#type = Expr::init(E::String::init(r#type), loc);
+    object_of(b"with", object_of(b"type", r#type))
+}
+
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Picks the transpiler cache key, so `bun test` and `bun run` have to compute the same answer.
     pub(crate) fn uses_test_api(&self) -> bool {
@@ -340,22 +371,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             })
     }
 
-    /// A package name starts with a letter, a digit, `-`, or `@scope/` and a name, so `#cfg`, `~/cfg`, `@cfg` and `@/cfg` are aliases.
-    fn is_alias_name(path: &[u8]) -> bool {
-        match path {
-            [b'@', name @ ..] => !matches!(
-                strings::index_of_char_usize(name, b'/'),
-                Some(slash) if slash > 0 && slash + 1 < name.len()
-            ),
-            [first, ..] => first.is_ascii() && !first.is_ascii_alphanumeric() && *first != b'-',
-            [] => false,
-        }
-    }
-
     /// A mock updates a loaded project file in place. Only an import that can be in a package has to load behind the call that names it.
     fn loads_behind_hoisted_mock(&self, path: &[u8]) -> bool {
         let can_be_in_package = if bun_paths::is_package_path(path) {
-            !Self::is_alias_name(path)
+            !is_alias_name(path)
         } else {
             strings::contains(path, b"/node_modules/")
         };
@@ -364,14 +383,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 .hoisted_mock_paths
                 .iter()
                 .any(|named| named.slice() == path)
-    }
-
-    fn import_bindings(import: &S::Import) -> impl Iterator<Item = (Ref, js_ast::StoreStr)> + '_ {
-        import
-            .default_name
-            .iter()
-            .map(|name| (name.ref_, js_ast::StoreStr::new(b"default")))
-            .chain(import.items.iter().map(|item| (item.name.ref_, item.alias)))
     }
 
     /// Where an import goes in a file that hoists.
@@ -390,7 +401,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return MockHoistOrder::InPlace;
         }
         // `export { a }` needs `a` to be a binding.
-        if Self::import_bindings(import).any(|(ref_, _)| exported.contains_key(&ref_)) {
+        if import_bindings(import).any(|(ref_, _)| exported.contains_key(&ref_)) {
             return MockHoistOrder::InPlace;
         }
         MockHoistOrder::LoweredImport
@@ -403,7 +414,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         if !matches!(order, MockHoistOrder::LoweredImport) {
             return order;
         }
-        let bindings = || Self::import_bindings(import);
+        let bindings = || import_bindings(import);
 
         if import.star_name_loc.is_empty() && bindings().next().is_some() {
             self.temp_ref_count += 1;
@@ -503,15 +514,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     pub(crate) fn lower_import_to_dynamic(&mut self, import: &S::Import, loc: js_ast::Loc) -> Stmt {
         let record = &self.import_records.items()[import.import_record_index as usize];
         let (path, path_loc) = (record.path.text, record.range.loc);
-        // An import attribute picked the loader: `with { type: "json" }`.
-        let options = match record.loader {
-            Some(loader) => {
-                let r#type = loader.import_attribute_type().as_bytes();
-                let r#type = Expr::init(E::String::init(r#type), loc);
-                object_of(b"with", object_of(b"type", r#type))
-            }
-            None => Expr::EMPTY,
-        };
+        let options = import_options_of(record.loader, loc);
         let path = self.new_expr(E::String::init(path), path_loc);
         let namespace = self.new_expr(
             E::Import {

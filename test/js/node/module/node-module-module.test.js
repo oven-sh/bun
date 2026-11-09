@@ -1173,10 +1173,13 @@ console.log("survived", require("./late.js"));`,
           JSON.stringify(require("./lib.zzx")),
           JSON.stringify(require("./umd.zzx")),
           JSON.stringify(require("./amd.zzx")),
+          JSON.stringify(require("./replaced.zzx")),
         );
       `,
       // `exports = {}` detaches the `exports` binding; `this` still points at module.exports.
       "lib.zzx": "this.x = 0;\nexports.y = 2;\nexports = {};\nthis.x = 1;\n",
+      // `this` is the first exports object, so a write after `module.exports = {}` is not exported.
+      "replaced.zzx": "module.exports = {};\nthis.x = 1;\n",
       "umd.zzx": /* js */ `
         (function (root, factory) {
           root.Lib = factory();
@@ -1201,7 +1204,7 @@ console.log("survived", require("./late.js"));`,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe('{"x":1,"y":2} {"Lib":{"v":1}} {"Lib":{"v":1}}\n');
+    expect(stdout).toBe('{"x":1,"y":2} {"Lib":{"v":1}} {"Lib":{"v":1}} {}\n');
     expect(exitCode).toBe(0);
   });
 

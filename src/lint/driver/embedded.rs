@@ -313,10 +313,9 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     }
 }
 
-/// The rules oxlint 1.87 turns off for these files, because the template isn't parsed. Unlike oxlint, `no-unused-vars`,
-/// `prefer-const` and `no-unassigned-vars` run in Vue and Svelte files: they skip the template's bindings themselves
-/// (`Symbol::is_template_reachable`). Astro keeps oxlint's rules, as its template reads the frontmatter but can't
-/// assign to it. `$:` is Svelte syntax.
+/// The rules oxlint 1.87 turns off for these files, because the template isn't parsed. In Vue and Svelte files,
+/// `no-unused-vars`, `prefer-const` and `no-unassigned-vars` run and skip the template's bindings themselves. Astro's
+/// template reads the frontmatter and can't assign to it, so Astro keeps oxlint's rules. `$:` is Svelte syntax.
 fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     let RuleId::Known(meta) = rule else {
         return true;

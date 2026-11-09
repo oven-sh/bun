@@ -636,6 +636,31 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         &["a"],
     ),
     (
+        "a.cjs",
+        r#"const path = require("node:path"); require("module").createRequire(path.normalize(__filename))("a");"#,
+        &["node:path", "module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { resolve } from "node:path"; createRequire(resolve(Bun.fileURLToPath(import.meta.url)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { normalize } from "node:path"; createRequire(Bun.pathToFileURL(normalize(import.meta.path)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { normalize } from "node:path"; createRequire(normalize(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { resolve } from "node:path"; createRequire(resolve(import.meta.path, ".."))("a");"#,
+        &[],
+    ),
+    (
         "a.mjs",
         r#"import { createRequire } from "module"; createRequire(Bun.pathToFileURL(import.meta.url))("a");"#,
         &[],

@@ -215,7 +215,7 @@ fn path_that_is_spelled_in_part_marks_the_files_that_fit() {
 
 #[test]
 fn file_leaves_by_its_key() {
-    let uses: [(&str, &[&str], bool); 17] = [
+    let uses: [(&str, &[&str], bool); 19] = [
         (
             r#"delete require.cache[require.resolve("./a.cjs")];"#,
             &["a.cjs"],
@@ -290,7 +290,18 @@ fn file_leaves_by_its_key() {
             false,
         ),
         (
+            r#"delete require.cache[require("node:path").normalize(require.resolve("./a.test"))];"#,
+            &["a.test.js"],
+            false,
+        ),
+        (
             r#"delete require.cache[require("node:path").normalize(require.resolve("./b"))];"#,
+            &[],
+            false,
+        ),
+        // No resolver was asked: the path in a URL is the name as it is written.
+        (
+            r#"const { pathToFileURL } = require("node:url"); delete require.cache[new URL("./a", pathToFileURL(__filename)).pathname];"#,
             &[],
             false,
         ),

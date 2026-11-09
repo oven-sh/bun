@@ -404,7 +404,7 @@ fn is_written_as_own_file(
         Some(ExprKind::Call(call)) => {
             let call = hir[call];
             let file_call = text.find_file_call(call.callee, left);
-            if file_call == Some(FileCall::UrlOfPath) {
+            if matches!(file_call, Some(FileCall::UrlOfPath | FileCall::SamePath)) {
                 return call.args.len() == 1
                     && settled_chain(hir, bound, hir.id_at(call.args, 0)).any(is_path);
             }
@@ -432,9 +432,10 @@ fn is_path_of_own_file(
     let is_url = matches!(hir.member_key(e), Some((_, MemberKey::Name(name)))
         if name == known::url || name == known::href);
     let is_path = match expr_kind(hir, e) {
-        Some(ExprKind::Call(call)) => {
-            text.find_file_call(hir[call].callee, left) == Some(FileCall::PathOfUrl)
-        }
+        Some(ExprKind::Call(call)) => matches!(
+            text.find_file_call(hir[call].callee, left),
+            Some(FileCall::PathOfUrl | FileCall::SamePath)
+        ),
         Some(ExprKind::New(_) | ExprKind::Binary { .. }) => false,
         _ => !is_url,
     };

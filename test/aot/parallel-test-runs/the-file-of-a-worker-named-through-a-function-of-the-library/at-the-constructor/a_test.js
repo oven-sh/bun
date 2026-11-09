@@ -1,6 +1,6 @@
 // The name of each Worker's file goes through one more function of the library on its way to the constructor. A test run reads through it as the build of an
 // executable does, and the Worker starts from its file.
-import { test } from "bun:test";
+import { expect, test } from "bun:test";
 import { join, normalize, resolve } from "node:path";
 import { fileURLToPath as pathOf } from "bun";
 
@@ -16,7 +16,7 @@ const starts = [
 ];
 
 test("each Worker answers", async () => {
-  for (const [how, start] of starts) {
+  for (const [index, [how, start]] of starts.entries()) {
     const worker = start();
     const answer = await new Promise(done => {
       worker.onmessage = event => done(event.data);
@@ -24,5 +24,6 @@ test("each Worker answers", async () => {
     });
     console.log(how + ": " + answer);
     worker.terminate();
+    expect(answer).toBe(`w${index + 1}.js answers`);
   }
 });

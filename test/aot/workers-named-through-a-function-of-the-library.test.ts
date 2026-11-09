@@ -61,6 +61,10 @@ const moduleRoads: Way[] = [
     file => `createRequire(Bun.pathToFileURL(import.meta.path))("./${file}")`,
   ],
   ["createRequire() of what URL.parse() answers", file => `createRequire(URL.parse(import.meta.url))("./${file}")`],
+  [
+    "createRequire() of what path.normalize() answers",
+    file => `createRequire(normalize(import.meta.path))("./${file}")`,
+  ],
 ];
 const commonJsRoads: Way[] = [
   [
@@ -74,6 +78,10 @@ const commonJsRoads: Way[] = [
   [
     "createRequire() of what Bun.pathToFileURL() answers, in a CommonJS file",
     file => `require("node:module").createRequire(Bun.pathToFileURL(__filename))("./${file}")`,
+  ],
+  [
+    "createRequire() of what path.resolve() answers for one path, in a CommonJS file",
+    file => `require("node:module").createRequire(require("node:path").resolve(__filename))("./${file}")`,
   ],
 ];
 const roads = [...moduleRoads, ...commonJsRoads].map(([name, write], index) => [name, write(`l${index + 1}.cjs`)]);
@@ -135,12 +143,17 @@ const compile = (executable: string, entry: string) => [
 ];
 const warnings = (text: string) => [...text.matchAll(/^warn: (TS\d+)/gm)].map(match => match[1]);
 const seenIn = (text: string) => text.split("\n").filter(line => line.startsWith("SEEN "));
+const seenBy = async (command: string[], cwd: string) => {
+  const { stdout, stderr, exitCode } = await run(command, cwd, bunEnv);
+  return { seen: seenIn(stdout), stderr: exitCode ? stderr : "", exitCode };
+};
 
 async function seeInAnExecutable(program: string, seen: string[], warned: string[]) {
   const files = { ...project, "main.mjs": `import "./src/starts.mjs";\n`, "src/starts.mjs": program };
   using dir = tempDir("aot-workers-named-through-the-library", files);
   const cwd = String(dir);
-  expect(seenIn((await run([bunExe(), "main.mjs"], cwd, bunEnv)).stdout)).toEqual(seen);
+  const asWritten = { seen, stderr: "", exitCode: 0 };
+  expect(await seenBy([bunExe(), "main.mjs"], cwd)).toEqual(asWritten);
   const executable = join(cwd, isWindows ? "main.exe" : "main");
   const built = await run(compile(executable, "main.mjs"), cwd, bunEnv);
   expect({
@@ -149,7 +162,7 @@ async function seeInAnExecutable(program: string, seen: string[], warned: string
     exitCode: built.exitCode,
   }).toEqual({ warnings: warned, stderr: "", exitCode: 0 });
   for (const folder of ["src", "node_modules"]) renameSync(join(cwd, folder), join(cwd, folder + "-moved-away"));
-  expect(seenIn((await run([executable], cwd, bunEnv)).stdout)).toEqual(seen);
+  expect(await seenBy([executable], cwd)).toEqual(asWritten);
 }
 
 test("at the constructor, the name is the file that the Worker starts from", async () => {

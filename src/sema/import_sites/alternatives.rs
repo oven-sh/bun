@@ -274,15 +274,19 @@ pub(super) fn find_texts_of_key(
     }
     let mut texts: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::with_capacity(values.len());
     for value in values {
-        let may_lack_ending =
-            matches!(&value, Held::Resolved(name, ResolvedForm::Path) if lacks_extension(name));
+        let may_go_on = match &value {
+            Held::Resolved(name, ResolvedForm::Path) => {
+                follower.is_relative_name_asked_of_resolver(name)
+            }
+            _ => false,
+        };
         let mut text = match value {
             Held::Text(text) if text.is_file_url => return None,
             Held::Text(text) | Held::Resolved(text, _) | Held::Url(text) => text,
             Held::Primitive(_) => continue,
             _ => return None,
         };
-        if may_lack_ending {
+        if may_go_on {
             let with_ending = |ending: &[u8]| [&text.start[..], ending].concat();
             texts.push((with_ending(b"."), Some(Vec::new())));
             texts.push((with_ending(b"/"), Some(Vec::new())));
@@ -307,19 +311,6 @@ pub(super) fn find_texts_of_key(
         },
     });
     Some(texts.collect())
-}
-
-/// Whether a resolver may answer for this name with a file whose name goes on: `./a` finds `./a.js` or `./a/index.js`.
-fn lacks_extension(name: &Text) -> bool {
-    let is_relative = name.start.starts_with(b"./") || name.start.starts_with(b"../");
-    let last = match strings::last_index_of_char(&name.start, b'/') {
-        Some(slash) => &name.start[slash + 1..],
-        None => &name.start[..],
-    };
-    is_relative
-        && name.end.is_none()
-        && !last.is_empty()
-        && !strings::contains_char(&last[1..], b'.')
 }
 
 pub(super) fn find_alternatives(
@@ -529,6 +520,15 @@ impl Follower<'_, '_, '_> {
                 }
             }
         }
+    }
+
+    /// A resolver may answer for such a name with a file whose name goes on from it: `./a` finds `./a.js` or `./a/index.js`.
+    fn is_relative_name_asked_of_resolver(&self, name: &Text) -> bool {
+        let is_relative = name.start.starts_with(b"./") || name.start.starts_with(b"../");
+        is_relative
+            && name.end.is_none()
+            && !name.start.ends_with(b"/")
+            && self.calls_of_resolvers.borrow().contains_key(&name.start)
     }
 
     fn ask_where_file_of_call_lies(&self, name: &[u8], call: ExprId) {

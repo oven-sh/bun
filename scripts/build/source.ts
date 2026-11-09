@@ -17,7 +17,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { ar, cc, cxx, link, nasm, pch, type PrecompiledHeader } from "./compile.ts";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -468,10 +468,13 @@ export interface Provides {
  */
 export type DepName =
   | "WebKit"
+  | "abseil-cpp"
   | "boringssl"
   | "brotli"
   | "cares"
+  | "dawn"
   | "highway"
+  | "jinja2"
   | "libdeflate"
   | "libjpeg-turbo"
   | "libuv"
@@ -480,12 +483,16 @@ export type DepName =
   | "lshpack"
   | "lsqpack"
   | "lsquic"
+  | "markupsafe"
   | "mimalloc"
   | "nodejs"
   | "picohttpparser"
   | "rust-argon2"
+  | "spirv-headers"
   | "sqlite"
   | "tinycc"
+  | "vulkan-headers"
+  | "vulkan-utility-libraries"
   | "zlib"
   | "zstd";
 
@@ -515,8 +522,9 @@ export interface Dependency {
    *
    * Resolves to the named dep's `outputs` (generated headers + source stamp),
    * order-only inputs of this dep's compiles. Does NOT link the other dep.
+   * A function where the list depends on the target: each one named is `enabled` there.
    */
-  fetchDeps?: DepName[];
+  fetchDeps?: DepName[] | ((cfg: Config) => DepName[]);
 
   /** How to build. */
   build: (cfg: Config) => BuildSpec;
@@ -842,12 +850,18 @@ export function resolveDep(
   // time from the fetched tree.
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
-    assert(
-      source.kind !== "github-archive" || (buildSpec.groups === undefined && buildSpec.steps === undefined),
-      `${dep.name}: groups/steps of a fetched dep are not declared as outputs of its fetch yet`,
-    );
     for (const s of buildSpec.sources) {
       directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
+    }
+    // A group also compiles what a step generates, and a step also reads other deps' files: only what is in this
+    // dep's own tree comes from its fetch.
+    const inSourceTree = (file: string) => file.startsWith(srcDir + sep);
+    for (const group of buildSpec.groups ?? []) {
+      const files = group.sources.map(s => resolve(srcDir, typeof s === "string" ? s : s.path));
+      directSources.push(...files.filter(inSourceTree));
+    }
+    for (const step of buildSpec.steps ?? []) {
+      if (step.kind !== "exe") directSources.push(...step.inputs.filter(inSourceTree));
     }
     for (const h of Object.values(buildSpec.headers ?? {})) {
       if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
@@ -866,7 +880,7 @@ export function resolveDep(
   // For local/in-tree: source is already on disk.
   let sourceStamp: string | undefined;
   if (source.kind === "github-archive") {
-    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...new Set([...resolvedSources, ...directSources])]);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers a rebuild.
@@ -897,7 +911,8 @@ export function resolveDep(
   // ─── Resolve fetchDeps → order-only inputs of this dep's compiles ───
   // Deps whose headers this one includes (a dep → zlib's generated
   // zlib.h): they must exist first; the depfiles track their content.
-  const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
+  const fetchDeps = typeof dep.fetchDeps === "function" ? dep.fetchDeps(cfg) : (dep.fetchDeps ?? []);
+  const fetchDepStamps = fetchDeps.flatMap(d => {
     const r = resolved.get(d);
     assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
     return r.outputs;

@@ -945,6 +945,11 @@ export const defines: Flag[] = [
     desc: "bun:ffi calls no native function",
   },
   {
+    flag: "BUN_WEBGPU=1",
+    when: c => c.webgpu,
+    desc: "navigator.gpu and the GPU* globals",
+  },
+  {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
     flag: c => `BUN_DYNAMIC_JS_LOAD_PATH=\\"${slash(join(c.buildDir, "js"))}\\"`,
     when: c => c.debug && !c.ci,

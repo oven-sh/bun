@@ -137,6 +137,14 @@ function named after the namespace.
 
 A function with [overloads](#overloads) is an array of its signatures. A function of a namespace has no `passThis`, `passCallee`, `export` or `feature`.
 
+A member can also be a number that never changes, as a `const` of a WebIDL namespace is: `{ constant: 0x10 }`. It is
+enumerable, and neither writable nor configurable. `{ toStringTag: true }` in the options gives the object its name as
+`Symbol.toStringTag`:
+
+```ts
+export const GPUMapMode = b.namespace({ READ: { constant: 1 }, WRITE: { constant: 2 } }, { toStringTag: true });
+```
+
 ### What a function may do: `capability`
 
 What a function can do to the JS heap is a parameter it is given, so it is
@@ -248,6 +256,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
+| `b.f32`                                          | `f32`                            | WebIDL's `float`: `ToNumber`, and finite as an `f32`          |
 | `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
 | `b.string.owned`                                 | `bun_core::String`               | as `b.string`                                                 |
 | `b.string.view`                                  | `bun_core::StringView<'a>`       | as `b.string`                                                 |
@@ -270,10 +279,13 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.promisePtr("crate::T")`                       | `*mut T`                         | the context of a promise reaction; see below                  |
 | `b.nativePromiseContext("crate::T")`             | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
+| `b.sequence(T)`                                  | `Vec<T>`                         | WebIDL's `sequence<T>`: an object that can be iterated        |
+| `b.record(T)`                                    | `Vec<(bun_core::String, T)>`     | WebIDL's `record<USVString, T>`: an object's own properties   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
 | `b.class(options)`                               | `&'a T`                          | an instance                                                   |
+| `Class.ref`                                      | `bun_ptr::RefPtr<T>`             | an instance of a [`refCounted`](#refcounted) class            |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported. It is used by
@@ -282,6 +294,14 @@ field, so one that is a C++ keyword is refused: a member takes a `rustName`.
 
 An array is what `Array.isArray` says is one, `Array.prototype` too, except a proxy of an array: that is an object
 like any other. Only a dictionary refuses the proxy along with the array.
+
+`b.sequence(T)` takes what `b.array(T)` takes and every other object that has `Symbol.iterator`: a typed array, a
+`Set`, a generator. In a union, an object without one goes on to the next alternative, which is how WebIDL tells
+`(sequence<T> or Dictionary)` apart.
+
+An instance taken as `&'a T` is only an argument: nothing roots it once the next conversion runs JavaScript. `Class.ref`
+holds a reference to the struct, so it is also a member of a dictionary, an alternative of a union, and an element of an
+array, a sequence or a record.
 
 Only the promise calls a reaction, with the context it was given, so nothing tests that argument.
 `b.promisePtr` is the `*mut T` that `JSValue::then` was given. `b.nativePromiseContext` is what `take` of the cell
@@ -296,7 +316,7 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
 - `.otherAsNull`: a value of a [kind](#unions-and-kinds) the type does not take, or that it refuses (what is not an object, a shared buffer), means absent and nothing is thrown, as if the type were in a union with `ignored: b.any` after it; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. What is inside a value is still reported: the members of a dictionary, the elements of an array. It is not for a type that throws for a value of a kind it takes: an integer for `1.5` (`b.f64.otherAsNull` takes every number), an enumeration for an unknown string (`b.string.allowStringObject.otherAsNull` takes every string), a dictionary without `allowArray` for an array. Nor is it for a type that takes every kind, like a `.loose` one or a `nonObjectAsEmpty` dictionary. A union writes `ignored: b.any` as its last alternative.
 - `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. Where `f()` is an error, see [`requiredArguments`](#too-few-arguments-requiredarguments). It also goes on a type that takes `undefined`, like `b.any`. It is only for an argument, and not for one of an overload.
-- `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
+- `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`. An array or a sequence has `.default([])`, and a record or a dictionary `.default({})`.
 
 `.withValue` on an argument also gives the body the argument itself, `(T, JsLocal<'a>)`: for a body that reads the
 internal fields of an instance, or returns the argument when there is nothing to change. It comes after all of these,
@@ -316,7 +336,7 @@ These are results only:
 | `b.u64.asBigInt` | `u64`                                         | always a BigInt                                                                                                                                                                      |
 | `b.f64.asDate`   | `f64`                                         | a `Date` with that time value                                                                                                                                                        |
 | `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
-| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, `T` holds no JS value, and it is not a member or an alternative           |
+| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, and `T` holds no JS value. One type is either taken or returned           |
 
 A body that returns `b.any` makes the value with what the generated code calls:
 `bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module. An empty
@@ -331,8 +351,12 @@ double nearest to it. `b.f64.allowDate` also takes a `Date`, as its time value, 
 - `.allowBigInt`: a BigInt in the same range too. It is how a `b.u64` above 2<sup>53</sup> gets in. It goes with the strict conversion and with `.loose`; the others refuse a BigInt.
 - `.loose`: `ToNumber` first, or `ToNumeric` with `.allowBigInt`, then as strict as the default.
 - `.wrap`: the WebIDL conversion, `ToNumber` then wrap modulo the width.
-- `.enforceRange(min, max)`: WebIDL `[EnforceRange]`.
-- `.validateInteger(min, max)`: Node's `validateInteger`, with its exact errors. Use it when implementing Node.js APIs.
+- `.clamp`: WebIDL `[Clamp]`.
+- `.enforceRange(min, max)`: WebIDL `[EnforceRange]`. Without arguments the range is the type's.
+- `.validateInteger(min, max)`: Node's `validateInteger`, with its exact errors. Use it when implementing Node.js APIs. It names its argument, so it is not an element or an alternative.
+
+`b.f64.loose` is WebIDL's `unrestricted double`, and `b.f64.loose.finite` its `double`: NaN and the infinities are a
+`TypeError`.
 
 ### Strings
 
@@ -343,6 +367,9 @@ case up front: beyond 64 Latin-1 characters or 42 UTF-16 code units it allocates
 Nothing needs freeing. An unpaired surrogate becomes U+FFFD. `.loose` comes before
 `.utf8`. A `String` object, which `b.string` refuses, is converted with `ToString`, so
 its `toString` runs.
+
+`b.string.usv` is WebIDL's `USVString`: `.loose`, and then U+FFFD for every unpaired surrogate. `.owned` and `.view`
+come after it.
 
 `b.string.utf8.owned` is for a body that stores the string: a
 `bun_core::Utf8Bytes<'static>`, which shares the JS string's buffer when it is 8-bit
@@ -436,6 +463,10 @@ except in a union. Returning an enumeration allocates nothing after the first ti
 
 Values that make no identifier, or the same one, are written as a record, whose keys are the variants:
 `b.enumeration({ Rgb: "rgb", RgbArray: "[rgb]" })`.
+
+`Formatter::ALL` is every variant and `Formatter::SPELLINGS` the first spelling of each, both in the order of the
+variants and both `const`: `SPELLINGS[variant as usize]` is what JavaScript calls it, and a `const fn` can hold the two
+to a table of another library when Bun is compiled.
 
 ### Unions and kinds
 
@@ -770,8 +801,10 @@ One class inherits from another as one WebIDL interface does:
 `js_RecordableHistogram::create(heap, payload)` makes an instance, and `create_wrapper(global, payload)` does for code
 that has no capability. `payload.into_js(heap)` makes an instance of the base.
 
-The base has `final: false` and is not `refCounted`. The subclass declares `proto`, `construct: "illegal"`, `final`,
-`rustTraits` and the three attributes, which it does not inherit. The rest is the base's: how it is created and
+The base has `final: false` and is not `refCounted`. The subclass declares `proto`, `construct`, `final`,
+`rustTraits` and the three attributes, which it does not inherit. Its `construct` is `"illegal"`, or
+`{ args, rustName }`: the struct is the base's, so `rustName` is the function of the base that makes one for this
+subclass. The rest is the base's: how it is created and
 collected, its internal fields, which no member of the subclass names, and the memory it reports.
 
 An instance of the subclass is of both [kinds](#unions-and-kinds), so a union or the overloads of a function take the
@@ -929,9 +962,56 @@ Native callbacks have no capability. What they need to reach the JS object takes
 | `js_CronJob::to_js(ptr, global)` | makes the object, which takes over the caller's ref |
 | `js_CronJob::from_js(value)`     | the struct, if `value` is an instance               |
 
+With a capability, `js_CronJob::create(heap, RefPtr<CronJob>)` makes the object as a `JsWrapper<'a, CronJob>`.
+
 `CronJob::to_js_ptr(ptr, global)` is `to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
 `NonNull`. The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
 back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
+
+### `webcoreBase`
+
+A WebIDL interface that inherits from `EventTarget`, `Event` or `DOMException` inherits from Bun's C++ class of that
+name, so an instance is one for `instanceof`, for `addEventListener` and for everything in C++ that takes one:
+
+```ts
+export const Emitter = b.class({
+  rustPath: "crate::Emitter",
+  refCounted: true,
+  webcoreBase: "EventTarget",
+  construct: {},
+  proto: {
+    onping: { eventHandler: "ping" },
+    ping: { returns: b.bool, capability: "js", passThis: true },
+  },
+});
+export const PingEvent = b.class({
+  rustPath: "crate::PingEvent",
+  refCounted: true,
+  webcoreBase: "Event",
+  construct: { args: { type: b.string.loose.owned, init: PingEventInit } },
+  proto: { count: { getter: b.u32 } },
+});
+```
+
+```rust
+impl Emitter {
+    pub(crate) fn ping<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bool {
+        let event = js_PingEvent::create(&cx.heap, RefPtr::new(PingEvent { .. }));
+        bindgen::dispatch_event(cx, this_value, event)
+    }
+}
+
+impl PingEvent {
+    pub(crate) fn event_init(&self) -> bindgen::EventInit { .. }
+}
+```
+
+- The class is `refCounted`.
+- `eventHandler: "ping"` is an event handler attribute, like `onmessage`.
+- `bindgen::dispatch_event(cx, target, event)` calls the listeners, and is false if one called `preventDefault()`.
+- The base is made from the struct when the object is: an `Event` from `fn event_init(&self) -> bindgen::EventInit`
+  (`type`, `bubbles`, `cancelable`, `composed`, `is_trusted`), and a `DOMException` from
+  `fn dom_exception_init(&self) -> bindgen::DOMExceptionInit` (`message`, `name`).
 
 ### Memory
 

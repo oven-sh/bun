@@ -91,6 +91,7 @@ members = [
   "src/sha_hmac",
   "src/sys_jsc",
   "src/zlib_sys",
+  "src/webgpu_sys",
   "src/dispatch",
   "src/brotli",
   "src/bundler_jsc",
@@ -471,6 +472,7 @@ bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
+bun_webgpu_sys = { path = "src/webgpu_sys" }
 bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }

@@ -1,6 +1,7 @@
 #pragma once
 #include "root.h"
 #include "Bindgen/IDLTypes.h"
+#include "BunIDLHumanReadable.h"
 #include "JSDOMConvertNumbers.h"
 #include "NodeValidator.h"
 
@@ -17,6 +18,11 @@ struct IDLValidateInteger : WebCore::IDLType<T> {};
 }
 
 template<std::integral T, T Min, T Max>
+struct Bun::IDLHumanReadableName<Bun::Bindgen::IDLEnforceRange<T, Min, Max>> : Bun::BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("integer");
+};
+
+template<std::integral T, T Min, T Max>
 struct WebCore::Converter<Bun::Bindgen::IDLEnforceRange<T, Min, Max>> : WebCore::DefaultConverter<Bun::Bindgen::IDLEnforceRange<T, Min, Max>> {
     // False if it threw.
     static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, T& result)
@@ -28,6 +34,14 @@ struct WebCore::Converter<Bun::Bindgen::IDLEnforceRange<T, Min, Max>> : WebCore:
         result = static_cast<T>(WebCore::enforceRange(globalObject, number, Min, Max));
         RETURN_IF_EXCEPTION(scope, false);
         return true;
+    }
+
+    // For an element of an array.
+    static T convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+    {
+        T result {};
+        convertInto(globalObject, value, result);
+        return result;
     }
 };
 

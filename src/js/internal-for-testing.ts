@@ -240,6 +240,10 @@ export const declaredResults = {
   ) as () => boolean,
 };
 
+// Only in a build with `--webgpu=on`: `isCompiled` in scripts/build/codegen.ts.
+export const webgpuUseNullBackend = $bindgen("webgpu.bind.ts", "useNullBackendForTesting");
+export const webgpuIsDeviceLost = $bindgen("webgpu.bind.ts", "isDeviceLostForTesting");
+
 // Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
 export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   add: $bindgen("bindgen_test.bind.ts", "add"),
@@ -256,6 +260,12 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
   describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
   describeAnything: $bindgen("bindgen_test.bind.ts", "describeAnything"),
+  sumOfRefs: $bindgen("bindgen_test.bind.ts", "sumOfRefs"),
+  webidlNumbers: $bindgen("bindgen_test.bind.ts", "webidlNumbers"),
+  areaOf: $bindgen("bindgen_test.bind.ts", "areaOf"),
+  sumOfSequence: $bindgen("bindgen_test.bind.ts", "sumOfSequence"),
+  describeRecords: $bindgen("bindgen_test.bind.ts", "describeRecords"),
+  TestFlags: $bindgen("bindgen_test.bind.ts", "TestFlags"),
   overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
   describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
   names: $bindgen("bindgen_test.bind.ts", "names"),
@@ -293,6 +303,10 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   TestNonFinal: $bindgen("bindgen_test.bind.ts", "TestNonFinal"),
   TestShape: $bindgen("bindgen_test.bind.ts", "TestShape"),
   TestSquare: $bindgen("bindgen_test.bind.ts", "TestSquare"),
+  TestTriangle: $bindgen("bindgen_test.bind.ts", "TestTriangle"),
+  TestPingEvent: $bindgen("bindgen_test.bind.ts", "TestPingEvent"),
+  TestEmitter: $bindgen("bindgen_test.bind.ts", "TestEmitter"),
+  TestException: $bindgen("bindgen_test.bind.ts", "TestException"),
   makeShape: $bindgen("bindgen_test.bind.ts", "makeShape"),
   makeSquare: $bindgen("bindgen_test.bind.ts", "makeSquare"),
   makeSquareWrapper: $bindgen("bindgen_test.bind.ts", "makeSquareWrapper"),

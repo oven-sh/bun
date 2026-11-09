@@ -85,6 +85,12 @@ struct IDLArray : Detail::IDLMimallocSequence<IDL> {
     using Base = Detail::IDLMimallocSequence<IDL>;
 };
 
+// `b.sequence(T)`: of anything that has `Symbol.iterator`.
+template<typename IDL>
+struct IDLSequence : Detail::IDLMimallocSequence<IDL> {
+    using Base = Detail::IDLMimallocSequence<IDL>;
+};
+
 template<typename T, typename RefDerefTraits = WTF::DefaultRefDerefTraits<T>>
 struct IDLRef : WebCore::IDLType<WTF::RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>> {
     using NullableType = WTF::RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>;
@@ -189,6 +195,38 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     using NullableInnerParameterType = JSClass*;
     static JSClass* nullValue() { return nullptr; }
 };
+
+// The Rust struct that an instance of a `refCounted` class wraps. Never defined.
+template<typename JSClass>
+struct WrappedStruct;
+
+template<typename JSClass>
+struct WrappedRefDerefTraits {
+    using Wrapped = WrappedStruct<JSClass>;
+
+    static ALWAYS_INLINE Wrapped* refIfNotNull(Wrapped* ptr)
+    {
+        if (ptr) [[likely]]
+            JSClass::refWrapped(ptr);
+        return ptr;
+    }
+
+    static ALWAYS_INLINE Wrapped& ref(Wrapped& ref)
+    {
+        JSClass::refWrapped(&ref);
+        return ref;
+    }
+
+    static ALWAYS_INLINE void derefIfNotNull(Wrapped* ptr)
+    {
+        if (ptr) [[likely]]
+            JSClass::derefWrapped(ptr);
+    }
+};
+
+// `.ref`: an instance of a `refCounted` class, as a reference to what it wraps. Nothing has to keep the cell alive.
+template<typename JSClass, auto name>
+struct IDLWrappedRef : IDLRef<WrappedStruct<JSClass>, WrappedRefDerefTraits<JSClass>> {};
 
 // An instance of a `refCounted` class, as what it wraps. The caller's frame keeps the cell alive.
 template<typename JSClass, auto name>

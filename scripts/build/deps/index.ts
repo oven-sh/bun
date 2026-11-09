@@ -14,6 +14,7 @@ import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
+import { dawnDeps } from "./dawn.ts";
 import { highway } from "./highway.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
@@ -67,6 +68,7 @@ export const allDeps: readonly Dependency[] = [
   // a DirectBuild dep its .o files go straight on the link line so static
   // link order doesn't apply.
   lsquic,
+  ...dawnDeps,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
   webkit,

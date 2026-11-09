@@ -254,6 +254,7 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `aot.ts`                       | The steps that exist for `bun compile`: removable features, the IR schema, the table of built-ins, the archive of Bun's own sources                                     |
 | `aot-source-lists.ts`          | Writes and checks the lists of WebKit's `aot/`: library and test sources, include directories, exported headers                                                         |
 | `aot-paths.ts`                 | Prints where this configuration finds `testaot`, `jsc`, the engine's `aot/`, the schema and the engine's half of the table: for CI steps and shells                     |
+| `dawn-source-lists.ts`         | Writes `deps/dawn-sources.ts`, what of Dawn and Abseil a build with `--webgpu=on` compiles, from Dawn's own CMake files. Run after moving Dawn's commit                 |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |

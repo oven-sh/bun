@@ -96,6 +96,14 @@ impl<T: Copy> ExternVector<T> {
     }
 }
 
+/// A pair of a `b.record` that is taken.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExternRecordEntry<T: Copy> {
+    pub key: ExternString,
+    pub value: T,
+}
+
 /// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns. Another thread can write those of a shared buffer.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -178,6 +186,7 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         index: u32,
     ) -> JSValue;
+    pub(super) fn Bun__Bindgen__dispatchEvent(target: JSValue, event: JSValue) -> bool;
     pub(super) safe fn Bun__Bindgen__exceptionPresenceMatches(
         global: &JSGlobalObject,
         should_have_exception: bool,

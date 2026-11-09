@@ -1076,6 +1076,16 @@ impl<'a, T> JsWrapper<'a, T> {
         JsWrapper(cell, PhantomData, PhantomData)
     }
 
+    /// # Safety
+    /// As [`from_extern`](Self::from_extern).
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_value(wrapper: JSValue, heap: &JsHeap<'a>) -> Self {
+        debug_assert!(wrapper.is_cell());
+        // SAFETY: the bits of a cell's value are its address.
+        unsafe { Self::from_extern(NonNull::new_unchecked(wrapper.0 as *mut c_void), heap) }
+    }
+
     #[inline(always)]
     pub fn as_value(self) -> JsLocal<'a, JSObject> {
         JsLocal::from_raw(self.to_js())
@@ -1437,6 +1447,49 @@ pub fn hold_cached_to_declared_type(
         panic!("{member} is declared as {declared}, and native code cached something else");
     }
     JSValue::ZERO
+}
+
+// ───────────────────────────── webcoreBase ─────────────────────────────
+
+/// What `fn event_init(&self)` of a class with `webcoreBase: "Event"` returns: what the `Event` in an instance is made of.
+#[repr(C)]
+pub struct EventInit {
+    pub r#type: bun_core::String,
+    pub bubbles: bool,
+    pub cancelable: bool,
+    pub composed: bool,
+    /// Native code made the event, and not `new`.
+    pub is_trusted: bool,
+}
+
+/// What `fn dom_exception_init(&self)` of a class with `webcoreBase: "DOMException"` returns.
+#[repr(C)]
+pub struct DOMExceptionInit {
+    pub message: bun_core::String,
+    pub name: bun_core::String,
+}
+
+/// The struct of a class with `webcoreBase: "EventTarget"`.
+///
+/// # Safety
+/// Generated code implements it.
+pub unsafe trait JsEventTarget {}
+
+/// The struct of a class with `webcoreBase: "Event"`.
+///
+/// # Safety
+/// Generated code implements it.
+pub unsafe trait JsEvent {}
+
+/// Calls the listeners of `target` for `event`. What one of them throws is reported as an uncaught exception is.
+/// False if one of them called `preventDefault()`.
+pub fn dispatch_event<'a, T: JsEventTarget, E: JsEvent>(
+    _: &mut JsScope<'a>,
+    target: JsWrapper<'a, T>,
+    event: JsWrapper<'a, E>,
+) -> bool {
+    // SAFETY: the traits say what the two objects are.
+    unsafe { extern_types::Bun__Bindgen__dispatchEvent(target.to_js(), event.to_js()) }
 }
 
 /// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.

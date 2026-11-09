@@ -18,6 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { dawnFrameworks } from "./deps/dawn.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
@@ -574,7 +575,18 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "/usr/lib/libresolv.9.dylib",
           ],
           exact: true,
-          allowed: sanitizerLibs,
+          allowed: [
+            ...sanitizerLibs,
+            // Foundation hands on the two that are not in dawnFrameworks.
+            ...(cfg.webgpu
+              ? [
+                  ...[...dawnFrameworks, "CoreFoundation"].map(
+                    name => `/System/Library/Frameworks/${name}.framework/*`,
+                  ),
+                  "/usr/lib/libobjc.A.dylib",
+                ]
+              : []),
+          ],
         },
         ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),
         forbiddenImports: forbiddenImports(cfg),

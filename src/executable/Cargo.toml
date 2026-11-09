@@ -14,6 +14,8 @@ default = ["aot"]
 aot = ["dep:bun_aot"]
 # The functions that `bun_aot_interface` declares, in a Bun without the compiler.
 without_aot = ["dep:bun_aot_absent"]
+# `navigator.gpu`. Its functions call Dawn, which only a build with `--webgpu=on` links.
+webgpu = ["bun_runtime/webgpu"]
 
 [dependencies]
 bun_aot = { workspace = true, features = ["linked_names", "linked_archive"], optional = true }

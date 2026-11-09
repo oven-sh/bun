@@ -1,0 +1,36 @@
+// Build scripts run on the host before bun_* crates are compiled; std is the only option.
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    clippy::disallowed_macros
+)]
+//! Export `BUN_CODEGEN_DIR` for `lib.rs`, which `include!`s what `src/codegen/generate-webgpu-sys.ts` writes.
+//!
+//! Only a build with `--webgpu=on` writes it. `cargo check --workspace` compiles this crate after any build, so without
+//! the file the crate is empty.
+
+use std::env;
+use std::path::{Path, PathBuf};
+
+fn main() {
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let repo = manifest
+        .parent()
+        .and_then(Path::parent)
+        .expect("repo root from CARGO_MANIFEST_DIR")
+        .to_path_buf();
+
+    let codegen_dir = env::var("BUN_CODEGEN_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| repo.join("build/debug/codegen"));
+
+    let generated = codegen_dir.join("webgpu_sys.rs");
+    println!("cargo:rustc-check-cfg=cfg(bun_webgpu_sys_generated)");
+    if generated.exists() {
+        println!("cargo:rustc-cfg=bun_webgpu_sys_generated");
+    }
+
+    println!("cargo:rerun-if-changed={}", generated.display());
+    println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
+    println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
+}

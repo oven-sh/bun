@@ -25,6 +25,7 @@ import {
   DictionaryType,
   FunctionDefinition,
   Getter,
+  EventHandlerAccessor,
   InternalFieldAccessor,
   Method,
   OptionalType,
@@ -819,6 +820,8 @@ function directEntryOfMethod(type: ClassType, fn: FunctionDefinition): DirectEnt
 
 function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinPath, isStatic: boolean): Declaration[] {
   if (member instanceof Getter || member instanceof InternalFieldAccessor) return collectAccessor(type, member, path);
+  // Nobody has said what it does: it holds a function of the program's, which an event calls.
+  if (member instanceof EventHandlerAccessor) return [createStructureMember(path, "Accessor", null)];
   if (member instanceof Constant) return collectConstant(type, member, path);
   if (!(member instanceof FunctionDefinition)) return collectBuiltin(type, member, path);
   const methods = member.signatures as readonly Method[];
@@ -843,6 +846,7 @@ const pathOfMember = (classPath: BuiltinPath, side: "static" | "proto", name: st
 
 function prototypeBaseOf(type: ClassType): BuiltinPath | null {
   if (type.forBind || type.callInstance) return "Function.prototype";
+  if (type.webcoreBase) return `${type.webcoreBase}.prototype`;
   return type.prototypeBase === "Error" ? "Error.prototype" : null;
 }
 
@@ -927,6 +931,7 @@ function collectNamespace(namespace: NamespaceDefinition, path: BuiltinPath): De
   return [
     ...b.namespace(path, {}, namespace.columns),
     ...(namespace.call === undefined ? [] : declareFunction(namespace.call, path)),
+    ...namespace.constants.flatMap(constant => b.method(joinPath([path, constant.name]), b.constant(constant.value))),
     ...namespace.functions.flatMap(fn => declareFunction(fn, joinPath([path, fn.name]))),
   ];
 }
@@ -942,6 +947,7 @@ function collectBoundNamespace(
     ...b.namespace(path, {}, { scope: "Module", listsAllMembers: true, ...namespace.columns }),
     ...(usesFeature.length > 0 ? b.extend(path, { usesFeature }) : []),
     ...(namespace.call === undefined ? b.inherits(path, "Object.prototype") : declareFunction(namespace.call, path)),
+    ...namespace.constants.flatMap(constant => b.method(joinPath([path, constant.name]), b.constant(constant.value))),
     ...namespace.functions.flatMap(fn => [
       ...declareFunction(fn, joinPath([path, fn.name])),
       ...b.extend(joinPath([path, fn.name]), {

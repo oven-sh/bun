@@ -19,6 +19,7 @@ import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
+import { dawnFrameworks } from "./deps/dawn.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
@@ -86,6 +87,7 @@ function systemLibs(cfg: Config): string[] {
     // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
     libs.push("-licucore", "-lresolv");
+    for (const framework of cfg.webgpu ? dawnFrameworks : []) libs.push("-framework", framework);
   }
 
   if (cfg.freebsd) {
@@ -113,6 +115,8 @@ function systemLibs(cfg: Config): string[] {
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release
     );
+    // The GUIDs of Direct3D's interfaces: data, and no DLL.
+    if (cfg.webgpu) libs.push("dxguid.lib");
   }
 
   return libs;

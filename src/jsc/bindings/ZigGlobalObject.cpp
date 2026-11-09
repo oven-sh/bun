@@ -236,6 +236,7 @@
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
 #include "../../runtime/webview/JSWebView.h"
+#include "../../runtime/webgpu/WebGPUBindings.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -3070,6 +3071,9 @@ void GlobalObject::finishCreation(VM& vm)
 
              obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                  jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+#if BUN_WEBGPU
+             Bun::addWebGPUToNavigator(init.vm, obj);
+#endif
 
              init.set(obj);
          } },
@@ -3569,6 +3573,9 @@ private:
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
+#if BUN_WEBGPU
+    Bun::addWebGPUGlobals(vm, this);
+#endif
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     m_builtinInternalFunctions->initialize(*this);
 

@@ -1351,6 +1351,14 @@ pub(crate) unsafe fn __bun_fire_timer(
                 (*c).on_room_timer(&*vm)
             })
         }
+        #[cfg(feature = "webgpu")]
+        EventLoopTimerTag::WebGPUInstance => {
+            timer_arm!(crate::webgpu::Instance, poll_timer, |c, _now, vm| {
+                crate::webgpu::Instance::on_timer_fire(c, &*vm)
+            })
+        }
+        #[cfg(not(feature = "webgpu"))]
+        EventLoopTimerTag::WebGPUInstance => unreachable!("nothing arms it"),
         EventLoopTimerTag::GcRepeating => {
             timer_arm!(
                 GarbageCollectionController,

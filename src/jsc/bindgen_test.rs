@@ -12,9 +12,10 @@ use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
     TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
     TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
-    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
-    js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
-    js_TestSquare,
+    TestOuter, TestPingEventInit, TestRecords, TestRefOrInteger, TestRefs, TestSize,
+    TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
+    js_TestNonFinal, js_TestNote, js_TestPingEvent, js_TestRefCounted, js_TestRefCountedNote,
+    js_TestShape, js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -119,6 +120,56 @@ pub(crate) fn describe_value(value: TestValue<'_>) -> Vec<u8> {
         TestValue::Text(text) => [b"text ", text].concat(),
         TestValue::List(list) => format!("list {list:?}").into_bytes(),
     }
+}
+
+pub(crate) fn sum_of_refs(refs: &TestRefs, more: Vec<TestRefOrInteger>) -> i32 {
+    let held = core::iter::once(&refs.first)
+        .chain(&refs.second)
+        .chain(refs.rest.iter().flatten());
+    let more = more.into_iter().map(|one| match one {
+        TestRefOrInteger::Counted(counted) => counted.get_value(),
+        TestRefOrInteger::Integer(integer) => integer,
+    });
+    held.map(|counted| counted.get_value()).chain(more).sum()
+}
+
+pub(crate) fn describe_records(
+    constants: Vec<(bun_core::String, f64)>,
+    records: &TestRecords,
+) -> Vec<Vec<u8>> {
+    let constants = constants
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"));
+    let limits = records.limits.iter().map(|(key, value)| match value {
+        Some(value) => format!("{key}={value}"),
+        None => format!("{key}=none"),
+    });
+    let counted = records
+        .counted
+        .iter()
+        .map(|(key, value)| format!("{key}={}", value.get_value()));
+    constants
+        .chain(limits)
+        .chain(counted)
+        .map(String::into_bytes)
+        .collect()
+}
+
+pub(crate) fn sum_of_sequence(numbers: Vec<f64>) -> f64 {
+    numbers.into_iter().fold(0.0, |sum, number| sum + number)
+}
+
+pub(crate) fn area_of(size: TestSize) -> f64 {
+    match size {
+        TestSize::Sequence(sides) => sides.into_iter().map(f64::from).product(),
+        TestSize::Dict(size) => f64::from(size.width) * f64::from(size.height),
+    }
+}
+
+pub(crate) fn webidl_numbers(clamped: u8, finite: f64, float: f32, in_range: Vec<u32>) -> Vec<f64> {
+    let mut numbers = vec![f64::from(clamped), finite, f64::from(float)];
+    numbers.extend(in_range.into_iter().map(f64::from));
+    numbers
 }
 
 pub(crate) fn describe_anything(value: TestAnything<'_>) -> Vec<u8> {
@@ -909,6 +960,114 @@ impl TestShape {
 
     pub(crate) fn inspect_custom(&self) -> String {
         format!("a square of {}", self.side)
+    }
+
+    pub(crate) fn new_triangle(side: u32) -> Self {
+        TestShape { sides: 3, side }
+    }
+}
+
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct TestPingEvent {
+    ref_count: Cell<u32>,
+    r#type: bun_core::String,
+    cancelable: bool,
+    bubbles: bool,
+    composed: bool,
+    is_trusted: bool,
+    count: u32,
+}
+
+impl TestPingEvent {
+    pub(crate) fn constructor(r#type: bun_core::String, init: &TestPingEventInit) -> *mut Self {
+        RefPtr::new(Self {
+            ref_count: Cell::new(1),
+            r#type,
+            cancelable: init.cancelable,
+            bubbles: init.bubbles,
+            composed: init.composed,
+            is_trusted: false,
+            count: init.count,
+        })
+        .into_raw()
+    }
+
+    pub(crate) fn event_init(&self) -> bindgen::EventInit {
+        bindgen::EventInit {
+            r#type: self.r#type.clone(),
+            bubbles: self.bubbles,
+            cancelable: self.cancelable,
+            composed: self.composed,
+            is_trusted: self.is_trusted,
+        }
+    }
+
+    pub(crate) fn get_count(&self) -> u32 {
+        self.count
+    }
+}
+
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct TestEmitter {
+    ref_count: Cell<u32>,
+    pings: Cell<u32>,
+}
+
+impl TestEmitter {
+    pub(crate) fn constructor() -> *mut Self {
+        RefPtr::new(Self {
+            ref_count: Cell::new(1),
+            pings: Cell::new(0),
+        })
+        .into_raw()
+    }
+
+    pub(crate) fn get_pings(&self) -> u32 {
+        self.pings.get()
+    }
+
+    pub(crate) fn ping<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bool {
+        self.pings.set(self.pings.get() + 1);
+        let event = TestPingEvent {
+            ref_count: Cell::new(1),
+            r#type: bun_core::String::static_("ping"),
+            cancelable: true,
+            bubbles: false,
+            composed: false,
+            is_trusted: true,
+            count: self.pings.get(),
+        };
+        let event = js_TestPingEvent::create(&cx.heap, RefPtr::new(event));
+        bindgen::dispatch_event(cx, this_value, event)
+    }
+}
+
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct TestException {
+    ref_count: Cell<u32>,
+    message: bun_core::String,
+    reason: bun_core::String,
+}
+
+impl TestException {
+    pub(crate) fn constructor(message: bun_core::String, reason: bun_core::String) -> *mut Self {
+        RefPtr::new(Self {
+            ref_count: Cell::new(1),
+            message,
+            reason,
+        })
+        .into_raw()
+    }
+
+    pub(crate) fn dom_exception_init(&self) -> bindgen::DOMExceptionInit {
+        bindgen::DOMExceptionInit {
+            message: self.message.clone(),
+            name: bun_core::String::static_("TestException"),
+        }
+    }
+
+    pub(crate) fn get_reason(&self) -> bun_core::String {
+        self.reason.clone()
     }
 }
 

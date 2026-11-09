@@ -312,6 +312,9 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         { "lshpack", BUN_VERSION_LSHPACK },
         // Use commit hash for zstd (semantic version extraction not working yet)
         { "zstd", BUN_VERSION_ZSTD_HASH },
+#if BUN_WEBGPU
+        { "dawn", BUN_VERSION_DAWN },
+#endif
         { "v8", REPORTED_NODEJS_V8_VERSION },
 #if !OS(WINDOWS)
         { "uv", "1.48.0" },

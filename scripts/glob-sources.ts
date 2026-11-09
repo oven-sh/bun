@@ -124,6 +124,7 @@ const patterns = {
       "src/jsc/bindings/v8/*.cpp",
       "src/jsc/bindings/v8/shim/*.cpp",
       "src/runtime/webview/*.cpp",
+      "src/runtime/webgpu/*.cpp",
       "src/runtime/bake/*.cpp",
       "src/uws_sys/*.cpp",
       "src/simdutf_sys/*.cpp",

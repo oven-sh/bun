@@ -41,6 +41,7 @@ using namespace JSC;
     macro(addAbortAlgorithmToSignal) \
     macro(armedTimeout) \
     macro(arrayBuffer) \
+    macro(arrayBufferDetachKey) \
     macro(asUint8Array) \
     macro(asymmetricMatch) \
     macro(atimeMs) \

@@ -100,6 +100,7 @@ bun_semver_jsc.workspace = true
 bun_sha_hmac.workspace = true
 bun_shell_parser.workspace = true
 bun_simdutf_sys.workspace = true
+bun_webgpu_sys = { workspace = true, optional = true }
 bun_sourcemap.workspace = true
 bun_sourcemap_jsc.workspace = true
 bun_standalone_graph.workspace = true
@@ -127,3 +128,4 @@ bun_css_jsc.workspace = true
 
 [features]
 default = []
+webgpu = ["dep:bun_webgpu_sys"]

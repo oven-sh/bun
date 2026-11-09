@@ -16,6 +16,7 @@ import {
   DoubleType,
   EnumerationType,
   type EnumerationValues,
+  FloatType,
   FunctionDefinition,
   type FunctionOptions,
   integers,
@@ -25,7 +26,8 @@ import {
   type NamespaceOptions,
   NativePromiseContextType,
   PromisePtrType,
-  RecordResultType,
+  RecordType,
+  SequenceType,
   RefType,
   RestType,
   type SignatureOptions,
@@ -42,11 +44,14 @@ export { null_ as null, undefined_ as undefined };
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
 export const bool = new BoolType();
 
-/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
+/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.clamp`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
 export const { u8, u16, i32, u32, u64, usize } = integers;
 
-/** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
+/** Strict: only a number. `.loose` for `ToNumber`, then `.finite` or `.allowBigInt`. As a result, `b.f64.asDate`. */
 export const f64 = new DoubleType();
+
+/** WebIDL's `float`, as an `f32`: `ToNumber`, and a `TypeError` for what is not finite. */
+export const f32 = new FloatType();
 
 /** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.local` for the JS string itself. */
 export const string = new StringType();
@@ -99,8 +104,14 @@ const undefined_ = new UnitType("undefined");
 
 export const array = (element: Type) => new ArrayType(element);
 
-/** A result only: an object with a property for each `(key, value)` the body gives. */
-export const record = (value: Type) => new RecordResultType(value);
+/** WebIDL's `sequence<T>`, a `Vec<T>`: as `b.array(T)`, of any object that can be iterated. */
+export const sequence = (element: Type) => new SequenceType(element);
+
+/**
+ * As a result: an object with a property for each `(key, value)` the body gives.
+ * As an argument or a member: WebIDL's `record<USVString, V>`, a `Vec<(bun_core::String, V)>`.
+ */
+export const record = (value: Type) => new RecordType(value);
 
 /** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.any` or `b.string.local`. */
 export const rest = (element: Type) => new RestType(element);
@@ -130,11 +141,11 @@ export const value = (options: ValueOptions) => new FunctionDefinition([options]
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: FunctionOptions[]) => new FunctionDefinition(signatures, signatures[0]);
 
-/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. An array is the overloads of one function. */
+/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. An array is the overloads of one function, and `{ constant: 1 }` a read-only integer. */
 export const namespace = (
-  functions: Record<string, SignatureOptions | readonly SignatureOptions[]>,
+  members: Record<string, SignatureOptions | readonly SignatureOptions[] | { constant: number }>,
   options?: NamespaceOptions,
-) => new NamespaceDefinition(functions, options);
+) => new NamespaceDefinition(members, options);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */
 export const module = (options: { rustPath: string }) => new ModuleDefinition(options);

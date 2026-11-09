@@ -298,6 +298,26 @@ If you are using a JSC debug build with VSCode, run the `C/C++: Select a Configu
 
 If you make changes to Bun's [WebKit fork](https://github.com/oven-sh/WebKit), you also have to change `WEBKIT_VERSION` in `scripts/build/deps/webkit.ts` to point to your commit hash or release tag.
 
+## Building with WebGPU
+
+WebGPU is not in the default build. `--webgpu=on` compiles [Dawn](https://dawn.googlesource.com/dawn), Chromium's implementation, into Bun, and adds `navigator.gpu` and the `GPU*` globals. There are no canvases, windows or external textures: it computes, and it renders to textures that are read back.
+
+```sh
+bun run build --webgpu=on --build-dir=build/debug-webgpu test test/js/web/webgpu
+```
+
+The first build fetches Dawn and compiles about 700 more files. It also needs `python3`, which Dawn's code generators run on.
+
+| OS      | Backend     | The driver                                         |
+| ------- | ----------- | -------------------------------------------------- |
+| Linux   | Vulkan      | `libvulkan.so.1`, loaded when an adapter is wanted |
+| macOS   | Metal       | linked                                             |
+| Windows | Direct3D 12 | `d3d12.dll` and `dxgi.dll`, loaded the same way    |
+
+So far only Linux x64 with glibc has been built and tested. A machine without a GPU can use Mesa's software Vulkan driver (`mesa-vulkan-drivers` on Ubuntu). Without any adapter, `navigator.gpu.requestAdapter()` resolves with `null`, and most of the tests still run: they use Dawn's Null backend, which validates every call and runs nothing.
+
+The bindings are in `src/runtime/webgpu/`. `webgpu.bind.ts` is the [WebIDL of the specification](https://gpuweb.github.io/gpuweb/#idl-index) as a [bindgen](/project/bindgen) schema, and `src/codegen/generate-webgpu-sys.ts` writes the Rust declarations of Dawn's C API from its `webgpu.h`. To move to another commit of Dawn, see `scripts/build/deps/dawn.ts`.
+
 ## Troubleshooting
 
 ### 'span' file not found on Ubuntu

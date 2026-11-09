@@ -45,6 +45,9 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         return toJS(state, globalObject, static_cast<BroadcastChannel&>(impl));
     case BunWebViewEventTargetInterfaceType:
         return Bun::toJS(state, globalObject, static_cast<Bun::WebViewEventTarget&>(impl));
+    case BunBindgenEventTargetInterfaceType:
+        // The wrapper owns it, so there is one while a listener of its runs.
+        return impl.wrapper() ? JSC::JSValue(impl.wrapper()) : JSC::jsNull();
     case DOMWindowEventTargetInterfaceType:
         return globalObject;
     case MessagePortEventTargetInterfaceType:

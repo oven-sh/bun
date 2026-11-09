@@ -92,4 +92,6 @@ pub(crate) use cli::{
     shell_completions, test_command,
 };
 
+#[cfg(feature = "webgpu")]
+pub(crate) mod webgpu;
 pub(crate) mod webview;

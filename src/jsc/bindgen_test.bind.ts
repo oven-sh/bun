@@ -392,6 +392,49 @@ export const TestRefCountedNote = b.class({
   refCounted: true,
 });
 
+/** `webcoreBase: "Event"`. */
+export const TestPingEventInit = b.dictionary({
+  bubbles: b.bool.loose.default(false),
+  cancelable: b.bool.loose.default(false),
+  composed: b.bool.loose.default(false),
+  count: b.u32,
+});
+export const TestPingEvent = b.class({
+  rustPath: "crate::bindgen_test::TestPingEvent",
+  runsUnseenCode: false,
+  refCounted: true,
+  webcoreBase: "Event",
+  construct: { args: { type: b.string.loose.owned, init: TestPingEventInit } },
+  proto: { count: { getter: b.u32 } },
+});
+
+/** `webcoreBase: "EventTarget"`, `eventHandler` and `bindgen::dispatch_event`. An internal field comes after what the base holds. */
+export const TestEmitter = b.class({
+  rustPath: "crate::bindgen_test::TestEmitter",
+  runsUnseenCode: false,
+  refCounted: true,
+  webcoreBase: "EventTarget",
+  construct: {},
+  internalFields: ["note"],
+  proto: {
+    onping: { eventHandler: "ping" },
+    note: { internalField: "note", setter: true },
+    pings: { getter: b.u32 },
+    /** Dispatches a cancelable `ping`. False if a listener called `preventDefault()`. */
+    ping: { returns: b.bool, capability: "js", passThis: true },
+  },
+});
+
+/** `webcoreBase: "DOMException"`. */
+export const TestException = b.class({
+  rustPath: "crate::bindgen_test::TestException",
+  runsUnseenCode: false,
+  refCounted: true,
+  webcoreBase: "DOMException",
+  construct: { args: { message: b.string.loose.owned.default(""), reason: b.string.loose.owned } },
+  proto: { reason: { getter: b.string } },
+});
+
 /** `forBind`: the bound `this` of a function. */
 export const TestBoundThis = b.class({
   rustPath: "crate::bindgen_test::TestBoundThis",
@@ -470,6 +513,12 @@ export const TestSquare = b.class({
     scale: { args: { by: b.u32 }, returns: b.self, capability: "heap" },
     "@@inspectCustom": { returns: b.string.utf8 },
   },
+});
+/** `extends` with a constructor. */
+export const TestTriangle = b.class({
+  extends: TestShape,
+  construct: { args: { side: b.u32 }, rustName: "new_triangle" },
+  proto: {},
 });
 export const makeShape = b.fn({ args: { sides: b.u32 }, returns: TestShape, capability: "heap" });
 export const makeSquare = b.fn({ args: { side: b.u32 }, returns: TestSquare, capability: "heap" });
@@ -665,6 +714,54 @@ export const TestAnything = b.union({
   options: TestOptions,
 });
 export const describeAnything = b.fn({ args: { value: TestAnything }, returns: b.string.utf8 });
+
+/** `.ref`: reading `second` can drop the last thing that holds the object of `first`. */
+export const TestRefs = b.dictionary({
+  first: TestRefCounted.ref,
+  second: TestRefCounted.ref.nullable,
+  rest: b.array(TestRefCounted.ref.nullable).default([]),
+});
+export const TestRefOrInteger = b.union({ counted: TestRefCounted.ref, integer: b.i32 });
+/** The sum of the values, and of what is not an instance. */
+export const sumOfRefs = b.fn({
+  args: { refs: TestRefs, more: b.array(TestRefOrInteger).default([]) },
+  returns: b.i32,
+});
+
+/** A namespace as WebIDL declares one: constants, and its name as `Symbol.toStringTag`. */
+export const TestFlags = b.namespace(
+  { READ: { constant: 1 }, WRITE: { constant: 2 }, ALL: { constant: 0xffffffff } },
+  { toStringTag: true },
+);
+
+/** `b.record` that is taken, as an argument and as a member. */
+export const TestRecords = b.dictionary({
+  limits: b.record(b.u64.enforceRange().optional).default({}),
+  counted: b.record(TestRefCounted.ref).default({}),
+});
+/** Each pair as `key=value`, where a value that is absent is `none`. */
+export const describeRecords = b.fn({
+  args: { constants: b.record(b.f64.loose.finite), records: TestRecords.default({}) },
+  returns: b.array(b.string.utf8),
+});
+
+/** As WebIDL's `(sequence<[EnforceRange] unsigned long> or TestSizeDict)`. */
+export const TestSizeDict = b.dictionary({ width: b.u32.enforceRange(), height: b.u32.enforceRange().default(1) });
+export const TestSize = b.union({ sequence: b.sequence(b.u32.enforceRange()), dict: TestSizeDict });
+export const areaOf = b.fn({ args: { size: TestSize }, returns: b.f64 });
+/** `b.sequence` by itself. */
+export const sumOfSequence = b.fn({ args: { numbers: b.sequence(b.f64.loose).default([]) }, returns: b.f64 });
+
+/** WebIDL's `[Clamp]`, `double`, `float` and a sequence of `[EnforceRange]`, as they arrive. */
+export const webidlNumbers = b.fn({
+  args: {
+    clamped: b.u8.clamp,
+    finite: b.f64.loose.finite,
+    float: b.f32.default(0.5),
+    inRange: b.array(b.u32.enforceRange()).default([]),
+  },
+  returns: b.array(b.f64),
+});
 
 /** Told apart by the first argument, then by the second. */
 export const overloaded = b.overloads(

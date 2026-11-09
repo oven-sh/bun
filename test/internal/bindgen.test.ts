@@ -114,7 +114,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.namespace({ f: { [key]: true } })).toThrow(`f: a function of a namespace has no ${key}`);
   }
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
-  expect(() => b.array(b.i32.enforceRange(0, 100).nullable)).toThrow("the converter of a range takes no context");
+  expect(() => b.array(b.i32.validateInteger(0, 100).nullable)).toThrow(
+    "the converter of .validateInteger() takes the name of what it converts, and an element has none",
+  );
   const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
   expect(() => b.array(stringOrBuffer)).toThrow("the bytes of a buffer are only for an argument");
   expect(() => b.dictionary({ bytes: stringOrBuffer })).toThrow("the bytes of a buffer are only for an argument");
@@ -267,7 +269,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.string.loose.local).toThrow(".local follows b.string");
   expect(() => b.fn({ args: { value: b.f64.asDate.optional } })).toThrow("value: .asDate is a result");
   expect(() => b.fn({ args: { value: b.array(b.string.local) } })).toThrow("an array is a Vec");
-  expect(() => b.fn({ args: { value: b.record(b.bool) } })).toThrow("value: b.record is a result");
   for (const value of [b.any, b.string.local, b.bufferSource]) {
     expect(() => b.record(value)).toThrow("the pairs of a record can be a Vec, where the GC does not see JS values");
   }
@@ -354,9 +355,12 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ extends: base, proto: { x: { getter: b.u32, cache: true } } })).toThrow(
     "cache: a class with extends adds no internal field",
   );
-  for (const construct of [{}, "illegal"] as const)
-    expect(() => b.class({ extends: base, construct })).toThrow(
-      'extends: construct is "illegal", and the base has a constructor too',
+  for (const construct of [{ rustName: "new_x" }, "illegal"] as const)
+    expect(() => b.class({ extends: base, construct })).toThrow("extends: the base has a constructor too");
+  const baseWithConstructor = b.class({ rustPath: "T", final: false, construct: "illegal" });
+  for (const construct of [{}, { rustName: "new_x", passStructure: true, capability: "heap" }] as const)
+    expect(() => b.class({ extends: baseWithConstructor, construct })).toThrow(
+      "extends: construct has a rustName, for the struct is the base's, and no passStructure",
     );
   expect(() => b.class({ extends: base, proto: { x: { mutates: true } } })).toThrow(
     "a class that is or has a subclass has no mutates",
@@ -2945,6 +2949,19 @@ describe("classes", () => {
         expect(() => new Class()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
     });
 
+    it("a subclass has a constructor of its own", () => {
+      const { TestTriangle } = bindgen as any;
+      const triangle = new TestTriangle(2);
+      expect(Object.getPrototypeOf(triangle)).toBe(TestTriangle.prototype);
+      expect(triangle).toBeInstanceOf(TestShape);
+      expect(triangle.sides).toBe(3);
+      expect(shapeFromJS(triangle)).toEqual([true, false, false]);
+      class Isosceles extends TestTriangle {}
+      expect(new Isosceles(1)).toBeInstanceOf(Isosceles);
+      expect(new Isosceles(1).describe()).toBe("3 sides");
+      expect(() => TestTriangle(2)).toThrow(TypeError);
+    });
+
     it.each([makeSquare, makeSquareWrapper])("an instance is an instance of the base: %p", make => {
       const square = make(3);
       expect(Object.getPrototypeOf(square)).toBe(TestSquare.prototype);
@@ -3158,6 +3175,300 @@ describe("classes", () => {
       // The cell, then size_of::<TestRefCounted>().
       expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 12);
     });
+  });
+});
+
+describe(".ref of a refCounted class", () => {
+  const { TestRefCounted, sumOfRefs } = bindgen as any;
+
+  it("is a member of a dictionary, an element of an array and an alternative of a union", () => {
+    const refs = { first: new TestRefCounted(1), second: new TestRefCounted(2), rest: [new TestRefCounted(4), null] };
+    expect(sumOfRefs(refs, [new TestRefCounted(8), 16])).toBe(31);
+    expect(sumOfRefs({ first: refs.first, second: null })).toBe(1);
+    expect(sumOfRefs({ first: refs.first })).toBe(1);
+  });
+
+  it("takes only an instance", () => {
+    expect(() => sumOfRefs({ first: {} })).toThrow("TestRefs.first must be an instance of TestRefCounted");
+    expect(() => sumOfRefs({ first: null })).toThrow("TestRefs.first must be an instance of TestRefCounted");
+    expect(() => sumOfRefs({ first: new TestRefCounted(1), rest: [1] })).toThrow(
+      "element of TestRefs.rest must be an instance of TestRefCounted",
+    );
+  });
+
+  it("holds the struct after the object is collected while the dictionary is read", () => {
+    Bun.gc(true);
+    const alive = TestRefCounted.alive();
+    const sum = sumOfRefs({
+      get first() {
+        return new TestRefCounted(40);
+      },
+      get second() {
+        Bun.gc(true);
+        return new TestRefCounted(2);
+      },
+    });
+    expect(sum).toBe(42);
+    Bun.gc(true);
+    expect(TestRefCounted.alive()).toBe(alive);
+  });
+
+  it("drops what it took when a later member throws", () => {
+    Bun.gc(true);
+    const alive = TestRefCounted.alive();
+    expect(() =>
+      sumOfRefs({
+        get first() {
+          return new TestRefCounted(1);
+        },
+        get second() {
+          throw new Error("no second");
+        },
+      }),
+    ).toThrow("no second");
+    Bun.gc(true);
+    expect(TestRefCounted.alive()).toBe(alive);
+  });
+
+  itAlways("is only of a refCounted class", () => {
+    const inObject = b.class({ rustPath: "crate::InObject" });
+    expect(() => inObject.ref).toThrow(".ref is a reference to the struct of a refCounted class");
+  });
+});
+
+describe("webcoreBase", () => {
+  const { TestEmitter, TestPingEvent, TestException } = bindgen as any;
+
+  it("an EventTarget has the listeners of one", () => {
+    const emitter = new TestEmitter();
+    expect(emitter).toBeInstanceOf(EventTarget);
+    expect(Object.getPrototypeOf(TestEmitter.prototype)).toBe(EventTarget.prototype);
+    expect(Object.getPrototypeOf(TestEmitter)).toBe(EventTarget);
+    expect(Object.prototype.toString.call(emitter)).toBe("[object TestEmitter]");
+
+    const seen: unknown[] = [];
+    emitter.addEventListener("ping", function (this: unknown, event: any) {
+      seen.push([this === emitter, event.target === emitter, event.currentTarget === emitter, event.count]);
+    });
+    expect(emitter.ping()).toBe(true);
+    expect(emitter.ping()).toBe(true);
+    expect(seen).toEqual([
+      [true, true, true, 1],
+      [true, true, true, 2],
+    ]);
+    expect(emitter.pings).toBe(2);
+  });
+
+  it("an event that native code dispatches is an instance, is trusted, and can be cancelled", () => {
+    const emitter = new TestEmitter();
+    let event: any;
+    emitter.addEventListener("ping", (dispatched: Event) => {
+      event = dispatched;
+      dispatched.preventDefault();
+    });
+    expect(emitter.ping()).toBe(false);
+    expect(event).toBeInstanceOf(TestPingEvent);
+    expect(event).toBeInstanceOf(Event);
+    expect([event.type, event.isTrusted, event.cancelable, event.defaultPrevented]).toEqual(["ping", true, true, true]);
+  });
+
+  it("dispatchEvent() takes an event that script made", () => {
+    const emitter = new TestEmitter();
+    const event = new TestPingEvent("pong", { count: 7, bubbles: true });
+    expect([event.type, event.count, event.bubbles, event.cancelable, event.isTrusted]).toEqual([
+      "pong",
+      7,
+      true,
+      false,
+      false,
+    ]);
+    let received: unknown;
+    emitter.addEventListener("pong", (dispatched: Event) => void (received = dispatched));
+    expect(emitter.dispatchEvent(event)).toBe(true);
+    expect(received).toBe(event);
+    expect(() => new TestPingEvent("pong", {})).toThrow("TestPingEventInit.count");
+    expect(new TestPingEvent("", { count: 1 }).type).toBe("");
+    expect(new TestException("", "").message).toBe("");
+  });
+
+  it("an eventHandler is the one listener that assigning replaces", () => {
+    const emitter = new TestEmitter();
+    expect(emitter.onping).toBeNull();
+    const calls: string[] = [];
+    const first = () => void calls.push("first");
+    emitter.onping = first;
+    expect(emitter.onping).toBe(first);
+    emitter.addEventListener("ping", () => void calls.push("listener"));
+    emitter.onping = () => void calls.push("second");
+    emitter.ping();
+    expect(calls).toEqual(["second", "listener"]);
+    emitter.onping = 1;
+    expect(emitter.onping).toBeNull();
+    emitter.ping();
+    expect(calls).toEqual(["second", "listener", "listener"]);
+    const { get, set } = Object.getOwnPropertyDescriptor(TestEmitter.prototype, "onping")!;
+    expect(() => get!.call({})).toThrow(TypeError);
+    expect(() => set!.call({}, null)).toThrow(TypeError);
+  });
+
+  it("the object keeps its listeners and its internal fields alive", () => {
+    const emitter = new TestEmitter();
+    let calls = 0;
+    emitter.addEventListener("ping", () => void calls++);
+    emitter.onping = () => void calls++;
+    emitter.note = { text: "kept" };
+    Bun.gc(true);
+    emitter.ping();
+    expect(calls).toBe(2);
+    expect(emitter.note).toEqual({ text: "kept" });
+  });
+
+  it("a DOMException has the message and the name that the struct gives", () => {
+    const exception = new TestException("went wrong", "because");
+    expect(exception).toBeInstanceOf(DOMException);
+    expect(exception).toBeInstanceOf(Error);
+    expect(Object.getPrototypeOf(TestException)).toBe(DOMException);
+    expect([exception.message, exception.name, exception.code, exception.reason]).toEqual([
+      "went wrong",
+      "TestException",
+      0,
+      "because",
+    ]);
+    expect(exception.stack).toContain("bindgen.test.ts");
+    expect(new TestException(undefined, "why").message).toBe("");
+  });
+
+  itAlways("is for a refCounted class", () => {
+    expect(() => b.class({ rustPath: "T", webcoreBase: "Event" })).toThrow("webcoreBase: the class is refCounted");
+    expect(() => b.class({ rustPath: "T", proto: { onping: { eventHandler: "ping" } } })).toThrow(
+      'onping: an eventHandler is a property of the prototype of a class with webcoreBase: "EventTarget"',
+    );
+  });
+});
+
+it("a namespace has constants and its name as Symbol.toStringTag", () => {
+  const { TestFlags } = bindgen as any;
+  expect(Object.getOwnPropertyDescriptors(TestFlags)).toEqual({
+    READ: { value: 1, writable: false, enumerable: true, configurable: false },
+    WRITE: { value: 2, writable: false, enumerable: true, configurable: false },
+    ALL: { value: 0xffffffff, writable: false, enumerable: true, configurable: false },
+    [Symbol.toStringTag]: { value: "TestFlags", writable: false, enumerable: false, configurable: true },
+  });
+  expect(Object.getPrototypeOf(TestFlags)).toBe(Object.prototype);
+  expect(String(TestFlags)).toBe("[object TestFlags]");
+});
+
+describe("b.record that is taken", () => {
+  const { describeRecords, TestRefCounted } = bindgen as any;
+
+  it("is the own enumerable properties, in order", () => {
+    const constants = Object.create({ inherited: 1 }, { hidden: { value: 2 }, shown: { value: 3, enumerable: true } });
+    constants.b = "4";
+    constants[1] = 0.5;
+    expect(describeRecords(constants)).toEqual(["1=0.5", "shown=3", "b=4"]);
+    expect(describeRecords({})).toEqual([]);
+  });
+
+  it("is a member of a dictionary, with values that can be absent or hold a reference", () => {
+    const records = { limits: { a: 1, b: undefined }, counted: { c: new TestRefCounted(7) } };
+    expect(describeRecords({}, records)).toEqual(["a=1", "b=none", "c=7"]);
+  });
+
+  it("converts each value, and reports what it refuses", () => {
+    expect(() => describeRecords({ a: NaN })).toThrow(TypeError);
+    expect(() => describeRecords({}, { limits: { a: -1 } })).toThrow(TypeError);
+    expect(() => describeRecords({}, { counted: { a: {} } })).toThrow(
+      "value of a record must be an instance of TestRefCounted",
+    );
+    expect(() => describeRecords({ [Symbol.iterator]: 1 })).toThrow(TypeError);
+  });
+
+  it("takes only an object", () => {
+    for (const value of [undefined, null, 1, "text"]) {
+      expect(() => describeRecords(value)).toThrow("constants must be an object");
+    }
+    expect(() => describeRecords({}, { limits: 1 })).toThrow("TestRecords.limits must be an object");
+  });
+
+  it("replaces an unpaired surrogate in a key, and keeps the last value of keys that are then the same", () => {
+    expect(describeRecords({ "\ud800": 1, "\ufffd": 2 })).toEqual(["\ufffd=2"]);
+  });
+
+  itAlways("holds nothing that is borrowed", () => {
+    expect(() => b.fn({ args: { value: b.record(b.string.utf8) } })).toThrow(
+      "a record that is taken is a Vec, which outlives what its values would borrow",
+    );
+  });
+});
+
+describe("WebIDL's numbers", () => {
+  const { webidlNumbers } = bindgen as any;
+
+  it(".clamp is the nearest integer of the width", () => {
+    expect(webidlNumbers(300, 0)[0]).toBe(255);
+    expect(webidlNumbers(-1, 0)[0]).toBe(0);
+    expect(webidlNumbers(NaN, 0)[0]).toBe(0);
+    expect(webidlNumbers("7", 0)[0]).toBe(7);
+    expect(webidlNumbers(2.5, 0)[0]).toBe(2);
+    expect(webidlNumbers(3.5, 0)[0]).toBe(4);
+  });
+
+  it(".finite refuses NaN and the infinities", () => {
+    expect(webidlNumbers(0, "1.5")[1]).toBe(1.5);
+    for (const value of [NaN, Infinity, -Infinity, undefined]) {
+      expect(() => webidlNumbers(0, value)).toThrow(TypeError);
+    }
+  });
+
+  it("b.f32 rounds to an f32 and refuses what is not finite as one", () => {
+    expect(webidlNumbers(0, 0)[2]).toBe(0.5);
+    expect(webidlNumbers(0, 0, 0.1)[2]).toBe(Math.fround(0.1));
+    expect(() => webidlNumbers(0, 0, NaN)).toThrow(TypeError);
+    expect(() => webidlNumbers(0, 0, 1e39)).toThrow(TypeError);
+  });
+
+  it("b.sequence takes what can be iterated, and in a union leaves any other object to the next alternative", () => {
+    const { areaOf } = bindgen as any;
+    expect(areaOf([2, "3"])).toBe(6);
+    expect(areaOf(new Uint32Array([2, 5]))).toBe(10);
+    expect(areaOf(new Set([3, 4]))).toBe(12);
+    expect(
+      areaOf(
+        (function* () {
+          yield 6;
+          yield 7;
+        })(),
+      ),
+    ).toBe(42);
+    expect(areaOf({ width: 4 })).toBe(4);
+    expect(areaOf({ width: 4, [Symbol.iterator]: undefined })).toBe(4);
+    // It is a sequence, whatever else it has.
+    expect(areaOf(Object.assign([2], { width: 4 }))).toBe(2);
+    expect(() => areaOf([-1])).toThrow(TypeError);
+    expect(() => areaOf(1)).toThrow("TestSizeDict must be an object");
+    expect(() => areaOf("12")).toThrow("TestSizeDict must be an object");
+    expect(() =>
+      areaOf({
+        get [Symbol.iterator]() {
+          throw new Error("no iterator");
+        },
+      }),
+    ).toThrow("no iterator");
+  });
+
+  it("b.sequence by itself refuses what cannot be iterated", () => {
+    const { sumOfSequence } = bindgen as any;
+    expect(sumOfSequence()).toBe(0);
+    expect(sumOfSequence([1, "2"])).toBe(3);
+    expect(sumOfSequence(new Float32Array([0.5, 0.25]))).toBe(0.75);
+    for (const value of [{}, 1, "12", null])
+      expect(() => sumOfSequence(value)).toThrow("numbers must be an object that can be iterated");
+  });
+
+  it(".enforceRange() is an element of an array", () => {
+    expect(webidlNumbers(0, 0, 0, [1, "2", 4294967295]).slice(3)).toEqual([1, 2, 4294967295]);
+    expect(() => webidlNumbers(0, 0, 0, [1, -1])).toThrow(TypeError);
+    expect(() => webidlNumbers(0, 0, 0, [4294967296])).toThrow(TypeError);
   });
 });
 

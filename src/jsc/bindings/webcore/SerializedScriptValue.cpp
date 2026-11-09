@@ -4920,6 +4920,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
                 RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
             }
+            // [[ArrayBufferDetachKey]] of any other buffer: only what made it detaches it.
+            if (transferable->getDirect(vm, builtinNames(vm).arrayBufferDetachKeyPrivateName())) {
+                throwVMTypeError(&lexicalGlobalObject, scope, "Cannot transfer an ArrayBuffer that only its owner can detach"_s);
+                RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
+            }
             // No generic isDetachable() gate: Bun's native borrows call
             // ArrayBuffer::pin(), which clears isDetachable() without setting
             // the lock flag. A pinned buffer falls through so transferTo()

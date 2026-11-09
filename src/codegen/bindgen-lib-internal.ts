@@ -721,6 +721,11 @@ export class IntegerType extends PrimitiveType {
     this.#refusesBigInt(".wrap");
     return new IntegerType(this.info, `WebCore::${this.info.webidl}`);
   }
+  /** WebIDL `[Clamp]`: `ToNumber`, then the nearest integer of the width. NaN is 0. */
+  get clamp(): IntegerType {
+    this.#refusesBigInt(".clamp");
+    return new IntegerType(this.info, `WebCore::IDLClampAdaptor<WebCore::${this.info.webidl}>`);
+  }
   /** WebIDL `[EnforceRange]` over `[min, max]`. */
   enforceRange(min = Number(this.info.min), max = Number(this.info.max)): RangeType {
     this.#refusesBigInt(".enforceRange()");
@@ -807,6 +812,9 @@ export class RangeType extends IntegerType {
   get wrap(): never {
     throw new TypeError(`.${this.modifier}() says how the value converts; .wrap is another way`);
   }
+  get clamp(): never {
+    throw new TypeError(`.${this.modifier}() says how the value converts; .clamp is another way`);
+  }
   getHeaders(out: Set<string>): void {
     out.add("Bindgen/IDLConvertIntegerRange.h");
   }
@@ -884,6 +892,10 @@ export class DoubleType extends PrimitiveType {
 }
 
 export class LooseDoubleType extends DoubleType {
+  /** WebIDL's `double`: NaN and the infinities throw a `TypeError`. */
+  get finite(): DoubleType {
+    return new FiniteDoubleType("WebCore::IDLDouble", "any", convertingType(numberType, "ToNumber"));
+  }
   /** `ToNumeric`: a BigInt too, as the double nearest to it, for an argument whose type is `number | bigint`. */
   get allowBigInt(): DoubleType {
     return new DoubleType(
@@ -891,6 +903,44 @@ export class LooseDoubleType extends DoubleType {
       "any",
       convertingType(unionType(numberType, bigIntType), "ToNumeric"),
     );
+  }
+}
+
+class FiniteDoubleType extends DoubleType {
+  get canRefuse(): boolean {
+    return true;
+  }
+  get tryConvertThrows(): boolean {
+    return true;
+  }
+}
+
+/** WebIDL's `float`: `ToNumber`, then the nearest `f32`. What is not finite, before or after, throws a `TypeError`. */
+export class FloatType extends PrimitiveType {
+  constructor() {
+    super("WebCore::IDLFloat", "any", "f32", 4, "any");
+  }
+  protected get cppName(): string {
+    return "float";
+  }
+  get parameterType(): ParameterType {
+    return convertingType(numberType, "ToNumber");
+  }
+  get resultType(): TypeSpec {
+    return numberType;
+  }
+  get canRefuse(): boolean {
+    return true;
+  }
+  toCpp(value: unknown): string {
+    assert(typeof value === "number" && Math.fround(value) === value, `${util.inspect(value)} is not an f32`);
+    return `float { ${value} }`;
+  }
+  toRust(value: unknown): string {
+    return `${value}_f32`;
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::f64(heap, f64::from(${value}))`;
   }
 }
 
@@ -980,6 +1030,11 @@ export class StringType extends Type {
   get loose(): StringType {
     assert(!this.valueKinds.includes("stringObject"), ".loose already takes a String object");
     return new StringType("WebCore::IDLDOMString", "any");
+  }
+  /** WebIDL's `USVString`: `ToString`, then U+FFFD for every unpaired surrogate. */
+  get usv(): StringType {
+    assert(!this.valueKinds.includes("stringObject"), ".usv already takes a String object");
+    return new StringType("WebCore::IDLUSVString", "any");
   }
   /** Also takes a `String` object, as `.utf8` does. */
   get allowStringObject(): StringType {
@@ -2270,8 +2325,8 @@ export class ArrayType extends Type {
     super();
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(
-      !(withoutModifiers(element) instanceof RangeType),
-      "the converter of a range takes no context, which is what names an element",
+      !isValidatedInteger(withoutModifiers(element)),
+      "the converter of .validateInteger() takes the name of what it converts, and an element has none",
     );
     refuseOutsideArgument(element);
     assert(
@@ -2324,6 +2379,14 @@ export class ArrayType extends Type {
     out.add("Bindgen/ExternVectorTraits.h");
     super.getHeaders(out);
   }
+  /** WebIDL's `= []`. */
+  toCpp(value: unknown): string {
+    assert(Array.isArray(value) && value.length === 0, "the default of an array is []");
+    return `${this.idlType}::ImplementationType {}`;
+  }
+  toRust(): string {
+    return "Vec::new()";
+  }
   layout(): Layout {
     return { size: 16, align: 8 };
   }
@@ -2348,9 +2411,33 @@ export class ArrayType extends Type {
   }
 }
 
-/** An object with a property for each pair of a key, in UTF-8, and a value. */
-export class RecordResultType extends ResultType {
-  readonly refusal = "b.record is a result";
+/** WebIDL's `sequence<T>`: what an object that has `Symbol.iterator` yields. In a union the next alternative gets any other object. */
+export class SequenceType extends ArrayType {
+  get idlType(): string {
+    return super.idlType.replace("Bun::Bindgen::IDLArray<", "Bun::Bindgen::IDLSequence<");
+  }
+  get tsType(): string {
+    return `Iterable<${this.element.tsType}>`;
+  }
+  get valueKinds(): ValueKinds {
+    return "any";
+  }
+  get refuses(): string | null {
+    return "what is not iterable";
+  }
+  get tryConvertThrows(): boolean {
+    return true;
+  }
+  get parameterType(): ParameterType {
+    return strictType({ type: "Object" });
+  }
+}
+
+/**
+ * As a result: an object with a property for each pair of a key, in UTF-8, and a value.
+ * As an argument or a member: WebIDL's `record<USVString, V>`, a `Vec<(bun_core::String, V)>` of an object's own enumerable properties.
+ */
+export class RecordType extends Type {
   readonly value: Type;
   constructor(value: Type) {
     super();
@@ -2360,8 +2447,58 @@ export class RecordResultType extends ResultType {
     );
     this.value = value;
   }
+  /** More can be returned in a record than taken in one. */
+  checkTaken(name: string): void {
+    const value = this.value;
+    assert(!(value instanceof DefaultType), `${name}: a value of a record is never absent, so it has no default`);
+    assert(
+      !isValidatedInteger(withoutModifiers(value)),
+      `${name}: the converter of .validateInteger() takes the name of what it converts, and a value of a record has none`,
+    );
+    refuseOutsideArgument(value, name);
+    assert(
+      !value.borrowsCell && !value.borrowsHeap && !value.borrowsFrame,
+      `${name}: a record that is taken is a Vec, which outlives what its values would borrow: use b.string, b.string.utf8.owned or .ref`,
+    );
+  }
+  get idlType(): string {
+    return `Bun::Bindgen::IDLRecord<${this.value.idlType}>`;
+  }
   get tsType(): string {
     return `Record<string, ${this.value.tsType}>`;
+  }
+  get parameterType(): ParameterType {
+    return strictType({ type: "Object" });
+  }
+  get refuses(): string | null {
+    return nonObjects;
+  }
+  get rustIsCopy(): boolean {
+    return false;
+  }
+  getHeaders(out: Set<string>): void {
+    out.add("Bindgen/IDLConvertRecord.h");
+    super.getHeaders(out);
+  }
+  /** WebIDL's `= {}`. */
+  toCpp(value: unknown): string {
+    assert(
+      typeof value === "object" && value !== null && Object.keys(value).length === 0,
+      "the default of a record is {}",
+    );
+    return `${this.idlType}::ImplementationType {}`;
+  }
+  toRust(): string {
+    return "Vec::new()";
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(scope: RustScope): string {
+    return `bindgen::extern_types::ExternVector<bindgen::extern_types::ExternRecordEntry<${this.value.rustExternType(scope)}>>`;
+  }
+  rustFromExtern(expr: string, scope: RustScope): string {
+    return `${expr}.into_vec_with(|entry| (bindgen::extern_types::adopt_string(entry.key), ${this.value.rustFromExtern("entry.value", scope)}))`;
   }
   /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. */
   get resultType(): TypeSpec {
@@ -2370,8 +2507,13 @@ export class RecordResultType extends ResultType {
   get dependencies(): readonly Type[] {
     return [this.value];
   }
-  rustType(): never {
-    throw new TypeError("b.record has no Rust type to name, so it is not a member or an alternative");
+  rustType(scope: RustScope): string {
+    return `Vec<(bun_core::String, ${this.value.rustType(scope)})>`;
+  }
+  rustResultFieldType(): never {
+    throw new TypeError(
+      "a b.record that is returned has no Rust type to name, so it is not a member or an alternative",
+    );
   }
   rustToJS(value: string, scope: RustScope): string {
     return `bindgen::to_js::record(heap, ${value}, |heap, value| ${this.value.rustToJS("value", scope)})`;
@@ -2719,8 +2861,8 @@ export class UnionType extends NamedType {
       assert(name !== "tag", "tag: the generated struct has a member of that name");
       assert(!cppKeywords.has(name), `${name} is a C++ keyword, and JavaScript never sees the name: pick another`);
       assert(
-        !(type instanceof RangeType),
-        `${name}: the converter of a range takes no context, which is what names an alternative`,
+        !isValidatedInteger(type),
+        `${name}: the converter of .validateInteger() takes the name of what it converts, and an alternative has none`,
       );
     }
     const chosen = new Set([...this.alternativesByKind.values()].flat());
@@ -3035,6 +3177,10 @@ export class Signature {
   }
 }
 
+function isValidatedInteger(type: Type): boolean {
+  return type instanceof RangeType && type.modifier === "validateInteger";
+}
+
 function isMadeOf(type: Type, kind: new (...args: never[]) => Type): boolean {
   return type instanceof kind || (type as Type).dependencies.some(dependency => isMadeOf(dependency, kind));
 }
@@ -3075,6 +3221,11 @@ function withoutModifiers(type: Type): Type {
 function refuseResultType(name: string, type: Type): void {
   const result = resultTypeIn(type);
   assert(!result, `${name}: ${result?.refusal}`);
+  const checkRecords = (part: Type) => {
+    if (part instanceof RecordType) part.checkTaken(name);
+    part.dependencies.forEach(checkRecords);
+  };
+  checkRecords(type);
 }
 
 /** Call a signature, or look at the kind of one more argument. */
@@ -3262,6 +3413,11 @@ export interface InternalFieldField {
   setter?: true;
 }
 
+/** WebIDL's `attribute EventHandler`, of a class with `webcoreBase: "EventTarget"`: the listener for events of this type that assigning replaces. */
+export interface EventHandlerField {
+  eventHandler: string;
+}
+
 /** A function written in JavaScript: the export of this name in `src/js/builtins/<class name>.ts`, without the `@@` of a symbol's key. */
 export interface BuiltinField {
   builtin: true;
@@ -3279,7 +3435,13 @@ export interface ConstantField {
 
 /** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. `@@inspectCustom` is `Symbol.for("nodejs.util.inspect.custom")`. */
 export type Field =
-  FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ConstantField;
+  | FunctionField
+  | readonly FunctionField[]
+  | GetterField
+  | InternalFieldField
+  | EventHandlerField
+  | BuiltinField
+  | ConstantField;
 export type StaticField =
   | Omit<
       FunctionField,
@@ -3290,9 +3452,13 @@ export type StaticField =
 export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
   /** The constructor creates the object itself, with `structure.create(..)`, and returns it: it can then set internal fields. */
   passStructure?: boolean;
+  /** The Rust function, which is `constructor` otherwise. A class with `extends` names one: its struct is its base's. */
+  rustName?: string;
 }
 
 type ClassTableColumns = Pick<ClassColumns, "slots" | "stateHeap" | "types" | "lockedMembers"> & EntryColumns;
+
+export type WebCoreBase = "EventTarget" | "Event" | "DOMException";
 
 export interface ClassOptions extends ClassTableColumns {
   /** Path of the Rust struct. The members are its own methods. A class with `extends` has its base's. */
@@ -3315,6 +3481,8 @@ export interface ClassOptions extends ClassTableColumns {
   rustTraits?: readonly string[];
   /** The prototype inherits from `Error.prototype` instead of `Object.prototype`, and its `name` is the class's. */
   prototypeBase?: "Error";
+  /** With `refCounted`: the class inherits from this interface, which WebCore implements. See "webcoreBase" in the docs. */
+  webcoreBase?: WebCoreBase;
   /** `true`: native properties are configurable. */
   configurable?: boolean;
   /** `false`: native properties are non-enumerable. */
@@ -3554,6 +3722,16 @@ export class InternalFieldAccessor {
   }
 }
 
+export class EventHandlerAccessor {
+  readonly name: string;
+  readonly eventType: string;
+  readonly hasSetter = true;
+  constructor(name: string, options: EventHandlerField) {
+    this.name = name;
+    this.eventType = options.eventHandler;
+  }
+}
+
 export class Builtin {
   readonly name: string;
   readonly length: number;
@@ -3577,7 +3755,8 @@ export class Constant {
   }
 }
 
-export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin | Constant;
+export type ClassMember =
+  FunctionDefinition | Getter | InternalFieldAccessor | EventHandlerAccessor | Builtin | Constant;
 
 /** Stands for the class being declared, in its own signatures. */
 class SelfType extends Type {
@@ -3602,6 +3781,54 @@ class SelfType extends Type {
   }
 }
 export const selfType = new SelfType();
+
+/**
+ * An instance of a `refCounted` class, as a reference to its struct: `bun_ptr::RefPtr<T>`. It holds the struct and not
+ * the object, so it can be where the GC does not look and where nothing else holds the object.
+ */
+export class ClassRefType extends Type {
+  readonly class: ClassType;
+  constructor(type: ClassType) {
+    super();
+    this.class = type;
+  }
+  get idlType(): string {
+    return `Bun::Bindgen::IDLWrappedRef<${this.class.cpp}, std::to_array("${this.class.name}")>`;
+  }
+  get tsType(): string {
+    return this.class.tsType;
+  }
+  get valueKinds(): ValueKinds {
+    return [this.class];
+  }
+  get parameterType(): ParameterType {
+    return this.class.parameterType;
+  }
+  get tryConvertThrows(): boolean {
+    return false;
+  }
+  get rustIsCopy(): boolean {
+    return false;
+  }
+  get nullRepresentation() {
+    return "pointer" as const;
+  }
+  getHeaders(out: Set<string>): void {
+    this.class.getHeaders(out);
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "*mut core::ffi::c_void";
+  }
+  rustType(): string {
+    return `bun_ptr::RefPtr<${this.class.rustPath}>`;
+  }
+  rustFromExtern(expr: string): string {
+    return `bun_ptr::RefPtr::<${this.class.rustPath}>::from_raw(${expr}.cast())`;
+  }
+}
 
 /** As a result: the wrapper, `JsWrapper<'a, T>`. As an argument: `&'a T`. */
 export class ClassType extends NamedType {
@@ -3630,6 +3857,7 @@ export class ClassType extends NamedType {
   readonly functions: readonly FunctionDefinition[];
   readonly getters: readonly Getter[];
   readonly internalFieldAccessors: readonly InternalFieldAccessor[];
+  readonly eventHandlerAccessors: readonly EventHandlerAccessor[];
   readonly staticFunctions: readonly FunctionDefinition[];
   readonly staticGetters: readonly Getter[];
   readonly builtins: readonly Builtin[];
@@ -3647,6 +3875,9 @@ export class ClassType extends NamedType {
   readonly enumerable: boolean;
   readonly writable: boolean;
   readonly prototypeBase: "Error" | undefined;
+  readonly webcoreBase: WebCoreBase | undefined;
+  /** The Rust function that `new` calls. */
+  readonly constructorRustName: string;
   readonly columns: ClassTableColumns;
   /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
   classIndex = -1;
@@ -3663,6 +3894,7 @@ export class ClassType extends NamedType {
       "protoCaller",
       "rustTraits",
       "prototypeBase",
+      "webcoreBase",
       "configurable",
       "enumerable",
       "writable",
@@ -3688,6 +3920,7 @@ export class ClassType extends NamedType {
         "overridesToJS",
         "forBind",
         "prototypeBase",
+        "webcoreBase",
         "memoryCost",
         "estimatedSize",
         "call",
@@ -3697,11 +3930,23 @@ export class ClassType extends NamedType {
         "calledFromRust",
       ] as const)
         assert(options[key] === undefined, `${key}: a class with extends has what its base has`);
+      assert(options.construct === undefined || this.base.construct, "extends: the base has a constructor too");
       assert(
-        options.construct === undefined || (options.construct === "illegal" && this.base.construct),
-        'extends: construct is "illegal", and the base has a constructor too',
+        typeof options.construct !== "object" || (options.construct.rustName && !options.construct.passStructure),
+        "extends: construct has a rustName, for the struct is the base's, and no passStructure",
       );
     }
+    this.webcoreBase = options.webcoreBase;
+    assert(
+      !this.webcoreBase ||
+        (options.refCounted &&
+          (options.final ?? true) &&
+          !options.prototypeBase &&
+          !options.forBind &&
+          !options.callInstance),
+      "webcoreBase: the class is refCounted and final, and has no prototypeBase, forBind or callInstance",
+    );
+    this.constructorRustName = (typeof options.construct === "object" && options.construct.rustName) || "constructor";
     assert(this.base || options.rustPath !== undefined, "a class has a rustPath");
     this.rustPath = this.base?.rustPath ?? options.rustPath!;
     this.refCounted = options.refCounted ?? false;
@@ -3751,7 +3996,8 @@ export class ClassType extends NamedType {
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(
-          !wellKnownSymbol(name) || !("internalField" in field || "getter" in field || "constant" in field),
+          !wellKnownSymbol(name) ||
+            !("internalField" in field || "eventHandler" in field || "getter" in field || "constant" in field),
           `${name}: only a function has an @@ key`,
         );
         if ("builtin" in field) {
@@ -3761,6 +4007,13 @@ export class ClassType extends NamedType {
         if ("internalField" in field) {
           assert(!isStatic, `${name}: an internalField accessor is a property of the prototype`);
           return new InternalFieldAccessor(name, field);
+        }
+        if ("eventHandler" in field) {
+          assert(
+            !isStatic && this.webcoreBase === "EventTarget",
+            `${name}: an eventHandler is a property of the prototype of a class with webcoreBase: "EventTarget"`,
+          );
+          return new EventHandlerAccessor(name, field);
         }
         if ("constant" in field) {
           assert(!isStatic, `${name}: a constant is a property of the prototype`);
@@ -3821,6 +4074,7 @@ export class ClassType extends NamedType {
     assert(!(this.protoCaller !== undefined && this.refCounted), "protoCaller is not for a refCounted class");
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
     this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
+    this.eventHandlerAccessors = this.protoMembers.filter(member => member instanceof EventHandlerAccessor);
     this.builtins = this.protoMembers.filter(member => member instanceof Builtin);
     this.constants = this.protoMembers.filter(member => member instanceof Constant);
     this.staticFunctions = this.staticMembers.filter(member => member instanceof FunctionDefinition);
@@ -3880,6 +4134,19 @@ export class ClassType extends NamedType {
     this.enumerable = options.enumerable ?? true;
     this.writable = options.writable ?? true;
     this.prototypeBase = options.prototypeBase;
+  }
+  #ref: ClassRefType | undefined;
+  /** A schema takes a `.ref` of it, so C++ takes and drops references to the struct. */
+  get hasRef(): boolean {
+    return this.#ref !== undefined;
+  }
+  /** Of a `refCounted` class: a `bun_ptr::RefPtr<T>`, which a dictionary, an array and their unions can hold. */
+  get ref(): ClassRefType {
+    assert(
+      this.refCounted,
+      ".ref is a reference to the struct of a refCounted class: the struct of any other is in its object",
+    );
+    return (this.#ref ??= new ClassRefType(this));
   }
   /** The class that declares the struct and the fields: the base of its base, and so on. */
   get root(): ClassType {
@@ -3956,20 +4223,45 @@ export class ClassType extends NamedType {
 export interface NamespaceOptions extends EntryColumns {
   /** The object is itself a function, named as the namespace is, that does what this one of its functions does. */
   call?: string;
+  /** `Symbol.toStringTag` is the name of the namespace, as for one that WebIDL declares. */
+  toStringTag?: boolean;
 }
 
-/** A plain object whose properties are native functions, as WebIDL's `namespace`. With `call`, a function that has them. */
+export interface NamespaceConstant {
+  readonly name: string;
+  readonly value: number;
+}
+
+/** A plain object whose properties are native functions and constants, as WebIDL's `namespace`. With `call`, a function that has them. */
 export class NamespaceDefinition {
   readonly functions: readonly FunctionDefinition[];
+  /** Read-only integers, like a WebIDL `const`. They come before the functions. */
+  readonly constants: readonly NamespaceConstant[];
   readonly call: FunctionDefinition | undefined;
+  readonly toStringTag: boolean;
   readonly columns: EntryColumns;
   name = "";
+  origin: Origin | null = null;
   constructor(
-    functions: Record<string, SignatureOptions | readonly SignatureOptions[]>,
+    members: Record<string, SignatureOptions | readonly SignatureOptions[] | { constant: number }>,
     options: NamespaceOptions = {},
   ) {
-    this.columns = columnsOf(options, ["call"]);
-    this.functions = Object.entries(functions).map(([name, options]) => {
+    this.columns = columnsOf(options, ["call", "toStringTag"]);
+    this.toStringTag = options.toStringTag ?? false;
+    const isConstant = (member: object): member is { constant: number } => "constant" in member;
+    this.constants = Object.entries(members).flatMap(([name, member]) => {
+      if (!isConstant(member)) return [];
+      assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a constant is named by an identifier`);
+      assert(
+        Number.isInteger(member.constant) && Math.abs(member.constant) < 2 ** 32,
+        `${name}: a constant is an integer of 32 bits`,
+      );
+      return { name, value: member.constant };
+    });
+    const functions = Object.entries(members).flatMap(([name, member]) =>
+      isConstant(member) ? [] : ([[name, member]] as const),
+    );
+    this.functions = functions.map(([name, options]) => {
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a function is named by an identifier`);
       assert(!(options instanceof FunctionDefinition), `${name}: write what b.fn takes, without b.fn`);
       const signatures: readonly SignatureOptions[] = Array.isArray(options) ? options : [options];
@@ -3979,7 +4271,7 @@ export class NamespaceDefinition {
       fn.name = name;
       return fn;
     });
-    assert(this.functions.length > 0, "a namespace with no functions");
+    assert(this.functions.length + this.constants.length > 0, "a namespace with no functions or constants");
     this.call = this.functions.find(fn => fn.name === options.call);
     assert(options.call === undefined || this.call, `call: ${options.call} is not one of its functions`);
   }

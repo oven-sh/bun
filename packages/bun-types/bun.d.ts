@@ -3406,16 +3406,19 @@ declare module "bun" {
      *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
      *   file to link the two.
      * - `"inline"` - an inline source map is appended to the output file.
-     * - `"external"` - Generate a separate source map file for each output file.
-     *   No `//# sourceMappingURL` comment is added to the output file.
+     * - `"external"` - Generate a separate source map file for each JavaScript
+     *   output file. No `//# sourceMappingURL` comment is added to the output
+     *   file.
+     *
+     * Only JavaScript output files (entry points and chunks) get a source
+     * map. CSS and HTML output files do not.
      *
      * `true` is an alias for `"linked"` when `outdir` is set, and for `"inline"`
      * when it is not. `false` is an alias for `"none"`.
      *
-     * Without `outdir`, `"linked"` and `"external"` maps are not written to
-     * disk. Each map is a separate {@link BuildArtifact} in `outputs` with
-     * `kind: "sourcemap"`, and is also the `sourcemap` property of the
-     * artifact it belongs to.
+     * Each `"linked"` or `"external"` map is a separate {@link BuildArtifact}
+     * in `outputs` with `kind: "sourcemap"`. Without `outdir`, Bun does not
+     * write it to disk.
      *
      * @default "none"
      *

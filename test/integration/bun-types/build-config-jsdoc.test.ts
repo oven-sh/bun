@@ -3,7 +3,7 @@
 // option describes what the build did.
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dts = readFileSync(join(import.meta.dir, "../../../packages/bun-types/bun.d.ts"), "utf8");
@@ -29,17 +29,30 @@ function sourcemapCommentKind(text: string): "inline" | "linked" | "none" {
   return "none";
 }
 
+const extensionOf = (path: string) => path.slice(path.lastIndexOf("."));
+
+// With `splitting`, this page builds to one output of each type: a JavaScript
+// entry point, a JavaScript chunk, a CSS file and an HTML file.
+const page = {
+  "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"><script type="module" src="./index.js"></script></head><body></body></html>`,
+  "index.js": `import("./lazy.js").then(m => console.log(m.default));`,
+  "lazy.js": `export default "lazy";`,
+  "style.css": `a { color: red; }`,
+};
+const outputTypes = ["CSS", "HTML", "JavaScript"];
+
 describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
   test("sourcemap: what `true` is an alias for", async () => {
-    using dir = tempDir("jsdoc-sourcemap-true", { "index.js": `console.log("hello");` });
-    const entrypoints = [join(String(dir), "index.js")];
+    using dir = tempDir("jsdoc-sourcemap-true", page);
+    const config = { entrypoints: [join(String(dir), "index.html")], splitting: true, sourcemap: true };
 
-    const withOutdir = await Bun.build({ entrypoints, sourcemap: true, outdir: join(String(dir), "out") });
-    const withoutOutdir = await Bun.build({ entrypoints, sourcemap: true });
-    const observed = [
-      sourcemapCommentKind(await withOutdir.outputs.find(o => o.kind === "entry-point")!.text()),
-      sourcemapCommentKind(await withoutOutdir.outputs.find(o => o.kind === "entry-point")!.text()),
-    ];
+    const observed: string[] = [];
+    for (const build of [await Bun.build({ ...config, outdir: join(String(dir), "out") }), await Bun.build(config)]) {
+      const scripts = build.outputs.filter(output => extensionOf(output.path) === ".js");
+      expect(scripts.map(output => output.kind).sort()).toEqual(["chunk", "entry-point"]);
+      const kinds = await Promise.all(scripts.map(async output => sourcemapCommentKind(await output.text())));
+      observed.push(...new Set(kinds));
+    }
     expect(observed).toEqual(["linked", "inline"]);
 
     const sentences = jsdocOf("sourcemap")
@@ -54,33 +67,45 @@ describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
   });
 
   test('sourcemap: "linked" and "external" without outdir', async () => {
-    using dir = tempDir("jsdoc-sourcemap-no-outdir", { "index.js": `console.log("hello");` });
-    const entrypoints = [join(String(dir), "index.js")];
+    using dir = tempDir("jsdoc-sourcemap-no-outdir", page);
+    const sources = readdirSync(String(dir)).sort();
 
     for (const sourcemap of ["linked", "external"] as const) {
-      const build = await Bun.build({ entrypoints, sourcemap });
-      const entry = build.outputs.find(o => o.kind === "entry-point")!;
-      const map = build.outputs.find(o => o.kind === "sourcemap")!;
-      expect({ sourcemap, success: build.success, kinds: build.outputs.map(o => o.kind) }).toEqual({
+      const build = await Bun.build({ entrypoints: [join(String(dir), "index.html")], splitting: true, sourcemap });
+      expect(build.success).toBe(true);
+
+      const maps = build.outputs.filter(output => output.kind === "sourcemap").map(output => output.path);
+      const observed = build.outputs
+        .filter(output => output.kind !== "sourcemap")
+        .map(output => ({
+          ext: extensionOf(output.path),
+          kind: output.kind,
+          map: maps.includes(output.path + ".map"),
+        }))
+        .sort((a, b) => (a.ext + a.kind).localeCompare(b.ext + b.kind));
+      expect({ sourcemap, maps: maps.length, observed }).toEqual({
         sourcemap,
-        success: true,
-        kinds: ["entry-point", "sourcemap"],
+        maps: 2,
+        observed: [
+          { ext: ".css", kind: "asset", map: false },
+          { ext: ".html", kind: "entry-point", map: false },
+          { ext: ".js", kind: "chunk", map: true },
+          { ext: ".js", kind: "entry-point", map: true },
+        ],
       });
-      expect(entry.sourcemap).toBe(map);
     }
+    expect(readdirSync(String(dir)).sort()).toEqual(sources);
 
     const doc = jsdocOf("sourcemap");
     expect(doc).not.toMatch(/requires? `outdir`|outdir\}? (is )?required/i);
     expect(doc).toContain('`kind: "sourcemap"`');
+    // Only one of the three types of output file got a map, so the JSDoc has
+    // to name all three.
+    expect(outputTypes.filter(type => doc.includes(type))).toEqual(outputTypes);
   });
 
   test("banner and footer: JavaScript outputs only", async () => {
-    using dir = tempDir("jsdoc-banner-footer", {
-      "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"><script type="module" src="./index.js"></script></head><body></body></html>`,
-      "index.js": `import("./lazy.js").then(m => console.log(m.default));`,
-      "lazy.js": `export default "lazy";`,
-      "style.css": `a { color: red; }`,
-    });
+    using dir = tempDir("jsdoc-banner-footer", page);
     const build = await Bun.build({
       entrypoints: [join(String(dir), "index.html")],
       splitting: true,
@@ -93,7 +118,7 @@ describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
       build.outputs.map(async output => {
         const text = await output.text();
         return {
-          ext: output.path.slice(output.path.lastIndexOf(".")),
+          ext: extensionOf(output.path),
           kind: output.kind,
           banner: text.includes("/* BANNER */"),
           footer: text.includes("/* FOOTER */"),
@@ -110,7 +135,6 @@ describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
 
     // The build made three types of output file and treated them differently,
     // so the JSDoc has to name all three.
-    const outputTypes = ["CSS", "HTML", "JavaScript"];
     for (const member of ["banner", "footer"]) {
       const doc = jsdocOf(member);
       expect({ member, named: outputTypes.filter(type => doc.includes(type)) }).toEqual({ member, named: outputTypes });

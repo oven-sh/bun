@@ -1476,4 +1476,34 @@ describe("bundler", () => {
       stdout: "",
     },
   });
+
+  // Test 73: the linker also wraps an entry point that has no `require` and
+  // no `module.exports`
+  for (const [way, files, stdout] of [
+    // A direct eval() can read `module` and `exports`, so the parser makes a
+    // file with no ESM syntax CommonJS
+    [
+      "direct_eval_in_function",
+      { "/entry.js": `function f() { return eval("1"); }\nconsole.log("entry ran", f());` },
+      "entry ran 1",
+    ],
+    ["direct_eval_at_top_level", { "/entry.js": `eval("");\nconsole.log("entry ran");` }, "entry ran"],
+    // A file with no module syntax takes its type from the nearest package.json
+    [
+      "type_commonjs",
+      { "/entry.js": `console.log("entry ran");`, "/package.json": `{ "type": "commonjs" }` },
+      "entry ran",
+    ],
+  ] as const) {
+    itBundled(`cjs/__commonJS_entry_point_called_in_iife_${way}`, {
+      files,
+      format: "iife",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toEndWith("\n  });\n  require_entry();\n})();\n");
+      },
+      run: {
+        stdout,
+      },
+    });
+  }
 });

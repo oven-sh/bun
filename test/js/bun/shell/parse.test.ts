@@ -351,9 +351,7 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
-  // The lexer used to leave a Delimit after the last token of these bodies, and the substitution
-  // failed with `expected a command or assignment but got: "CmdSubstEnd"`. The token streams
-  // are in "end of cmd subst" in lex.test.ts.
+  // The token streams are in "end of cmd subst" in lex.test.ts.
   describe("end of cmd subst", () => {
     const buffer = new Uint8Array(8);
     // `@` in the source is an interpolated Buffer.
@@ -376,47 +374,49 @@ describe("parse shell", () => {
       subshell: { script: script(expr), redirect: null, redirect_flags: redirect({}) },
     });
     const subst = (stmts: unknown[], quoted = false) => ({ simple: { cmd_subst: { script: { stmts }, quoted } } });
+    const echoOf = (atom: unknown) => script(cmd([word("echo"), atom]));
 
     // [what the body ends in, the body, the statements of the body]
-    const bodies: [string, string, unknown[]][] = [
+    test.each([
       ["a JS object after `>`", "echo hi > @", echoHiTo({ stdout: true })],
       ["a JS object after `2>`", "echo hi 2> @", echoHiTo({ stderr: true })],
       ["a JS object after `&>`", "echo hi &> @", echoHiTo({ stdout: true, stderr: true })],
       ["a JS object after `<`", "cat < @", [{ exprs: [cmd([word("cat")], { stdin: true }, { jsbuf: { idx: 0 } })] }]],
       ["a JS object and a blank", "echo hi > @ ", echoHiTo({ stdout: true })],
       ["a subshell", " (echo hi)", [{ exprs: [subshell(echo("hi"))] }]],
-      ["`]]`", "[[ -n x ]] ", [{ exprs: [{ condexpr: { op: "-n", args: [word("x")] } }] }]],
+      ["`]]` and a blank", "[[ -n x ]] ", [{ exprs: [{ condexpr: { op: "-n", args: [word("x")] } }] }]],
       ["nothing", "", []],
       ["a blank", " ", []],
       ["`;`", "echo hi;", [{ exprs: [echo("hi")] }]],
       ["a newline", "echo hi\n", [{ exprs: [echo("hi")] }]],
       ["`2>&1`", "echo hi 2>&1", [{ exprs: [cmd([word("echo"), word("hi")], { stdout: true, duplicate_out: true })] }]],
-    ];
-
-    // [the form, the source for a body, the script for the statements of the body]
-    const forms: [string, (body: string) => string, (stmts: unknown[]) => unknown][] = [
-      ["$(...)", body => `echo $(${body})`, stmts => script(cmd([word("echo"), subst(stmts)]))],
-      ["`...`", body => "echo `" + body + "`", stmts => script(cmd([word("echo"), subst(stmts)]))],
-      ['"$(...)"', body => `echo "$(${body})"`, stmts => script(cmd([word("echo"), subst(stmts, true)]))],
-      ["X=$(...)", body => `X=$(${body})`, stmts => script({ assign: [{ label: "X", value: subst(stmts) }] })],
-      ["X=`...`", body => "X=`" + body + "`", stmts => script({ assign: [{ label: "X", value: subst(stmts) }] })],
-      [
-        "$(echo $(...))",
-        body => `echo $(echo $(${body}))`,
-        stmts => script(cmd([word("echo"), subst([{ exprs: [cmd([word("echo"), subst(stmts)])] }])])),
-      ],
-    ];
-
-    test.each(
-      forms.flatMap(([form, source, expected]) =>
-        bodies.map(([end, body, stmts]) => [`${form} ends in ${end}`, source(body), expected(stmts)] as const),
-      ),
-    )("%s", (_name, source, expected) => {
-      expect(ast(source)).toEqual(expected);
+      ["`**`", "echo **", [{ exprs: [cmd([word("echo"), { simple: { double_asterisk: {} } }])] }]],
+    ])("$(...) and `...` end in %s", (_end, body, stmts) => {
+      expect(ast(`echo $(${body})`)).toEqual(echoOf(subst(stmts)));
+      expect(ast("echo `" + body + "`")).toEqual(echoOf(subst(stmts)));
     });
 
-    test("the outer command goes on after the substitution", () => {
-      expect(ast("echo $(echo hi > @) && echo hi > @")).toEqual(
+    // [where the substitution is, the source, the script]
+    test.each([
+      ["in double quotes", 'echo "$(echo hi > @)"', echoOf(subst(echoHiTo({ stdout: true }), true))],
+      [
+        "an assignment value",
+        "X=$(echo hi > @)",
+        script({ assign: [{ label: "X", value: subst(echoHiTo({ stdout: true })) }] }),
+      ],
+      [
+        "a backtick assignment value",
+        "X=`echo hi > @`",
+        script({ assign: [{ label: "X", value: subst(echoHiTo({ stdout: true })) }] }),
+      ],
+      [
+        "inside a substitution",
+        "echo $(echo $(echo hi > @))",
+        echoOf(subst([{ exprs: [cmd([word("echo"), subst(echoHiTo({ stdout: true }))])] }])),
+      ],
+      [
+        "before more of the command",
+        "echo $(echo hi > @) && echo hi > @",
         script({
           binary: {
             op: "And",
@@ -424,7 +424,9 @@ describe("parse shell", () => {
             right: cmd([word("echo"), word("hi")], { stdout: true }, { jsbuf: { idx: 1 } }),
           },
         }),
-      );
+      ],
+    ])("a substitution that ends in a JS object, %s", (_where, source, expected) => {
+      expect(ast(source)).toEqual(expected);
     });
 
     // [the body, the error]
@@ -435,10 +437,9 @@ describe("parse shell", () => {
       ["echo hi >", "Redirection with no file"],
       ["echo hi &", 'Background commands "&" are not supported yet.'],
       ["echo @", 'expected a command or assignment but got: "JSObjRef"'],
-    ])("a body that is not valid stays an error: %s", (body, message) => {
-      for (const source of [`echo $(${body})`, "echo `" + body + "`"]) {
-        expect(() => ast(source)).toThrow(new Error(message));
-      }
+    ])("a body that ends in an operator or has a JS object as a word is an error: %s", (body, message) => {
+      expect(() => ast(`echo $(${body})`)).toThrow(new Error(message));
+      expect(() => ast("echo `" + body + "`")).toThrow(new Error(message));
     });
 
     // `$((` is a subshell when the `)` of that subshell does not also end the substitution.
@@ -452,7 +453,7 @@ describe("parse shell", () => {
         [{ exprs: [{ binary: { op: "And", left: subshell(echo("a")), right: subshell(echo("b")) } }] }],
       ],
     ])("a substitution that starts with a subshell: %s", (source, stmts) => {
-      expect(ast(source)).toEqual(script(cmd([word("echo"), subst(stmts)])));
+      expect(ast(source)).toEqual(echoOf(subst(stmts)));
     });
   });
 

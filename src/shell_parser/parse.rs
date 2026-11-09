@@ -1484,10 +1484,6 @@ impl<'bump> Parser<'bump> {
         let mut has_glob_syntax = false;
         {
             while match self.peek() {
-                Token::Delimit => {
-                    let _ = self.expect(TokenTag::Delimit);
-                    false
-                }
                 Token::Eof | Token::Semicolon | Token::Newline => false,
                 t => {
                     !(self.inside_subshell.is_some()
@@ -2672,7 +2668,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     .peek()
                                     .is_some_and(|p| !p.escaped && p.char == u32::from(b')'))
                             {
-                                self.add_error(b"Arithmetic expansion `$((...))` is not supported. For a subshell inside a command substitution, write `$( (...) )`.");
+                                self.add_error(b"Arithmetic expansion `$((...))` is not supported yet. Compute the value in JavaScript: `${a + b}` in a `$` template, or `$(bun -e 'console.log(1 + 2)')` in a script. For a subshell inside a command substitution, write `$( (...) )`.");
                             }
                             fell_through = true;
                         }

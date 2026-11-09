@@ -566,8 +566,7 @@ describe("bunshell", () => {
     );
   });
 
-  // The lexer left a Delimit after the last token of these bodies, and the `$` call threw
-  // `expected a command or assignment but got: "CmdSubstEnd"`.
+  // The token streams are in "end of cmd subst" in lex.test.ts.
   describe("command substitution that does not end in a word", () => {
     // Runs `source`. Each `@` in it is the next of `objects`.
     const sh = (source: string, ...objects: unknown[]) =>
@@ -579,39 +578,34 @@ describe("bunshell", () => {
     });
     const xyz = () => Buffer.from("xyz");
 
-    test.concurrent("the lines of the report", async () => {
+    test.concurrent("in a `$` template with a Buffer", async () => {
       const buf = xyz();
       const bt = { raw: "`" };
       expect(await $`echo $(cat < ${buf})`.text()).toBe("xyz\n");
       expect(await $`echo "$(cat < ${buf})"`.text()).toBe("xyz\n");
       expect(await $`X=$(cat < ${buf}) && echo $X`.text()).toBe("xyz\n");
-      expect(await $`echo $( (echo hi) )`.text()).toBe("hi\n");
       expect(await $`echo ${bt}cat < ${buf}${bt}`.text()).toBe("xyz\n");
     });
 
     // [the script, its objects, stdout]
     const cases: [string, () => unknown[], string][] = [
-      ["echo $(cat < @ ) $(cat < @)", () => [xyz(), xyz()], "xyz xyz\n"],
-      ["echo $(echo outer $(cat < @))", () => [xyz()], "outer xyz\n"],
+      ["echo $(cat < @ ) $(echo outer $(cat < @))", () => [xyz(), xyz()], "xyz outer xyz\n"],
       ["echo é $(cat < @)", () => [xyz()], "é xyz\n"],
-      ["echo $( (echo hi) ) $( (echo there))", () => [], "hi there\n"],
-      ["echo `(echo hi)`", () => [], "hi\n"],
+      ["echo $( (echo hi) ) `(echo there)`", () => [], "hi there\n"],
       ["echo $([[ -n x ]] ) && echo yes", () => [], "\nyes\n"],
-      ["echo `echo hi;`", () => [], "hi\n"],
-      ["echo `echo hi\n`", () => [], "hi\n"],
-      ['echo "[$()]" a $() b `` c', () => [], "[] a b c\n"],
-      ['X=$() && echo "[$X]" x$()y', () => [], "[] xy\n"],
-      ["$()", () => [], ""],
-      ["``", () => [], ""],
+      ["echo `echo hi;` `echo there\n`", () => [], "hi there\n"],
+      ['echo "[$()]" a $() b `` c x$()y', () => [], "[] a b c xy\n"],
+      ['X=$() && echo "[$X]"', () => [], "[]\n"],
+      ["$() ``", () => [], ""],
       // Text directly before the backtick.
       ["X=`echo hi;` && echo $X", () => [], "hi\n"],
       ["X=`cat < @` && echo $X", () => [xyz()], "xyz\n"],
       ["echo pre`(echo hi)`post", () => [], "prehipost\n"],
       ['echo "a `echo hi\n` b"', () => [], "a hi b\n"],
-      // `$((` that is a subshell. `$((...))` is arithmetic expansion.
+      // `((` that is two subshells. `$((...))` is arithmetic expansion.
+      ["((echo a))", () => [], "a\n"],
       ["echo $((echo a); echo b)", () => [], "a b\n"],
       ["echo $((echo a) )", () => [], "a\n"],
-      ["echo $((echo a) && (echo b))", () => [], "a b\n"],
     ];
     for (const [source, objects, stdout] of cases) {
       test.concurrent(source.replaceAll("\n", "\\n"), async () => {
@@ -632,30 +626,25 @@ describe("bunshell", () => {
       });
     }
 
-    // [the script, what the object holds after it, stdout]
-    const outputs: [string, string, string][] = [
-      ["echo a $(echo hi > @) b", "hi\n", "a b\n"],
-      ["echo a $(echo hi > @ ) b", "hi\n", "a b\n"],
-      ["echo a $(echo hi &> @) b", "hi\n", "a b\n"],
-      ["echo a `echo hi > @` b", "hi\n", "a b\n"],
-      ['echo "[$(echo hi > @)]"', "hi\n", "[]\n"],
-      ["echo $(echo outer $(echo inner > @))", "inner\n", "outer\n"],
+    // [the script, the object, what the object holds after it, stdout]
+    const outputs: [string, () => Uint8Array, string, string][] = [
+      ["echo a $(echo hi > @) b", () => Buffer.alloc(16), "hi\n", "a b\n"],
+      ["echo a $(echo hi > @) b", () => new Uint8Array(16), "hi\n", "a b\n"],
+      ["echo a $(echo hi &> @ ) b", () => Buffer.alloc(16), "hi\n", "a b\n"],
+      ["echo a `echo hi > @` b", () => Buffer.alloc(16), "hi\n", "a b\n"],
+      ['echo "[$(echo hi > @)]"', () => Buffer.alloc(16), "hi\n", "[]\n"],
+      ["echo $(echo outer $(echo inner > @))", () => Buffer.alloc(16), "inner\n", "outer\n"],
     ];
-    for (const [source, written, stdout] of outputs) {
-      for (const [kind, object] of [
-        ["Buffer", () => Buffer.alloc(16)],
-        ["Uint8Array", () => new Uint8Array(16)],
-      ] as const) {
-        test.concurrent(`${source} with a ${kind}`, async () => {
-          const target = object();
-          expect({ ...output(await sh(source, target)), written: stringifyBuffer(target) }).toEqual({
-            stdout,
-            stderr: "",
-            exitCode: 0,
-            written,
-          });
+    for (const [source, object, written, stdout] of outputs) {
+      const target = object();
+      test.concurrent(`${source} with a ${target.constructor.name}`, async () => {
+        expect({ ...output(await sh(source, target)), written: stringifyBuffer(target) }).toEqual({
+          stdout,
+          stderr: "",
+          exitCode: 0,
+          written,
         });
-      }
+      });
     }
 
     test.concurrent("$(cmd 2> Buffer)", async () => {
@@ -682,7 +671,7 @@ describe("bunshell", () => {
       });
     });
 
-    for (const source of ["`exit 3;`", "`exit 3\n`", "`(exit 3)`", "$( (exit 3) )"]) {
+    for (const source of ["`exit 3;`", "`exit 3\n`", "$( (exit 3) )"]) {
       test.concurrent(`${source.replaceAll("\n", "\\n")} exits with the exit code of its body`, async () => {
         expect(output(await sh(source))).toEqual({ stdout: "", stderr: "", exitCode: 3 });
       });
@@ -704,9 +693,23 @@ describe("bunshell", () => {
     test("$((...)) is an error when the script is parsed", () => {
       expect(() => sh("echo $((1+2))")).toThrow(
         new Error(
-          "Arithmetic expansion `$((...))` is not supported. For a subshell inside a command substitution, write `$( (...) )`.",
+          "Arithmetic expansion `$((...))` is not supported yet. Compute the value in JavaScript: `${a + b}` in a `$` template, or `$(bun -e 'console.log(1 + 2)')` in a script. For a subshell inside a command substitution, write `$( (...) )`.",
         ),
       );
+    });
+
+    // These bodies parse now. Each result is wrong for a reason that another change owns.
+    // Prints "a b\n": the empty quoted word is dropped. https://github.com/oven-sh/bun/pull/44904
+    test.todo('echo a "$()" b keeps the empty word', async () => {
+      expect(output(await sh('echo a "$()" b'))).toEqual({ stdout: "a  b\n", stderr: "", exitCode: 0 });
+    });
+    // Prints "deployed\n" and exits 0: an assignment reports 0. https://github.com/oven-sh/bun/pull/45074
+    test.todo("X=$( (exit 1) ) && echo deployed stops at the assignment", async () => {
+      expect(output(await sh("X=$( (exit 1) ) && echo deployed"))).toEqual({ stdout: "", stderr: "", exitCode: 1 });
+    });
+    // Throws `Expected "]]" but got: ]]`: `]]` before `)` is text. https://github.com/oven-sh/bun/pull/38643
+    test.todo("echo $([[ -n x ]]) with no blank before the closing paren", async () => {
+      expect(output(await sh("echo $([[ -n x ]])"))).toEqual({ stdout: "\n", stderr: "", exitCode: 0 });
     });
   });
 

@@ -533,11 +533,13 @@ test("hoisted", () => {
 });
 ```
 
-A hoisted call takes its arguments with it, so Bun evaluates the path and the factory above the file's imports too. Write the path as a string literal and the factory as an inline function, or compute them in a `vi.hoisted()` declaration above the call. If you pass the factory by name, as in `vi.mock("./math", makeFake)`, the result depends on the declaration of `makeFake`:
+A hoisted call takes its arguments with it, so Bun evaluates the path and the factory above the file's imports too. Write the path as a string literal and the factory as an inline function. If you pass the factory by name, as in `vi.mock("./math", makeFake)`, the result depends on the declaration of `makeFake`:
 
 - A function declaration, or a declaration above the call that Bun hoists too, such as `const makeFake = vi.hoisted(() => ...)`: the call gets its value.
 - Another `const` or `let`, or an import that becomes `await import()` (see below): the file fails with a `ReferenceError`.
-- Another `var`: it is still `undefined`, so Bun mocks the module [without a factory](#mocking-without-a-factory) and reports no error.
+- Another `var`: it is `undefined`, unless hoisted code above the call has assigned it. An `undefined` factory is the same as no factory, so the call does what `vi.mock("./math")` does (see [Mocking Without a Factory](#mocking-without-a-factory)).
+
+The callback of a hoisted `vi.hoisted()` call runs in the same place, so the same rules say which names it can read. To compute the path or the factory, declare it above the mock call, as in `const makeFake = vi.hoisted(() => ...)`, and return its value from the callback. Bun hoists a top-level `const`, `let` or `var` declaration when its initializer is the `vi.hoisted()` call itself, or an `await` of it.
 
 `mock.module()`, `vi.doMock()` and `jest.doMock()` aren't hoisted, and neither are calls inside a block or a function. They run where they're written. At the top level of a file, that is after the file's `import` statements, so their arguments can read the imports and the variables declared above the call.
 

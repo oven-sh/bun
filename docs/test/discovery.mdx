@@ -81,11 +81,19 @@ For this test, `bun test` matches the pattern against the string "Math operation
 
 ### When Nothing Matches
 
-When `bun test` finds no test file, or a filter or `--test-name-pattern` matches nothing, it reports that and exits with code 1. Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared CI step that runs before a package has any tests:
+`bun test` exits with code 1 in each of these cases:
+
+- It finds no test file.
+- The [filters](#position-arguments-as-filters) or [paths](#specifying-exact-file-paths) you pass select no test file.
+- `--test-name-pattern` matches no test.
+
+Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared CI step that runs before a package has any tests:
 
 ```bash terminal icon="terminal"
 bun test --pass-with-no-tests
 ```
+
+`--pass-with-no-tests` does not cover a single path that does not exist. `bun test ./missing.test.ts --pass-with-no-tests` prints `Test filter "./missing.test.ts" had no matches` and exits with code 1.
 
 ### Changing the Root Directory
 

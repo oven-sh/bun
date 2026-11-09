@@ -77,8 +77,9 @@ bun install <name>@<version>
 </ParamField>
 
 <ParamField path="--save-text-lockfile" type="boolean">
-  Save a text-based lockfile (<code>bun.lock</code>). This is the default since Bun v1.2, so the flag only matters when
-  migrating an existing binary <code>bun.lockb</code>
+  Save a text-based lockfile (<code>bun.lock</code>). Bun writes <code>bun.lock</code> by default since v1.2. Pass the
+  flag to convert a project that still has a binary <code>bun.lockb</code>, or to override{" "}
+  <code>saveTextLockfile = false</code> in <code>bunfig.toml</code>
 </ParamField>
 
 <ParamField path="--lockfile-only" type="boolean">

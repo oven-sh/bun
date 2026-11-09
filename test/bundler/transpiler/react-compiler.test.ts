@@ -4376,8 +4376,8 @@ describe("bundler", () => {
   // body of a function behind the component, or in the body behind a head, which the head can't see. The first render
   // threw `ReferenceError: _temp is not defined`. They are declared in the list of the statement that holds the
   // component, once for all calls of the component. A component in a head that declares a name gets them in its own
-  // body, at each call. So does one in a block that holds a direct `eval`: that block keeps its function declarations,
-  // and `Leaf` of the last form is called with no statement of its `case` run.
+  // body, at each call. So does one in a block that holds a direct `eval`, in front of it or behind it: that block keeps
+  // its function declarations, and `Leaf` of the two `case` forms is called with no statement of its `case` run.
   const nestedComponentForms = {
     "/entry.js": /* js */ `
       import { sizes } from "react/compiler-runtime";
@@ -4670,6 +4670,16 @@ describe("bundler", () => {
           return Leaf;
         }
       }
+      export function blockBeforeAnEval(k) {
+        let out;
+        {
+          const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+            other = () => 1;
+          out = Leaf;
+          eval("");
+        }
+        return out;
+      }
       export function caseBesideAnEval(k) {
         switch (k) {
           case "never":
@@ -4677,6 +4687,17 @@ describe("bundler", () => {
             function Leaf({ x }) {
               return <i x={x} on={() => k + x0} at={() => x0} />;
             }
+          default:
+            return Leaf;
+        }
+      }
+      export function caseBeforeAnEval(k) {
+        switch (k) {
+          case "never":
+            function Leaf({ x }) {
+              return <i x={x} on={() => k + x0} at={() => x0} />;
+            }
+            eval("");
           default:
             return Leaf;
         }
@@ -4714,7 +4735,9 @@ describe("bundler", () => {
     "twoStatements",
   ];
   const nestedComponentsInAHead = [
+    "blockBeforeAnEval",
     "blockWithAnEval",
+    "caseBeforeAnEval",
     "caseBesideAnEval",
     "caseTestBesideALet",
     "catchDefault",
@@ -4876,19 +4899,24 @@ describe("bundler", () => {
 
   // A block that holds a direct `eval` keeps its function declarations as they are written. There the callback stayed
   // a function declaration, which is a variable of the whole cjs bundle too, and `Top` called it. It is now declared
-  // in the component.
+  // in the component, also when the `eval` stands behind the component.
   for (const runtime of ["bun", "node"] as const) {
     itBundled(`react-compiler/NestedComponentInABlockWithADirectEval-cjs-${runtime}`, {
       files: {
         "/entry.jsx": /* jsx */ `
           import { Top } from "./top.jsx";
-          let InABlock;
+          let BehindAnEval, BeforeAnEval;
           {
             eval("");
-            const Leaf = ({ x }) => <i x={x} on={() => "mine"} />;
-            InABlock = Leaf;
+            const Leaf = ({ x }) => <i x={x} on={() => "behind"} />;
+            BehindAnEval = Leaf;
           }
-          const called = [InABlock, Top].map(Component => {
+          {
+            const Leaf = ({ x }) => <i x={x} on={() => "before"} />;
+            BeforeAnEval = Leaf;
+            eval("");
+          }
+          const called = [BehindAnEval, BeforeAnEval, Top].map(Component => {
             const { on } = Component({ x: 1 }).props;
             return on() + (on.name === "on" ? " (in place)" : "");
           });
@@ -4902,17 +4930,18 @@ describe("bundler", () => {
       reactCompiler: true,
       backend: "cli",
       format: "cjs",
-      run: { runtime, stdout: "mine top" },
+      run: { runtime, stdout: "behind before top" },
     });
   }
 
-  // A block keeps a function declaration that is async, so another `case` can call it. Its callback was a `let` of the
-  // `case` that declares it: "ReferenceError: Cannot access '_temp' before initialization". It is declared in the component.
+  // A block keeps a function declaration that is async or a generator, so another `case` can call it. Its callback
+  // was a `let` of the `case` that declares it: "ReferenceError: Cannot access '_temp' before initialization". It is
+  // declared in the component.
   itBundled("react-compiler/NestedAsyncComponentCalledThroughAnotherCase", {
     files: {
       "/entry.jsx": /* jsx */ `
         const x0 = "!";
-        function viaAnotherCase(k) {
+        function asyncComponent(k) {
           switch (k) {
             case "never":
               async function Leaf({ x }) {
@@ -4922,14 +4951,26 @@ describe("bundler", () => {
               return Leaf;
           }
         }
-        const { on } = (await viaAnotherCase("red")({ x: 1 })).props;
-        console.log(on(), on.name === "on" ? "in place" : "moved out");
+        function generatorComponent(k) {
+          switch (k) {
+            case "never":
+              function* Leaf({ x }) {
+                return <i x={x} on={() => k + x0} />;
+              }
+            default:
+              return Leaf;
+          }
+        }
+        const elements = [await asyncComponent("red")({ x: 1 }), generatorComponent("red")({ x: 1 }).next().value];
+        for (const { on } of elements.map(element => element.props)) {
+          console.log(on(), on.name === "on" ? "in place" : "moved out");
+        }
       `,
       ...reactWithMemo,
     },
     reactCompiler: true,
     backend: "cli",
-    run: { stdout: "red! moved out" },
+    run: { stdout: "red! moved out\nred! moved out" },
   });
 
   // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies

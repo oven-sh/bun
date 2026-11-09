@@ -213,7 +213,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
 
     /// Where what is outlined from the function being compiled is declared. src/react_compiler/DESIGN.md has the rule.
     pub(crate) fn react_compiler_place_of_outlined(
-        &self,
+        &mut self,
         pending: &bun_react_compiler::PendingCompile,
     ) -> OutlinedPlace {
         use js_ast::scope::Kind;
@@ -233,7 +233,8 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 if scope.kind != Kind::Label {
                     // A `case` can call a declaration that its block keeps, and skip the `let` of its callback.
                     if !scope.kind_stops_hoisting()
-                        && (scope.contains_direct_eval || Self::is_kept_in_a_block(pending))
+                        && (Self::is_kept_in_a_block(pending)
+                            || self.may_hold_a_direct_eval(&scope))
                     {
                         break;
                     }
@@ -249,6 +250,18 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
             first_local: self.current_scope().generated.len(),
             own_name: pending.own_name,
         }
+    }
+
+    /// Beside a direct `eval` a block keeps every function declaration. The `eval` marks its scope only once visited.
+    fn may_hold_a_direct_eval(&mut self, scope: &js_ast::Scope) -> bool {
+        if scope.contains_direct_eval {
+            return true;
+        }
+        if self.react_compiler_source_has_eval.is_none() {
+            let has_eval = bun_core::strings::contains(&self.source.contents, b"eval");
+            self.react_compiler_source_has_eval = Some(has_eval);
+        }
+        self.react_compiler_source_has_eval == Some(true)
     }
 
     /// A block makes a `let` of a function declaration, but not of one that is async or a generator.

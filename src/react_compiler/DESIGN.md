@@ -142,11 +142,13 @@ reach it and where it can reach those variables:
 - In the nested function's own body when it stands in a head that declares a
   name: a parameter list, a `catch` binding, a `for` that declares, the test of
   a `case` in a `switch` that declares, the initializer of an enum member. Also
-  in a block that holds a direct `eval` in front of it: that block keeps a
-  function declaration as written, which is a `var` too where the code is not
-  strict, and a `let` in a `case` is not set when another `case` calls the
-  function. Also when it is an async or generator function declaration in a
-  block, which a block always keeps. It is then a new function at each call.
+  in a block of a file that has the word `eval`: beside a direct `eval` a block
+  keeps a function declaration as written, which is a `var` too where the code
+  is not strict, and a `let` in a `case` is not set when another `case` calls
+  the function. A direct `eval` marks its scope only when it is visited, so
+  the parser looks for the word. Also when it is an async or generator function
+  declaration in a block, which a block always keeps. It is then a new function
+  at each call.
   With no renamer, no local of the compiled function takes a name that a scope
   around it declares.
 

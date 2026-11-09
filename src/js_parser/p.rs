@@ -461,6 +461,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_outlined_from_nested: Vec<Stmt>,
     /// The scope of the statement list that the innermost `visit_stmts` call visits.
     pub(crate) react_compiler_list_scope: js_ast::StoreRef<js_ast::Scope>,
+    /// Whether the source has the word `eval`, once a nested function in a block has asked.
+    pub(crate) react_compiler_source_has_eval: Option<bool>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -9800,6 +9802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_may_replace_body: false,
             react_compiler_outlined_from_nested: Vec::new(),
             react_compiler_list_scope: scope,
+            react_compiler_source_has_eval: None,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),

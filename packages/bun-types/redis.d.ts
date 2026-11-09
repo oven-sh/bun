@@ -238,6 +238,26 @@ declare module "bun" {
     set(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number, keepttl: "KEEPTTL"): Promise<"OK">;
 
     /**
+     * Set key to hold the string value with several options
+     * @param key The key to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
+     * @param option The first option (EX, PX, EXAT, PXAT, NX, XX, KEEPTTL, GET)
+     * @param options The options that follow, and their values
+     * @returns Promise that resolves with "OK" on success, null if NX/XX condition not met, or the old value if GET is specified
+     *
+     * @example
+     * ```ts
+     * await redis.set("lock", "token", "NX", "PX", 30_000);
+     * ```
+     */
+    set(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      option: string,
+      ...options: (string | number)[]
+    ): Promise<"OK" | string | null>;
+
+    /**
      * Set key to hold the string value with various options
      * @param key The key to set
      * @param value The value to set. A number is sent as the string that `String(value)` returns.
@@ -247,7 +267,7 @@ declare module "bun" {
     set(
       key: RedisClient.KeyLike,
       value: RedisClient.KeyLike | number,
-      ...options: (string | number)[]
+      ...options: string[]
     ): Promise<"OK" | string | null>;
 
     /**

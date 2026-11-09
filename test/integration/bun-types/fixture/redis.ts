@@ -166,6 +166,7 @@ expectType(redis.set("k", 1, "GET")).is<Promise<string | null>>();
 expectType(redis.set("k", 1, "KEEPTTL")).is<Promise<"OK">>();
 expectType(redis.set("k", 1, "EX", 60, "NX")).is<Promise<"OK" | string | null>>();
 expectType(redis.set("lock", "token", "NX", "PX", 30_000)).is<Promise<"OK" | string | null>>();
+expectType(redis.set("k", 1, ...(["NX", "GET"] as string[]))).is<Promise<"OK" | string | null>>();
 expectType(redis.append("k", 1)).is<Promise<number>>();
 expectType(redis.getset("k", 1)).is<Promise<string | null>>();
 expectType(redis.setnx("k", 1)).is<Promise<number>>();
@@ -236,6 +237,8 @@ expectType(redis.hsetex("hash", "FXX", "PX", 60_000, "FIELDS", 1, "f", 1)).is<Pr
 expectType(redis.hsetex("hash", "FXX", "EXAT", 1_900_000_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
 expectType(redis.hsetex("hash", "FXX", "PXAT", 1_900_000_000_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
 expectType(redis.hsetex("hash", "FXX", "KEEPTTL", "FIELDS", 1, "f", 1)).is<Promise<number>>();
+// @ts-expect-error - the first option of set is a token: Redis answers a number there with a syntax error
+redis.set("k", "v", 60);
 // @ts-expect-error - a bigint value throws at runtime
 redis.set("k", 10n);
 // @ts-expect-error - a boolean value throws at runtime

@@ -34,7 +34,7 @@ import { on, once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
-import { Duplex } from "node:stream";
+import { Duplex, isErrored } from "node:stream";
 import nodeTls from "node:tls";
 import { Worker } from "node:worker_threads";
 import { tmpdir } from "os";
@@ -1459,6 +1459,84 @@ it("should work for a file stream", async () => {
       expect(await response.text()).toBe(textToExpect);
     },
   );
+});
+
+describe("a body derived from a Bun.file() stream that fails to open", () => {
+  const missing = () => file(join(import.meta.dir, "fetch.js.txt.notfound")).stream();
+  // The derived stream is built inside fetch(). The open error is thrown there, so error() can answer.
+  const derived: [label: string, body: () => ReadableStream][] = [
+    ["pipeThrough(new TransformStream())", () => missing().pipeThrough(new TransformStream())],
+    ['pipeThrough(new CompressionStream("gzip"))', () => missing().pipeThrough(new CompressionStream("gzip"))],
+    ["tee()[0]", () => missing().tee()[0]],
+  ];
+
+  describe.each(derived)("%s", (_label, body) => {
+    it.each(["GET", "HEAD"])("%s reaches error()", async method => {
+      const errors: string[] = [];
+      using server = serve({
+        port: 0,
+        development: false,
+        fetch: () => new Response(body()),
+        error(error: NodeJS.ErrnoException) {
+          errors.push(String(error.code));
+          return new Response("not found", { status: 404 });
+        },
+      });
+      const response = await fetch(server.url, { method });
+      expect({ status: response.status, body: await response.text(), errors }).toEqual({
+        status: 404,
+        body: method === "HEAD" ? "" : "not found",
+        errors: ["ENOENT"],
+      });
+    });
+
+    it("a try/catch in the handler answers", async () => {
+      using server = serve({
+        port: 0,
+        development: false,
+        fetch() {
+          try {
+            return new Response(body());
+          } catch (error) {
+            return new Response(String((error as NodeJS.ErrnoException).code), { status: 404 });
+          }
+        },
+      });
+      const response = await fetch(server.url);
+      expect({ status: response.status, body: await response.text() }).toEqual({ status: 404, body: "ENOENT" });
+    });
+  });
+
+  it("pipeTo() into the writable side of the body ends the response", async () => {
+    const handled = Promise.withResolvers<{ readable: ReadableStream; piped: Promise<NodeJS.ErrnoException> }>();
+    using server = serve({
+      port: 0,
+      development: false,
+      fetch() {
+        const { readable, writable } = new TransformStream();
+        handled.resolve({
+          readable,
+          piped: missing()
+            .pipeTo(writable)
+            .catch(error => error),
+        });
+        return new Response(readable);
+      },
+    });
+    const outcome = fetch(server.url)
+      .then(response => response.text())
+      .then(
+        () => "complete",
+        () => "failed",
+      );
+    const { readable, piped } = await handled.promise;
+    // The pipe aborts its destination with the open error. That errors the body, so the response does not stay open.
+    expect({ piped: (await piped).code, bodyErrored: isErrored(readable) }).toEqual({
+      piped: "ENOENT",
+      bodyErrored: true,
+    });
+    expect(await outcome).toBe("failed");
+  });
 });
 
 it("fetch should work with headers", async () => {

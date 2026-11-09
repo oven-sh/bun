@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
+import { closeSync, openSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
-import { bunExe } from "harness";
 
 type Test = {
   file: string;
@@ -209,5 +210,32 @@ describe("stdin", () => {
       ,
       }
     `);
+  });
+
+  // stdin cannot open. The first use throws the error, as it always did. After that the stream
+  // reports it, and no read reaches the descriptor that never opened.
+  it.skipIf(isWindows).each([
+    ["process.stdin first", [], { web: "skipped", attach: "threw EISDIR/fstat", error: "EISDIR/fstat" }],
+    [
+      "a Bun.stdin reader first",
+      ["web-first"],
+      { web: "threw EISDIR/fstat", attach: "attached", error: "EISDIR/fstat" },
+    ],
+  ])("a directory on fd 0 ends stdin with its error: %s", async (_label, args, expected) => {
+    using dir = tempDir("stdin-directory", {});
+    const fd = openSync(String(dir), "r");
+    try {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "directory.fixture.js"), ...args],
+        env: bunEnv,
+        stdin: fd,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: JSON.stringify(expected), exitCode: 0 });
+    } finally {
+      closeSync(fd);
+    }
   });
 });

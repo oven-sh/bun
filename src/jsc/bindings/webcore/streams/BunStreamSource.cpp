@@ -440,15 +440,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     startArgs.append(jsNumber(static_cast<double>(autoAllocateChunkSize)));
     ASSERT(!startArgs.hasOverflowed());
     JSValue startResult = invokeMethod(vm, globalObject, handle, builtinNames(vm).startPublicName(), startArgs);
-    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
-        // The source could not start (open() → ENOENT, EISDIR, ...): error the stream, as a rejected pull does.
-        TRY_CLEAR_EXCEPTION(scope, );
-        auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));
-        controller->m_algorithms.kind = SourceKind::Nothing;
-        setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), 1);
-        RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, readableStreamDefaultControllerError(globalObject, controller, exception->value()));
-    }
+    RETURN_IF_EXCEPTION(scope, );
 
     double chunkSize = 0;
     JSValue drainValue;
@@ -893,15 +885,9 @@ static void rsisFailBeforeAcquire(JSC::VM& vm, JSGlobalObject* globalObject, JSR
     auto scope = DECLARE_THROW_SCOPE(vm);
     rejectPromise(globalObject, result, error);
     RETURN_IF_EXCEPTION(scope, );
-    if (!isReadableStreamLocked(stream)) {
-        // The stream is unlocked, so its lazy start threw before creating a controller. The pump was its only consumer, so cancel it.
-        auto* cancelPromise = readableStreamCancel(globalObject, stream, error);
-        RETURN_IF_EXCEPTION(scope, );
-        markPromiseAsHandled(vm, cancelPromise);
-    } else {
-        // Clear the pipe slot first. Otherwise the sink's owner would end the stream when the sink closes (FileSink's on_close and handle_reject_stream).
+    // Clear the pipe slot first. Otherwise the sink's owner would end the stream when the sink closes (FileSink's on_close and handle_reject_stream).
+    if (isReadableStreamLocked(stream))
         sink->clearPipeStream();
-    }
     RELEASE_AND_RETURN(scope, sink->closeWithError(globalObject, error));
 }
 

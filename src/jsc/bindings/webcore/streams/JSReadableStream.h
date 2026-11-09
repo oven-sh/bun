@@ -99,8 +99,15 @@ public:
     // Bun helpers
 
     // Runs the lazy-start thunk if any. Idempotent. MUST be the first thing every consumer
-    // does. userJS: YES (direct pull setup / native handle.start()).
-    void materializeIfNeeded(JSC::JSGlobalObject*);
+    // does. A start that fails leaves the stream errored and is thrown. userJS: YES (direct pull setup / native handle.start()).
+    void materializeIfNeeded(JSC::JSGlobalObject* globalObject)
+    {
+        if (m_bunMode == BunStreamMode::Default) [[likely]]
+            return;
+        materializeSlow(globalObject);
+    }
+    // For a consumer whose contract reports a source failure through the stream: a failed start is not thrown.
+    void materializeOrError(JSC::JSGlobalObject*);
 
     // The value the old `$bunNativePtr` DOMAttribute getter returned.
     JSC::JSValue nativePtrForJS() const
@@ -133,6 +140,7 @@ public:
 private:
     JSReadableStream(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);
+    void materializeSlow(JSC::JSGlobalObject*);
 };
 
 using JSReadableStreamConstructor = JSStreamConstructor<JSReadableStream>;

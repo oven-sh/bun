@@ -152,7 +152,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
-    source.updateRef(forceUnref ? false : true);
+    source?.updateRef?.(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {

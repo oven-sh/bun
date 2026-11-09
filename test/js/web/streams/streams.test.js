@@ -22,7 +22,7 @@ import {
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable, finished, isErrored, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -2244,9 +2244,20 @@ it("ReadableStream for File", async () => {
   expect(output).toBe(input);
 });
 
+it("ReadableStream for File errors", async () => {
+  try {
+    var blob = file(import.meta.dir + "/fetch.js.txt.notfound");
+    blob.stream().getReader();
+    throw new Error("should not reach here");
+  } catch (e) {
+    expect(e.code).toBe("ENOENT");
+    expect(e.syscall).toBe("open");
+  }
+});
+
 describe("ReadableStream for a File that fails to open", () => {
-  // The native file source opens the file when the stream is first consumed. A failure
-  // there errors the stream: consumers do not throw synchronously, and every read settles.
+  // The file opens when the stream is first consumed. A failure there is recorded on the stream,
+  // so a later consumer gets the same error instead of a read that never settles.
   const missing = join(import.meta.dir, "fetch.js.txt.notfound");
   const enoent = expect.objectContaining({ code: "ENOENT", syscall: "open" });
   // label => [makeStream, expected error]
@@ -2254,8 +2265,6 @@ describe("ReadableStream for a File that fails to open", () => {
     "Bun.file(missing).stream()": [() => file(missing).stream(), enoent],
     "Bun.file(missing).slice().stream()": [() => file(missing).slice(0, 10).stream(), enoent],
     "new Response(Bun.file(missing)).body": [() => new Response(file(missing)).body, enoent],
-    // The text-mode native source takes the same start path.
-    "new Response(Bun.file(missing)).textStream()": [() => new Response(file(missing)).textStream(), enoent],
     "new Request({ body: Bun.file(missing) }).body": [
       () => new Request("http://example.com/", { method: "POST", body: file(missing) }).body,
       enoent,
@@ -2272,7 +2281,20 @@ describe("ReadableStream for a File that fails to open", () => {
     // open() succeeds, the fstat() after it reports a directory.
     ...(isWindows
       ? {}
-      : { directory: [() => file(import.meta.dir).stream(), expect.objectContaining({ code: "EISDIR" })] }),
+      : {
+          directory: [
+            () => file(import.meta.dir).stream(),
+            expect.objectContaining({ code: "EISDIR", syscall: "fstat" }),
+          ],
+        }),
+  };
+  // These have thrown the open error at the call on every release. A Bun.serve handler reaches error() through that throw.
+  const throwingConsumers = {
+    "getReader()": stream => stream.getReader(),
+    "tee()": stream => stream.tee(),
+    "pipeThrough()": stream => stream.pipeThrough(new TransformStream()),
+    "new ReadableStreamDefaultReader()": stream => new ReadableStreamDefaultReader(stream),
+    "new Response(stream).textStream()": stream => new Response(stream).textStream(),
   };
   // Bun.readableStreamToText(), ToJSON(), stream.text(), stream.json() and new Response(stream).text()
   // rejected up to 1.3.14 and threw at the call from 1.4.0.
@@ -2281,8 +2303,6 @@ describe("ReadableStream for a File that fails to open", () => {
     "stream.json()": stream => stream.json(),
     "stream.bytes()": stream => stream.bytes(),
     "stream.blob()": stream => stream.blob(),
-    "stream.pipeTo()": stream => stream.pipeTo(new WritableStream()),
-    "stream.pipeThrough().getReader().read()": stream => stream.pipeThrough(new TransformStream()).getReader().read(),
     "Bun.readableStreamToText()": stream => readableStreamToText(stream),
     "Bun.readableStreamToJSON()": stream => Bun.readableStreamToJSON(stream),
     "Bun.readableStreamToBlob()": stream => Bun.readableStreamToBlob(stream),
@@ -2291,30 +2311,44 @@ describe("ReadableStream for a File that fails to open", () => {
     "Bun.readableStreamToArray()": stream => readableStreamToArray(stream),
     "Bun.readableStreamToFormData()": stream => Bun.readableStreamToFormData(stream),
     "new Response(stream).text()": stream => new Response(stream).text(),
-    "new Response(stream).json()": stream => new Response(stream).json(),
-    "new Response(stream).bytes()": stream => new Response(stream).bytes(),
-    "new Response(stream).arrayBuffer()": stream => new Response(stream).arrayBuffer(),
+    "stream.pipeTo()": stream => stream.pipeTo(new WritableStream()),
   };
 
   describe.each(Object.entries(doors))("%s", (label, [makeStream, expected]) => {
-    it("getReader() returns a reader whose read() rejects", async () => {
+    it.each(Object.entries(throwingConsumers))("%s throws and leaves the stream errored", async (name, consume) => {
       const stream = makeStream();
-      const reader = stream.getReader();
-      expect(stream.locked).toBe(true);
-      await expect(reader.read()).rejects.toEqual(expected);
-      await expect(reader.closed).rejects.toEqual(expected);
-      // Later consumers see the same error instead of a read that never settles.
-      reader.releaseLock();
-      const second = stream.getReader();
-      await expect(second.read()).rejects.toEqual(expected);
-      second.releaseLock();
-      await expect(Array.fromAsync(stream)).rejects.toEqual(expected);
-    });
+      let thrown;
+      try {
+        consume(stream);
+      } catch (e) {
+        thrown = e;
+      }
+      // Checked before any read: without the fix the stream stays readable and the reads below never settle.
+      expect({ thrown, errored: isErrored(stream), locked: stream.locked }).toEqual({
+        thrown: expected,
+        errored: true,
+        locked: false,
+      });
 
-    it("tee() returns two errored branches", async () => {
-      const [a, b] = makeStream().tee();
-      await expect(a.getReader().read()).rejects.toEqual(expected);
-      await expect(b.getReader().read()).rejects.toEqual(expected);
+      const reader = stream.getReader();
+      const read = await reader.read().catch(e => e);
+      const closed = await reader.closed.catch(e => e);
+      reader.releaseLock();
+      const { promise: fromWeb, resolve } = Promise.withResolvers();
+      Readable.fromWeb(stream).on("error", resolve).on("end", resolve).on("close", resolve).resume();
+      expect({
+        read: read === thrown,
+        closed: closed === thrown,
+        cancel: (await stream.cancel().catch(e => e)) === thrown,
+        finished: (await new Promise(done => finished(stream, done))) === thrown,
+        "Readable.fromWeb": (await fromWeb) === thrown,
+        "tee()":
+          (await stream
+            .tee()[1]
+            .getReader()
+            .read()
+            .catch(e => e)) === thrown,
+      }).toEqual({ read: true, closed: true, cancel: true, finished: true, "Readable.fromWeb": true, "tee()": true });
     });
 
     it("promise-returning consumers reject instead of throwing", async () => {
@@ -2335,17 +2369,26 @@ describe("ReadableStream for a File that fails to open", () => {
       expect(outcomes).toEqual(Object.fromEntries(Object.keys(promiseConsumers).map(name => [name, expected])));
     });
 
-    it("Readable.fromWeb() after the failed start emits the error", async () => {
+    it("pipeTo() aborts its destination and leaves the stream errored", async () => {
       const stream = makeStream();
-      stream.getReader().releaseLock();
-      const readable = Readable.fromWeb(stream);
-      const { promise, resolve, reject } = Promise.withResolvers();
-      readable
-        .on("error", resolve)
-        .on("end", () => reject(new Error("ended without an error")))
-        .on("close", () => reject(new Error("closed without an error")));
-      readable.resume();
-      expect(await promise).toEqual(expected);
+      const aborts = [];
+      const error = await stream
+        .pipeTo(
+          new WritableStream({
+            abort(reason) {
+              aborts.push(reason);
+            },
+          }),
+        )
+        .catch(e => e);
+      expect(error).toEqual(expected);
+      expect(aborts).toEqual([error]);
+      expect(
+        await stream
+          .getReader()
+          .read()
+          .catch(e => e),
+      ).toBe(error);
     });
   });
 });

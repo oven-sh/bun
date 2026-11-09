@@ -521,11 +521,10 @@ void JSReadableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
 }
 
-void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)
+NEVER_INLINE void JSReadableStream::materializeSlow(JSGlobalObject* globalObject)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     const auto mode = m_bunMode;
-    if (mode == BunStreamMode::Default) [[likely]]
-        return;
     // A native sink locked this stream without a reader (ReadableStream__lockNative) and didn't start it.
     // Don't start its source here. The caller's acquire will fail on the lock.
     if (m_lockedWithoutReader)
@@ -536,6 +535,20 @@ void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)
         setUpDirectStreamController(globalObject, this, DirectSinkKind::ArrayBuffer);
     else
         materializeNativeSource(globalObject, this);
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        // The lazy state is spent, so the failure goes on the stream (File API "get stream": a chunk that cannot be read errors it).
+        TRY_CLEAR_EXCEPTION(scope, );
+        webStreamControllerError(globalObject, this, exception->value());
+        RETURN_IF_EXCEPTION(scope, );
+        // Still thrown: getReader(), tee() and pipeThrough() always threw it, and that throw is how a Bun.serve handler reaches error().
+        throwException(globalObject, scope, exception);
+    }
+}
+
+void JSReadableStream::materializeOrError(JSGlobalObject* globalObject)
+{
+    atStreamsBoundary(
+        globalObject, [&] { materializeIfNeeded(globalObject); }, [&](JSValue error) { webStreamControllerError(globalObject, this, error); });
 }
 
 // Prototype host functions
@@ -701,6 +714,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeTo, (JSGlobalObje
             RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The ReadableStream is locked"_s)));
         if (isWritableStreamLocked(destination))
             RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The WritableStream is locked"_s)));
+        // A source that fails to start is an errored source: the pipe aborts the destination with its error.
+        stream->materializeOrError(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         RELEASE_AND_RETURN(scope, readableStreamPipeTo(lexicalGlobalObject, stream, destination, options.preventClose, options.preventAbort, options.preventCancel, options.signal));
     })));
 }

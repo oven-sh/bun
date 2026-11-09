@@ -324,7 +324,7 @@ impl FileReader {
                     match open_result {
                         Err(err) => {
                             self.fd.set(Fd::INVALID);
-                            return streams::Start::Err(err);
+                            return self.fail_start(err);
                         }
                         Ok(opened) => {
                             debug_assert!(opened.fd.is_valid());
@@ -405,7 +405,7 @@ impl FileReader {
                     // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
                     unsafe { Source::decrement_count(parent) };
                 }
-                return streams::Start::Err(e);
+                return self.fail_start(e);
             }
         } else {
             #[cfg(unix)]
@@ -486,6 +486,14 @@ impl FileReader {
         }
 
         streams::Start::Ready
+    }
+
+    /// A start that failed leaves nothing to read. The reader ends, and a pull or a sink that comes through a handle taken before the failure gets `err`.
+    fn fail_start(&self, err: sys::Error) -> streams::Start {
+        self.done.set(true);
+        self.reader().end_without_source();
+        self.read_error.set(Some(err.clone()));
+        streams::Start::Err(err)
     }
 
     /// Lazily start the reader for a native-sink hookup. Bun's file-backed

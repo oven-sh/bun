@@ -1242,8 +1242,8 @@ interface Console {
   error(...data: any[]): void;
   /**
    * Start a group. Logs `data` as the label of the group, if there is any,
-   * then indents later `log`, `info`, `debug`, `warn`, `error`, `dir` and
-   * `trace` output by two more spaces.
+   * then indents each line of the console messages that follow by two more
+   * spaces. `console.write` is not indented.
    */
   group(...data: any[]): void;
   /** An alias for {@link group}. */

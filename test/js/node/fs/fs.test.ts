@@ -68,6 +68,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnSync } from "bun";
+import { heapStats } from "bun:jsc";
 import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
@@ -7931,20 +7932,29 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
   // In a subprocess: the replacement must not reach the other tests, and a held
   // callback ends the process with no output instead of a hang.
   it("while user code has replaced process.nextTick", async () => {
-    using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello", "rm.txt": "x", "tree/a/b.txt": "x" });
     const script = `
       const fs = require("fs");
+      const path = require("path");
+      const dir = ${JSON.stringify(String(dir))};
       const realNextTick = process.nextTick;
       const order = [];
       process.on("exit", () => console.log(order.join(" ")));
-      // The tick queue exists before the operation starts.
-      realNextTick(() => {
+      const operations = [
+        cb => fs.stat(path.join(dir, "file.txt"), cb),
+        cb => fs.rm(path.join(dir, "rm.txt"), cb),
+        cb => fs.rmdir(path.join(dir, "tree"), { recursive: true }, cb),
+      ];
+      // The tick queue exists before the first operation starts.
+      realNextTick(function next() {
         // What a fake-timer library does: hold the job until the fake clock runs.
         process.nextTick = () => {};
-        fs.stat(${JSON.stringify(join(String(dir), "file.txt"))}, () => {
+        const operation = operations.shift();
+        if (!operation) return;
+        operation(() => {
           order.push("callback");
           realNextTick(() => order.push("nextTick"));
-          queueMicrotask(() => order.push("microtask"));
+          queueMicrotask(() => (order.push("microtask"), next()));
         });
       });
     `;
@@ -7952,7 +7962,7 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("callback nextTick microtask");
+    expect(stdout.trim()).toBe(Array(3).fill("callback nextTick microtask").join(" "));
     expect(exitCode).toBe(0);
   });
 
@@ -7960,8 +7970,6 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
   it("while user code has replaced process.nextTick, for the APIs that are promise chains", async () => {
     using dir = tempDir("fs-callback-order", {
       "file.txt": "hello",
-      "rm.txt": "x",
-      "tree/a/b.txt": "x",
       "list/f0": "",
       "list/f1": "",
     });
@@ -7977,8 +7985,6 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
       // What a fake-timer library does: hold the job until the fake clock runs.
       process.nextTick = () => {};
       fs.cp(path.join(dir, "file.txt"), path.join(dir, "cp.txt"), () => ran.push("cp"));
-      fs.rm(path.join(dir, "rm.txt"), () => ran.push("rm"));
-      fs.rmdir(path.join(dir, "tree"), { recursive: true }, () => ran.push("rmdir"));
       fs.opendir(list, (err, handle) => (handle.closeSync(), ran.push("opendir")));
       const first = fs.opendirSync(list);
       first.read(() => (first.closeSync(), ran.push("Dir.read")));
@@ -7990,9 +7996,92 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("Dir.close Dir.read Dir.read(buffered) cp glob opendir rm rmdir");
+    expect(stdout.trim()).toBe("Dir.close Dir.read Dir.read(buffered) cp glob opendir");
     expect(exitCode).toBe(0);
   });
+});
+
+// Node checks the arguments of a callback API before the call returns. The callback is for what the file system reports.
+// fs.exists() has no error, and Node's fs.realpath() makes a string of any path.
+describe("an fs callback API throws an invalid first argument from the call", () => {
+  type Start = (callback: (...args: unknown[]) => void) => unknown;
+  const invalid = {} as any;
+  const buffer = () => Buffer.alloc(1);
+  const cases: Array<[string, Start]> = [
+    ["access", cb => fs.access(invalid, cb)],
+    ["appendFile", cb => fs.appendFile(invalid, "x", cb)],
+    ["chmod", cb => fs.chmod(invalid, 0o644, cb)],
+    ["chown", cb => fs.chown(invalid, 0, 0, cb)],
+    ["close", cb => fs.close(invalid, cb)],
+    ["copyFile", cb => fs.copyFile(invalid, "dest", cb)],
+    ["cp", cb => fs.cp(invalid, "dest", cb)],
+    ["fchmod", cb => fs.fchmod(invalid, 0o644, cb)],
+    ["fchown", cb => fs.fchown(invalid, 0, 0, cb)],
+    ["fdatasync", cb => fs.fdatasync(invalid, cb)],
+    ["fstat", cb => fs.fstat(invalid, cb)],
+    ["fsync", cb => fs.fsync(invalid, cb)],
+    ["ftruncate", cb => fs.ftruncate(invalid, 1, cb)],
+    ["futimes", cb => fs.futimes(invalid, 1, 1, cb)],
+    ["glob", cb => fs.glob(invalid, cb)],
+    ["lchown", cb => fs.lchown(invalid, 0, 0, cb)],
+    ["link", cb => fs.link(invalid, "dest", cb)],
+    ["lstat", cb => fs.lstat(invalid, cb)],
+    ["lutimes", cb => fs.lutimes(invalid, 1, 1, cb)],
+    ["mkdir", cb => fs.mkdir(invalid, cb)],
+    ["mkdir (recursive)", cb => fs.mkdir(invalid, { recursive: true }, cb)],
+    ["mkdtemp", cb => fs.mkdtemp(invalid, cb)],
+    ["open", cb => fs.open(invalid, "r", cb)],
+    ["opendir", cb => fs.opendir(invalid, cb)],
+    ["read", cb => fs.read(invalid, buffer(), 0, 1, 0, cb)],
+    ["readdir", cb => fs.readdir(invalid, cb)],
+    ["readdir (recursive)", cb => fs.readdir(invalid, { recursive: true }, cb)],
+    ["readFile", cb => fs.readFile(invalid, cb)],
+    ["readlink", cb => fs.readlink(invalid, cb)],
+    ["readv", cb => fs.readv(invalid, [buffer()], 0, cb)],
+    ["realpath.native", cb => fs.realpath.native(invalid, cb)],
+    ["rename", cb => fs.rename(invalid, "dest", cb)],
+    ["rm", cb => fs.rm(invalid, cb)],
+    ["rm (force)", cb => fs.rm(invalid, { force: true }, cb)],
+    ["rm (recursive)", cb => fs.rm(invalid, { recursive: true }, cb)],
+    ["rmdir", cb => fs.rmdir(invalid, cb)],
+    // Node 26 has no `recursive` for rmdir (DEP0147) and throws ERR_INVALID_ARG_VALUE for the option.
+    ["rmdir (recursive)", cb => (fs.rmdir as Function)(invalid, { recursive: true }, cb)],
+    ["stat", cb => fs.stat(invalid, cb)],
+    ["statfs", cb => fs.statfs(invalid, cb)],
+    ["symlink", cb => fs.symlink("target", invalid, cb)],
+    ["truncate", cb => fs.truncate(invalid, 1, cb)],
+    ["unlink", cb => fs.unlink(invalid, cb)],
+    ["utimes", cb => fs.utimes(invalid, 1, 1, cb)],
+    ["write", cb => fs.write(invalid, buffer(), 0, 1, 0, cb)],
+    ["write (string)", cb => fs.write(invalid, "x", 0, "utf8", cb)],
+    ["writeFile", cb => fs.writeFile(invalid, "x", cb)],
+    ["writev", cb => fs.writev(invalid, [buffer()], 0, cb)],
+  ];
+
+  it.each(cases)("%s", async (_name, start) => {
+    const calls: unknown[][] = [];
+    expect(() => start((...args) => void calls.push(args))).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    // Past every callback that the call could have queued: a tick, a promise reaction, a job of the thread pool.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await promises.lstat(tmpdir());
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(calls).toEqual([]);
+  });
+});
+
+// fs.rm(path, callback) is one native call, as fs.unlink(path, callback) is. No promise carries its result.
+it("a pending fs.rm() with a callback holds no promise", async () => {
+  using dir = tempDir("fs-rm-pending", {});
+  const files = Array.from({ length: 200 }, (_, i) => join(String(dir), `file-${i}`));
+  for (const file of files) writeFileSync(file, "");
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  let pending = files.length;
+  const promiseCount = () => heapStats().objectTypeCounts.Promise ?? 0;
+  const before = promiseCount();
+  for (const file of files) fs.rm(file, err => (err ? reject(err) : --pending === 0 && resolve()));
+  const created = promiseCount() - before;
+  await promise;
+  expect(created).toBeLessThan(files.length);
 });
 
 // The operation pins the buffer while it runs. Node can transfer it from the callback.

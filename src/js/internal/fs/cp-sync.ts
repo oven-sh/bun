@@ -118,6 +118,11 @@ function fsEisdirError(context: SystemErrorContext) {
   return decorateSystemError($ERR_FS_EISDIR(context.message), "Path is a directory", context);
 }
 
+// Node's error for rm() of a directory without `recursive`.
+function fsRmEisdirError(path: SystemErrorContext["path"]) {
+  return fsEisdirError({ code: "EISDIR", message: "is a directory", path, syscall: "rm", errno: EISDIR });
+}
+
 function getValidMode(mode: number | null | undefined) {
   if (mode == null) {
     return 0;
@@ -570,6 +575,7 @@ export default {
   fsCpSymlinkToSubdirectoryError,
   fsCpUnknownError,
   fsEisdirError,
+  fsRmEisdirError,
   areIdentical,
   isSrcSubdir,
 };

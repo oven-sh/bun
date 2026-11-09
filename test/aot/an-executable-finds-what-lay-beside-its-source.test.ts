@@ -29,6 +29,7 @@ const page = path.join(__dirname, "public", "index.html");
   await show("existsSync", () => [fs.existsSync(page), fs.existsSync(path.dirname(page)), fs.existsSync(__filename)].join());
   await show("statSync", () => [fs.statSync(page).isFile(), fs.statSync(page).size, fs.statSync(path.dirname(page)).isDirectory()].join());
   await show("accessSync", () => fs.accessSync(page, fs.constants.R_OK) ?? "ok");
+  await show("rmSync of a folder without recursive", () => { try { fs.rmSync(path.dirname(page)); return "removed"; } catch (error) { return error.code; } });
   await show("readdirSync", () => fs.readdirSync(path.dirname(page)).sort().join());
   await show("readdirSync, recursive", () => fs.readdirSync(path.dirname(page), { recursive: true }).map(name => name.replaceAll("\\\\", "/")).sort().join());
   await show("openSync and readSync", () => {
@@ -105,6 +106,7 @@ describe("compile/aot/an executable finds what lay beside its source", () => {
     expect(compiled).toEqual(bundled);
     expect(compiled).toContain("__dirname: the-folder-of-the-build");
     expect(compiled).toContain("a file that nobody embedded: not embedded");
+    expect(compiled).toContain("rmSync of a folder without recursive: ERR_FS_EISDIR");
     expect(compiled.filter(line => line.includes("throws"))).toEqual([]);
   });
 

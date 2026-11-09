@@ -405,6 +405,13 @@ fn is_in_executable(path: &[u8]) -> bool {
         .is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
 }
 
+/// Whether `lstat` calls `path` a directory of the executable.
+fn is_directory_in_executable(path: &[u8]) -> bool {
+    graph_in_front_of_disk(path)
+        .and_then(|graph| graph.stat(path))
+        .is_some_and(|stat| sys::S::ISDIR(stat.st_mode as _))
+}
+
 /// What the executable holds lies on the file system that holds the executable.
 fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut PathBuffer) -> &'a ZStr {
     match bun_core::self_exe_path() {
@@ -467,19 +474,26 @@ fn graph_may_answer_for(path: &[u8]) -> bool {
     standalone_module_graph().is_some_and(|graph| graph.may_answer_for(path))
 }
 
+/// What a compiled program holds at `path`, which the disk has failed `stat` or `lstat` for with `errno`.
+fn stat_behind_disk(errno: E, path: &[u8], written: &[u8]) -> Option<sys::Stat> {
+    if !graph_may_answer_for(path) && (written == path || !graph_may_answer_for(written)) {
+        return None;
+    }
+    if let Some(result) = graph_behind_disk(path).and_then(|graph| graph.stat(path)) {
+        return Some(result);
+    }
+    if errno != E::ENOENT {
+        return None;
+    }
+    standalone_module_graph()?.source_path_stat(written)
+}
+
 /// The disk has failed `stat` or `lstat` with `err`; `path` is what the system call was given.
 #[allow(clippy::needless_pass_by_value)] // handed on as the answer
 fn stat_failure(err: sys::Error, path: &[u8], args: &args::Stat) -> Maybe<StatOrNotFound> {
     let written = args.path.slice();
-    if graph_may_answer_for(path) || (written != path && graph_may_answer_for(written)) {
-        if let Some(result) = graph_behind_disk(path).and_then(|graph| graph.stat(path)) {
-            return Ok(stats_of(&result, args.big_int));
-        }
-        if err.get_errno() == E::ENOENT
-            && let Some(stats) = source_path_stats(written, args.big_int)
-        {
-            return Ok(stats);
-        }
+    if let Some(result) = stat_behind_disk(err.get_errno(), path, written) {
+        return Ok(stats_of(&result, args.big_int));
     }
     if err.get_errno() == E::ENOENT && !args.throw_if_no_entry {
         return Ok(StatOrNotFound::NotFound);
@@ -548,11 +562,6 @@ fn is_embedded_in_compiled_program(path: &[u8]) -> bool {
 /// For a path that the disk does not have: `Graph::source_path_kind`.
 fn is_source_path(path: &[u8]) -> bool {
     standalone_module_graph().is_some_and(|graph| graph.source_path_kind(path).is_some())
-}
-
-fn source_path_stats(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
-    let result = standalone_module_graph()?.source_path_stat(path)?;
-    Some(stats_of(&result, big_int))
 }
 
 /// A read-only descriptor of an unnamed file that holds `contents`.
@@ -8195,10 +8204,16 @@ impl NodeFS {
     }
 
     pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
+        // Node refuses a directory without `recursive`. The wrappers in node:fs make ERR_FS_EISDIR of this.
+        let is_directory =
+            || sys::Error::from_code(E::EISDIR, sys::Tag::rm).with_path(args.path.slice());
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::rm) {
-            return match args.force && error.get_errno() == E::ENOENT {
-                true => Ok(()),
-                false => Err(error),
+            return match error.get_errno() {
+                E::ENOENT if args.force => Ok(()),
+                E::EROFS if !args.recursive && is_directory_in_executable(args.path.slice()) => {
+                    Err(is_directory())
+                }
+                _ => Err(error),
             };
         }
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
@@ -8232,8 +8247,18 @@ impl NodeFS {
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
+        // Node's rm() runs lstat() first. HFS+ lets unlink() remove a hard link to a directory, so macOS does too.
+        if cfg!(target_os = "macos")
+            && Syscall::lstat(dest).is_ok_and(|stat| sys::S::ISDIR(stat.st_mode as _))
+        {
+            return Err(is_directory());
+        }
+        // Elsewhere unlink() refuses every directory, and lstat() runs only when the removal fails.
         if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
+            if rm_target_is_directory(dest, args.path.slice(), e1) {
+                return Err(is_directory());
+            }
             if e1 == E::ENOENT {
                 if args.force {
                     return Ok(());
@@ -9992,6 +10017,22 @@ fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
         "IsDir" => E::EISDIR,
         _ => E::EFAULT,
     }
+}
+
+/// Whether `lstat` calls the path that `unlink()` did not remove a directory.
+fn rm_target_is_directory(path: &ZStr, written: &[u8], unlink_errno: E) -> bool {
+    // Linux says so itself. Elsewhere EISDIR can have another cause, and a directory is EPERM.
+    if cfg!(any(target_os = "linux", target_os = "android")) && unlink_errno == E::EISDIR {
+        return true;
+    }
+    // A missing path needs no second answer from the disk.
+    let on_disk = match unlink_errno {
+        E::ENOENT => Err(E::ENOENT),
+        _ => Syscall::lstat(path).map_err(|err| err.get_errno()),
+    };
+    on_disk
+        .or_else(|errno| stat_behind_disk(errno, path.as_bytes(), written).ok_or(errno))
+        .is_ok_and(|stat| sys::S::ISDIR(stat.st_mode as _))
 }
 
 // `rm` non-recursive unlink/rmdir fallback — narrower table; anything not

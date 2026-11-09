@@ -567,6 +567,7 @@ function installFsInstrumentation() {
     realpath: ["realpath"],
     realpathNative: ["realpath"],
     rename: ["rename"],
+    rm: ["lstat"], // Node's rm starts with an lstat. Bun's rm is one native call.
     rmdir: ["rmdir"],
     stat: ["stat"],
     symlink: ["symlink"],
@@ -580,6 +581,12 @@ function installFsInstrumentation() {
     const original = binding[method];
     if (typeof original === "function") binding[method] = wrapFsSyncMethod(original, syncOps[method]);
   }
+  // Node's rmSync starts with an lstat, except with `recursive` and `force` (validateRmOptionsSync).
+  const rmSync: Wrapped = binding.rmSync;
+  const tracedRmSync = wrapFsSyncMethod(rmSync, ["lstat"]);
+  binding.rmSync = function (this: unknown, _path: unknown, options?: { recursive?: unknown; force?: unknown }) {
+    return (options?.recursive && options.force ? rmSync : tracedRmSync).$apply(this, arguments);
+  };
   for (const method in asyncOps) {
     const original = binding[method];
     if (typeof original === "function") binding[method] = wrapFsAsyncMethod(original, asyncOps[method]);

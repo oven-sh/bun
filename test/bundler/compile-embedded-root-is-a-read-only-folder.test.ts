@@ -30,6 +30,7 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       result.chdirOutByRelativePath = code(() => process.chdir(path.relative(root, before)));
       result.outByRelativePath = process.cwd() === before;
       process.chdir(root);
+      result.rmFolderByRelativePath = (() => { try { fs.rmSync("."); } catch (error: any) { return error.code + " " + error.path; } })();
       process.chdir(before);
       result.back = process.cwd() === before;
       result.writeFresh = code(() => fs.writeFileSync(root + "/fresh", "x"));
@@ -41,6 +42,8 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       result.unlink = code(() => fs.unlinkSync(asset));
       result.rmForce = code(() => fs.rmSync(asset, { force: true }));
       result.rmForceNothing = code(() => fs.rmSync(root + "/nowhere", { force: true }));
+      result.rmFolder = code(() => fs.rmSync(root));
+      result.rmFolderRecursive = code(() => fs.rmSync(root, { recursive: true }));
       result.rename = code(() => fs.renameSync(asset, asset + "2"));
       result.chmod = code(() => fs.chmodSync(asset, 0o600));
       result.bunWrite = await Bun.write(asset, "x").then(() => "fine", error => error.code);
@@ -72,6 +75,7 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       symlinkTarget: "target.txt",
       chdirOutByRelativePath: "fine",
       outByRelativePath: true,
+      rmFolderByRelativePath: "ERR_FS_EISDIR .",
       back: true,
       writeFresh: "EROFS",
       writeOver: "EROFS",
@@ -82,6 +86,8 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       unlink: "EROFS",
       rmForce: "EROFS",
       rmForceNothing: "fine",
+      rmFolder: "ERR_FS_EISDIR",
+      rmFolderRecursive: "EROFS",
       rename: "EROFS",
       chmod: "EROFS",
       bunWrite: "EROFS",

@@ -401,26 +401,14 @@ const exports = {
       // Normalize here so the native parser sees exactly that set.
       options = { ...options };
     }
-    if (!options?.recursive) {
-      // node validates in JS and reports ERR_FS_EISDIR for directories
-      // (same check as rmSync)
-      let stats: $Node.Stats | undefined;
-      try {
-        stats = await fs.lstat(path);
-      } catch {
-        // let the native call produce the error (respects force/ENOENT)
-      }
-      if (stats?.isDirectory()) {
-        throw require("internal/fs/cp-sync").fsEisdirError({
-          code: "EISDIR",
-          message: "is a directory",
-          path,
-          syscall: "rm",
-          errno: $processBindingConstants.os.errno.EISDIR,
-        });
-      }
+    if (options?.recursive) return fs.rm(path, options);
+    try {
+      return await fs.rm(path, options);
+    } catch (err: any) {
+      // Native rm answers a directory that it refuses without `recursive` with EISDIR from the syscall "rm".
+      if (err?.code !== "EISDIR" || err.syscall !== "rm") throw err;
+      throw require("internal/fs/cp-sync").fsRmEisdirError(path);
     }
-    return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.

@@ -116,6 +116,15 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readdirCode: errcode(() => fs.readdirSync(cfg)),
         };
 
+        // rm without "recursive" refuses an embedded directory like a directory on disk
+        const rmDirectory = {
+          sync: errcode(() => fs.rmSync(root)),
+          syncForce: errcode(() => fs.rmSync(root, { force: true })),
+          callback: await new Promise(resolve => fs.rm(root, err => resolve(err?.code))),
+          promise: await fs.promises.rm(root).then(() => "", err => err.code),
+          stillExists: fs.existsSync(root),
+        };
+
         // Bun.Glob over the embedded tree (issue #40932)
         const realDir = fs.mkdtempSync(path.join(os.tmpdir(), "bunfs-glob-real-"));
         fs.writeFileSync(path.join(realDir, "real.txt"), "x");
@@ -144,7 +153,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         };
         fs.rmSync(realDir, { recursive: true, force: true });
 
-        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, glob, realDirPosix }));
+        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, rmDirectory, glob, realDirPosix }));
       `,
         "data.txt": "hello",
         "client/index.html": "<!doctype html><h1>hi</h1>",
@@ -212,6 +221,13 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         enoent: { code: "ENOENT", path: r.missing, exists: false },
         missing: expect.stringMatching(/[/\\]root[/\\]does-not-exist$/),
         singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
+        rmDirectory: {
+          sync: "ERR_FS_EISDIR",
+          syncForce: "ERR_FS_EISDIR",
+          callback: "ERR_FS_EISDIR",
+          promise: "ERR_FS_EISDIR",
+          stillExists: true,
+        },
         glob: {
           scanSync: ["empty.txt", "favicon.svg", "index.html"],
           scanAsync: ["empty.txt", "favicon.svg", "index.html"],

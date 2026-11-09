@@ -414,12 +414,12 @@ pub mod http_server_agent;
 pub mod js_secrets;
 #[path = "NodeModuleModule.rs"]
 pub mod node_module_module;
-#[path = "PosixSignalHandle.rs"]
-pub mod posix_signal_handle;
 #[path = "resolve_path_jsc.rs"]
 pub mod resolve_path_jsc;
 #[path = "resolver_jsc.rs"]
 pub mod resolver_jsc;
+#[path = "SignalHandle.rs"]
+pub mod signal_handle;
 #[path = "virtual_machine_exports.rs"]
 pub mod virtual_machine_exports;
 
@@ -1194,13 +1194,9 @@ pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
     DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
-    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    SignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
-#[cfg(unix)]
-pub type PlatformEventLoop = bun_uws::Loop;
-#[cfg(not(unix))]
-pub type PlatformEventLoop = bun_io::Loop;
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected, RunsOn};
 
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 

@@ -536,7 +536,6 @@ export const globalFlags: Flag[] = [
   {
     // libuv stubs use C23 anonymous parameters
     flag: "-Wno-c23-extensions",
-    when: c => c.unix,
     desc: "Allow C23 extensions (libuv stubs use anonymous parameters)",
   },
 
@@ -1185,14 +1184,11 @@ export const linkerFlags: Flag[] = [
       "/DEBUG:FULL",
       "/delayload:ole32.dll",
       "/delayload:WINMM.dll",
-      "/delayload:dbghelp.dll",
       "/delayload:WS2_32.dll",
-      "/delayload:WSOCK32.dll",
       "/delayload:ADVAPI32.dll",
       "/delayload:IPHLPAPI.dll",
       "/delayload:CRYPT32.dll",
       "/delayload:USER32.dll",
-      "/delayload:SHELL32.dll",
       "/delayload:OLEAUT32.dll",
       "/delayload:USERENV.dll",
     ],
@@ -1928,6 +1924,8 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/jsc/bindings/node/http"),
     join(cwd, "src/jsc/bindings/sqlite"),
     join(cwd, "src/jsc/bindings/v8"),
+    // libuv's headers, for the uv_* functions exported to native addons.
+    join(cwd, "src/jsc/bindings/libuv"),
     join(cwd, "src/jsc/modules"),
     join(cwd, "src/js/builtins"),
     join(cwd, "src/runtime/napi"),
@@ -1941,9 +1939,6 @@ export function bunIncludes(cfg: Config): string[] {
 
   if (cfg.windows) {
     includes.push(join(cwd, "src/jsc/bindings/windows"));
-  } else {
-    // libuv stubs for unix (real libuv used on windows)
-    includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
 
   // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles

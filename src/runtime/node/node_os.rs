@@ -1,6 +1,5 @@
-use core::ffi::c_int;
 #[cfg(not(windows))]
-use core::ffi::{c_char, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 
 use bun_core::String as BunString;
 use bun_jsc::bindgen::JsScope;
@@ -37,12 +36,11 @@ mod _impl {
     use bun_core::{env_var, fmt as bun_fmt};
     use bun_jsc::{StringJsc as _, SysErrorJsc as _, SystemError};
 
-    #[cfg(windows)]
-    use bun_sys::ReturnCodeExt as _;
     #[cfg(not(windows))]
     use bun_sys::c;
     #[cfg(windows)]
-    use bun_sys::windows::{self, libuv};
+    use bun_sys::windows;
+    #[cfg(not(windows))]
     use std::io::Write as _;
 
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
@@ -475,47 +473,23 @@ mod _impl {
 
     #[cfg(windows)]
     fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
-        if err != 0 {
-            return Err(OsError::Any);
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_cpu_info
-            unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
-        };
+        let infos = win32::cpus().map_err(|_| OsError::Any)?;
 
-        let values =
-            JSValue::create_empty_array(global_this, usize::try_from(count).expect("int cast"))?;
+        let values = JSValue::create_empty_array(global_this, infos.len())?;
 
-        // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
-        let infos =
-            unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
         for (i, cpu_info) in infos.iter().enumerate() {
-            let times = CPUTimes {
-                user: cpu_info.cpu_times.user,
-                nice: cpu_info.cpu_times.nice,
-                sys: cpu_info.cpu_times.sys,
-                idle: cpu_info.cpu_times.idle,
-                irq: cpu_info.cpu_times.irq,
-            };
-
             let cpu = JSValue::create_empty_object(global_this, 3);
-            // SAFETY: cpu_info.model is a NUL-terminated C string from libuv
-            let model = unsafe { bun_core::ffi::cstr(cpu_info.model) }.to_bytes();
             cpu.put(
                 global_this,
                 b"model",
-                bun_string_jsc::create_utf8_for_js(global_this, model)?,
+                BunString::clone_utf16(&cpu_info.model).into_js(global_this)?,
             );
             cpu.put(
                 global_this,
                 b"speed",
                 JSValue::js_number(cpu_info.speed as f64),
             );
-            cpu.put(global_this, b"times", times.to_value(global_this));
+            cpu.put(global_this, b"times", cpu_info.times.to_value(global_this));
 
             values.put_index(global_this, u32::try_from(i).expect("int cast"), cpu)?;
         }
@@ -523,27 +497,34 @@ mod _impl {
         Ok(values)
     }
 
+    #[cfg(not(windows))]
     unsafe extern "C" {
         safe fn get_process_priority(pid: i32) -> i32;
     }
 
     pub(crate) fn get_priority(cx: &mut JsScope<'_>, pid: i32) -> JsResult<i32> {
+        #[cfg(windows)]
+        let result = win32::priority(pid);
+        #[cfg(not(windows))]
+        let result = match get_process_priority(pid) {
+            i32::MAX => Err(bun_sys::E::ESRCH),
+            priority => Ok(priority),
+        };
+        result.map_err(|errno| priority_error(cx, errno, bun_sys::Tag::uv_os_getpriority))
+    }
+
+    fn priority_error(
+        cx: &mut JsScope<'_>,
+        errno: bun_sys::E,
+        syscall: bun_sys::Tag,
+    ) -> bun_jsc::JsError {
         let global = cx.global();
-        let result = get_process_priority(pid);
-        if result == i32::MAX {
-            let err = SystemError {
-                message: BunString::static_("no such process"),
-                code: BunString::static_("ESRCH"),
-                #[cfg(not(windows))]
-                errno: -(bun_sys::posix::E::ESRCH as c_int),
-                #[cfg(windows)]
-                errno: libuv::UV_ESRCH,
-                syscall: BunString::static_("uv_os_getpriority"),
-                ..Default::default()
-            };
-            return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
-        }
-        Ok(result)
+        let err = bun_sys::Error::from_code(errno, syscall);
+        let mut sys_err: SystemError = err.to_system_error().into();
+        // Node's message here is the bare libuv label, not "ESRCH: …, uv_os_setpriority".
+        sys_err.message =
+            BunString::static_(err.uv_code_label().map_or("unknown error", |(_, l)| l));
+        global.throw_value(sys_err.to_error_instance_with_info_object(global))
     }
 
     pub(crate) fn homedir(cx: &mut JsScope<'_>) -> JsResult<BunString> {
@@ -551,15 +532,10 @@ mod _impl {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
         {
-            let mut out = bun_paths::path_buffer_pool::get();
-            let mut size: usize = out.len();
-            // SAFETY: valid buffer + size out-param
-            if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
-                .to_error(bun_sys::Tag::uv_os_homedir)
-            {
-                return Err(global.throw_value(err.to_js(global)));
-            }
-            return Ok(BunString::clone_utf8(&out[0..size]));
+            return match win32::home_directory() {
+                Ok(path) => Ok(BunString::clone_utf16(&path)),
+                Err(err) => Err(global.throw_value(err.to_js(global))),
+            };
         }
         #[cfg(not(windows))]
         {
@@ -654,7 +630,7 @@ mod _impl {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
-            windows::libuv::uv__winsock_ensure();
+            windows::ws2_32::ensure_started();
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
@@ -1012,27 +988,56 @@ mod _impl {
         Ok(ret)
     }
 
+    /// `address`, `netmask` and `family`.
+    #[cfg(windows)]
+    fn put_address(
+        global_this: &JSGlobalObject,
+        interface: JSValue,
+        iface: &win32::InterfaceAddress<'_>,
+    ) -> JsResult<()> {
+        // 65 comes from: https://stackoverflow.com/questions/39443413/why-is-inet6-addrstrlen-defined-as-46-in-c
+        let mut ip_buf = [0u8; 65];
+        let address = bun_fmt::buf_print_infallible(&mut ip_buf, format_args!("{}", iface.address));
+        interface.put(
+            global_this,
+            b"address",
+            bun_string_jsc::create_utf8_for_js(global_this, address)?,
+        );
+        let netmask =
+            bun_fmt::buf_print_infallible(&mut ip_buf, format_args!("{}", iface.netmask()));
+        interface.put(
+            global_this,
+            b"netmask",
+            bun_string_jsc::create_utf8_for_js(global_this, netmask)?,
+        );
+        interface.put(
+            global_this,
+            b"family",
+            if iface.address.is_ipv6() {
+                global_this.common_strings().ipv6()
+            } else {
+                global_this.common_strings().ipv4()
+            },
+        );
+        Ok(())
+    }
+
     #[cfg(windows)]
     pub(crate) fn network_interfaces_windows(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
-        if err != 0 {
-            let sys_err = SystemError {
-                message: BunString::static_("uv_interface_addresses failed").into(),
-                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
-                //.info = info,
-                errno: err,
-                syscall: BunString::static_("uv_interface_addresses").into(),
-                ..Default::default()
-            };
-            return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_interface_addresses
-            unsafe { libuv::uv_free_interface_addresses(ifaces, count) };
+        let adapters = match win32::Adapters::get() {
+            Ok(adapters) => adapters,
+            Err(err) => {
+                let sys_err = SystemError {
+                    message: BunString::static_("uv_interface_addresses failed"),
+                    code: BunString::static_("ERR_SYSTEM_ERROR"),
+                    //.info = info,
+                    errno: err,
+                    syscall: BunString::static_("uv_interface_addresses"),
+                    ..Default::default()
+                };
+                return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
+            }
         };
 
         let ret = JSValue::create_empty_object(global_this, 8);
@@ -1040,109 +1045,13 @@ mod _impl {
         // 65 comes from: https://stackoverflow.com/questions/39443413/why-is-inet6-addrstrlen-defined-as-46-in-c
         let mut ip_buf = [0u8; 65];
 
-        // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
-        let iface_slice =
-            unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
-        for iface in iface_slice {
+        for iface in adapters.addresses() {
             let interface = JSValue::create_empty_object(global_this, 7);
-
-            // address <string> The assigned IPv4 or IPv6 address
-            // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
-            let mut cidr = JSValue::NULL;
-            {
-                // Compute the CIDR suffix; returns null if the netmask cannot
-                //  be converted to a CIDR suffix
-                // SAFETY: union read tagged by family
-                let family = unsafe { iface.address.address4.sin_family } as c_int;
-                let maybe_suffix: Option<u8> = match family {
-                    bun_sys::posix::AF::INET => {
-                        netmask_to_cidr_suffix(unsafe { iface.netmask.netmask4.sin_addr.s_addr })
-                    }
-                    bun_sys::posix::AF::INET6 => {
-                        netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
-                            iface.netmask.netmask6.sin6_addr.s6_addr
-                        }))
-                    }
-                    _ => None,
-                };
-
-                // Format the address and then, if valid, the CIDR suffix; both
-                //  the address and cidr values can be slices into this same buffer
-                // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
-                let addr_str = bun_fmt::format_ip(
-                    // bun_sys::net::Address will do ptrCast depending on the family so this is ok
-                    // SAFETY: the address union backs a valid sockaddr_in/sockaddr_in6; pointer derived
-                    // from the whole union so provenance covers the full 28 bytes init_posix may copy.
-                    &unsafe {
-                        bun_sys::net::Address::init_posix(
-                            core::ptr::from_ref(&iface.address).cast::<bun_sys::posix::sockaddr>(),
-                        )
-                    },
-                    &mut ip_buf,
-                )
-                .expect("unreachable");
-                let addr_len = addr_str.len();
-                let start = addr_str.as_ptr() as usize - ip_buf.as_ptr() as usize;
-                if let Some(suffix) = maybe_suffix {
-                    //NOTE addr_str might not start at buf[0] due to slicing in formatIp
-                    // Start writing the suffix immediately after the address
-                    let suffix_len = {
-                        let mut cursor = &mut ip_buf[start + addr_len..];
-                        write!(cursor, "/{}", suffix).expect("unreachable");
-                        let remaining = cursor.len();
-                        (ip_buf.len() - (start + addr_len)) - remaining
-                    };
-                    // The full cidr value is the address + the suffix
-                    let cidr_str = &ip_buf[start..start + addr_len + suffix_len];
-                    cidr = bun_string_jsc::create_utf8_for_js(global_this, cidr_str)?;
-                }
-
-                interface.put(
-                    global_this,
-                    b"address",
-                    bun_string_jsc::create_utf8_for_js(
-                        global_this,
-                        &ip_buf[start..start + addr_len],
-                    )?,
-                );
-            }
-
-            // netmask
-            {
-                let str = bun_fmt::format_ip(
-                    // bun_sys::net::Address will do ptrCast depending on the family so this is ok
-                    // SAFETY: the netmask union backs a valid sockaddr_in/sockaddr_in6; pointer derived
-                    // from the whole union so provenance covers the full 28 bytes init_posix may copy.
-                    &unsafe {
-                        bun_sys::net::Address::init_posix(
-                            core::ptr::from_ref(&iface.netmask).cast::<bun_sys::posix::sockaddr>(),
-                        )
-                    },
-                    &mut ip_buf,
-                )
-                .expect("unreachable");
-                interface.put(
-                    global_this,
-                    b"netmask",
-                    bun_string_jsc::create_utf8_for_js(global_this, str)?,
-                );
-            }
-            // family
-            // SAFETY: union read tagged by family
-            let family = unsafe { iface.address.address4.sin_family } as c_int;
-            interface.put(
-                global_this,
-                b"family",
-                match family {
-                    bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
-                    bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => global_this.common_strings().unknown(),
-                },
-            );
+            put_address(global_this, interface, &iface)?;
 
             // mac
             {
-                let mac_buf = bun_fmt::mac_address_lower(iface.phys_addr);
+                let mac_buf = bun_fmt::mac_address_lower(iface.mac);
                 interface.put(
                     global_this,
                     b"mac",
@@ -1152,31 +1061,34 @@ mod _impl {
 
             // internal
             {
+                interface.put(global_this, b"internal", JSValue::from(iface.internal));
+            }
+
+            // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation.
+            {
+                let str = bun_fmt::buf_print_infallible(
+                    &mut ip_buf,
+                    format_args!("{}/{}", iface.address, iface.prefix_length),
+                );
                 interface.put(
                     global_this,
-                    b"internal",
-                    JSValue::from(iface.is_internal != 0),
+                    b"cidr",
+                    bun_string_jsc::create_utf8_for_js(global_this, str)?,
                 );
             }
 
-            // cidr. this is here to keep ordering consistent with the node implementation
-            interface.put(global_this, b"cidr", cidr);
-
             // scopeid
-            if family == bun_sys::posix::AF::INET6 {
-                // SAFETY: union read; family == INET6
+            if iface.address.is_ipv6() {
                 interface.put(
                     global_this,
                     b"scopeid",
-                    JSValue::js_number(unsafe { iface.address.address6.sin6_scope_id } as f64),
+                    JSValue::js_number(iface.scope_id as f64),
                 );
             }
 
             // Does this entry already exist?
-            // SAFETY: iface.name is a NUL-terminated C string from libuv
-            let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::StringView::from_bytes(interface_name);
+            let key = BunString::clone_utf16(iface.name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1191,6 +1103,77 @@ mod _impl {
         }
 
         Ok(ret)
+    }
+
+    // `header.cpus` and `header.networkInterfaces` of `process.report.getReport()`; empty if Windows gives no list.
+
+    #[cfg(windows)]
+    #[unsafe(export_name = "Bun__Os__createReportCpus")]
+    extern "C" fn create_report_cpus(global_this: &JSGlobalObject) -> JSValue {
+        let infos = win32::cpus().unwrap_or_default();
+        let cpus = JSValue::create_array_from_iter(global_this, infos.iter(), |info| {
+            let cpu = JSValue::create_empty_object(global_this, 7);
+            cpu.put(
+                global_this,
+                b"model",
+                BunString::clone_utf16(&info.model).into_js(global_this)?,
+            );
+            cpu.put(global_this, b"speed", JSValue::js_number(info.speed as f64));
+            for (name, time) in [
+                ("user", info.times.user),
+                ("nice", info.times.nice),
+                ("sys", info.times.sys),
+                ("idle", info.times.idle),
+                ("irq", info.times.irq),
+            ] {
+                cpu.put(global_this, name, JSValue::js_number_from_uint64(time));
+            }
+            Ok(cpu)
+        });
+        bun_jsc::to_js_host_fn_result(global_this, cpus)
+    }
+
+    #[cfg(windows)]
+    #[unsafe(export_name = "Bun__Os__createReportNetworkInterfaces")]
+    extern "C" fn create_report_network_interfaces(global_this: &JSGlobalObject) -> JSValue {
+        bun_jsc::to_js_host_fn_result(global_this, report_network_interfaces(global_this))
+    }
+
+    #[cfg(windows)]
+    fn report_network_interfaces(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        let interfaces = JSValue::create_empty_array(global_this, 0)?;
+        let Ok(adapters) = win32::Adapters::get() else {
+            return Ok(interfaces);
+        };
+
+        for iface in adapters.addresses() {
+            let interface = JSValue::create_empty_object(global_this, 7);
+            interface.put(
+                global_this,
+                b"name",
+                BunString::clone_utf16(iface.name).into_js(global_this)?,
+            );
+            interface.put(global_this, b"internal", JSValue::from(iface.internal));
+            interface.put(
+                global_this,
+                b"mac",
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    &bun_fmt::mac_address_lower(iface.mac),
+                )?,
+            );
+            put_address(global_this, interface, &iface)?;
+            if iface.address.is_ipv6() {
+                interface.put(
+                    global_this,
+                    b"scopeid",
+                    JSValue::js_number(iface.scope_id as f64),
+                );
+            }
+            interfaces.push(global_this, interface)?;
+        }
+
+        Ok(interfaces)
     }
 
     pub(crate) fn release() -> BunString {
@@ -1212,21 +1195,21 @@ mod _impl {
             bun_core::slice_to_nul(&name_buffer)
         };
         #[cfg(windows)]
-        let value: &[u8] = 'slice: {
-            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
-            if err != 0 {
-                break 'slice b"unknown";
-            }
-            let value = bun_core::slice_to_nul(&info.release);
-            name_buffer[0..value.len()].copy_from_slice(value);
-            &name_buffer[0..value.len()]
+        let value: &[u8] = {
+            let info = win32::os_version();
+            bun_fmt::buf_print_infallible(
+                &mut name_buffer,
+                format_args!(
+                    "{}.{}.{}",
+                    info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber
+                ),
+            )
         };
 
         BunString::clone_utf8(value)
     }
 
+    #[cfg(not(windows))]
     unsafe extern "C" {
         pub(crate) safe fn set_process_priority(pid: i32, priority: i32) -> i32;
     }
@@ -1236,15 +1219,15 @@ mod _impl {
             return bun_sys::E::ESRCH;
         }
 
-        let code: i32 = set_process_priority(pid, priority);
-        if code == 0 {
-            return bun_sys::E::SUCCESS;
-        }
-        // POSIX `setpriority` returns -1 and sets errno; Windows returns a libuv code.
         #[cfg(windows)]
-        return bun_sys::windows::translate_uv_error_to_e(code);
+        return win32::set_priority(pid, priority)
+            .err()
+            .unwrap_or(bun_sys::E::SUCCESS);
         #[cfg(not(windows))]
-        return bun_sys::get_errno(code);
+        return match set_process_priority(pid, priority) {
+            0 => bun_sys::E::SUCCESS,
+            code => bun_sys::get_errno(code),
+        };
     }
 
     pub(crate) fn set_priority_of_current_process(
@@ -1255,17 +1238,11 @@ mod _impl {
     }
 
     pub(crate) fn set_priority(cx: &mut JsScope<'_>, pid: i32, priority: i32) -> JsResult<()> {
-        let global = cx.global();
         let errno = set_process_priority_impl(pid, priority);
         if errno == bun_sys::E::SUCCESS {
             return Ok(());
         }
-        let err = bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_setpriority);
-        let mut sys_err: SystemError = err.to_system_error().into();
-        // Node's message here is the bare libuv label, not "ESRCH: …, uv_os_setpriority".
-        sys_err.message =
-            BunString::static_(err.uv_code_label().map_or("unknown error", |(_, l)| l));
-        Err(global.throw_value(sys_err.to_error_instance_with_info_object(global)))
+        Err(priority_error(cx, errno, bun_sys::Tag::uv_os_setpriority))
     }
 
     pub(crate) fn totalmem() -> u64 {
@@ -1295,26 +1272,14 @@ mod _impl {
         }
         #[cfg(windows)]
         {
-            return libuv::uv_get_total_memory();
+            return win32::total_memory();
         }
     }
 
     pub(crate) fn uptime() -> Result<f64, Box<SystemError>> {
         #[cfg(windows)]
         {
-            let mut uptime_value: f64 = 0.0;
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
-            if err != 0 {
-                return Err(Box::new(SystemError {
-                    message: BunString::static_("failed to get system uptime").into(),
-                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
-                    errno: err,
-                    syscall: BunString::static_("uv_uptime").into(),
-                    ..Default::default()
-                }));
-            }
-            return Ok(uptime_value);
+            return Ok(win32::uptime_seconds());
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
@@ -1386,6 +1351,7 @@ mod _impl {
     }
 
     pub(crate) fn version() -> JsResult<BunString> {
+        #[cfg(not(windows))]
         let mut name_buffer = [0u8; HOST_NAME_MAX];
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -1403,26 +1369,18 @@ mod _impl {
             name_buffer[..result.len()].copy_from_slice(result);
             &name_buffer[0..result.len()]
         };
-        #[cfg(windows)]
-        let slice: &[u8] = 'slice: {
-            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
-            if err != 0 {
-                break 'slice b"unknown";
-            }
-            let s = bun_core::slice_to_nul(&info.version);
-            name_buffer[0..s.len()].copy_from_slice(s);
-            &name_buffer[0..s.len()]
-        };
 
-        Ok(BunString::clone_utf8(slice))
+        #[cfg(not(windows))]
+        return Ok(BunString::clone_utf8(slice));
+        #[cfg(windows)]
+        return Ok(BunString::clone_utf16(&win32::os_version_name()));
     }
 } // mod _impl
 pub(crate) use _impl::*;
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
 /// `T` must be one of u32 (IPv4) or u128 (IPv6)
+#[cfg(unix)]
 fn netmask_to_cidr_suffix<T: NetmaskInt>(mask: T) -> Option<u8> {
     let mask_bits = mask.swap_bytes();
 
@@ -1436,12 +1394,14 @@ fn netmask_to_cidr_suffix<T: NetmaskInt>(mask: T) -> Option<u8> {
 }
 
 // Helper trait for netmask_to_cidr_suffix (u32 / u128)
+#[cfg(unix)]
 trait NetmaskInt: Copy + core::ops::Not<Output = Self> {
     const BITS: u32;
     fn swap_bytes(self) -> Self;
     fn leading_zeros(self) -> u32;
     fn trailing_zeros(self) -> u32;
 }
+#[cfg(unix)]
 impl NetmaskInt for u32 {
     const BITS: u32 = u32::BITS;
     fn swap_bytes(self) -> Self {
@@ -1454,6 +1414,7 @@ impl NetmaskInt for u32 {
         u32::trailing_zeros(self)
     }
 }
+#[cfg(unix)]
 impl NetmaskInt for u128 {
     const BITS: u32 = u128::BITS;
     fn swap_bytes(self) -> Self {
@@ -1485,4 +1446,553 @@ fn parse_u32(s: &[u8]) -> crate::Result<u32> {
 fn slice_to_nul_u16(buf: &[u16]) -> &[u16] {
     let nul = bun_core::strings::index_of_scalar(buf, 0).unwrap_or(buf.len());
     &buf[..nul]
+}
+
+/// What `node:os` asks Windows for.
+#[cfg(windows)]
+mod win32 {
+    use core::ffi::c_void;
+    use core::iter::successors;
+    use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use core::ptr::{null, null_mut};
+
+    use bun_core::strings::element_length_utf16_into_utf8;
+    use bun_sys::net::{sockaddr_in, sockaddr_in6};
+    use bun_sys::windows::kernel32::GetTickCount64;
+    use bun_sys::windows::{
+        BOOL, CloseHandle, DWORD, GetCurrentProcess, HANDLE, NT_SUCCESS, NTSTATUS, OSVERSIONINFOW,
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, RtlGetVersion, ULONG, Win32Error,
+        Win32ErrorExt as _,
+    };
+    use bun_sys::{E, UV_E};
+
+    use super::{CPUTimes, bun_sysconf__SC_NPROCESSORS_ONLN, slice_to_nul_u16};
+    use crate::node::node_util_binding::errno_from_win32_error;
+
+    type HKEY = *mut c_void;
+    const HKEY_LOCAL_MACHINE: HKEY = 0x8000_0002_u32 as i32 as isize as HKEY;
+    const KEY_QUERY_VALUE: DWORD = 0x01;
+    const RRF_RT_REG_SZ: DWORD = 0x02;
+    const RRF_RT_REG_DWORD: DWORD = 0x10;
+
+    const SystemProcessorPerformanceInformation: i32 = 8;
+
+    const PROCESS_SET_INFORMATION: DWORD = 0x0200;
+    const NORMAL_PRIORITY_CLASS: DWORD = 0x20;
+    const IDLE_PRIORITY_CLASS: DWORD = 0x40;
+    const HIGH_PRIORITY_CLASS: DWORD = 0x80;
+    const REALTIME_PRIORITY_CLASS: DWORD = 0x100;
+    const BELOW_NORMAL_PRIORITY_CLASS: DWORD = 0x4000;
+    const ABOVE_NORMAL_PRIORITY_CLASS: DWORD = 0x8000;
+    /// `os.constants.priority`
+    const PRIORITY_LOW: i32 = 19;
+    const PRIORITY_BELOW_NORMAL: i32 = 10;
+    const PRIORITY_NORMAL: i32 = 0;
+    const PRIORITY_ABOVE_NORMAL: i32 = -7;
+    const PRIORITY_HIGH: i32 = -14;
+    const PRIORITY_HIGHEST: i32 = -20;
+
+    const GAA_FLAG_SKIP_ANYCAST: ULONG = 0x02;
+    const GAA_FLAG_SKIP_MULTICAST: ULONG = 0x04;
+    const GAA_FLAG_SKIP_DNS_SERVER: ULONG = 0x08;
+    const IF_TYPE_SOFTWARE_LOOPBACK: ULONG = 24;
+    const IfOperStatusUp: i32 = 1;
+    const ERROR_ADDRESS_NOT_ASSOCIATED: Win32Error = Win32Error(1228);
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION {
+        IdleTime: i64,
+        KernelTime: i64,
+        UserTime: i64,
+        DpcTime: i64,
+        InterruptTime: i64,
+        InterruptCount: ULONG,
+    }
+
+    #[repr(C)]
+    struct MEMORYSTATUSEX {
+        dwLength: DWORD,
+        dwMemoryLoad: DWORD,
+        ullTotalPhys: u64,
+        ullAvailPhys: u64,
+        ullTotalPageFile: u64,
+        ullAvailPageFile: u64,
+        ullTotalVirtual: u64,
+        ullAvailVirtual: u64,
+        ullAvailExtendedVirtual: u64,
+    }
+    bun_core::impl_zeroable!(MEMORYSTATUSEX);
+
+    #[repr(C)]
+    struct SOCKET_ADDRESS {
+        lpSockaddr: *const c_void,
+        iSockaddrLength: i32,
+    }
+
+    #[repr(C)]
+    struct IP_ADAPTER_UNICAST_ADDRESS_LH {
+        Length: ULONG,
+        Flags: DWORD,
+        Next: *const IP_ADAPTER_UNICAST_ADDRESS_LH,
+        Address: SOCKET_ADDRESS,
+        PrefixOrigin: i32,
+        SuffixOrigin: i32,
+        DadState: i32,
+        ValidLifetime: ULONG,
+        PreferredLifetime: ULONG,
+        LeaseLifetime: ULONG,
+        OnLinkPrefixLength: u8,
+    }
+
+    /// Only the leading fields: the ones after `OperStatus` are not read.
+    #[repr(C)]
+    struct IP_ADAPTER_ADDRESSES_LH {
+        Length: ULONG,
+        IfIndex: DWORD,
+        Next: *const IP_ADAPTER_ADDRESSES_LH,
+        AdapterName: *const u8,
+        FirstUnicastAddress: *const IP_ADAPTER_UNICAST_ADDRESS_LH,
+        FirstAnycastAddress: *const c_void,
+        FirstMulticastAddress: *const c_void,
+        FirstDnsServerAddress: *const c_void,
+        DnsSuffix: *const u16,
+        Description: *const u16,
+        FriendlyName: *const u16,
+        PhysicalAddress: [u8; 8],
+        PhysicalAddressLength: ULONG,
+        Flags: ULONG,
+        Mtu: ULONG,
+        IfType: ULONG,
+        OperStatus: i32,
+    }
+
+    unsafe extern "system" {
+        fn GetPriorityClass(hProcess: HANDLE) -> DWORD;
+        fn SetPriorityClass(hProcess: HANDLE, dwPriorityClass: DWORD) -> BOOL;
+        safe fn GlobalMemoryStatusEx(lpBuffer: &mut MEMORYSTATUSEX) -> BOOL;
+    }
+
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtQuerySystemInformation(
+            SystemInformationClass: i32,
+            SystemInformation: *mut c_void,
+            SystemInformationLength: ULONG,
+            ReturnLength: *mut ULONG,
+        ) -> NTSTATUS;
+    }
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn RegOpenKeyExW(
+            hKey: HKEY,
+            lpSubKey: *const u16,
+            ulOptions: DWORD,
+            samDesired: DWORD,
+            phkResult: *mut HKEY,
+        ) -> i32;
+        fn RegCloseKey(hKey: HKEY) -> i32;
+        fn RegGetValueW(
+            hkey: HKEY,
+            lpSubKey: *const u16,
+            lpValue: *const u16,
+            dwFlags: DWORD,
+            pdwType: *mut DWORD,
+            pvData: *mut c_void,
+            pcbData: *mut DWORD,
+        ) -> i32;
+    }
+
+    #[link(name = "userenv")]
+    unsafe extern "system" {
+        fn GetUserProfileDirectoryW(
+            hToken: HANDLE,
+            lpProfileDir: *mut u16,
+            lpcchSize: *mut DWORD,
+        ) -> BOOL;
+    }
+
+    #[link(name = "iphlpapi")]
+    unsafe extern "system" {
+        fn GetAdaptersAddresses(
+            Family: ULONG,
+            Flags: ULONG,
+            Reserved: *mut c_void,
+            AdapterAddresses: *mut IP_ADAPTER_ADDRESSES_LH,
+            SizePointer: *mut ULONG,
+        ) -> ULONG;
+    }
+
+    /// A key under `HKEY_LOCAL_MACHINE`, open for reading its values. The names end with a NUL.
+    struct RegistryKey(HKEY);
+
+    impl RegistryKey {
+        fn open(path: &[u16]) -> Result<Self, Win32Error> {
+            debug_assert!(path.last() == Some(&0));
+            let mut key: HKEY = null_mut();
+            // SAFETY: the string is NUL-terminated, and `key` is a valid out-param.
+            let status = unsafe {
+                RegOpenKeyExW(
+                    HKEY_LOCAL_MACHINE,
+                    path.as_ptr(),
+                    0,
+                    KEY_QUERY_VALUE,
+                    &raw mut key,
+                )
+            };
+            match status {
+                0 => Ok(Self(key)),
+                _ => Err(Win32Error::from_u32(status as u32)),
+            }
+        }
+
+        fn read(&self, name: &[u16], kind: DWORD, data: &mut [u16]) -> Result<(), Win32Error> {
+            debug_assert!(name.last() == Some(&0));
+            let mut size = size_of_val(data) as DWORD;
+            // SAFETY: the string is NUL-terminated, and `data` is writable for `size` bytes.
+            let status = unsafe {
+                RegGetValueW(
+                    self.0,
+                    null(),
+                    name.as_ptr(),
+                    kind,
+                    null_mut(),
+                    data.as_mut_ptr().cast(),
+                    &raw mut size,
+                )
+            };
+            match status {
+                0 => Ok(()),
+                _ => Err(Win32Error::from_u32(status as u32)),
+            }
+        }
+
+        fn string(&self, name: &[u16]) -> Result<Vec<u16>, Win32Error> {
+            let mut value = [0u16; 256];
+            self.read(name, RRF_RT_REG_SZ, &mut value)?;
+            Ok(slice_to_nul_u16(&value).to_vec())
+        }
+
+        fn dword(&self, name: &[u16]) -> Result<u32, Win32Error> {
+            let mut halves = [0u16; 2];
+            self.read(name, RRF_RT_REG_DWORD, &mut halves)?;
+            Ok(u32::from(halves[0]) | u32::from(halves[1]) << 16)
+        }
+    }
+
+    impl Drop for RegistryKey {
+        fn drop(&mut self) {
+            // SAFETY: `open` opened it, and nothing else closes it.
+            unsafe { RegCloseKey(self.0) };
+        }
+    }
+
+    pub(super) struct Cpu {
+        pub model: Vec<u16>,
+        /// In MHz.
+        pub speed: u32,
+        /// In milliseconds.
+        pub times: CPUTimes,
+    }
+
+    /// The logical processors of this process's processor group, like Node.
+    pub(super) fn cpus() -> Result<Vec<Cpu>, Win32Error> {
+        let count = usize::try_from(bun_sysconf__SC_NPROCESSORS_ONLN()).unwrap_or(0);
+        let mut performance = vec![SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION::default(); count];
+        // SAFETY: the length is the size of `performance`.
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SystemProcessorPerformanceInformation,
+                performance.as_mut_ptr().cast(),
+                size_of_val(performance.as_slice()) as ULONG,
+                null_mut(),
+            )
+        };
+        if !NT_SUCCESS(status) {
+            return Err(Win32Error::from_ntstatus(status));
+        }
+
+        // The times count 100 ns units, and the kernel time includes the idle time.
+        let milliseconds = |time: i64| (time / 10_000) as u64;
+        performance
+            .iter()
+            .enumerate()
+            .map(|(index, times)| {
+                let path: Vec<u16> =
+                    format!("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\{index}\0")
+                        .encode_utf16()
+                        .collect();
+                let key = RegistryKey::open(&path)?;
+                Ok(Cpu {
+                    model: key.string(bun_core::w!("ProcessorNameString\0"))?,
+                    speed: key.dword(bun_core::w!("~MHz\0"))?,
+                    times: CPUTimes {
+                        user: milliseconds(times.UserTime),
+                        nice: 0,
+                        sys: milliseconds(times.KernelTime - times.IdleTime),
+                        idle: milliseconds(times.IdleTime),
+                        irq: milliseconds(times.InterruptTime),
+                    },
+                })
+            })
+            .collect()
+    }
+
+    /// The profile directory of the user this process runs as.
+    fn profile_directory() -> Result<Vec<u16>, Win32Error> {
+        /// `GetCurrentProcessToken()`
+        const CURRENT_PROCESS_TOKEN: HANDLE = -4_isize as HANDLE;
+
+        let mut path = vec![0u16; 260];
+        loop {
+            let mut length = path.len() as DWORD;
+            // SAFETY: `length` is the length of `path`.
+            if unsafe {
+                GetUserProfileDirectoryW(CURRENT_PROCESS_TOKEN, path.as_mut_ptr(), &raw mut length)
+            } != 0
+            {
+                path.truncate(slice_to_nul_u16(&path).len());
+                return Ok(path);
+            }
+            match Win32Error::get() {
+                Win32Error::INSUFFICIENT_BUFFER if length as usize > path.len() => {
+                    path.resize(length as usize, 0);
+                }
+                error => return Err(error),
+            }
+        }
+    }
+
+    pub(super) fn home_directory() -> bun_sys::Result<Vec<u16>> {
+        use bun_sys::{Error, Tag};
+        match bun_sys::windows::getenv_w(bun_core::w!("USERPROFILE\0")) {
+            // Node refuses a value that takes less than 3 bytes in UTF-8.
+            Some(path) if element_length_utf16_into_utf8(&path) < 3 => {
+                Err(Error::from_code(E::ENOENT, Tag::uv_os_homedir))
+            }
+            Some(path) => Ok(path),
+            None => {
+                profile_directory().map_err(|error| Error::from_win32(error, Tag::uv_os_homedir))
+            }
+        }
+    }
+
+    pub(super) fn os_version() -> OSVERSIONINFOW {
+        let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
+        info.dwOSVersionInfoSize = size_of::<OSVERSIONINFOW>() as ULONG;
+        // SAFETY: the size is the size of `info`.
+        let _ = unsafe { RtlGetVersion(&raw mut info) };
+        info
+    }
+
+    /// The product name from the registry if it can be read, then the service pack.
+    pub(super) fn os_version_name() -> Vec<u16> {
+        let info = os_version();
+        let mut name = Vec::new();
+        if let Ok(product) = RegistryKey::open(bun_core::w!(
+            "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\0"
+        ))
+        .and_then(|key| key.string(bun_core::w!("ProductName\0")))
+        {
+            name = product;
+            // Windows 11 kept the product name of Windows 10.
+            if info.dwMajorVersion == 10
+                && info.dwBuildNumber >= 22000
+                && name.starts_with(bun_core::w!("Windows 10"))
+            {
+                name[9] = u16::from(b'1');
+            }
+        }
+        let service_pack = slice_to_nul_u16(&info.szCSDVersion);
+        if !service_pack.is_empty() {
+            if !name.is_empty() {
+                name.push(u16::from(b' '));
+            }
+            name.extend_from_slice(service_pack);
+        }
+        name
+    }
+
+    pub(super) fn total_memory() -> u64 {
+        let mut status: MEMORYSTATUSEX = bun_core::ffi::zeroed();
+        status.dwLength = size_of::<MEMORYSTATUSEX>() as DWORD;
+        if GlobalMemoryStatusEx(&mut status) == 0 {
+            return 0;
+        }
+        status.ullTotalPhys
+    }
+
+    pub(super) fn uptime_seconds() -> f64 {
+        GetTickCount64() as f64 / 1000.0
+    }
+
+    struct Process(HANDLE);
+
+    impl Process {
+        /// 0 is this process.
+        fn open(pid: i32, access: DWORD) -> Result<Self, E> {
+            if pid == 0 {
+                return Ok(Self(GetCurrentProcess()));
+            }
+            // SAFETY: every argument is passed by value.
+            let handle = unsafe { OpenProcess(access, 0, pid as DWORD) };
+            if handle.is_null() {
+                return Err(match Win32Error::get() {
+                    Win32Error::INVALID_PARAMETER => E::ESRCH,
+                    error => error.to_system_errno(),
+                });
+            }
+            Ok(Self(handle))
+        }
+    }
+
+    impl Drop for Process {
+        fn drop(&mut self) {
+            // SAFETY: the handle is open, or the one of this process, which closing leaves alone.
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// The priority class of a process as the `nice` value Node reports for it.
+    pub(super) fn priority(pid: i32) -> Result<i32, E> {
+        let process = Process::open(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
+        // SAFETY: the handle is open.
+        Ok(match unsafe { GetPriorityClass(process.0) } {
+            0 => return Err(Win32Error::get().to_system_errno()),
+            REALTIME_PRIORITY_CLASS => PRIORITY_HIGHEST,
+            HIGH_PRIORITY_CLASS => PRIORITY_HIGH,
+            ABOVE_NORMAL_PRIORITY_CLASS => PRIORITY_ABOVE_NORMAL,
+            NORMAL_PRIORITY_CLASS => PRIORITY_NORMAL,
+            BELOW_NORMAL_PRIORITY_CLASS => PRIORITY_BELOW_NORMAL,
+            _ => PRIORITY_LOW,
+        })
+    }
+
+    /// Gives a process the priority class Node picks for a `nice` value.
+    pub(super) fn set_priority(pid: i32, priority: i32) -> Result<(), E> {
+        let class = match priority {
+            PRIORITY_HIGHEST..PRIORITY_HIGH => REALTIME_PRIORITY_CLASS,
+            PRIORITY_HIGH..PRIORITY_ABOVE_NORMAL => HIGH_PRIORITY_CLASS,
+            PRIORITY_ABOVE_NORMAL..PRIORITY_NORMAL => ABOVE_NORMAL_PRIORITY_CLASS,
+            PRIORITY_NORMAL..PRIORITY_BELOW_NORMAL => NORMAL_PRIORITY_CLASS,
+            PRIORITY_BELOW_NORMAL..PRIORITY_LOW => BELOW_NORMAL_PRIORITY_CLASS,
+            PRIORITY_LOW => IDLE_PRIORITY_CLASS,
+            _ => return Err(E::EINVAL),
+        };
+        let process = Process::open(pid, PROCESS_SET_INFORMATION)?;
+        // SAFETY: the handle is open.
+        if unsafe { SetPriorityClass(process.0, class) } == 0 {
+            return Err(Win32Error::get().to_system_errno());
+        }
+        Ok(())
+    }
+
+    /// The list `GetAdaptersAddresses` wrote, which points into itself.
+    pub(super) struct Adapters(Vec<u64>);
+
+    /// One address of an adapter that is up.
+    pub(super) struct InterfaceAddress<'a> {
+        pub name: &'a [u16],
+        pub mac: [u8; 6],
+        pub internal: bool,
+        pub address: IpAddr,
+        pub prefix_length: u8,
+        /// 0 for IPv4.
+        pub scope_id: u32,
+    }
+
+    impl Adapters {
+        /// The error is the `errno` Node throws.
+        pub(super) fn get() -> Result<Self, i32> {
+            // Microsoft recommends starting with 15 KB.
+            let mut size: ULONG = 15 * 1024;
+            loop {
+                let capacity = size;
+                let mut list = vec![0u64; (capacity as usize).div_ceil(size_of::<u64>())];
+                // SAFETY: `list` is aligned for the structure and at least `size` bytes long.
+                let error = Win32Error::from_u32(unsafe {
+                    GetAdaptersAddresses(
+                        0, // AF_UNSPEC
+                        GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                        null_mut(),
+                        list.as_mut_ptr().cast(),
+                        &raw mut size,
+                    )
+                });
+                match error {
+                    Win32Error::SUCCESS => return Ok(Self(list)),
+                    Win32Error::NO_DATA => return Ok(Self(Vec::new())),
+                    // `size` is now what the list needs, which can grow between two calls.
+                    Win32Error::BUFFER_OVERFLOW if size > capacity => {}
+                    ERROR_ADDRESS_NOT_ASSOCIATED => return Err(-UV_E::AGAIN),
+                    Win32Error::INVALID_PARAMETER => return Err(-UV_E::NOBUFS),
+                    _ => return Err(errno_from_win32_error(error.0.into())),
+                }
+            }
+        }
+
+        pub(super) fn addresses(&self) -> impl Iterator<Item = InterfaceAddress<'_>> {
+            // SAFETY: a list that is not empty starts with the first adapter. Every pointer in it is
+            // null or points to a structure in `self.0`.
+            let first = (!self.0.is_empty())
+                .then(|| unsafe { &*self.0.as_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>() });
+            // SAFETY: as above.
+            successors(first, |adapter| unsafe { adapter.Next.as_ref() })
+                .filter(|adapter| adapter.OperStatus == IfOperStatusUp)
+                .flat_map(|adapter| {
+                    // SAFETY: as above.
+                    let first = unsafe { adapter.FirstUnicastAddress.as_ref() };
+                    // SAFETY: as above.
+                    successors(first, |unicast| unsafe { unicast.Next.as_ref() })
+                        .map(move |unicast| InterfaceAddress::new(adapter, unicast))
+                })
+        }
+    }
+
+    impl<'a> InterfaceAddress<'a> {
+        fn new(
+            adapter: &'a IP_ADAPTER_ADDRESSES_LH,
+            unicast: &IP_ADAPTER_UNICAST_ADDRESS_LH,
+        ) -> Self {
+            let sockaddr = unicast.Address.lpSockaddr;
+            // SAFETY: a unicast address is a `sockaddr_in` or a `sockaddr_in6`, and both start with
+            // the family.
+            let (address, scope_id) = unsafe {
+                if i32::from((*sockaddr.cast::<sockaddr_in>()).family) == bun_sys::posix::AF::INET6
+                {
+                    let in6 = &*sockaddr.cast::<sockaddr_in6>();
+                    (IpAddr::V6(Ipv6Addr::from(in6.addr)), in6.scope_id)
+                } else {
+                    let in4 = &*sockaddr.cast::<sockaddr_in>();
+                    (IpAddr::V4(Ipv4Addr::from(in4.addr.to_ne_bytes())), 0)
+                }
+            };
+            let mut mac = [0u8; 6];
+            if adapter.PhysicalAddressLength as usize == mac.len() {
+                mac.copy_from_slice(&adapter.PhysicalAddress[..6]);
+            }
+            Self {
+                // SAFETY: NUL-terminated, in the list `adapter` is borrowed from.
+                name: unsafe { bun_core::ffi::wstr_units(adapter.FriendlyName) },
+                mac,
+                internal: adapter.IfType == IF_TYPE_SOFTWARE_LOOPBACK,
+                address,
+                prefix_length: unicast.OnLinkPrefixLength,
+                scope_id,
+            }
+        }
+
+        pub(super) fn netmask(&self) -> IpAddr {
+            let prefix = u32::from(self.prefix_length);
+            match self.address {
+                IpAddr::V4(_) => {
+                    Ipv4Addr::from_bits(!u32::MAX.checked_shr(prefix).unwrap_or(0)).into()
+                }
+                IpAddr::V6(_) => {
+                    Ipv6Addr::from_bits(!u128::MAX.checked_shr(prefix).unwrap_or(0)).into()
+                }
+            }
+        }
+    }
 }

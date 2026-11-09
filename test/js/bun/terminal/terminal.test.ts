@@ -1649,6 +1649,74 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     expect(outcomes).toEqual(Array.from({ length: N }, () => "data"));
   });
 
+  test.skipIf(!isWindows).each([
+    ["terminals open", "new Bun.Terminal({ data() {} });"],
+    ["terminals just closed", "new Bun.Terminal({ data() {} }).close();"],
+  ])("a Worker that ends with %s leaves no handle behind", async (_, terminal) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { dlopen, ptr } = require("bun:ffi");
+          const { NtQueryObject } = dlopen("ntdll.dll", {
+            NtQueryObject: { args: ["u64", "i32", "ptr", "u32", "ptr"], returns: "i32" },
+          }).symbols;
+          const { GetNamedPipeInfo, GetExitCodeProcess } = dlopen("kernel32.dll", {
+            GetNamedPipeInfo: { args: ["u64", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+            GetExitCodeProcess: { args: ["u64", "ptr"], returns: "i32" },
+          }).symbols;
+          // The type of each open handle.
+          function handles() {
+            const ObjectTypeInformation = 2;
+            const STILL_ACTIVE = 259;
+            const info = Buffer.alloc(1024);
+            const exitCode = new Uint32Array(1);
+            const types = [];
+            for (let handle = 4; handle < 0x4000; handle += 4) {
+              if (NtQueryObject(handle, ObjectTypeInformation, info, info.length, null) < 0) continue;
+              const name = Number(info.readBigUInt64LE(8)) - ptr(info);
+              const type = info.toString("utf16le", name, name + info.readUInt16LE(0));
+              // In older versions of Windows ClosePseudoConsole does not close its handle of the console host that it has ended.
+              if (type === "Process" && GetExitCodeProcess(handle, exitCode) && exitCode[0] !== STILL_ACTIVE) continue;
+              types.push(type === "File" && GetNamedPipeInfo(handle, null, null, null, null) ? "Pipe" : type);
+            }
+            return types;
+          }
+          const { Worker } = require("worker_threads");
+          async function worker() {
+            const script = "for (let i = 0; i < 8; i++) " + process.argv[1];
+            const worker = new Worker(script + "require('worker_threads').parentPort.postMessage(1); setInterval(() => {}, 1000);", { eval: true });
+            await new Promise(resolve => worker.once("message", resolve));
+            await worker.terminate();
+          }
+
+          await worker();
+          const before = handles();
+          await worker();
+          await worker();
+          // The console host goes away on a thread of its own.
+          let left;
+          for (let i = 0; i < 200; i++) {
+            left = handles();
+            for (const type of before) if (left.includes(type)) left.splice(left.indexOf(type), 1);
+            if (left.length < 8) break;
+            await Bun.sleep(10);
+          }
+          console.log(left.length < 8 ? "ok" : "left: " + left.sort().join(" "));
+          process.exit(0);
+        `,
+        terminal,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/42171
   // On macOS a pty's session leader can't finish exiting until the parent reads what it wrote to the terminal.
   // If it got that far before the parent's kqueue watch (ESRCH), the parent used to block in wait4() on the

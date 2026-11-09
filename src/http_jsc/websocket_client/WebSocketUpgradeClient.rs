@@ -1674,17 +1674,18 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// On Windows, only WSA codes (>= 10000) are real socket errors, and WSAENOTCONN comes from
-/// uSockets' recv() probe, not from the actual failure. Both return `None`.
 fn socket_errno_name(errno: c_int) -> Option<&'static str> {
-    if errno == 0 || (cfg!(windows) && (errno < 10000 || errno == 10057)) {
+    if errno == 0 {
         return None;
     }
-    bun_errno::SystemErrno::init(i64::from(errno)).map(Into::into)
+    bun_errno::SystemErrno::from_os_code(errno).map(Into::into)
 }
 
-/// Errno name after `socket(2)` / `connect(2)` failed synchronously.
+/// Errno name after `socket(2)` / `connect(2)` failed synchronously. Winsock does not report through `errno`.
 fn last_connect_error_code() -> BunString {
+    if cfg!(windows) {
+        return BunString::EMPTY;
+    }
     socket_errno_name(bun_core::ffi::errno()).map_or(BunString::EMPTY, BunString::static_)
 }
 

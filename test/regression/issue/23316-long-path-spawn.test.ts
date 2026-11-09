@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import { join } from "path";
 
 test("spawn should handle cwd paths >= MAX_PATH on Windows", async () => {
@@ -71,28 +72,22 @@ test("spawn should handle cwd paths with disabled 8.3 names on Windows", async (
 
   console.log(`Created path for 8.3 test (length: ${deepPath.length}): ${deepPath}`);
 
-  // Attempt to copy test.js to the deep path
-  let err;
-  try {
-    await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeInstanceOf(Error);
+  await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
 
-  // This should not panic, even if GetShortPathNameW fails
-  err = undefined;
+  // CreateProcessW takes no directory this long. The 8.3 form is short enough, on a volume that has those names.
+  const hasShortNames = existsSync(join(String(dir), "DIRECT~1"));
+  let result;
   try {
     const proc = Bun.spawn({
       cmd: [bunExe(), "test.js"],
+      env: bunEnv,
       cwd: deepPath,
-      stdout: "inherit",
+      stdout: "pipe",
       stderr: "inherit",
     });
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) throw new Error("process exited");
+    result = { stdout: await proc.stdout.text(), exitCode: await proc.exited };
   } catch (e) {
-    err = e;
+    result = { code: (e as NodeJS.ErrnoException).code };
   }
-  expect(err).toBeInstanceOf(Error);
+  expect(result).toEqual(hasShortNames ? { stdout: "hello\n", exitCode: 0 } : { code: "ENOENT" });
 });

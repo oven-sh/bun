@@ -51,17 +51,31 @@ pub mod AF {
 /// `EAI_*` getaddrinfo error codes. The `libc` crate is missing
 /// `EAI_ADDRFAMILY` and the glibc-only async-getaddrinfo extensions, so we
 /// hardcode those raw values from `<netdb.h>`.
-#[cfg(not(windows))]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct EAI(c_int);
 
-#[cfg(not(windows))]
+/// `<ws2tcpip.h>`: they are Winsock error codes.
+#[cfg(windows)]
+impl EAI {
+    pub(crate) const AGAIN: Self = Self(11002);
+    pub(crate) const BADFLAGS: Self = Self(10022);
+    pub(crate) const FAIL: Self = Self(11003);
+    pub(crate) const FAMILY: Self = Self(10047);
+    pub(crate) const MEMORY: Self = Self(8);
+    pub(crate) const NONAME: Self = Self(11001);
+    pub(crate) const SERVICE: Self = Self(10109);
+    pub(crate) const SOCKTYPE: Self = Self(10044);
+}
+
 impl EAI {
     #[inline]
     pub(crate) const fn from_raw(rc: i32) -> Self {
         Self(rc as c_int)
     }
+}
 
+#[cfg(not(windows))]
+impl EAI {
     #[cfg(target_os = "linux")]
     pub(crate) const ADDRFAMILY: Self = Self(-9);
     #[cfg(not(target_os = "linux"))]
@@ -750,9 +764,8 @@ impl Channel {
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
-        // c-ares creates its sockets with ws2_32 directly, and libuv initializes Winsock lazily.
         #[cfg(windows)]
-        bun_libuv_sys::uv__winsock_ensure();
+        bun_windows_sys::ws2_32::ensure_started();
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
@@ -1632,30 +1645,19 @@ impl Error {
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
-            use bun_libuv_sys as libuv;
-            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-            if rc == libuv::UV_EAI_NODATA || rc == libuv::UV_EAI_NONAME {
-                return Some(Error::ENOTFOUND);
+            if rc == 0 {
+                return None;
             }
-            // TODO: revisit this
-            return match rc {
-                0 => None,
-                libuv::UV_EAI_AGAIN => Some(Error::EAI_AGAIN),
-                libuv::UV_EAI_ADDRFAMILY => Some(Error::EBADFAMILY),
-                libuv::UV_EAI_BADFLAGS => Some(Error::EBADFLAGS),
-                libuv::UV_EAI_BADHINTS => Some(Error::EBADHINTS),
-                libuv::UV_EAI_CANCELED => Some(Error::ECANCELLED),
-                libuv::UV_EAI_FAIL => Some(Error::ENOTFOUND),
-                libuv::UV_EAI_FAMILY => Some(Error::EBADFAMILY),
-                libuv::UV_EAI_MEMORY => Some(Error::ENOMEM),
-                libuv::UV_EAI_NODATA => Some(Error::ENODATA),
-                libuv::UV_EAI_NONAME => Some(Error::ENONAME),
-                libuv::UV_EAI_OVERFLOW => Some(Error::ENOMEM),
-                libuv::UV_EAI_PROTOCOL => Some(Error::EBADQUERY),
-                libuv::UV_EAI_SERVICE => Some(Error::ESERVICE),
-                libuv::UV_EAI_SOCKTYPE => Some(Error::ECONNREFUSED),
-                _ => Some(Error::ENOTFOUND), // UV_ENOENT and non documented errors
-            };
+            return Some(match EAI::from_raw(rc) {
+                EAI::AGAIN => Error::EAI_AGAIN,
+                EAI::BADFLAGS => Error::EBADFLAGS,
+                EAI::FAMILY => Error::EBADFAMILY,
+                EAI::MEMORY => Error::ENOMEM,
+                EAI::SERVICE => Error::ESERVICE,
+                EAI::SOCKTYPE => Error::ECONNREFUSED,
+                // `NONAME`, `FAIL`, `WSANO_DATA` and whatever is not documented.
+                _ => Error::ENOTFOUND,
+            });
         }
 
         #[cfg(not(windows))]
@@ -1704,24 +1706,11 @@ impl Error {
 
     /// This platform's raw getaddrinfo(3) status for the `EAI_*` code named `name`.
     pub fn eai_raw_by_name(name: &[u8]) -> Option<i32> {
-        #[cfg(windows)]
-        {
-            use bun_libuv_sys as libuv;
-            match name {
-                b"EAI_AGAIN" => Some(libuv::UV_EAI_AGAIN),
-                b"EAI_FAIL" => Some(libuv::UV_EAI_FAIL),
-                b"EAI_NONAME" => Some(libuv::UV_EAI_NONAME),
-                _ => None,
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            match name {
-                b"EAI_AGAIN" => Some(EAI::AGAIN.0),
-                b"EAI_FAIL" => Some(EAI::FAIL.0),
-                b"EAI_NONAME" => Some(EAI::NONAME.0),
-                _ => None,
-            }
+        match name {
+            b"EAI_AGAIN" => Some(EAI::AGAIN.0),
+            b"EAI_FAIL" => Some(EAI::FAIL.0),
+            b"EAI_NONAME" => Some(EAI::NONAME.0),
+            _ => None,
         }
     }
 

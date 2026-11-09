@@ -32,7 +32,6 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <stdint.h>
 #include <errno.h>
 #include <string.h> // memset
-#include <mimalloc.h>
 #endif
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns);
@@ -219,7 +218,7 @@ static int bun_kevent64_wait(int kqfd, struct kevent64_s *eventlist, int nevents
 #endif
 
 /* Loop */
-struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
+struct us_loop_t *us_create_loop(void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
     struct us_loop_t *loop = (struct us_loop_t *) us_xcalloc(1, sizeof(struct us_loop_t) + ext_size);
     loop->num_polls = 0;
     /* These could be accessed if we close a poll before starting the loop */
@@ -254,7 +253,6 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     return loop;
 }
 
-/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick */
 static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_EPOLL
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
@@ -408,7 +406,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
  * Re-poll non-blocking and dispatch again before running pre/post callbacks, so a
  * single tick covers all pending I/O instead of one 1024-event slice per roundtrip.
  * Conditioned on saturation and capped at 48 iterations — matches libuv's uv__io_poll
- * (vendor/libuv/src/unix/linux.c:1387,1590 and kqueue.c:253,451). */
+ * (src/unix/linux.c and kqueue.c). */
 static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     int drain_count = 48;
     while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
@@ -428,53 +426,6 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     }
 }
 
-/* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
-static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
-    long long ns = us_internal_sweep_timeout_ns(loop);
-    if (ns < 0) {
-        return timeout;
-    }
-    long long sweep_sec = ns / 1000000000LL;
-    long long sweep_nsec = ns % 1000000000LL;
-    if (timeout && (timeout->tv_sec < sweep_sec ||
-                    (timeout->tv_sec == sweep_sec && timeout->tv_nsec <= sweep_nsec))) {
-        return timeout;
-    }
-    storage->tv_sec = (time_t) sweep_sec;
-    storage->tv_nsec = (long) sweep_nsec;
-    return storage;
-}
-
-void us_loop_run(struct us_loop_t *loop) {
-    /* While we have non-fallthrough polls we shouldn't fall through */
-    while (loop->num_polls) {
-        loop->data.tick_depth++;
-        /* Emit pre callback */
-        us_internal_loop_pre(loop);
-
-        struct timespec sweep_ts;
-        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
-
-        /* Fetch ready polls */
-#ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
-#else
-        loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
-#endif
-
-        us_internal_dispatch_ready_polls(loop);
-        us_internal_drain_ready_polls(loop);
-        us_internal_sweep_if_due(loop);
-
-        /* Emit post callback */
-        us_internal_loop_post(loop);
-        loop->data.tick_depth--;
-    }
-}
-
-extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
-extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
-
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
         return;
@@ -484,49 +435,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
-    /* loop_pre runs lsquic_engine_process_conns and stores the soonest
-     * earliest_adv_tick. The JS event loop folds this in via src/runtime/timer/mod.rs; other
-     * callers of us_loop_run_bun_tick (HTTP thread) pass NULL, so fold it
-     * here so QUIC retransmit/idle timers fire without other I/O waking us. */
-    struct timespec quic_ts;
-    if (loop->data.quic_head && loop->data.quic_next_tick_us >= 0) {
-        long long us = loop->data.quic_next_tick_us;
-        if (!timeout ||
-            (long long) timeout->tv_sec * 1000000 + timeout->tv_nsec / 1000 > us) {
-            quic_ts.tv_sec = (time_t)(us / 1000000);
-            quic_ts.tv_nsec = (long)((us % 1000000) * 1000);
-            timeout = &quic_ts;
-        }
-    }
-
-    struct timespec sweep_ts;
-    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
+    struct timespec timeout_storage;
+    timeout = us_internal_loop_bound_timeout(loop, timeout, &timeout_storage);
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
-    /* `now_ns` is the reading the JS side took to pick `timeout`
-     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
-     * if it had none to share. Nothing measures a deadline against it. */
-    int released_heap_access = 0;
-    if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        (void) Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns, &released_heap_access);
-
-    /* The scavenger sweeps our heaps while we are in the kernel. Must come after
-     * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
-     * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
-     * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
-     * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
-     * it between ticks is what we are avoiding. */
-    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
-    if (!handed_off && will_idle_inside_event_loop) {
-        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
-        static _Thread_local uint64_t last_idle_sweep_ns = 0;
-        const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
-        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
-            last_idle_sweep_ns = sweep_now_ns;
-            mi_on_thread_idle();
-        }
-    }
+    struct us_internal_wait_t wait_state;
+    if (will_idle_inside_event_loop)
+        us_internal_loop_before_wait(loop, now_ns, &wait_state);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -548,12 +464,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Anything that stops a poll from here on scrubs this batch (us_internal_loop_update_pending_ready_polls). */
     loop->current_ready_poll = 0;
-    /* Before anything can allocate again. */
-    if (handed_off)
-        mi_on_thread_idle_end();
-    /* Before anything touches the JS heap again (this may run a finished collection's epilogue, i.e. destructors). */
-    if (released_heap_access)
-        Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);
+    if (will_idle_inside_event_loop)
+        us_internal_loop_after_wait(loop, &wait_state);
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);
@@ -790,21 +702,6 @@ void us_internal_poll_close_fd(struct us_poll_t *p) {
     bsd_close_socket(us_poll_fd(p));
 }
 
-size_t us_internal_accept_poll_event(struct us_poll_t *p) {
-#ifdef LIBUS_USE_EPOLL
-    int fd = us_poll_fd(p);
-    uint64_t buf;
-    ssize_t read_length = 0;
-    do {
-         read_length = read(fd, &buf, 8);
-    } while (IS_EINTR(read_length));
-    return buf;
-#else
-    /* Kqueue has no underlying FD for user events */
-    return 0;
-#endif
-}
-
 /* Async (internal helper for loop's wakeup feature) */
 #ifdef LIBUS_USE_EPOLL
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
@@ -824,8 +721,6 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
     cb->loop = loop;
-    cb->cb_expects_the_loop = 1;
-    cb->leave_poll_ready = 1;  /* Edge-triggered: skip reading eventfd on wakeup */
 
     return (struct us_internal_async *) cb;
 }
@@ -877,8 +772,6 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
     struct us_internal_callback_t *cb = us_xcalloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
-    cb->cb_expects_the_loop = 1;
-    cb->leave_poll_ready = 0;
 
     /* Bug: us_internal_poll_set_type does not SET the type, it only CHANGES it */
     cb->p.state.poll_type = POLL_TYPE_POLLING_IN;
@@ -1016,8 +909,6 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
     struct us_internal_callback_t *cb = us_xcalloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
-    cb->cb_expects_the_loop = 1;
-    cb->leave_poll_ready = 0;
 
     cb->p.state.poll_type = POLL_TYPE_POLLING_IN;
     us_internal_poll_set_type((struct us_poll_t *) cb, POLL_TYPE_CALLBACK);

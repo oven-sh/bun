@@ -193,7 +193,7 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
 });
 
 // The dispatcher removes a paused socket from the epoll set when its peer hangs up, so resuming it
-// is a new EPOLL_CTL_ADD that can fail. kqueue and libuv never do that.
+// is a new EPOLL_CTL_ADD that can fail. kqueue and Windows never do that.
 describe.skipIf(skip || !isLinux)("Bun.serve: resuming a request socket fails in the kernel", () => {
   const ping = "HTTP/1.1 200 OK, pong";
   const bodyFails = [`before: ${ping}`, "abort", "body: rejected AbortError", `after: ${ping}`, "done"];

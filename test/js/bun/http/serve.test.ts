@@ -2848,6 +2848,56 @@ it("unix socket connection in Bun.serve", async () => {
   connection.end();
 });
 
+it.if(isWindows)("named pipe connection in Bun.serve", async () => {
+  const unix = "\\\\.\\pipe\\bun-test-serve-" + Math.random().toString(36).slice(2);
+  const options = { unix, fetch: (req: Request) => new Response("hey " + new URL(req.url).pathname) };
+  const first = Bun.serve(options);
+  try {
+    expect({ href: first.url.href, pathname: first.url.pathname }).toEqual({ href: "unix:" + unix, pathname: unix });
+    expect(await (await fetch("http://localhost/a", { unix })).text()).toBe("hey /a");
+    expect(() => Bun.serve(options)).toThrow(expect.objectContaining({ code: "EADDRINUSE", syscall: "listen" }));
+  } finally {
+    await first.stop(true);
+  }
+  using second = Bun.serve(options);
+  expect(await (await fetch("http://localhost/b", { unix })).text()).toBe("hey /b");
+});
+
+// A pipe queues a response that does not fit. The client has all of it before the server's loop hears that the write is through.
+it.if(isWindows)("a named pipe client sends its next request as soon as it has all of a large response", async () => {
+  const fixture = JSON.stringify(join(import.meta.dir, "..", "..", "node", "net", "windows-foreign-pipe-fixture.js"));
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const size = 100_000;
+        const unix = process.env.PIPE;
+        const server = Bun.serve({ unix, fetch: () => new Response(Buffer.alloc(size, "#")) });
+        const client = require(${fixture}).connect(unix);
+        let responses = 0;
+        for (; responses < 3; responses++) {
+          client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          let received = "";
+          while (received.length - received.indexOf("#") < size) {
+            await new Promise(setImmediate);
+            // Throws once the server has closed the connection.
+            if (client.available()) received += client.text();
+          }
+        }
+        console.log(responses);
+        client.close();
+        await server.stop();
+      `,
+    ],
+    env: { ...bunEnv, PIPE: `\\\\.\\pipe\\bun-test-serve-${crypto.randomUUID()}` },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "3\n", exitCode: 0 });
+});
+
 it("unix socket connection throws an error on a bad domain without crashing", async () => {
   const unix = "/i/don/tevent/exist/because/the/directory/is/invalid/yes.sock";
   expect(() => {
@@ -5607,6 +5657,180 @@ describe("requests pipelined in one read", () => {
     });
     const reply = await exchange(plain(server.port!), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
     expect(parseResponses(reply)).toEqual([{ status: "HTTP/1.1 200 OK", body: "done" }]);
+  });
+
+  it("a graceful stop() sends the rest of a completed response before it closes the connection", async () => {
+    // More than a socket takes from a server whose client does not read.
+    const size = 16 * 1024 * 1024;
+    const completed = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(Buffer.alloc(size, "h"));
+              await controller.end();
+              completed.resolve();
+            },
+          }),
+        );
+      },
+    });
+    const client = connect(server.port!, "127.0.0.1");
+    client.pause();
+    await once(client, "connect");
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await completed.promise;
+    const stopped = server.stop();
+    const chunks: Buffer[] = [];
+    client.on("data", (chunk: Buffer) => chunks.push(chunk)).resume();
+    await Promise.all([stopped, once(client, "close")]);
+    const wire = Buffer.concat(chunks);
+    expect({ hasBody: wire.length > size, end: wire.subarray(-7).toString() }).toEqual({
+      hasBody: true,
+      end: "\r\n0\r\n\r\n",
+    });
+  });
+
+  describe.concurrent("a client on a unix socket that is slow to read", () => {
+    // More than a unix socket or a Windows named pipe has room for.
+    const size = 300_000;
+    const turns = `for (let turn = 0; turn < 5; turn++) await new Promise(setImmediate);`;
+
+    /**
+     * Runs a server in a process of its own. It prints a line once it listens on `process.env.SOCKET_PATH`, and sends `size` times "#".
+     * The client reads nothing before the server's second line, or its exit. Resolves with how many "#" arrived.
+     */
+    async function request(script: string, head = "") {
+      using dir = tempDir("serve-slow-client", {});
+      const path = isWindows ? `\\\\.\\pipe\\bun-test-slow-${crypto.randomUUID()}` : join(String(dir), "s.sock");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, SOCKET_PATH: path },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const output = proc.stdout.getReader();
+      await output.read();
+      const client = connect(path);
+      client.pause();
+      client.on("error", () => {});
+      await once(client, "connect");
+      client.write(`GET / HTTP/1.1\r\nHost: x\r\n${head}\r\n`);
+      await output.read();
+      const chunks: Buffer[] = [];
+      client.on("data", (chunk: Buffer) => chunks.push(chunk)).resume();
+      const [exitCode] = await Promise.all([proc.exited, once(client, "close")]);
+      const wire = Buffer.concat(chunks);
+      return { received: wire.filter(byte => byte === 35 /* # */).length, exitCode };
+    }
+
+    it("a graceful stop() is not done before a completed response has left the process", async () => {
+      const result = await request(`
+        const server = Bun.serve({
+          unix: process.env.SOCKET_PATH,
+          fetch() {
+            setImmediate(async () => {
+              server.stop().then(() => process.exit(0));
+              ${turns}
+              console.log("stopping");
+            });
+            return new Response(Buffer.alloc(${size}, "#"));
+          },
+        });
+        console.log("listening");
+      `);
+      expect(result).toEqual({ received: size, exitCode: 0 });
+    });
+
+    it.each(["written", "controller.flush(true)"])(
+      "what a direct stream wrote has left the process once `await %s` is over",
+      async ack => {
+        const result = await request(`
+          Bun.serve({
+            unix: process.env.SOCKET_PATH,
+            fetch() {
+              return new Response(
+                new ReadableStream({
+                  type: "direct",
+                  async pull(controller) {
+                    const written = controller.write(Buffer.alloc(${size}, "#"));
+                    const left = Promise.resolve(${ack}).then(() => process.exit(0));
+                    ${turns}
+                    console.log("waiting");
+                    await left;
+                  },
+                }),
+              );
+            },
+          });
+          console.log("listening");
+        `);
+        expect(result).toEqual({ received: size, exitCode: 0 });
+      },
+    );
+
+    // The first stays in the stream's own buffer until the flush, the second goes to the socket from write().
+    it.each([4, 4096])(
+      "`await controller.flush(true)` waits for a large write that has %d bytes written behind it",
+      async small => {
+        const result = await request(`
+          Bun.serve({
+            unix: process.env.SOCKET_PATH,
+            fetch() {
+              return new Response(
+                new ReadableStream({
+                  type: "direct",
+                  async pull(controller) {
+                    controller.write(Buffer.alloc(${size}, "#"));
+                    controller.write(Buffer.alloc(${small}, "#"));
+                    const left = Promise.resolve(controller.flush(true)).then(() => process.exit(0));
+                    ${turns}
+                    console.log("waiting");
+                    await left;
+                  },
+                }),
+              );
+            },
+          });
+          console.log("listening");
+        `);
+        expect(result).toEqual({ received: size + small, exitCode: 0 });
+      },
+    );
+
+    it.each([
+      ["a response", `return new Response(Buffer.alloc(${size}, "#"));`, ""],
+      [
+        "a WebSocket message",
+        `server.upgrade(req);`,
+        "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n",
+      ],
+    ])("stop(true) does not wait for the client to read %s", async (_, respond, head) => {
+      const { exitCode } = await request(
+        `
+          const server = Bun.serve({
+            unix: process.env.SOCKET_PATH,
+            fetch(req) {
+              setImmediate(() => server.stop(true));
+              ${respond}
+            },
+            websocket: {
+              open(ws) {
+                ws.send(Buffer.alloc(${size}, "#"));
+              },
+              message() {},
+            },
+          });
+          console.log("listening");
+        `,
+        head,
+      );
+      expect(exitCode).toBe(0);
+    });
   });
 
   // RFC 9112 9.6: a response that carries Connection: close is the last one on its connection.

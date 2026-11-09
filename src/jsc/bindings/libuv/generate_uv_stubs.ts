@@ -1,5 +1,5 @@
 import { join } from "path";
-import { symbols, test_skipped } from "./generate_uv_posix_stubs_constants";
+import { symbols, test_skipped } from "./generate_uv_stubs_constants";
 
 import Parser from "tree-sitter";
 import C from "tree-sitter-c";
@@ -287,18 +287,14 @@ for (const symbol of symbols) {
 let parts = await Promise.all(symbols.map(s => generate(s)));
 
 const final_contents = `// GENERATED CODE - DO NOT MODIFY BY HAND
-#include "uv-posix-polyfills.h"
+#include "uv-polyfills.h"
 
-
-#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 ${parts.map(([stub, _]) => stub).join("\n\n")}
-#endif
-
 `;
 
-await Bun.write(join(import.meta.dir, "../", "uv-posix-stubs.c"), final_contents);
+await Bun.write(join(import.meta.dir, "../", "uv-stubs.c"), final_contents);
 if (Bun.which("clang-format")) {
-  await Bun.$`clang-format -i ${join(import.meta.dir, "../", "uv-posix-stubs.c")}`;
+  await Bun.$`clang-format -i ${join(import.meta.dir, "../", "uv-stubs.c")}`;
 }
 
 const test_plugin_contents = ` // GENERATED CODE ... NO TOUCHY!!
@@ -307,7 +303,6 @@ const test_plugin_contents = ` // GENERATED CODE ... NO TOUCHY!!
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <uv.h>
 
 napi_value call_uv_func(napi_env env, napi_callback_info info) {

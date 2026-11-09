@@ -1290,7 +1290,7 @@ pub mod fs {
                     )
                 };
                 if handle == w::INVALID_HANDLE_VALUE {
-                    if is_dangling_link_error(w::last_system_errno().to_e()) {
+                    if is_dangling_link_error(w::last_system_errno()) {
                         cache.kind = EntryKind::Dangling;
                     }
                     // anything else keeps the kind from the link's own directory bit
@@ -1617,11 +1617,8 @@ pub mod fs {
             // Reconstruct `mtime` (i128 ns) from `st_mtime` (sec) +
             // `st_mtime_nsec` (ns). The `libc` crate flattens BSD/Darwin
             // `st_mtimespec` into `st_mtime`/`st_mtime_nsec`, so the access is
-            // uniform on all `unix`.
-            #[cfg(unix)]
+            // uniform.
             let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
-            #[cfg(windows)]
-            let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
             let seconds = mtime / NS_PER_S;
 
             // We can't detect changes if the file system zeros out the

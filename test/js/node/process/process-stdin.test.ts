@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { dlopen, ptr } from "bun:ffi";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
+import { devNull } from "node:os";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -215,6 +219,345 @@ test.concurrent("explicit read(n) with no 'readable' listener still pulls from s
     stdout: JSON.stringify({ chunks: ["abc", "def", "gh"], readableEnded: true }) + "\n",
     exitCode: 0,
   });
+});
+
+test.concurrent.skipIf(!isWindows)("a loop that never sleeps gets its stdin with one processor to run on", async () => {
+  // A thread reads an inherited pipe for the event loop, and here the two have to share.
+  using dir = tempDir("stdin-one-processor", {
+    "poll.js": `
+      const deadline = Date.now() + 10_000;
+      (function poll() {
+        const chunk = process.stdin.read(3);
+        if (chunk !== null || Date.now() > deadline) {
+          console.log(String(chunk));
+          process.exit(0);
+        }
+        setImmediate(poll);
+      })();`,
+  });
+  const proc = Bun.spawn({
+    cmd: ["cmd", "/d", "/c", "start", "", "/b", "/wait", "/affinity", "1", bunExe(), "poll.js"],
+    cwd: String(dir),
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("abcdefgh");
+  proc.stdin.end();
+
+  expect(await stdioResult(proc)).toEqual({ stdout: "abc\n", exitCode: 0 });
+});
+
+// Waiting for input takes none of it: whoever was handed a chunk can read the next one in a call of their own, or
+// leave it to a child.
+describe.concurrent("the chunk after the one that was delivered is for whoever reads first", () => {
+  const readSync = `(b => b.toString("utf8", 0, require("fs").readSync(0, b)))(Buffer.alloc(64))`;
+  const takers = {
+    "fs.readSync(0)": readSync,
+    "a child that inherits stdin": `require("child_process")
+      .spawnSync(process.execPath, ["-e", ${JSON.stringify(`process.stdout.write(${readSync})`)}], {
+        stdio: ["inherit", "pipe", "inherit"],
+      })
+      .stdout.toString()`,
+  };
+  const readers = {
+    "a 'data' listener": (take: string) => `
+      let chunks = 0;
+      process.stdin.on("data", chunk => {
+        console.log("delivered " + chunk);
+        if (++chunks === 1) console.log("taken " + ${take});
+      });`,
+    "a 'data' listener that pauses meanwhile": (take: string) => `
+      let chunks = 0;
+      process.stdin.on("data", chunk => {
+        console.log("delivered " + chunk);
+        if (++chunks > 1) return;
+        process.stdin.pause();
+        console.log("taken " + ${take});
+        process.stdin.resume();
+      });`,
+    "Bun.stdin.stream()": (take: string) => `
+      let chunks = 0;
+      for await (const chunk of Bun.stdin.stream()) {
+        console.log("delivered " + Buffer.from(chunk));
+        if (++chunks === 1) console.log("taken " + ${take});
+      }`,
+  };
+
+  describe.each(Object.keys(readers))("%s", reader => {
+    test.each(Object.keys(takers))("%s", async taker => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", readers[reader](takers[taker])],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+        env: bunEnv,
+      });
+      const stdout = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+      // Each chunk is answered with a line, and is written once the one before it was.
+      for (let lines = 1; lines <= 3; lines++) {
+        proc.stdin.write(["one", "two", "three"][lines - 1]);
+        proc.stdin.flush();
+        while (output.split("\n").length <= lines) {
+          const { value, done } = await stdout.read();
+          if (done) break;
+          output += decoder.decode(value, { stream: true });
+        }
+      }
+      proc.stdin.end();
+
+      expect(output).toBe("delivered one\ntaken two\ndelivered three\n");
+      expect(await proc.exited).toBe(0);
+    });
+  });
+});
+
+describe.concurrent("a child that inherits stdin does not wait for the read that its parent is in", () => {
+  test.each([
+    `console.log("started")`,
+    `process.stdout.write("started\\n")`,
+    `require("fs").writeSync(1, "started\\n")`,
+    `const fs = require("fs"); fs.readSync(fs.openSync(process.execPath), Buffer.alloc(2)); console.error("started")`,
+    `console.log(Bun.spawnSync([process.execPath, "-e", "console.log('started')"], { stdin: "inherit" }).stdout.toString().trim())`,
+  ])("%s", async child => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdin.on("data", () => {
+          // The next read has begun long before the child is up.
+          setImmediate(async () => {
+            const child = Bun.spawn([process.execPath, "-e", ${JSON.stringify(child)}], { stdio: ["inherit", "inherit", "inherit"] });
+            process.exit(await child.exited);
+          });
+        });`,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write("go");
+    proc.stdin.flush();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toBe("started\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test.skipIf(!isWindows)("a socket as stdin ends when its peer is done sending", async () => {
+  const ws2_32 = dlopen("ws2_32.dll", {
+    WSASocketW: { args: ["i32", "i32", "i32", "ptr", "u32", "u32"], returns: "u64" },
+    connect: { args: ["u64", "ptr", "i32"], returns: "i32" },
+    closesocket: { args: ["u64"], returns: "i32" },
+  });
+  const kernel32 = dlopen("kernel32.dll", {
+    SetHandleInformation: { args: ["u64", "u32", "u32"], returns: "i32" },
+    CreateProcessW: { args: ["ptr", "ptr", "ptr", "ptr", "i32", "u32", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+    TerminateProcess: { args: ["u64", "u32"], returns: "i32" },
+    CloseHandle: { args: ["u64"], returns: "i32" },
+  });
+  const wide = (text: string) => Buffer.from(text + "\0", "utf16le");
+
+  let received = "";
+  const closed = Promise.withResolvers<void>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.write("hello");
+        socket.shutdown();
+      },
+      data(_, chunk) {
+        received += chunk;
+      },
+      close() {
+        closed.resolve();
+      },
+    },
+  });
+
+  // Without WSA_FLAG_OVERLAPPED, as a standard handle has to be for most programs.
+  const socket = ws2_32.symbols.WSASocketW(2 /* AF_INET */, 1 /* SOCK_STREAM */, 6 /* IPPROTO_TCP */, null, 0, 0);
+  const address = Buffer.alloc(16);
+  address.writeUInt16LE(2 /* AF_INET */, 0);
+  address.writeUInt16BE(server.port, 2);
+  address.set([127, 0, 0, 1], 4);
+  expect(ws2_32.symbols.connect(socket, ptr(address), address.length)).toBe(0);
+  expect(kernel32.symbols.SetHandleInformation(socket, 1 /* HANDLE_FLAG_INHERIT */, 1)).not.toBe(0);
+
+  // The socket is also the only way for the child to tell.
+  const script = `let all = ''; process.stdin.on('data', chunk => (all += chunk)).on('end', () => require('fs').writeSync(0, 'end after ' + all));`;
+  const commandLine = wide(`"${bunExe()}" -e "${script}"`);
+  const environment = wide(
+    Object.entries(bunEnv)
+      .filter(([, value]) => value !== undefined)
+      .map(([name, value]) => `${name}=${value}\0`)
+      .join(""),
+  );
+  const startupInfo = Buffer.alloc(104);
+  startupInfo.writeUInt32LE(startupInfo.length, 0);
+  startupInfo.writeUInt32LE(0x100 /* STARTF_USESTDHANDLES */, 60);
+  startupInfo.writeBigUInt64LE(socket, 80);
+  const processInformation = Buffer.alloc(24);
+  expect(
+    kernel32.symbols.CreateProcessW(
+      null,
+      ptr(commandLine),
+      null,
+      null,
+      1,
+      0x400 /* CREATE_UNICODE_ENVIRONMENT */,
+      ptr(environment),
+      null,
+      ptr(startupInfo),
+      ptr(processInformation),
+    ),
+  ).not.toBe(0);
+  onTestFinished(() => {
+    kernel32.symbols.TerminateProcess(processInformation.readBigUInt64LE(0), 1);
+    kernel32.symbols.CloseHandle(processInformation.readBigUInt64LE(0));
+    kernel32.symbols.CloseHandle(processInformation.readBigUInt64LE(8));
+  });
+  ws2_32.symbols.closesocket(socket);
+
+  await closed.promise;
+  expect(received).toBe("end after hello");
+});
+
+// In that mode a read that finds nothing is an error, and the empty message is gone once something has asked for data.
+test.concurrent.skipIf(!isWindows)("an empty message is nothing to a stdin in the mode PIPE_NOWAIT", async () => {
+  const fixture = join(import.meta.dir, "..", "net", "windows-foreign-pipe-fixture.js");
+  const child = `
+    process.stdin
+      .on("data", chunk => console.log(String(chunk)))
+      .on("end", () => console.log("end"))
+      .on("error", error => console.log(error.code));
+  `;
+  const script = `
+    const { createServer, openClient, setNoWait } = require(${JSON.stringify(fixture)});
+    const server = createServer({ messages: true });
+    const { fd, handle } = openClient(server.name, "r+");
+    setNoWait(handle);
+    const child = Bun.spawn({
+      cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+      stdin: fd,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    require("node:fs").closeSync(fd);
+
+    let output = "";
+    const reader = child.stdout.getReader();
+    async function until(text) {
+      while (!output.includes(text)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += Buffer.from(value);
+      }
+    }
+
+    server.write("one");
+    await until("one");
+    server.write("");
+    server.flush();
+    server.write("two");
+    await until("two");
+    server.close();
+    await until("end");
+    process.stdout.write(output);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("one\ntwo\nend\n");
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent("a directory as stdin is an 'error', as in Node.js", () => {
+  test.each([
+    ["on('data')", `process.stdin.on("data", () => seen.push("data"));`],
+    ["on('readable')", `process.stdin.on("readable", () => seen.push("readable"));`],
+    ["resume()", `process.stdin.resume();`],
+    ["read()", `process.stdin.read();`],
+  ])("%s", async (_, start) => {
+    using dir = tempDir("process-stdin-directory", {});
+    const fd = openSync(String(dir), "r");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const seen = [];
+            process.stdin.on("error", error => seen.push([error.code, error.syscall]));
+            process.stdin.on("end", () => seen.push("end"));
+            process.stdin.on("close", () => seen.push("close"));
+            process.on("exit", () => console.log(JSON.stringify([...seen, process.stdin.destroyed, process.stdin.errored?.code])));
+            ${start}
+            seen.push("returned");
+            process.stdin.resume();
+          `,
+        ],
+        env: bunEnv,
+        stdio: [fd, "pipe", "inherit"],
+      });
+      expect(await proc.stdout.json()).toEqual(["returned", ["EISDIR", "read"], "close", true, "EISDIR"]);
+      expect(await proc.exited).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+});
+
+test.concurrent("a stdin that is not open for reading is an 'error', as in Node.js", async () => {
+  const fd = openSync(devNull, "w");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stdin.on("error", error => console.log(error.code)).resume();`],
+      env: bunEnv,
+      stdio: [fd, "pipe", "inherit"],
+    });
+    expect(await proc.stdout.text()).toBe("EBADF\n");
+    expect(await proc.exited).toBe(0);
+  } finally {
+    closeSync(fd);
+  }
+});
+
+test.concurrent("process.stdin can be read once a lock on Bun.stdin.stream() is released", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const seen = [];
+        const reader = Bun.stdin.stream().getReader();
+        process.stdin.on("error", error => seen.push("error " + error.code));
+        try { process.stdin.resume(); seen.push("returned"); } catch (error) { seen.push("threw " + error.code); }
+        reader.releaseLock();
+        let text = "";
+        process.stdin.on("data", chunk => (text += chunk));
+        process.stdin.on("end", () => seen.push("end"));
+        process.on("exit", () => console.log(JSON.stringify([...seen, text])));
+      `,
+    ],
+    env: bunEnv,
+    stdin: new Blob(["hello world"]),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.json()).toEqual(["threw ERR_INVALID_STATE", "end", "hello world"]);
+  expect(await proc.exited).toBe(0);
 });
 
 test.concurrent("a read() that throws does not keep the process alive", async () => {
@@ -505,7 +848,7 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
 // pipe into an internal buffer. The kernel pipe buffer filling up is the
 // backpressure signal; these tests feed far more than that and check the
 // child's resident set does not grow to match.
-describe.skipIf(isWindows)("pipe backpressure", () => {
+describe("pipe backpressure", () => {
   const feedMB = 40;
   // With no backpressure the child buffers the whole feed (Vec growth roughly
   // doubles that in RSS). With backpressure only the highwater mark plus the

@@ -32,6 +32,10 @@ async function run(cmd: string, test: Test): Promise<RunResult> {
     child.on("error", err => {
       reject(err);
     });
+    // A script that ends by itself can be gone before its last chunk is written.
+    child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "EPIPE") reject(err);
+    });
 
     let stdout = "";
     let stderr = "";

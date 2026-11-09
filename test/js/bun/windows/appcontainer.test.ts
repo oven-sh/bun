@@ -252,12 +252,17 @@ async function main() {
   const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdio: ["inherit", "pipe", "pipe"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
-  // User-facing fs.realpath stays Node-parity: the component walk lstats the
-  // drive root (denied), and uv_fs_realpath's mount-manager query is denied.
-  // Bun internals go through get_fd_path, not these.
+  // fs.realpath walks the components as Node.js does, and the lstat of the drive
+  // root is denied. fs.realpath.native is the call that Bun's internals make, which
+  // does without the mount manager on the system volume.
   r.realpath = (() => {
     const errno = fn => { try { fn(); return "OK"; } catch (e) { return e.code || e.name; } };
     return { sync: errno(() => fs.realpathSync(".")), native: errno(() => fs.realpathSync.native(".")) };
+  })();
+
+  // The parent is outside the container: it exists, and it cannot be opened.
+  r.priorityOfParent = (() => {
+    try { return require("os").getPriority(process.ppid); } catch (e) { return e.info; }
   })();
 
   r.pipeNonLocal = await new Promise(resolve => {
@@ -318,7 +323,7 @@ async function main() {
   })();
 
   // In an AppContainer, any call on a closed handle kills the process (exit 0xC0000008). When a socket
-  // is closed in its own data() handler, its libuv poll has to be closed before the socket.
+  // is closed in its own data() handler, its poll has to be stopped before the socket is closed.
   r.closeInHandler = await (async () => {
     let server;
     try {
@@ -367,10 +372,15 @@ main().then(
       // AppContainer children to the package's AC\Temp.
       expect(r.tempRewritten).toBe(true);
       expect(r.spawnPiped).toBe(true);
-      expect(r.realpath).toEqual({ sync: "EPERM", native: "EPERM" });
-      // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
-      // stock uv_pipe_bind2 maps that to EADDRINUSE. Tighten to EACCES once
-      // the disambiguation probe lands on the libuv side.
+      expect(r.realpath).toEqual({ sync: "EPERM", native: "OK" });
+      expect(r.priorityOfParent).toEqual({
+        errno: -4048,
+        code: "EPERM",
+        message: "operation not permitted",
+        syscall: "uv_os_getpriority",
+      });
+      // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED,
+      // which Node reports as EADDRINUSE.
       expect(["EACCES", "EADDRINUSE"]).toContain(r.pipeNonLocal);
       expect(r.pipeLocal).toBe("LISTENED");
       expect(r.forkIpc).toBe("OK");

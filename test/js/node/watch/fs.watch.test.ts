@@ -25,6 +25,18 @@ function repeat(fn: any) {
   const interval = setInterval(fn, 20);
   return interval;
 }
+// Windows, for a script: from here on all threads of the process share the last processor that it may use.
+const onOneProcessor = /* js */ `{
+  const { symbols: kernel32 } = require("bun:ffi").dlopen("kernel32.dll", {
+    GetProcessAffinityMask: { args: ["i64", "ptr", "ptr"], returns: "i32" },
+    SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" },
+  });
+  const self = -1n, allowed = new BigUint64Array(1);
+  kernel32.GetProcessAffinityMask(self, allowed, new BigUint64Array(1));
+  let last = 1n;
+  while (last << 1n <= allowed[0]) last <<= 1n;
+  kernel32.SetProcessAffinityMask(self, last);
+}`;
 const encodingFileName = `新建文夹件.txt`;
 const testDir = tempDirWithFiles("watch", {
   "watch.txt": "hello",
@@ -228,6 +240,185 @@ describe("fs.watch", () => {
     });
   });
 
+  test.skipIf(!isWindows)("should work with a `\\\\?\\` path that does not start with a drive", async () => {
+    using dir = tempDir("watch-object-name", {});
+    const { promise, resolve, reject } = Promise.withResolvers<[string, string | null]>();
+    const watcher = fs.watch("\\\\?\\GLOBALROOT\\??\\" + dir, (event, filename) => resolve([event, filename]));
+    watcher.on("error", reject);
+    try {
+      fs.writeFileSync(path.join(String(dir), "new.txt"), "");
+      expect(await promise).toEqual(["rename", "new.txt"]);
+    } finally {
+      watcher.close();
+    }
+  });
+
+  test.skipIf(!isWindows)("reports a watched file by the name that each watcher was given", async () => {
+    using dir = tempDir("watch-given-name", { "File.txt": "" });
+    const watchers: fs.FSWatcher[] = [];
+    try {
+      const events = ["FILE.TXT", "file.txt", "File.txt"].map(name => {
+        const { promise, resolve, reject } = Promise.withResolvers<[string, string | null]>();
+        const watcher = fs.watch(path.join(String(dir), name), (event, filename) => resolve([event, filename]));
+        watcher.on("error", reject);
+        watchers.push(watcher);
+        return promise;
+      });
+      fs.writeFileSync(path.join(String(dir), "File.txt"), "changed");
+      expect(await Promise.all(events)).toEqual([
+        ["change", "FILE.TXT"],
+        ["change", "file.txt"],
+        ["change", "File.txt"],
+      ]);
+    } finally {
+      for (const watcher of watchers) watcher.close();
+    }
+  });
+
+  test.skipIf(!isWindows)("a directory that takes the name of a renamed one gets its own watcher", async () => {
+    using dir = tempDir("watch-renamed", { "a": {} });
+    const [a, b] = ["a", "b"].map(name => path.join(String(dir), name));
+    const watch = (target: string) => {
+      const names = new Set<string>();
+      const sawOne = Promise.withResolvers<void>();
+      const watcher = fs.watch(target, (_, filename) => {
+        names.add(`${filename}`);
+        sawOne.resolve();
+      });
+      watcher.on("error", sawOne.reject);
+      return { names, sawOne: sawOne.promise, watcher };
+    };
+    const watches = [watch(a)];
+    try {
+      fs.renameSync(a, b);
+      fs.mkdirSync(a);
+      watches.push(watch(a));
+      fs.writeFileSync(path.join(b, "in-b.txt"), "");
+      fs.writeFileSync(path.join(a, "in-a.txt"), "");
+      await Promise.all(watches.map(watch => watch.sawOne));
+      // The first one stays with its directory.
+      expect(watches.map(watch => [...watch.names])).toEqual([["in-b.txt"], ["in-a.txt"]]);
+    } finally {
+      for (const { watcher } of watches) watcher.close();
+    }
+  });
+
+  test.skipIf(!isWindows).each([
+    ["the flat one first", [false, true]],
+    ["the recursive one first", [true, false]],
+  ])("a flat and a recursive watcher of one directory each get their own events, %s", async (_, order) => {
+    using dir = tempDir("watch-flat-and-recursive", { "nested": {} });
+    const watches = order.map(recursive => {
+      const names: string[] = [];
+      const sawLast = Promise.withResolvers<void>();
+      const watcher = fs.watch(String(dir), { recursive }, (_, filename) => {
+        names.push(`${filename}`);
+        if (filename === "last.txt") sawLast.resolve();
+      });
+      watcher.on("error", sawLast.reject);
+      return { recursive, names, sawLast: sawLast.promise, watcher };
+    });
+    try {
+      fs.writeFileSync(path.join(String(dir), "nested", "file.txt"), "x");
+      fs.writeFileSync(path.join(String(dir), "last.txt"), "x");
+      await Promise.all(watches.map(watch => watch.sawLast));
+      expect(watches.map(({ recursive, names }) => [recursive, names.includes("nested\\file.txt")])).toEqual(
+        order.map(recursive => [recursive, recursive]),
+      );
+    } finally {
+      for (const { watcher } of watches) watcher.close();
+    }
+  });
+
+  test.skipIf(!isWindows).each([false, true])(
+    "the end of a watched directory is one 'rename', ENOENT and 'close' (recursive: %p)",
+    async recursive => {
+      using dir = tempDir("watch-deleted-directory", { "watched": {} });
+      const watched = path.join(String(dir), "watched");
+      const events: unknown[] = [];
+      const closed = Promise.withResolvers<void>();
+      const watcher = fs.watch(watched, { recursive }, (event, filename) => events.push([event, filename]));
+      watcher.on("error", (error: NodeJS.ErrnoException) => events.push([error.code, error.syscall]));
+      watcher.on("close", () => closed.resolve());
+      fs.rmdirSync(watched);
+      await closed.promise;
+      expect(events).toEqual([
+        ["rename", watched],
+        ["ENOENT", "watch"],
+      ]);
+      // The watcher holds on to nothing of the directory.
+      fs.mkdirSync(watched);
+    },
+  );
+
+  test.concurrent.skipIf(!isWindows).each(["directory", "file"])(
+    "a %s by the name of a deleted one gets a watcher of its own",
+    async kind => {
+      using dir = tempDir("watch-recreated", {});
+      // The first watcher is ended by another thread, which is late often enough if there is one processor for both.
+      const script = /* js */ `
+        const fs = require("node:fs"), path = require("node:path");
+        ${onOneProcessor}
+
+        const wrong = [];
+        for (let i = 0; i < 25; i++) {
+          const directory = "d" + i, file = path.join(directory, "file");
+          const watched = ${kind === "file"} ? file : directory;
+          const create = () => (fs.mkdirSync(directory), fs.writeFileSync(file, ""));
+          create();
+          const first = fs.watch(watched, () => {});
+          first.on("error", () => {});
+          fs.rmSync(directory, { recursive: true });
+          create();
+          const second = fs.watch(watched);
+          const outcome = await new Promise(done => {
+            second.on("error", error => done(error.code));
+            second.on("change", (event, filename) => done(event + " " + filename));
+            fs.writeFileSync(file, "changed");
+          });
+          if (outcome !== "change file") wrong.push(outcome);
+          first.close();
+          second.close();
+        }
+        console.log(JSON.stringify(wrong));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      expect(await proc.stdout.text()).toBe("[]\n");
+      expect(await proc.exited).toBe(0);
+    },
+  );
+
+  test.skipIf(!isWindows)("a path that is longer than MAX_PATH can be watched", async () => {
+    using dir = tempDir("watch-long-path", {});
+    let deep = String(dir);
+    for (let i = 0; i < 6; i++) deep = path.join(deep, Buffer.alloc(50, "d").toString() + i);
+    fs.mkdirSync(deep, { recursive: true });
+    fs.writeFileSync(path.join(deep, "file.txt"), "");
+    const watchers: fs.FSWatcher[] = [];
+    try {
+      const events = [deep, path.join(deep, "file.txt")].map(target => {
+        const { promise, resolve, reject } = Promise.withResolvers<[string, string | null]>();
+        const watcher = fs.watch(target, (event, filename) => resolve([event, filename]));
+        watcher.on("error", reject);
+        watchers.push(watcher);
+        return promise;
+      });
+      fs.writeFileSync(path.join(deep, "file.txt"), "changed");
+      expect(await Promise.all(events)).toEqual([
+        ["change", "file.txt"],
+        ["change", "file.txt"],
+      ]);
+    } finally {
+      for (const watcher of watchers) watcher.close();
+    }
+  });
+
   test("should emit 'change' event when file is modified", done => {
     const filepath = path.join(testDir, "watch.txt");
 
@@ -264,6 +455,10 @@ describe("fs.watch", () => {
       expect(err.syscall).toBe("watch");
       done();
     }
+  });
+
+  test("the empty path is no name for the current directory", () => {
+    expect(() => fs.watch("")).toThrow(expect.objectContaining({ code: "ENOENT", syscall: "watch" }));
   });
 
   test("returns an FSWatcher that inherits from EventEmitter", () => {
@@ -1486,12 +1681,14 @@ test.skipIf(!isWindows)(
     using dir = tempDir("fswatch-overflow-win", {});
     const watchDir = String(dir);
     // ~100-char names make ~210-byte FILE_NOTIFY_INFORMATION entries, so ~19
-    // fill libuv's 4KB buffer; 100 blocked-loop writes overflow it ~5x over.
+    // fill the 4KB buffer, and 100 writes are ~5x that.
     const N = 100;
 
     const fixture = /* js */ `
       const fs = require("node:fs");
       const path = require("node:path");
+      // Another thread takes the entries out of the buffer. It keeps up if it has a processor of its own.
+      ${onOneProcessor}
 
       const dir = ${JSON.stringify(watchDir)};
       const N = ${N};
@@ -1526,9 +1723,8 @@ test.skipIf(!isWindows)(
         w.on("close", () => settle(() => reject(new Error("watcher closed before overflow or full delivery"))));
       }
 
-      // The watch is armed synchronously, so sync-writing N files now blocks
-      // the event loop while libuv's 4KB ReadDirectoryChangesW buffer fills
-      // and overflows, forcing the lost-events notification.
+      // The watch is armed synchronously, so the 4KB ReadDirectoryChangesW
+      // buffer fills and overflows while these writes keep the processor.
       const pad = Buffer.alloc(90, "x").toString();
       for (let i = 0; i < N; i++) {
         fs.writeFileSync(path.join(dir, "f" + pad + String(i).padStart(3, "0") + ".txt"), "");

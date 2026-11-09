@@ -76,7 +76,6 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
 void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
     struct us_loop_t *loop = group->loop;
     if (!loop) {
-        /* A Windows named-pipe Listener never initializes its group. */
         return;
     }
 
@@ -395,11 +394,11 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
         /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches).
          * Report via both the out-param and thread-local errno: Bun.listen
          * reads *error, Bun.serve reads errno. */
-        int saved_errno = errno;
+        int saved_errno = LIBUS_ERR;
         bsd_close_socket(listen_socket_fd);
         us_poll_free(p, group->loop);
         *error = saved_errno;
-        errno = saved_errno;
+        LIBUS_SET_ERR(saved_errno);
         return 0;
     }
 
@@ -450,6 +449,20 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *path, size_t pathlen, int options, int socket_ext_size, int *error) {
+#ifdef LIBUS_USE_IOCP
+    if (us_internal_is_pipe_name(path, pathlen)) {
+        struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
+        us_poll_init(p, LIBUS_SOCKET_ERROR, POLL_TYPE_SEMI_SOCKET);
+        if (us_internal_pipe_listen(group->loop, p, path, pathlen) != 0) {
+            *error = LIBUS_ERR;
+            us_poll_free(p, group->loop);
+            return 0;
+        }
+        us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
+        us_internal_init_listen_socket((struct us_listen_socket_t *) p, group, kind, ssl_ctx, options, socket_ext_size);
+        return (struct us_listen_socket_t *) p;
+    }
+#endif
     LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, options, error);
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
@@ -458,11 +471,11 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
-        int saved_errno = errno;
+        int saved_errno = LIBUS_ERR;
         bsd_close_socket(listen_socket_fd);
         us_poll_free(p, group->loop);
         *error = saved_errno;
-        errno = saved_errno;
+        LIBUS_SET_ERR(saved_errno);
         return 0;
     }
 
@@ -559,10 +572,10 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
+        int saved_errno = LIBUS_ERR;
         bsd_close_socket(connect_socket_fd);
         us_poll_free(p, group->loop);
-        errno = saved_errno;
+        LIBUS_SET_ERR(saved_errno);
         return NULL;
     }
 
@@ -650,11 +663,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     c->port = port;
     us_internal_socket_group_link_connecting_socket(group, c);
 
-#ifdef _WIN32
-    loop->uv_loop->active_handles++;
-#else
     loop->num_polls++;
-#endif
 
     Bun__addrinfo_set(ai_req, c);
 
@@ -664,19 +673,30 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
 struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *server_path, size_t pathlen, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
-    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        return 0;
-    }
+    struct us_poll_t *p;
+#ifdef LIBUS_USE_IOCP
+    if (us_internal_is_pipe_name(server_path, pathlen)) {
+        p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
+        us_poll_init(p, LIBUS_SOCKET_ERROR, POLL_TYPE_SEMI_SOCKET);
+        us_internal_pipe_connect(group->loop, p, server_path, pathlen);
+        us_poll_start(p, group->loop, LIBUS_SOCKET_WRITABLE);
+    } else
+#endif
+    {
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
+        if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+            return 0;
+        }
 
-    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
-    us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
-        bsd_close_socket(connect_socket_fd);
-        us_poll_free(p, group->loop);
-        errno = saved_errno;
-        return 0;
+        p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
+        us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+        if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            int saved_errno = LIBUS_ERR;
+            bsd_close_socket(connect_socket_fd);
+            us_poll_free(p, group->loop);
+            LIBUS_SET_ERR(saved_errno);
+            return 0;
+        }
     }
 
     struct us_socket_t *connect_socket = (struct us_socket_t *) p;
@@ -743,11 +763,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     }
 
     struct us_socket_group_t *group = c->group;
-#ifdef _WIN32
-    group->loop->uv_loop->active_handles--;
-#else
     group->loop->num_polls--;
-#endif
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
         /* Preserve the getaddrinfo failure so the connect-error callback can
@@ -767,36 +783,13 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
          * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
+        c->error = LIBUS_ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     struct us_connecting_socket_t *c = s->connect_state;
-    #if _WIN32
-    if (error == 0) {
-        if (recv(us_poll_fd((struct us_poll_t*)s), NULL, 0, MSG_PUSH_IMMEDIATE) == SOCKET_ERROR) {
-            error = WSAGetLastError();
-            switch (error) {
-                case WSAEWOULDBLOCK:
-                case WSAEINTR: {
-                    error = 0;
-                    break;
-                }
-                default: {
-                    /* The probe only says the socket is not connected
-                     * (WSAENOTCONN); SO_ERROR has why the connect failed. */
-                    int so_error = us_socket_get_error(s);
-                    if (so_error > 0) {
-                        error = so_error;
-                    }
-                    break;
-                }
-            }
-        }
-    }
-    #endif
     if (error) {
         if (c) {
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {
@@ -814,7 +807,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                      * us_connecting_socket_close defaults c->error to
                      * ECANCELED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
+                    c->error = LIBUS_ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }
@@ -823,7 +816,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
         }
     } else {
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
-        bsd_socket_nodelay(us_poll_fd(&s->p), 1);
+        if (!us_internal_poll_is_pipe(&s->p)) {
+            bsd_socket_nodelay(us_poll_fd(&s->p), 1);
+        }
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET);
         us_socket_timeout(s, 0);
 

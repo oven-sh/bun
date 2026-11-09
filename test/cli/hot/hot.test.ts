@@ -1244,8 +1244,8 @@ it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exc
         for (let i = 1; i <= 2; i++) await fetch(new URL("/" + i, server.url));
         console.log("still running");
       })();
-      // The timers of a run stop at its first uncaught exception. On Windows, libuv goes on firing them.
-      if (process.platform !== "win32") setTimeout(() => process.exit(1), 1);
+      // The timers of a run stop at its first uncaught exception.
+      setTimeout(() => process.exit(1), 1);
       throw new Error("from the entry point");
     `,
   });

@@ -53,7 +53,7 @@ const { addServerAbortSignalOption } = require("internal/net/server_abort_signal
 
 type SocketHandle = $Node.SocketHandle<$Node.Socket | ConnectData>;
 type ListenerHandle = $Node.ListenerHandle;
-type NativeSocketError = Error & { errno?: number };
+type NativeSocketError = Error & { errno?: number; syscall?: string };
 type NativeConnectError = Error & { errno: number };
 type ConnectException = InstanceType<typeof ExceptionWithHostPort> & { localAddress?: string; localPort?: number };
 type SystemError = Error & { errno?: number; syscall?: string };
@@ -617,10 +617,6 @@ const checkServerIdentityInHandshake: (socket: SocketHandle, inHandshake: boolea
 );
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
 const releaseHeldFlight: (socket: SocketHandle) => void = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
-const isNamedPipeSocket: (socket: SocketHandle | null) => boolean = $bindgen(
-  "socket_body.bind.ts",
-  "isNamedPipeSocket",
-);
 const getBufferedAmount: (socket: SocketHandle) => number = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 
 const bunTlsSymbol: typeof netSymbols.bunTlsSymbol = netSymbols.bunTlsSymbol;
@@ -899,7 +895,7 @@ function attachClientTLS(
   if (self.destroyed || (!upgradeDuplex && !handle)) return;
   const options = { data: { self, req: {} }, tls, socket: self[khandlers], isServer: false };
   try {
-    if (upgradeDuplex || isNamedPipeSocket(handle) || hasUnflushedWrites(connection)) {
+    if (upgradeDuplex || hasUnflushedWrites(connection)) {
       attachTLSEngine(self, connection, options);
     } else {
       adoptTLSPair(self, connection, upgradeTLSDeferred(handle!, options));
@@ -1451,6 +1447,8 @@ function SocketEmitEndNT(self: $Node.Socket, _err?: NativeSocketError) {
       er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
       er.syscall = "read";
       self.destroy(er);
+    } else if (_err.syscall === "write") {
+      failWriteWith(self, _err, self[kwriteCallback]);
     } else {
       // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
       self.destroy(_err);
@@ -2146,6 +2144,8 @@ const SocketHandlers2 = {
         er.errno = err.errno;
         er.syscall = "read";
         self.destroy(er);
+      } else if (err.syscall === "write") {
+        failWriteWith(self, err, self[kwriteCallback]);
       } else {
         // Any other recv errno (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, ...)
         // keeps its identity — Node's onStreamRead does
@@ -2164,7 +2164,7 @@ const SocketHandlers2 = {
     const pendingWrite = self[kwriteCallback];
     if (pendingWrite) {
       self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
+      pendingWrite(err ?? $ERR_SOCKET_CLOSED());
     }
   },
   handshake(socket: $Node.SocketHandle<ConnectData<$Node.TLSSocket>>, success, verifyError) {
@@ -3083,8 +3083,8 @@ Socket.prototype[kUpgradeServerTLS] = function (
   linkUpgraded(this, connection);
   const options = { data: this, tls, socket: serverHandlersFor(this), isServer: true };
   const socket = connection._handle;
-  if (!socket || connection.encrypted || isNamedPipeSocket(socket) || hasUnflushedWrites(connection)) {
-    // No adoptable fd (generic Duplex, named pipe, never dialed), TLS over TLS (the fd belongs to the
+  if (!socket || connection.encrypted || hasUnflushedWrites(connection)) {
+    // No adoptable fd (generic Duplex, never dialed), TLS over TLS (the fd belongs to the
     // outer SSL layer), or pending plain writes that must flush first.
     attachTLSEngine(this, connection, options);
   } else if (connection.connecting) {

@@ -29,7 +29,7 @@ use bun_valkey::valkey_protocol as protocol;
 /// `KeepAlive::ref_/unref`. Valkey always runs on the JS event loop.
 #[inline]
 fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
+    bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 bun_output::define_scoped_log!(debug, RedisJS, visible);

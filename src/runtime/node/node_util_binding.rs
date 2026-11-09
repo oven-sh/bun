@@ -41,13 +41,20 @@ pub(crate) fn uv_translate_sys_error(errno: f64) -> i32 {
     }
     #[cfg(windows)]
     {
-        let uv_err = bun_libuv_sys::uv_translate_sys_error(n);
-        if uv_err != 0 { uv_err } else { -UV_E::INVAL }
+        errno_from_win32_error(n as u32)
     }
     #[cfg(not(windows))]
     {
         -n
     }
+}
+
+/// The number Node reports as `err.errno` for a Win32 or Winsock error code.
+#[cfg(windows)]
+#[unsafe(export_name = "Bun__errnoFromWin32Error")]
+pub(crate) extern "C" fn errno_from_win32_error(code: u32) -> i32 {
+    let errno = bun_sys::windows::fs::errno(bun_sys::windows::Win32Error::from_u32(code));
+    bun_errno::e_discriminant_to_uv(errno as u16).unwrap_or(bun_errno::uv_codes::UV_UNKNOWN)
 }
 
 /// libuv's ECANCELED code (`uv_udp_send` requests cancelled by close). Not a

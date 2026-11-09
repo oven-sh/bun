@@ -709,7 +709,7 @@ pub(crate) type Valkey<const SSL: bool> =
 // methods on SendQueue, so we adapt manually here.
 pub(crate) struct SpawnIPC;
 
-use IPC::IPCHandlers::PosixSocket as IpcH;
+use IPC::IPCHandlers as IpcH;
 type IpcS = NewSocketHandler<false>;
 
 impl VHandler for SpawnIPC {

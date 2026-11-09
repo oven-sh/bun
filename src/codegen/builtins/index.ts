@@ -10,7 +10,7 @@ import { builtinFunctionIds } from "../builtin-function-ids.ts";
 import { nativeCalls, type EngineFunctions } from "../builtins-manifest-model.ts";
 import { engineDirectory, engineFile } from "../engine-directory.ts";
 import { nativeCallListStamp } from "../generate-js2native.ts";
-import { argParse, writeIfNotChanged } from "../helpers.ts";
+import { argParse, sourcesArgument, writeIfNotChanged } from "../helpers.ts";
 import { tableEntryRecord } from "../removable-entry-points.ts";
 import { buildModel } from "./build-model.ts";
 import { describeUndescribedResults, summarizeUndescribedResults } from "./check-dependencies.ts";
@@ -97,7 +97,7 @@ const ownBunRoot = resolve(import.meta.dir, "..", "..", "..");
 
 const usage =
   "usage: bun src/codegen/builtins/index.ts --codegen-path=<dir> " +
-  `--target=<${targetPlatforms.join("|")}> --sources=<crate>=<a.bind.ts>,.. ` +
+  `--target=<${targetPlatforms.join("|")}> (--sources=<crate>=<a.bind.ts>,.. | --sources-file=<one on each line>) ` +
   "(--javascriptcore=<Source/JavaScriptCore> [--engine-out=<dir>] | --prebuilt-generated=<dir>) " +
   "[--engine-directory=<Source/JavaScriptCore/aot>] [--types-only=<b.bind.ts>,..] [--left-out=<global>,..] [--check]";
 
@@ -335,6 +335,7 @@ function readCommandLine(): CommandLine {
     "codegen-path",
     "target",
     "sources",
+    "sources-file",
     "javascriptcore",
     "engine-out",
     "engine-directory",
@@ -353,7 +354,7 @@ function readCommandLine(): CommandLine {
   };
   const target = targetPlatforms.find(platform => platform === flags.target);
   const codegenPath = directoryOf("codegen-path");
-  const sources = textOf("sources");
+  const sources = sourcesArgument(flags);
   const javaScriptCore = directoryOf("javascriptcore");
   const prebuiltGenerated = directoryOf("prebuilt-generated");
   const engineOut = directoryOf("engine-out");
@@ -368,7 +369,7 @@ function readCommandLine(): CommandLine {
       javaScriptCore,
       prebuiltGenerated,
       target,
-      bindgenSources: listOf(sources).sort(compareBytes),
+      bindgenSources: sources.sort(compareBytes),
       typesOnly: listOf(textOf("types-only") ?? ""),
       leftOut: listOf(textOf("left-out") ?? ""),
     },

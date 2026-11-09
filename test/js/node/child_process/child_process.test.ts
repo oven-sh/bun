@@ -29,6 +29,8 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import type { Writable } from "node:stream";
+import { text } from "node:stream/consumers";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -86,6 +88,29 @@ describe("ChildProcess.spawn()", () => {
     expect(result).toBe(true);
   });
 
+  // A Windows exit code has 32 bits, and the low 8 of 256 are those of success.
+  it.skipIf(!isWindows).each([256, 3010, 0xc0000005])("exit code %d arrives whole", async code => {
+    const args = [
+      "-e",
+      `require("bun:ffi").dlopen("kernel32.dll", { ExitProcess: { args: ["u32"], returns: "void" } }).symbols.ExitProcess(${code})`,
+    ];
+    const child = spawn(bunExe(), args, { stdio: "ignore", env: bunEnv });
+    const [exit, close] = await Promise.all([once(child, "exit"), once(child, "close")]);
+    let thrown: unknown;
+    try {
+      execFileSync(bunExe(), args, { stdio: "ignore", env: bunEnv });
+    } catch (e) {
+      thrown = (e as { status: number }).status;
+    }
+    expect({
+      exit,
+      close,
+      exitCode: child.exitCode,
+      spawnSync: spawnSync(bunExe(), args, { stdio: "ignore", env: bunEnv }).status,
+      execFileSync: thrown,
+    }).toEqual({ exit: [code, null], close: [code, null], exitCode: code, spawnSync: code, execFileSync: code });
+  });
+
   // `errors` collects every "error" the child emits, including ones emitted by
   // kill() after the awaited lifecycle events, and is asserted empty.
   it("kill() on a running process returns true and sets .killed", async () => {
@@ -105,6 +130,59 @@ describe("ChildProcess.spawn()", () => {
     await closed;
     expect(errors).toEqual([]);
   });
+
+  // Windows can send none of them.
+  it.skipIf(!isWindows).each(["SIGHUP", "SIGABRT", "SIGBREAK", 1])(
+    "kill(%p) ends the child as SIGKILL does",
+    async signal => {
+      const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+      const errors: unknown[] = [];
+      child.on("error", err => errors.push(err));
+      await once(child, "spawn");
+      const closed = once(child, "close");
+      try {
+        expect(child.kill(signal as NodeJS.Signals)).toBe(true);
+      } finally {
+        child.kill("SIGKILL");
+      }
+      expect([await closed, child.killed, errors]).toEqual([[null, "SIGKILL"], true, []]);
+    },
+  );
+
+  it.skipIf(!isWindows).each(["SIGWINCH", 28])("kill(%p) throws ENOSYS and leaves the child alone", async signal => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+    const errors: unknown[] = [];
+    child.on("error", err => errors.push(err));
+    await once(child, "spawn");
+    const closed = once(child, "close");
+    try {
+      expect(() => child.kill(signal as NodeJS.Signals)).toThrow(
+        expect.objectContaining({ code: "ENOSYS", syscall: "kill" }),
+      );
+      expect([child.killed, child.kill(0), errors]).toEqual([false, true, []]);
+    } finally {
+      child.kill("SIGKILL");
+    }
+    expect(await closed).toEqual([null, "SIGKILL"]);
+  });
+
+  // The child ends by itself, so that a timeout that does not end it is a failure and not a hang.
+  it.skipIf(!isWindows).each(["SIGHUP", 28])(
+    "the timeout of spawnSync with killSignal %p ends the child as SIGKILL does",
+    killSignal => {
+      const { status, signal, error } = spawnSync(bunExe(), ["-e", "setTimeout(() => {}, 4000)"], {
+        stdio: "ignore",
+        env: bunEnv,
+        timeout: 1,
+        killSignal: killSignal as NodeJS.Signals,
+      });
+      expect({ status, signal, code: (error as NodeJS.ErrnoException)?.code }).toEqual({
+        status: null,
+        signal: "SIGKILL",
+        code: "ETIMEDOUT",
+      });
+    },
+  );
 
   it("kill() after the process has exited returns false and does not set .killed", async () => {
     const child = spawn(bunExe(), ["-e", ""], { stdio: "ignore", env: bunEnv });
@@ -663,11 +741,76 @@ describe("spawn()", () => {
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
     });
+    it.skipIf(!isWindows).each([
+      ["overlapped", [true, true, true]],
+      ["pipe", [false, false, false]],
+      [
+        ["pipe", "overlapped", "pipe"],
+        [false, true, false],
+      ],
+      [
+        ["overlapped", "pipe", "overlapped"],
+        [true, false, true],
+      ],
+    ] as [StdioOptions, boolean[]][])(
+      "stdio %j: which handles of the child are overlapped",
+      async (stdio, expected) => {
+        const script = `
+        const { dlopen, ptr } = require("bun:ffi");
+        const { GetStdHandle } = dlopen("kernel32.dll", { GetStdHandle: { args: ["i32"], returns: "ptr" } }).symbols;
+        const { NtQueryInformationFile } = dlopen("ntdll.dll", {
+          NtQueryInformationFile: { args: ["ptr", "ptr", "ptr", "u32", "u32"], returns: "i32" },
+        }).symbols;
+        const [FileModeInformation, FILE_SYNCHRONOUS_IO_NONALERT] = [16, 0x20];
+        const isOverlapped = which => {
+          const [status, mode] = [new BigUint64Array(2), new Uint32Array(1)];
+          if (NtQueryInformationFile(GetStdHandle(which), ptr(status), ptr(mode), 4, FileModeInformation) !== 0) return null;
+          return (mode[0] & FILE_SYNCHRONOUS_IO_NONALERT) === 0;
+        };
+        console.log(JSON.stringify([-10, -11, -12].map(isOverlapped)));
+      `;
+        const child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio });
+        const closed = once(child, "close");
+        child.stderr!.resume();
+        expect(JSON.parse(await text(child.stdout!))).toEqual(expected);
+        expect(await closed).toEqual([0, null]);
+        // Without `input` there is no pipe at 0.
+        expect(
+          JSON.parse(spawnSync(bunExe(), ["-e", script], { env: bunEnv, stdio, encoding: "utf8" }).stdout).slice(1),
+        ).toEqual(expected.slice(1));
+      },
+    );
+
+    it.skipIf(!isWindows).each(["pipe", "overlapped"] as const)(
+      "stdio %j: the child has the rights that it has under Node.js",
+      async kind => {
+        const script = `
+        const { dlopen, ptr } = require("bun:ffi");
+        const { GetStdHandle } = dlopen("kernel32.dll", { GetStdHandle: { args: ["i32"], returns: "ptr" } }).symbols;
+        const { NtQueryInformationFile } = dlopen("ntdll.dll", {
+          NtQueryInformationFile: { args: ["ptr", "ptr", "ptr", "u32", "u32"], returns: "i32" },
+        }).symbols;
+        const FileAccessInformation = 8;
+        const rights = which => {
+          const [status, access] = [new BigUint64Array(2), new Uint32Array(1)];
+          if (NtQueryInformationFile(GetStdHandle(which), ptr(status), ptr(access), 4, FileAccessInformation) !== 0) return null;
+          return access[0].toString(16);
+        };
+        console.log(JSON.stringify([-10, -11, -12].map(rights)));
+      `;
+        const child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio: [kind, kind, kind] });
+        const closed = once(child, "close");
+        child.stderr!.resume();
+        // GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE | WRITE_DAC
+        expect(JSON.parse(await text(child.stdout!))).toEqual(["16019f", "16019f", "16019f"]);
+        expect(await closed).toEqual([0, null]);
+      },
+    );
 
     describe("a socket as a stdio entry", () => {
       // Both ends of an established loopback connection: the socket `connect` returns and the one `server`
       // accepts for it.
-      async function bothEnds(server: net.Server, connect: (port: number) => net.Socket) {
+      async function bothEnds(server: net.Server, connect: (port: number) => net.Socket, pipeName?: string) {
         const secure = server instanceof tls.Server;
         const sockets: net.Socket[] = [];
         const ends = {
@@ -678,7 +821,8 @@ describe("spawn()", () => {
           },
         };
         try {
-          server.listen(0, "127.0.0.1");
+          if (pipeName) server.listen(pipeName);
+          else server.listen(0, "127.0.0.1");
           await once(server, "listening");
           const connected = connect((server.address() as net.AddressInfo).port);
           sockets.push(connected);
@@ -719,7 +863,33 @@ describe("spawn()", () => {
         }
       });
 
-      // Windows cannot give a child a socket as stdio: node throws ENOTSUP, Bun throws EBADF.
+      it.skipIf(!isWindows)("refuses a network socket on Windows, as Node.js does", async () => {
+        using ends = await bothEnds(net.createServer(), port => net.connect(port, "127.0.0.1"));
+        const rejection = expect.objectContaining({ code: "ENOTSUP", syscall: "spawn" });
+        for (const socket of ends.sockets) {
+          const options = { env: bunEnv, stdio: ["ignore", socket, "ignore"] satisfies StdioOptions };
+          expect(() => spawn(bunExe(), ["-e", ""], options)).toThrow(rejection);
+        }
+      });
+
+      it.skipIf(!isWindows)("accepts either end of a named pipe", async () => {
+        const name = `\\\\.\\pipe\\bun-test-stdio-entry-${process.pid}`;
+        using ends = await bothEnds(net.createServer(), () => net.connect(name), name);
+        const [connected, accepted] = ends.sockets;
+        for (const [ours, theirs] of [
+          [connected, accepted],
+          [accepted, connected],
+        ]) {
+          const line = once(ours, "data");
+          const child = spawn(bunExe(), ["-e", `console.log("from the child")`], {
+            env: bunEnv,
+            stdio: ["ignore", theirs, "inherit"],
+          });
+          expect(await once(child, "close")).toEqual([0, null]);
+          expect(`${(await line)[0]}`).toBe("from the child\n");
+        }
+      });
+
       it.skipIf(isWindows)("accepts a net.Socket", async () => {
         using ends = await bothEnds(net.createServer(), port => net.connect(port, "127.0.0.1"));
         const closed = ends.sockets.map(socket =>
@@ -733,59 +903,219 @@ describe("spawn()", () => {
     });
   });
 
-  it.skipIf(isWindows)(
-    "stdin write failure (EPIPE) emits 'error' and destroys even with a write callback",
-    async () => {
-      // Child closes its own stdin fd, signals ready on stdout, then stays alive.
-      const child = spawn(
-        bunExe(),
-        ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
-        { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
-      );
-      try {
-        await new Promise<void>((resolve, reject) => {
-          child.on("error", reject);
-          child.on("exit", () => reject(new Error("child exited before ready")));
-          child.stdout!.once("data", () => resolve());
+  type WriteCallback = (err?: Error | null) => void;
+
+  // fs.closeSync() leaves 0, 1 and 2 open on Windows, as in Node.js.
+  const closeStdin = isWindows
+    ? `const kernel32 = require("bun:ffi").dlopen("kernel32.dll", {
+         GetStdHandle: { args: ["i32"], returns: "ptr" },
+         CloseHandle: { args: ["ptr"], returns: "i32" },
+       }).symbols;
+       kernel32.CloseHandle(kernel32.GetStdHandle(-10));`
+    : `require("fs").closeSync(0);`;
+
+  it.each([
+    ["one small write", 1, (stdin: Writable, cb: WriteCallback) => void stdin.write("x", cb)],
+    [
+      "several small writes",
+      5,
+      (stdin: Writable, cb: WriteCallback) => {
+        for (let i = 0; i < 5; i++) stdin.write("x", cb);
+      },
+    ],
+    [
+      "small writes under cork()",
+      2,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.cork();
+        stdin.write("x", cb);
+        stdin.write("y", cb);
+        stdin.uncork();
+      },
+    ],
+    [
+      "a small write and end()",
+      1,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write("x", cb);
+        stdin.end();
+      },
+    ],
+    [
+      "a small write and a large one",
+      2,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write("x", cb);
+        stdin.write(Buffer.alloc(65536, "y"), cb);
+      },
+    ],
+    [
+      "a large write and two small ones",
+      3,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write(Buffer.alloc(65536, "y"), cb);
+        stdin.write("x", cb);
+        stdin.write("x", cb);
+      },
+    ],
+    [
+      "a small write from the callback of another",
+      2,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write("x", err => {
+          cb(err);
+          stdin.write("y", cb);
         });
-        child.removeAllListeners("error");
-        child.removeAllListeners("exit");
+      },
+    ],
+  ])("%s to a stdin that the child has closed fails the callbacks and is an 'error'", async (_, count, write) => {
+    const child = spawn(
+      bunExe(),
+      ["-e", `${closeStdin} process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
+    );
+    try {
+      await once(child.stdout!, "data");
+      const seen: unknown[] = [];
+      const closed = Promise.withResolvers<void>();
+      child.stdin!.on("error", (err: NodeJS.ErrnoException) => seen.push(err.code, err.syscall));
+      child.stdin!.on("close", closed.resolve);
+      write(child.stdin!, err => seen.push(`callback ${(err as NodeJS.ErrnoException | null)?.code}`));
+      await closed.promise;
+      expect(seen).toEqual([...new Array(count).fill("callback EPIPE"), "EPIPE", "write"]);
+      expect(child.stdin!.destroyed).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
 
-        const errEv = Promise.withResolvers<any>();
-        const cb1 = Promise.withResolvers<any>();
-        child.stdin!.on("error", e => errEv.resolve(e));
-        child.stdin!.write(Buffer.alloc(65536, 0x41), e => cb1.resolve(e));
+  it("stdin calls back in the order of the writes, small or large", async () => {
+    const child = spawn(bunExe(), ["-e", "process.stdin.resume()"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const order: string[] = [];
+    const stdin = child.stdin!;
+    stdin.write("a", () => order.push("small"));
+    stdin.write(Buffer.alloc(1 << 20, "b"), () => order.push("large"));
+    stdin.write("c", () => order.push("small again"));
+    stdin.end(() => order.push("end"));
+    order.push("in a later tick:");
+    await once(child, "close");
+    expect(order).toEqual(["in a later tick:", "small", "large", "small again", "end"]);
+  });
 
-        const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise]);
+  it.each([
+    ["a small chunk", 6, (stdin: Writable, cb: WriteCallback) => void stdin.write("header", cb)],
+    [
+      "a chunk that fills the pipe",
+      65536,
+      (stdin: Writable, cb: WriteCallback) => void stdin.write(Buffer.alloc(65536, "h"), cb),
+    ],
+    [
+      "the first of many small chunks",
+      300 * 1024,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write(Buffer.alloc(1024, "s"), cb);
+        for (let i = 1; i < 300; i++) stdin.write(Buffer.alloc(1024, "s"));
+      },
+    ],
+  ])("the callback of %s does not wait until the child has read what stdin got after it", async (_, length, write) => {
+    // The child reads nothing before that callback tells it to.
+    const script = `
+      process.once("message", () => {
+        let length = 0;
+        process.stdin.on("data", chunk => (length += chunk.length));
+        process.stdin.on("end", () => process.send(length, () => process.disconnect()));
+      });
+    `;
+    const child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio: ["pipe", "ignore", "inherit", "ipc"] });
+    try {
+      const seen: unknown[] = [];
+      const received = once(child, "message");
+      write(child.stdin!, err => {
+        seen.push("first", err ?? null);
+        child.send("read");
+      });
+      child.stdin!.write(Buffer.alloc(1 << 20, "x"), err => seen.push("last", err ?? null));
+      child.stdin!.end();
+      expect(await received).toEqual([length + (1 << 20), undefined]);
+      expect(seen).toEqual(["first", null, "last", null]);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
 
-        // Node names the syscall "write" even though the stdio pipe is a
-        // socketpair underneath.
-        expect({
-          cb1: cb1Err?.code,
-          errEv: errEvErr?.code,
-          syscall: errEvErr?.syscall,
-          destroyed: child.stdin!.destroyed,
-          writable: child.stdin!.writable,
-        }).toEqual({
-          cb1: "EPIPE",
-          errEv: "EPIPE",
-          syscall: "write",
-          destroyed: true,
-          writable: false,
-        });
+  it("a callback of stdin.write() that throws does not take the others with it", async () => {
+    const script = `
+      const child = require("child_process").spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      const seen = [];
+      process.on("uncaughtException", err => seen.push("uncaught " + err.message));
+      child.stdin.on("error", err => seen.push("'error' " + err.message));
+      child.stdin.write("a", () => {
+        throw new Error("first");
+      });
+      child.stdin.write("b", () => seen.push("second"));
+      child.stdin.end(() => seen.push("end"));
+      child.on("close", () => console.log(seen.join(", ")));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaught first, second, end\n", stderr: "", exitCode: 0 });
+  });
 
-        const cb2 = Promise.withResolvers<any>();
-        const r2 = child.stdin!.write("more-bytes", e => cb2.resolve(e));
-        const cb2Err = await cb2.promise;
+  it("stdin write failure (EPIPE) emits 'error' and destroys even with a write callback", async () => {
+    // Child closes its own stdin fd, signals ready on stdout, then stays alive.
+    const child = spawn(
+      bunExe(),
+      ["-e", `${closeStdin} process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("exit", () => reject(new Error("child exited before ready")));
+        child.stdout!.once("data", () => resolve());
+      });
+      child.removeAllListeners("error");
+      child.removeAllListeners("exit");
 
-        expect({ r2, cb2: cb2Err?.code }).toEqual({ r2: false, cb2: "ERR_STREAM_DESTROYED" });
-      } finally {
-        child.kill("SIGKILL");
-      }
-    },
-  );
+      const errEv = Promise.withResolvers<any>();
+      const cb1 = Promise.withResolvers<any>();
+      child.stdin!.on("error", e => errEv.resolve(e));
+      child.stdin!.write(Buffer.alloc(65536, 0x41), e => cb1.resolve(e));
 
-  it.skipIf(isWindows)("stdin write to a child that exits before draining it fails with EPIPE", async () => {
+      const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise]);
+
+      // Node names the syscall "write" even though the stdio pipe is a
+      // socketpair underneath.
+      expect({
+        cb1: cb1Err?.code,
+        errEv: errEvErr?.code,
+        syscall: errEvErr?.syscall,
+        destroyed: child.stdin!.destroyed,
+        writable: child.stdin!.writable,
+      }).toEqual({
+        cb1: "EPIPE",
+        errEv: "EPIPE",
+        syscall: "write",
+        destroyed: true,
+        writable: false,
+      });
+
+      const cb2 = Promise.withResolvers<any>();
+      const r2 = child.stdin!.write("more-bytes", e => cb2.resolve(e));
+      const cb2Err = await cb2.promise;
+
+      expect({ r2, cb2: cb2Err?.code }).toEqual({ r2: false, cb2: "ERR_STREAM_DESTROYED" });
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it("stdin write to a child that exits before draining it fails with EPIPE", async () => {
     // The child exits with most of the 16 MiB (more than any socket buffer
     // holds) unread. Whether the kernel fails the next send or the exit handler
     // settles the pending write first, the stream reports EPIPE from "write".
@@ -807,7 +1137,7 @@ describe("spawn()", () => {
     expect({ code: err.code, syscall: err.syscall, errno: err.errno }).toEqual({
       code: "EPIPE",
       syscall: "write",
-      errno: -os.constants.errno.EPIPE,
+      errno: isWindows ? -4047 : -os.constants.errno.EPIPE,
     });
   });
 });
@@ -1228,21 +1558,17 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
 });
 
-// Windows: the extra "pipe" slots are HANDLE values that child_process wraps
-// in net.Sockets (net.connect({fd})); each socket closes its handle. The
-// Subprocess used to keep its own uv_pipe_t on the same HANDLE and close the
-// value again when it was GC'd. Windows reuses a closed handle value at once,
-// so that second close destroyed whatever owned the value by then (here the
-// files opened right after the sockets closed, in the crash reports a worker
-// thread's handle). test/js/bun/spawn/spawn.test.ts pins the exact handle
-// value down; this checks the child_process wiring on top of it.
+// child_process wraps the extra "pipe" slots in net.Sockets (net.connect({fd})),
+// and each socket closes its own. A second close when the Subprocess is GC'd
+// would hit whatever has the descriptor or its handle by then. Windows reuses
+// both at once: here for the files opened right after the sockets closed.
 it.if(isWindows)("extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else", async () => {
   const fixture = /* js */ `
     const { spawn } = require("node:child_process");
     const fs = require("node:fs");
 
     // The ChildProcess is unreachable once this returns; only the files
-    // opened into the freed handle values are kept.
+    // opened into what the sockets freed are kept.
     async function spawnAndReadThenOpenFiles(files) {
       const child = spawn(
         process.execPath,
@@ -1292,6 +1618,37 @@ it.if(isWindows)("extra stdio 'pipe' sockets deliver data and GC of the ChildPro
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
+});
+
+it("the extra pipe of one child can be the stdout of another", async () => {
+  const reader = spawn(
+    bunExe(),
+    [
+      "-e",
+      `require("node:fs").createReadStream(null, { fd: 3 }).once("data", chunk => process.stdout.write(chunk, () => process.exit()))`,
+    ],
+    { env: bunEnv, stdio: ["ignore", "pipe", "inherit", "pipe"] },
+  );
+  const pipe = reader.stdio[3] as net.Socket;
+  try {
+    const writer = spawn(bunExe(), ["-e", `process.stdout.write("from the other child")`], {
+      env: bunEnv,
+      stdio: ["ignore", pipe, "inherit"],
+    });
+    const [output, [writerExitCode], [readerExitCode]] = await Promise.all([
+      text(reader.stdout!),
+      once(writer, "exit"),
+      once(reader, "exit"),
+    ]);
+    expect({ output, writerExitCode, readerExitCode }).toEqual({
+      output: "from the other child",
+      writerExitCode: 0,
+      readerExitCode: 0,
+    });
+  } finally {
+    pipe.destroy();
+    reader.kill();
+  }
 });
 
 // For fd 0-2, "ignore" opens /dev/null. For fd >= 3, Node leaves the fd

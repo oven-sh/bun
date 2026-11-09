@@ -145,13 +145,25 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   let needsInternalReadRefresh = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
+  // Stdin is something that cannot be read, a directory for one.
+  let isUnreadable = false;
 
   function own() {
     // After EOF there is nothing left to read: no acquisition path ('readable'
     // listeners, resume(), ref(), an explicit read()) may take the reader back.
-    if (stream_reachedEof) return;
+    if (stream_reachedEof || isUnreadable) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
-    reader ??= native.getReader();
+    if (!reader) {
+      try {
+        reader = native.getReader();
+      } catch (err) {
+        // Whoever holds the lock may release it.
+        if (native.locked) throw err;
+        isUnreadable = true;
+        stream.destroy(err as Error);
+        return;
+      }
+    }
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
@@ -307,6 +319,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
+    if (isUnreadable) return;
     $debug('on("resume");');
     own();
     stream._undestroy();

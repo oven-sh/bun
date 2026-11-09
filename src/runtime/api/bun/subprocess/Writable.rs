@@ -2,7 +2,6 @@ use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_ptr::RefPtr;
-#[cfg(not(windows))]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd};
 
@@ -10,8 +9,6 @@ use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::streams::SourceHandle;
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
@@ -131,13 +128,13 @@ impl<'a> Writable<'a> {
         result: StdioResult,
         promise_for_stream: &mut JSValue,
     ) -> JsResult<Writable<'a>> {
-        super::assert_stdio_result!(result);
+        debug_assert!(result.is_none_or(|fd| fd.is_valid()));
 
         let global = event_loop.global_ref();
 
         // `FileSink::create` / `StaticPipeWriter::create` take
         // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
-        // the vtable-backed handle once and reuse for all arms (both platforms).
+        // the vtable-backed handle once and reuse for all arms.
         // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
         // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.
         let evtloop = bun_event_loop::EventLoopHandle::init(
@@ -146,100 +143,20 @@ impl<'a> Writable<'a> {
                 .cast::<()>(),
         );
 
-        #[cfg(windows)]
-        {
-            match stdio {
-                Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if let StdioResult::Buffer(buffer) = result {
-                        // Ownership of the `Box<uv::Pipe>` transfers to the
-                        // FileSink's writer (the sink takes over the heap
-                        // pointer).
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        let pipe_ref = FileSink::create_with_pipe(evtloop, uv_pipe);
-
-                        match pipe_ref.writer.with_mut(|w| w.start_with_current_pipe()) {
-                            bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(err) => {
-                                if let Stdio::ReadableStream(rs) = stdio {
-                                    rs.cancel(global)?;
-                                }
-                                return Err(global.throw_value(err.to_js(global)));
-                            }
-                        }
-                        pipe_ref
-                            .writer
-                            .with_mut(|w| w.set_parent(pipe_ref.as_ptr()));
-                        subprocess
-                            .weak_file_sink_stdin_ptr
-                            .set(Some(pipe_ref.as_non_null()));
-                        subprocess.ref_();
-                        subprocess.update_flags(|f| {
-                            f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
-                            f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
-                        });
-
-                        if let Stdio::ReadableStream(rs) = stdio {
-                            *promise_for_stream =
-                                Self::attach_stream(&pipe_ref, rs, subprocess, global)?;
-                        }
-
-                        return Ok(Writable::Pipe(pipe_ref));
-                    }
-                    return Ok(Writable::Inherit);
-                }
-
-                Stdio::Blob(_) => {
-                    // See the unix arm below: Stdio has Drop, so move the
-                    // payload out via ManuallyDrop + ptr::read.
-                    let owned =
-                        core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                    let blob = match &*owned {
-                        // SAFETY: owned is ManuallyDrop; payload moved exactly once.
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        evtloop,
-                        subprocess as *mut Subprocess<'a>,
-                        result,
-                        super::source_from_blob(blob),
-                    )));
-                }
-                Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(*fd));
-                }
-                Stdio::Dup2(dup2) => {
-                    return Ok(Writable::Fd(dup2.to.to_fd()));
-                }
-                Stdio::Inherit => {
-                    return Ok(Writable::Inherit);
-                }
-                Stdio::Path(_) | Stdio::Ignore => {
-                    return Ok(Writable::Ignore);
-                }
-                Stdio::Ipc | Stdio::Capture(_) => {
-                    return Ok(Writable::Ignore);
-                }
-                // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
-                Stdio::SocketFd => unreachable!("SocketFd at stdin"),
-            }
+        if matches!(stdio, Stdio::Pipe) {
+            let _ = bun_sys::set_nonblocking(result.unwrap());
         }
 
-        #[cfg(unix)]
-        {
-            if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
-            }
-        }
-
-        #[cfg(not(windows))]
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
                 let fd = result.unwrap();
-                let pipe_ref = FileSink::create(evtloop, fd);
+                let pipe_ref = FileSink::init(fd, evtloop);
 
-                match pipe_ref.writer.with_mut(|w| w.start(fd, true)) {
+                match pipe_ref
+                    .writer
+                    .with_mut(|w| w.start(fd, true, bun_io::FilePollFlag::CHILD_STDIO.into()))
+                {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(err) => {
                         // The writer did not take `fd`; nothing else closes it.
@@ -250,14 +167,6 @@ impl<'a> Writable<'a> {
                         return Err(global.throw_value(err.to_js(global)));
                     }
                 }
-
-                // `handle` is `PollOrFd` (enum); flag mutation goes
-                // through the FilePoll vtable shim.
-                pipe_ref.writer.with_mut(|w| {
-                    if let Some(poll) = w.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
 
                 subprocess
                     .weak_file_sink_stdin_ptr

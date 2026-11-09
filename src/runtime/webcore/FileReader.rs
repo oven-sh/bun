@@ -2,18 +2,15 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
 use bun_collections::VecExt;
-#[cfg(unix)]
 use bun_io as aio;
-#[cfg(not(windows))]
-use bun_io::FileType;
-use bun_io::{BufferedReader, Chunk, ReadState};
+use bun_io::pipe_reader::ReaderFlags;
+use bun_io::{BufferedReader, Chunk, FileType, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
-use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
@@ -98,7 +95,6 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) fd: Fd,
     pub(crate) pollable: bool,
     pub(crate) nonblocking: bool,
-    #[cfg(not(windows))]
     pub(crate) file_type: FileType,
 }
 
@@ -108,7 +104,6 @@ impl Default for OpenedFileBlob {
             fd: Fd::INVALID,
             pollable: false,
             nonblocking: true,
-            #[cfg(not(windows))]
             file_type: FileType::File,
         }
     }
@@ -126,7 +121,6 @@ impl Lazy {
             ..Default::default()
         };
         let mut file_buf = bun_paths::path_buffer_pool::get();
-        #[cfg(unix)]
         let mut is_nonblocking = false;
 
         let fd: Fd = match &file.pathlike {
@@ -152,17 +146,14 @@ impl Lazy {
                         Err(err) => return Err(err.with_fd(*pl_fd)),
                     };
 
-                    #[cfg(unix)]
-                    {
-                        if fd.stdio_tag().is_none() {
-                            is_nonblocking = match sys::get_fcntl_flags(fd) {
-                                Ok(flags) => (flags & sys::O::NONBLOCK as isize) != 0,
-                                Err(_) => false,
-                            };
-                        }
+                    if fd.stdio_tag().is_none() {
+                        is_nonblocking = match sys::get_fcntl_flags(fd) {
+                            Ok(flags) => (flags & sys::O::NONBLOCK as isize) != 0,
+                            Err(_) => false,
+                        };
                     }
 
-                    fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
+                    fd
                 }
             }
             PathOrFileDescriptor::Path(path) => {
@@ -172,10 +163,8 @@ impl Lazy {
                     0,
                 ) {
                     Ok(fd) => {
-                        #[cfg(unix)]
-                        {
-                            is_nonblocking = true;
-                        }
+                        // On Windows `open` ignores `O_NONBLOCK`.
+                        is_nonblocking = cfg!(unix);
                         fd
                     }
                     Err(err) => {
@@ -188,59 +177,67 @@ impl Lazy {
             }
         };
 
-        #[cfg(unix)]
+        if file.is_atty.unwrap_or(false)
+            || (fd.stdio_tag().is_some() && sys::isatty(fd))
+            || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
+                    if pl_fd.stdio_tag().is_some() && sys::isatty(*pl_fd)))
         {
-            if file.is_atty.unwrap_or(false)
-                || (fd.stdio_tag().is_some() && sys::isatty(fd))
-                || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
-                        if pl_fd.stdio_tag().is_some() && sys::isatty(*pl_fd)))
-            {
-                file.is_atty = Some(true);
+            file.is_atty = Some(true);
+        }
+
+        let stat: sys::Stat = match sys::fstat(fd) {
+            Ok(result) => result,
+            Err(err) => {
+                fd.close();
+                return Err(err);
             }
+        };
 
-            let stat: sys::Stat = match sys::fstat(fd) {
-                Ok(result) => result,
-                Err(err) => {
-                    fd.close();
-                    return Err(err);
-                }
-            };
+        let mode = stat.st_mode as _;
+        if sys::S::ISDIR(mode) {
+            aio::Closer::close(fd);
+            return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::read));
+        }
 
-            let mode = stat.st_mode as _;
-            if sys::S::ISDIR(mode) {
-                aio::Closer::close(fd, ());
-                return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
-            }
+        if sys::S::ISREG(mode) {
+            is_nonblocking = false;
+        }
 
-            if sys::S::ISREG(mode) {
-                is_nonblocking = false;
-            }
+        // `CONIN$`, or a descriptor of it. A read lasts until somebody types.
+        #[cfg(windows)]
+        if sys::S::ISCHR(mode) && sys::isatty(fd) {
+            file.is_atty = Some(true);
+        }
 
-            // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
-            this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
-                || is_nonblocking
-                || file.is_atty.unwrap_or(false);
-            this.file_type = if sys::S::ISFIFO(mode) {
-                FileType::Pipe
-            } else if sys::S::ISSOCK(mode) {
-                FileType::Socket
-            } else {
-                FileType::File
-            };
+        // There is no opening a device so that a read of it does not wait.
+        let waits_like_a_pipe =
+            cfg!(windows) && sys::S::ISCHR(mode) && !file.is_atty.unwrap_or(false);
 
-            // pretend it's a non-blocking pipe if it's a TTY
-            if is_nonblocking && this.file_type != FileType::Socket {
-                this.file_type = FileType::NonblockingPipe;
-            }
+        // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
+        this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
+            || is_nonblocking
+            || file.is_atty.unwrap_or(false)
+            || waits_like_a_pipe;
+        this.file_type = if sys::S::ISFIFO(mode) || waits_like_a_pipe {
+            FileType::Pipe
+        } else if sys::S::ISSOCK(mode) {
+            FileType::Socket
+        } else {
+            FileType::File
+        };
 
-            this.nonblocking = is_nonblocking
-                || (this.pollable
-                    && !file.is_atty.unwrap_or(false)
-                    && this.file_type != FileType::Pipe);
+        // pretend it's a non-blocking pipe if it's a TTY
+        if is_nonblocking && this.file_type != FileType::Socket {
+            this.file_type = FileType::NonblockingPipe;
+        }
 
-            if this.nonblocking && this.file_type == FileType::Pipe {
-                this.file_type = FileType::NonblockingPipe;
-            }
+        this.nonblocking = is_nonblocking
+            || (this.pollable
+                && !file.is_atty.unwrap_or(false)
+                && this.file_type != FileType::Pipe);
+
+        if this.nonblocking && this.file_type == FileType::Pipe {
+            this.file_type = FileType::NonblockingPipe;
         }
 
         this.fd = fd;
@@ -263,14 +260,6 @@ bun_io::impl_buffered_reader_parent! {
     on_read_chunk   = |this, chunk, state| (&*this).on_read_chunk(chunk, state);
     on_reader_done  = |this| (&*this).on_reader_done();
     on_reader_error = |this, err| (&*this).on_reader_error(err);
-    loop_ = |this| {
-        let ev = (&*this).event_loop.get();
-        // The event loop is a libuv
-        // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
-        // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
-        #[cfg(windows)] { ev.uv_loop().cast() }
-        #[cfg(not(windows))] { ev.r#loop() }
-    };
     event_loop = |this| (&*this).event_loop.get().as_event_loop_ctx();
     // A read delivers to `on_read_chunk` consumers (JS, or a native sink such
     // as HTMLRewriter) that can drop this stream's last GC root and allocate
@@ -306,7 +295,6 @@ impl FileReader {
         self.reader().set_parent(self.as_ctx_ptr().cast());
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
-        #[cfg(unix)]
         let mut file_type = FileType::File;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `RefPtr<Store>`
@@ -330,26 +318,11 @@ impl FileReader {
                             debug_assert!(opened.fd.is_valid());
                             self.fd.set(opened.fd);
                             pollable = opened.pollable;
-                            #[cfg(unix)]
-                            {
-                                file_type = opened.file_type;
-                            }
-                            #[cfg(unix)]
-                            {
-                                use bun_io::pipe_reader::PosixFlags;
-                                self.reader()
-                                    .flags
-                                    .set(PosixFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader().flags.set(PosixFlags::POLLABLE, pollable);
-                            }
-                            #[cfg(windows)]
-                            {
-                                use bun_io::pipe_reader::WindowsFlags;
-                                self.reader()
-                                    .flags
-                                    .set(WindowsFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader().flags.set(WindowsFlags::POLLABLE, pollable);
-                            }
+                            file_type = opened.file_type;
+                            self.reader()
+                                .flags
+                                .set(ReaderFlags::NONBLOCKING, opened.nonblocking);
+                            self.reader().flags.set(ReaderFlags::POLLABLE, pollable);
                         }
                     }
                 }
@@ -378,16 +351,11 @@ impl FileReader {
             // The across-read ref roots the JS wrapper (`increment_count`
             // upgrades `this_jsvalue` to Strong) so an event-loop callback
             // firing with no JS on the stack never lands on a freed box. For a
-            // POSIX non-pollable regular file every read is synchronous
+            // non-pollable regular file every read is synchronous
             // (`read_file` → `sys::pread`), so there is no such callback —
             // holding the Strong there would root an abandoned reader forever
-            // and leak its fd. Windows file reads are async via libuv even for
-            // regular files, so the ref is always taken there.
-            #[cfg(unix)]
-            let need_io_ref = pollable;
-            #[cfg(windows)]
-            let need_io_ref = true;
-            if need_io_ref {
+            // and leak its fd.
+            if pollable {
                 self.parent_const().increment_count();
                 self.waiting_for_on_reader_done.set(true);
             }
@@ -399,7 +367,7 @@ impl FileReader {
                 self.reader().start(self.fd.get(), pollable)
             };
             if let Err(e) = start_result {
-                if need_io_ref {
+                if pollable {
                     self.waiting_for_on_reader_done.set(false);
                     let parent = self.parent();
                     // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
@@ -407,57 +375,33 @@ impl FileReader {
                 }
                 return streams::Start::Err(e);
             }
-        } else {
-            #[cfg(unix)]
-            {
-                use bun_io::pipe_reader::PosixFlags;
-                if !self.started.get()
-                    && !self.waiting_for_on_reader_done.get()
-                    && self.reader().flags.contains(PosixFlags::POLLABLE)
-                    && !self.reader().is_done()
-                {
-                    self.waiting_for_on_reader_done.set(true);
-                    self.parent_const().increment_count();
-                }
-            }
-            #[cfg(windows)]
-            {
-                // Non-lazy fromPipe path (Bun.spawn stdout/stderr): hold a
-                // ref across the pending uv_read_start so the source is not
-                // finalized while IOCP has a read queued on it.
-                if !self.started.get()
-                    && !self.waiting_for_on_reader_done.get()
-                    && self.reader().source.is_some()
-                    && !self.reader().is_done()
-                {
-                    self.waiting_for_on_reader_done.set(true);
-                    self.parent_const().increment_count();
-                }
-            }
+        } else if !self.started.get()
+            && !self.waiting_for_on_reader_done.get()
+            && self.reader().flags.contains(ReaderFlags::POLLABLE)
+            && !self.reader().is_done()
+        {
+            self.waiting_for_on_reader_done.set(true);
+            self.parent_const().increment_count();
         }
 
-        #[cfg(unix)]
-        {
-            use bun_io::pipe_reader::PosixFlags;
-            if file_type == FileType::Socket {
-                self.reader().flags.insert(PosixFlags::SOCKET);
+        if file_type == FileType::Socket {
+            self.reader().flags.insert(ReaderFlags::SOCKET);
+        }
+
+        let r = self.reader();
+        if let Some(poll) = r.handle.get_poll() {
+            // `bun_io::FilePoll` is an opaque vtable wrapper; flag
+            // mutation goes through `set_flag(FilePollFlag)`.
+            if file_type == FileType::Socket || r.flags.contains(ReaderFlags::SOCKET) {
+                poll.set_flag(bun_io::FilePollFlag::Socket);
+            } else {
+                // if it's a TTY, we report it as a fifo
+                // we want the behavior to be as though it were a blocking pipe.
+                poll.set_flag(bun_io::FilePollFlag::Fifo);
             }
 
-            let r = self.reader();
-            if let Some(poll) = r.handle.get_poll() {
-                // `bun_io::FilePoll` is an opaque vtable wrapper; flag
-                // mutation goes through `set_flag(FilePollFlag)`.
-                if file_type == FileType::Socket || r.flags.contains(PosixFlags::SOCKET) {
-                    poll.set_flag(bun_io::FilePollFlag::Socket);
-                } else {
-                    // if it's a TTY, we report it as a fifo
-                    // we want the behavior to be as though it were a blocking pipe.
-                    poll.set_flag(bun_io::FilePollFlag::Fifo);
-                }
-
-                if r.flags.contains(PosixFlags::NONBLOCKING) {
-                    poll.set_flag(bun_io::FilePollFlag::Nonblocking);
-                }
+            if r.flags.contains(ReaderFlags::NONBLOCKING) {
+                poll.set_flag(bun_io::FilePollFlag::Nonblocking);
             }
         }
 
@@ -470,19 +414,13 @@ impl FileReader {
                     self.buffered.replace(Vec::new()),
                 ));
             }
-        } else {
-            #[cfg(unix)]
-            {
-                use bun_io::pipe_reader::PosixFlags;
-                if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
-                    // A from_pipe() reader may arrive with IS_PAUSED set (lazy
-                    // subprocess stdio); clear it so read() does not no-op.
-                    self.reader().unpause();
-                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                    unsafe { IOReader::read(self.reader.get()) };
-                }
-            }
+        } else if !was_lazy && self.reader().flags.contains(ReaderFlags::POLLABLE) {
+            // A from_pipe() reader may arrive with IS_PAUSED set (lazy
+            // subprocess stdio); clear it so read() does not no-op.
+            self.reader().unpause();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
         }
 
         streams::Start::Ready
@@ -664,7 +602,7 @@ impl FileReader {
             });
             match wrote {
                 streams::Writable::Backpressure(_) => {
-                    // Returning `false` ends a synchronous read loop; an event-driven reader (Windows, pollable fds) has to be paused or its next completion piles into the sink. `pull_into_sink` unpauses.
+                    // Returning `false` ends a synchronous read loop; an event-driven reader (pollable fds) has to be paused or its next completion piles into the sink. `pull_into_sink` unpauses.
                     self.sink_paused.set(true);
                     self.reader().pause();
                     return false;
@@ -877,20 +815,6 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
-        #[cfg(not(windows))]
-        {
-            panic!(
-                "FileReader.setRawMode must not be called on {}",
-                std::env::consts::OS
-            );
-        }
-        #[cfg(windows)]
-        {
-            self.reader().set_raw_mode(_flag)
-        }
-    }
-
     pub(crate) fn set_flowing(&self, flag: bool) {
         bun_core::scoped_log!(
             FileReader,
@@ -1012,10 +936,6 @@ impl readable_stream::SourceContext for FileReader {
         let buffer_len = buffer.len();
         let global = self.parent_const().global_this();
         self.pending_value.with_mut(|p| p.set(global, array));
-        #[cfg(windows)]
-        if self.flowing.get() {
-            self.reader().unpause();
-        }
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
@@ -1059,15 +979,6 @@ impl readable_stream::SourceContext for FileReader {
 }
 
 impl Source {
-    pub fn set_raw_mode(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) -> JSValue {
-        let flag = flag.to_js();
-        debug_assert!(flag.is_boolean());
-        match self.context.set_raw_mode(flag == JSValue::TRUE) {
-            Ok(()) => JSValue::UNDEFINED,
-            Err(e) => e.to_js(cx.global()),
-        }
-    }
-
     pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());

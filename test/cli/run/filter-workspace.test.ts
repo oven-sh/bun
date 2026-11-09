@@ -1194,9 +1194,9 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
 // as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
-// reaches the scripts and cleanup is entirely on the parent. libuv's global
-// spawn Job is KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership only
-// propagates one hop: as soon as the tree contains a non-libuv spawner
+// reaches the scripts and cleanup is entirely on the parent. The job that
+// every child is put in is KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership
+// only propagates one hop: as soon as the tree contains another spawner
 // (cmd.exe, a `.cmd` bin shim, node.exe), everything below it escapes and keeps
 // its port bound after the parent exits.
 //
@@ -1443,6 +1443,56 @@ describe("output timing", () => {
     // The run ends when the script exits; the child's much later write goes to
     // a closed pipe instead of delaying the run by 30s.
     expect(stdout).not.toContain("late-line");
+    expect(exitCode).toBe(0);
+  });
+
+  // A pipe that is written faster than the runner reads it never runs dry.
+  test("a child left behind that writes without a pause does not delay the script's finish", async () => {
+    using dir = tempDir("filter-busy-orphan", {
+      "package.json": JSON.stringify({
+        name: "ws-busy",
+        workspaces: ["packages/*"],
+      }),
+      "packages/busy/package.json": JSON.stringify({
+        name: "pkg-busy",
+        scripts: {
+          go: `${bunExe()} leaves.js`,
+        },
+      }),
+      "packages/busy/busy.js": `
+        const fs = require("fs");
+        const chunk = Buffer.alloc(65536, Buffer.alloc(63, "x") + "\\n");
+        const end = Date.now() + 30_000;
+        for (let chunks = 1; Date.now() < end; chunks++) {
+          fs.writeSync(1, chunk);
+          // More than a pipe holds: the runner is reading by now.
+          if (chunks === 16) fs.writeFileSync("pid.txt", String(process.pid));
+        }
+      `,
+      "packages/busy/leaves.js": `
+        Bun.spawn({
+          cmd: [process.execPath, "busy.js"],
+          stdio: ["ignore", "inherit", "ignore"],
+          detached: true,
+        }).unref();
+        while (!(await Bun.file("pid.txt").exists())) await Bun.sleep(10);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-busy", "go"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const drained = (async () => {
+      for await (const _ of proc.stdout);
+    })();
+    const [exitCode] = await Promise.all([proc.exited, drained]);
+    try {
+      const pid = Number(await Bun.file(join(String(dir), "packages", "busy", "pid.txt")).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
     expect(exitCode).toBe(0);
   });
 

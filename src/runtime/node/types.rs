@@ -1008,7 +1008,7 @@ impl PathLikeExt for PathLike<'_> {
                 }
                 // The PathBuffer doc comment says why the buffer is aligned in practice.
                 let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, s));
+                return Ok(bun_sys::windows::fs::to_kernel32_path(buf_u16, s));
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
                 // Bail before the cwd resolution + normalization below write
@@ -1040,12 +1040,12 @@ impl PathLikeExt for PathLike<'_> {
                 }
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
                 let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, normal));
+                return Ok(bun_sys::windows::fs::to_kernel32_path(buf_u16, normal));
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
                 let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, b"."));
+                return Ok(bun_sys::windows::fs::to_kernel32_path(buf_u16, b"."));
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,
@@ -1056,7 +1056,7 @@ impl PathLikeExt for PathLike<'_> {
                 return Err(NameTooLong);
             }
             let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-            return Ok(strings::to_kernel32_path(buf_u16, normal));
+            return Ok(bun_sys::windows::fs::to_kernel32_path(buf_u16, normal));
         }
 
         #[cfg(not(windows))]
@@ -1656,12 +1656,14 @@ impl FileSystemFlags {
             let number = validators::validate_int32(ctx, val, "flags", None, None)?;
             let flags = number.max(0);
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
-            // use the platform's native MSVC/libuv values which differ from the
+            // use the platform's native MSVC values which differ from the
             // internal bun.O representation. Convert them here so downstream
             // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
-                return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
+                return Ok(Some(FileSystemFlags(bun_sys::windows::fs::O::to_bun_o(
+                    flags,
+                ))));
             }
             #[cfg(not(windows))]
             {
@@ -1829,25 +1831,24 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
-        use bun_libuv_sys::{
-            UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
-            UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
-        };
-        let kind_int: i32 = match self.kind {
-            DirentKind::File => UV_DIRENT_FILE,
-            DirentKind::BlockDevice => UV_DIRENT_BLOCK,
-            DirentKind::CharacterDevice => UV_DIRENT_CHAR,
-            DirentKind::Directory => UV_DIRENT_DIR,
+        /// `fs.constants.UV_DIRENT_*`
+        #[rustfmt::skip]
+        enum UvDirent { Unknown, File, Dir, Link, Fifo, Socket, Char, Block }
+        let kind = match self.kind {
+            DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UvDirent::Unknown,
+            DirentKind::File => UvDirent::File,
+            DirentKind::Directory => UvDirent::Dir,
+            DirentKind::SymLink => UvDirent::Link,
             // event_port is deliberate there.
-            DirentKind::EventPort | DirentKind::NamedPipe => UV_DIRENT_FIFO,
-            DirentKind::UnixDomainSocket => UV_DIRENT_SOCKET,
-            DirentKind::SymLink => UV_DIRENT_LINK,
-            DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
+            DirentKind::EventPort | DirentKind::NamedPipe => UvDirent::Fifo,
+            DirentKind::UnixDomainSocket => UvDirent::Socket,
+            DirentKind::CharacterDevice => UvDirent::Char,
+            DirentKind::BlockDevice => UvDirent::Block,
         };
         bun_jsc::from_js_host_call(global_object, || {
             Bun__Dirent__toJS(
                 global_object,
-                kind_int,
+                kind as i32,
                 self.name,
                 self.path,
                 cached_previous_path_jsvalue,

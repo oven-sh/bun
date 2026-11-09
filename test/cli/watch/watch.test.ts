@@ -368,6 +368,53 @@ it.skipIf(!isWindows)("--watch reports an error when its executable was renamed"
   }
 });
 
+it.skipIf(!isWindows)("--watch notices a change that is made as soon as the script has printed", async () => {
+  // It runs until the other end of stdin is closed, so nothing is left behind if the test ends early.
+  const script = (iter: number) => `Bun.stdin.text().then(() => process.exit()); console.log("iter ${iter}");`;
+  using dir = tempDir("watch-early-change", {
+    "script.js": script(0),
+    "driver.js": `
+      import { dlopen } from "bun:ffi";
+      import { writeFileSync } from "node:fs";
+
+      // With one processor for this process and all it starts, a thread that was just started is the last to run.
+      const kernel32 = dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } });
+      if (!kernel32.symbols.SetProcessAffinityMask(-1n, 1n)) throw new Error("SetProcessAffinityMask failed");
+
+      const texts = ${JSON.stringify([script(1), script(2)])};
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "--watch", "script.js"],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const decoder = new TextDecoder();
+      let output = "";
+      let iter = 0;
+      for await (const chunk of proc.stdout) {
+        output += decoder.decode(chunk, { stream: true });
+        if (!output.includes("iter " + iter + "\\n")) continue;
+        if (iter === texts.length) break;
+        writeFileSync("script.js", texts[iter++]);
+      }
+      proc.stdin.end();
+      // One change can restart the script more than once.
+      console.log([...new Set(output.trim().split("\\n"))].join(", "), "| exited with", await proc.exited);
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "driver.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("iter 0, iter 1, iter 2 | exited with 0\n");
+  expect(exitCode).toBe(0);
+});
+
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload
 // to the JS thread first (so listeners can run), but forces the reload itself

@@ -96,7 +96,7 @@ This is called when the event loop is active and needs to wait for I/O:
                │
                ▼
 ┌─────────────────────────────────────┐
-│  5. Drain timers (POSIX)            │ ← setTimeout/setInterval callbacks
+│  5. Drain timers                    │ ← setTimeout/setInterval callbacks
 └──────────────┬──────────────────────┘
                │
                ▼
@@ -279,10 +279,6 @@ When I/O becomes ready (socket readable/writable, file descriptor ready):
 
 ## setTimeout and setInterval Ordering
 
-Timers are handled differently based on platform:
-
-### POSIX (`event_loop.rs:396`)
-
 ```rust
 ctx.timer.drain_timers(ctx);
 ```
@@ -292,10 +288,6 @@ Timers are drained after I/O polling. Each timer callback:
 1. Is wrapped in `enter()`/`exit()`
 2. Triggers microtask draining after execution
 3. Can enqueue new tasks
-
-### Windows
-
-Uses the uv_timer_t mechanism integrated into the uSockets loop.
 
 ### Timer vs. setImmediate Ordering
 

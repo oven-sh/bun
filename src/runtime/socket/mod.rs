@@ -24,38 +24,10 @@ pub(crate) mod listener;
 #[path = "UpgradedDuplex.rs"]
 pub(crate) mod upgraded_duplex;
 
-#[cfg(windows)]
-#[path = "WindowsNamedPipe.rs"]
-pub(crate) mod windows_named_pipe;
-
-#[cfg(windows)]
-#[path = "WindowsNamedPipeContext.rs"]
-pub(crate) mod windows_named_pipe_context;
-
 mod bundled_root_certs;
 mod cert_files;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod system_certs;
-
-/// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
-/// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
-/// need to name `crate::server::server_config::SSLConfig`). The body is the
-/// same `as_usockets() → init_from_options()` round-trip the old local copy
-/// did; the duplicate module file is gone.
-pub(crate) mod ssl_wrapper {
-    pub(crate) use bun_uws::ssl_wrapper::*;
-
-    /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
-    /// tier can keep passing `&SSLConfig` directly.
-    pub(crate) fn init<T: Copy>(
-        ssl_options: &crate::server::server_config::SSLConfig,
-        is_client: bool,
-        handlers: Handlers<T>,
-    ) -> Result<SSLWrapper<T>, crate::Error> {
-        SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
-            .map_err(crate::Error::from)
-    }
-}
 
 pub(crate) mod udp_socket;
 
@@ -88,9 +60,6 @@ pub(crate) use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
     server_ctx_rejects_unauthorized, server_ctx_requests_cert,
 };
-
-#[cfg(windows)]
-pub(crate) use windows_named_pipe_context::WindowsNamedPipeContext;
 
 pub(crate) use udp_socket::UDPSocket;
 

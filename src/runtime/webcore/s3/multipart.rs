@@ -101,8 +101,8 @@ use bun_collections::IntegerBitSet;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
+use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JsCell};
 use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
@@ -124,7 +124,7 @@ use bun_collections::index_sort;
 declare_scope!(S3MultiPartUpload, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct MultiPartUpload {
+pub(crate) struct MultiPartUpload {
     pub(crate) root: Cell<Option<core::ptr::NonNull<MultiPartUpload>>>,
     pub(crate) queue: JsCell<Option<Box<[UploadPart]>>>,
     pub(crate) available: Cell<IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>>,
@@ -145,8 +145,6 @@ pub struct MultiPartUpload {
     /// The context of the script that started the upload: its requests are that script's.
     pub(crate) context: bun_jsc::ContextId,
     pub(crate) vm: &'static VirtualMachine,
-    // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
-    pub global_this: GlobalRef,
 
     pub(crate) buffered: JsCell<StreamBuffer>,
     /// Bytes accepted by `write*` (after encoding): what a streamed `Bun.write`/`writer.end()`
@@ -422,9 +420,7 @@ impl Drop for MultiPartUpload {
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
         self.poll_ref.with_mut(|poll_ref| {
-            poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
+            poll_ref.unref(bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js))
         });
     }
 }
@@ -611,9 +607,7 @@ impl MultiPartUpload {
             // Nothing more is expected for this upload (a rollback request keeps the loop alive
             // itself), and whoever still holds a ref may hold it for as long as the collector likes.
             self.poll_ref.with_mut(|poll_ref| {
-                poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
+                poll_ref.unref(bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js))
             });
 
             if old_state == State::MultipartCompleted {

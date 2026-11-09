@@ -1,15 +1,19 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
-import { existsSync, readFileSync } from "node:fs";
-import { constants } from "node:os";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { constants, tmpdir } from "node:os";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
+import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_stubs_constants";
 import source from "./uv-stub-stuff/uv_impl.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
-// We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+// uv/errno.h: -errno on POSIX, libuv's own numbers on Windows.
+const UV_EINVAL = isWindows ? -4071 : -constants.errno.EINVAL;
+const UV_EBUSY = isWindows ? -4082 : -constants.errno.EBUSY;
+const UV_ECANCELED = isWindows ? -4081 : -constants.errno.ECANCELED;
+
+describe("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -58,9 +62,13 @@ describe.if(!isWindows)("uv stubs", () => {
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
     // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs for a
     // root binding.gyp package; build:napi below is the single, explicit gyp build.
-    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+    // On Windows node-gyp runs under Bun, for the reason that test/v8/v8.test.ts gives.
+    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} ${isWindows ? ["--bun"] : []} build:napi`
+      .env(bunEnv)
+      .cwd(tempdir);
 
-    addonPath = path.join(tempdir, "./build/Release/uv_test.node");
+    // Forward slashes: some scripts below quote the path twice.
+    addonPath = path.join(tempdir, "./build/Release/uv_test.node").replaceAll("\\", "/");
     nativeModule = require(addonPath);
   });
 
@@ -77,7 +85,7 @@ describe.if(!isWindows)("uv stubs", () => {
   });
 
   test("mutex trylock", () => {
-    expect(() => nativeModule.testMutexTrylock()).not.toThrow();
+    expect(nativeModule.testMutexTrylock()).toBe(UV_EBUSY);
   });
 
   test("process IDs", () => {
@@ -88,6 +96,7 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(result.ppid).toBeGreaterThan(0);
     // The process ID should match Node's process.pid
     expect(result.pid).toBe(process.pid);
+    expect(result.ppid).toBe(process.ppid);
   });
 
   test("uv_once", () => {
@@ -109,6 +118,33 @@ describe.if(!isWindows)("uv stubs", () => {
 
     expect(result.smallRc).toBe(result.UV_ENOBUFS);
     expect(result.smallRequired).toBe(cwdBytes + 1);
+  });
+
+  test.each([
+    [
+      "whose name has characters of two, three and four bytes",
+      () => {
+        const directory = path.join(tempdir, "ß-ก-😀");
+        mkdirSync(directory, { recursive: true });
+        return directory;
+      },
+    ],
+    ["that is the root", () => path.parse(tempdir).root],
+  ])("uv_cwd in a directory %s", (_, getDirectory) => {
+    const directory = getDirectory();
+    process.chdir(directory);
+    expect(nativeModule.testCwd()).toMatchObject({
+      rc: 0,
+      cwd: directory,
+      size: Buffer.byteLength(directory),
+    });
+  });
+
+  const hasShare = isWindows && existsSync(`\\\\localhost\\${tmpdir()[0]}$${tmpdir().slice(2)}`);
+  test.skipIf(!hasShare)("uv_cwd in a directory that was entered by its \\\\?\\UNC\\ name", () => {
+    const share = `localhost\\${tempdir[0]}$\\${tempdir.slice(3)}`;
+    process.chdir("\\\\?\\UNC\\" + share);
+    expect(nativeModule.testCwd()).toMatchObject({ rc: 0, cwd: "\\\\" + share });
   });
 
   test("hrtime", () => {
@@ -149,7 +185,7 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("uv_tty_reset_mode after setRawMode", async () => {
+  test.skipIf(isWindows)("uv_tty_reset_mode after setRawMode", async () => {
     // The child runs in a pty so that setRawMode() takes the termios snapshot
     // uv_tty_reset_mode() restores. Restoring it succeeds (0); two threads
     // restoring it at once see UV_EBUSY (thousands of times per run on a
@@ -244,8 +280,14 @@ describe.if(!isWindows)("uv stubs", () => {
       unknownHandleSizeIsMinusOne: true,
       workSizeMatches: true,
       unknownReqSizeIsMinusOne: true,
-      // sizeof(uv_async_t) on 64-bit Unix. Bun's private fields must fit in it.
-      asyncSize: 128,
+      // sizeof in a 64-bit build, as in src/runtime/napi/uv.rs. Bun's private fields must fit.
+      asyncSize: isWindows ? 224 : 128,
+      idleSize: 120,
+      prepareSize: 120,
+      checkSize: 120,
+      timerSize: isWindows ? 160 : 152,
+      reqSize: isWindows ? 112 : 64,
+      workSize: isWindows ? 176 : 128,
       asyncName: "async",
       pipeName: "pipe",
       workName: "work",
@@ -255,12 +297,23 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("uv_get_osfhandle and uv_open_osfhandle return the fd unchanged", async () => {
+  test.concurrent.skipIf(isWindows)("uv_get_osfhandle and uv_open_osfhandle return the fd unchanged", async () => {
     const { stdout, stderr, exitCode } = await runInChild(
       `console.log(addon.testOsfhandle(2), addon.testOsfhandle(41));`,
     );
     expect(stderr).toBe("");
     expect(stdout).toBe("2 41\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(!isWindows)("uv_open_osfhandle makes an fd that node:fs can use", async () => {
+    // The report reaches stdout through the second fd for stdout's HANDLE.
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const fd = addon.testOsfhandle(1);
+      require("node:fs").writeSync(fd, JSON.stringify({ isNewFd: fd > 2, notOpen: addon.testOsfhandle(41) }));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ isNewFd: true, notOpen: -1 });
     expect(exitCode).toBe(0);
   });
 
@@ -279,22 +332,21 @@ describe.if(!isWindows)("uv stubs", () => {
   test.concurrent("returns UV_EINVAL for a missing loop, a missing callback or the wrong handle type", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testErrors()));`);
     expect(stderr).toBe("");
-    const EINVAL = -constants.errno.EINVAL;
     expect(JSON.parse(stdout)).toEqual([
-      EINVAL, // uv_async_init without a loop
-      EINVAL, // uv_check_init without a loop
-      EINVAL, // uv_timer_init without a loop
-      EINVAL, // uv_queue_work without a work_cb
-      EINVAL, // uv_cancel on a request that isn't a work request
-      EINVAL, // uv_idle_start without a callback
-      EINVAL, // uv_timer_start without a callback
-      EINVAL, // uv_timer_again on a timer that was never started
-      EINVAL, // uv_prepare_start on an idle handle
-      EINVAL, // uv_prepare_stop on an idle handle
-      EINVAL, // uv_idle_start on a timer
-      EINVAL, // uv_timer_start on an idle handle
-      EINVAL, // uv_timer_stop on an idle handle
-      EINVAL, // uv_timer_again on an idle handle
+      UV_EINVAL, // uv_async_init without a loop
+      UV_EINVAL, // uv_check_init without a loop
+      UV_EINVAL, // uv_timer_init without a loop
+      UV_EINVAL, // uv_queue_work without a work_cb
+      UV_EINVAL, // uv_cancel on a request that isn't a work request
+      UV_EINVAL, // uv_idle_start without a callback
+      UV_EINVAL, // uv_timer_start without a callback
+      UV_EINVAL, // uv_timer_again on a timer that was never started
+      UV_EINVAL, // uv_prepare_start on an idle handle
+      UV_EINVAL, // uv_prepare_stop on an idle handle
+      UV_EINVAL, // uv_idle_start on a timer
+      UV_EINVAL, // uv_timer_start on an idle handle
+      UV_EINVAL, // uv_timer_stop on an idle handle
+      UV_EINVAL, // uv_timer_again on an idle handle
     ]);
     expect(exitCode).toBe(0);
   });
@@ -417,8 +469,8 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(stderr).toBe("");
     // uv_cancel races with the pool picking up the request, so either outcome
     // is valid. 124 is 127 without the two work_cb bits.
-    const cancelled = `cancel 0\nafter ${-constants.errno.ECANCELED} 124\n`;
-    const tooLate = `cancel ${-constants.errno.EBUSY}\nafter 0 127\n`;
+    const cancelled = `cancel 0\nafter ${UV_ECANCELED} 124\n`;
+    const tooLate = `cancel ${UV_EBUSY}\nafter 0 127\n`;
     expect([cancelled, tooLate]).toContain(stdout);
     expect(exitCode).toBe(0);
   });

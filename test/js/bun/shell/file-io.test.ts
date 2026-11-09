@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
@@ -124,6 +124,43 @@ describe("IOWriter file output redirection", () => {
       } finally {
         fs.closeSync(holder);
       }
+    });
+
+    // The code page belongs to every process on the console, and `chcp` in a script changes it.
+    test.concurrent.skipIf(!isWindows)("a builtin writes to a console whatever its code page is", async () => {
+      const decoder = new TextDecoder();
+      let text = "";
+      const done = Promise.withResolvers<void>();
+      await using terminal = new Bun.Terminal({
+        data(_, chunk: Uint8Array) {
+          text += decoder.decode(chunk, { stream: true });
+          if (text.includes("done")) done.resolve();
+        },
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { $ } from "bun";
+            import { dlopen } from "bun:ffi";
+            dlopen("kernel32.dll", { SetConsoleOutputCP: { args: ["u32"], returns: "i32" } }).symbols.SetConsoleOutputCP(437);
+            await $\`echo \${"héllo → 日本"}\`;
+            await $\`ls \${"/does/not/exist/日本"}\`.nothrow();
+            await $\`echo done\`;
+            process.stdin.resume();
+          `,
+        ],
+        env: bunEnv,
+        terminal,
+      });
+      proc.exited.then(code => done.reject(new Error(`exited with code ${code}: ${JSON.stringify(text)}`)));
+      await done.promise;
+      const lines = Bun.stripANSI(text)
+        .split(/[\r\n]+/)
+        .map(line => line.trimEnd())
+        .filter(Boolean);
+      expect(lines.slice(0, 2)).toEqual(["héllo → 日本", "ls: /does/not/exist/日本: No such file or directory"]);
     });
   });
 

@@ -49,7 +49,7 @@ use core::marker::ConstParamTy;
 use core::mem::{MaybeUninit, size_of};
 
 // Standalone PE: depend ONLY on `bun_windows_sys` (leaf, no native C, no
-// `#[no_mangle]` exports) so the link has no libuv/simdutf/ICU roots and the
+// `#[no_mangle]` exports) so the link has no simdutf/ICU roots and the
 // binary stays tiny. `crate::compat`
 // re-exports `bun_windows_sys::*` and locally declares the few items
 // (`CreateProcessW`, `STARTUPINFOW`, `TEB`/`teb()`, …) that otherwise live in

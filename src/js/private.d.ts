@@ -111,7 +111,9 @@ declare module "bun" {
   // stdio entries, and `onDisconnect` told whether the channel closed cleanly.
   namespace Spawn {
     // `globalThis.`: inside this module the bare name is Bun's narrower `ArrayBufferView` alias.
-    type NodeStdio = (Bun.SpawnOptions.Writable | globalThis.ArrayBufferView | "ipc" | "socket-fd")[];
+    type NodeStdio = (
+      Bun.SpawnOptions.Writable | globalThis.ArrayBufferView | $Bindgen.TCPSocket | "ipc" | "socket-fd" | "overlapped"
+    )[];
     interface NodeSpawnOptions extends Omit<
       Bun.Spawn.SpawnOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
       "stdio" | "onDisconnect"
@@ -1068,8 +1070,6 @@ declare namespace $Bindgen {
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
     setFlowing(flowing: boolean): void;
-    /** `undefined`, or the system error. */
-    setRawMode(enabled: boolean): Error | undefined;
   }
 
   // src/runtime/api/bun/subprocess.rs. What `Bun.spawn` answers; native code hands it to builtins as an opaque owner.

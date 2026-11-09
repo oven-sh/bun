@@ -3,7 +3,6 @@
 //! *NOTE* This type is reference counted via `Rc`; see the `Drop` impl note.
 
 use core::cell::UnsafeCell;
-#[cfg(not(windows))]
 use core::ffi::c_void;
 
 use bun_sys::{self as sys, Fd};
@@ -47,14 +46,11 @@ struct State {
     /// True while `start()` is on the stack. An error reported meanwhile goes to `start_err`.
     starting: bool,
     start_err: Option<sys::Error>,
+    /// Why a read failed. The reader never reads again after that, so later listeners get the same error.
+    read_err: Option<sys::Error>,
     /// The reader is paused until a listener calls `resume()` (see `nobody_ready`).
     paused: bool,
     evtloop: EventLoopHandle,
-    #[cfg(windows)]
-    is_reading: bool,
-    /// True after EOF. The Windows reader closes its source and the fd at EOF, so later listeners can't read.
-    #[cfg(windows)]
-    reached_eof: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
     /// without unsafe Rc-pointer reconstruction. Set via `Rc::new_cyclic` in
     /// `init()` (the sole constructor).
@@ -90,12 +86,7 @@ impl IOReader {
         // held by the bun_io read loop never overlaps a `&mut State` derived in a
         // vtable callback (see struct doc comment).
         //
-        // Don't call this from the done/error callback bodies below. `WindowsBufferedReader`
-        // (and `PosixBufferedReader::start()` when registration fails synchronously)
-        // invokes them while a `&mut ReaderImpl` is live. The POSIX poll dispatch
-        // doesn't borrow the reader (raw pointer, copied vtable), so a command
-        // started from a done/error notification can `start()` a new read.
-        // Both readers dispatch the chunk callback through a raw pointer, so it can pause.
+        // Not from the done/error callbacks: `start()` calls them with a `&mut ReaderImpl` live when registration fails at once.
         unsafe { &mut *self.reader.get() }
     }
 
@@ -121,16 +112,9 @@ impl IOReader {
 
     pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> std::rc::Rc<IOReader> {
         let mut reader = ReaderImpl::init::<IOReader>();
-        #[cfg(not(windows))]
-        {
-            reader
-                .flags
-                .remove(bun_io::pipe_reader::PosixFlags::CLOSE_HANDLE);
-        }
-        #[cfg(windows)]
-        {
-            reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
-        }
+        reader
+            .flags
+            .remove(bun_io::pipe_reader::ReaderFlags::CLOSE_HANDLE);
         let this = std::rc::Rc::new_cyclic(|w| IOReader {
             reader: UnsafeCell::new(reader),
             state: UnsafeCell::new(State {
@@ -139,12 +123,9 @@ impl IOReader {
                 readers: Readers::new(),
                 starting: false,
                 start_err: None,
+                read_err: None,
                 paused: false,
                 evtloop,
-                #[cfg(windows)]
-                is_reading: false,
-                #[cfg(windows)]
-                reached_eof: false,
                 self_weak: std::rc::Weak::clone(w),
                 read_guards: Vec::new(),
                 interp: None,
@@ -162,6 +143,13 @@ impl IOReader {
         this.reader().set_parent(parent.cast_mut().cast());
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
+    }
+
+    /// Whether `fd` is a pipe that was made for the event loop.
+    #[cfg(windows)]
+    pub(crate) fn set_nonblocking(&self, nonblocking: bool) {
+        let flag = bun_io::pipe_reader::ReaderFlags::NONBLOCKING;
+        self.reader().flags.set(flag, nonblocking);
     }
 
     /// `interp` must outlive this reader (it owns the IO struct that holds this `Rc`).
@@ -193,22 +181,11 @@ impl IOReader {
         self.state().evtloop.as_event_loop_ctx()
     }
 
-    /// Only does things on windows.
-    #[inline]
-    fn set_reading(&self, reading: bool) {
-        #[cfg(windows)]
-        {
-            self.state().is_reading = reading;
-        }
-        let _ = reading;
-    }
-
     /// Idempotent function to start the reading. The caller's trampoline is on the stack,
     /// so a failure to start is returned as a continuation (see `finish_listeners`).
     pub(crate) fn start(&self) -> Yield {
-        #[cfg(windows)]
-        if self.state().reached_eof {
-            return self.finish_listeners(None);
+        if let Some(err) = self.state().read_err.clone() {
+            return self.finish_listeners(&err);
         }
         self.state().paused = false;
         self.state().starting = true;
@@ -217,14 +194,10 @@ impl IOReader {
         s.starting = false;
         match s.start_err.take().map_or(result, Err) {
             Ok(()) => Yield::suspended(),
-            Err(e) => {
-                self.set_reading(false);
-                self.finish_listeners(Some(&e))
-            }
+            Err(e) => self.finish_listeners(&e),
         }
     }
 
-    #[cfg(not(windows))]
     fn start_impl(&self) -> sys::Result<()> {
         let r = self.reader();
         r.unpause();
@@ -235,16 +208,6 @@ impl IOReader {
         }
         let fd = self.state().fd;
         r.start(fd, true)
-    }
-
-    #[cfg(windows)]
-    fn start_impl(&self) -> sys::Result<()> {
-        let s = self.state();
-        if s.is_reading {
-            return Ok(());
-        }
-        s.is_reading = true;
-        self.reader().start_with_current_pipe()
     }
 
     /// A listener has written the chunks it got. Reads on if the reader was paused for that.
@@ -284,7 +247,6 @@ impl IOReader {
         // `state()` accesses (and `run_yield`'s re-read of `interp`) see live
         // memory.
         let _keepalive = self.keepalive();
-        self.set_reading(false);
         // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
         // both re-derive `state()` (and the interpreter callback may re-enter
         // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
@@ -309,12 +271,6 @@ impl IOReader {
             self.reader().pause();
             return false;
         }
-        if should_continue && !self.state().readers.is_empty() {
-            self.set_reading(true);
-            // Don't re-arm here (Windows doesn't allow it, see `reader()`). The
-            // caller re-arms after we return (on posix, based on the `bool` below),
-            // and `WindowsBufferedReader::on_read` clears the chunk buffer.
-        }
         should_continue
     }
 
@@ -322,11 +278,11 @@ impl IOReader {
         // `dispatch_reader_done` may drop the last external Rc; keep `self`
         // alive across the loop.
         let _keepalive = self.keepalive();
-        self.set_reading(false);
         if self.state().starting {
             self.state().start_err = Some(err.clone());
             return;
         }
+        self.state().read_err = Some(err.clone());
         let interp = self.state().interp;
         for r in self.take_readers() {
             // Re-derive a fresh SystemError per callee (see
@@ -342,26 +298,20 @@ impl IOReader {
         // mid-loop and `run_yield`'s `state().interp` reads 0xdfdf poison.
         // Hold a strong ref across the body.
         let _keepalive = self.keepalive();
-        self.set_reading(false);
-        // Set this before notifying listeners, because a notification can start the next `cat`.
-        #[cfg(windows)]
-        {
-            self.state().reached_eof = true;
-        }
         let interp = self.state().interp;
         for r in self.take_readers() {
             self.run_yield(dispatch_reader_done(r, None, interp));
         }
     }
 
-    /// Reports EOF (`None`) or an error to the listeners from under `start()`. Returns the last
+    /// Reports an error to the listeners from under `start()`. Returns the last
     /// continuation instead of running it, so consecutive `cat`s don't nest `Yield::run` calls.
-    fn finish_listeners(&self, err: Option<&sys::Error>) -> Yield {
+    fn finish_listeners(&self, err: &sys::Error) -> Yield {
         let _keepalive = self.keepalive();
         let interp = self.state().interp;
         let mut readers = self.take_readers();
         let last = readers.pop();
-        let done = |r| dispatch_reader_done(r, err.map(sys::Error::to_shell_system_error), interp);
+        let done = |r| dispatch_reader_done(r, Some(err.to_shell_system_error()), interp);
         for r in readers {
             self.run_yield(done(r));
         }
@@ -407,7 +357,6 @@ bun_io::impl_buffered_reader_parent! {
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done_cb();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
-    loop_           = |this| (*this).io_evtloop().native_loop();
     event_loop      = |this| (*this).io_evtloop();
     ref_            = |this| (*this).push_read_guard();
     deref           = |this| drop((*this).pop_read_guard());
@@ -425,23 +374,13 @@ impl Drop for IOReader {
         let s = self.state.get_mut();
         let r = self.reader.get_mut();
         if s.fd != Fd::INVALID {
-            #[cfg(windows)]
-            {
-                // windows reader closes the file descriptor
-                if r.source.is_some() && !r.source.as_ref().is_some_and(|src| src.is_closed()) {
-                    r.close_impl::<false>();
-                }
+            // We cleared CLOSE_HANDLE in init(), so reader Drop will not
+            // return the FilePoll to its pool. Do it explicitly (without
+            // closing the fd — we own that and close it ourselves below).
+            if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
+                r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
             }
-            #[cfg(not(windows))]
-            {
-                // We cleared CLOSE_HANDLE in init(), so reader Drop will not
-                // return the FilePoll to its pool. Do it explicitly (without
-                // closing the fd — we own that and close it ourselves below).
-                if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                    r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
-                }
-                let _ = sys::close(s.fd);
-            }
+            let _ = sys::close(s.fd);
         }
         r.disable_keeping_process_alive(());
         // `reader` Drop handles its own deinit.

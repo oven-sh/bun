@@ -940,10 +940,22 @@ export function typesOnlyFlag(cfg: CodegenFields, sources: Sources): string {
     .join(",")}`;
 }
 
+/**
+ * `<crate>=<a.bind.ts>` per line, every schema. A file because the list is longer than the 8191 characters cmd.exe
+ * accepts. Written at configure time, like cxx-sources.txt.
+ */
+export function bindgenSourcesFile(cfg: CodegenFields, sources: Sources): string {
+  mkdirSync(cfg.buildDir, { recursive: true });
+  const file = resolve(cfg.buildDir, "bindgen-sources.txt");
+  writeIfChanged(file, sources.bindgen.map(src => `${crateOf(src)}=${src}\n`).join(""));
+  return file;
+}
+
 /** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
 export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
   const crates = new Map(sources.bindgen.map(src => [src, crateOf(src)]));
+  const sourcesFile = bindgenSourcesFile(cfg, sources);
   const compiled = sources.bindgen.filter(src => isCompiled(cfg, src));
 
   // What bindgen.ts writes follows from the names and places of its inputs alone.
@@ -968,7 +980,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
     inputs: [...sources.bindgen, ...sources.bindgenCodegen],
-    implicitInputs: [...declaredTypeInputs(cfg), ...guardInputs({ cfg, engine })],
+    implicitInputs: [sourcesFile, ...declaredTypeInputs(cfg), ...guardInputs({ cfg, engine })],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -976,7 +988,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
       args: shJoin(cfg, [
         script,
         // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
-        `--sources=${sources.bindgen.map(src => `${crates.get(src)}=${src}`).join(",")}`,
+        `--sources-file=${sourcesFile}`,
         typesOnlyFlag(cfg, sources),
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,

@@ -8,10 +8,6 @@ use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
 use crate::{BundleV2, Transpiler};
 
-/// Used to keep the bundle thread from spinning on Windows
-#[cfg(windows)]
-extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
-
 /// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
 /// block `spawn()` until the bundle thread has initialized its `Waker`.
 // Re-exports `bun_threading::ResetEvent` (futex-backed); the futex impl
@@ -185,7 +181,6 @@ impl<C: CompletionStruct> BundleThread<C> {
     unsafe fn thread_main(instance: *mut Self) {
         Output::Source::configure_named_thread(zstr!("Bundler"));
 
-        // On Windows the waker is this thread's libuv loop, so create it here, not in `spawn()`.
         let waker = match Async::Waker::init() {
             Ok(waker) => waker,
             Err(err) => {
@@ -208,19 +203,6 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         // Unblock the calling thread so it can continue.
         this.ready_event.set();
-
-        // The libuv Timer lives on stack for the lifetime of this never-returning fn.
-        // It MUST be declared at function scope (not inside the `#[cfg(windows)] { ... }`
-        // block below) because `timer.init()`/`timer.start()` register `&timer`'s address
-        // into the uv loop's intrusive handle queue / timer min-heap, and `waker.wait()`
-        // (→ `uv_run`) in the `loop {}` below dereferences that address.
-        #[cfg(windows)]
-        let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
-        #[cfg(windows)]
-        {
-            timer.init(this.waker.uv_loop());
-            timer.start(u64::MAX, u64::MAX, Some(timer_callback));
-        }
 
         let mut has_bundled = false;
         let mut generation: bun_core::Generation = 0;

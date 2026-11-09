@@ -1658,15 +1658,6 @@ describe.concurrent("bun lint", () => {
             ["//server/share", "a"],
             ["C:/", ""],
           ],
-          namespaced: [
-            ["C:/a/b"],
-            ["C:\\a\\b"],
-            ["C:/"],
-            ["C:/a/../b/./c"],
-            ["//server/share/a"],
-            ["//server/share/"],
-            ["\\\\?\\C:\\a"],
-          ],
         },
         posix: {
           resolve: [
@@ -1699,7 +1690,6 @@ describe.concurrent("bun lint", () => {
       ] as const) {
         const all = Object.entries(cases[style]).flatMap(([name, list]) => list.map(([a, b = "."]) => [name, a, b]));
         const expected = all.map(([name, a, b]) => {
-          if (name === "namespaced") return path.toNamespacedPath(a);
           if (name === "normalize") return path.normalize(a).replaceAll("\\", "/");
           const answer = name === "dirname" ? path.dirname(a) : path[name as "resolve" | "relative" | "join"](a, b);
           return answer.replaceAll("\\", "/");

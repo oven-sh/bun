@@ -550,7 +550,7 @@ where
         // With --watch-kill-signal listeners registered, reload via the event
         // loop so the JS thread emits them before execve (node runs the child's
         // handlers on kill); otherwise execve immediately (node's default kill).
-        if RELOAD_IMMEDIATELY && !crate::posix_signal_handle::watch_kill_signal_has_listeners() {
+        if RELOAD_IMMEDIATELY && !crate::signal_handle::watch_kill_signal_has_listeners() {
             crate::node_compile_cache::persist_now();
             Output::flush();
             flush_changed_paths_for_reload();
@@ -614,7 +614,7 @@ fn arm_watch_reload_grace_timer() {
         return;
     }
     let reload_started = bun_core::is_process_reload_in_progress_on_another_thread;
-    let handler_running = crate::posix_signal_handle::is_emitting_watch_kill_signal;
+    let handler_running = crate::signal_handle::is_emitting_watch_kill_signal;
     let force = || -> ! {
         // Same as the sibling reload paths: execve never reaches on_exit, so
         // flush the compile cache first (safe off the JS thread; generation

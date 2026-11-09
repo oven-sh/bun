@@ -90,6 +90,12 @@
 #define HAVE_RSA_PSS 1
 
 #if OS(WINDOWS)
+#include <stdint.h>
+#if !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
+typedef intptr_t ssize_t;
+#define _SSIZE_T_
+#define _SSIZE_T_DEFINED
+#endif
 #define BUN_DECLARE_HOST_FUNCTION(name) extern "C" __attribute__((visibility("default"))) JSC_DECLARE_HOST_FUNCTION(name)
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" __attribute__((visibility("default"))) JSC_DEFINE_HOST_FUNCTION(name, args)
 #else

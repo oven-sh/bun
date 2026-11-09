@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "bun";
+import { $, spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { release } from "node:os";
@@ -160,6 +160,22 @@ describe.concurrent("process-stdio", () => {
     );
   });
 
+  test("a write to process.stdout or process.stderr queues no tick", async () => {
+    const script = `
+      const { stdout, stderr, nextTick } = process;
+      const queued = [];
+      process.nextTick = (...args) => queued.push(args);
+      stdout.write("out ");
+      stderr.write("err");
+      process.nextTick = nextTick;
+      console.log(queued.length);
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "out 0\n", stderr: "err" });
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(isWindows)("process.stdout still writes when it's first read with no file descriptors left", async () => {
     const script = `
       const fs = require("node:fs");
@@ -184,7 +200,123 @@ describe.concurrent("process-stdio", () => {
     expect({ stdout, stderr }).toEqual({ stdout: "written\n", stderr: "callback null\n" });
     expect(exitCode).toBe(0);
   });
+
+  // The reader takes nothing from the pipe until the writer's event loop has shown that it runs.
+  test.each([
+    ["fs.write(1, data, callback)", `fs.write(1, data, () => {});`],
+    ["fs.writev(1, [data], callback)", `fs.writev(1, [data], () => {});`],
+    ["Bun.write(Bun.stdout, data)", `Bun.write(Bun.stdout, data);`],
+  ])("%s with more than the pipe holds leaves the event loop running", async (_, write) => {
+    using dir = tempDir("stdout-write-leaves-the-loop", {
+      "writer.js": `
+        const fs = require("node:fs");
+        const data = Buffer.alloc(1024 * 1024, "x");
+        ${write}
+        setImmediate(() => fs.writeFileSync("loop-runs", ""));
+      `,
+      "reader.js": `
+        const fs = require("node:fs");
+        const deadline = Date.now() + 30_000;
+        while (!fs.existsSync("loop-runs") && Date.now() < deadline) Bun.sleepSync(5);
+        const loopRan = fs.existsSync("loop-runs");
+        let total = 0;
+        for await (const chunk of Bun.stdin.stream()) total += chunk.length;
+        console.log(JSON.stringify({ loopRan, total }));
+      `,
+    });
+    const { stdout, exitCode } = await $`${bunExe()} writer.js | ${bunExe()} reader.js`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .quiet()
+      .nothrow();
+    expect({ ...JSON.parse(stdout.toString()), exitCode }).toEqual({ loopRan: true, total: 1024 * 1024, exitCode: 0 });
+  });
 });
+
+describe.concurrent.if(isWindows)(
+  "like in Node, a write to process.stdout/stderr is over when it returns if they are pipes",
+  () => {
+    describe.each(["stdout", "stderr"] as const)("process.%s", name => {
+      test.each([
+        ["process.exit(0)", 0],
+        ["throw new Error('thrown')", 1],
+      ])("%s right after a write loses nothing", async (ending, expectedExitCode) => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", `process.${name}.write(Buffer.alloc(1_000_000, "x")); ${ending};`],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect((name === "stdout" ? stdout : stderr).match(/^x*/)![0].length).toBe(1_000_000);
+        expect(exitCode).toBe(expectedExitCode);
+      });
+    });
+
+    test("writes stay in order with those of console.log() and fs.writeSync()", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        process.stdout.write(Buffer.alloc(300_000, "A"));
+        console.log("B");
+        process.stdout.write("CCC");
+        require("node:fs").writeSync(1, "D");
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(Array.from(stdout.matchAll(/(.)\1*/gs), ([run, char]) => [char, run.length])).toEqual([
+        ["A", 300_000],
+        ["B", 1],
+        ["\n", 1],
+        ["C", 3],
+        ["D", 1],
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The mode belongs to the end of the pipe, so whoever shares the end can set it: Cygwin, Ruby and Python do. To a write
+    // that does not fit at once, such an end answers with success and 0 bytes written.
+    test.each([
+      ["process.stdout.write()", `process.stdout.write(data);`],
+      ["console.log()", `for (let i = 0; i < 4; i++) console.log(data.toString("latin1", 0, 74_999));`],
+      ["fs.writeSync()", `for (let written = 0; written < data.length; ) written += fs.writeSync(1, data, written);`],
+      ["fs.write()", `await new Promise(done => fs.write(1, data, done));`],
+      ["Bun.write()", `await Bun.write(Bun.stdout, data);`],
+      ["Bun.stdout.writer()", `const writer = Bun.stdout.writer(); writer.write(data); await writer.end();`],
+    ])("%s loses nothing on a pipe in the mode PIPE_NOWAIT", async (_, script) => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const fs = require("node:fs");
+        const { dlopen, ptr } = require("bun:ffi");
+        const { GetStdHandle, SetNamedPipeHandleState } = dlopen("kernel32.dll", {
+          GetStdHandle: { args: ["i32"], returns: "u64" },
+          SetNamedPipeHandleState: { args: ["u64", "ptr", "ptr", "ptr"], returns: "i32" },
+        }).symbols;
+        const PIPE_NOWAIT = 1;
+        if (!SetNamedPipeHandleState(GetStdHandle(-11), ptr(new Uint32Array([PIPE_NOWAIT])), null, null)) throw new Error();
+        const data = Buffer.alloc(300_000, "x");
+        ${script}
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.replaceAll("\n", "x").match(/^x*$/)![0].length).toBe(300_000);
+      expect(exitCode).toBe(0);
+    });
+  },
+);
 
 // Like Node, process.stdout/stderr put O_NONBLOCK on fd 1/2 when they are pipes or sockets. The flag lives on the shared open
 // file description, so spawn clears it again for a child's fds 0-2 (libuv does the same), and the native console writer must

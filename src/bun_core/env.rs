@@ -21,7 +21,6 @@ pub const IS_NATIVE: bool = matches!(BUILD_TARGET, BuildTarget::Native);
 const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
 pub(crate) const IS_BROWSER: bool = IS_WASM;
 pub const IS_WINDOWS: bool = cfg!(windows);
-pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 /// `true` only for the `dev` cargo profile (Debug buildtype). Keyed on
 /// `--cfg=bun_debug` (set by `scripts/build/rust.ts` when `cfg.debug`), not on
 /// `cfg!(debug_assertions)`: release-asan / release-assertions builds enable

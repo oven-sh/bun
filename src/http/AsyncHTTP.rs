@@ -2,7 +2,6 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
-use bun_core::FeatureFlags;
 use bun_core::MutableString;
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
@@ -360,15 +359,6 @@ impl Preconnect {
 }
 
 pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
-    if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-        if is_url_owned {
-            // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
-            // global-allocator `Box<[u8]>` we now own.
-            unsafe { free_owned_href(url.href) };
-        }
-        return;
-    }
-
     // Write-before-read: `fetch.preconnect` reaches here without going
     // through any path that calls `HTTPThread::init`, so `schedule()` below
     // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing

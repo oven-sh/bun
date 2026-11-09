@@ -4255,8 +4255,9 @@ const mayStillSettle = [
   "CompressionStream",
   // Computed inside the call; the callback is a process.nextTick.
   "crypto.randomInt",
-  // A file sink's writes complete inside write() on POSIX, from the event loop on Windows.
-  ...(isWindows ? [] : ["Bun.file().writer(): write, end", "Bun.spawn stdin: write, end"]),
+  // A file sink's writes complete inside write().
+  "Bun.file().writer(): write, end",
+  "Bun.spawn stdin: write, end",
 ];
 
 describe.concurrent(

@@ -21,10 +21,10 @@ use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::DuplexUpgradeContext;
-use super::ssl_wrapper::SSLWrapper;
 use crate::generated_bindgen::socket_body::js_TLSSocket;
 use crate::generated_bindgen::upgraded_duplex::{self as listeners, DuplexChunk};
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use bun_uws::ssl_wrapper::{self, SSLWrapper};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
@@ -558,8 +558,8 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
-    fn wrapper_handlers(&self) -> super::ssl_wrapper::Handlers<*mut UpgradedDuplex> {
-        super::ssl_wrapper::Handlers {
+    fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut UpgradedDuplex> {
+        ssl_wrapper::Handlers {
             ctx: std::ptr::from_ref(self).cast_mut(),
             on_open: Self::on_open,
             on_handshake: Self::on_handshake,
@@ -585,14 +585,18 @@ impl UpgradedDuplex {
         is_client: bool,
         verify: ServerVerify,
     ) -> Result<(), crate::Error> {
-        let wrapper = super::ssl_wrapper::init(ssl_options, is_client, self.wrapper_handlers())?;
+        let wrapper = SSLWrapper::init_from_options(
+            &ssl_options.as_usockets(),
+            is_client,
+            self.wrapper_handlers(),
+        )?;
         self.install_and_start(wrapper, verify);
         Ok(())
     }
 
     /// Mirrors `start_tls` but skips the
     /// `SSLConfig.asUSockets() → us_ssl_ctx_from_options()` round-trip so a
-    /// memoised `SecureContext` can be reused on the duplex/named-pipe path.
+    /// memoised `SecureContext` can be reused on the duplex path.
     pub(crate) fn start_tls_with_ctx(
         &self,
         ctx: bun_boringssl_sys::OwnedSslCtx,
@@ -754,8 +758,7 @@ impl UpgradedDuplex {
         // `flush_pending_events` UAFs into BoringSSL. `deinit()` alone leaves
         // `ssl == None` / `closed_notified` readable so those guards work; the
         // `Option` is dropped for real when the parent `DuplexUpgradeContext`
-        // is freed, by the hop it queues once no entry point holds it. See
-        // WindowsNamedPipe's WRAPPER_BUSY for the sibling pattern.
+        // is freed, by the hop it queues once no entry point holds it.
         if let Some(w) = self.wrapper_ref() {
             w.deinit();
         }

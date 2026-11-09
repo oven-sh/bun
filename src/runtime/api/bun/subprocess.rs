@@ -11,7 +11,6 @@ use bun_jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
-#[cfg(not(windows))]
 use bun_sys::FdExt as _;
 use bun_sys::{self, SignalCode};
 use enumset::{EnumSet, EnumSetType};
@@ -20,17 +19,12 @@ use enumset::{EnumSet, EnumSetType};
 // external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
 // platform-thin `Stdio`/`Status` shims used by `bun.spawnSync` callers.
 use crate::api::bun::Terminal;
-#[cfg(windows)]
-use crate::api::bun_process as spawn_process;
-#[cfg(not(windows))]
 use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::{Process, Rusage, Status};
 use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, FileSink};
-#[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
 
 #[path = "subprocess/ResourceUsage.rs"]
 pub(crate) mod resource_usage;
@@ -58,18 +52,12 @@ bun_output::declare_scope!(IPC, visible);
 
 pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
 
-/// Platform-dependent stdio result type.
 pub(crate) use bun_spawn::subprocess::StdioResult;
-
-#[cfg(windows)]
-type StdioPipeItem = StdioResult;
-#[cfg(not(windows))]
-type StdioPipeItem = ExtraPipe;
 
 pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
 impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::file_poll::poll_tag::STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -102,7 +90,7 @@ pub struct Subprocess<'a> {
     pub(crate) stdin: JsCell<Writable<'a>>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
-    pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
+    pub(crate) stdio_pipes: JsCell<Vec<ExtraPipe>>,
     pub(crate) pid_rusage: Cell<Option<Rusage>>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -240,19 +228,6 @@ bitflags::bitflags! {
     }
 }
 
-// `StdioResult` is `Option<Fd>` (Copy) on unix but a non-Copy enum on windows;
-// a fn would have to pick by-value (moves on windows) or by-ref
-// (clippy::trivially_copy_pass_by_ref on unix).
-macro_rules! assert_stdio_result {
-    ($result:expr) => {{
-        #[cfg(all(debug_assertions, unix))]
-        if let Some(fd) = &$result {
-            debug_assert!(fd.is_valid());
-        }
-    }};
-}
-pub(crate) use assert_stdio_result;
-
 bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live.
     let this = unsafe { &*this };
@@ -277,7 +252,7 @@ bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, caus
     if !this.has_exited() {
         this.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
     }
-    let _ = this.try_kill(signal);
+    let _ = this.must_kill(signal);
 });
 
 bun_spawn::link_impl_ProcessExit! {
@@ -312,15 +287,11 @@ impl Subprocess<'_> {
 
             #[cfg(windows)]
             {
-                let rusage =
-                    if let spawn_process::Poller::Uv(uv_proc) = &mut self.process_mut().poller {
-                        Some(spawn_process::uv_getrusage(uv_proc))
-                    } else {
-                        None
-                    };
-                if let Some(r) = rusage {
-                    self.pid_rusage.set(Some(r));
-                    break 'brk r;
+                let handle = self.process().handle;
+                if handle.is_valid() {
+                    let rusage = bun_spawn_sys::windows::rusage(handle.native());
+                    self.pid_rusage.set(Some(rusage));
+                    break 'brk rusage;
                 }
             }
 
@@ -550,7 +521,7 @@ impl Subprocess<'_> {
         self.stdout.with_mut(|s| s.unref());
         self.stderr.with_mut(|s| s.unref());
 
-        match self.try_kill(self.kill_signal) {
+        match self.must_kill(self.kill_signal) {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
                 // Signal 9 should always be fine, but just in case that somehow fails.
@@ -589,12 +560,12 @@ impl Subprocess<'_> {
         }
         self.event_loop_timer
             .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-        let _ = self.try_kill(self.kill_signal);
+        let _ = self.must_kill(self.kill_signal);
     }
 
     pub(crate) fn on_max_buffer(&self, kind: MaxBuf::Kind) {
         self.exited_due_to_maxbuf.set(Some(kind));
-        let _ = self.try_kill(self.kill_signal);
+        let _ = self.must_kill(self.kill_signal);
     }
 
     /// `MaxBuf::Owner::on_overflow` target. Routes straight from the `MaxBuf`
@@ -673,6 +644,12 @@ impl Subprocess<'_> {
         self.process_mut().kill(sig.0)
     }
 
+    /// For a timeout and the like. As in Node.js, a child that cannot be sent `sig` (most signals on Windows) is ended nevertheless.
+    pub(crate) fn must_kill(&self, sig: SignalCode) -> bun_sys::Result<()> {
+        self.try_kill(sig)
+            .or_else(|_| self.try_kill(SignalCode::SIGKILL))
+    }
+
     fn has_called_getter(&self, getter: ObservableGetter) -> bool {
         self.observable_getters.get().contains(getter)
     }
@@ -733,7 +710,7 @@ impl Subprocess<'_> {
                 callback.to_js(),
             ],
             context,
-            self.pid() as u32,
+            Some(self.pid() as u32),
         )
     }
 
@@ -771,71 +748,26 @@ impl Subprocess<'_> {
         array.push(global, JSValue::NULL)?; // TODO: align this with options
         array.push(global, JSValue::NULL)?; // TODO: align this with options
 
-        // Once the values are visible to JS the caller owns them (it hands
-        // them to `net.connect({ fd })`, which closes them with the socket).
-        // Our `uv_pipe_t` would close the same HANDLE again when this
-        // Subprocess is finalized, so expose a duplicate instead. The pipe is
-        // closed right away: as long as our handle stayed open, the child
-        // would not see EOF when the caller closes its copy. The duplicate is
-        // kept so later reads return the same value.
-        #[cfg(windows)]
-        self.stdio_pipes.with_mut(|pipes| {
-            for slot in pipes.iter_mut() {
-                let buffer = match core::mem::take(slot) {
-                    StdioResult::Buffer(buffer) => buffer,
-                    other => {
-                        *slot = other;
-                        continue;
-                    }
-                };
-                let handle = buffer.fd();
-                // On failure the slot stays `Unavailable` and reads as null.
-                if handle != bun_sys::windows::libuv::INVALID_HANDLE_VALUE {
-                    if let Ok(dup) = bun_sys::dup(bun_sys::Fd::from_system(handle)) {
-                        *slot = StdioResult::UnownedFd(dup);
-                    }
-                }
-                // `uv_close` is async; `close_and_destroy` frees the pipe from
-                // the close callback.
-                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
-                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
-            }
-        });
-
-        for item in self.stdio_pipes.get().iter() {
-            #[cfg(windows)]
-            {
-                if let StdioResult::UnownedFd(fd) = item {
-                    // Expose the numeric HANDLE value.
-                    let handle: usize = fd.native() as usize;
-                    array.push(global, JSValue::js_number(handle as f64))?;
-                } else {
-                    array.push(global, JSValue::NULL)?;
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                match item {
-                    ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
-                        array.push(global, JSValue::js_number(fd.native() as f64))?;
-                    }
-                    ExtraPipe::Unavailable => {
-                        array.push(global, JSValue::NULL)?;
-                    }
-                }
-            }
-        }
         // The raw fd numbers are now visible to JS and the caller owns them.
         // Downgrade so finalize_streams never closes a number JS may have
         // already closed (whose value the kernel may have since recycled).
-        #[cfg(not(windows))]
-        self.stdio_pipes.with_mut(|pipes| {
-            for slot in pipes.iter_mut() {
-                if let ExtraPipe::OwnedFd(fd) = *slot {
-                    *slot = ExtraPipe::UnownedFd(fd);
+        self.stdio_pipes
+            .with_mut(|pipes| pipes.iter_mut().for_each(ExtraPipe::release_to_caller));
+        for item in self.stdio_pipes.get().iter() {
+            match item {
+                // The handle of a socket that the caller passed: it has no number, and a new one would own the handle.
+                #[cfg(windows)]
+                ExtraPipe::UnownedFd(fd) if fd.kind() == bun_core::FdKind::System => {
+                    array.push(global, JSValue::NULL)?;
+                }
+                ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
+                    array.push(global, JSValue::js_number_from_int32(fd.crt()))?;
+                }
+                ExtraPipe::Unavailable => {
+                    array.push(global, JSValue::NULL)?;
                 }
             }
-        });
+        }
         Ok(array)
     }
 
@@ -1036,10 +968,10 @@ impl Subprocess<'_> {
 
                     match status {
                         Status::Exited(exited) => {
-                            let _ = promise
-                                .as_any_promise()
-                                .unwrap()
-                                .resolve(global_this, JSValue::js_number(exited.code as f64));
+                            let _ = promise.as_any_promise().unwrap().resolve(
+                                global_this,
+                                JSValue::js_number_from_uint64(exited.full_code().into()),
+                            );
                             // TODO: properly propagate exception upwards
                         }
                         Status::Err(err) => {
@@ -1178,26 +1110,13 @@ impl Subprocess<'_> {
         self.close_io(StdioKind::Stdout);
         self.close_io(StdioKind::Stderr);
 
-        #[cfg(windows)]
-        for item in self.stdio_pipes.replace(Vec::new()) {
-            if let StdioResult::Buffer(buffer) = item {
-                // `uv_close` is async — the pipe must outlive this scope until the
-                // close callback reclaims the allocation; `close_and_destroy` also
-                // copes with a pipe that never got `uv_pipe_init`'d.
-                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
-                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
+        for item in self.stdio_pipes.get().iter() {
+            match item {
+                ExtraPipe::OwnedFd(fd) => fd.close(),
+                ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
             }
         }
-        #[cfg(not(windows))]
-        {
-            for item in self.stdio_pipes.get().iter() {
-                match item {
-                    ExtraPipe::OwnedFd(fd) => fd.close(),
-                    ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
-                }
-            }
-            self.stdio_pipes.with_mut(|v| v.clear());
-        }
+        self.stdio_pipes.with_mut(|v| v.clear());
         self.stdio_pipes.with_mut(|v| v.shrink_to_fit());
     }
 
@@ -1281,9 +1200,10 @@ impl Subprocess<'_> {
 
         let global_this = cx.global();
         match &self.process().status {
-            Status::Exited(exit) => {
-                JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code as f64))
-            }
+            Status::Exited(exit) => JSPromise::resolved_promise_value(
+                global_this,
+                JSValue::js_number_from_uint64(exit.full_code().into()),
+            ),
             Status::Signaled(signal) => JSPromise::resolved_promise_value(
                 global_this,
                 JSValue::js_number(bun_sys::SignalCode(*signal).to_exit_code() as f64),
@@ -1300,16 +1220,16 @@ impl Subprocess<'_> {
         }
     }
 
-    pub(crate) fn get_exit_code(&self) -> Option<u8> {
+    pub(crate) fn get_exit_code(&self) -> Option<u32> {
         if let Status::Exited(exited) = &self.process().status {
-            return Some(exited.code);
+            return Some(exited.full_code());
         }
         None
     }
 
     pub(crate) fn exit_code_to_js(&self) -> JSValue {
         self.get_exit_code().map_or(JSValue::NULL, |code| {
-            JSValue::js_number_from_int32(i32::from(code))
+            JSValue::js_number_from_uint64(code.into())
         })
     }
 
@@ -1434,58 +1354,13 @@ pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
 }
 
-/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
-/// Subprocess owns without a reader/writer in front of them; record that so a
-/// thread teardown closes them through us (and `finalize_streams` then finds
-/// the slots empty) instead of anyone closing them twice.
-#[cfg(windows)]
-impl Subprocess<'_> {
-    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
-        // SAFETY: `this` is the live boxed Subprocess (stable address).
-        let me = unsafe { &*this };
-        for item in me.stdio_pipes.get().iter() {
-            if let StdioResult::Buffer(buffer) = item {
-                bun_sys::windows::libuv::open_handles::set_owner(
-                    core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
-                        .cast_mut()
-                        .cast(),
-                    this.cast(),
-                    Some(Self::stop_for_vm_teardown),
-                );
-            }
-        }
-    }
-
-    /// `uv::open_handles` entry point: close every stdio pipe still held here.
-    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
-        // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
-        // Subprocess; each pipe leaves the list as its uv_close is issued.
-        let me = unsafe { &*this.cast::<Self>() };
-        for item in me.stdio_pipes.replace(Vec::new()) {
-            if let StdioResult::Buffer(buffer) = item {
-                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
-                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe) {
-    // safely free the pipes
-    // SAFETY: pipe was heap-allocated when created; we are the close callback owner.
-    drop(unsafe { bun_core::heap::take(this) });
-}
-
 pub(crate) mod testing_apis {
     use super::*;
 
     /// Inject a synthetic read error into a subprocess's stdout/stderr
-    /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
-    /// callback (Windows) had failed with EBADF. Used by tests to exercise
-    /// the onReaderError cleanup path, which is otherwise very hard to
-    /// trigger deterministically — on Windows in particular, peer death on
-    /// a named pipe maps to UV_EOF rather than an error.
+    /// PipeReader, as if the underlying read() had failed with EBADF. Used by
+    /// tests to exercise the onReaderError cleanup path, which is otherwise
+    /// very hard to trigger deterministically.
     ///
     /// Returns true if an error was injected, false if the given stdio is
     /// not (or no longer) a buffered pipe reader.
@@ -1508,13 +1383,8 @@ pub(crate) mod testing_apis {
             return Ok(false);
         };
 
-        // Mirror what the real error path does (onStreamRead on Windows,
-        // read() on Posix) so the teardown exercised is identical.
+        // Mirror what the real error path does so the teardown exercised is identical.
         let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
-        #[cfg(windows)]
-        {
-            let _ = Readable::pipe_reader_mut(pipe).reader.stop_reading();
-        }
         let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
         // SAFETY: live pipe reader; `on_error` is the raw entry so the
         // (maybe-freeing) error dispatch runs under no receiver protector.
@@ -1522,14 +1392,11 @@ pub(crate) mod testing_apis {
         Ok(true)
     }
 
-    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper, no ref.
+    /// Close the stdin pipe's writer with no JS wrapper and no ref.
     pub(crate) fn close_stdin_writer(
         _: &mut JsScope<'_>,
         subprocess: &Subprocess<'static>,
     ) -> bool {
-        #[cfg(windows)]
-        use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-
         let Writable::Pipe(pipe) = subprocess.stdin.get() else {
             return false;
         };

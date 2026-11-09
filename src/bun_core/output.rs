@@ -488,38 +488,53 @@ pub mod windows_stdio {
         safe fn SetConsoleMode(hConsoleHandle: w::HANDLE, dwMode: w::DWORD) -> w::BOOL;
     }
 
-    /// At program start, we snapshot the console modes of standard in, out, and err
-    /// so that we can restore them at program exit if they change. Restoration is
-    /// best-effort, and may not be applied if the process is killed abruptly.
-    ///
-    /// Write-once at startup → `Once`, not `RacyCell`: `init()` builds the
-    /// snapshot locally and `.set()`s it; `restore()` reads via `.get()`. Both
-    /// sides are fully safe (cell-get reduction).
-    static CONSOLE_MODE: crate::Once<[Option<u32>; 3]> = crate::Once::new();
     static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
+    /// [`console_input_mode_to_restore`]. Bit 32 says that it is set.
+    static CONSOLE_INPUT_MODE: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(0);
+
+    /// The console input mode from before Bun changed it, which [`restore`] puts back. `current`: the mode right now, which the caller is about to change.
+    pub fn console_input_mode_to_restore(current: u32) -> u32 {
+        match CONSOLE_INPUT_MODE.compare_exchange(
+            0,
+            1 << 32 | u64::from(current),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => current,
+            Err(saved) => saved as u32,
+        }
+    }
 
     #[unsafe(no_mangle)]
     extern "C" fn Bun__restoreWindowsStdio() {
         restore();
     }
 
+    /// The modes belong to the console and not to this process. So the input mode is put back only if Bun changed it, and the output mode, which others that write to the console go by, never.
     pub(crate) fn restore() {
-        // SAFETY: PEB access is sound on Windows; handles are valid for process
-        // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
-        // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a
-        // long-lived `&` — read the handle fields through raw-pointer deref.
-        let (stdin, stdout, stderr) = unsafe {
-            let pp = (*w::peb()).ProcessParameters;
-            ((*pp).hStdInput, (*pp).hStdOutput, (*pp).hStdError)
-        };
-
-        let handles = [stdin, stdout, stderr];
-        let modes = CONSOLE_MODE.get().copied().unwrap_or([None; 3]);
-        for (mode, handle) in modes.iter().zip(handles.iter()) {
-            if let Some(m) = *mode {
-                let _ = SetConsoleMode(*handle, m);
+        let input_mode = CONSOLE_INPUT_MODE.load(Ordering::Relaxed);
+        if input_mode != 0 {
+            // SAFETY: the name is NUL-terminated, and the null arguments are optional.
+            let input = unsafe {
+                bun_windows_sys::externs::CreateFileW(
+                    crate::wstr!("CONIN$").as_ptr(),
+                    bun_windows_sys::externs::GENERIC_READ
+                        | bun_windows_sys::externs::GENERIC_WRITE,
+                    bun_windows_sys::externs::FILE_SHARE_READ
+                        | bun_windows_sys::externs::FILE_SHARE_WRITE,
+                    core::ptr::null_mut(),
+                    bun_windows_sys::externs::OPEN_EXISTING,
+                    0,
+                    core::ptr::null_mut(),
+                )
+            };
+            if input != w::INVALID_HANDLE_VALUE {
+                let _ = SetConsoleMode(input, input_mode as u32);
+                // SAFETY: opened above.
+                let _ = unsafe { bun_windows_sys::externs::CloseHandle(input) };
             }
         }
 
@@ -534,7 +549,7 @@ pub mod windows_stdio {
     }
 
     pub(crate) fn init() {
-        w::libuv::uv_disable_stdio_inheritance();
+        w::disable_stdio_inheritance();
 
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
@@ -575,44 +590,19 @@ pub mod windows_stdio {
         CONSOLE_CODEPAGE.store(c::GetConsoleCP(), Ordering::Relaxed);
         let _ = c::SetConsoleCP(CP_UTF8);
 
-        let mut mode: w::DWORD = 0;
-        // Build the snapshot locally, then publish via `Once::set` — no
-        // long-lived `&mut` into a shared static (cell-get reduction).
-        let mut console_mode: [Option<u32>; 3] = [None; 3];
-        if GetConsoleMode(stdin, &mut mode) != 0 {
-            console_mode[0] = Some(mode);
-            bun_stdio_tty[0].store(1, Ordering::Relaxed);
-            // There are no flags to set on standard in, but just in case something
-            // later modifies the mode, we can still reset it at the end of program run
-            //
-            // In the past, Bun would set ENABLE_VIRTUAL_TERMINAL_INPUT, which was not
-            // intentionally set for any purpose, and instead only caused problems.
-        }
-
-        if GetConsoleMode(stdout, &mut mode) != 0 {
-            console_mode[1] = Some(mode);
-            bun_stdio_tty[1].store(1, Ordering::Relaxed);
-            let _ = SetConsoleMode(
-                stdout,
-                w::ENABLE_PROCESSED_OUTPUT
+        for (i, handle) in [stdin, stdout, stderr].into_iter().enumerate() {
+            let mut mode: w::DWORD = 0;
+            if GetConsoleMode(handle, &mut mode) == 0 {
+                continue;
+            }
+            bun_stdio_tty[i].store(1, Ordering::Relaxed);
+            if i != 0 {
+                let wanted = w::ENABLE_PROCESSED_OUTPUT
                     | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
-                    | w::ENABLE_WRAP_AT_EOL_OUTPUT
-                    | mode,
-            );
+                    | w::ENABLE_WRAP_AT_EOL_OUTPUT;
+                let _ = SetConsoleMode(handle, (mode | wanted) & !w::DISABLE_NEWLINE_AUTO_RETURN);
+            }
         }
-
-        if GetConsoleMode(stderr, &mut mode) != 0 {
-            console_mode[2] = Some(mode);
-            bun_stdio_tty[2].store(1, Ordering::Relaxed);
-            let _ = SetConsoleMode(
-                stderr,
-                w::ENABLE_PROCESSED_OUTPUT
-                    | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
-                    | w::ENABLE_WRAP_AT_EOL_OUTPUT
-                    | mode,
-            );
-        }
-        let _ = CONSOLE_MODE.set(console_mode);
     }
 }
 
@@ -2584,7 +2574,6 @@ fn init_scoped_debug_writer_at_startup() {
                 let _ = output_sink().make_path(Fd::cwd(), dir);
             }
 
-            // do not use libuv through this code path, since it might not be initialized yet.
             use std::io::Write as _;
             let mut pid = Vec::new();
             write!(&mut pid, "{}", getpid()).expect("failed to allocate path");

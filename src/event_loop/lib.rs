@@ -8,9 +8,7 @@ pub mod EventLoopTimer;
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
 // The parent event loop is wired via the lower-tier `set_parent_raw(tag, ptr)`
-// + `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
-// lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
-// gate-free.
+// + `EventLoopHandle::into_tag_ptr()`.
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]
@@ -18,7 +16,7 @@ pub mod MiniEventLoop;
 // Module renamed `any_event_loop` so the *type* `AnyEventLoop` can be re-exported
 // at crate root without colliding (modules and types share the type namespace).
 // Downstream callers use `bun_event_loop::AnyEventLoop` as a type / for
-// associated fns (`::init()`, `::js_current()`, `::as_handle()`), never as a
+// associated fns (`::init()`, `::js_current()`), never as a
 // module path, so the snake_case module name is internal.
 #[path = "SpawnSyncEventLoop.rs"]
 pub mod SpawnSyncEventLoop;

@@ -1,3 +1,4 @@
+import { dlopen, ptr } from "bun:ffi";
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
@@ -1744,6 +1745,20 @@ it("readdirSync on import.meta.dir with trailing slash", () => {
     }
   }
   expect(match).toBe(true);
+});
+
+it.skipIf(!isWindows)("readdirSync on a `\\\\?\\` path that does not start with a drive", () => {
+  using dir = tempDir("readdir-object-name", { "a.txt": "", "sub": { "b.txt": "" } });
+  const name = "\\\\?\\GLOBALROOT\\??\\" + dir;
+  expect({
+    flat: readdirSync(name).sort(),
+    recursive: readdirSync(name, { recursive: true }).sort(),
+    sub: readdirSync(name + "\\sub"),
+  }).toEqual({
+    flat: ["a.txt", "sub"],
+    recursive: ["a.txt", "sub", "sub\\b.txt"],
+    sub: ["b.txt"],
+  });
 });
 
 it("readdirSync works on empty directories", () => {
@@ -3689,6 +3704,164 @@ it.if(isWindows)("symlink on windows with forward slashes", async () => {
   expect(await fs.promises.readlink(join(r, "file-sym.txt"))).toBe("files\\2024\\123.txt");
 });
 
+describe.if(isWindows)("a reparse point that fs.symlink() does not make", () => {
+  /** `data` is what follows the header of a REPARSE_DATA_BUFFER. */
+  function setReparsePoint(path: string, tag: number, data: Buffer) {
+    const { symbols: kernel32, close } = dlopen("kernel32.dll", {
+      CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
+      DeviceIoControl: { args: ["u64", "u32", "ptr", "u32", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+      CloseHandle: { args: ["u64"], returns: "i32" },
+    });
+    try {
+      const GENERIC_WRITE = 0x40000000;
+      const OPEN_EXISTING = 3;
+      const FILE_FLAG_BACKUP_SEMANTICS_AND_OPEN_REPARSE_POINT = 0x02200000;
+      const FSCTL_SET_REPARSE_POINT = 0x000900a4;
+      const name = Buffer.from(path + "\0", "utf16le");
+      const flags = FILE_FLAG_BACKUP_SEMANTICS_AND_OPEN_REPARSE_POINT;
+      const handle = kernel32.CreateFileW(ptr(name), GENERIC_WRITE, 0, null, OPEN_EXISTING, flags, null);
+      expect(handle).not.toBe(0xffff_ffff_ffff_ffffn);
+      const buffer = Buffer.alloc(8 + data.length);
+      buffer.writeUInt32LE(tag, 0);
+      buffer.writeUInt16LE(data.length, 4);
+      data.copy(buffer, 8);
+      const returned = new Uint32Array(1);
+      const ok = kernel32.DeviceIoControl(
+        handle,
+        FSCTL_SET_REPARSE_POINT,
+        ptr(buffer),
+        buffer.length,
+        null,
+        0,
+        ptr(returned),
+        null,
+      );
+      kernel32.CloseHandle(handle);
+      expect(ok).not.toBe(0);
+    } finally {
+      close();
+    }
+  }
+
+  // An odd and an even number of bytes, and none.
+  it.each(["../tärget/file", "abc", "abcd", ""])("a symbolic link that WSL made, to %j", target => {
+    using dir = tempDir("fs-lx-symlink", { link: "" });
+    const link = join(String(dir), "link");
+    const IO_REPARSE_TAG_LX_SYMLINK = 0xa000001d;
+    const version = Buffer.from([2, 0, 0, 0]);
+    setReparsePoint(link, IO_REPARSE_TAG_LX_SYMLINK, Buffer.concat([version, Buffer.from(target)]));
+
+    const stats = lstatSync(link);
+    expect({ target: readlinkSync(link), isSymbolicLink: stats.isSymbolicLink(), size: stats.size }).toEqual({
+      target,
+      isSymbolicLink: true,
+      size: Buffer.byteLength(target),
+    });
+  });
+
+  it("the target of a junction ends at a NUL", () => {
+    using dir = tempDir("fs-junction-nul", { "target/file": "", "junction/file": "" });
+    const target = join(String(dir), "target");
+    const junction = join(String(dir), "junction");
+    unlinkSync(join(junction, "file"));
+    const IO_REPARSE_TAG_MOUNT_POINT = 0xa0000003;
+    const substituteName = Buffer.from(`\\??\\${target}\0.png`, "utf16le");
+    const printName = Buffer.from(target, "utf16le");
+    const lengths = Buffer.alloc(8);
+    lengths.writeUInt16LE(substituteName.length, 2);
+    lengths.writeUInt16LE(substituteName.length + 2, 4);
+    lengths.writeUInt16LE(printName.length, 6);
+    const nul = Buffer.alloc(2);
+    setReparsePoint(
+      junction,
+      IO_REPARSE_TAG_MOUNT_POINT,
+      Buffer.concat([lengths, substituteName, nul, printName, nul]),
+    );
+
+    expect(readlinkSync(junction)).toBe(target);
+  });
+});
+
+describe.skipIf(!isWindows)("the target of a junction", () => {
+  it.each([
+    ["a separator at the end", (target: string) => target + "\\"],
+    ["two separators at the end", (target: string) => target + "\\\\"],
+    ["a slash at the end", (target: string) => target + "/"],
+    ["the long path prefix", (target: string) => "\\\\?\\" + target],
+    ["the long path prefix and a separator at the end", (target: string) => "\\\\?\\" + target + "\\"],
+    ["a relative name and a separator at the end", () => "target\\"],
+  ])("with %s", (_, spell) => {
+    using dir = tempDir("fs-junction-target", { "target/file": "" });
+    const target = join(String(dir), "target");
+    const link = join(String(dir), "link");
+    symlinkSync(spell(target), link, "junction");
+    expect(readlinkSync(link)).toBe(target);
+    expect(readdirSync(link)).toEqual(["file"]);
+  });
+
+  it("keeps the separator of a drive", () => {
+    using dir = tempDir("fs-junction-drive", {});
+    const link = join(String(dir), "link");
+    const drive = String(dir).slice(0, 3);
+    symlinkSync(drive, link, "junction");
+    expect(readlinkSync(link)).toBe(drive);
+    rmdirSync(link);
+  });
+
+  it("cannot be a device path", () => {
+    using dir = tempDir("fs-junction-device", { "target/file": "" });
+    const link = join(String(dir), "link");
+    expect(() => symlinkSync("\\\\.\\" + join(String(dir), "target"), link, "junction")).toThrow(
+      expect.objectContaining({ code: "EINVAL", syscall: "symlink" }),
+    );
+    expect(existsSync(link)).toBe(false);
+  });
+});
+
+it.skipIf(!isWindows)("a junction can be made while somebody else opens the new directory", async () => {
+  using dir = tempDir("fs-junction-observed", { "target": {} });
+  // As a watcher or an indexer, only sooner: it opens each name once that is there, for as long as it is a plain directory.
+  const script = /* js */ `
+    const { symbols: kernel32 } = require("bun:ffi").dlopen("kernel32.dll", {
+      CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+      GetFileAttributesW: { args: ["ptr"], returns: "u32" },
+      CloseHandle: { args: ["i64"], returns: "i32" },
+    });
+    const FILE_LIST_DIRECTORY = 1, FILE_SHARE_ALL = 7, OPEN_EXISTING = 3;
+    const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000, FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    const FILE_ATTRIBUTE_DIRECTORY = 0x10, FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
+    for (const name of ["a", "b", "c"]) {
+      const path = Buffer.from(name + "\\0", "utf16le");
+      console.log(name);
+      let handle;
+      do {
+        const flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+        handle = kernel32.CreateFileW(path, FILE_LIST_DIRECTORY, FILE_SHARE_ALL, null, OPEN_EXISTING, flags, null);
+      } while (handle === -1n);
+      const both = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT;
+      while ((kernel32.GetFileAttributesW(path) & both) === FILE_ATTRIBUTE_DIRECTORY);
+      kernel32.CloseHandle(handle);
+    }
+  `;
+  await using observer = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const target = join(String(dir), "target");
+  const targets: string[] = [];
+  for await (const chunk of observer.stdout) {
+    for (const name of Buffer.from(chunk).toString().split("\n").filter(Boolean)) {
+      symlinkSync(target, join(String(dir), name), "junction");
+      targets.push(readlinkSync(join(String(dir), name)));
+    }
+  }
+  expect(targets).toEqual([target, target, target]);
+  expect(await observer.exited).toBe(0);
+});
+
 it("realpath async", async () => {
   const actual = join(tmpdirSync(), "fs-realpath.txt");
   try {
@@ -3803,6 +3976,13 @@ describe("stat", () => {
       throw "statSync should throw";
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");
+    }
+  });
+
+  // The system has it open for itself, so what there is to know comes from the directory, which here is a root.
+  it.skipIf(!isWindows || !readdirSync("C:\\").includes("pagefile.sys"))("a file that cannot be opened", () => {
+    for (const path of ["C:\\pagefile.sys", "C:/pagefile.sys", "\\\\?\\C:\\pagefile.sys"]) {
+      expect([path, statSync(path).isFile(), lstatSync(path).isFile()]).toEqual([path, true, true]);
     }
   });
 });
@@ -4270,6 +4450,15 @@ describe("createReadStream", () => {
         resolve(true);
       });
     });
+  });
+
+  it("reads 64 KiB at a time unless told otherwise", async () => {
+    using dir = tempDir("fs-createReadStream-default-chunk", { "file.bin": Buffer.alloc(3 * 65536 + 1, "x") });
+    const stream = createReadStream(join(String(dir), "file.bin"));
+    expect(stream.readableHighWaterMark).toBe(65536);
+    const lengths: number[] = [];
+    for await (const chunk of stream) lengths.push(chunk.length);
+    expect(lengths).toEqual([65536, 65536, 65536, 1]);
   });
 
   it("should emit open", done => {
@@ -5653,6 +5842,62 @@ describe("utimesSync", () => {
     expect(newStats.mtime.getTime() / 1000).toEqual(mtime);
     expect(newStats.atime.getTime() / 1000).toEqual(atime);
   });
+
+  // The count of 100 ns since 1601 is worked out in a double, whose steps there are 1.6 µs wide, and 3.2 µs from 2057 on.
+  it.skipIf(!isWindows)("stores of a fraction of a second what Node.js stores", () => {
+    using dir = tempDir("utimes-fraction", { "file": "" });
+    const file = join(String(dir), "file");
+    const stored = (time: number) => {
+      fs.utimesSync(file, time, time);
+      return fs.statSync(file, { bigint: true }).mtimeNs;
+    };
+    expect([1700000000.1234567, 1700000000.1234569, 1700000000.9999999, 4102444800.7654321].map(stored)).toEqual([
+      1700000000123456000n,
+      1700000000123457600n,
+      1700000001000000000n,
+      4102444800765433600n,
+    ]);
+  });
+
+  // Windows counts 100 ns since 1601 in an i64. Milliseconds passed for seconds are past the end of that.
+  it.skipIf(!isWindows)("refuses a time that Windows cannot hold", () => {
+    using dir = tempDir("utimes-range", { "file": "" });
+    const file = join(String(dir), "file");
+    const fd = fs.openSync(file, "r+");
+    try {
+      const codeOf = (fn: () => void) => {
+        try {
+          fn();
+        } catch (e) {
+          return (e as NodeJS.ErrnoException).code;
+        }
+      };
+      const attempt = (time: number | Date) => {
+        fs.utimesSync(file, 1000, 1000);
+        return [
+          codeOf(() => fs.utimesSync(file, time, time)),
+          codeOf(() => fs.futimesSync(fd, time, time)),
+          codeOf(() => fs.lutimesSync(file, time, time)),
+          fs.statSync(file).mtimeMs === 1000_000 ? "unchanged" : "changed",
+        ];
+      };
+      expect({
+        "before 1601": attempt(new Date(-11644473600_001)),
+        "the first second": attempt(new Date(-11644473599_000)),
+        "the last second": attempt(910692730085),
+        "one more": attempt(910692730086),
+        "Date.now()": attempt(Date.now()),
+      }).toEqual({
+        "before 1601": ["EINVAL", "EINVAL", "EINVAL", "unchanged"],
+        "the first second": [undefined, undefined, undefined, "changed"],
+        "the last second": [undefined, undefined, undefined, "changed"],
+        "one more": ["EINVAL", "EINVAL", "EINVAL", "unchanged"],
+        "Date.now()": ["EINVAL", "EINVAL", "EINVAL", "unchanged"],
+      });
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
 });
 
 it("createReadStream on a large file emits readable event correctly", () => {
@@ -5827,6 +6072,37 @@ describe("fs.write", () => {
     expect(readFileSync(path, "utf8")).toStrictEqual("bun");
     fs.closeSync(fd);
   });
+
+  // Another thread writes, and process.exit() waits for it as in Node.js. Elsewhere it does not.
+  it.concurrent.skipIf(!isWindows).each([
+    ["fs.write(1, string)", `fs.write(1, "written", () => {})`, "stdout", 7],
+    ["fs.write(2, buffer)", `fs.write(2, Buffer.from("written"), () => {})`, "stderr", 7],
+    ["fs.writev(1, buffers)", `fs.writev(1, [Buffer.from("writ"), Buffer.from("ten")], () => {})`, "stdout", 7],
+    ["fs.write(1, more than a pipe holds)", `fs.write(1, Buffer.alloc(1_000_000, "w"), () => {})`, "stdout", 1_000_000],
+    ["several calls of fs.write(1, string)", `for (const c of "written") fs.write(1, c, () => {})`, "stdout", 7],
+    [
+      "fs.write(1, string) after more reads than there are threads to wait in",
+      `for (let i = 0; i < 8; i++) fs.read(0, Buffer.alloc(1), () => {}); fs.write(1, "written", () => {})`,
+      "stdout",
+      7,
+    ],
+  ])("%s has written when process.exit() follows it", async (_, call, stream, length) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const fs = require("fs"); ${call}; process.exit(0);`],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+      // Nothing is ever written to it.
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.length, stderr: stderr.length, exitCode }).toEqual({
+      stdout: 0,
+      stderr: 0,
+      exitCode: 0,
+      [stream]: length,
+    });
+  });
 });
 
 describe("fs.read/readv/write/writev pass the buffer to the callback on error", () => {
@@ -5906,6 +6182,41 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
 });
 
 describe("fs.read", () => {
+  // Each such read holds a thread for as long as nobody writes.
+  it.skipIf(!isWindows)("reads of a silent pipe keep nothing else from running", async () => {
+    using dir = tempDir("fs-read-silent-pipe", { "module.js": "export default 1;", "file.txt": "content" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          fs.read(0, Buffer.alloc(16), 0, 16, null, () => {});
+          fs.readv(0, [Buffer.alloc(16)], () => {});
+          Bun.stdin.text();
+          Bun.file(0).bytes();
+          const { promisify } = require("util");
+          console.log(JSON.stringify([
+            (await import("./module.js")).default,
+            await fs.promises.readFile("file.txt", "utf8"),
+            (await fs.promises.stat("file.txt")).size,
+            (await promisify(require("crypto").pbkdf2)("password", "salt", 1, 4, "sha1")).length,
+            (await promisify(require("zlib").gzip)("data")).length > 0,
+          ]));
+          process.exit(0);
+        `,
+      ],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual([1, "content", 7, 4, true]);
+    expect(exitCode).toBe(0);
+  });
+
   it("should work with (fd, callback)", done => {
     const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;
     fs.writeFileSync(path, "bun");
@@ -6479,6 +6790,52 @@ it("open mode verification", async () => {
   );
 });
 
+it.skipIf(!isWindows).each(["\\\\.\\UNC", "\\\\?\\UNC"])(
+  "open() of %s, which can be opened and is no kind of file, fails as in Node.js",
+  path => {
+    expect(() => fs.openSync(path, "r")).toThrow(expect.objectContaining({ code: "EISDIR", syscall: "open", path }));
+  },
+);
+
+it("fs.copyFile with COPYFILE_EXCL copies to a free name, and leaves nothing there when it fails", () => {
+  using dir = tempDir("fs-copyfile-excl", { "src.txt": "the contents" });
+  const src = join(String(dir), "src.txt");
+  const dest = join(String(dir), "dest.txt");
+  fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
+  expect(fs.readFileSync(dest, "utf8")).toBe("the contents");
+  expect(() => fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL)).toThrow(
+    expect.objectContaining({ code: "EEXIST", syscall: "copyfile", path: src, dest }),
+  );
+  expect(fs.readFileSync(dest, "utf8")).toBe("the contents");
+
+  const missing = join(String(dir), "missing.txt");
+  const unused = join(String(dir), "unused.txt");
+  expect(() => fs.copyFileSync(missing, unused, fs.constants.COPYFILE_EXCL)).toThrow(
+    expect.objectContaining({ code: "ENOENT", syscall: "copyfile", path: missing, dest: unused }),
+  );
+  expect(fs.existsSync(unused)).toBe(false);
+});
+
+it("fs.copyFile with COPYFILE_EXCL copies under a umask that takes the right to write", async () => {
+  using dir = tempDir("fs-copyfile-excl-umask", { "src.txt": "the contents" });
+  const script = /* js */ `
+    const fs = require("node:fs");
+    process.umask(0o222);
+    fs.copyFileSync("src.txt", "sync.txt", fs.constants.COPYFILE_EXCL);
+    await fs.promises.copyFile("src.txt", "promises.txt", fs.constants.COPYFILE_EXCL);
+    console.log(fs.readFileSync("sync.txt", "utf8") + ", " + fs.readFileSync("promises.txt", "utf8"));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("the contents, the contents\n");
+  expect(await proc.exited).toBe(0);
+});
+
 it("fs.mkdirSync recursive should not error when the directory already exists, but should error when its a file", () => {
   expect(() => mkdirSync(import.meta.dir, { recursive: true })).not.toThrowError();
   expect(() => mkdirSync(import.meta.path, { recursive: true })).toThrowError();
@@ -6522,6 +6879,25 @@ it("fs.statfsSync should work", () => {
   if (isPosix) {
     expect(bigIntStats.bsize > 0n).toBe(true);
     expect(bigIntStats.blocks > 0n).toBe(true);
+  }
+});
+
+it.if(isWindows)("fs.statfsSync counts what GetDiskFreeSpaceExW counts, for a file as for a directory", () => {
+  const { symbols: kernel32, close } = dlopen("kernel32.dll", {
+    GetDiskFreeSpaceExW: { args: ["ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+  });
+  const total = new BigUint64Array(1);
+  try {
+    const name = Buffer.from(import.meta.dir + "\0", "utf16le");
+    expect(kernel32.GetDiskFreeSpaceExW(ptr(name), null, ptr(total), null)).not.toBe(0);
+  } finally {
+    close();
+  }
+  for (const path of [import.meta.dir, import.meta.path]) {
+    const stats = statfsSync(path, { bigint: true });
+    expect(stats.bsize * stats.blocks).toBe(total[0]);
+    expect(stats.bavail).toBeLessThanOrEqual(stats.bfree);
+    expect(stats.bfree).toBeLessThanOrEqual(stats.blocks);
   }
 });
 
@@ -6910,6 +7286,115 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
       expect(exitCode).toBe(0);
     });
   }
+});
+
+describe.skipIf(!isWindows)("a path that only Windows' long form can name", () => {
+  // `directory` is a name for `<cwd>\\rrr…`, which does not exist yet and is over MAX_PATH.
+  const script = `
+    const fs = require("node:fs");
+    const directory = process.argv[1];
+    const file = directory + "\\\\file.txt";
+    const results = {};
+    const attempt = (name, f) => {
+      try {
+        results[name] = f() ?? "ok";
+      } catch (e) {
+        results[name] = e.code + " " + e.syscall;
+      }
+    };
+    attempt("mkdir", () => fs.mkdirSync(directory));
+    attempt("mkdir recursive", () => (fs.mkdirSync(directory + "\\\\a\\\\b", { recursive: true }), "ok"));
+    attempt("writeFile", () => fs.writeFileSync(file, "hello"));
+    attempt("readFile", () => fs.readFileSync(file, "utf8"));
+    attempt("stat", () => fs.statSync(file).size);
+    attempt("lstat", () => fs.lstatSync(file).size);
+    attempt("exists", () => fs.existsSync(file));
+    attempt("access", () => fs.accessSync(file));
+    attempt("open", () => fs.closeSync(fs.openSync(file, "r+")));
+    attempt("chmod", () => fs.chmodSync(file, 0o666));
+    attempt("utimes", () => fs.utimesSync(file, 1, 1));
+    attempt("lutimes", () => fs.lutimesSync(file, 1, 1));
+    attempt("truncate", () => fs.truncateSync(file, 2));
+    attempt("realpath.native", () => fs.realpathSync.native(file).endsWith("r\\\\file.txt"));
+    attempt("readdir", () => fs.readdirSync(directory));
+    attempt("copyFile", () => fs.copyFileSync(file, file + ".copy"));
+    attempt("link", () => fs.linkSync(file, file + ".link"));
+    attempt("rename", () => fs.renameSync(file + ".copy", file + ".moved"));
+    attempt("junction", () => fs.symlinkSync(process.cwd(), directory + "\\\\junction", "junction"));
+    attempt("readlink", () => fs.readlinkSync(directory + "\\\\junction") === process.cwd());
+    attempt("mkdtemp", () => fs.mkdtempSync(directory + "\\\\t-").length - directory.length);
+    attempt("statfs", () => typeof fs.statfsSync(directory).bsize);
+    attempt("unlink", () => fs.unlinkSync(file + ".moved"));
+    attempt("rmdir", () => fs.rmdirSync(directory + "\\\\junction"));
+    attempt("rm", () => fs.rmSync(process.argv[2], { recursive: true }));
+    attempt("gone", () => !fs.existsSync(directory));
+    console.log(JSON.stringify(results));
+  `;
+  const expected = {
+    "mkdir": "ok",
+    "mkdir recursive": "ok",
+    "writeFile": "ok",
+    "readFile": "hello",
+    "stat": 5,
+    "lstat": 5,
+    "exists": true,
+    "access": "ok",
+    "open": "ok",
+    "chmod": "ok",
+    "utimes": "ok",
+    "lutimes": "ok",
+    "truncate": "ok",
+    "realpath.native": true,
+    "readdir": ["a", "file.txt"],
+    "copyFile": "ok",
+    "link": "ok",
+    "rename": "ok",
+    "junction": "ok",
+    "readlink": true,
+    "mkdtemp": 9,
+    "statfs": "number",
+    "unlink": "ok",
+    "rmdir": "ok",
+    "rm": "ok",
+    "gone": true,
+  };
+
+  async function run(spell: (cwd: string, name: string) => string, spellForRm = spell) {
+    using dir = tempDir("fs-long", {});
+    const cwd = join(String(dir), Buffer.alloc(200 - String(dir).length - 1, "b").toString());
+    mkdirSync(cwd);
+    const name = Buffer.alloc(100, "r").toString();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, spell(cwd, name), spellForRm(cwd, name)],
+      env: bunEnv,
+      cwd,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  }
+
+  it("a short relative name in a deep current directory", () => run((_, name) => name));
+  // TODO: `fs.rmSync` does not find a relative name with dots, whatever its length.
+  it("a relative name with dots and slashes", () =>
+    run(
+      (_, name) => `./x/../${name}`,
+      (_, name) => name,
+    ));
+  it("a name relative to the drive", () => run((cwd, name) => `${cwd.slice(2)}\\${name}`));
+  it("an absolute name with slashes", () => run((cwd, name) => `${cwd}/${name}`.replaceAll("\\", "/")));
+  // TODO: a recursive `fs.rmSync` does not know this prefix, whatever the length.
+  it("the long form with slashes", () =>
+    run(
+      (cwd, name) => `//?/${cwd}/${name}`.replaceAll("\\", "/"),
+      (_, name) => name,
+    ));
+
+  const share = (path: string) => `\\\\localhost\\${path[0]}$${path.slice(2)}`;
+  it.skipIf(!isWindows || !existsSync(share(tmpdir())))("a name on a share", () =>
+    run((cwd, name) => `${share(cwd)}\\${name}`),
+  );
 });
 
 it("overflowing mode doesn't crash", () => {
@@ -7663,7 +8148,7 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 
-  // On Windows, libuv's fs__close no-ops for fd <= 2 (as does Node), so the
+  // On Windows, closing fd <= 2 does nothing (as in Node), so the
   // descriptor is never really closed and the second close cannot raise EBADF.
   it.skipIf(isWindows)("closeSync throws EBADF on a double close of fd 2", async () => {
     using dir = tempDir("fs-close-stdio-dbl", {
@@ -8081,6 +8566,142 @@ describe("fs.Utf8Stream", () => {
       });
     });
     await done;
+  });
+
+  // Records the stream's calls into node:fs and its events, in their order.
+  function record(
+    dir: string,
+    { byPath = false, ...options }: Record<string, unknown>,
+    write: (...args: any[]) => void = fs.write,
+  ) {
+    const dest = path.join(dir, "out.log");
+    const log: string[] = [];
+    const call =
+      (name: string, target: (...args: any[]) => void) =>
+      (...args: any[]) => {
+        log.push(name);
+        target(...args);
+      };
+    const stream = new fs.Utf8Stream({
+      fd: byPath ? dest : openSync(dest, "w"),
+      sync: false,
+      ...options,
+      fs: { write: call("write", write), fsync: call("fsync", fs.fsync), close: call("close", fs.close) },
+    });
+    const closed = Promise.withResolvers<void>();
+    stream.on("drain", () => log.push("'drain'"));
+    stream.on("finish", () => log.push("'finish'"));
+    stream.on("error", (error: NodeJS.ErrnoException) => log.push(`'error' ${error.code}`));
+    stream.on("close", () => {
+      log.push("'close'");
+      closed.resolve();
+    });
+    return { dest, log, stream, closed: closed.promise };
+  }
+
+  it("destroy() closes the file after the write that is under way", async () => {
+    using dir = tempDir("utf8stream-destroy-write", {});
+    let finishWrite!: () => void;
+    const { dest, log, stream, closed } = record(String(dir), {}, (...args) => {
+      finishWrite = () => (fs.write as any)(...args);
+    });
+    stream.write("hello\n");
+    stream.destroy();
+    expect(log).toEqual(["write"]);
+    finishWrite();
+    await closed;
+    expect(log).toEqual(["write", "fsync", "close", "'close'"]);
+    expect(readFileSync(dest, "utf8")).toBe("hello\n");
+  });
+
+  it("flush() succeeds when destroy() follows it at once", async () => {
+    using dir = tempDir("utf8stream-destroy-flush", {});
+    let finishWrite!: () => void;
+    const { dest, log, stream, closed } = record(String(dir), { minLength: 4096 }, (...args) => {
+      finishWrite = () => (fs.write as any)(...args);
+    });
+    stream.write("hello\n");
+    stream.flush((error?: Error | null) => log.push(`flushed ${error}`));
+    stream.destroy();
+    expect(log).toEqual(["write"]);
+    finishWrite();
+    await closed;
+    expect(log).toEqual(["write", "'drain'", "flushed undefined", "fsync", "close", "'close'"]);
+    expect(readFileSync(dest, "utf8")).toBe("hello\n");
+  });
+
+  it.each(["at once", "in a 'write' listener"])(
+    "destroy() %s closes the file after the rest of a partial write",
+    async when => {
+      using dir = tempDir("utf8stream-destroy-partial", {});
+      let finishWrite: (() => void) | undefined;
+      const rest = Promise.withResolvers<void>();
+      const { dest, log, stream, closed } = record(String(dir), {}, (fd, data, encoding, callback) => {
+        if (data === "hello\n") return fs.write(fd, "hel", encoding, callback);
+        finishWrite = () => fs.write(fd, data, encoding, callback);
+        rest.resolve();
+      });
+      if (when !== "at once") stream.once("write", () => stream.destroy());
+      stream.write("hello\n");
+      if (when === "at once") stream.destroy();
+      await rest.promise;
+      expect(log).toEqual(["write", "write"]);
+      finishWrite!();
+      await closed;
+      expect(log).toEqual(["write", "write", "fsync", "close", "'close'"]);
+      expect(readFileSync(dest, "utf8")).toBe("hello\n");
+    },
+  );
+
+  it("destroy() drops what is buffered behind the write that is under way", async () => {
+    using dir = tempDir("utf8stream-destroy-buffered", {});
+    const { dest, log, stream, closed } = record(String(dir), {});
+    stream.write("first\n");
+    stream.write("second\n");
+    stream.destroy();
+    await closed;
+    expect(log).toEqual(["write", "fsync", "close", "'close'"]);
+    expect(readFileSync(dest, "utf8")).toBe("first\n");
+  });
+
+  it("flush() fails when destroy() drops a part of the data", async () => {
+    using dir = tempDir("utf8stream-destroy-flush-dropped", {});
+    const { dest, log, stream, closed } = record(String(dir), { minLength: 4, maxWrite: 8 });
+    stream.write("first\n");
+    stream.write("second\n");
+    stream.flush((error?: NodeJS.ErrnoException | null) => log.push(`flushed ${error?.code}`));
+    stream.destroy();
+    await closed;
+    expect(log).toEqual([
+      "write",
+      "'error' ERR_INVALID_STATE",
+      "flushed ERR_INVALID_STATE",
+      "fsync",
+      "close",
+      "'close'",
+    ]);
+    expect(readFileSync(dest, "utf8")).toBe("first\n");
+  });
+
+  it("end() and then destroy() end with 'finish' and 'close'", async () => {
+    using dir = tempDir("utf8stream-end-destroy", {});
+    const { dest, log, stream, closed } = record(String(dir), {});
+    stream.write("hello\n");
+    stream.end();
+    stream.destroy();
+    await closed;
+    expect(log).toEqual(["write", "fsync", "close", "'finish'", "'close'"]);
+    expect(readFileSync(dest, "utf8")).toBe("hello\n");
+  });
+
+  it.each(["destroy", "end"])("%s() and then destroy() while the file is being opened", async first => {
+    using dir = tempDir("utf8stream-destroy-opening", {});
+    const { log, stream, closed } = record(String(dir), { byPath: true });
+    stream[first]();
+    stream.destroy();
+    await closed;
+    // Node has no 'finish' after end() here.
+    expect(log.filter(entry => entry !== "'finish'")).toEqual(["fsync", "close", "'close'"]);
   });
 });
 

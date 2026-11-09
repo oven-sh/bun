@@ -115,11 +115,29 @@ impl us_socket_t {
         c::us_socket_is_closed(self) > 0
     }
 
+    /// An end of a named pipe or a pipe server, which only Windows has.
+    pub fn is_pipe(&self) -> bool {
+        cfg!(windows) && c::us_socket_is_pipe(self) > 0
+    }
+
+    /// The TLS layer has reported bytes as written that the kernel did not take.
+    pub(crate) fn tls_has_unsent(&self) -> bool {
+        c::us_socket_ssl_spill_pending(self) > 0 || c::us_socket_ssl_spill_dropped(self) > 0
+    }
+
+    /// The descriptor that an end of a pipe was adopted with and owns.
+    #[cfg(windows)]
+    pub(crate) fn crt_descriptor(&self) -> Fd {
+        match c::us_socket_get_crt_descriptor(self) {
+            -1 => Fd::INVALID,
+            descriptor => Fd::from_crt(descriptor),
+        }
+    }
+
     /// Write that also reports a fatal (non-would-block) send error so the
     /// node:net path can fail the pending write instead of waiting forever.
     /// The second element is 0 on success, otherwise the positive errno of
-    /// the failed `send()` on POSIX, or 1 on Windows (WSA→errno mapping is
-    /// not wired up here yet).
+    /// the failed `send()` on POSIX, or its WSA or Win32 code on Windows.
     pub(crate) fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         let mut fatal: i32 = 0;
         // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
@@ -157,9 +175,7 @@ impl us_socket_t {
             c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
-                bun_errno::last_error() as u16,
-            )));
+            return Err(crate::Error::Sys(bun_errno::last_error()));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -173,9 +189,7 @@ impl us_socket_t {
             c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
-                bun_errno::last_error() as u16,
-            )));
+            return Err(crate::Error::Sys(bun_errno::last_error()));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -299,6 +313,14 @@ impl us_socket_t {
                 old_ext,
                 new_ext,
             ))
+        }
+    }
+
+    /// Plain bytes that the socket's owner accepted before `adopt_tls` and has not sent. They leave ahead of the handshake.
+    pub fn tls_send_ahead(&mut self, data: &[u8]) {
+        for chunk in data.chunks(MAX_I32) {
+            // SAFETY: `self` is a live `us_socket_t`; `chunk` is valid for its length, which fits in an i32.
+            unsafe { c::us_socket_tls_send_ahead(self, chunk.as_ptr().cast(), chunk.len() as i32) };
         }
     }
 
@@ -457,11 +479,13 @@ impl us_socket_t {
 
     pub fn get_fd(&self) -> Fd {
         let raw = c::us_socket_get_fd(self);
-        // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
-        // Windows. Tag kind=system explicitly — `from_native` would store raw
-        // bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
+        // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on Windows.
         #[cfg(windows)]
         {
+            // `INVALID_SOCKET`: a named pipe server has several handles and names none.
+            if raw == !0 {
+                return Fd::INVALID;
+            }
             Fd::from_system(raw as *mut core::ffi::c_void)
         }
         #[cfg(not(windows))]
@@ -581,6 +605,11 @@ mod c {
         pub(super) safe fn us_socket_close_now(s: &mut us_socket_t) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_is_pipe(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_ssl_spill_pending(s: &us_socket_t) -> u32;
+        pub(super) safe fn us_socket_ssl_spill_dropped(s: &us_socket_t) -> i32;
+        #[cfg(windows)]
+        pub(super) safe fn us_socket_get_crt_descriptor(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
             s: &us_socket_t,
             data: *const core::ffi::c_char,
@@ -622,6 +651,11 @@ mod c {
             data: *const c_char,
             length: i32,
         ) -> *mut us_socket_t;
+        pub(super) fn us_socket_tls_send_ahead(
+            s: *mut us_socket_t,
+            data: *const c_char,
+            length: i32,
+        );
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
         pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);

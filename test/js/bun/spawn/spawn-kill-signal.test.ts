@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isLinux, isWindows, shellExe } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, shellExe } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -147,6 +147,35 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
     });
   });
 });
+
+// What ends a child on its own account ends it nevertheless, as in Node.js. `kill()` with such a signal throws.
+describe.concurrent.skipIf(!isWindows).each(["SIGHUP", 28] as const)(
+  "killSignal %p, which Windows cannot send",
+  killSignal => {
+    // It ends by itself, so that a child that is not ended is a failure and not a hang.
+    const cmd = [bunExe(), "-e", "setTimeout(() => {}, 4000)"];
+    const ended = { exitCode: null, signalCode: "SIGKILL" };
+
+    test("timeout", async () => {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, ...quiet, timeout: 1, killSignal });
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual<unknown>(ended);
+    });
+
+    test("AbortSignal", async () => {
+      const controller = new AbortController();
+      await using proc = Bun.spawn({ cmd, env: bunEnv, ...quiet, signal: controller.signal, killSignal });
+      controller.abort();
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual<unknown>(ended);
+    });
+
+    test("timeout of spawnSync", () => {
+      const { exitCode, signalCode } = Bun.spawnSync({ cmd, env: bunEnv, ...quiet, timeout: 1, killSignal });
+      expect({ exitCode, signalCode }).toEqual<unknown>(ended);
+    });
+  },
+);
 
 // Before, macOS sent signal 30 for "SIGPWR", which is SIGUSR1 there.
 test.each(unsupportedSignals)("%s: a name this OS has no signal for is rejected like an unknown name", async name => {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { join } from "node:path";
 
 // Linux sun_path is 108 bytes. Bun works around longer paths by opening the
 // parent directory and binding to "/proc/self/fd/<dirfd>/<basename>". The
@@ -7,6 +8,14 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 // via "%s", which reads past the end of a non-NUL-terminated allocation.
 // Under ASan this aborts; on release the bound address is built from
 // out-of-bounds heap bytes.
+
+test("listening at a last component that does not fit in sun_path is EINVAL", () => {
+  using dir = tempDir("sun-too-long", {});
+  const unix = join(String(dir), Buffer.alloc(150, "n") + ".sock");
+  expect(() => Bun.listen({ unix, socket: { data() {} } })).toThrow(
+    expect.objectContaining({ code: "EINVAL", syscall: "listen" }),
+  );
+});
 
 describe.skipIf(!isLinux)("unix domain socket long-path workaround", () => {
   function makeSockPath(prefix: string, total: number) {

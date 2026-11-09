@@ -445,9 +445,23 @@ fn search_bin_in_path_list<'a>(
     try_as_spelled: bool,
     extensions: &[&[u16]],
 ) -> Option<&'a mut [u16]> {
-    for segment_part in strings::tokenize(path, b";") {
+    let mut rest = path;
+    while !rest.is_empty() {
+        // As for cmd.exe and Node.js, quotes around a directory are not part of its name, and a `;` between them is.
+        let quoted_len = match rest {
+            [b'"', after @ ..] => {
+                strings::index_of_char_usize(after, b'"').map_or(rest.len(), |at| at + 2)
+            }
+            _ => 0,
+        };
+        let end = strings::index_of_char_usize(&rest[quoted_len..], b';')
+            .map_or(rest.len(), |at| quoted_len + at);
+        let segment = &rest[..end];
+        let segment = segment.strip_prefix(b"\"").unwrap_or(segment);
+        let segment = segment.strip_suffix(b"\"").unwrap_or(segment);
+        rest = rest.get(end + 1..).unwrap_or_default();
         if let Some(bin_path) =
-            search_bin_in_path(buf, path_buf, segment_part, bin, try_as_spelled, extensions)
+            search_bin_in_path(buf, path_buf, segment, bin, try_as_spelled, extensions)
         {
             return Some(bin_path);
         }

@@ -353,8 +353,7 @@ impl<'a> Coordinator<'a> {
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
-                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
-                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
+                    // SIGKILL → TerminateProcess
                     let _ = p.kill(9);
                 }
             }
@@ -1183,8 +1182,8 @@ impl<'a> Coordinator<'a> {
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
-                    // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
-                    // signals, so e.g. kill(1) would leave the sibling running
+                    // SIGKILL → TerminateProcess (most other signals are ENOSYS,
+                    // so e.g. kill(1) would leave the sibling running
                     // past the banner); it reaps as Signaled(9) →
                     // "aborted: sibling worker panicked".
                     let _ = p.kill(9);

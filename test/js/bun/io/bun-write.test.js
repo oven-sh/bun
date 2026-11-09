@@ -1,3 +1,4 @@
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import {
@@ -12,19 +13,19 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
+import { createServer } from "node:net";
+import { devNull } from "node:os";
 import { finished } from "node:stream/promises";
+import { promisify } from "node:util";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
 
 let i = 0;
-const IS_UV_FS_COPYFILE_DISABLED =
-  process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
 (isWindows ? describe : describe.concurrent)("Bun.write", () => {
-  process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
-
   it("Bun.write blob", async () => {
     using tmpbase = tempDir("bun-write-blob", {});
     await Bun.write(
@@ -120,9 +121,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect.unreachable();
     } catch (exception) {
       expect(exception.code).toBe("ENOENT");
-      if (!IS_UV_FS_COPYFILE_DISABLED) {
-        expect(exception.path).toBe(dst.name);
-      }
+      expect(exception.path).toBe(dst.name);
     }
 
     const src = Bun.file(path.join(tmpbase, `test-bun-write-${Date.now()}.txt`));
@@ -134,9 +133,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await gcTick();
     } catch (exception) {
       expect(exception.code).toBe("ENOENT");
-      if (!IS_UV_FS_COPYFILE_DISABLED) {
-        expect(exception.path).toBe(dst.name);
-      }
+      expect(exception.path).toBe(dst.name);
     } finally {
       fs.unlinkSync(src.name);
     }
@@ -166,7 +163,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).toContain("CODE=ENOENT");
-        if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
+        if (isWindows) {
           expect(stdout).toContain("PATH_IS_SRC=true");
         }
         expect(stderr).toBe("");
@@ -219,6 +216,62 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(stdout.trim()).toBe("copy me");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isWindows)("Bun.write(dest, Bun.file(src)) names a destination that cannot be made", async () => {
+    using dir = tempDir("bun-write-bad-dest", { "src.txt": "copy me" });
+    expect(await Bun.write("a<b", Bun.file(path.join(String(dir), "src.txt"))).catch(e => e)).toMatchObject({
+      code: "ENOENT",
+      path: "a<b",
+    });
+  });
+
+  // On Windows another handle has locked the file's bytes. On Linux the device is always full.
+  it.skipIf(isMacOS).each([3, 1024 * 1024])(
+    "Bun.write(path, data) names the file that does not take its %d bytes",
+    async length => {
+      using dir = tempDir("bun-write-fails", { "locked.txt": "0123456789" });
+      const file = isWindows ? path.join(String(dir), "locked.txt") : "/dev/full";
+      let unlock = () => {};
+      if (isWindows) {
+        const { symbols: kernel32 } = dlopen("kernel32.dll", {
+          CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+          LockFile: { args: ["i64", "u32", "u32", "u32", "u32"], returns: "i32" },
+          CloseHandle: { args: ["i64"], returns: "i32" },
+        });
+        const [GENERIC_READ_AND_WRITE, SHARE_ALL, OPEN_EXISTING] = [0xc0000000, 7, 3];
+        const name = Buffer.from(file + "\0", "utf16le");
+        const handle = kernel32.CreateFileW(ptr(name), GENERIC_READ_AND_WRITE, SHARE_ALL, null, OPEN_EXISTING, 0, null);
+        expect(kernel32.LockFile(handle, 0, 0, 0xffffffff, 0)).toBe(1);
+        unlock = () => kernel32.CloseHandle(handle);
+      }
+      try {
+        const { code, syscall, path: named, fd, message } = await Bun.write(file, Buffer.alloc(length)).catch(e => e);
+        expect({ code, syscall, named, fd, message: message.endsWith(`write '${file}'`) }).toEqual({
+          code: isWindows ? "EBUSY" : "ENOSPC",
+          syscall: "write",
+          named: file,
+          fd: undefined,
+          message: true,
+        });
+      } finally {
+        unlock();
+      }
+    },
+  );
+
+  it("Bun.write(fd, Bun.file(directory)) rejects with EISDIR", async () => {
+    using dir = tempDir("bun-write-directory-source", {});
+    const fd = fs.openSync(devNull, "w");
+    try {
+      expect(await Bun.write(fd, Bun.file(String(dir))).catch(e => e)).toMatchObject({
+        code: "EISDIR",
+        syscall: "read",
+        path: String(dir),
+      });
+    } finally {
+      fs.closeSync(fd);
+    }
   });
 
   it("Bun.write('out.txt', 'string')", async () => {
@@ -442,6 +495,165 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
   });
 
+  // Short data is written before Bun.write() returns. On Windows process.exit() waits for the rest, as Node.js does for fs.write().
+  describe.concurrent.each(["stdout", "stderr"])("Bun.write(Bun.%s, data) that nothing waits for", stream => {
+    const kinds = [
+      ["a string", `"written"`],
+      ["bytes", `new TextEncoder().encode("written")`],
+      // Elsewhere these are left to another thread, which process.exit() does not wait for.
+      ...(isWindows
+        ? [
+            ["a Blob", `new Blob(["writ", "ten"])`],
+            ["a Response", `new Response("written")`],
+          ]
+        : []),
+    ];
+    const script = data => `Bun.write(Bun.${stream}, ${data}); process.exit(0);`;
+
+    it.skipIf(!isWindows).each([
+      [256 * 1024 - 1, "0"],
+      [256 * 1024, "0"],
+      [1_000_000, "0"],
+      [1_000_000, "1"],
+    ])(
+      "writes %d bytes, more than a pipe holds, before process.exit() (BUN_DESTRUCT_VM_ON_EXIT=%s)",
+      async (size, BUN_DESTRUCT_VM_ON_EXIT) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script(`Buffer.alloc(${size}, "w").toString()`)],
+          env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.length, stderr: stderr.length, exitCode }).toEqual({
+          stdout: 0,
+          stderr: 0,
+          exitCode: 0,
+          [stream]: size,
+        });
+      },
+    );
+
+    it("does not keep process.exit() waiting for input that does not come", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script("Bun.stdin")],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    it.skipIf(!isWindows).each([1, 3])(
+      "does not keep process.exit() waiting for %d silent pipes that are named by their path",
+      async count => {
+        const server = createServer().listen(`\\\\.\\pipe\\bun-write-then-exit-${randomUUID()}`);
+        await once(server, "listening");
+        try {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `for (let i = 0; i < ${count}; i++) Bun.write(Bun.${stream}, Bun.file(${JSON.stringify(server.address())}));
+              require("fs").write(process.${stream}.fd, "written", () => {});
+              process.exit(0);`,
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0, [stream]: "written" });
+        } finally {
+          server.close();
+        }
+      },
+    );
+
+    it.each(kinds)("writes %s to a pipe before process.exit()", async (_, data) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script(data)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0, [stream]: "written" });
+    });
+
+    // Elsewhere a file is left to another thread, which process.exit() does not wait for.
+    it.skipIf(!isWindows).each(kinds)("writes %s to a file before process.exit()", async (_, data) => {
+      using dir = tempDir("bun-write-then-exit", {});
+      const file = Bun.file(join(String(dir), "out.txt"));
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script(data)], env: bunEnv, [stream]: file });
+      expect({ exitCode: await proc.exited, content: await file.text() }).toEqual({ exitCode: 0, content: "written" });
+    });
+  });
+
+  // libuv's reader does that, so a Bun whose stdout Node.js reads has it at the other end. A blocking write that is
+  // larger than the pipe and meets a read that is then taken back is answered with "success, 0 bytes".
+  it.skipIf(!isWindows).each([
+    ["Bun.write(Bun.file(fd), data)", (fd, data) => Bun.write(Bun.file(fd), data)],
+    ["fs.promises.writeFile(fd, data)", (fd, data) => fs.promises.writeFile(fd, data).then(() => data.length)],
+    ["fs.write(fd, data, callback)", (fd, data) => promisify(fs.write)(fd, data).then(result => result.bytesWritten)],
+  ])("%s writes all of it to a pipe whose reader takes reads back", async (_, write) => {
+    const { symbols: kernel32 } = dlopen("kernel32.dll", {
+      CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "ptr" },
+      ReadFile: { args: ["ptr", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+      CancelIoEx: { args: ["ptr", "ptr"], returns: "i32" },
+      GetOverlappedResult: { args: ["ptr", "ptr", "ptr", "i32"], returns: "i32" },
+      CloseHandle: { args: ["ptr"], returns: "i32" },
+    });
+    const [PIPE_ACCESS_INBOUND, FILE_FLAG_OVERLAPPED, capacity] = [1, 0x40000000, 65536];
+    const name = `\\\\.\\pipe\\bun-write-reads-taken-back-${crypto.randomUUID()}`;
+    const server = kernel32.CreateNamedPipeW(
+      ptr(Buffer.from(name + "\0", "utf16le")),
+      PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+      0,
+      1,
+      capacity,
+      capacity,
+      0,
+      null,
+    );
+    const fd = fs.openSync(name, "w");
+    try {
+      const [buffer, overlapped, transferred] = [new Uint8Array(capacity), new Uint8Array(32), new Uint32Array(1)];
+      const read = () => {
+        overlapped.fill(0);
+        if (!kernel32.ReadFile(server, ptr(buffer), buffer.length, null, ptr(overlapped))) {
+          kernel32.CancelIoEx(server, ptr(overlapped));
+        }
+        return kernel32.GetOverlappedResult(server, ptr(overlapped), ptr(transferred), 1) ? transferred[0] : 0;
+      };
+      const block = new Uint8Array(capacity * 1.5);
+      const results = [];
+      let received = 0;
+      for (let i = 0; i < 200; i++) {
+        let result;
+        write(fd, block).then(
+          written => (result = written),
+          error => (result = error),
+        );
+        while (result === undefined) {
+          for (let j = 0; j < 64; j++) received += read();
+          await new Promise(setImmediate);
+        }
+        results.push(result);
+      }
+      for (let length; (length = read());) received += length;
+      expect({ short: results.filter(result => result !== block.length), received }).toEqual({
+        short: [],
+        received: results.length * block.length,
+      });
+    } finally {
+      fs.closeSync(fd);
+      kernel32.CloseHandle(server);
+    }
+  });
+
   // These tests pass by not throwing:
   it("Bun.write(Bun.stdout, Bun.file(path))", async () => {
     await Bun.write(Bun.stdout, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
@@ -456,7 +668,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   // ftruncate(dst, N); both destroy bytes in a file the caller already had
   // open. BUN_CONFIG_DISABLE_COPY_FILE_RANGE=1 routes Linux through the
   // fallback so the assertion fail-befores on every POSIX lane.
-  describe.skipIf(isWindows)("Bun.write(Bun.file(fd), Bun.file(path)) does not truncate the fd", () => {
+  describe("Bun.write(Bun.file(fd), Bun.file(path)) does not truncate the fd", () => {
     const fallbackEnv = { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" };
 
     it("preserves bytes past the slice window in an r+ fd", async () => {
@@ -484,7 +696,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exitCode).toBe(0);
     });
 
-    it("preserves pre-existing bytes when stdout is redirected with >>", async () => {
+    it.skipIf(isWindows)("preserves pre-existing bytes when stdout is redirected with >>", async () => {
       using dir = tempDir("bun-write-stdout-append", {
         "src.bin": Buffer.alloc(1000, "S").toString(),
         "log.txt": "AAAAAAAAAA",
@@ -538,6 +750,68 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
       expect(exitCode).toBe(0);
     });
+
+    it("writes from the position of the destination fd", async () => {
+      using dir = tempDir("bun-write-fd-position", {
+        "src.txt": "0123456789",
+        "dst.txt": "abcdefghijklmnopqrstuvwxyz",
+      });
+      const dst = join(String(dir), "dst.txt");
+      const fd = fs.openSync(dst, "r+");
+      try {
+        fs.readSync(fd, Buffer.alloc(2));
+        expect(await Bun.write(Bun.file(fd), Bun.file(join(String(dir), "src.txt")))).toBe(10);
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(dst, "utf8")).toBe("ab0123456789mnopqrstuvwxyz");
+    });
+
+    // macOS copies with fcopyfile here.
+    it.skipIf(isMacOS)("reads from the position of the source fd", async () => {
+      using dir = tempDir("bun-write-fd-position", {
+        "src.txt": "0123456789",
+        "dst.txt": "abcdefghijklmnopqrstuvwxyz",
+      });
+      const dst = join(String(dir), "dst.txt");
+      const fd = fs.openSync(join(String(dir), "src.txt"), "r");
+      try {
+        fs.readSync(fd, Buffer.alloc(4));
+        expect(await Bun.write(dst, Bun.file(fd))).toBe(6);
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(dst, "utf8")).toBe("456789");
+    });
+
+    it("names a missing source as it was given", async () => {
+      using dir = tempDir("bun-write-fd-missing-source", { "dst.txt": "" });
+      const missing = join(String(dir), "missing.txt");
+      const fd = fs.openSync(join(String(dir), "dst.txt"), "r+");
+      try {
+        await expect(Bun.write(Bun.file(fd), Bun.file(missing))).rejects.toMatchObject({
+          code: "ENOENT",
+          path: missing,
+        });
+      } finally {
+        fs.closeSync(fd);
+      }
+    });
+
+    it.skipIf(!isWindows)("keeps a dot at the end of the destination's name, like a copy from a path", async () => {
+      using dir = tempDir("bun-write-fd-name", { "src.txt": "0123456789" });
+      const src = join(String(dir), "src.txt");
+      const names = ["from-fd.txt.", "from-path.txt."];
+      const fd = fs.openSync(src, "r");
+      try {
+        expect(await Bun.write(join(String(dir), names[0]), Bun.file(fd))).toBe(10);
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(await Bun.write(join(String(dir), names[1]), Bun.file(src))).toBe(10);
+      expect(fs.readdirSync(String(dir)).sort()).toEqual([...names, "src.txt"]);
+      for (const name of names) fs.rmSync(join(String(dir), name));
+    });
   });
 
   // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop
@@ -561,6 +835,20 @@ const IS_UV_FS_COPYFILE_DISABLED =
       piped: String(size),
       resolved: String(size),
     });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isWindows)("Bun.write(Bun.stdout, Bun.stdin) copies the whole named pipe (> 4096 bytes)", async () => {
+    const size = 1024 * 1024;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stderr.write(String(await Bun.write(Bun.stdout, Bun.stdin)))`],
+      env: bunEnv,
+      stdin: Buffer.alloc(size, "a"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect({ piped: stdout.length, resolved: stderr.trim() }).toEqual({ piped: size, resolved: String(size) });
     expect(exitCode).toBe(0);
   });
 
@@ -851,21 +1139,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     }
     expect(text).toBe("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n");
   }, 25000);
-
-  if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
-    it("Bun.write() without uv_fs_copyfile", async () => {
-      const { exited } = Bun.spawn({
-        cmd: [bunExe(), "test", import.meta.path],
-        env: {
-          ...bunEnv,
-          BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE: "1",
-        },
-        stdio: ["inherit", "inherit", "inherit"],
-      });
-
-      expect(await exited).toBe(0);
-    }, 10000);
-  }
 
   it("BunFile.name survives multiple file.write() calls + GC", async () => {
     using dir = tempDir("bun-file-name-write-gc", {});

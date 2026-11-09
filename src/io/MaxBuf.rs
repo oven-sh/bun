@@ -38,7 +38,7 @@ pub struct Owner {
 const OVERREAD_ALLOWANCE: u64 = 64 * 1024;
 
 // TODO(refactor): LIFETIMES.tsv classifies the caller fields (Subprocess.{stdout,stderr}_maxbuf,
-// {Posix,Windows}BufferedReader.maxbuf) as SHARED → Option<Arc<MaxBuf>>. The fn params below
+// BufferedReader.maxbuf) as SHARED → Option<Arc<MaxBuf>>. The fn params below
 // (`ptr: &mut Option<NonNull<MaxBuf>>`, `value: Option<NonNull<MaxBuf>>`) and the hand-rolled
 // heap::alloc/disowned()/destroy() refcount will not typecheck against those field types —
 // reconcile by retyping to Option<Arc<MaxBuf>> and dropping destroy()/disowned().

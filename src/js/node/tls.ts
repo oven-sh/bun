@@ -509,6 +509,11 @@ function checkServerIdentity(hostname: string, cert: $Node.PeerCertificate) {
   hostname = unfqdn(hostname);
   const hostnameASCIIWithoutFQDN = unfqdn(hostnameASCII);
 
+  // As in Node.js.
+  if (!net.isIP(hostname) && net.isIP(hostnameASCIIWithoutFQDN)) {
+    return $ERR_TLS_CERT_ALTNAME_INVALID("Host is a non-canonical IP address", hostname, cert);
+  }
+
   if (altNames) {
     const splitAltNames = StringPrototypeIncludes.$call(altNames, '"')
       ? splitEscapedAltNames(altNames)
@@ -1350,7 +1355,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
       next.key = key;
 
       let ca = options.ca || undefined;
-      // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
+      // InternalSecureContext applies tls.setDefaultCACertificates() only if there is no `ca`, and the bundle's certificates below make one.
       if (_defaultCACertificatesOverride !== undefined && ca == null) {
         ca = _defaultCACertificatesOverride;
       }
@@ -1458,42 +1463,12 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),
-        // What a socket listener serves. Only a named pipe's still builds its own from the fields below.
+        // What the listener serves.
         secureContext: listenerContext,
-        key: normalizePemKeyOption(this.key, this.passphrase),
-        cert: this.cert,
-        ca: this.ca,
-        crl: this.crl,
-        allowPartialTrustChain: this.allowPartialTrustChain,
-        sessionTimeout: this.sessionTimeout ?? 0,
-        sigalgs: this.sigalgs,
-        ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
-        passphrase: this.passphrase,
-        secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert,
         ALPNProtocols: this.ALPNProtocols,
-        clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
-        clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
-        // Translate minVersion/maxVersion/secureProtocol to the integer
-        // protocol range the native layer applies (secureProtocol wins, like
-        // Node's SecureContext::Init). When none are given the module-level
-        // tls.DEFAULT_MIN_VERSION / DEFAULT_MAX_VERSION apply.
-        ...(() => {
-          const processed = this.ciphers && stripTls13CipherNames(this.ciphers);
-          let minVersion, maxVersion;
-          const range = secureProtocolToVersionRange(this.secureProtocol);
-          if (range) {
-            minVersion = range[0];
-            maxVersion = range[1];
-          } else {
-            const min = processed && processed.tls13Only ? "TLSv1.3" : (this.minVersion ?? DEFAULT_MIN_VERSION);
-            minVersion = tlsStringToProtocolVersion(min);
-            maxVersion = tlsStringToProtocolVersion(this.maxVersion ?? DEFAULT_MAX_VERSION);
-          }
-          return { ciphers: processed && processed.cipherList, minVersion, maxVersion };
-        })(),
       },
       TLSSocket as unknown as $Node.SocketConstructor,
     ];

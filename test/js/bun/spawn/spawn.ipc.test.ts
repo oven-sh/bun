@@ -1,12 +1,24 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
+import { once } from "node:events";
+import fs from "node:fs";
+import net from "node:net";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
 // BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT lowers the max string length.
 const maxStringLength = 64 * 1024;
 const lowLimitEnv = { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(maxStringLength) };
+
+// Source of a function that makes bytes ready to be written to the channel by hand. On Windows they travel in frames,
+// as between libuv's processes: u32 flags (1: has data), u32 0, u32 length, u32 0, data.
+const framed = `(bytes => {
+  bytes = Buffer.from(bytes);
+  const header = Buffer.alloc(process.platform === "win32" ? 16 : 0);
+  if (header.length) header.writeUInt32LE(1, 0), header.writeUInt32LE(bytes.length, 8);
+  return Buffer.concat([header, bytes]);
+})`.replaceAll("\n", " ");
 
 // Sender code that writes 1 MiB of "a" without a newline, which is over the lowered limit.
 // It exits with 1 if the receiver accepted all of it.
@@ -46,6 +58,7 @@ async function runReceiver(serialization: "json" | "advanced", senderSource: str
       // or ENOTCONN (macOS checks the connection first).
       const closed = new Set(["EPIPE", "ECONNRESET", "ENOTCONN"]);
       function write(bytes) {
+        bytes = ${framed}(bytes);
         for (let offset = 0; offset < bytes.length; ) {
           try {
             offset += writeSync(3, bytes, offset);
@@ -195,7 +208,7 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 });
 
 describe("ipc mode json", () => {
-  it.skipIf(isWindows)("closes the channel on a line that holds only the internal tag byte", async () => {
+  it("closes the channel on a line that holds only the internal tag byte", async () => {
     // An internal JSON message is "\\x02" + json + "\\n". A line of just the tag
     // byte strips to an empty payload. The receiver must treat it like an empty
     // line (invalid, close the channel) instead of building an external string
@@ -207,7 +220,7 @@ describe("ipc mode json", () => {
       const child = Bun.spawn({
         cmd: [
           process.execPath, "-e",
-          'process.on("disconnect", () => process.exit(42)); require("fs").writeSync(3, "\\\\x02\\\\n");',
+          'process.on("disconnect", () => process.exit(42)); require("fs").writeSync(3, ${framed}("\\\\x02\\\\n"));',
         ],
         stdio: ["ignore", "inherit", "inherit"],
         serialization: "json",
@@ -230,7 +243,7 @@ describe("ipc mode json", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent.skipIf(isWindows)("closes the channel when an unterminated line exceeds the length limit", async () => {
+  it.concurrent("closes the channel when an unterminated line exceeds the length limit", async () => {
     // The complete lines are delivered. The bytes after them are never terminated by a newline.
     expect(await runReceiver("json", `write(Buffer.from('{"n":1}\\n{"n":2}\\n'));` + flood)).toEqual({
       stdout: ['MESSAGE {"n":1}', 'MESSAGE {"n":2}', "SENDER_EXIT 42"],
@@ -306,7 +319,7 @@ describe("ipc mode advanced", () => {
           process.execPath, "-e",
           // type = SerializedMessage (0x02), length = 0xFFFFFFFB (little-endian).
           // header_length (5) + 0xFFFFFFFB wraps to 0 in u32.
-          'require("fs").writeSync(3, Buffer.from([0x02, 0xfb, 0xff, 0xff, 0xff]))',
+          'require("fs").writeSync(3, ${framed}([0x02, 0xfb, 0xff, 0xff, 0xff]))',
         ],
         stdio: ["ignore", "inherit", "inherit"],
         serialization: "advanced",
@@ -330,7 +343,7 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(isWindows)("rejects a Buffer envelope whose buffer list holds a non-Uint8Array view", async () => {
+  it("rejects a Buffer envelope whose buffer list holds a non-Uint8Array view", async () => {
     // Frame type 4 carries a [message, buffers] envelope and the receiver puts
     // Buffer.prototype on every entry of `buffers`. Only Uint8Arrays may be
     // there: a Float64Array with that prototype reads as a Buffer whose
@@ -349,7 +362,7 @@ describe("ipc mode advanced", () => {
           head[0] = 4;
           head.writeUInt32LE(body.length, 1);
           process.on("disconnect", () => process.exit(42));
-          require("fs").writeSync(3, Buffer.concat([head, body]));
+          require("fs").writeSync(3, ${framed}(Buffer.concat([head, body])));
           \`,
         ],
         stdio: ["ignore", "inherit", "inherit"],
@@ -382,14 +395,12 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(isWindows)(
-    "closes the channel when a frame declares a length that cannot be framed with its header",
-    async () => {
-      const parent = `
+  it("closes the channel when a frame declares a length that cannot be framed with its header", async () => {
+    const parent = `
       const child = Bun.spawn({
         cmd: [
           process.execPath, "-e",
-          'process.on("disconnect", () => process.exit(42)); require("fs").writeSync(3, Buffer.from([0x02, 0xff, 0xff, 0xff, 0xff]));',
+          'process.on("disconnect", () => process.exit(42)); require("fs").writeSync(3, ${framed}([0x02, 0xff, 0xff, 0xff, 0xff]));',
         ],
         stdio: ["ignore", "inherit", "inherit"],
         serialization: "advanced",
@@ -398,22 +409,21 @@ describe("ipc mode advanced", () => {
       console.log("CHILD_EXIT", await child.exited);
     `;
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", parent],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout.trim()).toBe("CHILD_EXIT 42");
-      expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(stdout.trim()).toBe("CHILD_EXIT 42");
+    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+    expect(exitCode).toBe(0);
+  });
 
-  it.concurrent.skipIf(isWindows)(
+  it.concurrent(
     "closes the channel as soon as a frame header declares a length that's too long to deserialize",
     async () => {
       const header = `write(Buffer.from([0x02, 0x01, 0x00, 0x01, 0x00]));`;
@@ -426,12 +436,8 @@ describe("ipc mode advanced", () => {
   );
 });
 
-// get_ipc_instance error path: on Windows, windows_configure_client can open
-// the pipe, mark the socket open, then fail read_start, at which point
-// close_socket has queued a deferred task that holds a ref on the SendQueue.
-// get_ipc_instance detaches the queue, so the task emits no close event, and
-// drops its own ref; the task releases the last one. On POSIX no task is
-// queued and that drop frees the queue.
+// get_ipc_instance error path: no socket comes of the descriptor, so
+// get_ipc_instance detaches the queue and drops its ref, which frees it.
 it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -457,7 +463,121 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)("advanced serialization advertises wire format version 2", async () => {
+// A file can be written to as a pipe can, so a message would go over what is in it.
+it.skipIf(!isWindows)("child whose NODE_CHANNEL_FD is a file leaves the file alone", async () => {
+  using dir = tempDir("ipc-channel-is-a-file", { "file.txt": "what was in the file\n" });
+  const file = path.join(String(dir), "file.txt");
+  const fd = fs.openSync(file, "r+");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on('error', e => console.log('err', e.code));
+        process.send('x');
+        console.log(process.connected);
+      `,
+    ],
+    env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+    stdio: ["ignore", "pipe", "pipe", fd],
+  });
+  fs.closeSync(fd);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Unable to start IPC");
+  expect({ stdout, content: fs.readFileSync(file, "utf8"), exitCode }).toEqual({
+    stdout: "false\nerr ERR_IPC_CHANNEL_CLOSED\n",
+    content: "what was in the file\n",
+    exitCode: 0,
+  });
+});
+
+describe.concurrent.if(isWindows)("closes the channel on a frame header", () => {
+  it.each([
+    ["with a flag that does not exist", [8 | 1, 0, 0, 0]],
+    ["whose last word is not 0", [1, 0, 0, 1]],
+    ["of a connection without a socket", [4 | 1, 0, 0, 0]],
+    ["with a length and no data", [0, 0, 1, 0]],
+  ])("%s", async (_, words) => {
+    // The message before it arrives, and the one after it does not.
+    const sender = `
+      send("before");
+      writeSync(3, new Uint8Array(new Uint32Array(${JSON.stringify(words)}).buffer));
+      write(Buffer.from('"after"\\n'));
+    `;
+    expect(await runReceiver("json", sender)).toEqual({
+      stdout: ["MESSAGE string of 6", "SENDER_EXIT 42"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("no sooner than it is complete, however it is cut up", async () => {
+    const sender = `
+      for (const byte of ${framed}('"in pieces"\\n')) writeSync(3, new Uint8Array([byte]));
+    `;
+    expect(await runReceiver("json", sender, 1)).toEqual({
+      stdout: ["MESSAGE string of 9", "SENDER_EXIT 42"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// fs.openSync() gives a synchronous handle, as a parent that is neither Bun nor Node may hand down. A read on one
+// holds up its thread until the parent sends something. On the event loop's thread, the child's timer never fires.
+it.skipIf(!isWindows)("child whose NODE_CHANNEL_FD is a synchronous pipe handle sends and receives", async () => {
+  const server = net.createServer();
+  server.listen("\\\\.\\pipe\\bun-test-ipc-synchronous-" + Math.random().toString(36).slice(2));
+  await once(server, "listening");
+  const connected = once(server, "connection");
+  const fd = fs.openSync(server.address() as string, "r+");
+  const [peer]: [net.Socket] = await connected;
+  server.close();
+
+  // A message travels in a frame: u32 flags (1: has data), u32 0, u32 length, u32 0, data.
+  const messages: string[] = [];
+  let pending = Buffer.alloc(0);
+  peer.on("data", chunk => {
+    pending = Buffer.concat([pending, chunk]);
+    while (pending.length >= 16 && pending.length >= 16 + pending.readUInt32LE(8)) {
+      const end = 16 + pending.readUInt32LE(8);
+      messages.push(JSON.parse(pending.toString("utf8", 16, end)));
+      pending = pending.subarray(end);
+      if (messages.length > 1) {
+        peer.end();
+        return;
+      }
+      const reply = Buffer.alloc(16 + 7);
+      reply.writeUInt32LE(1, 0);
+      reply.writeUInt32LE(reply.write('"tock"\n', 16), 8);
+      peer.write(reply);
+    }
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on("message", message => process.send("got " + message));
+        process.on("disconnect", () => console.log("disconnect"));
+        setTimeout(() => process.send("tick"), 1);
+      `,
+    ],
+    env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+    stdio: ["ignore", "pipe", "pipe", fd],
+  });
+  fs.closeSync(fd);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ messages, stdout, stderr, exitCode }).toEqual({
+    messages: ["tick", "got tock"],
+    stdout: "disconnect\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("advanced serialization advertises wire format version 2", async () => {
   // The version packet is the first frame on the channel:
   // [type=Version(1), u32 LE version]. Read it raw off fd 3 before the
   // child's own channel machinery starts consuming the socket.
@@ -466,16 +586,16 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
       bunExe(),
       "-e",
       `const fs = require("fs");
-      const buf = Buffer.alloc(5);
+      const buf = Buffer.alloc(${framed}("12345").length);
       let n = 0;
-      while (n < 5) {
+      while (n < buf.length) {
         try {
-          n += fs.readSync(3, buf, n, 5 - n);
+          n += fs.readSync(3, buf, n, buf.length - n);
         } catch (e) {
           if (e.code !== "EAGAIN") throw e;
         }
       }
-      console.log(JSON.stringify([...buf]));`,
+      console.log(JSON.stringify([...buf.subarray(-5)]));`,
     ],
     env: bunEnv,
     stdio: ["ignore", "pipe", "inherit"],

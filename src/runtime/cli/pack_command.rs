@@ -1955,17 +1955,10 @@ pub(crate) fn pack(
                 bun_sys::O::RDONLY,
                 0,
             )
-            .and_then(|file| {
-                file.make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                )
-            })
             .unwrap_or_else(|err| fail_file(err, "open", path));
             let _close_fd = CloseOnDrop::new(fd);
 
-            let stat =
-                bun_sys::sys_uv::fstat(fd).unwrap_or_else(|err| fail_file(err, "stat", path));
+            let stat = bun_sys::fstat(fd).unwrap_or_else(|err| fail_file(err, "stat", path));
 
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(path),

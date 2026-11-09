@@ -465,6 +465,14 @@ test("dns.lookup (localhost)", () => {
   return promise;
 });
 
+// Bun looks up the ASCII form of a name, as Node.js does. No server has to be asked for these.
+test.skipIf(!isWindows).each([
+  ["full-width letters", "ｌｏｃａｌｈｏｓｔ"],
+  ["an ideographic full stop behind it", "localhost。"],
+])("dns.lookup of a name with %s", async (_, name) => {
+  expect(await dns_promises.lookup(name, { family: 4 })).toEqual({ address: "127.0.0.1", family: 4 });
+});
+
 // dns.lookup()'s contract is getaddrinfo(3), so it must use the system
 // resolver, not c-ares, which reads /etc/resolv.conf directly and bypasses
 // NSS/systemd-resolved on split-DNS hosts (#37378). "127.1" is a legacy IPv4
@@ -512,8 +520,8 @@ test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", as
   expect(exitCode).toBe(0);
 });
 
-// On Windows, c-ares closes the UDP socket from inside its uv_poll_t's poll callback. A nested uv_run
-// must not run the close callback that frees the handle while libuv is still dispatching to it.
+// c-ares closes the UDP socket from inside its poll's callback. A nested run of the event loop
+// must not free the poll while it is still being dispatched to.
 test("dns.Resolver: a query's promise reaction can re-enter the event loop", async () => {
   const rounds = 20;
   const fixture = `

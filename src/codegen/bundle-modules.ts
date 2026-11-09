@@ -233,10 +233,11 @@ mark("Preprocess modules");
 const config_cli = [
   process.execPath,
   "build",
-  ...bundledEntryPoints,
+  // Relative to TMP_DIR: as absolute paths they can exceed the 32767 characters of a Windows command line.
+  ...bundledEntryPoints.map(entry => "./" + path.relative(TMP_DIR, entry).replaceAll("\\", "/")),
   ...(debug ? [] : ["--minify-syntax", "--keep-names"]),
   "--root",
-  TMP_DIR,
+  ".",
   "--target",
   "bun",
   ...builtinModules.map(x => ["--external", x]).flat(),
@@ -248,12 +249,12 @@ const config_cli = [
   "--define",
   `__intrinsic__debug=${debug ? "$debug_log_enabled" : "false"}`,
   "--outdir",
-  path.join(TMP_DIR, "modules_out"),
+  "modules_out",
 ];
 verbose("running: ", config_cli);
 const out = Bun.spawnSync({
   cmd: config_cli,
-  cwd: process.cwd(),
+  cwd: TMP_DIR,
   env: process.env,
   stdio: ["pipe", "pipe", "pipe"],
 });

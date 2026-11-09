@@ -2118,11 +2118,9 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub(crate) fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
-        if FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-            if self.flags.is_preconnect_only {
-                self.on_preconnect::<IS_SSL>(socket);
-                return;
-            }
+        if self.flags.is_preconnect_only {
+            self.on_preconnect::<IS_SSL>(socket);
+            return;
         }
 
         if IS_SSL {
@@ -2329,18 +2327,7 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::DNSResolveFailed);
             return;
         }
-        // Windows: only a WSA code names a cause. Below that range is the CRT's
-        // `ECONNREFUSED` uSockets stores when every address of a name failed,
-        // a different number in `SystemErrno`; and WSAENOTCONN is its recv()
-        // probe finding the socket unconnected after SO_ERROR was consumed.
-        const WSA_FIRST: i32 = 10000;
-        const WSAENOTCONN: i32 = 10057;
-        self.state.connect_errno =
-            if cfg!(windows) && (connect_errno < WSA_FIRST || connect_errno == WSAENOTCONN) {
-                0
-            } else {
-                connect_errno
-            };
+        self.state.connect_errno = connect_errno;
         self.fail(crate::Error::ConnectionRefused);
     }
 
@@ -3369,11 +3356,9 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        if FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-            if self.flags.is_preconnect_only {
-                self.on_preconnect::<IS_SSL>(socket);
-                return;
-            }
+        if self.flags.is_preconnect_only {
+            self.on_preconnect::<IS_SSL>(socket);
+            return;
         }
 
         if let Some(proxy) = self.proxy_tunnel_ptr() {

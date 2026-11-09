@@ -61,7 +61,7 @@ export default b.declarations(
       reads: externalState,
       implementation: b.generic,
     },
-    // On Windows it takes a flag alone. Elsewhere the bytes hold the mode the terminal had before.
+    // The bytes hold the mode the terminal had before.
     setRawMode: {
       ...operandCodeOnly,
       args: { fd: b.any.optional, mode: b.any.optional, state: b.any.optional },

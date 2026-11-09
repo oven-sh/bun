@@ -13,19 +13,62 @@ use bun_wyhash::Wyhash11 as Wyhash;
 // the body of this crate stays cfg-free.
 #[cfg(not(windows))]
 mod sock {
-    // `addrinfo`/`freeaddrinfo` are re-exported from the crate root below;
+    // `addrinfo`/`getaddrinfo`/`freeaddrinfo` are re-exported from the crate root below;
     // the rest are crate-internal.
     pub(crate) use libc::{
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, sockaddr_un,
     };
-    pub use libc::{addrinfo, freeaddrinfo};
+    pub use libc::{addrinfo, freeaddrinfo, getaddrinfo};
 }
 #[cfg(windows)]
 mod sock {
     pub(crate) use bun_windows_sys::ws2_32::{
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
     };
-    pub use bun_windows_sys::ws2_32::{addrinfo, freeaddrinfo};
+    pub use bun_windows_sys::ws2_32::{FreeAddrInfoW as freeaddrinfo, addrinfo};
+
+    unsafe extern "C" {
+        /// UTS #46 ToASCII in NodeURL.cpp, on any thread. `Tag::Dead` when `domain` does not convert.
+        safe fn Bun__idnaToASCII(domain: &bun_core::String) -> bun_core::String;
+    }
+
+    /// `getaddrinfo` of UTF-8 names, which the function of that name reads in the system's code page.
+    ///
+    /// # Safety
+    /// As for `getaddrinfo`.
+    pub unsafe fn getaddrinfo(
+        node: *const core::ffi::c_char,
+        service: *const core::ffi::c_char,
+        hints: *const addrinfo,
+        res: *mut *mut addrinfo,
+    ) -> core::ffi::c_int {
+        const WSA_NOT_ENOUGH_MEMORY: core::ffi::c_int = 8;
+
+        let wide = |s: *const core::ffi::c_char| {
+            if s.is_null() {
+                return Ok(None);
+            }
+            // SAFETY: fn contract: not null, so a NUL-terminated string.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes();
+            // The name goes out in its ASCII form.
+            let ascii = bun_core::strings::first_non_ascii(bytes)
+                .map(|_| Bun__idnaToASCII(&bun_core::StringView::borrow_utf8(bytes)))
+                .filter(|ascii| !ascii.is_dead())
+                .map(|ascii| ascii.to_owned_slice());
+            let bytes = ascii.as_deref().unwrap_or(bytes);
+            bun_core::strings::to_utf16_alloc_for_real(bytes, false, true).map(Some)
+        };
+        let (Ok(node), Ok(service)) = (wide(node), wide(service)) else {
+            return WSA_NOT_ENOUGH_MEMORY;
+        };
+        let ptr_of = |s: &Option<Vec<u16>>| s.as_ref().map_or(core::ptr::null(), |s| s.as_ptr());
+
+        bun_windows_sys::ws2_32::ensure_started();
+        // SAFETY: the strings end in a NUL; the rest is the fn contract.
+        unsafe {
+            bun_windows_sys::ws2_32::GetAddrInfoW(ptr_of(&node), ptr_of(&service), hints, res)
+        }
+    }
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
     // (`{ family: u16, path: [108]u8 }`) here so address_to_string stays
@@ -37,9 +80,9 @@ mod sock {
     }
 }
 
-// Re-export the cfg-dispatched addrinfo type + matching free so callers don't
+// Re-export the cfg-dispatched addrinfo type + matching functions so callers don't
 // duplicate the POSIX/Windows split (see dns_jsc::dns).
-pub use sock::{addrinfo, freeaddrinfo};
+pub use sock::{addrinfo, freeaddrinfo, getaddrinfo};
 
 #[cfg(windows)]
 pub const AI_V4MAPPED: c_int = 2048;
@@ -341,10 +384,7 @@ impl GetAddrInfoResult {
         }
         Some(GetAddrInfoResult {
             // SAFETY: `ai_addr` is non-null and points to a valid sockaddr per
-            // getaddrinfo's contract. `.cast()` erases the nominal-type
-            // mismatch on Windows (ws2_32::sockaddr ↔ the libuv-sys mirror
-            // `bun_sys::posix::sockaddr` routes to) — both are the 16-byte
-            // ws2def.h `SOCKADDR`.
+            // getaddrinfo's contract.
             address: unsafe { Address::init_posix(sockaddr.cast()) },
             // no TTL in POSIX getaddrinfo()
             ttl: 0,
@@ -479,7 +519,7 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
 }
 
 /// The process-wide DNS
-/// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
+/// cache lives in `bun_runtime` (it owns the libinfo and work pool lookups + JSC
 /// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
 /// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
 /// rather than a `bun_runtime` crate dep, which would cycle.

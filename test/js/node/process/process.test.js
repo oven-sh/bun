@@ -3,7 +3,9 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { networkInterfaces } from "os";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -40,9 +42,8 @@ it("process", () => {
 
   // process.title defaults to argv[0] as invoked, matching Node
   // (uv_get_process_title semantics), so it is the executable path here.
-  if (!isNode && process.platform !== "win32" && typeof process.title !== "string")
-    throw new Error("process.title is not a string");
-  if (!isNode && process.platform !== "win32" && process.title.length === 0) throw new Error("process.title is empty");
+  if (!isNode && typeof process.title !== "string") throw new Error("process.title is not a string");
+  if (!isNode && process.title.length === 0) throw new Error("process.title is empty");
 
   if (process.platform !== "win32" && typeof process.env.USER !== "string")
     throw new Error("process.env is not an object");
@@ -107,6 +108,28 @@ it("process.title with UTF-16 characters", () => {
 
   process.title = "bun";
   expect(process.title).toBe("bun");
+});
+
+// A title that is stored goes to the console, which keeps it. As in Node.js, nobody starts with it.
+it.if(isWindows)("process.title starts as the path of the executable, whatever the title of the console", async () => {
+  const second = `process.stdout.write("TITLE<" + (process.title === process.execPath ? "execPath" : process.title) + ">");`;
+  const first = `
+    process.title = "left behind";
+    require("node:child_process").spawnSync(process.execPath, ["-e", ${JSON.stringify(second)}], { stdio: "inherit" });
+    setInterval(() => {}, 1 << 30);
+  `;
+  const title = Promise.withResolvers();
+  let output = "";
+  await using terminal = new Bun.Terminal({
+    data(_, chunk) {
+      output += Buffer.from(chunk).toString();
+      const match = /TITLE<(.*)>/.exec(output);
+      if (match) title.resolve(match[1]);
+    },
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", first], env: bunEnv, terminal });
+  proc.exited.then(code => title.reject(new Error(`exited with code ${code}: ${JSON.stringify(output)}`)));
+  expect(await title.promise).toBe("execPath");
 });
 
 it("process.loadEnvFile can set accessor-backed keys and respects empty values", async () => {
@@ -359,6 +382,22 @@ it("process.chdir() on root dir", () => {
     process.chdir(cwd);
   }
 });
+
+const cwdOnShare = `localhost\\${process.cwd()[0]}$\\${process.cwd().slice(3)}`;
+it.skipIf(!isWindows || !existsSync("\\\\" + cwdOnShare))(
+  "process.cwd() is a path after process.chdir() to a \\\\?\\UNC\\ path",
+  () => {
+    const cwd = process.cwd();
+    try {
+      for (const prefix of ["\\\\?\\UNC\\", "\\\\?\\unc\\"]) {
+        process.chdir(prefix + cwdOnShare);
+        expect(process.cwd()).toBe("\\\\" + cwdOnShare);
+      }
+    } finally {
+      process.chdir(cwd);
+    }
+  },
+);
 
 it("process.hrtime()", async () => {
   const start = process.hrtime();
@@ -760,6 +799,34 @@ it("process.umask()", () => {
   expect(process.umask(undefined)).toBe(mask);
   expect(process.umask(Number(orig))).toBe(mask);
   expect(process.umask()).toBe(orig);
+});
+
+it("process.umask() holds for files that many threads create at once", async () => {
+  using dir = tempDir("process-umask-threads", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const fs = require("node:fs");
+        process.umask(0o222);
+        for (let round = 0; round < 8; round++) {
+          await Promise.all(
+            Array.from({ length: 64 }, async (_, i) => (await fs.promises.open(round + "-" + i, "w", 0o666)).close()),
+          );
+        }
+        const writable = fs.readdirSync(".").filter(name => fs.statSync(name).mode & 0o200);
+        console.log(JSON.stringify({ writable, umask: process.umask() }));
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // The C runtime of Windows keeps the owner's bits only.
+  expect(JSON.parse(stdout)).toEqual({ writable: [], umask: isWindows ? 0o200 : 0o222 });
+  expect(exitCode).toBe(0);
 });
 
 it("process.versions", async () => {
@@ -1487,8 +1554,7 @@ describe.concurrent(() => {
       ).toThrow("The property 'prevValue.system' is invalid. Received -1");
     });
 
-    // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
-    it.skipIf(process.platform === "win32")("works with diff", () => {
+    it("works with diff", () => {
       const init = process.cpuUsage();
       init.system = 0;
       init.user = 0;
@@ -1497,7 +1563,7 @@ describe.concurrent(() => {
       expect(delta.system).toBeGreaterThanOrEqual(0);
     });
 
-    it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
+    it("works with diff of different structure", () => {
       const init = {
         system: 0,
         user: 0,
@@ -1908,6 +1974,19 @@ console.log(load());
     // TODO: write better tests
     JSON.stringify(process.report.getReport(), null, 2);
   });
+
+  it.if(isWindows)(
+    "process.report has the addresses of os.networkInterfaces(), with the fields in Node's order",
+    () => {
+      const expected = Object.entries(networkInterfaces()).flatMap(([name, addresses]) =>
+        addresses.map(({ internal, mac, address, netmask, family, scopeid }) =>
+          JSON.stringify({ name, internal, mac, address, netmask, family, scopeid }),
+        ),
+      );
+      const reported = process.report.getReport().header.networkInterfaces.map(it => JSON.stringify(it));
+      expect(reported.sort()).toEqual(expected.sort());
+    },
+  );
 
   // A pending worker.terminate() is delivered at the exception checks inside the
   // report builders, so a worker looping on getReport() is always interrupted in

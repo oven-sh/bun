@@ -171,6 +171,10 @@ public:
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
                 idle = false;
             }
+        } else if (idle && !Super::hasFullyDrained()) {
+            /* Its response has unsent bytes: close when they are out. */
+            data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+            idle = false;
         }
         if (!idle) {
             return false;

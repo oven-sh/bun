@@ -5057,7 +5057,8 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
     return arrayBuffer;
 }
 
-static DeserializationResult deserializeBytesOf(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& arrayBuffer, size_t byteOffset, size_t maxByteLength)
+// Inlined: deserialize() of bun:jsc pays no call for the share.
+static ALWAYS_INLINE DeserializationResult deserializeBytesOf(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& arrayBuffer, size_t byteOffset, size_t maxByteLength)
 {
     auto blobURLs = Vector<String> {};
     auto blobFiles = Vector<String> {};

@@ -5876,14 +5876,31 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm = unsafe { &mut *global.bun_vm_ptr() };
         if let Some(keys) = jsc_vm.resolution_memo_keys(specifier, source) {
-            return Self::resolve_with_memo::<IS_A_FILE_PATH>(
-                global,
-                keys,
-                (specifier, source),
-                query_string,
-                mode,
-                global_cache,
-            );
+            use crate::resolution_memo::{Kind, Lookup};
+            use bun_core::Environment::CI_ASSERT;
+            let kind = Kind::new(mode.is_esm(), IS_A_FILE_PATH, global_cache);
+            let watch = CI_ASSERT.then(bun_resolver::resolution_epoch::watch);
+            let epoch = bun_resolver::resolution_epoch::get();
+            let answers = &mut jsc_vm.resolution_memo.answers;
+            match answers.get(keys.0, keys.1, kind, epoch) {
+                Lookup::Kept(path) if !CI_ASSERT => {
+                    return Ok(Ok(crate::resolution_memo::into_string(path)));
+                }
+                // The memo has nothing to do with what the resolver answers for these.
+                Lookup::New(_) | Lookup::Refused if !CI_ASSERT => {}
+                lookup => {
+                    return Self::resolve_for_memo::<IS_A_FILE_PATH>(
+                        global,
+                        keys,
+                        (specifier, source),
+                        query_string,
+                        (mode, global_cache),
+                        (kind, epoch),
+                        lookup,
+                        watch,
+                    );
+                }
+            }
         }
         Self::resolve_with_resolver::<IS_A_FILE_PATH>(
             global,
@@ -6082,9 +6099,10 @@ impl VirtualMachine {
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
 
-    /// `resolve_without_on_resolve` for two strings that the memo can have an answer for: that answer, or what the
-    /// resolver answers now, which the memo keeps from the second time on that the pair comes.
-    fn resolve_with_memo<const IS_A_FILE_PATH: bool>(
+    /// `resolve_without_on_resolve` for a pair whose answer the memo keeps or checks: the second resolution of a pair,
+    /// one whose entry is from before the epoch moved, and in builds with assertions every resolution.
+    #[inline(never)]
+    fn resolve_for_memo<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         keys: (
             &bun_core::WTFStringImplStruct,
@@ -6092,31 +6110,19 @@ impl VirtualMachine {
         ),
         (specifier, source): (&bun_core::String, &bun_core::String),
         query_string: Option<&mut bun_core::String>,
-        mode: ResolveMode,
-        global_cache: bun_resolver::GlobalCache,
+        (mode, global_cache): (ResolveMode, bun_resolver::GlobalCache),
+        (kind, epoch): (crate::resolution_memo::Kind, u64),
+        lookup: crate::resolution_memo::Lookup<bun_core::WTFString>,
+        watch: Option<bun_resolver::resolution_epoch::Watch>,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
-        use crate::resolution_memo::{Kind, Lookup, Ticket};
-        use bun_core::Environment::CI_ASSERT;
+        use crate::resolution_memo::{Lookup, Ticket};
         // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm = unsafe { &mut *global.bun_vm_ptr() };
-        let kind = Kind::new(mode.is_esm(), IS_A_FILE_PATH, global_cache);
-        let watch = CI_ASSERT.then(bun_resolver::resolution_epoch::watch);
-        let epoch = bun_resolver::resolution_epoch::get();
         let mut ticket = Ticket::None;
         let mut memo_answer = None;
-        match jsc_vm
-            .resolution_memo
-            .answers
-            .get(keys.0, keys.1, kind, epoch)
-        {
-            Lookup::Kept(path) => {
-                let path = crate::resolution_memo::into_string(path);
-                if !CI_ASSERT {
-                    return Ok(Ok(path));
-                }
-                // With assertions on, the resolver runs as well, and it has to agree.
-                memo_answer = Some(path);
-            }
+        match lookup {
+            // With assertions on, the resolver runs as well, and it has to agree.
+            Lookup::Kept(path) => memo_answer = Some(crate::resolution_memo::into_string(path)),
             Lookup::Stale(slot) => ticket = Ticket::Refresh(slot),
             Lookup::Repeated(slot) => ticket = Ticket::Put(slot),
             Lookup::New(_) | Lookup::Refused => {}

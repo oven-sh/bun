@@ -238,26 +238,30 @@ fn asserted_type(file: &File<'_>, mut value: ExprId) -> Option<(TypeNodeId, bool
     }
 }
 
-/// The name of the variable that holds the default value of `parameter`: `a` of `let a = t0 === undefined ? 1 : t0`.
-fn variable_of_moved_default<'a>(
+/// The variable that holds each moved default value, by its parameter: `a` of `let a = t0 === undefined ? 1 : t0`.
+fn variables_of_moved_defaults<'a>(
     output: &Syntax<'a, '_>,
     mappings: &Mappings,
-    parameter: (u32, u32),
-) -> Option<&'a [u8]> {
-    output.file.stmts.iter().find_map(|statement| {
+) -> FxHashMap<(u32, u32), &'a [u8]> {
+    let mut found = FxHashMap::default();
+    for statement in output.file.stmts.iter() {
         let StmtKind::Var(declarations) = statement.kind else {
-            return None;
+            continue;
         };
-        declarations.iter().enumerate().find_map(|(place, id)| {
+        for (place, id) in declarations.iter().enumerate() {
             let declaration: &VarDecl = &output.file[id];
             let name = &output.file[declaration.pat];
             // The source map has no place for the name of the first variable of a statement, and has one for the statement.
             let of_statement = || mappings.original(statement.start).filter(|_| place == 0);
             let mapped = mappings.original(name.pos).or_else(of_statement);
-            let is_it = mapped == Some(parameter) && matches!(name.kind, PatKind::Ident(_));
-            is_it.then(|| output.word(name.pos))
-        })
-    })
+            if let Some(parameter) = mapped.filter(|_| matches!(name.kind, PatKind::Ident(_))) {
+                found
+                    .entry(parameter)
+                    .or_insert_with(|| output.word(name.pos));
+            }
+        }
+    }
+    found
 }
 
 /// Each parameter of `file` that has a default value, by where it starts.
@@ -312,16 +316,19 @@ impl<'a, 's> Syntax<'a, 's> {
         }
     }
 
-    /// The function that has a parameter with a default value whose name starts at `binding`.
-    fn function_with_default(&self, binding: u32) -> Option<FnId> {
-        let is_it = |parameter: ParamId| {
-            let parameter = &self.file[parameter];
-            parameter.default.is_some() && self.file[parameter.pat].pos == binding
-        };
-        let functions = (0..self.file.fns.len() as u32).map(FnId);
-        functions
-            .into_iter()
-            .find(|&id| self.file[id].params.iter().any(is_it))
+    /// The function and the default value of each parameter that has one, by where the name of the parameter starts.
+    fn defaults_by_parameter(&self) -> FxHashMap<u32, (FnId, ExprId)> {
+        let mut found = FxHashMap::default();
+        for function in (0..self.file.fns.len() as u32).map(FnId) {
+            let parameters = self.file[function].params.iter();
+            for parameter in parameters.map(|parameter| &self.file[parameter]) {
+                if parameter.default.is_some() {
+                    let at = self.file[parameter.pat].pos;
+                    found.insert(at, (function, parameter.default));
+                }
+            }
+        }
+        found
     }
 
     /// Whether `at` is before the body of `function`, and in no default value: the output has those in the body.
@@ -2702,6 +2709,7 @@ fn link(
         .collect();
     let mut pending_pairs: Vec<&[u8]> = Vec::new();
     let mut all_edits: Vec<Vec<(u32, u32, Vec<u8>)>> = Vec::new();
+    let mut moved_defaults = None;
     for (index, module) in written.iter().enumerate() {
         let mut edits: Vec<(u32, u32, Vec<u8>)> = Vec::new();
         if let Some((module, types)) = module
@@ -2842,6 +2850,7 @@ fn link(
                     }
                 }
             }
+            let mut defaults = None;
             for &(at, binding) in types.locals.iter().filter(|_| index < mapped) {
                 let Some(&offset) = generated.get(&(index as u32, binding)) else {
                     continue;
@@ -2853,12 +2862,18 @@ fn link(
                 // `typeof a` where the output has the default value of `a` in the function body: its parameter takes `undefined`.
                 let moved = (syntax.typeof_before(at))
                     .filter(|_| !may_have_default_without_slot(output.text, offset))
-                    .zip(syntax.function_with_default(binding));
+                    .zip(
+                        defaults
+                            .get_or_insert_with(|| syntax.defaults_by_parameter())
+                            .get(&binding),
+                    );
                 // In the function body, the variable that holds the default value has the type of `a`.
                 let variable = moved
-                    .filter(|&(_, function)| !syntax.is_in_signature(function, at))
+                    .filter(|&(_, &(function, _))| !syntax.is_in_signature(function, at))
                     .and_then(|_| {
-                        variable_of_moved_default(output, mappings, (index as u32, binding))
+                        let variables = moved_defaults
+                            .get_or_insert_with(|| variables_of_moved_defaults(output, mappings));
+                        variables.get(&(index as u32, binding)).copied()
                     });
                 if let Some(variable) = variable {
                     if variable != syntax.word(at) {
@@ -2866,7 +2881,13 @@ fn link(
                     }
                     continue;
                 }
-                let Some((start, _)) = moved else {
+                // A parameter takes `undefined` where that is its default value too: `typeof t0` is its type.
+                let is_undefined = |default: ExprId| {
+                    matches!(syntax.file[default].kind, ExprKind::Ident(_))
+                        && syntax.word(syntax.file[default].pos) == b"undefined"
+                };
+                let Some((start, _)) = moved.filter(|&(_, &(_, default))| !is_undefined(default))
+                else {
                     edits.push((at, end, new.to_vec()));
                     continue;
                 };

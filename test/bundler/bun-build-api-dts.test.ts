@@ -338,6 +338,10 @@ export function useMeasured(first = 1, unit = 2): number {
   const [value] = useState(first);
   return (value + 1) as typeof unit;
 }
+export function useReturned(first = 1, value: number | undefined = undefined): typeof value {
+  const [seen] = useState(first);
+  return seen > 1 ? value : undefined;
+}
 export function useCell(first = 1, unit = Unit.Px as Unit | null): string {
   const [value] = useState(first);
   if (unit === null) return value + "none";
@@ -380,7 +384,7 @@ export function plain(first: number = 1, second: number = 2): number {
 console.log(useName(), usePoint(), useUnit(), usePadded(undefined, undefined, undefined, "a"), useNested(1));
 console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), useCast(), useCast(1, null, "blue"));
 console.log(useCell(), useCell(1, null), useCell(1, Unit.Em), useParse(undefined, undefined, "1"), useTyped());
-console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2), useMeasured());
+console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2), useMeasured(), useReturned());
 `;
   // The parameters of each function, from the second one on where the first one is the compiler's. The first default
   // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
@@ -430,6 +434,7 @@ console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2)
     // Where only the parameter is in scope, `T & ({} | null)` is its type without `undefined`.
     useSigned: "t1?: (typeof t0 & ({} | null)), t2?: typeof same, t3?: (typeof t2<number> & ({} | null))",
     useMeasured: "t1?: number",
+    useReturned: "t1?: number | undefined",
     same: "value: T",
     // Its `switch` has a `case` for each value only if `unit` has its type.
     useCell: expect.stringMatching(/^t1\?: Unit\d* \| null$/),
@@ -466,6 +471,8 @@ console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2)
     expect(typed).toContain("picked: typeof pick<number> = pick");
     // The output has no variable for a parameter that only a type names.
     expect(typed).toContain("value + 1 as (typeof t1 & ({} | null))");
+    // A parameter takes `undefined` where that is its default value too.
+    expect(typed).toContain("t1?: number | undefined): typeof t1 {");
   });
 
   test("in a module that is not checked", async () => {

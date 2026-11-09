@@ -1,6 +1,9 @@
+import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -500,6 +503,38 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// Windows cannot hand a directory handle to a child as stdin.
+test.concurrent.skipIf(isWindows)("process.stdin ends when fd 0 is a directory, like node", async () => {
+  using dir = tempDir("stdin-directory", {});
+  const dirFd = openSync(String(dir), "r");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const events = [];
+        process.stdin
+          .on("error", e => events.push("error:" + e.code))
+          .on("end", () => events.push("end"))
+          .on("close", () => events.push("close"))
+          .resume();
+        console.log(process.stdin.isTTY, process.stdin.fd);
+        process.on("exit", () => console.log(events.join(",")));`,
+      ],
+      stdin: dirFd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined 0\nend,close\n");
+    expect(exitCode).toBe(0);
+  } finally {
+    closeSync(dirFd);
+  }
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the
@@ -692,4 +727,215 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
+});
+
+// node has the same streams. Not on Windows: it cannot hand a directory to a child for fd 0, 1 or 2, and fs.closeSync() keeps those three open.
+describe.skipIf(isWindows)("process streams over a descriptor of an unknown type", () => {
+  type Slot = number | "ignore" | "pipe";
+  async function run(
+    script: string,
+    { cwd, stdio = ["ignore", "pipe", "pipe"] }: { cwd?: string; stdio?: [Slot, Slot, Slot] } = {},
+  ) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd, stdio });
+    // A slot that holds a descriptor of this process has no pipe to read.
+    const text = (stream: unknown) => (stream instanceof ReadableStream ? stream.text() : "");
+    const [stdout, stderr, exitCode] = await Promise.all([text(proc.stdout), text(proc.stderr), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Each reports through a descriptor that is a pipe.
+  const writeToStdout = `
+    const { constructor, fd, _isStdio } = process.stdout;
+    process.stdout.write("discarded\\n", err => {
+      console.error(JSON.stringify({ stream: constructor.name, fd, _isStdio, err: err ?? null }));
+    });
+  `;
+  const stdoutDiscards = '{"stream":"Writable","fd":1,"_isStdio":true,"err":null}\n';
+  const writeToStderr = `
+    const { constructor, fd, _isStdio } = process.stderr;
+    process.stderr.write("discarded\\n", err => {
+      console.log(JSON.stringify({ stream: constructor.name, fd, _isStdio, err: err ?? null }));
+    });
+  `;
+  const stderrDiscards = '{"stream":"Writable","fd":2,"_isStdio":true,"err":null}\n';
+  const readStdin = `
+    const { constructor, fd } = process.stdin;
+    let bytes = 0;
+    process.stdin.on("data", chunk => (bytes += chunk.length));
+    process.stdin.on("end", () => console.log(JSON.stringify({ stream: constructor.name, fd, bytes })));
+  `;
+  const stdinHasEnded = '{"stream":"Readable","fd":0,"bytes":0}\n';
+
+  test.concurrent("process.stdout discards when fd 1 is a directory", async () => {
+    using dir = tempDir("stdout-directory", {});
+    const dirFd = openSync(String(dir), "r");
+    try {
+      expect(await run(writeToStdout, { stdio: ["ignore", dirFd, "pipe"] })).toEqual({
+        stdout: "",
+        stderr: stdoutDiscards,
+        exitCode: 0,
+      });
+    } finally {
+      closeSync(dirFd);
+    }
+  });
+
+  // node gives this stream the destroySoon() and _destroy() of every process.stdout: it is writable again once it has closed.
+  test.concurrent("process.stdout that discards takes a write after end() and after destroy()", async () => {
+    using dir = tempDir("stdout-directory-undestroy", {});
+    const dirFd = openSync(String(dir), "r");
+    try {
+      const write = `process.stdout.write("discarded\\n", err => {
+        console.error(JSON.stringify({ stream: process.stdout.constructor.name, err: err ?? null }));
+      });`;
+      const [afterEnd, afterDestroy] = await Promise.all(
+        [
+          `process.stdout.end(); process.stdout.once("close", () => { ${write} });`,
+          `process.stdout.destroy(); ${write}`,
+        ].map(script => run(script, { stdio: ["ignore", dirFd, "pipe"] })),
+      );
+      const written = { stdout: "", stderr: '{"stream":"Writable","err":null}\n', exitCode: 0 };
+      expect({ afterEnd, afterDestroy }).toEqual({ afterEnd: written, afterDestroy: written });
+    } finally {
+      closeSync(dirFd);
+    }
+  });
+
+  // An epoll instance is an anonymous inode: fstat() gives it no file type.
+  test.concurrent.skipIf(!isLinux)("an epoll instance on fd 0, 1 or 2 gives node's fallback streams", async () => {
+    const libc = dlopen(libcPathForDlopen(), {
+      epoll_create1: { args: ["int"], returns: "int" },
+      close: { args: ["int"], returns: "int" },
+    });
+    const epollFd = libc.symbols.epoll_create1(0);
+    try {
+      expect(epollFd).toBeGreaterThan(2);
+      const [stdin, stdout, stderr] = await Promise.all([
+        run(readStdin, { stdio: [epollFd, "pipe", "pipe"] }),
+        run(writeToStdout, { stdio: ["ignore", epollFd, "pipe"] }),
+        run(writeToStderr, { stdio: ["ignore", "pipe", epollFd] }),
+      ]);
+      expect({ stdin, stdout, stderr }).toEqual({
+        stdin: { stdout: stdinHasEnded, stderr: "", exitCode: 0 },
+        stdout: { stdout: "", stderr: stdoutDiscards, exitCode: 0 },
+        stderr: { stdout: stderrDiscards, stderr: "", exitCode: 0 },
+      });
+    } finally {
+      libc.symbols.close(epollFd);
+      libc.close();
+    }
+  });
+
+  // A file stream closes its descriptor when it ends, fd 0 too. process.stdin is made after that.
+  test.concurrent("process.stdin ends after a file stream has read fd 0 to its end", async () => {
+    using dir = tempDir("stdin-closed-by-stream", { "input.txt": "hello stdin\n" });
+    const inputFd = openSync(join(String(dir), "input.txt"), "r");
+    try {
+      expect(
+        await run(
+          `
+            const fs = require("node:fs");
+            let bytes = 0;
+            for await (const chunk of fs.createReadStream(null, { fd: 0 })) bytes += chunk.length;
+            process.stdin.on("end", () => console.log(JSON.stringify({ bytes, end: true }))).resume();
+          `,
+          { stdio: [inputFd, "pipe", "pipe"] },
+        ),
+      ).toEqual({ stdout: '{"bytes":12,"end":true}\n', stderr: "", exitCode: 0 });
+    } finally {
+      closeSync(inputFd);
+    }
+  });
+
+  // Bun.file(0) makes the stdio store while fd 0 is closed. process.stdin is what the descriptor is when it is made.
+  test.concurrent("process.stdin is the pipe kind over a FIFO that was opened on the closed fd 0", async () => {
+    using dir = tempDir("stdin-reopened-fifo", {});
+    expect(Bun.spawnSync({ cmd: ["mkfifo", `${dir}/fifo`] }).exitCode).toBe(0);
+    expect(
+      await run(
+        `
+          const fs = require("node:fs");
+          fs.closeSync(0);
+          Bun.file(0);
+          const opened = fs.openSync("fifo", "r+");
+          const unref = typeof process.stdin.unref;
+          // "r+" also opens the FIFO for writing, so no end comes: the first chunk is the result.
+          fs.writeSync(opened, "payload");
+          process.stdin.once("data", chunk => {
+            console.log(JSON.stringify({ opened, unref, data: String(chunk) }));
+            process.exit(0);
+          });
+        `,
+        { cwd: String(dir) },
+      ),
+    ).toEqual({ stdout: '{"opened":0,"unref":"function","data":"payload"}\n', stderr: "", exitCode: 0 });
+  });
+
+  // The other direction: the store saw fd 1 closed, and the descriptor is a file since.
+  test.concurrent("process.stdout writes to a descriptor that was opened again", async () => {
+    using dir = tempDir("stdout-reopened", {});
+    const output = await run(
+      `
+        const fs = require("node:fs");
+        fs.closeSync(1);
+        Bun.file(1);
+        const opened = fs.openSync("out.txt", "w");
+        const { constructor, fd, _isStdio } = process.stdout;
+        process.stdout.write("redirected\\n", err => {
+          console.error(JSON.stringify({ opened, stream: constructor.name, fd, _isStdio, err: err ?? null }));
+        });
+      `,
+      { cwd: String(dir) },
+    );
+    const written = Bun.file(`${dir}/out.txt`);
+    expect({ ...output, file: (await written.exists()) ? await written.text() : null }).toEqual({
+      stdout: "",
+      stderr: '{"opened":1,"stream":"WriteStream","fd":1,"_isStdio":true,"err":null}\n',
+      exitCode: 0,
+      file: "redirected\n",
+    });
+  });
+
+  // Whether a descriptor is a terminal is recorded when the process starts: a closed one is no terminal.
+  test.concurrent("a terminal that the program closed gives the same streams", async () => {
+    const script = `
+      const fs = require("node:fs");
+      const tty = require("node:tty");
+      const result = { startedAsTTY: tty.isatty(0) && tty.isatty(1) };
+      fs.closeSync(0);
+      fs.closeSync(1);
+      const { stdin, stdout } = process;
+      result.stdin = [stdin.constructor.name, stdin.fd, stdin.isTTY ?? null];
+      result.stdout = [stdout.constructor.name, stdout.fd, stdout.isTTY ?? null];
+      stdout.write("discarded\\n", err => {
+        result.err = err ?? null;
+        stdin.on("data", () => {}).on("end", () => fs.writeSync(2, "RESULT " + JSON.stringify(result) + "\\n"));
+      });
+    `;
+    const resultLine = /RESULT (\{.*\})/;
+    let output = "";
+    const decoder = new TextDecoder();
+    const finished = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (resultLine.test(output)) finished.resolve();
+        },
+        exit() {
+          finished.resolve();
+        },
+      },
+    });
+    await finished.promise;
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    const printed = Bun.stripANSI(output);
+    expect(printed.match(resultLine)?.[1] ?? printed).toBe(
+      '{"startedAsTTY":true,"stdin":["Readable",0,null],"stdout":["Writable",1,null],"err":null}',
+    );
+    expect(exitCode).toBe(0);
+  });
 });

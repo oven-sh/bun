@@ -28,9 +28,11 @@ const enum BunProcessStdinFdType {
   file = 0,
   pipe = 1,
   socket = 2,
+  // libuv's UV_UNKNOWN_HANDLE: a closed fd, a directory or an anonymous inode. POSIX only.
+  unknown = 3,
 }
 
-/** `process.stdout` and `process.stderr`: a `tty.WriteStream` or an `fs.WriteStream`. */
+/** `process.stdout` and `process.stderr`: a `tty.WriteStream`, an `fs.WriteStream`, or a `Writable` that discards. */
 interface StdioWriteStream extends $Node.Writable {
   readable: boolean;
   fd: number;
@@ -43,7 +45,7 @@ interface StdioWriteStream extends $Node.Writable {
   [Symbol.asyncIterator]?(): AsyncGenerator<never, void, unknown>;
 }
 
-/** `process.stdin`: a `tty.ReadStream` or an `fs.ReadStream`. */
+/** `process.stdin`: a `tty.ReadStream`, an `fs.ReadStream`, or a `Readable` that has ended. */
 interface StdinStream extends $Node.Readable {
   fd: number;
   ref?(): this;
@@ -57,6 +59,28 @@ export function getStdioWriteStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
+
+  if (!isTTY && fdType === BunProcessStdinFdType.unknown) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L94-L103
+    const Writable = require("internal/streams/writable");
+    // A class of its own with everything on its prototype: no other Writable gets a property or an option from here.
+    class DiscardingStdio extends Writable {
+      _write(_chunk: unknown, _encoding: unknown, callback: () => void) {
+        callback();
+      }
+      _destroy(this: StdioWriteStream, err: Error | null, cb: $Node.ErrorCallback) {
+        cb(err);
+        this._undestroy();
+        if (!this._writableState.emitClose) process.nextTick(() => this.emit("close"));
+      }
+    }
+    const prototype: any = DiscardingStdio.prototype;
+    prototype.constructor = Writable;
+    prototype.destroySoon = prototype.destroy;
+    prototype._isStdio = true;
+    prototype.fd = fd;
+    return [new DiscardingStdio() as unknown as StdioWriteStream, undefined];
+  }
 
   let stream: StdioWriteStream;
   if (isTTY) {
@@ -137,6 +161,22 @@ export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, po
 
 export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(fd === 0);
+
+  if (!isTTY && fdType === BunProcessStdinFdType.unknown) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L239-L245
+    const Readable = require("internal/streams/readable");
+    // A class of its own, as for the output streams above.
+    class EndedStdin extends Readable {
+      _read() {}
+    }
+    const prototype: any = EndedStdin.prototype;
+    prototype.constructor = Readable;
+    prototype.fd = fd;
+    const stream = new EndedStdin() as unknown as StdinStream;
+    stream.push(null);
+    return stream;
+  }
+
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
   const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
 

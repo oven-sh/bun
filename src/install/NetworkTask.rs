@@ -887,7 +887,9 @@ impl NetworkTask {
             Authorization::NoAuthorization => None,
             Authorization::AllowAuthorization => {
                 let url = URL::parse(&self.url_buf);
-                pm.options.tarball_credentials(scope, &url, normalized)
+                pm.options
+                    .tarball_credentials(scope, &url, normalized)
+                    .and_then(|credentials| credentials.authorization_parts(&url))
             }
         };
 
@@ -897,8 +899,7 @@ impl NetworkTask {
 
         // Configured credentials win over the URL's userinfo, as in npm.
         match (credentials, &url_authorization) {
-            (Some(scope), _) => {
-                let credentials = scope.authorization_parts(&URL::parse(&self.url_buf));
+            (Some(_), _) => {
                 count_auth(&mut header_builder, credentials);
                 header_builder.allocate()?;
                 append_auth(&mut header_builder, credentials);

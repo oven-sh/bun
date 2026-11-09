@@ -279,7 +279,8 @@ impl<'a> AsyncHTTP<'a> {
         unsafe {
             let tls_props = (*target).client.tls_props.take();
             ptr::write(target, ptr::read(source));
-            (*target).client.tls_props = tls_props;
+            // The copied pointer borrows the working request's reference until its terminal callback.
+            ptr::write(&raw mut (*target).client.tls_props, tls_props);
         }
     }
 

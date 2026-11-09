@@ -36,7 +36,6 @@ type NumberByFormat = Partial<Record<ObjectFormat, number>>;
 
 const featureNamePattern = /^[A-Z][A-Za-z0-9]*$/;
 const trimFeatureNamePattern = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
-const languagePattern = /^[a-z]{2,3}$/;
 const printableAsciiPattern = /^[\x20-\x7e]+$/;
 
 const isEnteredFrom = (value: unknown): value is EnteredFrom => enteredFromValues.includes(value as EnteredFrom);
@@ -72,8 +71,7 @@ const siteOf = (origin: Origin, key: string, occurrence = 0) => origin.sites.get
 type Declaration =
   | { kind: "feature"; feature: Feature; seen: Set<string> }
   | { kind: "trim-feature"; trimFeature: TrimFeature; seen: Set<string> }
-  | { kind: "icu-data" }
-  | { kind: "icu-language-group" };
+  | { kind: "icu-data" };
 
 interface ParseState extends FeatureLists {
   sites: Map<string, string[]>;
@@ -245,7 +243,6 @@ function parseAttribute(state: ParseState, line: Line) {
     case "trim-feature":
       return parseTrimFeatureAttribute(declaration.trimFeature, declaration.seen, line);
     case "icu-data":
-    case "icu-language-group":
       fail(`${declaration.kind} takes no indented lines`, line.site);
   }
 }
@@ -314,17 +311,6 @@ function parseIcuDataDeclaration(state: ParseState, file: FeatureFile, line: Lin
   state.declaration = { kind: "icu-data" };
 }
 
-function parseIcuLanguageGroup(state: ParseState, file: FeatureFile, line: Line) {
-  if (file !== "icu-data.def") fail(`icu-language-group is not allowed in ${file}`, line.site);
-  const languages = argumentsOf(line, 2);
-  for (const language of languages) {
-    checkName(language, languagePattern, line);
-    recordSite(state, `icu-language\0${language}`, line.site);
-  }
-  state.icuLanguageGroups.push(languages);
-  state.declaration = { kind: "icu-language-group" };
-}
-
 function parseDeclaration(state: ParseState, file: FeatureFile, line: Line) {
   const keyword = line.words[0];
   switch (keyword) {
@@ -334,8 +320,6 @@ function parseDeclaration(state: ParseState, file: FeatureFile, line: Line) {
       return parseTrimFeatureDeclaration(state, file, line);
     case "icu-data":
       return parseIcuDataDeclaration(state, file, line);
-    case "icu-language-group":
-      return parseIcuLanguageGroup(state, file, line);
     default:
       fail(`unknown declaration: ${keyword ?? line.text}`, line.site);
   }
@@ -357,7 +341,6 @@ export function parseFeatures(files: { name: FeatureFile; text: string }[]): Fea
     features: [],
     trimFeatures: [],
     icuData: [],
-    icuLanguageGroups: [],
     sites: new Map(),
     declaration: undefined,
     engineFeatureCount: 0,
@@ -409,15 +392,6 @@ function checkDeclaredOnce({ features, trimFeatures, icuData }: FeatureLists, or
   for (const { itemClass } of icuData) claim("icu-data", itemClass);
 }
 
-function checkLanguageGroups(groups: string[][], origin: Origin) {
-  const seen = new Set<string>();
-  for (const language of groups.flat()) {
-    if (seen.has(language))
-      fail(`icu-language-group lists ${language} twice`, siteOf(origin, `icu-language\0${language}`, 1));
-    seen.add(language);
-  }
-}
-
 function checkRustNames(items: { name: string; rustName: string }[], kind: string, origin: Origin) {
   const names = new Map<string, string>();
   for (const { name, rustName } of items) {
@@ -449,27 +423,22 @@ function checkReferences(lists: FeatureLists, known: Map<FeatureName, number>, o
   for (const { itemClass, features } of lists.icuData) checkMembers(features, "icu-data", itemClass, known, origin);
 }
 
-function computeHash({ features, trimFeatures, icuData, icuLanguageGroups }: FeatureLists): bigint {
+function computeHash({ features, trimFeatures, icuData }: FeatureLists): bigint {
   const text = JSON.stringify([
     features.map(f => [f.name, f.index, f.enteredFrom, f.exports]),
     trimFeatures.map(t => [t.name, t.features]),
     icuData.map(d => [d.itemClass, d.exceptWindows, d.byLocale, d.features]),
-    icuLanguageGroups,
   ]);
   let hash = 0xcbf29ce484222325n;
   for (const byte of new TextEncoder().encode(text)) hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
   return hash;
 }
 
-function finishModel(
-  { features, trimFeatures, icuData, icuLanguageGroups }: FeatureLists,
-  origin: Origin,
-): FeatureModel {
-  const lists: FeatureLists = { features, trimFeatures, icuData, icuLanguageGroups };
+function finishModel({ features, trimFeatures, icuData }: FeatureLists, origin: Origin): FeatureModel {
+  const lists: FeatureLists = { features, trimFeatures, icuData };
   features.sort((a, b) => a.index - b.index);
   checkLimits(features, trimFeatures, origin);
   checkDeclaredOnce(lists, origin);
-  checkLanguageGroups(icuLanguageGroups, origin);
   checkRustNames(features, "feature", origin);
   checkRustNames(trimFeatures, "trim-feature", origin);
   const known = new Map(features.map(({ name, index }) => [name, index]));

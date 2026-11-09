@@ -69,8 +69,6 @@ icu-data zone except-windows : NodeFs
 icu-data locales by-locale : NodeFs
 icu-data units except-windows by-locale : Zlib
 icu-data unused :
-icu-language-group no nb nn
-icu-language-group sr hr
 `,
 };
 
@@ -145,10 +143,6 @@ describe("parseFeatures", () => {
       { itemClass: "units", exceptWindows: true, byLocale: true, features: ["Zlib"] },
       { itemClass: "unused", exceptWindows: false, byLocale: false, features: [] },
     ]);
-    expect(model.icuLanguageGroups).toEqual([
-      ["no", "nb", "nn"],
-      ["sr", "hr"],
-    ]);
   });
 
   test("skips comments and blank lines without closing a declaration", () => {
@@ -187,7 +181,7 @@ describe("parseFeatures", () => {
     const files = (changes: Files = {}): Files => ({
       "bun.def": 'feature A "a"\nfeature B "b"',
       "trim-features.def": 'trim-feature a : A\n  about "x"',
-      "icu-data.def": "icu-data zone : A\nicu-language-group no nb",
+      "icu-data.def": "icu-data zone : A",
       ...changes,
     });
     const base = parse(files()).hash;
@@ -210,12 +204,10 @@ describe("parseFeatures", () => {
       ["exports", { "bun.def": 'feature A "a"\nfeature B "b"\n  exports' }],
       ["a trim feature's name", { "trim-features.def": 'trim-feature b : A\n  about "x"' }],
       ["a trim feature's members", { "trim-features.def": 'trim-feature a : A B\n  about "x"' }],
-      ["an ICU line's class", { "icu-data.def": "icu-data units : A\nicu-language-group no nb" }],
-      ["an ICU line's features", { "icu-data.def": "icu-data zone : B\nicu-language-group no nb" }],
-      ["except-windows", { "icu-data.def": "icu-data zone except-windows : A\nicu-language-group no nb" }],
-      ["by-locale", { "icu-data.def": "icu-data zone by-locale : A\nicu-language-group no nb" }],
-      ["a language group", { "icu-data.def": "icu-data zone : A\nicu-language-group no nb nn" }],
-      ["the absence of a language group", { "icu-data.def": "icu-data zone : A" }],
+      ["an ICU line's class", { "icu-data.def": "icu-data units : A" }],
+      ["an ICU line's features", { "icu-data.def": "icu-data zone : B" }],
+      ["except-windows", { "icu-data.def": "icu-data zone except-windows : A" }],
+      ["by-locale", { "icu-data.def": "icu-data zone by-locale : A" }],
     ])("covers %s", (_, changes) => {
       expect(parse(files(changes)).hash).not.toBe(base);
     });
@@ -236,7 +228,6 @@ const rejected: [name: string, files: Files, site: string][] = [
   ["feature in icu-data.def", { "icu-data.def": oneFeature }, "icu-data.def:1"],
   ["trim-feature in bun.def", { "bun.def": 'trim-feature a : A\n  about "x"' }, "bun.def:1"],
   ["icu-data in bun.def", { "bun.def": "icu-data a :" }, "bun.def:1"],
-  ["icu-language-group in bun.def", { "bun.def": "icu-language-group no nb" }, "bun.def:1"],
   ["too many engine features", { "engine.def": repeated(129, index => `feature E${index} "e"`) }, "engine.def:129"],
   ["index limit", { "bun.def": repeated(385, index => `feature E${index} "e"`) }, "bun.def:385"],
   [
@@ -283,7 +274,6 @@ const rejected: [name: string, files: Files, site: string][] = [
   ],
   ["unknown trim feature attribute", trimFile('trim-feature a : A\n  about "x"\n  exports'), "trim-features.def:3"],
   ["indented line under icu-data", icuFile("icu-data a : A\n  exports"), "icu-data.def:2"],
-  ["indented line under icu-language-group", icuFile("icu-language-group no nb\n  exports"), "icu-data.def:2"],
   ["feature without text", { "bun.def": "feature A" }, "bun.def:1"],
   ["feature with an extra word", { "bun.def": 'feature A B "a"' }, "bun.def:1"],
   ["flag with a word", { "bun.def": `${oneFeature}\n  exports yes` }, "bun.def:2"],
@@ -301,11 +291,6 @@ const rejected: [name: string, files: Files, site: string][] = [
   ],
   ["icu-data with except-windows twice", icuFile("icu-data a except-windows except-windows : A"), "icu-data.def:1"],
   ["icu-data with an unknown word before the colon", icuFile("icu-data a sometimes : A"), "icu-data.def:1"],
-  ["language group of one language", icuFile("icu-language-group no"), "icu-data.def:1"],
-  ["language in upper case", icuFile("icu-language-group no NB"), "icu-data.def:1"],
-  ["language of four letters", icuFile("icu-language-group no root"), "icu-data.def:1"],
-  ["language twice in a group", icuFile("icu-language-group no nb no"), "icu-data.def:1"],
-  ["language in two groups", icuFile("icu-language-group no nb\nicu-language-group nn nb"), "icu-data.def:2"],
   ["invalid feature name", { "bun.def": 'feature abc "a"' }, "bun.def:1"],
   ["invalid trim feature name", trimFile('trim-feature Abc : A\n  about "x"'), "trim-features.def:1"],
   ["malformed JSON text", { "bun.def": 'feature A "a' }, "bun.def:1"],

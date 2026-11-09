@@ -20,7 +20,3 @@ icu-data confusables : Tools
 icu-data character-names : Tools
 icu-data nfkc-simple-case-fold : Tools
 icu-data windows-zones except-windows : Tools
-
-icu-language-group nb nn no
-icu-language-group en hi
-icu-language-group yue zh

@@ -575,7 +575,6 @@ const model: FeatureModel = {
   features: [feature("JIT", Jit), feature("Sqlite", Sqlite)],
   trimFeatures: [],
   icuData: [],
-  icuLanguageGroups: [],
   hash: 0n,
 };
 

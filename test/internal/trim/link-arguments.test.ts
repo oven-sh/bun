@@ -30,7 +30,7 @@ import type { RemovableRange } from "../../../scripts/build/trim/ranges.ts";
 import { removedRangeListBytes, roomFor } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry, BuiltinUses } from "../../../scripts/build/trim/types.ts";
 import { run } from "../../aot/harness/run";
-import { packageOf } from "../icu-data-package.ts";
+import { bundleOf, packageOf } from "../icu-data-package.ts";
 import { feature, modelOf } from "./toy-graph.ts";
 
 setDefaultTimeout(60_000);
@@ -567,15 +567,19 @@ describe("layOut", () => {
     ]);
     const start = 0x20000;
     const end = start + dataPackage.length;
-    const formatWithPackage = (readLinks: LinkName[], moreSymbols: [string, number][] = []): Partial<LinkerFormat> => ({
-      read: () => readingOf(1, "elf", [{ address: start, size: dataPackage.length + 64, output: ".rodata" }]),
+    const formatWithPackage = (
+      readLinks: LinkName[],
+      moreSymbols: [string, number][] = [],
+      bytes = dataPackage,
+    ): Partial<LinkerFormat> => ({
+      read: () => readingOf(1, "elf", [{ address: start, size: bytes.length + 64, output: ".rodata" }]),
       namedBytes(link) {
         readLinks.push(link.name);
         return {
-          symbols: [["icudt99_dat", start], ["symbol_after_package", end], ...moreSymbols],
+          symbols: [["icudt99_dat", start], ["symbol_after_package", start + bytes.length], ...moreSymbols],
           image: {
             isArm64: false,
-            bytes: (address, length) => dataPackage.subarray(address - start, address - start + length),
+            bytes: (address, length) => bytes.subarray(address - start, address - start + length),
           },
         };
       },
@@ -613,12 +617,16 @@ describe("layOut", () => {
 
     test("with Bun's hook in ICU, the languages of a class that is removed by locale reach the layout, the table and the summary", () => {
       using dir = tempDir("trim-layout-icu-languages", {});
+      const bundles = packageOf([
+        ["icudt99l/coll/de.res", bundleOf({})],
+        ["icudt99l/coll/fr.res", bundleOf({})],
+        ["icudt99l/coll/oc.res", bundleOf({ "%%ALIAS": "fr" })],
+      ]);
       const session: LinkSession = {
-        ...fakeSession(String(dir), formatWithPackage([], [["bun_icu_zstd_dict", 0x1000]])).session,
+        ...fakeSession(String(dir), formatWithPackage([], [["bun_icu_zstd_dict", 0x1000]], bundles)).session,
         model: {
           ...model,
           icuData: [{ itemClass: "collation", exceptWindows: false, byLocale: true, features: ["Extra"] }],
-          icuLanguageGroups: [["fr", "oc"]],
         },
       };
       const layout = layOut(session);
@@ -629,7 +637,7 @@ describe("layOut", () => {
       ];
       expect(layout.icuLanguages).toEqual(languages);
       expect(summaryOf(layout, session)).toContain(
-        "ICU data: 3 items, 0.00 MB, removable in 2 runs, 3 languages in 2 groups: Extra 0.00 MB",
+        "ICU data: 3 items, 0.00 MB, removable in 2 runs, 3 languages in 2 groups (fr oc): Extra 0.00 MB",
       );
     });
 

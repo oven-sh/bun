@@ -4,9 +4,9 @@ use bun_lint::rule::Plugin;
 /// Enforces the use of `.textContent` over `.innerText` for DOM nodes.
 pub struct PreferDomNodeTextContent;
 
-const PREFER_TEXT_CONTENT: Message = Message::new("", "Prefer `.textContent` over `.innerText`.");
+const PREFER_TEXT_CONTENT: &Message = &Message::new("", "Prefer `.textContent` over `.innerText`.");
 
-/// Where the key is written, if it is the identifier `innerText`.
+/// The key's span, if it's the identifier `innerText`.
 fn inner_text_key<'a>(key: Option<Key<'a>>, file: &File<'a>) -> Option<Span> {
     let key = key?;
     matches!(key.kind(), KeyKind::Ident(name) if name.is("innerText")).then(|| key.span(file))

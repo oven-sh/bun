@@ -9,7 +9,8 @@ pub struct PreferImportInMock {
     fixable: bool,
 }
 
-const PREFER_IMPORT_IN_MOCK: Message = Message::new("", "Mocked modules must be dynamic imported.");
+const PREFER_IMPORT_IN_MOCK: &Message =
+    &Message::new("", "Mocked modules must be dynamic imported.");
 
 impl Rule for PreferImportInMock {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-import-in-mock", Kind::Suggestion)
@@ -18,7 +19,7 @@ impl Rule for PreferImportInMock {
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        // Options that are not valid are as none.
+        // Invalid options are treated as no options.
         let config = options.object(0);
         PreferImportInMock {
             fixable: config.entries().len() != 1 || config.bool_or("fixable", true),

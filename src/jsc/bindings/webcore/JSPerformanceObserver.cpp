@@ -157,6 +157,7 @@ static const HashTableValue JSPerformanceObserverConstructorTableValues[] = {
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, JSPerformanceObserverDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSPerformanceObserverDOMConstructor>(callFrame->jsCallee());

@@ -1,4 +1,4 @@
-//! What is reported about a file: ESLint's `LintResult`.
+//! The report for one file: ESLint's `LintResult`.
 
 use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, ResolvedConfig};
@@ -41,7 +41,7 @@ impl Counts {
     }
 }
 
-/// Of a file that has been linted.
+/// Extra state for a file that was linted.
 pub(crate) struct Linted {
     pub(crate) config: Arc<ResolvedConfig>,
     /// [`FileResult::text`] is ESLint's `source`.
@@ -49,37 +49,37 @@ pub(crate) struct Linted {
 }
 
 pub(crate) struct FileResult {
-    /// As it is printed: absolute, or `<text>`.
+    /// The path as printed: absolute, or `<text>`.
     pub(crate) path: Vec<u8>,
     pub(crate) messages: Vec<LintMessage>,
     pub(crate) suppressed: Vec<LintMessage>,
-    /// What ESLint throws while it lints the file. Nothing is printed but this.
+    /// The error ESLint throws while linting the file. If set, nothing else is printed.
     pub(crate) thrown: Option<Vec<u8>>,
-    /// It was linted with types.
+    /// True if it was linted with types.
     pub(crate) had_types: bool,
     pub(crate) counts: Counts,
-    /// The text that the messages are about: that of the file, or `output` if there is one. Kept
-    /// only if there is something to say about the file, and the format reads it.
+    /// The text the messages refer to: the file's, or `output` if there is one. Only kept if there's something to
+    /// report about the file and the format reads it.
     pub(crate) text: Option<Vec<u8>>,
-    /// Where the lines of `text` start, if that was looked for while it was linted.
+    /// The line starts of `text`, if they were computed during linting.
     pub(crate) line_starts: Option<Vec<u32>>,
     /// [`LintResult::run_keys`](bun_lint::linter::LintResult::run_keys), for when the file is linted again.
     pub(crate) run_keys: Vec<(u64, u128)>,
-    /// The text has been changed by fixes: `text` is ESLint's `output`.
+    /// Fixes changed the text, so `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
     /// Number of fixes applied.
     pub(crate) fixes: usize,
-    /// What the fixes have made of the text, if that is not `text`: oxlint fixes once, and reports what is left where it was.
+    /// The fixed text, if it isn't `text`. oxlint fixes once and reports the remaining problems at their original
+    /// locations.
     pub(crate) fixed_text: Option<Vec<u8>>,
-    /// `None` is ESLint's `createIgnoreResult`: the file is not linted, and the only message says
-    /// why.
+    /// `None` is ESLint's `createIgnoreResult`: the file isn't linted, and the only message explains why.
     pub(crate) linted: Option<Linted>,
-    /// JSON: ESLint's `usedDeprecatedRules`, if ESLint itself has linted the file.
+    /// ESLint's `usedDeprecatedRules` as JSON, if ESLint itself linted the file.
     pub(crate) deprecated: Option<Vec<u8>>,
 }
 
 impl FileResult {
-    /// The line starts of `text`, going by the line breaks of the file's language.
+    /// Returns the line starts of `text`, using the line breaks of the file's language.
     pub(crate) fn lines(&self) -> LineStarts {
         if let Some(starts) = &self.line_starts {
             return LineStarts::at(starts.clone());
@@ -94,16 +94,16 @@ impl FileResult {
         FileResult::about(path, Severity::Warn, message)
     }
 
-    /// What oxlint reports about the file at `path`, which it cannot open, and goes on. `error`: as Rust prints it. `is_named`: it
-    /// is a problem of that file. For oxlint it is one of no file.
-    pub(crate) fn unopened(path: Vec<u8>, error: &[u8], is_named: bool) -> FileResult {
+    /// oxlint's error for the file at `path`, which it can't open. It then continues with the next file. `error` is
+    /// formatted like Rust prints it. For oxlint the problem belongs to no file, so `belongs_to_file` is false.
+    pub(crate) fn unopened(path: Vec<u8>, error: &[u8], belongs_to_file: bool) -> FileResult {
         let start: &[u8] = b"Failed to open file ";
         let message = [start, &path, b" with error \"", error, b"\""].concat();
-        let path = if is_named { path } else { Vec::new() };
+        let path = if belongs_to_file { path } else { Vec::new() };
         FileResult::about(path, Severity::Error, &message)
     }
 
-    /// A problem of no rule, at no place in the file at `path`, which is not linted.
+    /// A problem with no rule and no location, about the file at `path`, which isn't linted.
     fn about(path: Vec<u8>, severity: Severity, message: &[u8]) -> FileResult {
         let messages = vec![LintMessage {
             rule_id: None,
@@ -137,12 +137,12 @@ impl FileResult {
         }
     }
 
-    /// What `--fix` writes.
-    pub(crate) fn written(&self) -> Option<&[u8]> {
+    /// The text that `--fix` writes.
+    pub(crate) fn text_to_write(&self) -> Option<&[u8]> {
         self.fixed_text.as_deref().or(self.text.as_deref())
     }
 
-    /// ESLint's `getErrorResults` for one result: what `--quiet` leaves of it.
+    /// ESLint's `getErrorResults` for one result: drops everything that `--quiet` hides.
     pub(crate) fn keep_errors_only(&mut self) {
         self.messages.retain(|it| it.severity == Severity::Error);
         self.suppressed.retain(|it| it.severity == Severity::Error);

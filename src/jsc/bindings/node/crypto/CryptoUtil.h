@@ -20,7 +20,7 @@ enum class DSASigEnc {
 // ML-DSA / ML-KEM parameter sets, as provided by BoringSSL's EVP_PKEY
 // integration. BoringSSL has ML-KEM-768 and ML-KEM-1024 but not ML-KEM-512.
 // Each returns 0 / a null literal / nullptr for any other key type.
-int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase = false);
+int pqcKeyTypeToNid(const WTF::StringView& name);
 ASCIILiteral pqcNidToKeyTypeName(int nid);
 bool isMlDsaNid(int nid);
 bool isMlKemNid(int nid);
@@ -31,11 +31,11 @@ const EVP_PKEY_ALG* pqcNidToAlg(int nid);
 namespace ExternZigHash {
 struct Hasher;
 
-Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name);
-Hasher* getFromOther(Zig::GlobalObject* globalObject, Hasher* hasher);
+Hasher* getByName(const StringView& name);
+Hasher* getFromOther(Hasher* hasher);
 void destroy(Hasher* hasher);
 bool update(Hasher* hasher, std::span<const uint8_t> data);
-uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out);
+uint32_t digest(Hasher* hasher, std::span<uint8_t> out);
 uint32_t getDigestSize(Hasher* hasher);
 bool isXof(Hasher* hasher);
 
@@ -58,11 +58,14 @@ int32_t getPadding(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue 
 std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options);
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options);
 bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, const ncrypto::EVPKeyPointer& pkey, WTF::Vector<uint8_t>& derBuffer);
-GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly = false);
+std::optional<WebCore::BufferEncodingType> getInputEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue);
+GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding = false);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);
+// Like Node, throws ERR_OUT_OF_RANGE "<argName> is too big" if `bytes` is longer than INT32_MAX.
+std::optional<WTF::Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName);
 
 // For output encoding
 void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);

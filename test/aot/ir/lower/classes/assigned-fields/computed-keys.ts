@@ -1,0 +1,42 @@
+// RUN: lower
+// CHECK: function {{*}}name="SignedNumber" {{*}}kind=BaseConstructor
+// CHECK-NOT: Define
+// CHECK: PropSet {{*}}key="-1"
+// CHECK-NOT: Define
+// CHECK: PropSet {{*}}key="a"
+// CHECK-NOT: Define
+// CHECK: function {{*}}name="FirstConstant" {{*}}kind=BaseConstructor
+// CHECK-NOT: Set
+// CHECK: CallDirect
+// CHECK-NOT: Set
+// CHECK: function {{*}}kind=Initializer
+// CHECK: ElemDefine
+// CHECK: PropDefine {{*}}key="b"
+// CHECK: PropDefine {{*}}key="unset"
+// CHECK: function {{*}}kind=Initializer
+// CHECK: ElemDefine
+// CHECK: PropDefine {{*}}key="c"
+// CHECK: PropDefine {{*}}key="unset"
+
+const first = "first";
+declare function f(): void;
+f();
+let variable = "variable";
+
+export class SignedNumber {
+  [-1] = 1;
+  a = 2;
+  unset?: number;
+}
+
+export class FirstConstant {
+  [first] = 1;
+  b = 2;
+  unset?: number;
+}
+
+export class Variable {
+  [variable] = 1;
+  c = 2;
+  unset?: number;
+}

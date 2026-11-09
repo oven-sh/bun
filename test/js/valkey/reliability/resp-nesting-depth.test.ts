@@ -357,4 +357,49 @@ describe("Valkey: RESP push frame routing", () => {
       server.close();
     }
   });
+
+  describe("an unsubscribe ack that arrives outside subscriber mode", () => {
+    const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
+    const ack = (kind: string, subject: string, remaining: number) =>
+      Buffer.from(`>3\r\n${bulk(kind)}${bulk(subject)}:${remaining}\r\n`);
+    const ok = Buffer.from("+OK\r\n");
+
+    async function withMockClient(payloads: Buffer[], body: (client: Bun.RedisClient) => Promise<void>) {
+      const { server, port } = await createMockRedisServer(payloads);
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 2000,
+      });
+      try {
+        await body(client);
+      } finally {
+        client.close();
+        server.close();
+      }
+    }
+
+    test("resolves the second of two in-flight UNSUBSCRIBEs", async () => {
+      // unsubscribe() drops the channel's handlers immediately, so the first ack already exits subscriber mode.
+      const payloads = [
+        ack("subscribe", "a", 1),
+        ack("subscribe", "b", 2),
+        ack("unsubscribe", "a", 1),
+        ack("unsubscribe", "b", 0),
+        ok,
+      ];
+      await withMockClient(payloads, async client => {
+        await client.subscribe("a", () => {});
+        await client.subscribe("b", () => {});
+        expect(await Promise.all([client.unsubscribe("a"), client.unsubscribe("b")])).toEqual([undefined, undefined]);
+        expect(await client.set("key", "value")).toBe("OK");
+      });
+    });
+
+    test("resolves punsubscribe() on a client that never subscribed", async () => {
+      await withMockClient([ack("punsubscribe", "news.*", 0), ok], async client => {
+        expect(await client.punsubscribe("news.*")).toEqual({ type: "punsubscribe", data: ["news.*", 0] });
+        expect(await client.set("key", "value")).toBe("OK");
+      });
+    });
+  });
 });

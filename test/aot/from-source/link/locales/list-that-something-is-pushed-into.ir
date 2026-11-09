@@ -1,0 +1,12 @@
+# the list has another user than the call, which may have stored anything into it
+# -- source: list-that-something-is-pushed-into.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# const locales = ["de"];
+# locales.push(input);
+# new Intl.NumberFormat(locales);
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown IntlNumberFormat at f0
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant

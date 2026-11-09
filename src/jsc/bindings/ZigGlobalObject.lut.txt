@@ -3,17 +3,17 @@
 /* Source for ZigGlobalObject.lut.h
 @begin bunGlobalObjectTable
   addEventListener                jsFunctionAddEventListener                           Function 2
-  alert                           WebCore__alert                                       Function 1
+  alert                           Bun::Bindgen::Generated::Prompt::jsAlert             Function 1
   atob                            functionATOB                                         Function 1
   btoa                            functionBTOA                                         Function 1
   clearImmediate                  functionClearImmediate                               Function 1
   clearInterval                   functionClearInterval                                Function 1
   clearTimeout                    functionClearTimeout                                 Function 1
-  confirm                         WebCore__confirm                                     Function 1
+  confirm                         Bun::Bindgen::Generated::Prompt::jsConfirm           Function 1
   dispatchEvent                   jsFunctionDispatchEvent                              Function 1
   fetch                           constructBunFetchObject                              PropertyCallback
   postMessage                     jsFunctionPostMessage                                Function 1
-  prompt                          WebCore__prompt                                      Function 1
+  prompt                          Bun::Bindgen::Generated::Prompt::jsPrompt            Function 1
   queueMicrotask                  functionQueueMicrotask                               Function 1
   removeEventListener             jsFunctionRemoveEventListener                        Function 2
   reportError                     functionReportError                                  Function 1
@@ -31,16 +31,16 @@
   performance                     GlobalObject::m_performanceObject                    CellProperty
   process                         GlobalObject::m_processObject                        CellProperty
 
-  Blob                            GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBlob]                               ClassStructure
+  Blob                            Bun::Bindgen::Generated::Blob::getBlobConstructor PropertyCallback
   Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
-  BuildError                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
-  BuildMessage                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
+  BuildError                      Bun::Bindgen::Generated::ResolveMessage::getBuildMessageConstructor PropertyCallback
+  BuildMessage                    Bun::Bindgen::Generated::ResolveMessage::getBuildMessageConstructor PropertyCallback
   Crypto                          Bun::Bindgen::Generated::Crypto::getCryptoConstructor PropertyCallback
-  HTMLRewriter                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSHTMLRewriter]                       ClassStructure
-  Request                         GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSRequest]                            ClassStructure
-  ResolveError                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
-  ResolveMessage                  GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
-  Response                        GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResponse]                           ClassStructure
+  HTMLRewriter                    Bun::Bindgen::Generated::HtmlRewriter::getHTMLRewriterConstructor PropertyCallback
+  Request                         Bun::Bindgen::Generated::Response::getRequestConstructor PropertyCallback
+  ResolveError                    Bun::Bindgen::Generated::ResolveMessage::getResolveMessageConstructor PropertyCallback
+  ResolveMessage                  Bun::Bindgen::Generated::ResolveMessage::getResolveMessageConstructor PropertyCallback
+  Response                        Bun::Bindgen::Generated::Response::getResponseConstructor PropertyCallback
   TextDecoder                     Bun::Bindgen::Generated::TextDecoder::getTextDecoderConstructor PropertyCallback
 
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback

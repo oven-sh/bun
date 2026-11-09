@@ -168,6 +168,8 @@ impl Shared {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn notify(&self) {
         let _g = self.drained.0.lock();
         self.drained.1.notify_all();
@@ -177,7 +179,7 @@ impl Shared {
     /// on the condvar, not on the loop).
     fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
         let el = self.loop_of(kind);
-        el.concurrent_tasks.push(task);
+        el.post(task);
         if self.state() >= State::Draining {
             self.notify();
         } else {
@@ -413,6 +415,12 @@ impl VmHandle {
         self.0.state() == State::Open
     }
 
+    /// Returns true once teardown has finished waiting. Nothing waits for a ticket issued after that.
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.0.state() == State::Closed
+    }
+
     pub(crate) fn tickets_outstanding(&self) -> u32 {
         self.0.tickets.load(Ordering::SeqCst)
     }
@@ -515,10 +523,16 @@ impl VirtualMachine {
         let h = self.handle_ref();
         h.assert_js_thread();
         debug_assert!(
-            h.0.state() != State::Closed,
+            !h.closed(),
             "off-thread work started after the VM finished draining"
         );
         Ticket::issue(&h.0, self.current_loop_kind())
+    }
+
+    /// See [`VmHandle::closed`].
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.handle_ref().closed()
     }
 }
 
@@ -758,24 +772,16 @@ pub unsafe extern "C" fn Bun__VmHandle__wake(r: *const Shared) {
 }
 
 /// Any thread: Node's `can_call_into_js()`.
-///
-/// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__scriptAllowed(r: *const Shared) -> bool {
-    // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.script_allowed()
+pub extern "C" fn Bun__VmHandle__scriptAllowed(r: &Shared) -> bool {
+    r.state() == State::Open
 }
 
 /// The address of this handle's state byte, for C++ to test
 /// `*addr == BUN_VM_HANDLE_STATE_OPEN` inline on its native→JS entries.
-///
-/// # Safety
-/// `r` is a live reference.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__stateAddress(r: *const Shared) -> *const AtomicU8 {
-    // SAFETY: fn contract; `hot.state` lives in the Arc payload `r` points at.
-    unsafe { &raw const (*r).hot.state }
+pub extern "C" fn Bun__VmHandle__stateAddress(r: &Shared) -> *const AtomicU8 {
+    &raw const r.hot.state
 }
 
 // C++ (BunClientData.h) hard-codes this value.
@@ -841,13 +847,7 @@ impl ConcurrentPoster {
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => {
-                let mut mini = *mini;
-                // SAFETY: per `EventLoopHandle::Mini` invariant — the mini loop is
-                // alive for as long as work it created runs; its concurrent queue
-                // push is thread-safe.
-                unsafe { mini.get_mut() }.enqueue_task_concurrent(task);
-            }
+            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }
@@ -943,7 +943,7 @@ impl IsolatedPosterInner {
         if open {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
             let el = unsafe { &*self.event_loop };
-            el.concurrent_tasks.push(task);
+            el.post(task);
             el.wakeup();
         }
         self.active.fetch_sub(1, Ordering::SeqCst);

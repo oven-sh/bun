@@ -115,10 +115,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
-        let prev_may_replace_body = self.enter_react_compiler_candidate(
-            func.name.map(|n| n.ref_),
+        let rc_candidate = self.enter_react_compiler_candidate(
+            func.flags
+                .contains(flags::Function::IsUniqueFormalParameters),
+            self.current_scope == self.module_scope,
             func.flags
                 .contains(flags::Function::HasReactHooksSuppression),
+            func.args.slice(),
+            func.flags.contains(flags::Function::HasRestArg),
             body_stmts,
         );
 
@@ -142,19 +146,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        let rc_binding = self.react_compiler_candidate_name.take();
-        if rc_binding.is_some() {
+        if rc_candidate.is_taken {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
                 flags: func.flags,
                 body_loc,
                 args_loc: func.open_parens_loc,
-                binding: func
-                    .name
-                    .map(|n| n.ref_)
-                    .filter(|r| r.is_valid())
-                    .or(rc_binding),
-                in_react_hoc: core::mem::take(&mut self.react_compiler_in_react_hoc),
+                binding: rc_candidate.binding,
+                own_name: func.name.map(|n| n.ref_).filter(|r| r.is_valid()),
+                in_react_hoc: rc_candidate.in_react_hoc,
+                is_top_level: rc_candidate.is_top_level,
             });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
@@ -163,7 +164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(result) = self.react_compiler_result.take() {
             func.args = result.args;
             func.flags = result.flags;
-            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+            if let Some(b) = rc_candidate.binding {
                 self.record_usage(b);
             }
         }
@@ -211,7 +212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
-        self.react_compiler_may_replace_body = prev_may_replace_body;
+        self.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -280,16 +281,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_export: bool,
     ) -> usize {
         let was_const = kind == LocalKind::KConst;
+        // A namespace member isn't a module export.
+        let can_replace_exports =
+            IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none();
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
-        let len = decls.len();
-        let mut i: usize = 0;
-        'outer: while i < len {
-            // SAFETY: i < len; we need disjoint borrows of decls[i] (read/mutate)
-            // and decls[j] (write at end). j <= i always holds.
-            let decl: &mut G::Decl = unsafe { &mut *decls.as_mut_ptr().add(i) };
-            i += 1;
+        'outer: for i in 0..decls.len() {
+            let decl = &mut decls[i];
 
             self.visit_binding(decl.binding, None);
 
@@ -307,7 +306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut replacement: Option<
                     bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
                 > = None;
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if can_replace_exports {
                     if let BData::BIdentifier(id) = decl.binding.data {
                         let id_ref = id.r#ref;
                         let name = self.load_name_from_ref(id_ref);
@@ -348,7 +347,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 if self.react_compiler.is_some()
-                    && self.current_scope == self.module_scope
                     && let BData::BIdentifier(id) = decl.binding.data
                     && let Some(in_hoc) = self.react_compiler_candidate_expr(&val)
                 {
@@ -574,7 +572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if can_replace_exports {
                     self.is_control_flow_dead = orig_dead;
                     self.in_deleted_export = orig_in_deleted;
                     if let BData::BIdentifier(_) = decl.binding.data {
@@ -602,7 +600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                     },
                 );
-            } else if IS_POSSIBLY_DECL_TO_REMOVE {
+            } else if can_replace_exports {
                 if let BData::BIdentifier(id) = decl.binding.data {
                     let id_ref = id.r#ref;
                     let name = self.load_name_from_ref(id_ref);
@@ -617,32 +615,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // which is not mutated during the visit pass.
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                            let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(
-                                decl,
-                                VisitDeclOpts {
-                                    was_anonymous_named_expr: false,
-                                    could_be_const_value: was_const && !is_after,
-                                    could_be_macro: false,
-                                },
-                            );
-                        } else {
                             continue 'outer;
                         }
+                        let is_after = self.vis_scope().is_after_const_local_prefix;
+                        self.visit_decl(
+                            decl,
+                            VisitDeclOpts {
+                                was_anonymous_named_expr: false,
+                                could_be_const_value: was_const && !is_after,
+                                could_be_macro: false,
+                            },
+                        );
                     }
                 }
             }
 
-            // out_decls[j] = decl.*;
-            if j != i - 1 {
-                // SAFETY: j < i-1 < len; src/dst non-overlapping; Decl has no Drop.
-                // Derive both pointers from a single `as_mut_ptr()` so the src `*const`
-                // shares provenance with dst (Stacked Borrows: a separate `as_ptr()`
-                // SharedRO tag would be popped by the later `as_mut_ptr()` Unique).
-                unsafe {
-                    let base = decls.as_mut_ptr();
-                    core::ptr::copy_nonoverlapping(base.add(i - 1), base.add(j), 1);
-                }
+            if j < i {
+                decls[j] = decls[i];
             }
             j += 1;
         }
@@ -1024,17 +1013,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
+        //
+        // With lowered class decorators the body reads the class through
+        // `inner_class_ref`, which the lowering sets to what the decorators
+        // return (the spec initializes the inner binding with that class).
         let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
+            let body_ref = if class.should_lower_standard_decorators
+                && class.ts_decorators.len_u32() > 0
+            {
+                let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
+                class.inner_class_ref = inner_ref;
+                self.decorated_class_names.push((inner_ref, name_ref));
+                // The name of a class expression is declared nowhere else:
+                // the renamer still has to number it around its neighbors.
+                if is_expr {
+                    VecExt::append(&mut self.vis_scope().generated, name_ref);
+                }
+                inner_ref
+            } else {
+                name_ref
+            };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
                 self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_,
+                        ref_: body_ref,
                         loc: name.loc,
                     },
                 )
@@ -1264,6 +1272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Some(ExprData::EString(_) | ExprData::ENumber(_))
                             )
                     });
+                class.assigns_fields_in_constructor = lower_fields;
 
                 let fields_to_lower = if lower_fields {
                     class
@@ -1483,6 +1492,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // class name scope
         self.pop_scope();
+        if class.inner_class_ref.is_symbol() {
+            self.decorated_class_names.pop();
+        }
 
         shadow_ref
     }
@@ -1601,6 +1613,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'list_getter &mut visited;
                 };
                 p.visit_and_append_stmt(list, stmt)?;
+                // Outlined functions can use variables from this scope, so they can't go at the end of the module.
+                visited.extend(p.react_compiler_outlined_from_nested.drain(..));
             }
 
             // Transform block-level function declarations into variable declarations
@@ -1670,9 +1684,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // The last function statement for a given symbol wins
                             data.func.name = None;
-                            // SAFETY: `G::Fn`'s fields are POD (`StoreSlice<T>`, ints, flags)
-                            // with no `Drop`, so a bitwise read is a plain copy; the type just
-                            // lacks `derive(Copy)`.
+                            // SAFETY: `G::Fn` is not `Copy` (`return_ts_metadata` can own a `Vec`),
+                            // so this is a move. The statement is not kept (`before.clear()` below),
+                            // and the AST store never drops its nodes: the `Vec` is not freed twice.
                             let func = unsafe { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =
                                 Some(p.new_expr(E::Function { func }, stmt.loc));
@@ -1780,12 +1794,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && p.react_compiler_may_replace_body
             && let Some(mut rc) = p.react_compiler.take()
         {
-            let name = pending
-                .binding
-                .filter(|r| *r != js_ast::Ref::NONE)
-                .map(|r| p.load_name_from_ref(r));
+            let name = pending.binding.map(|r| p.load_name_from_ref(r));
             // `Host::new_local` appends the locals of the compiled function here.
             let generated_len = p.current_scope().generated.len();
+            let outlined_len = rc.outlined_len();
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
@@ -1796,18 +1808,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     name,
                 )
             };
+            if !pending.is_top_level {
+                p.react_compiler_outlined_from_nested
+                    .extend(rc.take_outlined_from(outlined_len));
+            }
             p.react_compiler = Some(rc);
             if let Some((new_body, result)) = compiled {
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);
-                p.drop_symbols_of_replaced_function(pending.binding);
+                p.drop_symbols_of_replaced_function(pending.own_name);
             } else {
                 p.current_scope_mut().generated.truncate(generated_len);
             }
         }
 
-        if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+        if !p.should_remove_dead_statements() || !p.options.features.dead_code_elimination {
+            return Ok(());
+        }
+
+        if !p.options.features.minify_syntax {
+            let mut is_control_flow_dead = false;
+            stmts.retain(|stmt| {
+                if is_control_flow_dead
+                    && !SideEffects::should_keep_stmt_in_dead_control_flow(*stmt, p.arena)
+                {
+                    return false;
+                }
+                match stmt.data {
+                    StmtData::SEmpty(_) => return false,
+                    StmtData::SBlock(block) if block.stmts.is_empty() => return false,
+                    StmtData::SReturn(_)
+                    | StmtData::SBreak(_)
+                    | StmtData::SContinue(_)
+                    | StmtData::SThrow(_) => is_control_flow_dead = true,
+                    _ => {}
+                }
+                true
+            });
             return Ok(());
         }
 
@@ -1852,9 +1890,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // `Decl` is field-wise `Copy` but lacks the
-                                    // derive; `swap` compacts in place (idx >= end always).
-                                    decls.swap(end, idx);
+                                    if end < idx {
+                                        decls[end] = decls[idx];
+                                    }
                                     end += 1;
                                 }
                                 local.decls.truncate(end);
@@ -1907,7 +1945,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
+            if p.current_scope != p.module_scope
+                && !p.current_scope().contains_direct_eval
+                && !p.options.features.is_library
+            {
                 // Keep inlining variables until a failure or until there are none left.
                 // That handles cases like this:
                 //
@@ -1963,6 +2004,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // fail if something with side effects is in between the declaration
                     // and the usage.
                     if symbol.use_count_estimate == 1
+                        && !p.keeps_frame_for_call(&replacement)
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
                         // `const ns = await import(x); return ns` — the single use just
@@ -2014,17 +2056,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
-                                // `Vec::append_slice` requires `T: Clone`
-                                // but `G::Decl` lacks the derive (its fields are all
-                                // `Copy`). Per-element bitwise copy instead.
-                                //
-                                // The parse pass allocates `decls` in the bump arena
-                                // (`from_bump_slice` → `Origin::Borrowed`); promote to a
-                                // global-heap buffer before growing it.
-                                for d in local.decls.slice() {
-                                    // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
-                                    prev_local.decls.push(unsafe { core::ptr::read(d) });
-                                }
+                                prev_local.decls.extend_from_slice(local.decls.slice());
                                 continue;
                             }
                         }

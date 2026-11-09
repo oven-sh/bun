@@ -1,6 +1,7 @@
-// The scanner that `bun lint`, `bun fmt` and `bun check` share reads the length of a name, of indentation and of a plain
-// string from bitmaps that a SIMD kernel fills 64 bytes at a time, through a 64-bit window. These tests put the end of each kind
-// of run on both sides of every boundary that involves: 8, 16, 32, 56, 57 and 64 bytes, and the end of the file.
+// `bun lint`, `bun fmt` and `bun check` share a scanner. It gets the length of an identifier, of indentation and of a
+// plain string from bitmaps that a SIMD kernel fills 64 bytes at a time, and reads them through a 64-bit window. These
+// tests put the end of each kind of run on both sides of every boundary involved: 8, 16, 32, 56, 57 and 64 bytes, and
+// the end of the file.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { endChildren, spawn } from "../children";
@@ -21,7 +22,7 @@ async function run(args: string[], files: Record<string, string | Buffer>) {
 
 type Found = { message: string; line: number; column: number; endColumn: number };
 
-/** What `no-undef` says about each file: the names the scanner saw, and where. */
+/** Returns `no-undef`'s reports for each file, which show the names the scanner found and their positions. */
 async function undefinedNames(files: Record<string, string | Buffer>): Promise<Record<string, Found[]>> {
   const { stdout } = await run(["lint", "--rule", "no-undef: error", "-f", "json", "."], files);
   const results: { filePath: string; messages: (Found & { ruleId: string | null })[] }[] = JSON.parse(stdout);
@@ -44,7 +45,7 @@ const undefinedAt = (name: string, line: number, column: number): Found => ({
 });
 
 describe.concurrent("scanner", () => {
-  test("names of every length, after every indentation, in one file", async () => {
+  test("finds names of every length after indentation of every length", async () => {
     const lines: string[] = [];
     const expected: Found[] = [];
     for (const indentation of [0, ...LENGTHS]) {
@@ -59,7 +60,7 @@ describe.concurrent("scanner", () => {
     expect(await undefinedNames({ "a.js": lines.join("\n") })).toEqual({ "a.js": expected });
   });
 
-  test("a name ends at the end of the file, at a byte that is not ASCII, and at an escape", async () => {
+  test("handles a name that ends at the end of the file, at a non-ASCII byte, or at an escape", async () => {
     const files: Record<string, string> = {};
     const expected: Record<string, Found[]> = {};
     for (const length of LENGTHS) {
@@ -82,7 +83,7 @@ describe.concurrent("scanner", () => {
     expect(await undefinedNames(files)).toEqual(expected);
   });
 
-  test("files with nothing in them, or nothing but blanks", async () => {
+  test("handles empty files and files with only whitespace", async () => {
     const files = Object.fromEntries(
       ["", " ", "\n", "\t\t", "﻿", ...[63, 64, 65].flatMap(n => [" ".repeat(n), "\n" + " ".repeat(n)])].map(
         (text, i) => [`${i}.js`, text],
@@ -91,7 +92,7 @@ describe.concurrent("scanner", () => {
     expect(await undefinedNames(files)).toEqual(Object.fromEntries(Object.keys(files).map(file => [file, []])));
   });
 
-  test("strings, templates and comments of every length come out of the formatter whole", async () => {
+  test("bun fmt keeps strings, templates and comments of every length intact", async () => {
     const input: string[] = [];
     const expected: string[] = [];
     const both = (line: string, formatted = line) => (input.push(line), expected.push(formatted));
@@ -120,7 +121,8 @@ describe.concurrent("scanner", () => {
       both(`/* ${text} — ${text} */`);
       both(`/**\n * ${text}.\n * ${text}.\n */`);
     }
-    // Not in the directory of the test run: this repository's .gitignore has `/a.js`, and an ignored file is printed as it is.
+    // Don't run in the test runner's directory. This repository's .gitignore has `/a.js`, and an ignored file is
+    // printed unchanged.
     using dir = tempDir("bun-scanner", {});
     await using proc = spawn({
       cmd: [bunExe(), "fmt", "--print-width", "100000", "--stdin-filepath", "a.js"],
@@ -147,7 +149,7 @@ describe.concurrent("scanner", () => {
         files[`block-${kind}-${length}.js`] = `a /*${text}${lineBreak}${text}*/ b`;
         expected[`block-${kind}-${length}.js`] = [undefinedAt("a", 1, 1), undefinedAt("b", 2, length + 4)];
       }
-      // The first byte of each is the first byte of U+2028, and the second too but for the arrow.
+      // Each one starts with the same byte as U+2028. All but the arrow share its second byte too.
       for (const [kind, other] of Object.entries({
         none: "",
         dash: "\u2014",
@@ -167,7 +169,7 @@ describe.concurrent("scanner", () => {
     expect(await undefinedNames(files)).toEqual(expected);
   });
 
-  test("what has no end is an error at the end of the file", async () => {
+  test("an unterminated string, template or comment is a parse error", async () => {
     const files: Record<string, string> = {};
     const expected: Record<string, string[]> = {};
     for (const length of LENGTHS) {
@@ -208,7 +210,7 @@ describe.concurrent("scanner", () => {
     expect(await undefinedNames(files)).toEqual(expected);
   });
 
-  test("a directive counts on the last line of a block comment", async () => {
+  test("bun check only honors a directive on the last line of a block comment", async () => {
     const lines = ["export let x: number;"];
     const expected: string[] = [];
     for (const length of [0, ...LENGTHS]) {
@@ -229,13 +231,13 @@ describe.concurrent("scanner", () => {
     expect(exitCode).toBe(1);
   });
 
-  // The tokens that rules and plugins ask for are scanned a second time, from the same bitmaps.
+  // The tokens that rules and plugins request come from a second scan, which uses the same bitmaps.
   const PLUGIN = `export default { meta: { name: "pl" }, rules: { tokens: { create(context) { return { Program(node) {
     const all = [...context.sourceCode.ast.tokens, ...context.sourceCode.getAllComments()].sort((a, b) => a.range[0] - b.range[0]);
     context.report({ loc: { line: 1, column: 0 }, message: JSON.stringify(all.map(it => [it.type, it.value, ...it.range])) });
   } }; } } } };`;
 
-  /** `[type, value, start, end]` of each token and comment of each file, under a configuration of oxlint. */
+  /** Returns `[type, value, start, end]` for every token and comment in each file, with an oxlint config. */
   async function tokensOf(files: Record<string, string>): Promise<Record<string, [string, string, number, number][]>> {
     const { stdout } = await run(["lint", "-f", "json", "."], {
       ...files,
@@ -256,7 +258,7 @@ describe.concurrent("scanner", () => {
     );
   }
 
-  test("tokens: words, blanks, strings and templates of every length", async () => {
+  test("tokens: words, whitespace, strings and templates of every length", async () => {
     const files: Record<string, string> = {};
     const expected: Record<string, [string, string, number, number][]> = {};
     for (const length of LENGTHS) {
@@ -290,8 +292,8 @@ describe.concurrent("scanner", () => {
     expect(await tokensOf(files)).toEqual(expected);
   });
 
-  test("tokens: under a configuration of oxlint they are oxlint's, in every language", async () => {
-    // What oxlint 1.87 hands to a plugin, without the punctuators.
+  test("tokens: with an oxlint config, they match oxlint's in every language", async () => {
+    // These are the tokens oxlint 1.87 passes to a plugin, without the punctuators.
     const cases: [extensions: string[], code: string, tokens: string][] = [
       [
         ["js", "ts"],

@@ -168,6 +168,12 @@ describe("path.resolve", () => {
     },
   );
 
+  test.skipIf(!isWindows)("win32 drive-relative input on another drive resolves against that drive's root", () => {
+    const drive = process.cwd()[0].toUpperCase() === "Z" ? "Y:" : "Z:";
+    expect(path.resolve(drive + "foo")).toBe(drive + "\\foo");
+    expect(path.resolve(drive + "a", "b")).toBe(drive + "\\a\\b");
+  });
+
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {
     expect(() => {
       return path.posix.resolve(undefined, "hi");

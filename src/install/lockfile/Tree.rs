@@ -1884,6 +1884,19 @@ impl Tree {
                 |row: &Dependency| !row.behavior.is_optional() && !row.behavior.is_bundled();
 
             if input_dep_range.contains(dep_id) {
+                // Only a bun.lockb from Bun 1.4 or older has a tag of a workspace's name as a
+                // registry version. Their hoisted linker linked the workspace.
+                if METHOD == BuilderMethod::Filter
+                    && dep.behavior.is_workspace()
+                    && dependency.version.tag == crate::dependency::VersionTag::DistTag
+                    && (dependency.version.dist_tag().name).eql(
+                        dependency.name,
+                        builder.buf(),
+                        builder.buf(),
+                    )
+                {
+                    return HoistDependencyResult::Hoisted; // 1
+                }
                 // A root dependency named like a workspace package takes `node_modules/<name>` from
                 // it, unless an earlier dependency group resolves to the workspace package.
                 if dep.behavior.is_workspace()

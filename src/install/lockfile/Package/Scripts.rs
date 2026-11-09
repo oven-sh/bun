@@ -6,7 +6,7 @@ use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
-use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
+use bun_paths::resolve_path::{join_abs_string_buf_z_checked, platform};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
@@ -120,9 +120,12 @@ impl Scripts {
             return false;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
-        let binding_gyp =
-            join_abs_string_buf_z::<platform::Auto>(package_dir, &mut buf.0, &[b"binding.gyp"]);
-        if !bun_sys::exists_z(binding_gyp) {
+        let binding_gyp = join_abs_string_buf_z_checked::<platform::Auto>(
+            package_dir,
+            &mut buf.0,
+            &[b"binding.gyp"],
+        );
+        if !binding_gyp.is_some_and(bun_sys::exists_z) {
             return false;
         }
         gypfile.unwrap_or_else(|| read_gypfile(package_dir, &mut buf.0))
@@ -405,7 +408,11 @@ pub(crate) fn gypfile_from_json(json: Expr) -> bool {
 
 /// An unreadable package.json keeps the default script.
 fn read_gypfile(package_dir: &[u8], buf: &mut [u8]) -> bool {
-    let path = join_abs_string_buf_z::<platform::Auto>(package_dir, buf, &[b"package.json"]);
+    let Some(path) =
+        join_abs_string_buf_z_checked::<platform::Auto>(package_dir, buf, &[b"package.json"])
+    else {
+        return true;
+    };
     let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), path) else {
         return true;
     };

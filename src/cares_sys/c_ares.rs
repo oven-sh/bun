@@ -11,9 +11,9 @@ use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::ptr;
 
 #[cfg(windows)]
-use crate::winsock::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t};
+use crate::winsock::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t};
 #[cfg(not(windows))]
-use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t};
+use libc::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t};
 
 pub type ares_socklen_t = socklen_t;
 
@@ -656,8 +656,7 @@ pub struct AddrInfo_hints {
     pub ai_socktype: c_int,
     pub ai_protocol: c_int,
 }
-// SAFETY: four `c_int` fields; all-zero is a valid hints value (S021).
-unsafe impl bun_core::ffi::Zeroable for AddrInfo_hints {}
+bun_core::impl_zeroable!(AddrInfo_hints);
 
 #[derive(Copy, Clone, Default)]
 pub struct ChannelOptions {
@@ -696,13 +695,7 @@ pub trait ResolveHandler: Sized {
     const NS_TYPE: NSType;
     /// The `ares_callback`-compatible thunk that parses the reply and forwards
     /// to `Self`.
-    unsafe extern "C" fn raw_callback(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    );
+    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
 }
 
 /// Copy `src` into the caller-owned stack `buf`, NUL-terminate, and return a
@@ -757,12 +750,9 @@ impl Channel {
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
-        // SAFETY: idempotent Winsock init (uv_once); c-ares creates its sockets with
-        // ws2_32 directly and libuv otherwise initializes Winsock lazily.
+        // c-ares creates its sockets with ws2_32 directly, and libuv initializes Winsock lazily.
         #[cfg(windows)]
-        unsafe {
-            bun_libuv_sys::uv__winsock_ensure()
-        };
+        bun_libuv_sys::uv__winsock_ensure();
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
@@ -829,7 +819,7 @@ impl Channel {
         {
             // SAFETY: thunk handles ARES_EBADNAME path.
             unsafe {
-                T::raw_callback(
+                (T::RAW_CALLBACK)(
                     std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
                     ARES_EBADNAME,
                     0,
@@ -850,7 +840,7 @@ impl Channel {
                 name_ptr,
                 NSClass::ns_c_in,
                 T::NS_TYPE,
-                Some(T::raw_callback),
+                Some(T::RAW_CALLBACK),
                 std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
             );
         }
@@ -907,20 +897,12 @@ impl Channel {
                 return;
             }
         }
-        // SAFETY: invoking the thunk directly with ENOTIMP.
-        unsafe {
-            struct_hostent::host_callback_wrapper::<T>(
-                std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
-                ARES_ENOTIMP,
-                0,
-                ptr::null_mut(),
-            );
-        }
+        ctx.on_hostent(Some(Error::ENOTIMP), 0, ptr::null_mut());
     }
 
     /// https://c-ares.org/ares_getnameinfo.html
-    pub fn get_name_info<T: NameinfoHandler>(&mut self, sa: &mut sockaddr, ctx: &mut T) {
-        let salen: ares_socklen_t = if sa.sa_family == AF::INET as _ {
+    pub fn get_name_info<T: NameinfoHandler>(&mut self, sa: &sockaddr_storage, ctx: &mut T) {
+        let salen: ares_socklen_t = if sa.ss_family == AF::INET as _ {
             core::mem::size_of::<sockaddr_in>() as ares_socklen_t
         } else {
             core::mem::size_of::<sockaddr_in6>() as ares_socklen_t
@@ -929,7 +911,7 @@ impl Channel {
         unsafe {
             ares_getnameinfo(
                 self,
-                std::ptr::from_ref::<sockaddr>(sa),
+                std::ptr::from_ref::<sockaddr_storage>(sa).cast::<sockaddr>(),
                 salen,
                 // node returns ENOTFOUND for addresses like 255.255.255.255:80
                 // So, it requires setting the ARES_NI_NAMEREQD flag
@@ -1071,9 +1053,7 @@ pub struct struct_ares_addr6ttl {
     pub(crate) ttl: c_int,
 }
 
-// SAFETY: `#[repr(C)]` POD — 16-byte byte-array union + `c_int`. All-zero is a
-// valid bit pattern (S021).
-unsafe impl bun_core::ffi::Zeroable for struct_ares_addr6ttl {}
+bun_core::impl_zeroable!(struct_ares_addr6ttl);
 impl Default for struct_ares_addr6ttl {
     #[inline]
     fn default() -> Self {
@@ -1091,8 +1071,8 @@ impl Default for struct_ares_addr6ttl {
 
 /// A c-ares reply record whose parser has the canonical 3-arg signature.
 pub trait AresReply: Sized {
-    /// SAFETY: thin forward to the matching `ares_parse_*_reply` extern.
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int;
+    /// The matching `ares_parse_*_reply` extern.
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int;
 }
 
 /// Receiver for a parsed `R` reply (replaces the per-type `*Handler` traits).
@@ -1118,7 +1098,7 @@ pub unsafe extern "C" fn ares_reply_callback<R: AresReply, T: ReplyHandler<R>>(
     }
     let mut start: *mut R = ptr::null_mut();
     // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-    let result = unsafe { R::parse(buffer, buffer_length, &raw mut start) };
+    let result = unsafe { (R::PARSE)(buffer, buffer_length, &raw mut start) };
     if result != ARES_SUCCESS {
         this.on_reply(Error::get(result), timeouts, ptr::null_mut());
         return;
@@ -1137,10 +1117,8 @@ pub struct struct_ares_caa_reply {
 }
 
 impl AresReply for struct_ares_caa_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_caa_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_caa_reply;
 }
 
 impl struct_ares_caa_reply {
@@ -1180,10 +1158,8 @@ pub struct struct_ares_srv_reply {
 }
 
 impl AresReply for struct_ares_srv_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_srv_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_srv_reply;
 }
 
 #[repr(C)]
@@ -1194,10 +1170,8 @@ pub struct struct_ares_mx_reply {
 }
 
 impl AresReply for struct_ares_mx_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_mx_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_mx_reply;
 }
 
 #[repr(C)]
@@ -1208,10 +1182,8 @@ pub struct struct_ares_txt_reply {
 }
 
 impl AresReply for struct_ares_txt_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_txt_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_txt_reply;
 }
 
 impl struct_ares_txt_reply {
@@ -1240,10 +1212,8 @@ pub struct struct_ares_naptr_reply {
 }
 
 impl AresReply for struct_ares_naptr_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_naptr_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_naptr_reply;
 }
 
 #[repr(C)]
@@ -1258,10 +1228,8 @@ pub struct struct_ares_soa_reply {
 }
 
 impl AresReply for struct_ares_soa_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_soa_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_soa_reply;
 }
 
 pub struct struct_any_reply {
@@ -1597,7 +1565,7 @@ pub(crate) const ARES_ENODATA: c_int = 1;
 const ARES_EFORMERR: c_int = 2;
 const ARES_ESERVFAIL: c_int = 3;
 pub(crate) const ARES_ENOTFOUND: c_int = 4;
-pub(crate) const ARES_ENOTIMP: c_int = 5;
+const ARES_ENOTIMP: c_int = 5;
 const ARES_EREFUSED: c_int = 6;
 const ARES_EBADQUERY: c_int = 7;
 pub(crate) const ARES_EBADNAME: c_int = 8;
@@ -1869,8 +1837,6 @@ pub const ARES_SOCKET_BAD: ares_socket_t = usize::MAX; // INVALID_SOCKET
 #[cfg(not(windows))]
 pub const ARES_SOCKET_BAD: ares_socket_t = -1;
 
-// Bun__canonicalizeIP_ host fn: see bun_runtime::dns_jsc::cares_jsc
-
 /// Creates a sockaddr structure from an address, port.
 ///
 /// # Parameters
@@ -1881,7 +1847,7 @@ pub const ARES_SOCKET_BAD: ares_socket_t = -1;
 /// # Returns
 ///
 /// This function returns 0 on success.
-pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
+pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr_storage) -> c_int {
     const BUF_SIZE: usize = 128;
 
     let mut buf = [0u8; BUF_SIZE];
@@ -1893,7 +1859,7 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
         let in_: &mut sockaddr_in =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+            unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in>() };
         // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin_addr` storage.
         if unsafe { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) }
             == 1
@@ -1917,25 +1883,19 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
         // never resolves.
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
         let in_: &mut sockaddr_in =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+            unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in>() };
         in_.sin_family = AF::INET as _;
         in_.sin_port = port.to_be();
-        // SAFETY: `sin_addr` is 4 bytes of POD on every target.
-        unsafe {
-            (&raw mut in_.sin_addr)
-                .cast::<[u8; 4]>()
-                .write([octets[12], octets[13], octets[14], octets[15]]);
-        }
+        in_.sin_addr.s_addr = u32::from_ne_bytes([octets[12], octets[13], octets[14], octets[15]]);
         return 0;
     }
 
     // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
     let in6: &mut sockaddr_in6 =
-        unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
+        unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in6>() };
     in6.sin6_family = AF::INET6 as _;
     in6.sin6_port = port.to_be();
-    // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
-    unsafe { (&raw mut in6.sin6_addr).cast::<[u8; 16]>().write(octets) };
+    in6.sin6_addr.s6_addr = octets;
     0
 }
 

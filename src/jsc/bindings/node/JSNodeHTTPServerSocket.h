@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include "BunClientData.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedNodeHTTPResponse.h"
 #include <wtf/Lock.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
@@ -40,6 +40,8 @@ struct WebSocketData;
 
 namespace Bun {
 
+using Bindgen::Generated::JSNodeHTTPResponse;
+
 class JSNodeHTTPServerSocketPrototype;
 
 class JSNodeHTTPServerSocket : public JSC::JSDestructibleObject {
@@ -71,8 +73,8 @@ public:
     const char* peerCertVerifyErrorCode = nullptr;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
-    static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response);
-    static JSNodeHTTPServerSocket* create(JSC::VM& vm, Zig::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response);
+    static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, JSNodeHTTPResponse* response);
+    static JSNodeHTTPServerSocket* create(JSC::VM& vm, Zig::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl, JSNodeHTTPResponse* response);
 
     static void destroy(JSC::JSCell* cell)
     {
@@ -107,19 +109,19 @@ public:
      * in flight are queued here (in arrival order) and become the connection's
      * current response one at a time via startPipelinedResponse(). On socket
      * close every queued response is notified just like the current one. */
-    void appendPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response);
+    void appendPipelinedResponse(JSC::VM& vm, JSNodeHTTPResponse* response);
     /* Make a previously queued pipelined response the connection's current
      * response: reset the per-response uWS state (the part the request handler
      * normally resets per parsed request) and, when the queue drained, resume
      * socket reads. Returns false when the connection is already gone. */
-    bool startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose);
+    bool startPipelinedResponse(JSC::VM& vm, JSNodeHTTPResponse* response, bool isAncient, bool connectionClose);
     /* The response that answers on this connection now. A close reaches it and the queued ones. */
-    WebCore::JSNodeHTTPResponse* currentResponse() const { return m_currentResponse.get(); }
+    JSNodeHTTPResponse* currentResponse() const { return m_currentResponse.get(); }
     /* A close does not reach the response that leaves the slot, so the connection is taken back from it first. */
-    void setCurrentResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response)
+    void setCurrentResponse(JSC::VM& vm, JSNodeHTTPResponse* response)
     {
-        if (auto* replaced = m_currentResponse.get(); replaced != nullptr && replaced != response && replaced->m_ctx != nullptr) {
-            Bun__NodeHTTPResponse_takeBackConnection(replaced->m_ctx, JSC::JSValue::encode(replaced), false);
+        if (auto* replaced = m_currentResponse.get(); replaced != nullptr && replaced != response) {
+            Bun__NodeHTTPResponse_takeBackConnection(replaced->wrapped(), JSC::JSValue::encode(replaced), false);
         }
         m_currentResponse.set(vm, this, response);
     }
@@ -142,7 +144,7 @@ public:
      * ondata callback as opaque data. With afterBody, the switch is deferred
      * until the request body has been fully parsed (Upgrade requests with a
      * body deliver it through the request first, like Node 26). */
-    void upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response);
+    void upgradeToTunnelMode(bool afterBody, JSNodeHTTPResponse* response);
 
     /* Tunnel read backpressure, like net.Socket's handle. Both do nothing outside tunnel mode. */
     void readStop();
@@ -170,7 +172,7 @@ public:
 
     ~JSNodeHTTPServerSocket();
 
-    JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response);
+    JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, JSNodeHTTPResponse* response);
 
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnClose;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnDrain;
@@ -183,7 +185,7 @@ public:
      * mutation on the JS thread coherent with the concurrent GC marker walking
      * the vector in visitChildren. */
     mutable WTF::Lock m_pipelinedResponsesLock;
-    mutable WTF::Vector<JSC::WriteBarrier<WebCore::JSNodeHTTPResponse>, 2> m_pipelinedResponses;
+    mutable WTF::Vector<JSC::WriteBarrier<JSNodeHTTPResponse>, 2> m_pipelinedResponses;
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -212,7 +214,7 @@ public:
     void finishCreation(JSC::VM& vm);
 
 private:
-    mutable JSC::WriteBarrier<WebCore::JSNodeHTTPResponse> m_currentResponse;
+    mutable JSC::WriteBarrier<JSNodeHTTPResponse> m_currentResponse;
 };
 
 } // namespace Bun

@@ -4,10 +4,10 @@ use super::{CheckFlags, Locate, SymbolFlags, TsNode, Type};
 use crate::ast::File;
 use bun_sema::check::services::{SymbolOp, SymbolRef, SymbolTable};
 
-/// `ts.Symbol`: anything that is declared anywhere in the program, or that the checker makes up as
-/// if it were: a variable, a class, a module, a property of a type, a parameter of a signature.
+/// `ts.Symbol`: anything declared anywhere in the program, or synthesized by the checker as if it were declared. That
+/// can be a variable, a class, a module, a type's property or a signature's parameter.
 ///
-/// Two are `==` where TypeScript has one object.
+/// Two are `==` exactly when TypeScript has one object for both.
 #[derive(Copy, Clone)]
 pub struct TsSymbol<'a> {
     file: &'a File<'a>,
@@ -39,7 +39,7 @@ impl std::fmt::Debug for TsSymbol<'_> {
     }
 }
 
-/// A list of symbols: the properties of a type, the exports of a module.
+/// A list of symbols, such as a type's properties or a module's exports.
 #[derive(Copy, Clone)]
 pub struct SymbolList<'a> {
     file: &'a File<'a>,
@@ -141,11 +141,10 @@ impl<'a> TsSymbol<'a> {
 
     /// `symbol.name`, `symbol.getName()`, `symbol.escapedName`, `symbol.getEscapedName()`
     ///
-    /// They differ in TypeScript only for a name in the source that begins with `__`, which
-    /// `escapedName` gives one more `_`. This is `name`. A name that the compiler makes up is
-    /// spelled as there: `__type`, `__object`, `__function`, `__call`, `__index`, `default`,
-    /// `export=`. That of a property whose key is a well-known symbol is `__@iterator`, without
-    /// the number that follows in TypeScript.
+    /// In TypeScript they differ only for a source name that begins with `__`, to which `escapedName` adds one more
+    /// `_`. This is `name`. Compiler-generated names are spelled as in TypeScript: `__type`, `__object`, `__function`,
+    /// `__call`, `__index`, `default`, `export=`. A property keyed by a well-known symbol is named `__@iterator`,
+    /// without the number TypeScript appends.
     pub fn name(self) -> &'a [u8] {
         self.file.query(|q| q.symbol_info(self.id)).name
     }
@@ -187,7 +186,7 @@ impl<'a> TsSymbol<'a> {
         Some(TsNode::of(self.file, node))
     }
 
-    /// `symbol.members`: of a class, an interface or a type literal.
+    /// `symbol.members` of a class, an interface or a type literal.
     pub fn members(self) -> SymbolList<'a> {
         self.table(SymbolTable::Members)
     }
@@ -209,8 +208,8 @@ impl<'a> TsSymbol<'a> {
         )
     }
 
-    /// `checker.getDeclaredTypeOfSymbol(symbol)`: the type that a class, an interface, an enum, a
-    /// type alias or a type parameter names.
+    /// `checker.getDeclaredTypeOfSymbol(symbol)`: the type that a class, an interface, an enum, a type alias or a type
+    /// parameter declares.
     pub fn get_declared_type(self) -> Type<'a> {
         Type::new(
             self.file,
@@ -218,14 +217,14 @@ impl<'a> TsSymbol<'a> {
         )
     }
 
-    /// `checker.getAliasedSymbol(symbol)`: what an import or an export finally refers to. The
-    /// unknown symbol if that cannot be resolved ([`TsSymbol::is_unknown`]). TypeScript fails for a
-    /// symbol that is not an alias, this returns it.
+    /// `checker.getAliasedSymbol(symbol)`: what an import or export ultimately refers to, or the unknown symbol if that
+    /// can't be resolved ([`TsSymbol::is_unknown`]). TypeScript fails on a symbol that isn't an alias. This returns the
+    /// symbol itself.
     pub fn get_aliased_symbol(self) -> TsSymbol<'a> {
         self.op(SymbolOp::Aliased).unwrap_or(self)
     }
 
-    /// `checker.getImmediateAliasedSymbol(symbol)`: one step of that.
+    /// `checker.getImmediateAliasedSymbol(symbol)`: a single step of that.
     pub fn get_immediate_aliased_symbol(self) -> Option<TsSymbol<'a>> {
         self.op(SymbolOp::ImmediateAliased)
     }
@@ -248,7 +247,7 @@ impl<'a> TsSymbol<'a> {
         self.op(SymbolOp::Merged).unwrap_or(self)
     }
 
-    /// `checker.getExportsOfModule(symbol)`: with what `export *` adds.
+    /// `checker.getExportsOfModule(symbol)`, including what `export *` adds.
     pub fn get_exports_of_module(self) -> SymbolList<'a> {
         self.table(SymbolTable::ExportsOfModule)
     }
@@ -258,9 +257,9 @@ impl<'a> TsSymbol<'a> {
         self.file.query(|q| q.is_unknown_symbol(self.id))
     }
 
-    /// `symbol.getJsDocTags(checker).find(tag => tag.name === 'deprecated')`, as
-    /// `ts.displayPartsToString(tag.text)`: empty if nothing follows the tag. The tags are those of
-    /// all its declarations, or those that a member without any inherits.
+    /// `symbol.getJsDocTags(checker).find(tag => tag.name === 'deprecated')`, as `ts.displayPartsToString(tag.text)`:
+    /// empty if nothing follows the tag. The tags come from all of its declarations, or, for a member that has none,
+    /// from the member it inherits them from.
     pub fn deprecation(self) -> Option<&'a [u8]> {
         self.file.query(|q| q.deprecation_of_symbol(self.id))
     }

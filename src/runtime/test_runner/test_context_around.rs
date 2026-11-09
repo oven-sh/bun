@@ -389,16 +389,22 @@ pub(crate) fn adopt_async_context(cx: &mut JsScope<'_>, callback: JsLocal<'_>) -
     callback.to_js().with_async_context_if_needed(cx.global())
 }
 
-/// Remembers the current async context, for `in_async_context()`.
+/// Remembers the current async context, for `in_async_context()`. An around hook of a preload runs the test file's
+/// callbacks in its context, but they are not callbacks of the preload.
 fn capture_async_context(global: &JSGlobalObject) -> JSValue {
-    JSFunction::create(
+    unsafe extern "C" {
+        safe fn JSMock__withAsyncContextOfTestFile(global: &JSGlobalObject, callback: JSValue) -> JSValue;
+    }
+    JSMock__withAsyncContextOfTestFile(
         global,
-        "",
-        generated::Bun__AroundHook__adoptAsyncContext,
-        1,
-        Default::default(),
+        JSFunction::create(
+            global,
+            "",
+            generated::Bun__AroundHook__adoptAsyncContext,
+            1,
+            Default::default(),
+        ),
     )
-    .with_async_context_if_needed(global)
 }
 
 /// `callback`, bound to the async context that `captured` remembers instead of the one it was registered in.

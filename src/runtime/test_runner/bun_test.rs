@@ -85,6 +85,31 @@ pub(crate) fn is_preload_for_the_run(vm: &VirtualMachine) -> bool {
         })
 }
 
+/// `callback`, which is of an entry that is `of_preload`, to call in place of it. What it calls, awaits or schedules is then
+/// known to `preload_callback_is_calling()`. This turns async context tracking on for the rest of the process.
+pub(crate) fn as_preload_callback(global: &JSGlobalObject, callback: JSValue) -> JSValue {
+    unsafe extern "C" {
+        safe fn JSMock__asPreloadCallback(global: &JSGlobalObject, callback: JSValue) -> JSValue;
+    }
+    JSMock__asPreloadCallback(global, callback)
+}
+
+/// Whether a callback of a preload is calling: its entry is on the stack, or the code runs in the async context of one that
+/// went through `as_preload_callback()`. Unlike `in_preload_hook()`, this names the callback that calls, not the one that
+/// the runner waits for. So it holds after an `await` and in a concurrent group, and not for a test file's timer that fires
+/// while a hook of the preload is pending.
+pub(crate) fn preload_callback_is_calling(global: &JSGlobalObject) -> bool {
+    unsafe extern "C" {
+        safe fn JSMock__isInPreloadCallback(global: &JSGlobalObject) -> bool;
+    }
+    let Some(file) = clone_active_strong() else { return false };
+    match file.get().execution.on_stack.get() {
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        Some(on_stack) => unsafe { &*on_stack.entry.cast::<ExecutionEntry>() }.of_preload,
+        None => JSMock__isInPreloadCallback(global),
+    }
+}
+
 pub(crate) use super::done_callback::DoneCallback;
 
 pub(crate) mod js_fns {
@@ -402,7 +427,7 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    let new_item = ExecutionEntry::create(
+                    let mut new_item = ExecutionEntry::create(
                         None,
                         args.callback,
                         cfg,
@@ -410,6 +435,8 @@ pub(crate) mod js_fns {
                         BaseScopeCfg::default(),
                         AddedInPhase::Execution,
                     );
+                    // SAFETY: intrusive linked-list nodes are valid while sequence is live
+                    new_item.of_preload = sequence_ref.active_entry.is_some_and(|running| unsafe { running.as_ref() }.of_preload);
                     let new_item_ptr = bun_core::heap::into_raw(new_item);
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
                     unsafe {
@@ -2386,6 +2413,8 @@ pub(crate) struct ExecutionEntry {
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     pub(crate) timespec: Timespec,
     pub(crate) added_in_phase: AddedInPhase,
+    /// A preload registered the callback, or a callback of a preload did while it ran.
+    pub(crate) of_preload: bool,
     /// Number of times to retry a failed test (0 = no retries)
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
@@ -2415,6 +2444,7 @@ impl ExecutionEntry {
             fixtures: None,
             parameter: (cfg.calling.is_vitest() && phase != AddedInPhase::Execution).then(Default::default),
             added_in_phase: phase,
+            of_preload: phase == AddedInPhase::Preload,
             retry_count: cfg.retry_count,
             repeat_count: cfg.repeat_count,
             timespec: Timespec::EPOCH,

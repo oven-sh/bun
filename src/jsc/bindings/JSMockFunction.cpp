@@ -38,6 +38,8 @@
 #include "BunCompiledModules.h"
 #include "NodeVM.h"
 #include "AsyncContextFrame.h"
+#include "ModuleGraph.h"
+#include "NodeAsyncHooks.h"
 #include "ErrorCode.h"
 #include "headers.h"
 
@@ -1407,6 +1409,10 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     mock.vitestName.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString>::Initializer& init) {
             init.set(JSC::jsNontrivialString(init.vm, "Mock"_s));
+        });
+    mock.preloadCallbackMarker.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure()));
         });
     mock.withImplementationCleanupFunction.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
@@ -2861,6 +2867,70 @@ extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMock__strictThis(JSC::J
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
+}
+
+// ── The callbacks of a preload ───────────────────────────────────────────────────────
+//
+// The runner calls a callback of a preload in an async context frame whose storage is
+// `mockModule.preloadCallbackMarker`, so what the callback calls, awaits or schedules can be told from
+// the test file's code, wherever the runner is by then. As with the frame of a module mock's factory, no
+// AsyncLocalStorage finds it. The frame's value is true inside the callback and false where the context
+// has left it again.
+
+static JSObject* createPreloadCallbackFrame(Zig::GlobalObject* globalObject, bool isInside, JSValue previous)
+{
+    return Bun::createAsyncContextFrame(globalObject, globalObject->mockModule.preloadCallbackMarker.getInitializedOnMainThread(globalObject), previous, jsBoolean(isInside));
+}
+
+static bool isInPreloadCallback(Zig::GlobalObject* globalObject, JSValue asyncContext)
+{
+    // Only createPreloadCallbackFrame() makes the marker.
+    if (!globalObject->mockModule.preloadCallbackMarker.isInitialized())
+        return false;
+    auto& vm = JSC::getVM(globalObject);
+    auto& names = WebCore::builtinNames(vm);
+    JSObject* marker = globalObject->mockModule.preloadCallbackMarker.getInitializedOnMainThread(globalObject);
+    for (JSObject* frame = asyncContext.getObject(); frame;) {
+        if (frame->getDirect(vm, names.storagePublicName()) == JSValue(marker))
+            return frame->getDirect(vm, vm.propertyNames->value) == jsBoolean(true);
+        JSValue previous = frame->getDirect(vm, names.prevPublicName());
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    return false;
+}
+
+extern "C" bool JSMock__isInPreloadCallback(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return isInPreloadCallback(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
+// `callback`, to be called with AsyncContextFrame::call(): it runs inside a frame that names it as a callback of a preload.
+extern "C" JSC::EncodedJSValue JSMock__asPreloadCallback(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue encodedCallback)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue callback = JSValue::decode(encodedCallback);
+    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    // The call would put the context that the callback was registered in over a frame that is current.
+    if (auto* registered = dynamicDowncast<AsyncContextFrame>(callback)) {
+        context = registered->context.get();
+        callback = registered->callback.get();
+    }
+    // The frame has to survive the callback's awaits.
+    Bun::beginTrackingAsyncContexts(globalObject);
+    return JSValue::encode(AsyncContextFrame::create(JSC::getVM(globalObject), globalObject->AsyncContextFrameStructure(), callback, createPreloadCallbackFrame(globalObject, true, context)));
+}
+
+// `callback`, bound to the current async context like withAsyncContextIfNeeded(), but outside of a preload's callback:
+// for what a callback of a preload starts on behalf of the test file.
+extern "C" JSC::EncodedJSValue JSMock__withAsyncContextOfTestFile(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue encodedCallback)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue callback = JSValue::decode(encodedCallback);
+    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (!isInPreloadCallback(globalObject, context))
+        return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callback));
+    return JSValue::encode(AsyncContextFrame::create(JSC::getVM(globalObject), globalObject->AsyncContextFrameStructure(), callback, createPreloadCallbackFrame(globalObject, false, context)));
 }
 
 extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject, double ms);

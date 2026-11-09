@@ -476,11 +476,12 @@ impl From<JsError> for Stop {
 enum Owner {
     TestFile,
     Preload,
-    /// A hook that runs once for all test files. Its fakes are kept only while each one is on its global.
+    /// A hook of the preload. Its fakes are kept only while each one is on its global.
     PreloadHook,
 }
 
 impl Owner {
+    /// `TestFile` unless the preload's code for the run calls: its module, or a hook of it that runs once.
     fn of_caller(vm: &VirtualMachine) -> Owner {
         match (bun_test::is_preload_for_the_run(vm), vm.is_in_preload) {
             (false, _) => Owner::TestFile,
@@ -490,12 +491,24 @@ impl Owner {
     }
 }
 
+/// What of the clock a call mocks. `FakeTimers.standing` is what the preload's module, or a hook of it that runs once for
+/// the run, mocked last. Until that code ends the mock, the other callbacks of the preload set the clock for the preload,
+/// also after a test file set or ended it.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Standing {
+    None,
+    /// The next test file loads with real timers, so fake timers that another callback of the preload turns on end with each file.
+    SystemTime,
+    FakeTimers,
+}
+
 pub(crate) struct FakeTimers {
     active: bool,
     /// Empty while inactive.
     faked: ApiSet,
     fakes_abort_signal_timeout: bool,
     owner: Owner,
+    standing: Standing,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: u32,
     firing: u32,
@@ -527,6 +540,7 @@ impl Default for FakeTimers {
             faked: ApiSet::default(),
             fakes_abort_signal_timeout: false,
             owner: Owner::TestFile,
+            standing: Standing::None,
             installs: 0,
             firing: 0,
             timers: TimerHeap::default(),
@@ -554,7 +568,7 @@ const AUTO_STEP: u32 = 0;
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
 /// instead of the stale activation-time offset. `performance.now()` does not
 /// move, so `performance.timeOrigin` follows the rebased offset. While fake
-/// timers are inactive it only records `owner`. A NaN `ms` is the "clear override" sentinel:
+/// timers are inactive it only records who owns the system time. A NaN `ms` is the "clear override" sentinel:
 /// `Date.now()` is real again until the next tick, so the mocked wall clock
 /// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]
@@ -563,7 +577,12 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     let this = unsafe { &mut (*timer_all()).fake_timers };
     let vm = global.bun_vm().as_mut();
     if !this.active {
-        this.owner = Owner::of_caller(vm);
+        let caller = Owner::of_caller(vm);
+        if caller == Owner::TestFile && this.standing == Standing::None {
+            this.owner = caller;
+        } else {
+            this.own_system_time(global, caller, ms);
+        }
         return;
     }
     if ms.is_nan() {
@@ -575,6 +594,10 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     this.publish_clock(global);
     if !this.faked.contains(Api::Date) {
         JSMock__setOverridenDateNow(global, f64::NAN);
+    }
+    // A test file moves the preload's fake clock and leaves it the preload's. The preload takes back one that a test file turned on.
+    if this.owner == Owner::TestFile && this.standing != Standing::None {
+        this.owner = this.owner_after_other_mock(global, Standing::SystemTime);
     }
 }
 
@@ -742,11 +765,42 @@ impl FakeTimers {
         self.publish_clock(global);
     }
 
-    fn activate(&mut self, global: &JSGlobalObject, options: &Options, date_now: f64) {
+    /// The owner and the standing once `caller`, which is `Owner::of_caller()`, has set `mocked`. `Standing::None` ends the mock.
+    fn owned_after(&self, global: &JSGlobalObject, caller: Owner, mocked: Standing) -> (Owner, Standing) {
+        match (caller, mocked) {
+            (Owner::TestFile, Standing::None) => (Owner::TestFile, self.standing),
+            (Owner::TestFile, _) if self.standing == Standing::None => (Owner::TestFile, Standing::None),
+            (Owner::TestFile, _) => (self.owner_after_other_mock(global, mocked), self.standing),
+            (_, Standing::None) => (Owner::TestFile, Standing::None),
+            (_, _) => (caller, mocked),
+        }
+    }
+
+    /// `setSystemTime(ms)` with fake timers off. Out of line, because few runs have a preload that sets a clock.
+    #[cold]
+    fn own_system_time(&mut self, global: &JSGlobalObject, caller: Owner, ms: f64) {
+        let mocked = if ms.is_nan() { Standing::None } else { Standing::SystemTime };
+        (self.owner, self.standing) = self.owned_after(global, caller, mocked);
+    }
+
+    /// The owner once another caller than the preload's code for the run has set `mocked`, while the preload has a standing.
+    #[cold]
+    fn owner_after_other_mock(&self, global: &JSGlobalObject, mocked: Standing) -> Owner {
+        if !bun_test::preload_callback_is_calling(global) {
+            return Owner::TestFile;
+        }
+        // Fake timers over a test file's clock are that file's. Over the preload's system time, only they end with the file.
+        if self.standing == Standing::SystemTime && mocked == Standing::FakeTimers && self.owner == Owner::TestFile {
+            return Owner::TestFile;
+        }
+        Owner::PreloadHook
+    }
+
+    fn activate(&mut self, global: &JSGlobalObject, options: &Options, date_now: f64, owned: (Owner, Standing)) {
         self.active = true;
         self.faked = options.faked;
         self.fakes_abort_signal_timeout = options.fakes_abort_signal_timeout;
-        self.owner = Owner::of_caller(global.bun_vm());
+        (self.owner, self.standing) = owned;
         self.installs = self.installs.wrapping_add(1);
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;
@@ -784,6 +838,9 @@ impl FakeTimers {
         if self.active {
             self.forget_installation(global);
         }
+        // The next realm starts with no system time, and its preload sets its own clock.
+        self.owner = Owner::TestFile;
+        self.standing = Standing::None;
         self.replaced.clear();
         self.originals.deinit();
         self.ticks.clear();
@@ -915,12 +972,16 @@ impl FakeTimers {
     ) -> JsResult<Vec<AsyncDrive>> {
         bun_jsc::cpp::Bun__FakeTimers__loadNodeTimers(global)?;
         let replaced = Self::fakes(global, options.faked, date_now.floor())?;
+        // SAFETY: per-thread `timer::All`; the borrow ends at this statement. `uninstall` forgets the owner.
+        let owned = unsafe {
+            (*timer_all()).fake_timers.owned_after(global, Owner::of_caller(global.bun_vm()), Standing::FakeTimers)
+        };
         let drives = Self::uninstall(global, Restore::Always);
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         unsafe {
             (*timer_all())
                 .fake_timers
-                .activate(global, options, date_now)
+                .activate(global, options, date_now, owned)
         };
         for Replaced {
             api,
@@ -1728,7 +1789,15 @@ fn use_fake_timers_with_default(
 pub(crate) fn use_real_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     error_if_reading_globals(global)?;
-    AsyncDrive::settle_all(global, FakeTimers::uninstall(global, Restore::Always))?;
+    let ended = FakeTimers::uninstall(global, Restore::Always);
+    // SAFETY: per-thread `timer::All`; nothing in this block re-enters it.
+    unsafe {
+        let this = &mut (*timer_all()).fake_timers;
+        if this.standing != Standing::None {
+            (this.owner, this.standing) = this.owned_after(global, Owner::of_caller(global.bun_vm()), Standing::None);
+        }
+    }
+    AsyncDrive::settle_all(global, ended)?;
     Ok(chainable_this(global, this_value))
 }
 
@@ -1785,23 +1854,31 @@ fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
 
 pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     // SAFETY: per-thread `timer::All`; field reads only.
-    let (active, owner) = unsafe {
+    let (active, owner, standing) = unsafe {
         let this = &(*timer_all()).fake_timers;
-        (this.active, this.owner)
+        (this.active, this.owner, this.standing)
     };
+    let system_time = bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global);
+    // A callback of the preload turned these fake timers on over the preload's system time. The next file loads without them.
+    let over_system_time = active && owner == Owner::PreloadHook && standing == Standing::SystemTime;
     let kept = match owner {
         Owner::TestFile => false,
         Owner::Preload => true,
-        // Its fakes went over what the first file left on the globals, and any file can take one off again.
-        Owner::PreloadHook => FakeTimers::is_whole(global),
+        // Its fakes went over what a test file left on the globals, and any file can take one off again.
+        Owner::PreloadHook => !over_system_time && FakeTimers::is_whole(global),
     };
-    let mocked = active || !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan();
+    let mocked = active || !system_time.is_nan();
     if mocked && !kept {
         // SAFETY: the live event loop of the per-thread VM.
         let _entered =
             unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
         // Dropping the drives leaves their `…Async` promises pending, like anything else still pending at file end.
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
+        if over_system_time && !system_time.is_nan() {
+            JSMock__setOverridenDateNow(global, system_time);
+            // SAFETY: per-thread `timer::All`; one field write.
+            unsafe { (*timer_all()).fake_timers.owner = Owner::PreloadHook };
+        }
     }
     FakeTimers::take_off_stale_fakes(global);
 }
@@ -1809,6 +1886,12 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
 pub(crate) fn is_active() -> bool {
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
     unsafe { (*timer_all()).fake_timers.is_active() }
+}
+
+/// Whether a clock that a callback of the preload sets can be the preload's. See [`Standing`].
+pub(crate) fn preload_has_standing() -> bool {
+    // SAFETY: per-thread `timer::All`, live for the VM lifetime.
+    unsafe { (*timer_all()).fake_timers.standing != Standing::None }
 }
 
 /// `ms` must be finite and in `0..=u32::MAX`. Returns the exception a timer threw, or empty.

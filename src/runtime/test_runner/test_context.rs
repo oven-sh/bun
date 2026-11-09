@@ -154,6 +154,10 @@ impl TestContext {
             // SAFETY: just allocated.
             unsafe { (*entry.as_ptr()).around = Some((Around::Each, AroundPhase::TearDown)) };
         }
+        let start = buntest.execution.groups.get(self.group_index).map(|group| group.sequence_start);
+        let running = start.and_then(|start| buntest.execution.sequences.get(start + self.sequence_index)?.active_entry);
+        // SAFETY: entries outlive the sequences that run them, and `entry` was just allocated.
+        unsafe { (*entry.as_ptr()).of_preload = running.is_some_and(|running| running.as_ref().of_preload) };
         self.deferred.with_mut(|deferred| deferred.push((when, entry)));
     }
 

@@ -1314,6 +1314,10 @@ fn step_sequence_one(
         if let Some(captured) = test_context_around::captured_async_context(context, scope) {
             callback = test_context_around::in_async_context(global_this, captured, callback)?;
         }
+        // What this callback does to the clock can be the preload's: see `bun_test::preload_callback_is_calling()`.
+        if next_item.of_preload && super::timers::fake_timers::preload_has_standing() {
+            callback = super::bun_test::as_preload_callback(global_this, callback);
+        }
         let set_up_args: [JSValue; 4];
         let args = if let Some((around, AroundPhase::SetUp)) = next_item.around {
             let suite = match (args.get(1), scope) {

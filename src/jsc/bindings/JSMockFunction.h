@@ -42,7 +42,8 @@ public:
     V(JSC::Structure, mockWithImplementationCleanupDataStructure) \
     V(JSCell, lazyPrototype)                                      \
     V(JSString, defaultName)                                      \
-    V(JSString, vitestName)
+    V(JSString, vitestName)                                       \
+    V(JSObject, preloadCallbackMarker)
 
 #define DECLARE_JSMOCKMODULE_GC_MEMBER(T, name) \
     LazyProperty<JSGlobalObject, T> name;

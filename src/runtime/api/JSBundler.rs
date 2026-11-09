@@ -58,7 +58,7 @@ pub(crate) mod js_bundler {
                 global_this.throw_invalid_arguments(format_args!("loader must be a string"))
             );
         }
-        let name = value.to_slice(global_this)?;
+        let name = value.to_utf8(global_this)?;
         bun_ast::Loader::from_string(name.slice()).ok_or_else(|| {
             global_this
                 .throw_invalid_arguments(format_args!("loader must be one of {}", LoaderNamesList))

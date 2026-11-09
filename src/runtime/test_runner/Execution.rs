@@ -775,8 +775,7 @@ impl Execution {
             if in_first_window {
                 self.first_window_left -= 1;
             }
-            // A reset takes the whole global, and with it what the tests that started ahead have made. A test past the
-            // first window, a retry and a repeat still get theirs beside a running test, as in Vitest.
+            // The resets take the whole global. As in Vitest, only the first window is spared them beside a running test.
             let resets = !(in_first_window && others_mid_attempt);
             super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest(), resets);
 

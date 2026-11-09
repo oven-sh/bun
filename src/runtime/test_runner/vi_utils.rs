@@ -47,8 +47,7 @@ fn run(global: &JSGlobalObject, reset: Reset) {
     }));
 }
 
-/// Each reset takes the whole global, so `resets` is false for a test that starts in the first window of its
-/// concurrent group while another test of the group runs.
+/// `resets` is false for a test that starts in its group's first window while another test of the group runs.
 pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool, resets: bool) {
     JSMock__willRunTest(global);
     if !resets {

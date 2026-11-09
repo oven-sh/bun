@@ -328,6 +328,8 @@ function checkFilesAreCurrent(directory: string, files: ReadonlyMap<string, stri
   problems.throwIfAny();
 }
 
+const listOf = (value: string): string[] => value.split(",").filter(item => item !== "");
+
 function readCommandLine(): CommandLine {
   const flags: Record<string, string | boolean | undefined> = argParse([
     "codegen-path",
@@ -367,8 +369,8 @@ function readCommandLine(): CommandLine {
       prebuiltGenerated,
       target,
       bindgenSources: listOption(sources).sort(compareBytes),
-      typesOnly: listOption(textOf("types-only") ?? ""),
-      leftOut: listOption(textOf("left-out") ?? ""),
+      typesOnly: listOf(textOf("types-only") ?? ""),
+      leftOut: listOf(textOf("left-out") ?? ""),
     },
     codegenPath,
     engineOut,

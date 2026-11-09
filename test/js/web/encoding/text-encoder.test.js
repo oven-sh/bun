@@ -53,6 +53,14 @@ describe("TextEncoder", () => {
     expect(encoder.encode(null).length).toBe(4);
     expect(encoder.encode("").length).toBe(0);
   });
+  // constructor(), encode(optional USVString input = ""), encodeInto(USVString source, Uint8Array destination)
+  it("has the lengths of the IDL", () => {
+    expect({
+      TextEncoder: TextEncoder.length,
+      encode: TextEncoder.prototype.encode.length,
+      encodeInto: TextEncoder.prototype.encodeInto.length,
+    }).toEqual({ TextEncoder: 0, encode: 0, encodeInto: 2 });
+  });
   it("should encode latin1 text with non-ascii latin1 characters", () => {
     var text = "H©ell©o Wor©ld!";
 

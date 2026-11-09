@@ -1622,7 +1622,7 @@ fn file_followed_further_than_the_bundler_is_an_entry_point_beside_a_plugin() {
 
 #[test]
 fn file_found_for_a_load_is_read_as_that_load_reads_it() {
-    use bun_sema::module_format::ModuleFormat::CommonJs;
+    use bun_sema::module_format::ModuleFormat::{CommonJs, Esm};
     const NO_KIND: &str = "globalThis.ran = true;";
     const PLUG: (&str, &str) = ("plug.mjs", r#"import "./plain.cjs";"#);
     let rows: [(&[(&str, &str)], &str, _); 6] = [
@@ -1646,7 +1646,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            CommonJs,
+            Esm,
         ),
         (
             &[
@@ -1677,7 +1677,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            CommonJs,
+            Esm,
         ),
         (
             &[
@@ -1685,15 +1685,29 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            CommonJs,
+            Esm,
         ),
     ];
-    for (files, asked, format) in rows {
-        load(&executable(files), |loaded| {
-            let loaded = files_of(loaded);
-            let analysis = loaded.analysis(file_named(loaded, asked));
-            assert_eq!(analysis.module_format, format, "{}", files[0].1);
-        });
+    for builds_executable in [false, true] {
+        for &(files, asked, bundled_format) in &rows {
+            let mut project = executable(files);
+            project.builds_executable = builds_executable;
+            load(&project, |loaded| {
+                let loaded = files_of(loaded);
+                let analysis = loaded.analysis(file_named(loaded, asked));
+                let format = if builds_executable {
+                    bundled_format
+                } else {
+                    CommonJs
+                };
+                assert_eq!(
+                    analysis.module_format,
+                    format,
+                    "{}; builds_executable={builds_executable}",
+                    files[0].1
+                );
+            });
+        }
     }
 }
 

@@ -1315,7 +1315,7 @@ static InternalFieldTuple* stubOf(Zig::GlobalObject* globalObject, const Identif
 {
     auto& vm = JSC::getVM(globalObject);
     JSValue stubs = globalObject->mockModule.stubbedGlobals.get();
-    if (!stubs)
+    if (!stubs || !(globalObject->mockModule.namesOfStubbedGlobals & bitOfStubbedGlobal(key)))
         return nullptr;
     // The key is a string or a symbol, so the map runs no script for it.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1498,7 +1498,8 @@ extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObje
         }
         JSValue value = content.storage;
         bool mayBeSpy = value.isCell() && value.asCell()->type() == InternalFunctionType;
-        if (!isOwnAccessor && !mayBeSpy && (target != globalObject || !globalObject->mockModule.stubbedGlobals)) [[likely]] {
+        bool mayBeStubbed = target == globalObject && (globalObject->mockModule.namesOfStubbedGlobals & bitOfStubbedGlobal(key));
+        if (!isOwnAccessor && !mayBeSpy && !mayBeStubbed) [[likely]] {
             *entry = {};
             return JSValue::encode(value);
         }
@@ -3597,7 +3598,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 
         mock->didInstall(object, propertyKey, isOwn ? value : JSValue(), spyAttributes);
-        if (object == globalObject && globalObject->mockModule.stubbedGlobals) [[unlikely]] {
+        if (object == globalObject && (globalObject->mockModule.namesOfStubbedGlobals & bitOfStubbedGlobal(propertyKey))) [[unlikely]] {
             bool hasSpy;
             if (auto* link = cover(globalObject, object, propertyKey, mock->replaced(), hasSpy))
                 mock->setStubLink(globalObject, link);
@@ -3684,7 +3685,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     RETURN_IF_EXCEPTION(scope, {});
 
     mock->didInstall(object, propertyKey, storage, spyAttributes | JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0));
-    if (mayHaveSpy(descriptor) || (object == globalObject && globalObject->mockModule.stubbedGlobals)) [[unlikely]] {
+    if (mayHaveSpy(descriptor) || (object == globalObject && (globalObject->mockModule.namesOfStubbedGlobals & bitOfStubbedGlobal(propertyKey)))) [[unlikely]] {
         bool hasSpy;
         auto* link = cover(globalObject, object, propertyKey, mock->replaced(), hasSpy);
         if (hasSpy)

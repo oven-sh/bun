@@ -26,6 +26,7 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
 // What vi.stubGlobal() and vi.unstubAllGlobals() call.
+inline uint64_t bitOfStubbedGlobal(const JSC::Identifier& name) { return 1ull << (name.impl()->existingSymbolAwareHash() & 63); }
 // The first stub of the global `name` is about to replace `descriptor`. A spy in it then has to say what it replaced after its own restore too.
 void willReplaceForStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor& descriptor);
 // vi.unstubAllGlobals() is about to put `descriptor` back on the global `name`. True if a spy in it was restored since, and what the global has without that spy is there now.
@@ -71,6 +72,8 @@ public:
     // or undefined if the global did not exist. Then the value that the last stub of the name put.
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
     JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
+    // One bit for each name in stubbedGlobals: see bitOfStubbedGlobal(). A name whose bit is not set is not stubbed.
+    uint64_t namesOfStubbedGlobals { 0 };
     // JSMaps from name to stub for what a preload stubbed. Reapplied when a test file ends, so the next one starts with them.
     JSC::WriteBarrier<JSC::Unknown> envsOfPreload;
     JSC::WriteBarrier<JSC::Unknown> globalsOfPreload;

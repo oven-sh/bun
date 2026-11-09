@@ -125,6 +125,7 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
 static void unstubAllGlobals(Zig::GlobalObject* globalObject)
 {
     auto& stubbedGlobals = globalObject->mockModule.stubbedGlobals;
+    globalObject->mockModule.namesOfStubbedGlobals = 0;
     if (stubbedGlobals)
         restoreOriginals(globalObject, stubbedGlobals, globalObject->mockModule.globalsOfPreload, globalObject->globalThis(), restoreGlobal);
 }
@@ -163,6 +164,7 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
         entry->putInternalField(vm, 1, value);
         JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(entry));
         RETURN_IF_EXCEPTION(scope, );
+        globalObject->mockModule.namesOfStubbedGlobals |= bitOfStubbedGlobal(name);
     }
 
     target->methodTable()->defineOwnProperty(target, globalObject, name, PropertyDescriptor(value, 0), true);

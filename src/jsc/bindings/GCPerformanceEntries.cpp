@@ -17,9 +17,27 @@ namespace Bun {
 
 using namespace JSC;
 
+// The clock of the records and the clock of performance.now() have one source on every target, so they differ by a constant. It is taken where two reads of the first were closest around a read of the second.
+static MonotonicTime readPerformanceOrigin(void* bunVM)
+{
+    MonotonicTime origin;
+    Seconds narrowest = Seconds::infinity();
+    for (unsigned attempt = 0; attempt < 32 && narrowest > Seconds::fromNanoseconds(200); ++attempt) {
+        auto before = MonotonicTime::now();
+        auto sinceOrigin = Seconds::fromNanoseconds(static_cast<double>(Bun__readOriginTimerWithoutFakeTimers(bunVM)));
+        auto between = MonotonicTime::now() - before;
+        if (between < narrowest) {
+            narrowest = between;
+            origin = before + between / 2 - sinceOrigin;
+        }
+    }
+    return origin;
+}
+
 GCPerformanceEntries::GCPerformanceEntries(VM& vm)
     : m_vm(vm)
     , m_bunVM(WebCore::clientData(vm)->bunVM)
+    , m_performanceOrigin(readPerformanceOrigin(m_bunVM))
 {
 }
 
@@ -39,9 +57,8 @@ void GCPerformanceEntries::didFinishCollection(JSContextGroupRef, void* self)
     auto start = heap.lastGCBoundaryTime() - cycle;
     if (start < entries.m_recordsSince)
         return;
-    // The program waits for all of a collection that it forced (JSC__VM__runGC). Any other stops it for a part of the cycle only. The first stop begins a moment before JSC starts to time the cycle, hence the bound.
-    bool forced = heap.lastCollectionWasForced();
-    entries.m_records.append({ start, forced ? cycle : std::min(cycle, heap.lastCollectionPause()), isFullCollection, forced });
+    // The pause is the time for which the collection kept the program from running: its stops, and all of it where the program waited for it. The first stop begins a moment before JSC starts to time the cycle, hence the bound.
+    entries.m_records.append({ start, std::min(cycle, heap.lastCollectionPause()), isFullCollection, heap.lastCollectionWasForced() });
     // No wake: the entry waits for the next turn that the loop makes.
     Bun__VM__setGCPerformanceEntriesWait(entries.m_bunVM, true);
 }
@@ -97,16 +114,13 @@ void GCPerformanceEntries::callListeners()
         setRecordsCollections(!m_listeners.isEmpty());
     }
 
-    // The clock of performance.now() (the real one, also under fake timers, as in Node) and the clock of the records, read together, put each start on the timeline of the first.
     auto* clientData = WebCore::clientData(m_vm);
-    double performanceNow = static_cast<double>(Bun__readOriginTimerWithoutFakeTimers(clientData->bunVM)) / 1000000.0;
-    auto now = MonotonicTime::now();
-
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
     for (unsigned i = 0; i < records.size(); ++i) {
         auto& record = records[i];
         MarkedArgumentBuffer arguments;
-        arguments.append(jsNumber(std::max(0.0, performanceNow - (now - record.start).milliseconds())));
+        // On the timeline of the real performance.now(), also under fake timers, as in Node.
+        arguments.append(jsNumber((record.start - m_performanceOrigin).milliseconds()));
         arguments.append(jsNumber(record.duration.milliseconds()));
         arguments.append(jsBoolean(record.isFullCollection));
         arguments.append(jsBoolean(record.forced));

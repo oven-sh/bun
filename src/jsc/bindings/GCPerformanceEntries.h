@@ -44,6 +44,8 @@ private:
 
     JSC::VM& m_vm;
     void* m_bunVM;
+    // When performance.now() of this VM was 0, on the clock of the records.
+    WTF::MonotonicTime m_performanceOrigin;
     WTF::Vector<JSC::Weak<JSC::JSObject>, 1> m_listeners;
     bool m_recordsCollections { false };
     // When the first listener came. As in Node, a collection that was under way then has no entry.

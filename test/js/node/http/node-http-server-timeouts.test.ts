@@ -1352,13 +1352,13 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
     }
   });
 
-  // What the kernel holds for a paused client, taken from its descriptor at once. Behind it the send buffer of the server has room again.
-  function takeFromKernel(client: net.Socket, into: Buffer) {
+  // What the kernel holds for a paused client, taken from its descriptor at once: all of it, or `limit` bytes. Behind it the send buffer of the server has room again.
+  function takeFromKernel(client: net.Socket, into: Buffer, limit = Infinity) {
     const fd: number = (client as any)._handle.fd;
     let taken = 0;
-    for (;;) {
+    while (taken < limit) {
       try {
-        const length = readSync(fd, into);
+        const length = readSync(fd, into, 0, Math.min(into.length, limit - taken), null);
         if (length === 0) return taken;
         taken += length;
       } catch (error: any) {
@@ -1366,6 +1366,7 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
         return taken;
       }
     }
+    return taken;
   }
 
   // Makes the server send what it holds of its writes from inside write() calls alone. The client is paused, this
@@ -1457,10 +1458,13 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
   });
 
   // Node records the size of the write queue at every expiry, so an expiry that finds progress also uses up the
-  // one that a pending write gets without progress. Here bytes leave until half a period behind the first
-  // expiry. Then the reader stops and the handler stops. The second expiry behind that is 'timeout', not the third.
+  // one that a pending write gets without progress. Here the client is paused, and the test takes 16 KB of its
+  // bytes from the kernel every 20 ms, so bytes leave the server at an even pace. One and a half periods behind
+  // the write the test stops, and the handler with it. The second expiry behind that is 'timeout', not the third.
   test.concurrent("a peer that stops reading is timed out at the second expiry behind its last byte", async () => {
-    let stop = () => {};
+    let client: net.Socket | undefined;
+    let pump: ReturnType<typeof setInterval> | undefined;
+    let stopping: ReturnType<typeof setTimeout> | undefined;
     let stoppedAt = 0;
     let expiriesBehindStop = 0;
     const { promise: timedOut, resolve: onTimedOut, reject: onFailed } = Promise.withResolvers<number>();
@@ -1472,18 +1476,23 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
       // Each call sends bytes of the body, which is pending.
       const interval = setInterval(() => res.write("data: ping\n\n"), 20);
       res.on("close", () => clearInterval(interval));
+      const step = Buffer.alloc(STEP);
+      pump = setInterval(() => {
+        try {
+          takeFromKernel(client!, step, STEP);
+        } catch (error) {
+          onFailed(error);
+        }
+      }, 20);
+      stopping = setTimeout(() => {
+        clearInterval(pump);
+        clearInterval(interval);
+        stoppedAt = performance.now();
+      }, TIMEOUT * 1.5);
       // Every expiry of the timer comes through here.
       const onTimeout = socket._onTimeout;
-      let expiries = 0;
       socket._onTimeout = function () {
         if (stoppedAt !== 0) expiriesBehindStop++;
-        else if (++expiries === 1) {
-          setTimeout(() => {
-            stop();
-            clearInterval(interval);
-            stoppedAt = performance.now();
-          }, TIMEOUT / 2);
-        }
         return onTimeout.call(this);
       };
     });
@@ -1493,34 +1502,22 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
       socket.destroy();
     });
     const port = await listen(server);
-    const client = net.connect(port, "127.0.0.1");
-    let pump: ReturnType<typeof setInterval> | undefined;
     try {
-      let budget = 0;
-      client.on("data", chunk => {
-        budget -= chunk.length;
-        if (budget <= 0) client.pause();
-      });
-      pump = setInterval(() => {
-        budget = Math.min(budget + STEP, STEP);
-        if (budget > 0) client.resume();
-      }, 20);
-      stop = () => {
-        clearInterval(pump);
-        client.pause();
-      };
+      client = net.connect(port, "127.0.0.1");
+      client.pause();
       client.on("error", onFailed);
       await once(client, "connect");
       setSocketOptions(client, 2, KERNEL_BUFFER);
       client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
       const timedOutAt = await timedOut;
-      // A server that does not see the bytes leave fires before the reader stops, or half a period behind that.
+      // A server that does not see the bytes leave fires before the test stops, or half a period behind that.
       expect(stoppedAt).not.toBe(0);
       expect(timedOutAt - stoppedAt).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
       expect(expiriesBehindStop).toBeLessThanOrEqual(2);
     } finally {
       clearInterval(pump);
-      client.destroy();
+      clearTimeout(stopping);
+      client?.destroy();
       await close(server);
     }
   });

@@ -363,6 +363,17 @@ declare module "node:fs" {
      */
     windowsHandle?: bigint | undefined;
   }
+
+  interface StatOptions {
+    /**
+     * Stops waiting for the result when the signal aborts. `fs.promises.stat()`,
+     * `fs.promises.lstat()` and `filehandle.stat()` reject with an `AbortError`.
+     * `fs.stat()`, `fs.lstat()` and `fs.fstat()` pass one to the callback.
+     *
+     * The synchronous functions do not read it.
+     */
+    signal?: AbortSignal | undefined;
+  }
 }
 
 declare module "node:tls" {

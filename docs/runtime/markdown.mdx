@@ -110,7 +110,7 @@ Bun.markdown.html("## Hello World", { headings: { autolink: true } });
 // '<h2>Hello World</h2>\n'
 ```
 
-Only `Bun.markdown.html()` writes the link. `Bun.markdown.render()` and `Bun.markdown.react()` ignore `autolink`. With `ids: true`, they pass the `id` to your `heading` callback or heading component, and you write the link there.
+Only `Bun.markdown.html()` writes the link. `Bun.markdown.render()` and `Bun.markdown.react()` ignore `autolink`. With `ids: true`, they pass the `id` to your `heading` callback or heading component. To link a heading to its own ID, write the link there.
 
 ---
 

@@ -1664,9 +1664,9 @@ declare module "bun" {
        *
        * `autolink` wraps the content of each heading in `<a href="#id">`, a link
        * to the ID of that heading, so it requires `ids: true` to have an effect.
-       * Only `Bun.markdown.html()` writes the link. `render()` and `react()`
-       * ignore `autolink`: with `ids: true`, they pass the `id` to your heading
-       * callback or component, and you write the link there.
+       * Only `html()` writes the link. `render()` and `react()` ignore
+       * `autolink`: with `ids: true`, they pass the `id` to your heading callback
+       * or component. To link a heading to its own ID, write the link there.
        *
        * @example
        * ```ts

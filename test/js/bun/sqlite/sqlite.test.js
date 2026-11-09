@@ -2947,7 +2947,11 @@ describe("Database#status", () => {
       } catch (error) {
         result = error;
       }
-      expect([shape, new RangeError("Unknown sqlite3_db_status op: 13")]).toContainEqual(result);
+      if (result instanceof Error) {
+        expect(result).toEqual(new RangeError("Unknown sqlite3_db_status op: 13"));
+      } else {
+        expect(result).toStrictEqual(shape);
+      }
     }
   });
 

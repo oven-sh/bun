@@ -2541,10 +2541,10 @@ describe.concurrent("a built-in module uses what a program stored on node:stream
     expect(exitCode).toBe(0);
   });
 
-  // A read of process.stdout loads the fs streams, but it is not a use of fs.ReadStream. As in Node, the first use of
-  // fs.ReadStream takes the Readable stored by then. A stub stored by then throws at that use, and the next use tries again.
+  // A read of process.stdout loads the fs streams. From then on fs.ReadStream stands below the library's own Readable,
+  // whatever a program stores under stream.Readable later, as when that read loaded all of node:stream.
   it.concurrent(
-    "fs.ReadStream stands below what stream.Readable holds at its first use, after a read of process.stdout",
+    "behind a read of process.stdout, fs.ReadStream does not take what stream.Readable holds at its first use",
     async () => {
       await using proc = Bun.spawn({
         cmd: [
@@ -2590,7 +2590,41 @@ describe.concurrent("a built-in module uses what a program stored on node:stream
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr }).toEqual({
-        stdout: JSON.stringify({ whileStubbed: "TypeError", used: true, above: true, later: true }) + "\n",
+        stdout: JSON.stringify({ whileStubbed: "a stream", used: false, above: false, later: false }) + "\n",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The first read of process.stdin is a first use of fs.ReadStream. A stub under stream.Readable then does not cost the program its stdin.
+  it.concurrent(
+    "behind a read of process.stdout, a stub under stream.Readable leaves process.stdin a stream",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{
+          void process.stdout;
+          const nodeStream = require("node:stream");
+          const Was = nodeStream.Readable;
+          nodeStream.Readable = {};
+          const whileStubbed = typeof process.stdin?.on;
+          nodeStream.Readable = Was;
+          console.log(
+            JSON.stringify({ whileStubbed, afterwards: typeof process.stdin?.on, readable: process.stdin instanceof Was }),
+          );
+        }`,
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({
+        stdout: JSON.stringify({ whileStubbed: "function", afterwards: "function", readable: true }) + "\n",
         stderr: "",
       });
       expect(exitCode).toBe(0);

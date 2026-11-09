@@ -49,7 +49,8 @@ struct Way<T: Text + ?Sized, A> {
     epoch: u32,
     /// Compared before the strings of `entry`: those are most likely not in the CPU cache.
     tag: u16,
-    kind: Kind,
+    /// The `Kind`, and `ANSWERED`.
+    kind: u8,
     /// Not about `entry`: the mark of a pair last resolved without one, here to share the cache line.
     missed: u8,
 }
@@ -63,6 +64,13 @@ const _: () = assert!(size_of::<Bucket<WTFStringImplStruct, WTFString>>() == 64)
 /// 64 KB of buckets.
 const BUCKET_BITS: u32 = 10;
 const FIRST_SIGHTS: usize = 64;
+
+/// In `Way::kind`, above the bits of a `Kind`: the entry answered since it was put.
+const ANSWERED: u8 = 1 << 7;
+/// An entry that has not answered yet is replaced at every one of this many tries, and kept at the others. A pair that
+/// comes back once is no better than one that was kept and not asked for since, and the strings of an entry are out of
+/// the CPU cache by the time it is replaced. So a program that resolves each pair twice replaces few entries.
+const TRIES_PER_UNANSWERED_ENTRY: u8 = 8;
 
 /// In a mark, beside 7 bits of the tag: the pair is never kept.
 const REFUSED: u8 = 1 << 7;
@@ -102,6 +110,8 @@ pub struct Memo<T: Text + ?Sized, A> {
     forgotten: u64,
     /// The high half of the epoch of every entry.
     epoch_high: u32,
+    /// How often `put` found an entry in its way that has not answered yet.
+    tries_at_unanswered_entries: u8,
     /// For `bun:internal-for-testing`.
     hits: u64,
 }
@@ -114,6 +124,7 @@ impl<T: Text + ?Sized, A> Default for Memo<T, A> {
             first_sight_count: 0,
             forgotten: 0,
             epoch_high: 0,
+            tries_at_unanswered_entries: 0,
             hits: 0,
         }
     }
@@ -156,8 +167,10 @@ impl<T: Text + ?Sized, A: Answer> Memo<T, A> {
             if way != 0 {
                 swap_entries(ways);
             }
-            return match &ways[0].entry {
-                Some(entry) if ways[0].epoch == epoch => {
+            let [way, _] = ways;
+            return match &way.entry {
+                Some(entry) if way.epoch == epoch => {
+                    way.kind |= ANSWERED;
                     self.hits += 1;
                     Lookup::Kept(entry.path.share())
                 }
@@ -202,13 +215,54 @@ impl<T: Text + ?Sized, A: Answer> Memo<T, A> {
             .collect();
     }
 
-    /// After `Lookup::Repeated` or `Lookup::New`: keeps the answer, over the less recently used entry.
+    /// After `Lookup::Repeated` or `Lookup::New`: keeps the answer, over the less recently used entry. Not at every
+    /// call if that entry has not answered yet: see `TRIES_PER_UNANSWERED_ENTRY`.
     pub fn put(&mut self, slot: Slot, specifier: &T, source: &T, kind: Kind, path: &A) {
+        self.put_entry(slot, specifier, source, kind, path, true);
+    }
+
+    /// `put` at every call, for a memo that is there to have the last answer of each pair.
+    pub fn put_over_any_entry(
+        &mut self,
+        slot: Slot,
+        specifier: &T,
+        source: &T,
+        kind: Kind,
+        path: &A,
+    ) {
+        self.put_entry(slot, specifier, source, kind, path, false);
+    }
+
+    #[inline]
+    fn put_entry(
+        &mut self,
+        slot: Slot,
+        specifier: &T,
+        source: &T,
+        kind: Kind,
+        path: &A,
+        spares_unanswered_entries: bool,
+    ) {
         if self.buckets.is_empty() {
             self.build();
         }
+        debug_assert!(kind.0 & ANSWERED == 0);
         let Bucket(ways) = &mut self.buckets[slot.bucket as usize];
-        swap_entries(ways);
+        if ways[0].entry.is_some() {
+            let oldest = &ways[1];
+            if spares_unanswered_entries
+                && oldest.entry.is_some()
+                && oldest.epoch == slot.epoch
+                && oldest.kind & ANSWERED == 0
+            {
+                self.tries_at_unanswered_entries = self.tries_at_unanswered_entries.wrapping_add(1);
+                let tries = self.tries_at_unanswered_entries;
+                if !tries.is_multiple_of(TRIES_PER_UNANSWERED_ENTRY) {
+                    return;
+                }
+            }
+            swap_entries(ways);
+        }
         ways[0].entry = Some(Entry {
             specifier: specifier.keep(),
             source: source.keep(),
@@ -216,7 +270,7 @@ impl<T: Text + ?Sized, A: Answer> Memo<T, A> {
         });
         ways[0].epoch = slot.epoch;
         ways[0].tag = slot.tag;
-        ways[0].kind = kind;
+        ways[0].kind = kind.0;
     }
 
     /// After `Lookup::Stale`: the entry answers again, with `path`. Most often that is the path it has, and then it
@@ -232,6 +286,8 @@ impl<T: Text + ?Sized, A: Answer> Memo<T, A> {
             entry.path = path.share();
         }
         way.epoch = slot.epoch;
+        // The pair came back for it.
+        way.kind |= ANSWERED;
     }
 
     /// After any `Lookup` with a slot: the pair is one that is never kept, so the next `get` says `Refused`.
@@ -263,14 +319,14 @@ impl<T: Text + ?Sized, A> Way<T, A> {
         entry: None,
         epoch: 0,
         tag: 0,
-        kind: Kind(0),
+        kind: 0,
         missed: 0,
     };
 
     #[inline]
     fn holds(&self, tag: u16, specifier: &T, source: &T, kind: Kind) -> bool {
         self.tag == tag
-            && self.kind == kind
+            && self.kind & !ANSWERED == kind.0
             && self
                 .entry
                 .as_ref()
@@ -656,7 +712,7 @@ mod tests {
         for last_used in [0, 1] {
             let mut memo = memo_with_table();
             for name in &names[..2] {
-                for _ in 0..2 {
+                for _ in 0..3 {
                     said(&mut memo, name, &source, &name.text);
                 }
             }
@@ -669,6 +725,108 @@ mod tests {
             assert_eq!(said(&mut memo, &names[last_used], &source, ""), "kept");
             assert_eq!(said(&mut memo, &names[2], &source, ""), "kept");
         }
+    }
+
+    #[test]
+    fn an_entry_that_has_not_answered_yet_is_replaced_at_one_try_of_eight() {
+        let mut memo = memo_with_table();
+        let source = source();
+        let names = specifiers_of_one_bucket(3);
+        // Two entries, and neither was asked for again.
+        for name in &names[..2] {
+            assert_eq!(said(&mut memo, name, &source, &name.text), "new");
+            assert_eq!(said(&mut memo, name, &source, &name.text), "repeated");
+        }
+        assert_eq!(said(&mut memo, &names[2], &source, "./third"), "new");
+        let tries = usize::from(TRIES_PER_UNANSWERED_ENTRY);
+        for attempt in 1..tries {
+            assert_eq!(said(&mut memo, &names[2], &source, "./third"), "repeated");
+            assert_eq!(Rc::strong_count(&names[2].text), 1, "at try {attempt}");
+            assert_eq!(Rc::strong_count(&names[0].text), 2, "at try {attempt}");
+        }
+        assert_eq!(said(&mut memo, &names[2], &source, "./third"), "repeated");
+        // The older of the two made way.
+        assert_eq!(Rc::strong_count(&names[0].text), 1);
+        assert_eq!(Rc::strong_count(&names[1].text), 2);
+        assert_eq!(said(&mut memo, &names[2], &source, ""), "kept");
+    }
+
+    #[test]
+    fn put_over_any_entry_replaces_an_entry_that_has_not_answered_yet() {
+        let mut memo = memo_with_table();
+        let source = source();
+        let names = specifiers_of_one_bucket(3);
+        for name in &names {
+            let Lookup::New(slot) = memo.get(name, &source, CJS, 0) else {
+                panic!("the first resolution of a pair")
+            };
+            memo.put_over_any_entry(slot, name, &source, CJS, &Rc::from(&*name.text));
+        }
+        let counts: Vec<_> = names.iter().map(|it| Rc::strong_count(&it.text)).collect();
+        assert_eq!(counts, [1, 2, 2]);
+    }
+
+    #[test]
+    fn an_entry_of_an_older_epoch_is_replaced_whether_it_answered_or_not() {
+        let mut memo = memo_with_table();
+        let source = source();
+        let names = specifiers_of_one_bucket(3);
+        for name in &names[..2] {
+            for _ in 0..2 {
+                resolve(&mut memo, name, &source, CJS, 5, &name.text);
+            }
+        }
+        for _ in 0..2 {
+            resolve(&mut memo, &names[2], &source, CJS, 6, "./third");
+        }
+        assert_eq!(Rc::strong_count(&names[0].text), 1);
+        let (step, _) = resolve(&mut memo, &names[2], &source, CJS, 6, "");
+        assert_eq!(step, "kept");
+    }
+
+    #[test]
+    fn a_pair_that_comes_back_for_its_stale_entry_counts_as_an_answer() {
+        let mut memo = memo_with_table();
+        let source = source();
+        let names = specifiers_of_one_bucket(3);
+        for name in &names[..2] {
+            for _ in 0..2 {
+                resolve(&mut memo, name, &source, CJS, 5, &name.text);
+            }
+        }
+        // Both come back after the epoch moved, the first one last.
+        for name in names[..2].iter().rev() {
+            let (step, _) = resolve(&mut memo, name, &source, CJS, 6, &name.text);
+            assert_eq!(step, "stale");
+        }
+        for _ in 0..2 {
+            resolve(&mut memo, &names[2], &source, CJS, 6, "./third");
+        }
+        assert_eq!(Rc::strong_count(&names[1].text), 1);
+        assert_eq!(Rc::strong_count(&names[0].text), 2);
+    }
+
+    #[test]
+    fn a_way_that_a_refusal_emptied_is_filled_before_an_entry_is_replaced() {
+        let mut memo = memo_with_table();
+        let source = source();
+        let names = specifiers_of_one_bucket(3);
+        for name in &names[..2] {
+            for _ in 0..3 {
+                said(&mut memo, name, &source, &name.text);
+            }
+        }
+        // The second is in front. It turns out to be a pair that is never kept.
+        let Lookup::Stale(slot) = memo.get(&names[1], &source, CJS, 1) else {
+            panic!("an entry of the epoch before")
+        };
+        memo.refuse(slot);
+        assert_eq!(Rc::strong_count(&names[1].text), 1);
+        for _ in 0..2 {
+            resolve(&mut memo, &names[2], &source, CJS, 1, "./third");
+        }
+        assert_eq!(Rc::strong_count(&names[0].text), 2);
+        assert_eq!(Rc::strong_count(&names[2].text), 2);
     }
 
     #[test]

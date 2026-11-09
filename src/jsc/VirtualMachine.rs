@@ -6346,7 +6346,7 @@ impl VirtualMachine {
             }
             Lookup::Stale(slot) => last_answers.refresh(slot, &answer),
             Lookup::Repeated(slot) | Lookup::New(slot) => {
-                last_answers.put(slot, specifier_impl, source_impl, kind, &answer);
+                last_answers.put_over_any_entry(slot, specifier_impl, source_impl, kind, &answer);
             }
             Lookup::Refused => {}
         }

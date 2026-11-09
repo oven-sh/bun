@@ -76,8 +76,10 @@ function gitGrep(args: string[]): string[] {
     stdout: "pipe",
     stderr: "pipe",
   });
-  // Exit code 1 is "no match", anything above is a real failure.
-  if (r.exitCode > 1) throw new Error(`git grep failed (${r.exitCode}): ${r.stderr.toString()}`);
+  // Exit code 1 is "no match". Any other code but 0 is a real failure, and so is a signal (`null`).
+  if (r.exitCode !== 0 && r.exitCode !== 1) {
+    throw new Error(`git grep failed (${r.exitCode ?? r.signalCode}): ${r.stderr.toString()}`);
+  }
   return r.stdout.toString().split("\n").filter(Boolean);
 }
 

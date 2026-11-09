@@ -265,12 +265,17 @@ declare module "bun" {
     /**
      * The IP address of the client.
      *
+     * `undefined` for a connection without an IP address, such as one to
+     * `Bun.serve({ unix })`. Also `undefined` when the connection has closed,
+     * which is the case in the `close` handler, unless the value was read while
+     * the connection was open.
+     *
      * @example
      * ```ts
      * console.log(socket.remoteAddress); // "127.0.0.1"
      * ```
      */
-    readonly remoteAddress: string;
+    readonly remoteAddress: string | undefined;
 
     /**
      * The ready state of the client.

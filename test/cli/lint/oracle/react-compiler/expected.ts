@@ -133,7 +133,7 @@ function inDirectory<T>(files: Files, then: (stdout: string, exit: number, direc
       writeFileSync(join(directory, name), text);
     }
     const result = spawn(["-f", "json"], directory);
-    const found = then(result.stdout.toString(), result.exitCode, directory);
+    const found = then(result.stdout.toString(), result.exitCode ?? -1, directory);
     if (found === null)
       throw new Error(`No report (exit ${result.exitCode}): ${result.stderr.toString().slice(0, 1000)}`);
     return found;

@@ -468,6 +468,76 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "virtual_machine_exports.bind.ts": null,
 };
 
+/**
+ * What the published types call an instance of each class of the schemas that has no constructor.
+ * A program gets one from a call (`Bun.connect()`) or as an argument of a handler, so no export of
+ * `PUBLISHED_AS` leads to it.
+ * `null`: not compared, since JavaScript wraps it, it is not for users, or nothing holds its
+ * published type to the schema yet.
+ */
+const INSTANCES_PUBLISHED_AS: Record<string, string | null> = {
+  ActiveFixture: null,
+  AroundHook: null,
+  AttributeIterator: null,
+  BlobInternalReadableStreamSource: null,
+  BuildArtifact: null,
+  BytesInternalReadableStreamSource: null,
+  Comment: null,
+  CronJob: null,
+  DNSResolver: null,
+  DebugHTTPSServer: null,
+  DebugHTTPServer: null,
+  DocEnd: null,
+  DocType: null,
+  DoneCallback: null,
+  Element: null,
+  EndTag: null,
+  ExpectAny: null,
+  ExpectAnything: null,
+  ExpectArrayContaining: null,
+  ExpectCloseTo: null,
+  ExpectCustomAsymmetricMatcher: null,
+  ExpectDeferred: null,
+  ExpectMatcherContext: null,
+  ExpectMatcherUtils: null,
+  ExpectObjectContaining: null,
+  ExpectStatic: null,
+  ExpectStringContaining: null,
+  ExpectStringMatching: null,
+  FFI: null,
+  FSWatcher: null,
+  FileInternalReadableStreamSource: null,
+  HTMLBundle: null,
+  HTMLRewriterTransform: null,
+  HTTPSServer: null,
+  HTTPServer: null,
+  Listener: null,
+  MatchedRoute: null,
+  MySQLConnection: null,
+  MySQLQuery: null,
+  NodeHTTPResponse: null,
+  NodeJSFS: null,
+  ParsedShellScript: null,
+  PostgresSQLConnection: null,
+  PostgresSQLQuery: null,
+  QuicSession: null,
+  QuicStream: null,
+  ReadableSinkController: null,
+  ResourceUsage: null,
+  ScopeFunctions: null,
+  ShellInterpreter: null,
+  StatWatcher: null,
+  Subprocess: null,
+  TCPSocket: "Bun.TCPSocket",
+  TLSSocket: "Bun.TLSSocket",
+  TestContext: null,
+  TestFixtures: null,
+  TestToken: null,
+  TextChunk: null,
+  UDPSocket: null,
+  ViWait: null,
+};
+
 /** `jest` and `vi` each have their own function for these: `jestUseFakeTimers` and `viUseFakeTimers`. */
 const FAKE_TIMERS_TYPES = `
 type Jest = typeof import("bun:test").jest;
@@ -482,7 +552,7 @@ type OfFlavor<Prefix extends string, T extends Record<Flavored, unknown>> = { [K
  * that the schema's does not. They may be narrower than it, which says "a buffer" of a `Uint8Array`,
  * but not by leaving out `null` or `undefined`.
  */
-function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, schema: ts.Type) {
+function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, schema: ts.Type, root = "") {
   const broken: string[] = [];
   const compared = new Map<ts.Type, Set<ts.Type>>();
   const show = (type: ts.Type) => checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);
@@ -540,14 +610,18 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   }
 
   function compare(path: string, published: ts.Type, schema: ts.Type) {
-    if (compared.get(published)?.has(schema)) return;
-    compared.set(published, (compared.get(published) ?? new Set()).add(schema));
+    const calls = schema.getCallSignatures();
+    const constructs = schema.getConstructSignatures();
+    const isLeaf = calls.length === 0 && constructs.length === 0 && !isGenerated(schema);
+    // A pair of types that can hold itself is compared once. A leaf cannot, and each member that has it is a promise.
+    if (!isLeaf) {
+      if (compared.get(published)?.has(schema)) return;
+      compared.set(published, (compared.get(published) ?? new Set()).add(schema));
+    }
     // The exports of a file are a few of the members of `typeof Bun`.
     const never = path ? membersTheSchemaLacks(published, schema) : [];
     if (never.length > 0) broken.push(`${path} has no ${never.join(", ")}`);
-    const calls = schema.getCallSignatures();
-    const constructs = schema.getConstructSignatures();
-    if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
+    if (isLeaf) {
       const promisesNothing = published.flags & ts.TypeFlags.Void;
       const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
       if (
@@ -569,7 +643,7 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     }
   }
 
-  compare("", published, schema);
+  compare(root, published, schema);
   return broken;
 }
 
@@ -613,14 +687,17 @@ describe("@types/bun integration test", () => {
     await $`${bunExe()} src/codegen/bindgen.ts --sources=${schemas.map(file => `bun=${file}`).join(",")} --codegen-path=${dir} --types-path=${dir}`
       .env(bunEnv)
       .quiet();
+    const instances = Object.entries(INSTANCES_PUBLISHED_AS).filter((row): row is [string, string] => row[1] !== null);
     const pairs = join(dir, "published.ts");
     await Bun.write(
       pairs,
       `export type Published = {\n${Object.entries(PUBLISHED_AS)
         .map(([file, type]) => `  ${JSON.stringify(file)}: ${type};\n`)
-        .join(
-          "",
-        )}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n${FAKE_TIMERS_TYPES}`,
+        .join("")}};\nexport type Schemas = $Bindgen.Exports;\nexport type PublishedInstances = {\n${instances
+        .map(([name, type]) => `  ${name}: ${type};\n`)
+        .join("")}};\nexport type SchemaInstances = {\n${instances
+        .map(([name]) => `  ${name}: $Bindgen.${name};\n`)
+        .join("")}};\ntype Class<T> = { new (): T; prototype: T };\n${FAKE_TIMERS_TYPES}`,
     );
     const program = ts.createProgram({
       rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],
@@ -633,10 +710,22 @@ describe("@types/bun integration test", () => {
     }
 
     const checker = program.getTypeChecker();
-    const [published, generated] = source.statements.map(statement => checker.getTypeAtLocation(statement));
+    const [published, generated, publishedInstances, generatedInstances] = source.statements.map(statement =>
+      checker.getTypeAtLocation(statement),
+    );
     expect(schemas.map(file => basename(file)).sort()).toEqual(Object.keys(PUBLISHED_AS).sort());
+    // A class with a constructor is an export of its file. Every other class has a row in INSTANCES_PUBLISHED_AS.
+    const classes = readFileSync(join(dir, "GeneratedBindings+Classes.h"), "utf8").matchAll(
+      /^void setup(\w+)ClassStructure\(/gm,
+    );
+    const declared = program.getSourceFile(join(dir, "Bindgen.d.ts"))!.text;
     expect(
-      Object.keys(PUBLISHED_AS)
+      Array.from(classes, ([, name]) => name)
+        .filter(name => !declared.includes(`\n  interface ${name}Constructor {\n`))
+        .sort(),
+    ).toEqual(Object.keys(INSTANCES_PUBLISHED_AS).sort());
+    expect([
+      ...Object.keys(PUBLISHED_AS)
         .filter(file => PUBLISHED_AS[file])
         .flatMap(file =>
           promisesTheSchemaBreaks(
@@ -645,7 +734,15 @@ describe("@types/bun integration test", () => {
             checker.getTypeOfSymbol(generated.getProperty(file)!),
           ).map(promise => `${file}: ${promise}`),
         ),
-    ).toEqual([
+      ...instances.flatMap(([name]) =>
+        promisesTheSchemaBreaks(
+          checker,
+          checker.getTypeOfSymbol(publishedInstances.getProperty(name)!),
+          checker.getTypeOfSymbol(generatedInstances.getProperty(name)!),
+          `${name}.prototype`,
+        ),
+      ),
+    ]).toEqual([
       // `undefined` for a Blob without a store or with bytes. What is published is a BunFile.
       "Blob.bind.ts: file().stat() is Promise<unknown> | undefined, not Promise<Stats>",
       // An S3File is a Blob with more members, which C++ adds and no schema describes.
@@ -691,13 +788,52 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
       // As for `match` of FileSystemRouter.
       "response.bind.ts: new Request().clone() has no keepalive, duplex",
-      // `undefined` once the socket is closed.
-      "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
       "valkey.bind.ts: new RedisClient().psubscribe is not published",
       "valkey.bind.ts: new RedisClient().pubsub is not published",
       "valkey.bind.ts: new RedisClient().punsubscribe is not published",
       "valkey.bind.ts: new RedisClient().select is not published",
+      // Only a socket with TLS has these. `Bun.Socket` is what both classes are published as.
+      "TCPSocket.prototype has no getX509Certificate, getPeerX509Certificate",
+      // `null` or `undefined` without TLS and once the socket has closed, and where a socket with TLS has
+      // nothing to answer with: no certificate, no server name.
+      "TCPSocket.prototype.exportKeyingMaterial() is Buffer<ArrayBufferLike> | undefined, not Buffer<ArrayBufferLike>",
+      "TCPSocket.prototype.getCertificate() is object | undefined, not object | PeerCertificate | null",
+      "TCPSocket.prototype.getCipher() is object | undefined, not CipherNameAndProtocol",
+      "TCPSocket.prototype.getPeerCertificate() is object | null | undefined, not PeerCertificate",
+      "TCPSocket.prototype.getServername() is string | undefined, not string",
+      "TCPSocket.prototype.getSharedSigalgs() is unknown[] | null | undefined, not string[]",
+      "TCPSocket.prototype.getTLSVersion() is string | null, not string",
+      // bun.d.ts does not declare these.
+      "TCPSocket.prototype.getTypeOfService is not published",
+      "TCPSocket.prototype.resumeSNI is not published",
+      "TCPSocket.prototype.setKeyCert is not published",
+      "TCPSocket.prototype.setTypeOfService is not published",
+      // `undefined` for a socket that has TLS already. The two classes have one schema.
+      "TCPSocket.prototype.upgradeTLS() is unknown[] | undefined, not [raw: Socket<Data>, tls: Socket<Data>]",
+      // Never `null`: `false` where no protocol was selected.
+      "TCPSocket.prototype.alpnProtocol is string | boolean, not string | false | null",
+      // bun.d.ts does not declare it.
+      "TCPSocket.prototype.fd is not published",
+      // A `Listener` is not compared with `Bun.SocketListener`: its row of `INSTANCES_PUBLISHED_AS` is `null`.
+      "TCPSocket.prototype.listener is Listener | undefined, not SocketListener<undefined> | undefined",
+      // As for a TCPSocket.
+      "TLSSocket.prototype.exportKeyingMaterial() is Buffer<ArrayBufferLike> | undefined, not Buffer<ArrayBufferLike>",
+      "TLSSocket.prototype.getCertificate() is object | undefined, not object | PeerCertificate | null",
+      "TLSSocket.prototype.getCipher() is object | undefined, not CipherNameAndProtocol",
+      "TLSSocket.prototype.getPeerCertificate() is object | null | undefined, not PeerCertificate",
+      "TLSSocket.prototype.getPeerX509Certificate() is object | undefined, not X509Certificate",
+      "TLSSocket.prototype.getServername() is string | undefined, not string",
+      "TLSSocket.prototype.getSharedSigalgs() is unknown[] | null | undefined, not string[]",
+      "TLSSocket.prototype.getTLSVersion() is string | null, not string",
+      "TLSSocket.prototype.getTypeOfService is not published",
+      "TLSSocket.prototype.resumeSNI is not published",
+      "TLSSocket.prototype.setKeyCert is not published",
+      "TLSSocket.prototype.setTypeOfService is not published",
+      "TLSSocket.prototype.upgradeTLS() is unknown[] | undefined, not [raw: Socket<Data>, tls: Socket<Data>]",
+      "TLSSocket.prototype.alpnProtocol is string | boolean, not string | false | null",
+      "TLSSocket.prototype.fd is not published",
+      "TLSSocket.prototype.listener is Listener | undefined, not SocketListener<undefined> | undefined",
     ]);
   });
 

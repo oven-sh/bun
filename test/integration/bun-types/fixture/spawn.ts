@@ -188,6 +188,10 @@ tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }
 
 tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));
 
+// `null` when a signal ended the process, which is how `timeout` ends it.
+tsd.expectType(Bun.spawnSync(["sleep", "10"], { timeout: 1 }).exitCode).is<number | null>();
+tsd.expectType(Bun.spawnSync({ cmd: ["sleep", "10"], timeout: 1 }).exitCode).is<number | null>();
+
 // Lazy option types (async only)
 {
   // valid: lazy usable with async spawn

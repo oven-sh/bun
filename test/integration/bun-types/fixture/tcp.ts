@@ -1,4 +1,5 @@
 import * as Bun from "bun";
+import { expectType } from "./utilities";
 
 await Bun.connect({
   data: { arg: "asdf" },
@@ -165,4 +166,20 @@ await Bun.connect({
   },
   hostname: "localhost",
   port: 1,
+});
+
+// A Unix domain socket has no IP address, and a socket that is not connected has none to read.
+Bun.listen({
+  socket: {
+    open(socket) {
+      expectType(socket.remoteFamily).is<"IPv4" | "IPv6" | undefined>();
+      expectType(socket.remoteAddress).is<string | undefined>();
+      expectType(socket.remotePort).is<number | undefined>();
+      expectType(socket.localFamily).is<"IPv4" | "IPv6" | undefined>();
+      expectType(socket.localAddress).is<string | undefined>();
+      expectType(socket.localPort).is<number | undefined>();
+    },
+    data() {},
+  },
+  unix: "asdf",
 });

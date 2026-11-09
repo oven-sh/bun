@@ -7259,39 +7259,68 @@ declare module "bun" {
 
     /**
      * IP protocol family used for the remote endpoint of the socket
+     *
+     * `undefined` for a socket without an IP address: a Unix domain socket or a
+     * Windows named pipe. Also `undefined` when the socket is not connected, which
+     * is the case in the `connectError` and `close` handlers, unless the value was
+     * read while the socket was connected.
      * @example "IPv4" | "IPv6"
      */
-    readonly remoteFamily: "IPv4" | "IPv6";
+    readonly remoteFamily: "IPv4" | "IPv6" | undefined;
 
     /**
      * Remote IP address connected to the socket
+     *
+     * `undefined` for a socket without an IP address: a Unix domain socket or a
+     * Windows named pipe. Also `undefined` when the socket is not connected, which
+     * is the case in the `connectError` and `close` handlers, unless the value was
+     * read while the socket was connected.
      * @example "192.168.1.100" | "2001:db8::1"
      */
-    readonly remoteAddress: string;
+    readonly remoteAddress: string | undefined;
 
     /**
      * Remote port connected to the socket
+     *
+     * `undefined` for a socket without an IP address: a Unix domain socket or a
+     * Windows named pipe. Also `undefined` when the socket is not connected, which
+     * is the case in the `connectError` and `close` handlers.
      * @example 8080
      */
-    readonly remotePort: number;
+    readonly remotePort: number | undefined;
 
     /**
      * IP protocol family used for the local endpoint of the socket
+     *
+     * `undefined` for a socket without an IP address: a Unix domain socket or a
+     * Windows named pipe. Also `undefined` when the socket is not connected, which
+     * is the case in the `connectError` and `close` handlers, unless the value was
+     * read while the socket was connected.
      * @example "IPv4" | "IPv6"
      */
-    readonly localFamily: "IPv4" | "IPv6";
+    readonly localFamily: "IPv4" | "IPv6" | undefined;
 
     /**
      * Local IP address connected to the socket
+     *
+     * `undefined` for a socket without an IP address: a Unix domain socket or a
+     * Windows named pipe. Also `undefined` when the socket is not connected, which
+     * is the case in the `connectError` and `close` handlers, unless the value was
+     * read while the socket was connected.
      * @example "192.168.1.100" | "2001:db8::1"
      */
-    readonly localAddress: string;
+    readonly localAddress: string | undefined;
 
     /**
      * Local port connected to the socket
+     *
+     * `undefined` for a socket without an IP address: a Unix domain socket or a
+     * Windows named pipe. Also `undefined` when the socket is not connected, which
+     * is the case in the `connectError` and `close` handlers, unless the value was
+     * read while the socket was connected.
      * @example 8080
      */
-    readonly localPort: number;
+    readonly localPort: number | undefined;
 
     /**
      * `true` if the peer certificate was signed by one of the CAs
@@ -8620,7 +8649,7 @@ declare module "bun" {
     /**
      * Synchronously get the exit code of the process
      *
-     * `null` if the process hasn't exited yet
+     * `null` if the process hasn't exited yet, or if a signal ended it
      */
     readonly exitCode: number | null;
 
@@ -8697,7 +8726,13 @@ declare module "bun" {
   > {
     stdout: SpawnOptions.ReadableToSyncIO<Out>;
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
-    exitCode: number;
+    /**
+     * The exit code of the process
+     *
+     * `null` if a signal ended the process. The `timeout` and `maxBuffer`
+     * options end it that way. {@link SyncSubprocess.signalCode} is then the signal.
+     */
+    exitCode: number | null;
     success: boolean;
     /**
      * Resource usage of the process, such as max RSS and CPU time

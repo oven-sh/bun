@@ -4598,6 +4598,119 @@ describe("bundler", () => {
     },
   });
 
+  // Member calls that still read the method, or an argument, behind a statement. Each line says what the function
+  // prints today in place of what the plain build prints.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`react-compiler/MethodIsStillReadBehindAStatement-${target}`, {
+      todo: true,
+      files: {
+        "/entry.jsx": /* jsx */ `
+          function who(...suffix) {
+            return (this === undefined ? "no this" : this.name) + ":old" + suffix.filter(s => typeof s === "string").join("");
+          }
+          function other() {
+            return (this === undefined ? "no this" : this.name) + ":new";
+          }
+          const table = { name: "table", who };
+          const replace = o => {
+            o.who = other;
+            return "";
+          };
+          const restore = o => {
+            o.who = who;
+            return "";
+          };
+          const newJoin = function () {
+            return this[0] + ":new";
+          };
+          let version = 0;
+          const bump = () => {
+            version++;
+            return "";
+          };
+          const versioned = name =>
+            Object.defineProperty({ name }, "who", {
+              get() {
+                const v = version % 2;
+                return () => name + ":" + v;
+              },
+            });
+
+          // The pass does not run in a function inside the component: "A:second".
+          function CallInACallback(p) {
+            const fns = [() => p.name + ":first", () => p.name + ":second"];
+            const state = { i: 0 };
+            const run = () => fns[state.i](state.i++);
+            return <div>{run()}</div>;
+          }
+          // A method of the props object is called as a function of its own: "no this:old".
+          function MethodOfTheProps(p) {
+            const local = { n: 0 };
+            return <div>{p.who((() => { local.n = 1; return ""; })())}</div>;
+          }
+          // A load from a module-level object counts as a constant: "table:newA".
+          function MethodOfAModuleLevelObject(p) {
+            const local = { n: 0 };
+            const result = table.who(replace(table), (() => { local.n = 1; return ""; })());
+            return <div>{result + restore(table) + p.name}</div>;
+          }
+          // The inference takes \`join\` of an array for the method of arrays. Without memo blocks: "A:new".
+          function MethodOfAnArrayIsReplaced(p) {
+            const items = [p.name, "x"];
+            return <div>{items.join((() => { items.join = newJoin; return "-"; })())}</div>;
+          }
+          // The getter reads what no value of the function holds. With memo blocks: "A:1".
+          function GetterReadsModuleState(p) {
+            const o = versioned(p.name);
+            const local = { n: 0 };
+            const result = o.who(bump(), (() => { local.n = 1; return ""; })());
+            bump();
+            return <div>{result}</div>;
+          }
+          // A spread argument is iterated at the call: "A:oldxy".
+          function SpreadIsIteratedBehindAStatement(p) {
+            const o = { name: p.name, who };
+            const list = ["x"];
+            return <div>{o.who(...list, (() => { list.push("y"); return ""; })())}</div>;
+          }
+          for (const Form of [
+            CallInACallback,
+            MethodOfTheProps,
+            MethodOfAModuleLevelObject,
+            MethodOfAnArrayIsReplaced,
+            GetterReadsModuleState,
+            SpreadIsIteratedBehindAStatement,
+          ]) {
+            console.log(Form.name + "=" + Form({ name: "A", who }).props.children);
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          CallInACallback=A:first
+          MethodOfTheProps=A:old
+          MethodOfAModuleLevelObject=table:oldA
+          MethodOfAnArrayIsReplaced=A-x
+          GetterReadsModuleState=A:0
+          SpreadIsIteratedBehindAStatement=A:oldx
+        `,
+      },
+    });
+  }
+
   itBundled("react-compiler/SourceMapOfCatch", {
     files: {
       "/entry.jsx": /* jsx */ `

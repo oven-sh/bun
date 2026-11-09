@@ -41,7 +41,7 @@ async () => {
   // Additional operations with instance, memory, and table can be performed here
 };
 
-(error: unknown) => {
+(error: unknown, module: WebAssembly.Module) => {
   const tagType: WebAssembly.TagType = { parameters: ["i32", "f64"] };
   const tag: WebAssembly.Tag = new WebAssembly.Tag(tagType);
   const options: WebAssembly.ExceptionOptions = { traceStack: true };
@@ -52,13 +52,22 @@ async () => {
   WebAssembly.JSTag satisfies WebAssembly.Tag;
   tag satisfies Bun.WebAssembly.Tag;
   exception satisfies Bun.WebAssembly.Exception;
+  // @ts-expect-error - a number is not a tag
+  exception.is(42);
+  // @ts-expect-error - an object is not a tag
+  new WebAssembly.Exception({}, []);
 
   if (error instanceof WebAssembly.Exception && error.is(WebAssembly.JSTag)) {
     error.getArg(WebAssembly.JSTag, 0);
   }
 
+  // A module imports a tag as it imports a function or a memory.
+  WebAssembly.instantiate(module, { env: { thrown: tag, thrownByJavaScript: WebAssembly.JSTag } });
+  // @ts-expect-error - a string is not a value that a module imports
+  WebAssembly.instantiate(module, { env: { thrown: "tag" } });
+
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
-  memory.toResizableBuffer() satisfies ArrayBuffer;
-  memory.toFixedLengthBuffer() satisfies ArrayBuffer;
+  memory.toResizableBuffer() satisfies ArrayBuffer | SharedArrayBuffer;
+  new Uint8Array(memory.toFixedLengthBuffer());
   new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true }).toResizableBuffer();
 };

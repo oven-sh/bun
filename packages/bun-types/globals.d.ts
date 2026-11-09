@@ -152,18 +152,19 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-    // An `extends` clause reads only the signatures that take its number of type arguments, and they
-    // must all return the same type. The two type parameters keep this signature out of
-    // `extends ReadableStream` and `extends ReadableStream<T>`. In a checked JavaScript file that
-    // holds from TypeScript 7 only. A call with an explicit `<R>` resolves to the signature below it.
-    new <A extends never, B extends never>(
-      underlyingSource: import("node:stream/web").UnderlyingByteSource,
-      strategy?: { highWaterMark?: number },
-    ): ReadableStream<Uint8Array<ArrayBuffer> | A | B>;
-    new <R = any>(
-      underlyingSource: import("node:stream/web").UnderlyingByteSource,
+    // The two signatures for a byte source. An `extends` clause reads only the signatures that take its
+    // number of type arguments, and they must all return the same type. So the signature for an explicit
+    // `<R>` has no constraint, and its parameter refuses an `R` that is not a `Uint8Array`. The signature
+    // that infers `R` takes three type parameters, which keeps it out of `extends ReadableStream` and
+    // `extends ReadableStream<T>`. In a checked JavaScript file that holds from TypeScript 7 only.
+    new <R>(
+      underlyingSource: R extends Uint8Array ? import("node:stream/web").UnderlyingByteSource : never,
       strategy?: { highWaterMark?: number },
     ): ReadableStream<R>;
+    new <A extends never, B extends never, R extends Uint8Array = Uint8Array<ArrayBuffer>>(
+      underlyingSource: import("node:stream/web").UnderlyingByteSource,
+      strategy?: { highWaterMark?: number },
+    ): ReadableStream<R | A | B>;
   }
 >;
 

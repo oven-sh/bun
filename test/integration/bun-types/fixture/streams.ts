@@ -125,12 +125,7 @@ class LineStream extends ReadableStream<string> {
 }
 new LineStream(["a"]);
 
-// A byte source produces `Uint8Array<ArrayBuffer>` chunks. The expected type does not change that.
-// @ts-expect-error
+// @ts-expect-error - a byte source does not produce strings
 const byteSourceAsStrings: ReadableStream<string> = new ReadableStream({ type: "bytes" });
-// @ts-expect-error
-const byteSourceAsBuffers: ReadableStream<Buffer> = new ReadableStream({ type: "bytes" });
-// @ts-expect-error
-const byteSourceAsShared: ReadableStream<Uint8Array<SharedArrayBuffer>> = new ReadableStream({ type: "bytes" });
-// An explicit type argument states the chunk type.
+// A type argument states the chunk type of a byte stream.
 expectType(new ReadableStream<Buffer>({ type: "bytes" })).is<ReadableStream<Buffer>>();

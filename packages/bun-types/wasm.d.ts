@@ -2,7 +2,7 @@ declare module "bun" {
   namespace WebAssembly {
     type ImportExportKind = "function" | "global" | "memory" | "table" | "tag";
     type TableKind = "anyfunc" | "externref";
-    type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table;
+    type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table | Tag;
     type Exports = Record<string, ExportValue>;
     type ImportValue = ExportValue | number;
     type Imports = Record<string, ModuleImports>;
@@ -55,10 +55,10 @@ declare module "bun" {
        * Returns the memory as a fixed-length buffer, which becomes
        * {@link buffer}. A resizable buffer of the memory is detached.
        *
-       * For a shared memory the result is a `SharedArrayBuffer`, as `buffer`
-       * is, and no buffer is detached.
+       * For a shared memory the result is a `SharedArrayBuffer`, and no buffer
+       * is detached.
        */
-      toFixedLengthBuffer(): ArrayBuffer;
+      toFixedLengthBuffer(): ArrayBuffer | SharedArrayBuffer;
       /**
        * Returns the memory as a resizable buffer, which becomes {@link buffer}.
        * The fixed-length buffer of the memory is detached. The resizable buffer
@@ -68,7 +68,7 @@ declare module "bun" {
        * For a shared memory the result is a growable `SharedArrayBuffer`, and
        * no buffer is detached.
        */
-      toResizableBuffer(): ArrayBuffer;
+      toResizableBuffer(): ArrayBuffer | SharedArrayBuffer;
     }
 
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module) */
@@ -130,7 +130,9 @@ declare module "bun" {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Tag)
      */
-    interface Tag {}
+    interface Tag {
+      readonly [Symbol.toStringTag]: "WebAssembly.Tag";
+    }
 
     /**
      * An exception that WebAssembly code throws to JavaScript, or that

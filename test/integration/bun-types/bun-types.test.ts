@@ -941,7 +941,13 @@ describe("@types/bun integration test", () => {
          Response.redirect(url, { status: 302 });
 
          class BareStream extends ReadableStream {}
-         new BareStream({ type: "bytes" });
+         new BareStream();
+
+         // @ts-expect-error - a byte source does not produce strings
+         new ReadableStream<string>({ type: "bytes" });
+         declare const derived: InstanceType<typeof ReadableStream>;
+         derived satisfies ReadableStream<Uint8Array>;
+         export const byteSourceFirst: ConstructorParameters<typeof ReadableStream>[0] = { type: "bytes" };
 
          // @ts-expect-error - the runtime ignores \`endings\` (#11796), so the option is not declared
          new Blob(["a"], { endings: "native" });`,

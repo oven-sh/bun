@@ -1854,7 +1854,7 @@ describe("b.callable", () => {
     expect(bindgen.callOr(null, 2)).toBe(2);
   });
 
-  it.each([0, "", "text", {}, [[]], Symbol.iterator, 1n, new Proxy({}, {})])("refuses %p", value => {
+  it.each([0, "", "text", {}, [], Symbol.iterator, 1n, new Proxy({}, {})])("refuses %p", value => {
     expect(() => bindgen.callOr(value, 2)).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining("callback") }),
     );

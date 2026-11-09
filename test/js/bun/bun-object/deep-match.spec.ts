@@ -21,7 +21,7 @@ describe("Bun.deepMatch", () => {
     // force line break
     {},
     { a: 1 },
-    [[1, 2, 3]],
+    [1, 2, 3],
   ] as TestCase[])("returns `true` for referentially equal objects (%p)", obj => {
     expect(Bun.deepMatch(obj, obj)).toBe(true);
     // expect(Bun.deepMatch(obj, obj)).toBe(true);

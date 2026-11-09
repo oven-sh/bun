@@ -16,6 +16,7 @@ use crate::test_runner::test_context;
 use crate::test_runner::test_context_fixtures::TestFixtures;
 use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter, TEXT_LEFT_OUT};
 use crate::test_runner::jest;
+use crate::test_runner::pretty_format;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
 // so call sites read `let _g = group_log::begin();` and drop calls `end()`. The underlying
@@ -320,6 +321,14 @@ fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSV
     table_rows(global, &headings, values).map(Some)
 }
 
+/// `Array.isArray(row)`, which jest-each and Vitest test a row with. Only a Proxy needs the call.
+fn is_array_row(global: &JSGlobalObject, row: JSValue) -> JsResult<bool> {
+    if row.js_type() == bun_jsc::JSType::ProxyObject {
+        return pretty_format::is_array(global, row);
+    }
+    Ok(row.is_array())
+}
+
 #[optimize(size)]
 pub(crate) fn call_as_function<'a>(
     cx: &mut JsScope<'a>,
@@ -381,12 +390,15 @@ pub(crate) fn call_as_function<'a>(
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
-        // Vitest only spreads the rows if every row is an array.
+        // jest-each and Vitest spread the rows only if every row is an array.
         let mut spread_rows = this.rows == Rows::Each;
-        if spread_rows && is_vitest {
+        if spread_rows {
             let mut rows = this.each.array_iterator(global)?;
             while let Some(row) = rows.next()? {
-                spread_rows &= row.is_array();
+                if !is_array_row(global, row)? {
+                    spread_rows = false;
+                    break;
+                }
             }
         }
         let mut iter = this.each.array_iterator(global)?;
@@ -405,8 +417,8 @@ pub(crate) fn call_as_function<'a>(
                 rooted.append(item);
                 let mut args_list: Vec<JSValue> = Vec::new();
 
-                if item.is_array() {
-                    // Spread array as args_list (matching Jest & Vitest)
+                // A Vitest title takes its values from the elements of an array row in every table.
+                if (spread_rows || is_vitest) && is_array_row(global, item)? {
                     let mut item_iter = item.array_iterator(global)?;
                     while let Some(array_item) = item_iter.next()? {
                         rooted.append(array_item);
@@ -422,7 +434,7 @@ pub(crate) fn call_as_function<'a>(
                         Some(jest::format_vitest_title(global, desc, &[], test_idx)?)
                     }
                     Some(desc) if is_vitest => Some(jest::format_vitest_title(global, desc, args_list.as_slice(), test_idx)?),
-                    Some(desc) => Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec()),
+                    Some(desc) => Some(jest::format_label(global, desc, args_list.as_slice(), spread_rows, test_idx)?.into_vec()),
                     None => None,
                 };
 

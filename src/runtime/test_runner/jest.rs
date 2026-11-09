@@ -899,9 +899,11 @@ pub(crate) fn format_label(
     global_this: &JSGlobalObject,
     label: &[u8],
     function_args: &[JSValue],
+    is_spread_row: bool,
     test_idx: usize,
 ) -> JsResult<Box<[u8]>> {
-    let object_row = function_args.first().copied().filter(|row| row.is_object());
+    // `$name` reads from an object row, or from the first value of a spread row. An array row that is passed whole is a value.
+    let object_row = function_args.first().copied().filter(|row| row.is_object() && (is_spread_row || !row.is_array()));
     let mut args = function_args.iter();
     let mut title: Vec<u8> = Vec::with_capacity(label.len());
     let mut rest = label;

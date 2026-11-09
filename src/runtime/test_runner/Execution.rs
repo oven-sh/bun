@@ -292,13 +292,20 @@ impl ExecutionSequence {
         }
     }
 
-    /// Vitest's `task.result.state`
+    /// Vitest's `task.result.state`. Once the sequence has ended, it is the result that the reporter prints, where a todo reads "pass".
     pub(crate) fn state(&self) -> &'static str {
+        let Some(active) = self.active_entry else {
+            return match self.result.basic_result() {
+                Basic::Fail => "fail",
+                Basic::Skip => "skip",
+                Basic::Pass | Basic::Todo | Basic::Pending => "pass",
+            };
+        };
         if self.result == Result::Skip {
             "skip"
         } else if self.attempt_failed() {
             "fail"
-        } else if self.active_entry.is_some_and(|entry| Some(entry) == self.test_entry || self.test_follows(entry)) {
+        } else if Some(active) == self.test_entry || self.test_follows(active) {
             "run"
         } else {
             "pass"
@@ -801,6 +808,13 @@ impl Execution {
                 ScopeMode::Todo => Result::FailBecauseTodoPassed,
                 _ => Result::Pass,
             };
+        }
+        // Before the reporter, which exits the process on `--bail`: exit listeners read `task.result` too.
+        if let Some(context) = sequence.context.as_ref().map(Strong::get) {
+            let global = VirtualMachine::get().global();
+            if let Err(err) = TestContext::sync_result(context, global, sequence) {
+                global.bun_vm().as_mut().run_error_handler(global.take_exception(err), None);
+            }
         }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {

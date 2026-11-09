@@ -1295,6 +1295,10 @@ declare module "bun:test" {
     concurrent?: true;
     annotations: TestAnnotation[];
     result: {
+      /**
+       * Starts as `"run"`, and can change before the test ends. Once the test has ended, this is the result that
+       * `bun test` reports. A `test.todo()` that `--todo` reports as todo reads `"pass"`.
+       */
       state: "run" | "pass" | "fail" | "skip";
       /** Errors thrown by the test, its hooks and its fixtures. */
       errors?: unknown[];

@@ -314,6 +314,243 @@ describe.concurrent("test context", () => {
     });
   });
 
+  test("task.result has the final result once the test has ended", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeEach, afterEach, afterAll, expect, TestRunner } from "vitest";
+        // Each test reads its task while it runs. Nothing of a test runs after its callback, unless its name says so.
+        const tasks = [];
+        const keep = ({ task }) => { if (!tasks.includes(task)) tasks.push(task); };
+        const show = (where, { name, result }) =>
+          console.log(where, name + ":", result.state, result.retryCount, result.repeatCount, JSON.stringify(result.errors?.map((error) => error.message)));
+        afterAll(() => tasks.forEach((task) => show("afterAll", task)));
+        globalThis.tasksOfTheFirstFile = tasks;
+
+        test("passes", keep);
+        test("the next test", () => show("next test", tasks[0]));
+        test("throws", (ctx) => { keep(ctx); throw new Error("boom"); });
+        test("times out", { timeout: 20 }, async (ctx) => { keep(ctx); await new Promise(() => {}); });
+        test("skips", (ctx) => { keep(ctx); ctx.skip(); });
+        test("counts too few", (ctx) => { keep(ctx); expect.assertions(2); expect(1).toBe(1); });
+        test("passes on the third attempt", { retry: 2 }, (ctx) => { keep(ctx); if (ctx.task.result.retryCount < 2) throw new Error("again"); });
+        test("repeats", { repeats: 2 }, keep);
+        test.fails("fails, and throws", (ctx) => { keep(ctx); throw new Error("expected"); });
+        test.fails("fails, and passes", keep);
+        test.fails("fails, and throws on the third attempt", { retry: 2 }, (ctx) => { keep(ctx); if (ctx.task.result.retryCount === 2) throw new Error("expected"); });
+        test.each([1])("row %i", () => { tasks.push(TestRunner.getCurrentTest()); });
+        describe("read in beforeEach", () => {
+          beforeEach(keep);
+          test("passes", () => {});
+        });
+        describe("the last callback", () => {
+          afterEach(async () => { await new Promise(() => {}); }, 20);
+          test("times out in afterEach", keep);
+        });
+        describe.concurrent("concurrent", () => {
+          const secondReadIt = Promise.withResolvers();
+          test("first", async (ctx) => { keep(ctx); await secondReadIt.promise; });
+          test("second", async () => {
+            const first = tasks.at(-1);
+            show("a concurrent test, while it runs", first);
+            secondReadIt.resolve();
+            // "first" ends within a few turns of the event loop.
+            for (let turn = 0; turn < 100 && first.result.state === "run"; turn++) await new Promise(setImmediate);
+            show("a concurrent test", first);
+          });
+        });
+      `,
+      "b.test.js": `
+        import { test } from "vitest";
+        test("a later file", () => {
+          const { name, result } = tasksOfTheFirstFile[0];
+          console.log("a later file", name + ":", result.state);
+        });
+      `,
+    });
+    // `errors` has the errors that were thrown. A timeout, a count that is not met and a test.fails test that passes add none.
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "next test passes: pass 0 0 undefined",
+        "a concurrent test, while it runs first: run 0 0 undefined",
+        "a concurrent test first: pass 0 0 undefined",
+        "afterAll passes: pass 0 0 undefined",
+        `afterAll throws: fail 0 0 ["boom"]`,
+        "afterAll times out: fail 0 0 undefined",
+        "afterAll skips: skip 0 0 undefined",
+        "afterAll counts too few: fail 0 0 undefined",
+        `afterAll passes on the third attempt: pass 2 0 ["again","again"]`,
+        "afterAll repeats: pass 0 2 undefined",
+        `afterAll fails, and throws: pass 0 0 ["expected"]`,
+        "afterAll fails, and passes: fail 0 0 undefined",
+        `afterAll fails, and throws on the third attempt: pass 2 0 ["expected"]`,
+        "afterAll row 1: pass 0 0 undefined",
+        "afterAll passes: pass 0 0 undefined",
+        "afterAll times out in afterEach: fail 0 0 undefined",
+        "afterAll first: pass 0 0 undefined",
+        "a later file passes: pass",
+      ],
+      results: [
+        "(pass) passes",
+        "(pass) the next test",
+        "(fail) throws",
+        "(fail) times out",
+        "(skip) skips",
+        "(fail) counts too few",
+        "(pass) passes on the third attempt (attempt 3)",
+        "(pass) repeats (run 3)",
+        "(pass) fails, and throws",
+        "(fail) fails, and passes",
+        "(pass) fails, and throws on the third attempt (attempt 3)",
+        "(pass) row 1",
+        "(pass) read in beforeEach > passes",
+        "(fail) the last callback > times out in afterEach",
+        "(pass) concurrent > first",
+        "(pass) concurrent > second",
+        "(pass) a later file",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  // `bun:test` passes a context to the tests of `test.extend()` and `test.for()`. `--todo` runs the callback of test.todo().
+  // `bun test` reports a todo test that throws as "(todo)". Its state is "pass".
+  test.each([
+    ["vitest", "test"],
+    ["bun:test", "test.extend({})"],
+  ])("%s: task.result.state of test.failing and test.todo ends on the reported result", async (module, withContext) => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, afterAll } from "${module}";
+          const testWithContext = ${withContext};
+          const tasks = [], contexts = [];
+          afterAll(() => {
+            for (const task of tasks) console.log(task.name + ":", task.result.state);
+            // The first read of \`task\` comes after the test has ended.
+            for (const { task } of contexts) console.log(task.name + ":", task.result.state);
+          });
+          testWithContext("passes", ({ task }) => { tasks.push(task); });
+          test.for([1])("row %i", (row, { task }) => { tasks.push(task); });
+          testWithContext.failing("failing, throws", ({ task }) => { tasks.push(task); throw new Error("expected"); });
+          testWithContext.failing("failing, does not throw", ({ task }) => { tasks.push(task); });
+          testWithContext.todo("todo, throws", ({ task }) => { tasks.push(task); throw new Error("not yet"); });
+          testWithContext.todo("todo, does not throw", ({ task }) => { tasks.push(task); });
+          test.failing.for([1])("failing, throws, read later", (row, ctx) => { contexts.push(ctx); throw new Error("expected"); });
+          test.failing.for([1])("failing, does not throw, read later", (row, ctx) => { contexts.push(ctx); });
+          test.todo.for([1])("todo, throws, read later", (row, ctx) => { contexts.push(ctx); throw new Error("not yet"); });
+          test.todo.for([1])("todo, does not throw, read later", (row, ctx) => { contexts.push(ctx); });
+        `,
+      },
+      ["--todo"],
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "passes: pass",
+        "row 1: pass",
+        "failing, throws: pass",
+        "failing, does not throw: fail",
+        "todo, throws: pass",
+        "todo, does not throw: fail",
+        "failing, throws, read later: pass",
+        "failing, does not throw, read later: fail",
+        "todo, throws, read later: pass",
+        "todo, does not throw, read later: fail",
+      ],
+      results: [
+        "(pass) passes",
+        "(pass) row 1",
+        "(pass) failing, throws",
+        "(fail) failing, does not throw",
+        "(todo) todo, throws",
+        "(fail) todo, does not throw",
+        "(pass) failing, throws, read later",
+        "(fail) failing, does not throw, read later",
+        "(todo) todo, throws, read later",
+        "(fail) todo, does not throw, read later",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  // The result of a test of "bun:test" settles when its sequence ends: the count of assertions is checked there.
+  test("task.result.state of a bun:test test ends on the reported result", async () => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, expect } from "bun:test";
+          import { beforeEach, afterAll, TestRunner } from "vitest";
+          const tasks = [];
+          // A hook of "vitest" gives a test of "bun:test" a context. It reads the task before the test runs.
+          beforeEach(({ task }) => { if (!tasks.includes(task)) tasks.push(task); });
+          afterAll(() => { for (const { name, result } of tasks) console.log(name + ":", result.state); });
+          test("passes", () => {});
+          test("throws", () => { throw new Error("boom"); });
+          test("times out", async () => { await new Promise(() => {}); }, 20);
+          test("does not call done", (done) => {}, 20);
+          test("counts too few", () => { expect.assertions(2); expect(1).toBe(1); });
+          test("has no assertions", () => { expect.hasAssertions(); });
+          test("passes on the second attempt", () => { if (TestRunner.getCurrentTest().result.retryCount === 0) throw new Error("again"); }, { retry: 1 });
+          test.failing("failing, throws", () => { throw new Error("expected"); });
+          test.failing("failing, does not throw", () => {});
+          test.todo("todo, throws", () => { throw new Error("not yet"); });
+          test.todo("todo, does not throw", () => {});
+        `,
+      },
+      ["--todo"],
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "passes: pass",
+        "throws: fail",
+        "times out: fail",
+        "does not call done: fail",
+        "counts too few: fail",
+        "has no assertions: fail",
+        "passes on the second attempt: pass",
+        "failing, throws: pass",
+        "failing, does not throw: fail",
+        "todo, throws: pass",
+        "todo, does not throw: fail",
+      ],
+      results: [
+        "(pass) passes",
+        "(fail) throws",
+        "(fail) times out",
+        "(fail) does not call done",
+        "(fail) counts too few",
+        "(fail) has no assertions",
+        "(pass) passes on the second attempt (attempt 2)",
+        "(pass) failing, throws",
+        "(fail) failing, does not throw",
+        "(todo) todo, throws",
+        "(fail) todo, does not throw",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("task.result has the final result when --bail ends the run", async () => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test } from "vitest";
+          test("times out", { timeout: 20 }, async ({ task }) => {
+            process.on("exit", () => console.log("exit listener:", task.result.state));
+            await new Promise(() => {});
+          });
+        `,
+      },
+      ["--bail"],
+      // `bun test` runs exit listeners with this, and when a file of the run uses node:test.
+      { BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: ["exit listener: fail"],
+      results: ["(fail) times out"],
+      exitCode: 1,
+    });
+  });
+
   test("skip()", async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `

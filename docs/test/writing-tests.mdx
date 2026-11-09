@@ -488,6 +488,8 @@ The test context is the object you destructure fixtures from. Each test has one,
 
 As in Vitest, the context isn't a `done` callback. Calling it throws an error.
 
+`task.result.state` starts as `"run"`. It can change while the test runs: a failed `expect.soft()` makes it `"fail"`. What the test and its hooks read is not final, because a retry, `test.fails()` or `test.failing()` can still change it. After the last attempt and its last callback, it is the result that `bun test` reports: `"pass"`, `"fail"` or `"skip"`. A `test.todo()` that `--todo` reports as todo reads `"pass"`. A later test or an `afterAll` hook can read the state from a `task` that it kept.
+
 ## Importing from `vitest`
 
 In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/globals"`. Each module behaves like the runner it's named after, so a test file or helper module keeps the behavior it was written for:

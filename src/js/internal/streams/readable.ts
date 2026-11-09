@@ -563,6 +563,13 @@ function computeNewHighWaterMark(n) {
   return n;
 }
 
+// `state.length` is the sum of the lengths of what is buffered.
+function firstChunkLength(state) {
+  const buffer = state.buffer;
+  const index = state.bufferIndex;
+  return buffer.length - index === 1 ? state.length : buffer[index].length;
+}
+
 // This function is designed to be inlinable, so please take care when making
 // changes to the function body.
 function howMuchToRead(n, state) {
@@ -570,10 +577,10 @@ function howMuchToRead(n, state) {
   if ((state[kState] & kObjectMode) !== 0) return 1;
   if (NumberIsNaN(n)) {
     // Fast path for buffers.
-    if ((state[kState] & kDecoder) === 0 && state.length) return state.buffer[state.bufferIndex].length;
+    if ((state[kState] & kDecoder) === 0 && state.length) return firstChunkLength(state);
 
     // Only flow one buffer at a time.
-    if ((state[kState] & kFlowing) !== 0 && state.length) return state.buffer[state.bufferIndex].length;
+    if ((state[kState] & kFlowing) !== 0 && state.length) return firstChunkLength(state);
 
     return state.length;
   }

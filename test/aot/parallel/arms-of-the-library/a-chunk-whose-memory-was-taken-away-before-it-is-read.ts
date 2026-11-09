@@ -1,5 +1,5 @@
-// read() hands over one chunk at a time and asks that chunk for its length. A chunk whose memory was transferred, or that looks into a WebAssembly.Memory that has grown, has no bytes left:
-// read() then gives null and the stream goes on holding what it counted at the push, as in node 26. The lines are held to what node 26 prints, whoever runs the program.
+// read() hands over one chunk at a time. Of a chunk that lies alone in the stream it takes the length that was counted at the push. A chunk whose memory was transferred, or that looks into a
+// WebAssembly.Memory that has grown, has no bytes left: read() hands it over as it is now, the stream holds nothing more, and it ends. The lines are held to these, whoever runs the program.
 import { Readable } from "node:stream";
 const said: string[] = [];
 const sizeOf = (value: any): string => (value === null ? "null" : String(value.length));
@@ -40,6 +40,6 @@ await tellOfEnd("left", fresh(), () => {});
 await tellOfEnd("transferred", fresh(), transfer);
 await tellOfEnd("memory grown", ...grown());
 console.log(said.join("\n"));
-const asInNode = ["left 4 0", "transferred null 4", "memory grown null 4", "left 4 ended 0", "transferred nothing stuck 4", "memory grown nothing stuck 4"];
-if (said.join() !== asInNode.join()) throw new Error("node 26 prints: " + asInNode.join("; "));
+const held = ["left 4 0", "transferred 0 0", "memory grown 0 0", "left 4 ended 0", "transferred 0 ended 0", "memory grown 0 ended 0"];
+if (said.join() !== held.join()) throw new Error("the lines are held to: " + held.join("; "));
 process.exit(0);

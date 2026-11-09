@@ -1,7 +1,6 @@
 // `f(make(), other())` in a loop that stays a loop: what make() returned waits in the caller while other() runs. Once f has set its parameter to null nothing names the object, and it is collected while f still runs.
 // The loop of three turns in argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts is written out into straight code and says nothing of a loop: here nobody knows the bound.
 // Prints what the compiler saves: objects that are collected earlier
-// Skip on win32 x64: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

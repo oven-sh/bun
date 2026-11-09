@@ -62,27 +62,17 @@
 //                                        "collected" | "KEPT"      it prints one of the two words where its reference prints the other. Everything else that the two print, and how they end, is held as ever
 //                                        only frames (..)          see above
 //                                      A line that says none of the three fails the program, on whatever platform the line is for.
-//                                      No `Todo` of any kind and no `Skip` stands for a death: what a signal ends, what passes a limit of time or memory, a report of a sanitizer,
+//                                      No `Todo` of any kind stands for a death: what a signal ends, what passes a limit of time or memory, a report of a sanitizer,
 //                                      a failed assertion and an internal compiler error fail the program whatever it is marked with
 //   // Todo on win32 x64: <why>        the same where process.platform and process.arch are those two, and nothing anywhere else. There it goes before a `// Todo:`
-//   // Skip on win32 x64: <why>        where process.platform and process.arch are those two, what it prints is compared with nothing, and it is reported as skipped:
-//                                      for a program whose reference, `bun <file>`, answers now one way, now the other there. It is built and run all the same,
-//                                      and its line says in which lines the two differed in this run
-//                                      Nothing anywhere else. There is no such line for every platform
-//   // Skip under ASAN: <why>          the same where Bun is built with the address sanitizer: for a program that asks the collector whether an object is gone:
-//                                      native frames are larger there and keep words that nobody overwrites, and the collector reads them
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
 //                                      How a program or its build grows is not asked under ASAN, so no `// Todo:` of a program that says `// Grows:` is held to fail there,
 //                                      nor where no instructions are counted
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
 //   // Todo under a check: <why>       the same for every build with --aot-check= among its flags
-//   // Skip on linux arm64 under --aot-harden=proof-checks: <why>   where process.platform and process.arch are those two, its build with those flags is made and run, and what
-//                                      it prints is compared with nothing: `ways` says "built and run, not compared" of it. A failed build, a limit, a signal and another
-//                                      exit code than `// Exit code:` says fail it all the same. Everywhere else, and in its other builds, it is held as ever.
-//                                      For a program that asks the collector whether an object is gone
 //   // No build under --aot-harden=proof-checks: <why>   it is not built with those flags. The others are held as ever. For a build that outgrows the machine: <why> says how large it is
-//                                      Both name one of the ways in which every program is built whatever the build of CI, or one of the program's own `// Under:`.
-//                                      These two, `// Skip on ..:`, `// Skip under ASAN:` and the two `// Prints what ..:` stand in the head, name a platform that there is
+//                                      It names one of the ways in which every program is built whatever the build of CI, or one of the program's own `// Under:`.
+//                                      It and the two `// Prints what ..:` stand in the head
 //                                      and say why: a line that does not fails the program (harness/lines-that-leave-out.ts). stderr lists what they leave out behind the
 //                                      counts of the builds, and every-stored-program-is-built-once-more-where-guesses-fail.test.ts holds the list of all of them
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
@@ -169,12 +159,10 @@ type Program = {
   asksForEntryPoint: boolean;
   exitCode: number;
   todo?: string;
-  skip?: string;
   todoOfBuildWith: (flags: readonly string[]) => string | undefined;
-  skipOfBuildWith: (flags: readonly string[]) => string | undefined;
   isNotBuiltWith: (flags: readonly string[]) => boolean;
   marksNotRead: string[];
-  /** The lines `// Skip on .. under ..:` and `// No build under ..:` that name no way, say no reason or stand below the head. */
+  /** The lines `// No build under ..:` and `// Prints what ..:` that name no way, say no reason or stand below the head. */
   linesThatLeaveOutNotRead: string[];
   /** The flags of each further build that it asks for. */
   under: string[][];
@@ -765,19 +753,6 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   if (all.length < waysLeft.get(program.file)!) return;
   const sum = (name: string) => all.reduce((total, verdict) => total + Number(verdict[name] ?? 0), 0);
   const failed = all.some(({ state }) => state === "fail");
-  if (program.skip !== undefined && !all.some(({ died }) => died)) {
-    const differs = all.find(({ state }) => state === "fail");
-    const linesOf = (output: unknown) => JSON.stringify((output as Output | undefined)?.stdout ?? "");
-    const printed = differs
-      ? `the reference printed ${linesOf(differs.expected)} and the executable ${linesOf(differs.actual)}`
-      : "the executable printed what the reference printed";
-    return say({
-      file: program.file,
-      state: "skip",
-      message: `skipped on this platform: ${program.skip} | in this run ${printed}`,
-      ...goalsNotMetOf(program.file),
-    });
-  }
   const failsOtherwise =
     program.todo !== undefined && all.find(verdict => verdict.state === "fail" && !standsFor(program.todo!, verdict));
   if (failsOtherwise && !all.some(({ died }) => died)) {
@@ -929,14 +904,12 @@ function read(file: string): Program {
       (isASAN ? lines("Todo under ASAN")[0] : undefined) ??
       lines(`Todo on ${process.platform} ${process.arch}`)[0] ??
       lines("Todo")[0],
-    skip: (isASAN ? lines("Skip under ASAN")[0] : undefined) ?? lines(`Skip on ${process.platform} ${process.arch}`)[0],
     marksNotRead: Array.from(
       head.matchAll(/^\/\/ Todo(?: on \w+ \w+| under ASAN| under a check)?:[ \t]+(.*)$/gm),
       ([line, said]) => (readMark(said.trim()) ? [] : [line]),
     ).flat(),
     todoOfBuildWith: flags =>
       lines(`Todo under ${flags.join(" ")}`)[0] ?? (flags.some(isCheck) ? lines("Todo under a check")[0] : undefined),
-    skipOfBuildWith: flags => lines(`Skip on ${process.platform} ${process.arch} under ${flags.join(" ")}`)[0],
     linesThatLeaveOutNotRead: Array.from(text.matchAll(lineThatLeavesOut), ([line, what, why]) => {
       const refusal = whyLineThatLeavesOutIsNotRead(
         what,
@@ -1443,7 +1416,7 @@ async function run(program: Program): Promise<void> {
     if (Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output)))
       return settle(program, { ...passes, plainMs: plain!.ms });
     if (agreeButForFrames(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output))) return passesButForFrames();
-    if (program.todo === undefined && program.todoOfWay === undefined && program.skip === undefined)
+    if (program.todo === undefined && program.todoOfWay === undefined)
       for (let asked = 0; asked < 2; asked++) {
         const again = await runReference();
         if (!Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(again.output))) continue;
@@ -1529,7 +1502,6 @@ const all = [
         ...program,
         way,
         todoOfWay: program.todoOfBuildWith(flags),
-        printsWhatIsSaved: program.printsWhatIsSaved || program.skipOfBuildWith(flags) !== undefined,
         marksNotRead: [program.todoOfBuildWith(flags) ?? []].flat().filter(said => !readMark(said)),
         linesThatLeaveOutNotRead: [],
         flags: [...program.flags, ...flags.filter(flag => !program.flags.includes(flag))],
@@ -1565,7 +1537,7 @@ console.error(
   `builds by way: ${Array.from(buildsOfWays, ([way, builds]) => `${way} ${builds}`).join(" | ")}` +
     (takesTheFirstBuildAlone ? " | --no-erased leaves out every build behind the first" : ""),
 );
-const notCompared = all.filter(({ way, skip, printsWhatIsSaved }) => skip !== undefined || (way !== "compiled" && printsWhatIsSaved));
+const notCompared = all.filter(({ way, printsWhatIsSaved }) => way !== "compiled" && printsWhatIsSaved);
 const notBuilt = asWritten.flatMap(program =>
   furtherBuilds({ ...program, isNotBuiltWith: () => false })
     .filter(program.isNotBuiltWith)

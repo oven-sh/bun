@@ -101,55 +101,37 @@ test("a program that prints what goes by the copy that runs is built and run the
   });
 }, 120_000);
 
-const skipHere = `// Skip on ${process.platform} ${process.arch} under --aot-harden=proof-checks`;
+const noBuild = "// No build under --aot-harden=proof-checks";
 const waysUnder = async (head: string, text?: string) => {
   const { lines, stderr, exitCode } = await driven([], {}, head, text);
   return { ways: lines.find(({ state }) => state !== "compiling")?.ways, stderr, exitCode };
 };
 const { "under --aot-harden=proof-checks": _, ...theOtherThree } = inFourWays("3").ways;
 
-test("a line leaves one way uncompared on one platform, and another leaves its build out; the other ways are held, and stderr lists both", async () => {
-  expect(await waysUnder(`${skipHere}: for the test\n`)).toEqual({
-    ways: { ...theOtherThree, "under --aot-harden=proof-checks": "built and run, not compared" },
-    stderr: expect.stringMatching(
-      /left out by a line: 1 not compared \| 0 not built\n  not compared: \S*sums\.ts under --aot-harden=proof-checks\n/,
-    ),
-    exitCode: 0,
-  });
-  expect(await waysUnder("// No build under --aot-harden=proof-checks: for the test\n")).toEqual({
+test("a line leaves the build of one way out; the other ways are held, and stderr lists it", async () => {
+  expect(await waysUnder(`${noBuild}: for the test\n`)).toEqual({
     ways: theOtherThree,
     stderr: expect.stringMatching(
       /left out by a line: 0 not compared \| 1 not built\n  not built: \S*sums\.ts under --aot-harden=proof-checks\n/,
     ),
     exitCode: 0,
   });
-  const elsewhere = process.platform === "win32" ? "linux" : "win32";
-  expect(await waysUnder(`// Skip on ${elsewhere} x64 under --aot-harden=proof-checks: for the test\n`)).toEqual({
-    ...inFourWays("3"),
-    stderr: expect.stringContaining("left out by a line: 0 not compared | 0 not built\n"),
-  });
 }, 360_000);
 
 test.each([
-  ["names no platform", "// Skip under --aot-harden=proof-checks: for the test\n"],
-  ["names a way that this driver does not build", `${skipHere.replace("proof-checks", "proof-cheks")}: for the test\n`],
+  ["names a way that this driver does not build", `${noBuild.replace("proof-checks", "proof-cheks")}: for the test\n`],
   [
     "names the way that goes by the number of CI's build",
     "// No build under --aot-testing=FailGuesses:3: for the test\n",
   ],
-  ["says no reason", `${skipHere}:\n`],
-  ["says blanks for a reason", `${skipHere}:   \n`],
-  ["names a platform that there is not", "// Skip on plan9 mips under --aot-harden=proof-checks: for the test\n"],
-  [
-    "names the processor by another name",
-    `// Skip on ${process.platform} aarch64 under --aot-harden=proof-checks: for the test\n`,
-  ],
+  ["says no reason", `${noBuild}:\n`],
+  ["says blanks for a reason", `${noBuild}:   \n`],
   [
     "names the way that goes by the number of CI's build though the program asks for it itself",
     "// Under: --aot-testing=FailGuesses:3: for the test\n// No build under --aot-testing=FailGuesses:3: for the test\n",
   ],
   ["leaves every build behind the first uncompared and says no reason", "// Prints what goes by the copy that runs:\n"],
-  ["stands below the head", `\n${skipHere}: for the test\n`],
+  ["stands below the head", `\n${noBuild}: for the test\n`],
 ])(
   "a line that %s fails the program",
   async (_, head) => {
@@ -172,7 +154,7 @@ test("another exit code in a way that is not compared fails it all the same", as
 
 test("a stop in a way that is not compared fails it all the same", async () => {
   const { ways, exitCode } = await waysUnder(
-    `// Flags: --aot-testing=EqualIntegersAreTakenToBeLess\n${skipHere}: for the test\n`,
+    "// Flags: --aot-testing=EqualIntegersAreTakenToBeLess\n// Prints what goes by the copy that runs: nothing, for the test\n",
     `const given: number[] = JSON.parse("[-9, 0, 4, 2, 7]");
 function tally(low: number, add: number, step: number, by: number, turns: number): unknown[] {
   const out: unknown[] = [];
@@ -201,30 +183,19 @@ test("the lines by which something of a stored program is not compared or not bu
     "async/await-direct-call-function-tests-args.ts: Prints what the compiler saves",
     "async/await-direct-call-untyped-version/main.ts: Prints what the compiler saves",
     "calls-fast-paths/class-as-value/main.ts: Prints what the compiler saves",
-    "cells-lent-to-callees/what-was-lent-is-let-go-on-every-way-into-a-handler.ts: Skip on linux arm64 under --aot-harden=proof-checks",
-    "cells-lent-to-callees/what-was-lent-is-let-go-on-every-way-into-a-handler.ts: Skip under ASAN",
-    "cells-lent-to-callees/what-was-lent-is-let-go-where-another-argument-throws.ts: Skip on linux arm64 under --aot-harden=proof-checks",
     "classes-left-to-their-records/structures-and-prototype-objects-wait-for-the-first-touch.ts: Prints what the compiler saves",
     "external-data/bun-file-json-parsed-by-type.ts: Prints what the compiler saves",
     "gc/a-generator-lets-go-of-the-old-value-of-a-variable-assigned-again.mjs: Prints what the compiler saves",
     "gc/a-generator-lets-go-of-what-lives-only-across-a-yield-on-a-way-not-taken.mjs: Prints what the compiler saves",
     "gc/a-generator-that-has-ended-lets-go-of-what-it-stored.mjs: Prints what the compiler saves",
     "gc/argument-that-waited-in-the-caller-is-let-go-by-a-callee-out-of-a-list.ts: Prints what the compiler saves",
-    "gc/argument-that-waited-in-the-caller-is-let-go-by-a-callee-out-of-a-list.ts: Skip on win32 x64",
     "gc/argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts: Prints what the compiler saves",
-    "gc/argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts: Skip on win32 x64",
     "gc/argument-that-waited-in-the-caller-is-let-go-in-a-loop-whose-bound-nobody-knows.ts: Prints what the compiler saves",
-    "gc/argument-that-waited-in-the-caller-is-let-go-in-a-loop-whose-bound-nobody-knows.ts: Skip on win32 x64",
     "gc/generators-stepped-by-a-loop-let-go-beside-another-program/main.ts: Prints what the compiler saves",
     "gc/object-made-by-a-copied-callee-is-let-go-by-the-callee.ts: Prints what the compiler saves",
-    "gc/object-made-by-a-copied-callee-is-let-go-by-the-callee.ts: Skip on win32 x64",
     "gc/parameter-kept-in-a-register-across-calls-set-to-null-lets-go.ts: Prints what the compiler saves",
-    "gc/parameter-kept-in-a-register-across-calls-set-to-null-lets-go.ts: Skip on win32 x64",
     "gc/parameter-set-to-null-lets-go.ts: Prints what the compiler saves",
-    "gc/parameter-that-came-on-the-stack-set-to-null-lets-go.ts: Prints what the compiler saves",
-    "gc/parameter-that-came-on-the-stack-set-to-null-lets-go.ts: Skip on win32 x64",
     "lists-handed-to-apply/a-written-list-of-66000-elements-handed-to-a-function-in-sight.cjs: No build under --aot-harden=proof-checks",
-    "the-frame-does-not-grow-with-the-width-of-a-literal/the-recursion-goes-through-a-getter.ts: Skip under ASAN",
   ]);
 }, 120_000);
 

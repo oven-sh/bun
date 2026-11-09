@@ -1,5 +1,4 @@
 // run-parallel.ts: `// Todo on <process.platform> <process.arch>: <why>` is a `// Todo:` on that platform and nothing on any other.
-// `// Skip on <process.platform> <process.arch>: <why>` is held to nothing that it prints on that platform, right or wrong, and is nothing on any other.
 // `// Todo under ASAN: <why>` is one where Bun is built with the address sanitizer and nothing anywhere else.
 // Each says in front of its reason what differs, and stands for that alone: a program that fails otherwise fails, and so does one whose line does not say it.
 // A bound may end with ` Todo: <why>`, ` Todo on <process.platform>: <why>` or ` Todo on <process.platform> <process.arch>: <why>`: it is asked all the same, fails once it is met, and the line of its file says what was counted,
@@ -14,7 +13,6 @@ import { test } from "./supported";
 const here = `${process.platform} ${process.arch}`;
 const right = "console.log(true);\n/* Output:\ntrue\n*/\n";
 const wrong = "console.log(true);\n/* Output:\nfalse\n*/\n";
-const skipped = "skip: skipped on this platform: now one way, now the other";
 const oneForTheOther = '"true" | "false"';
 const notMeant = "its `// Todo` does not stand for that";
 const compiled = 'const compiled = Bun.main.startsWith("/$bunfs/") || Bun.main.includes("~BUN");\n';
@@ -24,9 +22,6 @@ const expected = {
   "right-here.js": "todo: it passes: its `// Todo:` line goes out",
   "right-elsewhere.js": "pass",
   "the-line-for-here-goes-first.js": `skip: todo: ${oneForTheOther}: another day`,
-  "skipped-here-and-right.js": `${skipped} | in this run the executable printed what the reference printed`,
-  "skipped-here-and-wrong.js": `${skipped} | in this run the reference printed "false\\n" and the executable "true\\n"`,
-  "skipped-elsewhere-and-wrong.js": "compare: it does not print what its last comment says",
   "wrong-under-asan.js": isASAN
     ? `skip: todo: ${oneForTheOther}: some day`
     : "compare: it does not print what its last comment says",
@@ -52,9 +47,6 @@ test("a todo for one platform counts there alone", async () => {
     "right-here.js": `// Todo on ${here}: ${oneForTheOther}: some day\n${right}`,
     "right-elsewhere.js": `// Todo on plan9 mips: ${oneForTheOther}: some day\n${right}`,
     "the-line-for-here-goes-first.js": `// Todo: ${oneForTheOther}: some day\n// Todo on ${here}: ${oneForTheOther}: another day\n${wrong}`,
-    "skipped-here-and-right.js": `// Skip on ${here}: now one way, now the other\n${right}`,
-    "skipped-here-and-wrong.js": `// Skip on ${here}: now one way, now the other\n${wrong}`,
-    "skipped-elsewhere-and-wrong.js": `// Skip on ${process.platform === "win32" ? "linux" : "win32"} x64: now one way, now the other\n${wrong}`,
     "wrong-under-asan.js": `// Todo under ASAN: ${oneForTheOther}: some day\n${wrong}`,
     "right-under-asan.js": `// Todo under ASAN: ${oneForTheOther}: some day\n${right}`,
     "wrong-in-another-line-too.js": `// Todo: ${oneForTheOther}: some day\nconsole.log(true);\nconsole.log(1);\n/* Output:\nfalse\n2\n*/\n`,

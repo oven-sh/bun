@@ -1,5 +1,5 @@
-// A stream that flows asks each chunk for its length before it hands it to the listeners. A chunk whose memory was transferred, or that looks into a WebAssembly.Memory that has grown, has no bytes left:
-// nothing is handed over then, no end is told, and the stream goes on holding what it counted at the push, as in node 26. The lines are held to what node 26 prints, whoever runs the program.
+// A stream that flows takes, of a chunk that lies alone in it, the length that was counted at the push. A chunk whose memory was transferred, or that looks into a WebAssembly.Memory that has grown, has no
+// bytes left: it is handed to the listeners as it is now, the stream holds nothing more, and the end is told. The lines are held to these, whoever runs the program.
 import { Readable } from "node:stream";
 const said: string[] = [];
 const transfer = (bytes: Buffer): void => {
@@ -29,16 +29,16 @@ for (const ends of [false, true]) {
   await flow("memory grown", ends, ...grown());
 }
 console.log(said.join("\n"));
-const asInNode = [
+const held = [
   "left open | data 4 | 0 true",
-  "transferred open | nothing | 4 true",
-  "memory grown open | nothing | 4 true",
+  "transferred open | data 0 | 0 true",
+  "memory grown open | data 0 | 0 true",
   "left ended | data 4 end close | 0 true",
-  "transferred ended | nothing | 4 true",
-  "memory grown ended | nothing | 4 true",
+  "transferred ended | data 0 end close | 0 true",
+  "memory grown ended | data 0 end close | 0 true",
 ];
-if (said.join("\n") !== asInNode.join("\n")) {
-  console.error("node 26 prints:\n" + asInNode.join("\n"));
+if (said.join("\n") !== held.join("\n")) {
+  console.error("the lines are held to:\n" + held.join("\n"));
   process.exit(1);
 }
 process.exit(0);

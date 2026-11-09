@@ -36,12 +36,17 @@ static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBufferWithSize<8> args = MarkedArgumentBufferWithSize<8>();
+    // Like Node, convert only the arguments the function actually takes. Converting an extra one would call its
+    // toString(), which is user code that Node never runs.
+    constexpr unsigned argumentsTaken = Function == Bun__Path__join || Function == Bun__Path__resolve ? UINT_MAX
+        : Function == Bun__Path__basename || Function == Bun__Path__relative                          ? 2
+                                                                                                      : 1;
     for (unsigned i = 0, size = callFrame->argumentCount(); i < size; ++i) {
         JSValue arg = callFrame->argument(i);
         // A String object can run user JS (Symbol.toPrimitive / toString) when
         // stringified; do it here so the resulting JSString is rooted in `args`
         // before the native side borrows characters from any argument.
-        if (Function != Bun__Path__format && Function != Bun__Path__toNamespacedPath) {
+        if (Function != Bun__Path__format && Function != Bun__Path__toNamespacedPath && i < argumentsTaken) {
             if (arg.isCell()) {
                 const JSC::JSType type = arg.asCell()->type();
                 if (type == JSC::StringObjectType || type == JSC::DerivedStringObjectType) {

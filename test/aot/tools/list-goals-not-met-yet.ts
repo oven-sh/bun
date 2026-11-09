@@ -12,9 +12,8 @@
 // A mark may stand on a wrong answer: a right program answers otherwise compiled than plain, and nothing says so when it runs. That is no goal, and is
 // listed apart, in front of the goals. The name of the case, or the reason of the mark, says it:
 //   <what is to hold>: a wrong answer today: under `<the compiled run>` <what happens>, where `<the plain run>` <what happens>
-// Listed apart, because they are not run or not judged:
+// Listed apart, because it is not run:
 //   a case under test/aot that is declared with `todo`
-//   `// Skip on <platform> <architecture>: <why>` in a program under test/aot/parallel
 // A name that is put together while the file runs cannot be read off its text. So each test file from which a mark can be reached is
 // loaded by a `bun test` of its own in which a stand-in takes the place of bun:test: `describe` runs what it is handed, every case is
 // written down under its name, and no case and no hook is run. What a test writes into a file for a Bun that it starts is text, and is
@@ -35,13 +34,12 @@ const writesTo = "GOALS_NOT_MET_YET_ARE_WRITTEN_TO";
 
 type Declared = { name: string; failing: boolean; todo: boolean };
 type Goal = { file: string; name: string; measured: string; bound: string; keeps: string };
-type Apart = { file: string; name: string; why?: string };
+type Apart = { file: string; name: string };
 type WrongAnswer = { file: string; name: string; plain: string; compiled: string };
 type Found = {
   wrongAnswers: WrongAnswer[];
   goals: Goal[];
   neverRun: Apart[];
-  skipped: Apart[];
   declareNothing: string[];
   withEngine: boolean;
 };
@@ -405,11 +403,10 @@ function goalOf(file: string, name: string, others: Declared[] = []): Goal {
 function marksOfStoredPrograms(found: Found) {
   for (const file of filesBelow("test/aot/parallel", name => /\.[cm]?[jt]sx?$/.test(name))) {
     const text = readFileSync(join(root, file), "utf8");
-    if (!text.includes(" Todo") && !text.includes("// Skip on ")) continue;
+    if (!text.includes(" Todo")) continue;
     for (const line of text.split("\n")) {
       const count = /^\/\/ (?:STATISTIC|COUNT|COUNTER): ([\w:]+) (=|>=|<=) (\d+) Todo( [ \w=.-]+)?: (.+)$/.exec(line);
       const answer = /^\/\/ Todo( [ \w=.-]+)?: (.+)$/.exec(line);
-      const skip = /^\/\/ Skip on ([\w ]+): (.+)$/.exec(line);
       if (count) {
         const [, what, relation, bound, where = "", why] = count;
         take(found, {
@@ -422,7 +419,7 @@ function marksOfStoredPrograms(found: Found) {
       } else if (answer) {
         const [, where = "", why] = answer;
         take(found, { file, name: `it answers as plain Bun${where}: ${why}`, measured: "", bound: "", keeps: yesOrNo });
-      } else if (skip) found.skipped.push({ file, name: skip[1], why: skip[2] });
+      }
     }
   }
 }
@@ -461,7 +458,7 @@ function marksOfCrates(found: Found) {
 async function marksIn(tree: string): Promise<Found> {
   root = tree;
   marksReachedFrom.clear();
-  const found: Found = { wrongAnswers: [], goals: [], neverRun: [], skipped: [], declareNothing: [], withEngine: false };
+  const found: Found = { wrongAnswers: [], goals: [], neverRun: [], declareNothing: [], withEngine: false };
   await marksOfTestFiles(found);
   marksOfStoredPrograms(found);
   marksOfIRTests(found);
@@ -471,7 +468,6 @@ async function marksIn(tree: string): Promise<Found> {
   found.wrongAnswers.sort(inOrder);
   found.goals.sort(inOrder);
   found.neverRun.sort(inOrder);
-  found.skipped.sort(inOrder);
   return found;
 }
 
@@ -489,7 +485,7 @@ const filesOf = (rows: Apart[]) => new Set(rows.map(row => row.file)).size;
 const inCell = (text: string) => text.replaceAll("|", "\\|").replaceAll("\n", " ");
 const rowOf = (...cells: string[]) => `| ${cells.map(inCell).join(" | ")} |`;
 
-function countsOf({ wrongAnswers, goals, neverRun, skipped, declareNothing, withEngine }: Found): string[] {
+function countsOf({ wrongAnswers, goals, neverRun, declareNothing, withEngine }: Found): string[] {
   const ofKind = Map.groupBy(goals, kindOf);
   const byKind = [...kinds.map(([kind]) => kind), "on other things"].flatMap(kind =>
     ofKind.has(kind) ? [`${ofKind.get(kind)!.length} ${kind}`] : [],
@@ -500,7 +496,6 @@ function countsOf({ wrongAnswers, goals, neverRun, skipped, declareNothing, with
     `${goals.length} goals in ${filesOf(goals)} files: ${byKind.join(", ")}.`,
     `${count(yesOrNo)} of them are a yes or a no. Of the others ${count("the case beside it")} are held to what is reached today by a case beside them, ${count("nothing yet")} could be, ${count(cannotGrowWorse)} cannot grow worse, ${count(comparedBetweenRuns)} are counted at every run and compared between runs, ${count("nothing in the tree")} move with the platform and with every change, and ${count("nothing: ")} say no measured number.`,
     `${neverRun.length} cases in ${filesOf(neverRun)} files are declared \`todo\` and never run.`,
-    `${skipped.length} programs are skipped on one platform, because \`bun <file>\` itself answers now one way, now the other there.`,
     ...(declareNothing.length
       ? [`${declareNothing.length} lines spell a mark from which no case was declared where this page was written. What they mark is not counted.`]
       : []),
@@ -543,14 +538,6 @@ function write(found: Found): string {
     "| file | case |",
     "|---|---|",
     ...found.neverRun.map(({ file, name }) => rowOf(file, name)),
-    "",
-    "## Skipped on one platform",
-    "",
-    "What such a program prints there is compared with nothing: `bun <file>` itself answers now one way, now the other. Everywhere else it is judged.",
-    "",
-    "| file | where | why |",
-    "|---|---|---|",
-    ...found.skipped.map(({ file, name, why }) => rowOf(file, name, why!)),
     "",
     ...(found.declareNothing.length
       ? [

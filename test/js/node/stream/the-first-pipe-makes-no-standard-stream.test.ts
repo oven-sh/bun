@@ -31,6 +31,23 @@ test.each(["stdout", "stderr"])("pipe() does not end process.%s", async name => 
   expect({ said: name === "stdout" ? stdout : stderr, exitCode }).toEqual({ said: "piped\nfalse\n", exitCode: 0 });
 });
 
+const pipes = `require("node:stream").Readable.from(["x"]).pipe(new (require("node:stream").Writable)({ write(chunk, encoding, done) { done(); } }));`;
+const size = 1 << 23;
+
+test.each([
+  ["behind pipe()", pipes],
+  [
+    "behind the exit of a program that called pipe() on the same pipe",
+    `Bun.spawnSync({ cmd: [process.execPath, "-e", ${JSON.stringify(pipes)}], stdio: ["ignore", "inherit", "inherit"] });`,
+  ],
+])("one write to a stdout that is a pipe takes all its bytes %s", async (_, before) => {
+  const { stdout, stderr, exitCode } = await run(`
+      ${before}
+      console.error(require("node:fs").writeSync(1, Buffer.alloc(${size}, 97)));
+    `);
+  expect({ read: stdout.length, stderr, exitCode }).toEqual({ read: size, stderr: size + "\n", exitCode: 0 });
+});
+
 test("pipe() does not end a stream that the program has put in the place of process.stdout", async () => {
   expect(
     await run(`

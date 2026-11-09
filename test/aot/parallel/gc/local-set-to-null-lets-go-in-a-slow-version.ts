@@ -1,6 +1,6 @@
 // A variable that the program sets to null lets go of what it held while the function still runs, also in the version of the function that runs where its guard turns away.
 // The bodies of local() and parameter() name no built-in: what makes the reference, collects and asks stands in functions of its own.
-// Todo on win32 x64: "collected" | "KEPT": in each of four runs of CI the executable printed "a parameter: KEPT | collected": native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
+// Todo on win32 x64: "collected" | "KEPT": in each of four runs of CI the executable printed "a parameter: KEPT | collected"
 type Thing = { id: number; payload: number[] };
 class Tag { n = 1; m = 2; }
 const unseen = (x: any): any => [x][JSON.parse("0")];

@@ -1677,7 +1677,7 @@ function getFunctionBase(ctx, value, constructor, tag) {
 function identicalSequenceRange(a, b) {
   for (let i = 0; i < a.length - 3; i++) {
     // Find the first entry of b that matches the current entry of a.
-    const pos = ArrayPrototypeIndexOf.$call(b, a[i]);
+    const pos = ArrayPrototypeIndexOf(b, a[i]);
     if (pos !== -1) {
       const rest = b.length - pos;
       if (rest > 3) {

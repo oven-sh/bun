@@ -2,6 +2,8 @@
 //
 // What the threads of a run that is over its time limit are doing: the name of each, the system call that it waits in, and the functions on its stack.
 // A debugger is not asked to attach. Where the system lets only a parent look into a process, a debugger that is started beside the run is refused. The driver is the parent, so it reads /proc itself.
+// The first function of a thread is where it stands. /proc does not say the frame pointer, so the others are looked for among the words of the stack, and a frame record that a call
+// left behind when it returned may be taken for the first: then the functions below the first are not the callers.
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 

@@ -46,8 +46,9 @@ test.skipIf(!isLinux || !isCanary)(
       /\nthe threads of \d+ at the time limit:\n.+ \(\d+\), S: system call \d+\(.+\)\n    \S/,
     );
     expect(threads["spins.js"]).toMatch(/\nthe threads of \d+ at the time limit:\n.+ \(\d+\), R: running\n/);
-    // The names are read out of the table of symbols, by gdb.
-    if (Bun.which("gdb")) expect(threads["sleeps.js"]).toMatch(/\n    us_loop_run_bun_tick \+ \d+\n/);
+    // The names are read out of the table of symbols, by gdb. Which callers are found is not asked: see stacks-of-a-run.ts.
+    if (Bun.which("gdb"))
+      expect(threads["sleeps.js"]).toMatch(/\), S: system call \d+\(.+\)\n    [A-Za-z_]\w* \+ \d+\n/);
     expect(exitCode).toBe(1);
   },
   120_000,

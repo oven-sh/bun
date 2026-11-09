@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/util/inspect.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6af95bda7f7223ec92dd037418200bb7d283944d014eae436c03d725ebf3f69a.
+// Written against that file with the SHA-256 433341d562ff2f9e6aefc0a2170f6b03755a6eea30ce5670232325f8ba2d400b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // **TODO: delete this file**
@@ -1802,8 +1802,7 @@ function getFunctionBase(ctx: Context, value, constructor: string | null, tag: s
 function identicalSequenceRange(a: string[], b: string[]) {
   for (let i = 0; i < a.length - 3; i++) {
     // Find the first entry of b that matches the current entry of a.
-    // TODO: this looks for `undefined` in a[i] and never finds it. Node looks for a[i] in b.
-    const pos = ArrayPrototypeIndexOf.$call(a[i]);
+    const pos = ArrayPrototypeIndexOf.$call(b, a[i]);
     if (pos !== -1) {
       const rest = b.length - pos;
       if (rest > 3) {

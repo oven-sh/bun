@@ -189,15 +189,7 @@ function step() {
   else
     setImmediate(() =>
       setImmediate(() => {
-        // pipe() asks for process.stdout, and from then on a write into a pipe may take a part, or nothing while the pipe is full.
-        const bytes = Buffer.from(grouped().join("\n") + "\n");
-        for (let written = 0; written < bytes.length; ) {
-          try {
-            written += require("node:fs").writeSync(1, bytes, written);
-          } catch (error) {
-            if (error.code !== "EAGAIN") throw error;
-          }
-        }
+        require("node:fs").writeSync(1, grouped().join("\n") + "\n");
         process.exit(0);
       }),
     );

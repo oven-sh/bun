@@ -44,7 +44,6 @@ test.skipIf(isWindows || !isCanary)(
       "tsconfig.json": "{}",
       "aborts.js": `console.error("said before the end");\nprocess.abort();\n`,
       "aborts-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.abort();\n`,
-      "aborts-where-it-is-skipped.js": `// Skip on ${process.platform} ${process.arch}: some day\nconsole.error("said before the end");\nprocess.abort();\n`,
       "aborts-under-a-todo-of-one-way.js": [
         `// Under: --define DIES=true: the build whose executable dies`,
         `// Todo under --define DIES=true: "true" | "false": some day`,
@@ -78,7 +77,6 @@ test.skipIf(isWindows || !isCanary)(
     const files = [
       "aborts.js",
       "aborts-under-a-todo.js",
-      "aborts-where-it-is-skipped.js",
       "aborts-under-a-todo-of-one-way.js",
       "faults-under-a-todo.js",
       "answers-otherwise-under-a-todo.js",
@@ -107,13 +105,6 @@ test.skipIf(isWindows || !isCanary)(
     expect(verdicts).toEqual([
       { file: "aborts-under-a-todo-of-one-way.js", state: "fail", stage: "run", message: ofOneWay, said: false },
       { file: "aborts-under-a-todo.js", state: "fail", stage: "run", message: "it ended by SIGABRT", said: true },
-      {
-        file: "aborts-where-it-is-skipped.js",
-        state: "fail",
-        stage: "run",
-        message: "it ended by SIGABRT",
-        said: true,
-      },
       { file: "aborts.js", state: "fail", stage: "run", message: "it ended by SIGABRT", said: true },
       {
         file: "answers-otherwise-under-a-todo.js",

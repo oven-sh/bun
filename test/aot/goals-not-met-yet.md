@@ -4,13 +4,11 @@ This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of th
 
 37 wrong answers in 13 files stand under a mark. They are no goals, and are not counted among them.
 
-234 goals in 132 files: 162 on what a program reaches of the library and what --trim keeps, 18 on how a build grows with its program, 54 on other things.
+233 goals in 131 files: 162 on what a program reaches of the library and what --trim keeps, 18 on how a build grows with its program, 53 on other things.
 
-82 of them are a yes or a no. Of the others 35 are held to what is reached today by a case beside them, 6 could be, 1 cannot grow worse, 63 are counted at every run and compared between runs, 46 move with the platform and with every change, and 1 say no measured number.
+81 of them are a yes or a no. Of the others 35 are held to what is reached today by a case beside them, 6 could be, 1 cannot grow worse, 63 are counted at every run and compared between runs, 46 move with the platform and with every change, and 1 say no measured number.
 
 17 cases in 7 files are declared `todo` and never run.
-
-5 programs are skipped on one platform, because `bun <file>` itself answers now one way, now the other there.
 
 9 lines spell a mark from which no case was declared where this page was written. What they mark is not counted.
 
@@ -161,9 +159,8 @@ what does. What is not run, or not judged, stands in tables of its own further d
 | test/aot/parallel/constructor-functions/methods-stored-on-the-instance-that-is-the-prototype-object-price.js | operations <= 200 on linux x64: the objects that nobody keeps are still made: 273 operations, of which the allocator asks the run time for room 234 times. On arm64 its blocks are larger: 69 times, 108 operations | printed by the run | <= 200 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/define-property/exports-defined-without-runtime-calls/main.cjs | operation:operationAOTDefineOwnProperty = 0: the definition is one operation of the run time, without the descriptor object, until it is a store into the slot. Until then it was a call of the host function Object.defineProperty, which no operation counts | printed by the run | = 0 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/field-writers/a-literal-filled-out-of-a-field-of-integers-tests-no-slot.cjs | operations <= 20: the form that the name speaks of is met (the slot is read at level Proven, no test). The cell of the literal has 48 bytes where an earlier compiler packed an int32 and a text into 32: 30 operationAOTAllocateSlow, the first cells of two size classes. An earlier compiler counted 14. | printed by the run | <= 20 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
-| test/aot/parallel/gc/generators-stepped-by-a-loop-let-go-beside-another-program/main.ts | it answers as plain Bun on win32 x64: "collected" \| "KEPT": compiled, the same ten of its objects were kept in each of four runs of CI: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them. The third object of "every turn" is left out there: plain Bun itself printed KEPT, KEPT, collected, collected for it in those runs | no | yes | no number: the goal is a yes or a no |
-| test/aot/parallel/gc/local-set-to-null-lets-go-in-a-slow-version.ts | it answers as plain Bun on win32 x64: "collected" \| "KEPT": in each of four runs of CI the executable printed "a parameter: KEPT \| collected": native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them | no | yes | no number: the goal is a yes or a no |
-| test/aot/parallel/gc/parameter-set-to-null-lets-go.ts | it answers as plain Bun on win32 x64: "collected" \| "KEPT": in each of four runs of CI plain Bun printed "a parameter: collected" and the executable "a parameter: KEPT": native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them | no | yes | no number: the goal is a yes or a no |
+| test/aot/parallel/gc/generators-stepped-by-a-loop-let-go-beside-another-program/main.ts | it answers as plain Bun on win32 x64: "collected" \| "KEPT": compiled, the same ten of its objects were kept in each of four runs of CI. The third object of "every turn" is left out there: plain Bun itself printed KEPT, KEPT, collected, collected for it in those runs | no | yes | no number: the goal is a yes or a no |
+| test/aot/parallel/gc/local-set-to-null-lets-go-in-a-slow-version.ts | it answers as plain Bun on win32 x64: "collected" \| "KEPT": in each of four runs of CI the executable printed "a parameter: KEPT \| collected" | no | yes | no number: the goal is a yes or a no |
 | test/aot/parallel/globals/copy-onto-global-and-computed-delete-without-printer.js | ImageFunctionsEmitted <= 100: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 100 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/globals/globals-defined-again-under-computed-names-without-printer.js | ImageFunctionsEmitted <= 100: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 100 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/globals/handler-and-computed-names-stored-without-printer.js | ImageFunctionsEmitted <= 100: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 100 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
@@ -325,18 +322,6 @@ A case that is declared with `todo` is listed by the runner and not run: nothing
 | test/aot/transpiler-parity-1.test.ts | test/bundler/transpiler/es-decorators-esbuild.test.ts: its runner imports each case by a computed specifier (:190), so the cases would be interpreted, and its boilerplate adds a property to Function.prototype (:19-20), which is read-only in a compiled program |
 | test/aot/transpiler-parity-1.test.ts | test/bundler/transpiler/jsx-production.test.ts: its program bundles itself with Bun.build() and imports the output from a blob: URL (jsx-production.tsx:36), and compiled code loads no code that was not compiled with it |
 | test/aot/transpiler-parity-1.test.ts | test/js/bun/resolve/esModule.test.ts: it stores to members of `import * as Self` (:14), and `bun build` stops at such a store, with --aot and without |
-
-## Skipped on one platform
-
-What such a program prints there is compared with nothing: `bun <file>` itself answers now one way, now the other. Everywhere else it is judged.
-
-| file | where | why |
-|---|---|---|
-| test/aot/parallel/gc/argument-that-waited-in-the-caller-is-let-go-by-a-callee-out-of-a-list.ts | win32 x64 | some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them |
-| test/aot/parallel/gc/argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts | win32 x64 | some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them |
-| test/aot/parallel/gc/object-made-by-a-copied-callee-is-let-go-by-the-callee.ts | win32 x64 | some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them |
-| test/aot/parallel/gc/parameter-kept-in-a-register-across-calls-set-to-null-lets-go.ts | win32 x64 | some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them |
-| test/aot/parallel/gc/parameter-that-came-on-the-stack-set-to-null-lets-go.ts | win32 x64 | some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them |
 
 ## Marks from which no case was declared
 

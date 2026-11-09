@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/readable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 7b37ab6406538cb764c7c99fdcd0e7a70e5252257cfb5872e922e4655fbfe3b6.
+// Written against that file with the SHA-256 26a4a653d8f942a822a4a5b79b8005d8725ed9562c1b0e5b742392e74be9e862.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -753,8 +753,11 @@ function howMuchToRead(n: number, state: ReadableState): number {
   return howManyBytesToRead(n, state);
 }
 
+// `state.length` is the sum of the lengths of what is buffered.
 function firstChunkLength(state: ReadableState): number {
-  return state.buffer[state.bufferIndex].length as number;
+  const buffer = state.buffer;
+  const index = state.bufferIndex;
+  return buffer.length - index === 1 ? state.length : (buffer[index].length as number);
 }
 
 function howManyBytesToRead(n: number, state: ReadableState): number {
@@ -914,8 +917,12 @@ function read(this: $Node.Readable, state: ReadableState, n: number) {
           ((state[kState] & Flag.Decoder) === 0 && state.length) ||
           ((state[kState] & Flag.Flowing) !== 0 && state.length)
         ) {
-          n = state.buffer[state.bufferIndex].length as number;
-          break everything;
+          const buffer = state.buffer;
+          const index = state.bufferIndex;
+          if (buffer.length - index !== 1) {
+            n = buffer[index].length as number;
+            break everything;
+          }
         }
         n = state.length;
       }

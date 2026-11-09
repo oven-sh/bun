@@ -4431,6 +4431,20 @@ declare module "bun" {
     /**
      * Retrieve a stored credential from the operating system's secure storage.
      *
+     * @param service The service or application name
+     * @param name The account name, username, or resource identifier within the service
+     * @returns The stored credential value, or null if not found
+     *
+     * @example
+     * ```ts
+     * const password = await Bun.secrets.get("my-database", "admin");
+     * ```
+     */
+    get(service: string, name: string): Promise<string | null>;
+
+    /**
+     * Retrieve a stored credential from the operating system's secure storage.
+     *
      * @param options The service and name identifying the credential
      * @returns The stored credential value, or null if not found
      *
@@ -4476,10 +4490,28 @@ declare module "bun" {
      * Store or update a credential in the operating system's secure storage.
      *
      * If a credential already exists for the given service/name combination, it is replaced.
+     * An empty string deletes the credential if it exists, the same as calling `delete()`.
+     *
+     * Pass an options object instead to set `allowUnrestrictedAccess` or `persist`.
+     *
+     * @param service The service or application name
+     * @param name The account name, username, or resource identifier within the service
+     * @param value The secret value to store, such as a password, API key, or token
+     *
+     * @example
+     * ```ts
+     * await Bun.secrets.set("openai-api", "production", "sk-proj-xxxxxxxxxxxxxxxxxxxx");
+     * ```
+     */
+    set(service: string, name: string, value: string): Promise<void>;
+
+    /**
+     * Store or update a credential in the operating system's secure storage.
+     *
+     * If a credential already exists for the given service/name combination, it is replaced.
      * The credential is encrypted by the operating system and only accessible to the current user.
      *
      * @param options The service and name identifying the credential, and the value to store
-     * @param value The secret value to store, such as a password, API key, or token
      *
      * @example
      * ```ts
@@ -4593,6 +4625,20 @@ declare module "bun" {
        */
       persist?: "local" | "enterprise" | undefined;
     }): Promise<void>;
+
+    /**
+     * Delete a stored credential from the operating system's secure storage.
+     *
+     * @param service The service or application name
+     * @param name The account name, username, or resource identifier within the service
+     * @returns true if a credential was deleted, false if not found
+     *
+     * @example
+     * ```ts
+     * const deleted = await Bun.secrets.delete("my-app", "api-key");
+     * ```
+     */
+    delete(service: string, name: string): Promise<boolean>;
 
     /**
      * Delete a stored credential from the operating system's secure storage.

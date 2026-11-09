@@ -86,6 +86,20 @@ tsd
   )
   .is<Promise<boolean>>();
 
+tsd.expectType(Bun.secrets.get("hey", "hey")).is<Promise<string | null>>();
+tsd.expectType(Bun.secrets.set("hey", "hey", "hey")).is<Promise<void>>();
+tsd.expectType(Bun.secrets.delete("hey", "hey")).is<Promise<boolean>>();
+// @ts-expect-error - the value is not optional
+Bun.secrets.set("hey", "hey");
+// @ts-expect-error - the name is not optional
+Bun.secrets.get("hey");
+// @ts-expect-error - the name is not optional
+Bun.secrets.delete("hey");
+// The options stay the parameters that a wrapper or a mock reads from the types.
+tsd.expectType<Parameters<typeof Bun.secrets.get>>().is<[options: { service: string; name: string }]>();
+tsd.expectType<Parameters<typeof Bun.secrets.delete>>().is<[options: { service: string; name: string }]>();
+tsd.expectType<Parameters<typeof Bun.secrets.set>[0]["value"]>().is<string>();
+
 tsd
   .expectType(
     Bun.mmap("./data.bin", {

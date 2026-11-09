@@ -11,6 +11,14 @@ describe("Bun.secrets argument validation", () => {
       () => Bun.secrets.set({ service: "a\0b", name: "test", value: "v" }),
       () => Bun.secrets.set({ service: "test", name: "a\0b", value: "v" }),
       () => Bun.secrets.set({ service: "test", name: "test", value: "a\0b" }),
+      // The same strings without an options object. A call that reaches this check was parsed.
+      () => Bun.secrets.get("a\0b", "test"),
+      () => Bun.secrets.get("test", "a\0b"),
+      () => Bun.secrets.delete("a\0b", "test"),
+      () => Bun.secrets.delete("test", "a\0b"),
+      () => Bun.secrets.set("a\0b", "test", "v"),
+      () => Bun.secrets.set("test", "a\0b", "v"),
+      () => Bun.secrets.set("test", "test", "a\0b"),
     ];
 
     for (const fn of cases) {
@@ -24,6 +32,33 @@ describe("Bun.secrets argument validation", () => {
       expect(thrown.code).toBe("ERR_INVALID_ARG_VALUE");
       expect(thrown.message).toBe("Expected service, name, and value to be strings without null bytes");
     }
+  });
+
+  // With fewer strings than the operation takes, the first argument has to be the options object.
+  test.each([
+    // @ts-expect-error - testing invalid input
+    ["get(service)", () => Bun.secrets.get("service")],
+    // @ts-expect-error - testing invalid input
+    ["get(service, 5)", () => Bun.secrets.get("service", 5)],
+    // @ts-expect-error - testing invalid input
+    ["delete(service)", () => Bun.secrets.delete("service")],
+    // @ts-expect-error - testing invalid input
+    ["delete(service, 5)", () => Bun.secrets.delete("service", 5)],
+    // @ts-expect-error - testing invalid input
+    ["set(service, name)", () => Bun.secrets.set("service", "name")],
+    // @ts-expect-error - testing invalid input
+    ["set(service, name, 5)", () => Bun.secrets.set("service", "name", 5)],
+  ])("%s is not a call without an options object", (_, call) => {
+    let thrown: any;
+    try {
+      call();
+    } catch (error) {
+      thrown = error;
+    }
+    expect({ code: thrown?.code, message: thrown?.message }).toEqual({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "Expected options to be an object",
+    });
   });
 
   // macOS and Linux ignore `persist`, so set() validates it before it reaches a backend.

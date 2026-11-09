@@ -2767,6 +2767,36 @@ describe("bundler", () => {
       },
       out: `@layer x;@import "https://example.com/e.css" layer(y);`,
     },
+    // Only "z" is out of its place, and nothing else declares it.
+    ConditionalImportOfAnAssetAheadOfAStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.svg" layer(z) screen;
+          @import "./a.css";
+        `,
+        "/a.svg": `<svg/>`,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css" layer(y);
+          .a { c: d }
+        `,
+      },
+      out: `@layer x;@import "https://example.com/e.css" layer(y);@media screen{@layer z;}.a{c:d}`,
+    },
+    ConditionalImportOfACycleAheadOfAStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer(z) screen;
+          @import "./a.css";
+        `,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css" layer(y);
+          .a { c: d }
+        `,
+      },
+      out: `@layer x;@import "https://example.com/e.css" layer(y);@media screen{@layer z;}.a{c:d}`,
+    },
     // Browsers accept an "@import" behind an unknown at-rule, and it applies once.
     ImportBehindAnUnknownAtRule: {
       files: {

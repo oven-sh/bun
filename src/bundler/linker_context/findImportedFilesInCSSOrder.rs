@@ -423,6 +423,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             }
             _ => false,
         };
+        // An entry that declares only the layers of an import that was not loaded must
+        // not keep a later statement behind the hoisted imports.
+        let continues_prefix = |entry: &CssImportOrder| {
+            is_statement(entry)
+                || matches!(&entry.kind, CssImportOrderKind::Layers(layers) if layers.inner().is_empty())
+        };
         let mut is_at_layer_prefix = true;
         for entry in order.slice() {
             if (is_statement(entry) && is_at_layer_prefix)
@@ -433,7 +439,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
-            is_at_layer_prefix &= is_statement(entry);
+            is_at_layer_prefix &= continues_prefix(entry);
         }
 
         // Pass 2: Append everything that we didn't pull out in pass 1
@@ -447,7 +453,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
-            is_at_layer_prefix &= is_statement(entry);
+            is_at_layer_prefix &= continues_prefix(entry);
         }
 
         memcpy_and_reset(&mut order, &mut wip_order);

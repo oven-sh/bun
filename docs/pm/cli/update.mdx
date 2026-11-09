@@ -20,7 +20,16 @@ bun update zod
 bun update jquery@3            # move the package.json entry to the newest 3.x
 bun update '@types/*'
 bun update '@babel/*' '!@babel/core'
+bun update '!react' '!react-dom'   # everything except these two
+bun update '!{react,react-dom}'    # the same
 ```
+
+An argument is a pattern when it starts with `!` or contains `*`. With [`--dev`, `--prod`, `--no-optional`](#--dev---prod---no-optional) or [`--depth 0`](#--depth-0), every argument is a pattern. In a pattern:
+
+- `*` matches any characters except the `/` of a scoped name: `'*eslint*'` does not match `@typescript-eslint/parser`, and `'@typescript-eslint/*'` does. A pattern that is only `*` matches every package.
+- `?` matches one character, and `[ab]` matches one character of a set.
+- `{a,b}` and `@(a|b)` match one of their alternatives.
+- A leading `!` excludes what the rest of the pattern matches. An exclusion that matches no package is not an error. An exclusion that cannot match a package name is an error: `'!a,b'` and `'!(a|b)'` are not lists, and `'!{a,b'` is not closed.
 
 `bun update <package>` updates `<package>` everywhere it appears in `bun.lock` and leaves everything else alone. This works for transitive dependencies too — `bun update caniuse-lite` picks up a nested fix without adding it to your `package.json`. A name that isn't in `bun.lock` is an error.
 

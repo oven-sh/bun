@@ -1987,7 +1987,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDbStatusFunction, (JSC::JSGlobalObject * 
 
     JSValue opValue = callFrame->argument(1);
     double opNumber = opValue.isNumber() ? opValue.asNumber() : std::numeric_limits<double>::quiet_NaN();
-    if (opNumber != std::trunc(opNumber)) {
+    if (!std::isfinite(opNumber) || opNumber != std::trunc(opNumber)) {
         throwTypeError(lexicalGlobalObject, scope, "Expected op to be an integer"_s);
         return {};
     }

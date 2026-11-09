@@ -3024,6 +3024,7 @@ describe("Database#status", () => {
     expect(() => db.status(2 ** 40)).toThrow(new RangeError("Unknown sqlite3_db_status op: 1099511627776"));
     expect(() => db.status("SQLITE_DBSTATUS_CACHE_USED")).toThrow(new TypeError("Expected op to be an integer"));
     expect(() => db.status(1.5)).toThrow(new TypeError("Expected op to be an integer"));
+    expect(() => db.status(Infinity)).toThrow(new TypeError("Expected op to be an integer"));
     expect(() => db.status()).toThrow(new TypeError("Expected op to be an integer"));
     db.close();
     expect(() => db.status(constants.SQLITE_DBSTATUS_CACHE_USED)).toThrow("Database has closed");

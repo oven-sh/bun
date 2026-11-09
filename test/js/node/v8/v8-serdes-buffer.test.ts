@@ -1,6 +1,6 @@
 import { deserialize as jscDeserialize, serialize as jscSerialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { BlockList } from "node:net";
 import { types } from "node:util";
 import v8 from "node:v8";
@@ -111,6 +111,7 @@ describe("v8 serialize/deserialize Buffer identity", () => {
           Object.defineProperty(TAProto, k, { get() { throw new Error("tampered " + k); } });
         }
         Uint8Array.prototype.subarray = () => { throw new Error("tampered subarray"); };
+        Object.defineProperty(Uint8Array.prototype, "constructor", { get() { throw new Error("tampered constructor"); } });
         globalThis.Uint8Array = function Poisoned() { throw new Error("tampered ctor"); };
         const jsc = require("bun:jsc");
         jsc.serialize = () => { throw new Error("tampered bun:jsc serialize"); };
@@ -284,16 +285,16 @@ describe("v8.serialize of a value that cannot be cloned", () => {
     expect(thrownBy(() => v8.serialize({ value, buffer: Buffer.from("x") }))).toBe(own);
   });
 
-  test(
-    "a value that nests too deep throws a RangeError",
-    () => {
-      const root: { next?: object } = {};
-      for (let i = 0, object = root; i < 50_000; i++) object = object.next = {};
-      expect(() => v8.serialize(root)).toThrow(RangeError);
-    },
-    // The walk of 40,000 levels takes about two seconds in a debug build.
-    isDebug || isASAN ? 30_000 : undefined,
-  );
+  test("a value that nests too deep throws a RangeError", () => {
+    // The serializer stops at 40,000 levels. Sets are the cheapest containers to nest that deep.
+    const root = new Set<unknown>();
+    for (let i = 0, set = root; i < 41_000; i++) {
+      const inner = new Set<unknown>();
+      set.add(inner);
+      set = inner;
+    }
+    expect(() => v8.serialize(root)).toThrow(RangeError);
+  });
 
   test("a CryptoKey that is not extractable throws an Error", async () => {
     const secret = new TextEncoder().encode("THIS-IS-SECRET-KEY-MATERIAL-32B!");
@@ -382,25 +383,38 @@ describe("v8.deserialize of bytes that are no serialized value", () => {
     }
   });
 
-  test(
-    "bytes that nest too deep throw a RangeError",
-    () => {
-      const prefix = new Uint8Array(jscSerialize(undefined));
-      const header = prefix.subarray(0, prefix.length - 1);
-      // An array of one element, at index 0.
-      const open = new Uint8Array([1, 1, 0, 0, 0, 0, 0, 0, 0]);
-      const close = new Uint8Array([255, 255, 255, 255]);
-      const depth = 50_000;
-      const payload = new Uint8Array(header.length + open.length * depth + 1 + close.length * depth);
-      payload.set(header, 0);
-      let offset = header.length;
-      for (let i = 0; i < depth; i++, offset += open.length) payload.set(open, offset);
-      payload[offset++] = prefix[prefix.length - 1];
-      for (let i = 0; i < depth; i++, offset += close.length) payload.set(close, offset);
-      expect(() => v8.deserialize(payload)).toThrow(RangeError);
-    },
-    isDebug || isASAN ? 30_000 : undefined,
-  );
+  test("an input whose ArrayBuffer is detached throws an Error", () => {
+    for (const make of [
+      (buffer: ArrayBuffer) => new Uint8Array(buffer),
+      (buffer: ArrayBuffer) => Buffer.from(buffer),
+      (buffer: ArrayBuffer) => new DataView(buffer),
+      (buffer: ArrayBuffer) => buffer,
+    ]) {
+      const buffer = new ArrayBuffer(16);
+      const input = make(buffer);
+      structuredClone(buffer, { transfer: [buffer] });
+      expectPlainError(
+        thrownBy(() => v8.deserialize(input as Uint8Array)),
+        unable,
+      );
+    }
+  });
+
+  test("bytes that nest too deep throw a RangeError", () => {
+    const prefix = new Uint8Array(jscSerialize(undefined));
+    const header = prefix.subarray(0, prefix.length - 1);
+    // An array of one element, at index 0. The deserializer stops at 40,000 levels.
+    const open = new Uint8Array([1, 1, 0, 0, 0, 0, 0, 0, 0]);
+    const close = new Uint8Array([255, 255, 255, 255]);
+    const depth = 41_000;
+    const payload = new Uint8Array(header.length + open.length * depth + 1 + close.length * depth);
+    payload.set(header, 0);
+    let offset = header.length;
+    for (let i = 0; i < depth; i++, offset += open.length) payload.set(open, offset);
+    payload[offset++] = prefix[prefix.length - 1];
+    for (let i = 0; i < depth; i++, offset += close.length) payload.set(close, offset);
+    expect(() => v8.deserialize(payload)).toThrow(RangeError);
+  });
 
   test("structured clone's own entry still throws a TypeError", () => {
     const error = thrownBy(() => jscDeserialize(withoutLastBytes(v8.serialize({ a: 1, b: "two" }))));

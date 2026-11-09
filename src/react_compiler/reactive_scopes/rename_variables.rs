@@ -322,7 +322,9 @@ fn collect_referenced_globals(block: &ReactiveBlock, env: &Environment) -> HashS
     let mut globals = HashSet::default();
     collect_globals_block(block, &mut globals, env);
     // Not in upstream, which prints no JSX factory. Codegen prints it, and no instruction names it.
-    if let Some(root) = env.jsx_factory_root {
+    if let Some(root) = env.jsx_factory_root
+        && env.output_mode != OutputMode::Lint
+    {
         globals.insert(root);
     }
     globals

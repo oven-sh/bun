@@ -5041,6 +5041,44 @@ describe("react-compiler does not name a local like", () => {
   });
 });
 
+// Lint mode generates no code, so a report has each name as written. Only a fixture pragma asks for that mode here.
+test.skipIf(!isDebug && !isASAN)("react-compiler in lint mode renames no local for the JSX factory", async () => {
+  using dir = tempDir("react-compiler-lint-names", {
+    "entry.jsx": `
+      // @outputMode:"lint" @validatePreserveExistingMemoizationGuarantees
+      import React, { useMemo } from "react";
+      export function Component(props) {
+        let data;
+        {
+          const React = props.list;
+          data = useMemo(() => {
+            const x = [];
+            x.push(React?.a);
+            if (props.cond) {
+              x.push(React.a);
+            }
+            return x;
+          }, [React?.a, props.cond]);
+        }
+        return <div>{data}</div>;
+      }
+    `,
+  });
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    jsx: { runtime: "classic" },
+    reactCompiler: true,
+    // @ts-expect-error test-only option, not in bun-types
+    reactCompilerParseTestPragmas: true,
+    throw: false,
+  });
+  expect(result.logs.map(log => String(log.message).match(/The inferred dependency was .*?\]/)?.[0])).toEqual([
+    "The inferred dependency was `React`, but the source dependencies were [React?.a, props.cond]",
+  ]);
+});
+
 // Three passes kept one copy of their work per basic block or per nesting
 // level of a value, so memory grew with the square of the size of a component
 // that has no loop at all. The fixpoint in InferMutationAliasingEffects kept

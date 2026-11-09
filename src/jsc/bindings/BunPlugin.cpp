@@ -4213,11 +4213,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    // After a reset a load reads its file, so the sources that `bun test --isolate` keeps go, except those of the packages that vi.resetModules() leaves loaded.
-    Bun::IsolatedModuleCache::dropForReset(vm, [&](const String& key, Zig::SourceProvider& source) {
-        return !callFactoriesAgain && isExternalizedByVitest(globalObject, key, source);
-    });
-
     ModulesToEvict evict;
     evict.all = true;
     evict.exceptPackages = !callFactoriesAgain;
@@ -4225,6 +4220,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
     Bun::willResetModules(globalObject, callFactoriesAgain ? "jest.resetModules()"_s : "vi.resetModules()"_s, evict.exceptPackages);
     RETURN_IF_EXCEPTION(scope, {});
 #endif
+    // After a reset a load reads its file, so the sources that `bun test --isolate` keeps go, except those of the packages that vi.resetModules() leaves loaded.
+    Bun::IsolatedModuleCache::dropForReset(vm, [&](const String& key, Zig::SourceProvider& source) {
+        return evict.exceptPackages && isExternalizedByVitest(globalObject, key, source);
+    });
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     RETURN_IF_EXCEPTION(scope, {});
     // As in Vitest, vi.dynamicImportSettled() doesn't wait for what was being loaded before.

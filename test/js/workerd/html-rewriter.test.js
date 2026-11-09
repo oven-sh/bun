@@ -1790,66 +1790,77 @@ describe("HTMLRewriter", () => {
       textarea: "<textarea>a&lt;b &amp;&amp; c&gt;d</textarea>",
     });
 
-    // The recipes from the docs.
-    const config = { html: "</script><script>alert(1)</script><!--", n: 1 };
-    const json = insert('script[type="application/json"]', '<script type="application/json"></script><p>n</p>', el =>
-      el.setInnerContent(JSON.stringify(config).replaceAll("<", "\\u003c"), { html: true }),
-    );
-    expect(json).toBe(
-      String.raw`<script type="application/json">{"html":"\u003c/script>\u003cscript>alert(1)\u003c/script>\u003c!--","n":1}</script><p>n</p>`,
-    );
-    expect(JSON.parse(json.slice('<script type="application/json">'.length, json.indexOf("</script>")))).toEqual(
-      config,
-    );
-
     expect(insert("style", "<style>b{}</style>", el => el.prepend("ul>li{color:red} ", { html: true }))).toBe(
       "<style>ul>li{color:red} b{}</style>",
     );
 
-    // A tag selector also matches <svg><style>, whose contents are markup to
-    // the HTML parser (entities are decoded, tags are live). The recipe keeps
-    // the default escaping there and keys on namespaceURI.
-    const namespaces = [];
-    const css = "i>b{} <img src=x onerror=alert(1)>";
+    // The recipes from the docs, as the docs write them.
+    const HTML_NS = "http://www.w3.org/1999/xhtml";
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const seen = [];
+
+    // JSON: one handler for an HTML <script> and for a <script> inside <svg>.
+    const config = { html: "</script><script>alert(1)</script><!--", amp: "&lt;&amp;", n: 1 };
+    const inHtml = String.raw`{"html":"\u003c/script>\u003cscript>alert(1)\u003c/script>\u003c!--","amp":"&lt;&amp;","n":1}`;
+    const inSvg = String.raw`{"html":"\u003c/script&gt;\u003cscript&gt;alert(1)\u003c/script&gt;\u003c!--","amp":"&amp;lt;&amp;amp;","n":1}`;
     expect(
-      insert("style", "<svg><style>a{}</style></svg><style>b{}</style>", el => {
-        namespaces.push(el.namespaceURI);
-        if (el.namespaceURI !== "http://www.w3.org/1999/xhtml") el.append(css);
-        else el.append(css, { html: true });
-      }),
+      insert(
+        'script[type="application/json"]',
+        '<script type="application/json"></script><svg><script type="application/json"></script></svg><p>n</p>',
+        el => {
+          seen.push(el.namespaceURI);
+          const json = JSON.stringify(config).replaceAll("<", "\\u003c");
+          el.setInnerContent(json, { html: el.namespaceURI === HTML_NS });
+        },
+      ),
     ).toBe(
-      "<svg><style>a{}i&gt;b{} &lt;img src=x onerror=alert(1)&gt;</style></svg>" +
-        "<style>b{}i>b{} <img src=x onerror=alert(1)></style>",
+      `<script type="application/json">${inHtml}</script>` +
+        `<svg><script type="application/json">${inSvg}</script></svg><p>n</p>`,
     );
+    // An HTML <script> hands its text to the reader as is. Inside <svg> the parser
+    // first decodes character references, here the three entities that Bun wrote.
+    // The replace() stands in for that step. Both readers get the value back.
+    const decoded = inSvg.replace(/&(lt|gt|amp);/g, (_, name) => ({ lt: "<", gt: ">", amp: "&" })[name]);
+    expect([JSON.parse(inHtml), JSON.parse(decoded)]).toEqual([config, config]);
 
-    // The JSON selector matches an <svg> script too. The parser decodes character
-    // references there, so the documented route is the default escaping.
-    expect(
-      insert('script[type="application/json"]', '<svg><script type="application/json"></script></svg>', el => {
-        namespaces.push(el.namespaceURI);
-        el.setInnerContent(JSON.stringify({ a: "&lt;<" }));
-      }),
-    ).toBe('<svg><script type="application/json">{"a":"&amp;lt;&lt;"}</script></svg>');
-    expect(namespaces).toEqual([
-      "http://www.w3.org/2000/svg",
-      "http://www.w3.org/1999/xhtml",
-      "http://www.w3.org/2000/svg",
-    ]);
+    // CSS: a tag selector also matches <svg><style>, whose contents are markup to
+    // the HTML parser (entities are decoded, tags are live). The recipe keeps the
+    // default escaping there and keys on namespaceURI.
+    const styleRecipe = css => el => {
+      seen.push(el.namespaceURI);
+      if (el.namespaceURI !== HTML_NS) {
+        el.setInnerContent(css);
+        return;
+      }
+      if (/<\/style/i.test(css)) throw new Error("CSS must not contain </style");
+      el.setInnerContent(css, { html: true });
+    };
+    const page = "<svg><style>a{}</style></svg><style>b{}</style>";
+    expect(insert("style", page, styleRecipe("i>b{} <img src=x onerror=alert(1)>"))).toBe(
+      "<svg><style>i&gt;b{} &lt;img src=x onerror=alert(1)&gt;</style></svg>" +
+        "<style>i>b{} <img src=x onerror=alert(1)></style>",
+    );
+    expect(() => insert("style", page, styleRecipe("a{}</STYLE ><img src=x>"))).toThrow("CSS must not contain </style");
+    expect(seen).toEqual([HTML_NS, SVG_NS, SVG_NS, HTML_NS, SVG_NS, HTML_NS]);
 
-    // Two { html: true } insertions into one element land back to back. A check of
-    // each string alone misses a sequence that the two form together, which is why
-    // the docs say to join the strings and check the result.
+    // With { html: true } a string lands right next to what is already there: the
+    // element's own text, or another inserted string. A check of the string alone
+    // misses a sequence that forms at that joint. setInnerContent leaves no joint.
     const parts = ["b{}</sty", "le><p>"];
     expect({
       eachPartPasses: parts.every(part => !/<\/style/i.test(part)),
       joinedIsCaught: /<\/style/i.test(parts.join("")),
-      output: insert("style", "<style>a{}</style>", el => {
+      twoAppends: insert("style", "<style>a{}</style>", el => {
         for (const part of parts) el.append(part, { html: true });
       }),
+      appendAfterExistingText: insert("style", "<style>a{}</sty</style>", el => el.append(parts[1], { html: true })),
+      setInnerContent: insert("style", "<style>a{}</sty</style>", el => el.setInnerContent(parts[1], { html: true })),
     }).toEqual({
       eachPartPasses: true,
       joinedIsCaught: true,
-      output: "<style>a{}b{}</style><p></style>",
+      twoAppends: "<style>a{}b{}</style><p></style>",
+      appendAfterExistingText: "<style>a{}</style><p></style>",
+      setInnerContent: "<style>le><p></style>",
     });
   });
 

@@ -57,14 +57,20 @@ declare namespace HTMLRewriterTypes {
      * does not decode entities. To insert script or style source there, pass
      * `{ html: true }` and first reject (ASCII case-insensitively) a string
      * that contains `</style` for a `<style>`, or any of `</script`,
-     * `<script` or `<!--` for a `<script>`. To insert more than one string
-     * into the same element, join the strings and check the result. For
-     * JSON, write `JSON.stringify(v).replaceAll("<", "\\u003c")`.
+     * `<script` or `<!--` for a `<script>`. For JSON, write
+     * `JSON.stringify(v).replaceAll("<", "\\u003c")`.
      *
-     * This applies to HTML elements only
+     * That check is complete for `setInnerContent`, which replaces the
+     * element's text. With `append` and `prepend`, one of these sequences
+     * can also form where the string meets the element's existing text or
+     * another inserted string. Join strings that go into the same element
+     * and check the result.
+     *
+     * The advice for script and style source is for HTML elements only
      * (`el.namespaceURI === "http://www.w3.org/1999/xhtml"`). Inside `<svg>`
      * or `<math>` the contents of `<style>` and `<script>` are markup to the
-     * HTML parser, so keep the default escaping there.
+     * HTML parser. `{ html: true }` writes raw content there too and can add
+     * markup, so keep the default escaping there.
      *
      * @default false
      */

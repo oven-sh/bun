@@ -355,7 +355,10 @@ const HTML_NS = "http://www.w3.org/1999/xhtml";
 // thing. The replacement is lossless and leaves no "<", so nothing can end the element.
 rewriter.on('script[type="application/json"]', {
   element(el) {
-    el.setInnerContent(JSON.stringify(state).replaceAll("<", "\\u003c"), { html: true });
+    const json = JSON.stringify(state).replaceAll("<", "\\u003c");
+    // The selector also matches a <script> inside <svg> or <math>. The parser decodes
+    // entities there, so the default escaping is the right one for those.
+    el.setInnerContent(json, { html: el.namespaceURI === HTML_NS });
   },
 });
 
@@ -365,20 +368,20 @@ rewriter.on("style", {
     // A tag selector also matches <svg><style> and <math><style>. To the HTML parser
     // their contents are ordinary markup, so the default escaping is the right one there.
     if (el.namespaceURI !== HTML_NS) {
-      el.append(css);
+      el.setInnerContent(css);
       return;
     }
     if (/<\/style/i.test(css)) throw new Error("CSS must not contain </style");
-    el.append(css, { html: true });
+    el.setInnerContent(css, { html: true });
   },
 });
 ```
 
-Keep the `namespaceURI` check. Inside `<svg>` or `<math>`, the parser reads the contents of `<style>` and `<script>` as markup and decodes entities. A string that you write there with `{ html: true }` can add elements even when it contains no end tag. The JSON recipe cannot add an element there, because its output has no `<`. The parser still decodes character references such as `&amp;` in that output, so use the default escaping for JSON there too.
+Keep the `namespaceURI` check in both recipes. Inside `<svg>` or `<math>`, the parser reads the contents of `<style>` and `<script>` as markup and decodes entities. A string that you write there with `{ html: true }` can add elements even when it contains no end tag. The JSON string has no `<`, so it cannot add an element there. The parser still decodes character references such as `&amp;` in it, which changes the value. The default escaping keeps CSS and JSON exact there.
 
 For JavaScript source in an HTML `<script>`, refuse `</script`, `<script` and `<!--` in the same way, whatever the letter case. After `<!--` and `<script`, the parser does not treat the next `</script>` as the end of the element, so the markup after it becomes script text. The HTML standard describes these [restrictions for contents of script elements](https://html.spec.whatwg.org/multipage/scripting.html#restrictions-for-contents-of-script-elements).
 
-To insert more than one string into the same element, join the strings and check the result. Two strings that each pass the check can form one of these sequences together.
+`setInnerContent` replaces the element's text, so the string stands alone and the check is complete. `append` and `prepend` keep the existing text, and one of these sequences can also form where your string meets that text. For example, existing text that ends in `</sty` and a string that starts with `le>` end the element together. Use `append` and `prepend` with `{ html: true }` only on text that you control. To insert more than one string into the same element, join the strings and check the result.
 
 A browser decodes entities in `<textarea>` and `<title>` as it does in ordinary elements, so the default escaping is correct there.
 

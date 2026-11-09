@@ -2,7 +2,6 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use super::entry_points::find_default_entry_point;
-use super::library::find_default_library_entry_points;
 use super::{BundlerInputs, CompileProduct, CompileRequest, ExecutableSettings, RequestOrigin};
 pub(super) use crate::cli::build_command::compile_outfile;
 use crate::cli::command::Context;
@@ -42,7 +41,8 @@ struct ExecutableName {
 }
 
 pub(super) fn use_default_entry_point(ctx: &mut ContextData) {
-    if !ctx.args.entry_points.is_empty() {
+    // `Library::find` finds the entry points of a library.
+    if !ctx.args.entry_points.is_empty() || ctx.bundler_options.library {
         return;
     }
     let working_directory = ctx
@@ -50,12 +50,6 @@ pub(super) fn use_default_entry_point(ctx: &mut ContextData) {
         .absolute_working_dir
         .as_deref()
         .expect("Arguments::parse sets the working directory");
-    if ctx.bundler_options.library {
-        let found =
-            find_default_library_entry_points(working_directory, &ctx.bundler_options.outdir);
-        ctx.args.entry_points = found.unwrap_or_else(|error| error.exit());
-        return;
-    }
     match find_default_entry_point(working_directory) {
         Ok(found) => {
             ctx.args.entry_points = vec![found.path];

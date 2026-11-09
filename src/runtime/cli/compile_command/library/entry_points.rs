@@ -2,7 +2,7 @@ use bun_ast::Expr;
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string_checked;
 
-use super::is_inside;
+use super::Outdir;
 
 const TYPESCRIPT_EXTENSIONS: [&[u8]; 3] = [b".ts", b".tsx", b".mts"];
 const DECLARATION_EXTENSIONS: [&[u8]; 2] = [b".d.ts", b".d.mts"];
@@ -20,10 +20,10 @@ const JAVASCRIPT_INDEX_FILES: [&[u8]; 4] =
 pub(super) fn find_entry_points(
     directory: &[u8],
     package_json: Option<&Expr>,
-    outdir: &[u8],
+    outdir: &Outdir,
 ) -> Vec<Box<[u8]>> {
     let find_source =
-        |written: &[u8]| find_file(directory, written).filter(|path| !is_inside(outdir, path));
+        |written: &[u8]| find_file(directory, written).filter(|path| !outdir.holds(path));
 
     let mut targets = Vec::new();
     if let Some(exports) = package_json.and_then(|root| root.get(b"exports")) {

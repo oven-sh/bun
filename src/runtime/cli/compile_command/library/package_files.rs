@@ -15,9 +15,9 @@ use bun_sema_driver::typed_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
 use super::typed_files::is_typed_file;
-use super::{Project, absolute_path};
+use super::{Library, Project, absolute_path};
 use crate::cli::check_command::CompilerOptions;
-use crate::cli::compile_command::build::asset_output_file;
+use crate::cli::compile_command::build::{asset_output_file, trim_trailing_separators};
 
 const FIELDS_COPIED_FIRST: [&[u8]; 11] = [
     b"name",
@@ -57,20 +57,18 @@ pub(super) struct PackageRequest<'a> {
 
 #[cold]
 pub(crate) fn add_package_files(
+    library: &Library,
     ctx: &ContextData,
     root_directory: &[u8],
     compiler_options: &CompilerOptions,
     log: &mut Log,
     output_files: &mut Vec<OutputFile>,
 ) {
-    let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
-    let project = Project::find(working_directory);
-    let outdir = absolute_path(working_directory, &ctx.bundler_options.outdir);
-    add_documents(&project.directory, output_files);
+    add_documents(&library.project.directory, output_files);
     let request = PackageRequest {
-        project: &project,
-        outdir: &outdir,
-        outdir_as_written: &ctx.bundler_options.outdir,
+        project: &library.project,
+        outdir: &library.outdir.folder,
+        outdir_as_written: &library.outdir.as_written,
         root_directory,
         entry_point_kind: match ctx.bundler_options.transform_only {
             true => OutputKind::Chunk,
@@ -521,7 +519,11 @@ pub(super) fn write_package_json(
     };
     let mut warnings = Warnings {
         log,
-        package_json: [request.outdir_as_written, b"/package.json"].concat(),
+        package_json: [
+            trim_trailing_separators(request.outdir_as_written),
+            b"/package.json",
+        ]
+        .concat(),
     };
 
     let mut package = E::Object::default();

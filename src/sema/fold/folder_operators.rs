@@ -20,15 +20,8 @@ impl<'s> Folder<'_, 's> {
         let kind = hir[e].kind;
         match kind {
             ExprKind::Unary { op, operand } => {
-                if op == UnOp::Not
-                    && let ExprKind::Unary {
-                        op: UnOp::Not,
-                        operand: inner,
-                    } = hir[self.as_written(operand)].kind
-                {
-                    self.note_operand_in_place(e, inner, |folder| {
-                        folder.minifies_syntax() && folder.is_boolean_by_shape(inner)
-                    });
+                if op == UnOp::Not {
+                    self.note_seen_in_place(e, |folder| folder.find_operand_of_double_not(operand));
                 }
                 let folded = self.fold_unary(op, operand);
                 if op == UnOp::Typeof && matches!(folded.value, Value::Unknown) {
@@ -175,6 +168,7 @@ impl<'s> Folder<'_, 's> {
     fn fold_binary(&mut self, e: ExprId, op: BinOp, left: ExprId, right: ExprId) -> Folded {
         match op {
             BinOp::Add => {
+                self.note_seen_in_place(e, |folder| folder.find_text_joined_with_no_text(e));
                 let sum = self.fold_addition(e);
                 let find_text = |folder: &Self| folder.find_text_joined_with_nothing(left, right);
                 if let (Value::Unknown, Some(text)) =

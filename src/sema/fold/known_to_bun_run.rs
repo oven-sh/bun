@@ -259,6 +259,84 @@ impl<'s> Folder<'_, 's> {
             if matches!(hir[self.as_written(object)].kind, ExprKind::ImportMeta))
     }
 
+    /// `!!x` is `x` to the parser under minify syntax where `x` is a boolean by the way it is written.
+    pub(super) fn find_operand_of_double_not(&self, operand: ExprId) -> Option<ExprId> {
+        let ExprKind::Unary {
+            op: UnOp::Not,
+            operand: inner,
+        } = self.hir[self.seen_by_bun_run(operand)].kind
+        else {
+            return None;
+        };
+        (self.minifies_syntax() && self.is_boolean_by_shape(inner)).then_some(inner)
+    }
+
+    /// `"" + x` and `x + ""` are `x` to the parser where `x` is a text by the way it is written. A text that it holds itself
+    /// it joins in front of "" only where it holds it in 8 bits.
+    pub(super) fn find_text_joined_with_no_text(&self, sum: ExprId) -> Option<ExprId> {
+        let ExprKind::Binary {
+            op: BinOp::Add,
+            left,
+            right,
+        } = self.hir[sum].kind
+        else {
+            return None;
+        };
+        let is_no_text = |e: ExprId| {
+            let e = self.seen_by_bun_run(e);
+            matches!(self.folded(e).value, Value::Known(value)
+                if self.evaluator.to_constant(value) == Constant::String(known::empty))
+                && self.is_literal_to_bun_run(e)
+        };
+        let is_held_by_parser = |e: ExprId| {
+            let e = self.seen_by_bun_run(e);
+            matches!(self.folded(e).value, Value::Known(_)) && self.is_literal_to_bun_run(e)
+        };
+        let text = match (is_no_text(left), is_no_text(right)) {
+            (true, _) => right,
+            (false, true) if !is_held_by_parser(left) => left,
+            _ => return None,
+        };
+        (self.computes_with_constants(sum) && self.is_text_by_shape(text)).then_some(text)
+    }
+
+    /// Whether `known_primitive` of the parser says that `e` is a text.
+    fn is_text_by_shape(&self, e: ExprId) -> bool {
+        let hir = self.hir;
+        let e = self.seen_by_bun_run(e);
+        if let Value::Known(value) = self.folded(e).value
+            && self.is_literal_to_bun_run(e)
+        {
+            return self.evaluator.is_string(value);
+        }
+        match hir[e].kind {
+            ExprKind::String(_) | ExprKind::Template { .. } => true,
+            ExprKind::Unary {
+                op: UnOp::Typeof, ..
+            } => true,
+            ExprKind::Binary { op, left, right } => match op {
+                BinOp::Add => {
+                    let addends = self.collect_addends(e);
+                    addends.iter().any(|&addend| self.is_text_by_shape(addend))
+                }
+                BinOp::And | BinOp::Or => {
+                    self.is_text_by_shape(left) && self.is_text_by_shape(right)
+                }
+                BinOp::Nullish => self.is_text_by_shape(left),
+                BinOp::Comma => self.is_text_by_shape(right),
+                _ => false,
+            },
+            ExprKind::Assign {
+                op: None, value, ..
+            } => self.is_text_by_shape(value),
+            ExprKind::Cond { branches, .. } => {
+                let branches = hir.branches(branches);
+                self.is_text_by_shape(branches.yes) && self.is_text_by_shape(branches.no)
+            }
+            _ => false,
+        }
+    }
+
     /// Whether `known_primitive` of the parser says that `e` is a boolean.
     pub(super) fn is_boolean_by_shape(&self, e: ExprId) -> bool {
         let hir = self.hir;
@@ -292,6 +370,7 @@ impl<'s> Folder<'_, 's> {
                     | BinOp::In
                     | BinOp::Instanceof => {}
                     BinOp::And | BinOp::Or => pending.extend([left, right]),
+                    BinOp::Nullish => pending.push(left),
                     BinOp::Comma => pending.push(right),
                     _ => return false,
                 },
@@ -481,6 +560,10 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn tells_condition_by_shape(&self, e: ExprId) -> bool {
         let is_known = |operand: ExprId| self.is_truthy_in_bun_run(operand).is_some();
+        let seen = self.seen_by_bun_run(e);
+        if seen != e {
+            return is_known(seen);
+        }
         match self.hir[e].kind {
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Typeof | UnOp::Void => true,
@@ -577,6 +660,15 @@ impl<'s> Folder<'_, 's> {
                 }
                 ExprKind::Binary { .. } => Some(false),
                 ExprKind::Assign { op: Some(op), .. } => (!is_logical(op)).then_some(false),
+                ExprKind::Cond { test, branches } => {
+                    let branches = hir.branches(branches);
+                    match self.is_test_truthy_in_bun_run(test) {
+                        Some(true) => e = branches.yes,
+                        Some(false) => e = branches.no,
+                        None => return None,
+                    }
+                    continue;
+                }
                 _ => None,
             };
         }
@@ -793,7 +885,10 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn compares_bigint_written_with_radix(&self, left: ExprId, right: ExprId) -> bool {
-        let is_nullish = |e: ExprId| self.is_nullish_in_bun_run(e) == Some(true);
+        let is_nullish = |e: ExprId| {
+            self.is_nullish_in_bun_run(e) == Some(true)
+                && self.is_literal_to_bun_run(self.seen_by_bun_run(e))
+        };
         let is_digit = |byte: &&u8| **byte != b'_';
         let written = (
             self.find_written_bigint(left),

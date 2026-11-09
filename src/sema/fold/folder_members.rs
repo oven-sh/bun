@@ -22,6 +22,8 @@ struct Read {
     has_other_items: bool,
     /// `new Array(..)` where the parser makes the list of its arguments.
     list_made_of: Option<CallId>,
+    /// The items of a list in which the items of spread lists stand.
+    items_with_spreads: Option<IdList<ExprId>>,
     /// What the object arm of the parser asks and its array arm does not: it puts nothing in place of a callee or behind a `?.`.
     is_kept_by_its_form: bool,
 }
@@ -31,6 +33,10 @@ impl Folder<'_, '_> {
         let hir = self.hir;
         let Some((object, key)) = hir.member_key(access) else {
             return Folded::UNKNOWN;
+        };
+        let key = match key {
+            MemberKey::Computed(index) => hir.index_member_key(self.as_written(index)),
+            key => key,
         };
         let literal = self.find_in_place(object);
         if self.is_assignment_target(access) || self.is_delete_operand(access) {
@@ -43,6 +49,7 @@ impl Folder<'_, '_> {
             index: None,
             has_other_items: false,
             list_made_of: None,
+            items_with_spreads: None,
             is_kept_by_its_form: false,
         };
         match hir[literal].kind {
@@ -96,19 +103,20 @@ impl Folder<'_, '_> {
 
     /// The item at `position` and the number of items, as the parser has them: where a list that is spread has items, the
     /// items of every such list stand in the list itself.
-    fn find_item(&self, items: IdList<ExprId>, position: usize) -> Option<(ExprId, usize)> {
+    fn find_item(&self, items: IdList<ExprId>, position: usize) -> Option<(ExprId, usize, bool)> {
         let hir = self.hir;
-        if !hir.ids(items).any(|item| {
-            self.find_items_of_spread(item)
-                .is_some_and(|it| !it.is_empty())
-        }) {
+        let has_items = |item: ExprId| {
+            let spread = self.find_items_of_spread(item);
+            spread.is_some_and(|list| !list.is_empty())
+        };
+        if !hir.ids(items).any(has_items) {
             let item = (position < items.len()).then(|| hir.id_at(items, position))?;
-            return Some((item, items.len()));
+            return Some((item, items.len(), false));
         }
         let mut inlined: SmallVec<[ExprId; 8]> = SmallVec::new();
         self.push_items_of_parser(items, &mut inlined);
         let item = *inlined.get(position)?;
-        Some((item, inlined.len()))
+        Some((item, inlined.len(), true))
     }
 
     fn find_items_of_spread(&self, item: ExprId) -> Option<IdList<ExprId>> {
@@ -116,10 +124,27 @@ impl Folder<'_, '_> {
         let ExprKind::Spread(list) = hir[item].kind else {
             return None;
         };
-        match hir[self.as_written(list)].kind {
+        match hir[self.find_in_place(list)].kind {
             ExprKind::Array(items) => Some(items),
             _ => None,
         }
+    }
+
+    /// Whether `bun run` has the lists that are spread in `items` where the build has them.
+    fn sees_spread_lists(&self, items: IdList<ExprId>) -> bool {
+        let hir = self.hir;
+        hir.ids(items).all(|item| {
+            let ExprKind::Spread(list) = hir[item].kind else {
+                return true;
+            };
+            let in_place = self.find_in_place(list);
+            match hir[in_place].kind {
+                ExprKind::Array(inner) => {
+                    self.seen_by_bun_run(list) == in_place && self.sees_spread_lists(inner)
+                }
+                _ => true,
+            }
+        })
     }
 
     fn push_items_of_parser(&self, items: IdList<ExprId>, inlined: &mut SmallVec<[ExprId; 8]>) {
@@ -140,7 +165,7 @@ impl Folder<'_, '_> {
         let Some((position, index)) = self.find_index(key) else {
             return Folded::UNKNOWN;
         };
-        let Some((item, count)) = self.find_item(items, position) else {
+        let Some((item, count, has_spread_lists)) = self.find_item(items, position) else {
             return Folded::UNKNOWN;
         };
         let has_other_items = count > 1;
@@ -152,6 +177,7 @@ impl Folder<'_, '_> {
         let read = Read {
             index: Some(index),
             has_other_items,
+            items_with_spreads: has_spread_lists.then_some(items),
             ..read
         };
         self.put_in_place(read, item)
@@ -278,6 +304,7 @@ impl Folder<'_, '_> {
                 && index.is_none_or(|index| folder.is_folded_by_bun_run(index))
                 && folder.seen_by_bun_run(read.object) == read.literal
                 && read.list_made_of.is_none_or(|call| folder.makes_list(call))
+                && (read.items_with_spreads).is_none_or(|items| folder.sees_spread_lists(items))
                 && (!read.has_other_items || folder.is_removed_if_unused_by_bun_run(read.literal))
         };
         let folded = match hir[member].kind {

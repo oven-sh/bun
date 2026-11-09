@@ -220,10 +220,7 @@ impl Folder<'_, '_> {
                             }
                         }
                     }
-                    BinOp::Add => [(left, right), (right, left)].iter().any(|&(text, empty)| {
-                        self.is_always_string(text)
-                            && matches!(hir[empty].kind, ExprKind::String(it) if it == known::empty)
-                    }),
+                    BinOp::Add => self.seen_by_bun_run(e) != e,
                     _ => false,
                 }
             }
@@ -238,8 +235,9 @@ impl Folder<'_, '_> {
             }
             ExprKind::Array(items) => {
                 let spread_array = |item: ExprId| match hir[item].kind {
-                    ExprKind::Spread(inner) if matches!(hir[inner].kind, ExprKind::Array(_)) => {
-                        Some(inner)
+                    ExprKind::Spread(inner) => {
+                        let list = self.seen_by_bun_run(inner);
+                        matches!(hir[list].kind, ExprKind::Array(_)).then_some(list)
                     }
                     _ => None,
                 };
@@ -371,14 +369,17 @@ impl Folder<'_, '_> {
 
     pub(super) fn is_always_string(&self, e: ExprId) -> bool {
         let defined = self.find_user_defined_value(e);
+        let seen = self.seen_by_bun_run(e);
         matches!(
-            self.hir[self.seen_by_bun_run(e)].kind,
+            self.hir[seen].kind,
             ExprKind::String(_)
                 | ExprKind::Unary {
                     op: UnOp::Typeof,
                     ..
                 }
         ) || matches!(defined, Some(DefineValue::Constant(Constant::String(_))))
+            || matches!(self.folded(seen).value, Value::Known(value)
+                if self.evaluator.is_string(value) && self.is_literal_to_bun_run(seen))
     }
 
     fn is_always_primitive(&self, e: ExprId) -> bool {
@@ -387,6 +388,9 @@ impl Folder<'_, '_> {
         while let Some(e) = pending.pop() {
             let e = self.seen_by_bun_run(e);
             if let Some(DefineValue::Constant(_)) = self.find_user_defined_value(e) {
+                continue;
+            }
+            if self.is_literal_to_bun_run(e) {
                 continue;
             }
             match hir[e].kind {

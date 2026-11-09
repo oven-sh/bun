@@ -86,7 +86,7 @@ impl Folder<'_, '_> {
         member: ExprId,
         is_in_place: impl Fn(&Self) -> bool,
     ) {
-        self.note_in_place(read, member, true, is_in_place);
+        self.note_in_place(read, member, |folder| is_in_place(folder).then_some(member));
     }
 
     /// `operand` stands where `operator` is written, where the parser leaves nothing else of it: for `bun run` where `is_in_place`
@@ -97,31 +97,40 @@ impl Folder<'_, '_> {
         operand: ExprId,
         is_in_place: impl Fn(&Self) -> bool,
     ) {
-        self.note_in_place(operator, operand, false, is_in_place);
+        self.note_seen_in_place(operator, |folder| is_in_place(folder).then_some(operand));
+    }
+
+    /// What `find` gives stands where `e` is written: for `bun run` with the flags that it is asked under, and for the build
+    /// what it gives under minify syntax.
+    pub(super) fn note_seen_in_place(&mut self, e: ExprId, find: impl Fn(&Self) -> Option<ExprId>) {
+        self.note_in_place(e, ExprId::NONE, find);
     }
 
     fn note_in_place(
         &mut self,
         e: ExprId,
-        node: ExprId,
-        is_read_by_build: bool,
-        is_in_place: impl Fn(&Self) -> bool,
+        read_by_build: ExprId,
+        find: impl Fn(&Self) -> Option<ExprId>,
     ) {
-        let seen_if_in_place = |folder: &Self| match is_in_place(folder) {
-            true => folder.seen_by_bun_run(node),
-            false => ExprId::NONE,
+        let seen = |folder: &Self| {
+            let node = find(folder);
+            (
+                node,
+                node.map_or(ExprId::NONE, |node| folder.seen_by_bun_run(node)),
+            )
         };
-        let in_bun_run = seen_if_in_place(self);
-        let under_minify_syntax = match self.inputs.minifies_syntax {
-            true => in_bun_run,
-            false => self.holds_under_minify_syntax(seen_if_in_place),
+        let (node, in_bun_run) = seen(self);
+        let (node_under_minify_syntax, under_minify_syntax) = match self.inputs.minifies_syntax {
+            true => (node, in_bun_run),
+            false => self.holds_under_minify_syntax(seen),
         };
-        if !is_read_by_build && under_minify_syntax.is_none() && in_bun_run.is_none() {
+        let Some(node) = node.or(node_under_minify_syntax).or(read_by_build.some()) else {
             return;
-        }
+        };
+        let read_by_build = read_by_build.some().or(node_under_minify_syntax);
         let in_place = InPlace {
             node,
-            for_build: self.find_in_place(node),
+            for_build: read_by_build.map_or(ExprId::NONE, |node| self.find_in_place(node)),
             in_bun_run,
             under_minify_syntax,
         };

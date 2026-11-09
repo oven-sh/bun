@@ -573,7 +573,6 @@ fn add_package_to_set(
             // installs. What it depends on is still visited.
             if lockfile.can_trust_by_name(
                 lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
-                lockfile.str(&lockfile.packages.items_name()[dep_package_id as usize]),
                 &lockfile.packages.items_resolution()[dep_package_id as usize],
             ) {
                 let _ = handle_oom(set.get_or_put(dep_package_id));

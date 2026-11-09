@@ -741,7 +741,7 @@ describe("a macro call in a data: URL module", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr.split('error: Macros cannot be run from a "data:" URL module.').length - 1).toBe(2);
       expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
       expect(exitCode).toBe(1);

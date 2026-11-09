@@ -45,6 +45,8 @@ struct Checks<'a, 'c> {
     /// If set, acorn notices the error currently being checked only once it has read this far: the start of a token,
     /// or the end of a node, after which it has also read the token that follows. See [`Checks::when_read_to`].
     noticed: Option<u32>,
+    /// Errors acorn reports once it has parsed the whole file, after every other check: `(at, message)`.
+    at_end: SmallVec<[(u32, Vec<u8>); 1]>,
     /// True if the tree is complete because the parser reported nothing.
     is_whole: bool,
     /// Report only what Prettier rejects. See [`babel_rejection`].
@@ -135,6 +137,7 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
         first: None,
         all: Vec::new(),
         noticed: None,
+        at_end: SmallVec::new(),
         is_whole: true,
         is_babel: false,
         is_oxc: false,
@@ -269,6 +272,7 @@ pub(super) fn babel_rejection<'a>(
         first: None,
         all: Vec::new(),
         noticed: None,
+        at_end: SmallVec::new(),
         is_whole: true,
         is_babel: true,
         is_oxc: false,
@@ -277,6 +281,7 @@ pub(super) fn babel_rejection<'a>(
     };
     checks.keywords_as_identifiers();
     checks.early_errors();
+    checks.end_of_file();
     checks.first.map(|it| it.1)
 }
 
@@ -471,6 +476,7 @@ pub(super) fn first_error<'a>(
         first: None,
         all: Vec::new(),
         noticed: None,
+        at_end: SmallVec::new(),
         is_whole: parser_error.is_none(),
         is_babel: false,
         is_oxc: false,
@@ -497,6 +503,7 @@ pub(super) fn first_error<'a>(
     // acorn checks the parameters once it has parsed an expression body, and after the `"use strict"` of a block
     // body.
     checks.parameters();
+    checks.end_of_file();
     checks.first.map(|it| it.1)
 }
 
@@ -664,6 +671,7 @@ fn oxc_checks<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) ->
         first: None,
         all: Vec::new(),
         noticed: None,
+        at_end: SmallVec::new(),
         // Don't use the scopes, which treat every file as a module.
         is_whole: false,
         is_babel: false,
@@ -772,6 +780,14 @@ impl<'a, 'c> Checks<'a, 'c> {
         let before = self.noticed.replace(noticed);
         check(self);
         self.noticed = before;
+    }
+
+    /// Records the errors acorn reports once it has parsed the whole file.
+    fn end_of_file(&mut self) {
+        let len = self.file.text().len() as u32;
+        for (at, message) in std::mem::take(&mut self.at_end) {
+            self.when_read_to(len, |checks| checks.fail(at, message));
+        }
     }
 
     /// Runs `check` for an error about the identifier at `at`. acorn's `parseIdent` reads the token after the

@@ -2403,8 +2403,6 @@ impl<'a> Checks<'a, '_> {
         // Each exported name, where it is, and where acorn checks it: after the `default` keyword, after the name in a
         // list, or after the whole declaration.
         let mut exported: Vec<(&'a [u8], u32, u32)> = Vec::new();
-        // acorn checks these at the end of the file, after every other check.
-        let mut undefined: SmallVec<[(u32, Vec<u8>); 2]> = SmallVec::new();
         for it in file.body() {
             match it.kind() {
                 StmtKind::ExportDefault(_) => {
@@ -2432,7 +2430,7 @@ impl<'a> Checks<'a, '_> {
                         {
                             let message =
                                 [b"Export '", local.bytes(), b"' is not defined"].concat();
-                            undefined.push((local.start(), message));
+                            self.at_end.push((local.start(), message));
                         }
                     }
                 }
@@ -2469,9 +2467,6 @@ impl<'a> Checks<'a, '_> {
         for (name, at, noticed) in duplicates {
             let message = [b"Duplicate export '", name, b"'"].concat();
             self.when_read_to(noticed, |checks| checks.fail(at, message));
-        }
-        for (at, message) in undefined {
-            self.when_read_to(file.text().len() as u32, |checks| checks.fail(at, message));
         }
     }
 

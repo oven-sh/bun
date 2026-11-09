@@ -1312,6 +1312,7 @@ describe.concurrent("bun lint", () => {
         'export { missing }; export { x as a } from "m"; export const a = 1;',
         "1:62: Parsing error: Duplicate export 'a'",
       ],
+      ["export { missing }; var f = (a, a) => a", "1:33: Parsing error: Argument name clash"],
       // Two errors deferred to one token come in source order.
       ["export var a; export var b; export var b, a;", "1:40: Parsing error: Duplicate export 'b'"],
       [

@@ -131,7 +131,8 @@ It includes the following environment variables when available:
 | ----------------------------------------------------------------------- | ------------- | ---------------------- |
 | `GITHUB_RUN_ID`, `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY`, `CI_JOB_URL` | `ci`          | CI build information   |
 | `GITHUB_SHA`, `CI_COMMIT_SHA`, `GIT_SHA`                                | `commit`      | Git commit identifiers |
-| System hostname                                                         | `hostname`    | Machine hostname       |
+
+Every `<testsuite>` also has a `hostname` attribute with the machine's hostname. On Windows the attribute is empty.
 
 #### Current Limitations
 

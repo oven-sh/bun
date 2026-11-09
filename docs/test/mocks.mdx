@@ -77,7 +77,7 @@ Mock functions implement the following properties and methods:
 | `mockFn.mock.lastCall`                    | Arguments of the most recent call              |
 | `mockFn.mockClear()`                      | Clears call history                            |
 | `mockFn.mockReset()`                      | Clears call history and removes implementation |
-| `mockFn.mockRestore()`                    | Restores original implementation               |
+| `mockFn.mockRestore()`                    | Like `mockReset()`, and undoes a `spyOn()`     |
 | `mockFn.mockImplementation(fn)`           | Sets a new implementation                      |
 | `mockFn.mockImplementationOnce(fn)`       | Sets implementation for next call only         |
 | `mockFn.mockName(name)`                   | Sets the mock name                             |
@@ -91,6 +91,8 @@ Mock functions implement the following properties and methods:
 | `mockFn.mockThrow(value)`                 | Throws `value` on every call                   |
 | `mockFn.mockThrowOnce(value)`             | Throws `value` on the next call only           |
 | `mockFn.withImplementation(fn, callback)` | Temporarily changes implementation             |
+
+The implementation that `mockReset()` and `mockRestore()` remove includes the `fn` of `mock(fn)` and `jest.fn(fn)`, so the mock then returns `undefined`. A `vi.fn(fn)` mock goes back to `fn` instead. On a spy, `mockRestore()` also puts back the property that `spyOn()` replaced.
 
 ### Practical Examples
 
@@ -414,7 +416,9 @@ Outside a factory, use `await vi.importActual("./math")` or `jest.requireActual(
 
 This also works when the mocked module is part of an import cycle. The modules that import it still get the mock.
 
-If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
+If the factory loads another module with `import()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
+
+`require()` and `jest.requireActual()` do the same for a module that hasn't started to load. They can't wait, so they throw if the module is an ES module that an `import` is already loading and that waits for the mock. For example, a test file with a `vi.mock("./dep", factory)` call first imports `./user`, which imports `./dep`, and the factory calls `require("./user")`. The error is `Circular import: "/path/to/dep.ts" is imported by a module that its own mock factory loads while it runs`, or `require() async module "/path/to/user.ts" is unsupported` after an `await` in the factory. Use `await import("./user")` in an `async` factory instead.
 
 When one import leads to several mocked modules, Bun calls their factories one at a time, in the order the modules are imported, as Vitest does. A factory that imports another mocked module gets that mock, whose factory is called first if it hasn't been.
 

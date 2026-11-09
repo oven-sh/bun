@@ -408,6 +408,8 @@ Each specifier accepts any value and converts it the way `util.format` does. For
 
 When a row is an object, `$name` and `$user.name` print its properties, and `$#` prints the test case's index. If the row has no `name` property, `$name` is left as is.
 
+In a `test.each` or `describe.each` title, an array shows at most 100 items. An array of the numbers 0 to 119 ends with `98, 99, ... 20 more items ]`. When `test` or `describe` comes from `"vitest"`, the title follows [Vitest's format](#importing-from-vitest) instead. `%j` prints every item of an array that `JSON.stringify()` accepts.
+
 #### Examples
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
@@ -496,7 +498,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
 | Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
 | `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
-| Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
+| Values in a `test.each` title                             | Bun's format: `{ a: "x" }`           | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
 | `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |
 | `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                                    |
 | Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks               |

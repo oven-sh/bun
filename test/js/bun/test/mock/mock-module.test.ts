@@ -1088,6 +1088,274 @@ describe.concurrent("the original of a mocked module", () => {
   });
 });
 
+// One run of `bun test` for each isolation mode, and not at the same time as other runs: --isolate=modules takes seconds to start in a debug build.
+describe("a module that a plugin gave to build.module()", () => {
+  const nextFile = `
+    import { expect, test } from "bun:test";
+    test("the next file gets the plugin's module", async () => {
+      const environment = await import("$app/environment");
+      expect([environment.dev, environment.f(), require("$app/environment").dev]).toEqual([true, "real", true]);
+    });
+  `;
+  const seesMockOfPreload = `
+    import { expect, test } from "bun:test";
+    test("a file gets the preload's mock", async () => {
+      expect((await import("$app/mocked-by-preload")).from).toBe("the preload's mock");
+    });
+  `;
+  // Test files run in the order of their names.
+  const files = {
+    "preload.ts": `
+      import { mock } from "bun:test";
+      globalThis.calls = {};
+      globalThis.give = (name, from) =>
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module(name, () => ({ exports: { from }, loader: "object" }));
+          },
+        });
+      Bun.plugin({
+        name: "virtual",
+        setup(build) {
+          build.module("$app/environment", () => ({ exports: { dev: true, f() { return "real"; } }, loader: "object" }));
+          build.module("$app/mocked-by-preload", () => ({ exports: { from: "the plugin" }, loader: "object" }));
+          for (const name of ["mocked", "removed"])
+            build.module("counted:" + name, () => {
+              calls[name] = (calls[name] ?? 0) + 1;
+              return { exports: { f() { return name; } }, loader: "object" };
+            });
+          build.module("virtual:later", async () => (await 0, { exports: { from: "the plugin" }, loader: "object" }));
+          build.module("virtual/code.ts", () => ({ contents: 'export const from: string = "the plugin";' }));
+          build.module("virtual/data.json", () => ({ contents: '{ "from": "the plugin" }' }));
+        },
+      });
+      mock.module("$app/mocked-by-preload", () => ({ from: "the preload's mock" }));
+      mock.module("virtual:preload-mocks", () => ({ from: "the preload's mock" }));
+      mock.module("virtual:preload-mocks-and-imports", () => ({ from: "the preload's mock" }));
+      await import("virtual:preload-mocks-and-imports");
+      mock.module("virtual:preload-mocks-then-gives", () => ({ from: "the preload's mock" }));
+      give("virtual:preload-mocks-then-gives", "the plugin");
+    `,
+
+    "a1-mocked.test.ts": `
+      import { expect, mock, test } from "bun:test";
+      mock.module("$app/environment", () => ({ dev: false }));
+      test("mock.module() mocks it", async () => {
+        expect((await import("$app/environment")).dev).toBe(false);
+      });
+    `,
+    "a2-next-file.test.ts": nextFile,
+    "a3-removed.test.ts": `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      const seen = async () => (await import("$app/environment")).dev;
+
+      test("the plugin's module is back when the mock is removed", async () => {
+        vi.doMock("$app/environment", () => ({ dev: false }));
+        expect(await seen()).toBe(false);
+        vi.doUnmock("$app/environment");
+        expect([require("$app/environment").dev, await seen()]).toEqual([true, true]);
+
+        {
+          using _ = vi.doMock("$app/environment", () => ({ dev: false }));
+          expect(await seen()).toBe(false);
+        }
+        expect(await seen()).toBe(true);
+
+        vi.doMock("$app/environment", () => ({ dev: false }));
+        vi.doMock("$app/environment", () => ({ dev: "mocked again" }));
+        expect(await seen()).toBe("mocked again");
+        vi.doUnmock("$app/environment");
+        expect(await seen()).toBe(true);
+
+        jest.doMock("$app/environment", () => ({ dev: false }));
+        expect(await seen()).toBe(false);
+        jest.resetModules();
+        expect(await seen()).toBe(false);
+        jest.dontMock("$app/environment");
+        expect(await seen()).toBe(true);
+
+        const failed = new Error("the factory failed");
+        vi.doMock("$app/environment", async () => {
+          await 0;
+          throw failed;
+        });
+        await expect(import("$app/environment")).rejects.toBe(failed);
+        vi.doUnmock("$app/environment");
+        expect(await seen()).toBe(true);
+      });
+
+      // Last: the end of the file removes this mock.
+      test("mock.module() updates the loaded module in place", async () => {
+        const loaded = await import("$app/environment");
+        expect(loaded.dev).toBe(true);
+        mock.module("$app/environment", () => ({ dev: false }));
+        expect([loaded.dev, loaded.f()]).toEqual([false, "real"]);
+      });
+    `,
+    "a4-next-file.test.ts": nextFile,
+
+    "b1-mocked-by-preload.test.ts": seesMockOfPreload,
+    "b2-mocked-by-preload.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test("a file mocks it again and removes its mock", async () => {
+        vi.doMock("$app/mocked-by-preload", () => ({ from: "the file's mock" }));
+        expect((await import("$app/mocked-by-preload")).from).toBe("the file's mock");
+        vi.doUnmock("$app/mocked-by-preload");
+        expect((await import("$app/mocked-by-preload")).from).toBe("the plugin");
+      });
+    `,
+    "b3-mocked-by-preload.test.ts": seesMockOfPreload,
+
+    "gives-imported.ts": `give("virtual:imported", "the plugin");`,
+    // The mocks are hoisted above the import and the call that give the modules, and the later call has the name.
+    "c1-hoisted.test.ts": `
+      import { expect, jest, test, vi } from "bun:test";
+      import "./gives-imported";
+      for (const name of ["virtual:automocked", "virtual:spied", "virtual:of-jest", "virtual:partly"]) give(name, "the plugin");
+      vi.mock("virtual:imported");
+      vi.mock("virtual:automocked");
+      vi.mock("virtual:spied", { spy: true });
+      jest.mock("virtual:of-jest");
+      vi.mock("virtual:partly", async importOriginal => ({ ...(await importOriginal()) }));
+      test("a hoisted mock that needs the original, in a file that gives the module", async () => {
+        const names = ["virtual:imported", "virtual:automocked", "virtual:spied", "virtual:of-jest", "virtual:partly"];
+        const seen = await Promise.all(names.map(async name => (await import(name)).from));
+        expect(seen).toEqual(["the plugin", "the plugin", "the plugin", "the plugin", "the plugin"]);
+      });
+    `,
+    "c3-given-after-mock.test.ts": `
+      import { expect, mock, test, vi } from "bun:test";
+      const seen = async name => [(await import(name)).from, require(name).from];
+
+      test("of mock.module() and build.module(), the later call has the name", async () => {
+        mock.module("virtual:late", () => ({ from: "the mock" }));
+        expect(await seen("virtual:late")).toEqual(["the mock", "the mock"]);
+        give("virtual:late", "the plugin");
+        expect(await seen("virtual:late")).toEqual(["the plugin", "the plugin"]);
+      });
+
+      test("a module that is loaded, mocked and given again", async () => {
+        give("virtual:again", "plugin 1");
+        expect(await seen("virtual:again")).toEqual(["plugin 1", "plugin 1"]);
+        vi.doMock("virtual:again", () => ({ from: "the mock" }));
+        expect(await seen("virtual:again")).toEqual(["the mock", "the mock"]);
+        give("virtual:again", "plugin 2");
+        expect(await seen("virtual:again")).toEqual(["plugin 2", "plugin 2"]);
+        // The mock ended where the module was given again.
+        vi.doUnmock("virtual:again");
+        expect(await seen("virtual:again")).toEqual(["plugin 2", "plugin 2"]);
+      });
+
+      test("a loaded module that mock.module() updated in place has its own exports again", async () => {
+        give("virtual:patched", "plugin 1");
+        const loaded = await import("virtual:patched");
+        mock.module("virtual:patched", () => ({ from: "the mock" }));
+        expect(loaded.from).toBe("the mock");
+        give("virtual:patched", "plugin 2");
+        expect([loaded.from, ...(await seen("virtual:patched"))]).toEqual(["plugin 1", "plugin 2", "plugin 2"]);
+      });
+    `,
+    "c4-mocked-by-preload.test.ts": `
+      import { expect, test } from "bun:test";
+      const from = async name => (await import(name)).from;
+      test("in a preload too, the later call has the name", async () => {
+        expect(await from("virtual:preload-mocks-then-gives")).toBe("the plugin");
+      });
+      const mockedByPreload = ["virtual:preload-mocks", "virtual:preload-mocks-and-imports"];
+      test.each(mockedByPreload)("build.module() in a test file ends the preload's mock of %s", async name => {
+        expect(await from(name)).toBe("the preload's mock");
+        give(name, "the file's plugin");
+        expect(await from(name)).toBe("the file's plugin");
+      });
+    `,
+    "c5-mocked-by-preload-next-file.test.ts": `
+      import { expect, test } from "bun:test";
+      const from = async name => (await import(name)).from;
+      const mockedByPreload = ["virtual:preload-mocks", "virtual:preload-mocks-and-imports"];
+      test.each(mockedByPreload)("the next file has the preload's mock of %s again", async name => {
+        expect(await from(name)).toBe("the preload's mock");
+      });
+    `,
+
+    "e1-calls.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      vi.mock("counted:mocked", () => ({ f: "mocked" }));
+      test("the plugin's function is not called for a mock, and once after the mock", async () => {
+        expect((await import("counted:mocked")).f).toBe("mocked");
+
+        vi.doMock("counted:removed", () => ({ f: "mocked" }));
+        expect((await import("counted:removed")).f).toBe("mocked");
+        vi.doUnmock("counted:removed");
+        expect((await import("counted:removed")).f()).toBe("removed");
+        expect((await import("counted:removed")).f()).toBe("removed");
+
+        expect(calls).toEqual({ removed: 1 });
+      });
+    `,
+
+    "f1-answers.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test.each(["virtual:later", "virtual/code.ts", "virtual/data.json"])("a plugin that answers with a promise or with contents: %s", async name => {
+        vi.doMock(name, () => ({ from: "the mock" }));
+        expect((await import(name)).from).toBe("the mock");
+        vi.doUnmock(name);
+        expect((await import(name)).from).toBe("the plugin");
+      });
+    `,
+
+    // Last: it takes every plugin away.
+    "z-clear-all.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test("Bun.plugin.clearAll() takes the module and its mock away", async () => {
+        vi.doMock("$app/environment", () => ({ dev: false }));
+        expect((await import("$app/environment")).dev).toBe(false);
+        Bun.plugin.clearAll();
+        await expect(import("$app/environment")).rejects.toThrow("Cannot find package '$app'");
+      });
+    `,
+  };
+  const tests = 5 + 3 + 1 + 3 + 5 + 1 + 3 + 1;
+
+  test.each(isolationFlags)("is there again after a mock of its name %j", async args => {
+    await expectFixturesToPass(files, tests, ["--preload", "./preload.ts", ...args]);
+  });
+
+  // build.module() takes the path of a file of the project too: the key that an import of the file has.
+  const filesWithPath = {
+    "preload.ts": `
+      Bun.plugin({
+        name: "virtual",
+        setup(build) {
+          build.module(Bun.resolveSync("./file.ts", import.meta.dir), () => ({ exports: { from: "the plugin" }, loader: "object" }));
+        },
+      });
+    `,
+    "file.ts": `export const from = "the file";`,
+    "a1-file.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test("a mock of a file that the plugin gave a module for", async () => {
+        vi.doMock("./file.ts", () => ({ from: "the mock" }));
+        expect((await import("./file.ts")).from).toBe("the mock");
+        vi.doUnmock("./file.ts");
+        expect((await import("./file.ts")).from).toBe("the plugin");
+        // Last: the end of the file removes this mock.
+        vi.doMock("./file.ts", () => ({ from: "the mock" }));
+      });
+    `,
+    "a2-file-next-file.test.ts": `
+      import { expect, test } from "bun:test";
+      test("the next file gets the plugin's module for the file", async () => {
+        expect((await import("./file.ts")).from).toBe("the plugin");
+      });
+    `,
+  };
+
+  test.each(isolationFlags)("under the path of a file, is there again after a mock of the file %j", async args => {
+    await expectFixturesToPass(filesWithPath, 2, ["--preload", "./preload.ts", ...args]);
+  });
+});
+
 describe.concurrent("a module mocked without a factory", () => {
   test("has mocks of the original's exports", async () => {
     await expectFixturesToPass(

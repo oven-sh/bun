@@ -25,6 +25,10 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets its own copy of a module that waits for the mock, imported before the mock
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets the original of the module that is being mocked
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
+# These give build.module() the path of a file of the run. A compiled run refuses that in the preload, and runs no test file: "module() cannot replace a module that was compiled ahead of time".
+test/js/bun/test/mock/mock-module.test.ts: a module that a plugin gave to build.module() > under the path of a file, is there again after a mock of the file ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a module that a plugin gave to build.module() > under the path of a file, is there again after a mock of the file ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a module that a plugin gave to build.module() > under the path of a file, is there again after a mock of the file []
 test/js/bun/test/mock/mock-module.test.ts: a module that is being fetched as a mock whose factory has not returned > loads as the real module or the new mock once the mock is removed or replaced
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock that is removed before import() calls its factory

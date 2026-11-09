@@ -74,12 +74,12 @@ test("wat", async () => {
 }, 500); // test must run in <500ms
 ```
 
-When Bun times out a test, that attempt fails. A test with [`retry`](#retries-and-repeats) attempts left runs again and can still pass. Bun does not interrupt JavaScript that is running, so a loop that never ends is never timed out. Bun also kills the child processes that the test started before the timeout, so they don't linger as zombie processes.
+When Bun times out a test, that attempt fails. With [`retry`](#retries-and-repeats), the test can run again and still pass. Bun does not interrupt JavaScript that is running, so a loop that never ends is never timed out. Bun also kills the child processes that the test started before the timeout, so they don't linger as zombie processes. Bun does not do this for tests that run concurrently.
 
 After a timeout, the test function can still run code:
 
-- A function that waits for a promise resumes when the promise settles, which can be during a later test. If the run ends first, the function never resumes, and its `finally` blocks never run. With [`--isolate`](/test/parallel#--isolate), which `--parallel` implies, the same happens when the test file ends first.
-- A function that waits for a [matcher that returns a promise](#promises), such as `.resolves`, `.rejects` or `expect.poll()`, resumes at the timeout. The matcher rejects with `The test that called this matcher has ended`, and the `await` throws that error.
+- A function that waits for a promise resumes when the promise settles, which can be during a later test. If `bun test` exits first, the function never resumes, and its `finally` blocks never run. With [`--isolate`](/test/parallel#--isolate), which `--parallel` implies, the same happens when the test file ends first.
+- A function that waits for a [matcher that returns a promise](#promises), such as `.resolves`, `.rejects` or `expect.poll()`, resumes at the timeout. The matcher rejects with `The test that called this matcher has ended`, and the `await` throws that error. In a concurrent test, a matcher that starts after the test's first `await` is not rejected at the timeout.
 
 The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.
 

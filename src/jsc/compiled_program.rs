@@ -154,6 +154,7 @@ pub extern "C" fn Bun__AOT__onResolveAnswersFor(
         Some(&mut query_of_answer),
         ResolveMode::Esm,
         false,
+        true,
     );
     let answer = match answer {
         Ok(None) => return DECLINED,
@@ -196,6 +197,7 @@ fn find_without_plugins(
         importer,
         Some(query),
         ResolveMode::Esm,
+        true,
     );
     Bun__AOT__setPluginsSilent(false);
     // SAFETY: as above.

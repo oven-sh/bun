@@ -2659,6 +2659,7 @@ describe("expect()", () => {
         throw new RangeError("key");
       },
     };
+    const hasTheKey = isVitest ? "to not have property" : "Expected path: not";
     expect({ true: 1 }).toHaveProperty(ANY([true]), 1);
     expect({ 1: 1 }).toHaveProperty(ANY([1n]), 1);
     expect({ null: 1 }).toHaveProperty(ANY([null]), 1);
@@ -2666,7 +2667,7 @@ describe("expect()", () => {
     expect({ a: 1 }).toHaveProperty(ANY([named]), 1);
     expect({ true: { a: 1 } }).toHaveProperty(ANY([true, named]), 1);
     expect({ a: 1 }).not.toHaveProperty(ANY([true]));
-    expect(() => expect({ true: 1 }).not.toHaveProperty(ANY([true]))).toThrow();
+    expect(() => expect({ true: 1 }).not.toHaveProperty(ANY([true]))).toThrow(hasTheKey);
     expect(() => expect({ a: 1 }).toHaveProperty(ANY([throws]))).toThrow(RangeError);
     expect(() => expect({ a: 1 }).not.toHaveProperty(ANY([throws]))).toThrow(RangeError);
   });

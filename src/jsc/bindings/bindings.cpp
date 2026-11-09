@@ -5298,24 +5298,24 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         JSValue currProp = value;
         auto* pathObject = path.toObject(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        forEachInArrayLike(globalObject, pathObject, [&](JSValue item) -> bool {
+        uint64_t length = toLength(globalObject, pathObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        for (uint64_t index = 0; index < length; index++) {
+            JSValue item = pathObject->getIndex(globalObject, index);
+            RETURN_IF_EXCEPTION(scope, {});
             Identifier propName = item.toPropertyKey(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             // In Vitest a Symbol in the path matches no key.
             if (isForVitest && propName.isSymbol()) {
-                currProp = {};
-                return false;
+                return {};
             }
 
             currProp = getPropertyOnPath(globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
-                return false;
+                return {};
             }
-
-            return true;
-        });
-        RETURN_IF_EXCEPTION(scope, {});
+        }
         return JSValue::encode(currProp);
     }
 

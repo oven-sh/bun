@@ -976,6 +976,445 @@ describe.concurrent("vi.setConfig", () => {
       expect(stderr).toContain("expected boolean but received string");
       expect(exitCode).toBe(1);
     });
+
+    // The tests of a group overlap through promises and immediates, not timers. Every run names its limit, because the default depends on the build.
+    describe("in a concurrent group", () => {
+      const made = (name: string) => ({
+        calls: [name],
+        returns: "changed",
+        method: "spied",
+        env: "1",
+        global: "number",
+      });
+      // "first" leaves its mocks and stubs behind. "second" makes its own, and still runs when "third" starts.
+      const group = (module: string, options: Record<string, boolean>) => `
+        import { test, vi } from "${module}";
+        vi.setConfig(${JSON.stringify(options)});
+        const state = name => {
+          const fn = vi.fn(() => "original");
+          const object = { method: () => "original" };
+          return {
+            change() {
+              fn(name);
+              fn.mockReturnValue("changed");
+              vi.spyOn(object, "method").mockReturnValue("spied");
+              vi.stubEnv(name, "1");
+              vi.stubGlobal(name, 1);
+            },
+            read: () => ({ calls: fn.mock.calls.flat(), returns: fn(), method: object.method(), env: process.env[name], global: typeof globalThis[name] }),
+          };
+        };
+        const left = state("LEFT"), own = state("OWN");
+        const third = Promise.withResolvers();
+        test("first", () => left.change());
+        test.concurrent("second", async () => {
+          const seen = { left: left.read() };
+          own.change();
+          await third.promise;
+          console.log(JSON.stringify({ ...seen, own: own.read() }));
+        });
+        test.concurrent("third", () => third.resolve());
+      `;
+
+      test.each([
+        ["vitest", {}, { calls: [] }],
+        ["bun:test", {}, {}],
+        ["bun:test", { clearMocks: true }, { calls: [] }],
+        ["bun:test", { mockReset: true }, { calls: [], returns: "original", method: "original" }],
+        ["bun:test", { restoreMocks: true }, { method: "original" }],
+        ["bun:test", { unstubEnvs: true }, { env: undefined }],
+        ["bun:test", { unstubGlobals: true }, { global: "undefined" }],
+        [
+          "vitest",
+          { clearMocks: true, mockReset: true, restoreMocks: true, unstubEnvs: true, unstubGlobals: true },
+          { calls: [], returns: "original", method: "original", env: undefined, global: "undefined" },
+        ],
+      ])(
+        "%j with %j: the first test is cleaned up, and the next start takes nothing from it",
+        async (module, options, cleaned) => {
+          const { stdout, stderr, exitCode } = await run(["test", "--max-concurrency=2"], {
+            "a.test.ts": group(module, options),
+          });
+          expect({
+            seen: stdout
+              .split("\n")
+              .filter(line => line.startsWith("{"))
+              .map(line => JSON.parse(line)),
+            results: results(stderr),
+            exitCode,
+          }).toEqual({
+            seen: [{ left: { ...made("LEFT"), ...cleaned }, own: made("OWN") }],
+            results: ["(pass) first", "(pass) third", "(pass) second"],
+            exitCode: 0,
+          });
+        },
+      );
+
+      // In each group, "running" has called its mock and still waits when another test starts.
+      const inFirstWindow = {
+        "a test starts": `
+          const started = gate();
+          test("running", async () => {
+            const fn = vi.fn();
+            fn();
+            await started.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+          test("neighbour", () => started.resolve());
+        `,
+        "a test from the other module starts": `
+          const started = gate();
+          other.concurrent("running", async () => {
+            const fn = vi.fn();
+            fn();
+            await started.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+          test("neighbour", () => started.resolve());
+        `,
+        "the mock is called in a microtask": `
+          const started = gate();
+          test("running", async () => {
+            const fn = vi.fn();
+            queueMicrotask(fn);
+            await started.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+          test("neighbour", () => started.resolve());
+        `,
+        "the mock is made in beforeEach": `
+          const started = gate();
+          let made;
+          beforeEach(() => {
+            made = vi.fn();
+            made();
+          });
+          test("running", async () => {
+            const fn = made;
+            await started.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+          test("neighbour", () => started.resolve());
+        `,
+        "the test that still runs is in afterEach": `
+          const started = gate();
+          let mine;
+          afterEach(async () => {
+            const fn = mine;
+            mine = undefined;
+            if (!fn) return;
+            await started.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+          test("running", () => {
+            mine = vi.fn();
+            mine();
+          });
+          test("neighbour", () => started.resolve());
+        `,
+      };
+      // These starts clean up beside a running test, as in Vitest, and "running" loses its call.
+      const later = {
+        "a test past the limit starts": `
+          const held = gate(), started = gate();
+          test("running", async () => {
+            await held.promise;
+            const fn = vi.fn();
+            fn();
+            await started.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+          test("holds the other slot", () => {
+            held.resolve();
+            return new Promise(resolve => setImmediate(resolve));
+          });
+          test("late", () => started.resolve());
+        `,
+        "a test ahead is retried": `
+          const called = gate(), retried = gate();
+          let attempts = 0;
+          test("retried", { retry: 1 }, async () => {
+            if (++attempts === 2) return retried.resolve();
+            await called.promise;
+            throw new Error("fails once");
+          });
+          test("running", async () => {
+            const fn = vi.fn();
+            fn();
+            called.resolve();
+            await retried.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+        `,
+        "a test behind is retried": `
+          const failed = gate(), retried = gate();
+          let attempts = 0;
+          test("running", async () => {
+            await failed.promise;
+            const fn = vi.fn();
+            fn();
+            await retried.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+          test("retried", { retry: 1 }, async () => {
+            if (++attempts === 2) return retried.resolve();
+            failed.resolve();
+            throw new Error("fails once");
+          });
+        `,
+        "a test is repeated": `
+          const ran = gate(), repeated = gate();
+          let runs = 0;
+          test("running", async () => {
+            await ran.promise;
+            const fn = vi.fn();
+            fn();
+            await repeated.promise;
+            expect(fn).toHaveBeenCalledTimes(1);
+          });
+          test("repeated", { repeats: 1 }, () => {
+            if (++runs === 2) return repeated.resolve();
+            ran.resolve();
+          });
+        `,
+      };
+
+      test.each([
+        ["vitest", "bun:test", ""],
+        ["bun:test", "vitest", "[test]\nclearMocks = true\n"],
+      ])(
+        "a running test keeps its calls beside a start in the first window, with tests from %j",
+        async (module, other, bunfig) => {
+          const { stderr, exitCode } = await run(["test", "--max-concurrency=2"], {
+            "a.test.ts": `
+            import { afterEach, beforeEach, describe, expect, test, vi } from "${module}";
+            import { test as other } from "${other}";
+            const gate = () => Promise.withResolvers();
+            ${Object.entries({ ...inFirstWindow, ...later })
+              .map(([name, tests]) => `describe.concurrent(${JSON.stringify(name)}, () => {${tests}});`)
+              .join(`\ntest("alone", () => {});\n`)}
+          `,
+            "bunfig.toml": bunfig,
+          });
+          // After more than 20 passes, what failed is listed again at the end.
+          const running = [...new Set(results(stderr).filter(line => line.endsWith("> running")))];
+          expect({
+            running,
+            failed: results(stderr).filter(line => !line.startsWith("(pass)") && !running.includes(line)),
+            exitCode,
+          }).toEqual({
+            running: [
+              ...Object.keys(inFirstWindow).map(name => `(pass) ${name} > running`),
+              ...Object.keys(later).map(name => `(fail) ${name} > running`),
+            ],
+            failed: [],
+            exitCode: 1,
+          });
+        },
+      );
+
+      const running = (config = "") => `
+        import { expect, test, vi } from "vitest";
+        ${config}
+        const held = Promise.withResolvers(), started = Promise.withResolvers();
+        test.concurrent("running", async () => {
+          await held.promise;
+          const fn = vi.fn();
+          fn();
+          await started.promise;
+          expect(fn).toHaveBeenCalledTimes(1);
+        });
+        test.concurrent("holds a slot", () => {
+          held.resolve();
+          return new Promise(resolve => setImmediate(resolve));
+        });
+        test.concurrent("third", () => started.resolve());
+      `;
+
+      // With a limit of 2 the third test is past the first window: "a test past the limit starts" above.
+      test.each([
+        ["--max-concurrency=3", ""],
+        ["--max-concurrency=0", ""],
+        ["", ""],
+        ["--max-concurrency=2", "vi.setConfig({ maxConcurrency: 3 });"],
+      ])("the first window has as many tests as the limit allows: %j %j", async (flag, config) => {
+        const { stderr, exitCode } = await run(["test", ...(flag ? [flag] : [])], { "a.test.ts": running(config) });
+        expect({ results: results(stderr).sort(), exitCode }).toEqual({
+          results: ["(pass) holds a slot", "(pass) running", "(pass) third"],
+          exitCode: 0,
+        });
+      });
+
+      test.each([
+        ["--concurrent", ""],
+        ["", `[test]\nconcurrentTestGlob = "**/a.test.ts"\n`],
+      ])("tests that %j or %j makes concurrent", async (flag, bunfig) => {
+        const { stderr, exitCode } = await run(["test", "--max-concurrency=3", ...(flag ? [flag] : [])], {
+          "a.test.ts": running().replaceAll("test.concurrent(", "test("),
+          "bunfig.toml": bunfig,
+        });
+        expect({ results: results(stderr).sort(), exitCode }).toEqual({
+          results: ["(pass) holds a slot", "(pass) running", "(pass) third"],
+          exitCode: 0,
+        });
+      });
+
+      test("a test.for() row and a test.extend() test of bun:test, which get Vitest's default", async () => {
+        const { stderr, exitCode } = await run(["test", "--max-concurrency=2"], {
+          "a.test.ts": `
+            import { describe, expect, mock, test } from "bun:test";
+            for (const [name, neighbour] of [["test.for()", test.for([1])], ["test.extend()", test.extend({})]]) {
+              describe.concurrent(name, () => {
+                const started = Promise.withResolvers();
+                test("running", async () => {
+                  const fn = mock();
+                  fn();
+                  await started.promise;
+                  expect(fn).toHaveBeenCalledTimes(1);
+                });
+                neighbour("neighbour", () => started.resolve());
+              });
+              test("alone", () => {});
+            }
+          `,
+        });
+        expect({
+          running: results(stderr).filter(line => line.endsWith("> running")),
+          failed: results(stderr).filter(line => !line.startsWith("(pass)")),
+          exitCode,
+        }).toEqual({
+          running: ["(pass) test.for() > running", "(pass) test.extend() > running"],
+          failed: [],
+          exitCode: 0,
+        });
+      });
+
+      test("an assertion that the mock of a running test has no calls still fails", async () => {
+        const { stderr, exitCode } = await run(["test", "--max-concurrency=2"], {
+          "a.test.ts": `
+            import { expect, test, vi } from "vitest";
+            const started = Promise.withResolvers();
+            test.concurrent("running", async () => {
+              const fn = vi.fn();
+              fn();
+              await started.promise;
+              expect(fn).not.toHaveBeenCalled();
+            });
+            test.concurrent("neighbour", () => started.resolve());
+          `,
+        });
+        expect(stderr).toContain("Received number of calls: 1");
+        expect({ results: results(stderr), exitCode }).toEqual({
+          results: ["(pass) neighbour", "(fail) running"],
+          exitCode: 1,
+        });
+      });
+
+      test("a start is cleaned up unless it is in the first window beside a running test", async () => {
+        const { stdout, stderr, exitCode } = await run(["test", "--max-concurrency=2"], {
+          "a.test.ts": `
+            import { describe, test, vi } from "vitest";
+            import { test as bunTest } from "bun:test";
+            const gate = () => Promise.withResolvers();
+            const shared = vi.fn();
+            const sees = name => console.log(name + ":", shared.mock.calls.join());
+
+            test("alone", () => void shared("alone"));
+            describe.concurrent("a test still runs", () => {
+              const late = gate();
+              test("first", async () => { sees("first"); shared("first"); await late.promise; });
+              test("second", () => { sees("second"); shared("second"); });
+              test("past the limit", () => { sees("past the limit"); late.resolve(); });
+            });
+            test("after the group", () => { sees("after the group"); shared("alone"); });
+
+            describe.concurrent("no test still runs", () => {
+              test.skip("skipped", () => {});
+              test("first", () => { sees("no overlap, first"); shared("first"); });
+            });
+            describe("a plain describe block", () => {
+              test.concurrent("in the same group", () => { sees("no overlap, second"); shared("second"); });
+            });
+            test("alone", () => void shared("alone"));
+
+            describe.concurrent("a test from bun:test still runs", () => {
+              const started = gate();
+              bunTest.concurrent("running", async () => { await started.promise; });
+              test("from vitest", () => { sees("from vitest"); started.resolve(); });
+            });
+          `,
+        });
+        expect({
+          seen: stdout.split("\n").filter(line => line.includes(":")),
+          failed: results(stderr).filter(line => !/^\((pass|skip)\)/.test(line)),
+          exitCode,
+        }).toEqual({
+          seen: [
+            "first: ",
+            "second: first",
+            "past the limit: ",
+            "after the group: ",
+            "no overlap, first: ",
+            "no overlap, second: ",
+            "from vitest: alone",
+          ],
+          failed: [],
+          exitCode: 0,
+        });
+      });
+
+      // Shuffled, two of these tests can end up in one group. They never overlap, so each is still cleaned up.
+      test.each(["--seed=11", "--seed=12"])("tests that do not overlap, with --randomize %s", async seed => {
+        const { stderr, exitCode } = await run(["test", "--max-concurrency=20", "--randomize", seed], {
+          "a.test.ts": `
+            import { describe, expect, test, vi } from "vitest";
+            const log = vi.fn();
+            describe("parser", () => {
+              test.concurrent("parses", () => { log("parse"); expect(log).toHaveBeenCalledTimes(1); });
+              test("rejects", () => { log("reject"); expect(log).toHaveBeenCalledTimes(1); });
+            });
+            describe("printer", () => {
+              test.concurrent("prints", () => { log("print"); expect(log).toHaveBeenCalledTimes(1); });
+              test("flushes", () => { log("flush"); expect(log).toHaveBeenCalledTimes(1); });
+            });
+          `,
+        });
+        expect({ results: results(stderr).sort(), exitCode }).toEqual({
+          results: [
+            "(pass) parser > parses",
+            "(pass) parser > rejects",
+            "(pass) printer > flushes",
+            "(pass) printer > prints",
+          ],
+          exitCode: 0,
+        });
+      });
+
+      test("with --max-concurrency=1, every test of the group is cleaned up", async () => {
+        const { stdout, stderr, exitCode } = await run(["test", "--max-concurrency=1"], {
+          "a.test.ts": `
+            import { test, vi } from "vitest";
+            const shared = vi.fn();
+            for (const name of ["first", "second", "third"]) {
+              test.concurrent(name, async () => {
+                console.log(name + ":", shared.mock.calls.join());
+                shared(name);
+                await new Promise(resolve => setImmediate(resolve));
+              });
+            }
+          `,
+        });
+        expect({
+          seen: stdout.split("\n").filter(line => line.includes(":")),
+          results: results(stderr),
+          exitCode,
+        }).toEqual({
+          seen: ["first: ", "second: ", "third: "],
+          results: ["(pass) first", "(pass) second", "(pass) third"],
+          exitCode: 0,
+        });
+      });
+    });
   });
 });
 

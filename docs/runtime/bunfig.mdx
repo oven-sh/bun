@@ -398,6 +398,8 @@ clearMocks = true
 
 `mockReset`, `restoreMocks`, `unstubEnvs` and `unstubGlobals` work the same way. They call `vi.resetAllMocks()`, `vi.restoreAllMocks()`, `vi.unstubAllEnvs()` and `vi.unstubAllGlobals()` before each test. Default `false`.
 
+Bun skips these cleanups for a concurrent test that starts together with a test that is still running. See [test execution](/test/configuration#test-execution).
+
 ### `test.concurrentTestGlob`
 
 Test files matching this glob pattern run all of their tests concurrently, as if you passed the `--concurrent` flag.

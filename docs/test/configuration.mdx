@@ -348,6 +348,10 @@ unstubGlobals = true  # vi.unstubAllGlobals()
 
 They're all off by default, except that `clearMocks` is on for tests that use `test` from `"vitest"`, like in Vitest 5. Set `clearMocks = false` to turn that off. `vi.setConfig({ clearMocks: true })` changes an option for the rest of the test file.
 
+Each cleanup applies to every mock and stub, including those of a [concurrent test](/test#concurrent-test-execution) that is still running. Concurrent tests that follow one another start together, up to `--max-concurrency` of them. When one of those tests starts while another is still running, Bun skips its cleanup, so the running test keeps its mocks and stubs.
+
+A concurrent test that starts later, a retry, and a repeat are cleaned up as usual, as in Vitest. That cleanup also clears the mocks and stubs of the tests that are still running. Set the option to `false` if a concurrent test has to keep them.
+
 ## Coverage Options
 
 ### Basic Coverage Settings

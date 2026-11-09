@@ -94,6 +94,10 @@ pub(crate) struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
+    /// How many more tests of the active group start in its first window: the first to start, up to the concurrency limit.
+    first_window_left: usize,
+    /// Attempts of the active group between their start and the step that handles their end, hooks included.
+    mid_attempt: u32,
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
@@ -424,6 +428,8 @@ impl Execution {
             groups: Box::default(),
             sequences: Box::default(),
             group_index: 0,
+            first_window_left: 0,
+            mid_attempt: 0,
             on_stack: core::cell::Cell::new(None),
         }
     }
@@ -688,6 +694,10 @@ impl Execution {
 
         if sequence.active_entry.is_none() {
             // just completed the sequence
+            if !sequence.started_at.eql(&Timespec::EPOCH) {
+                // SAFETY: a field that neither `sequence` nor `group_ptr` points into.
+                unsafe { (*buntest.as_ptr()).execution.mid_attempt -= 1 };
+            }
             sequence.flip_fails();
             let test_failed = sequence.result.is_fail();
             let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
@@ -739,7 +749,8 @@ impl Execution {
         }
     }
 
-    fn on_sequence_started(global_this: &JSGlobalObject, sequence: &mut ExecutionSequence) {
+    fn on_sequence_started(&mut self, global_this: &JSGlobalObject, seq_abs: usize) {
+        let sequence = &mut self.sequences[seq_abs];
         if let Some(entry) = sequence.test_entry {
             // SAFETY: arena-owned entry
             if unsafe { entry.as_ref() }.callback.is_none() {
@@ -748,6 +759,8 @@ impl Execution {
         }
 
         sequence.started_at = Timespec::now_force_real_time();
+        let others_mid_attempt = self.mid_attempt > 0;
+        self.mid_attempt += 1;
 
         if let Some(entry_ptr) = sequence.test_entry {
             // SAFETY: arena-owned entry
@@ -758,7 +771,14 @@ impl Execution {
                 // `BStr`'s `Debug` impl quotes and escapes for display.
                 bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)"))
             );
-            super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest());
+            let in_first_window = sequence.attempt == 0 && self.first_window_left > 0;
+            if in_first_window {
+                self.first_window_left -= 1;
+            }
+            // A reset takes the whole global, and with it what the tests that started ahead have made. A test past the
+            // first window, a retry and a repeat still get theirs beside a running test, as in Vitest.
+            let resets = !(in_first_window && others_mid_attempt);
+            super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest(), resets);
 
             if entry.base.test_id_for_debugger != 0 {
                 // SAFETY: VirtualMachine::get() returns the live singleton.
@@ -1007,12 +1027,18 @@ fn step_group(
         let Some(group) = this.active_group() else {
             return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
         };
-        if !group.executing {
-            Execution::on_group_started(global_this);
-            group.executing = true;
-        }
+        let is_starting = !group.executing;
+        group.executing = true;
         // Raw, so that it does not alias the `&mut Execution` that step_group_one re-derives.
         let group_ptr = NonNull::from(group);
+        if is_starting {
+            Execution::on_group_started(global_this);
+            this.mid_attempt = 0;
+            this.first_window_left = match concurrent_limit(buntest.reporter) {
+                0 => usize::MAX,
+                limit => limit,
+            };
+        }
 
         // loop over items in the group and advance their execution
 
@@ -1041,6 +1067,7 @@ fn step_group(
             ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
         }
         group.executing = false;
+        debug_assert_eq!(this.mid_attempt, 0);
         Execution::on_group_completed(global_this);
 
         // if there is one sequence and it failed, skip to the next group
@@ -1072,6 +1099,17 @@ enum AdvanceStatus {
     Execute { timeout: Timespec },
 }
 
+/// How many tests of a group run at once. 0 is no limit.
+fn concurrent_limit(reporter: Option<NonNull<test_command::CommandLineReporter>>) -> usize {
+    let Some(reporter) = reporter else {
+        debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
+        return 20;
+    };
+    // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
+    let runner = &unsafe { reporter.as_ref() }.jest;
+    runner.vi_config.max_concurrency.unwrap_or(runner.max_concurrency) as usize
+}
+
 #[optimize(size)]
 fn step_group_one(
     buntest_strong: &BunTestPtr,
@@ -1081,14 +1119,7 @@ fn step_group_one(
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
     let mut final_status = AdvanceStatus::Done;
-    let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
-        // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-        let runner = &unsafe { reporter.as_ref() }.jest;
-        runner.vi_config.max_concurrency.unwrap_or(runner.max_concurrency) as usize
-    } else {
-        debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
-        20
-    };
+    let concurrent_limit = concurrent_limit(buntest.reporter);
     let mut active_count: usize = 0;
     let len = {
         // SAFETY: group points into buntest.execution.groups; read-only here.
@@ -1227,8 +1258,9 @@ fn step_sequence_one(
     sequence.executing = true;
     // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
     if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
-        Execution::on_sequence_started(global_this, sequence);
+        this.on_sequence_started(global_this, seq_abs);
     }
+    let sequence = &mut this.sequences[seq_abs];
     Execution::on_entry_started(next_item);
     if next_item.added_in_phase == AddedInPhase::Preload {
         bun_jsc::compiled_program::will_run_preloads(global_this);

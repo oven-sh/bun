@@ -497,7 +497,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 |                                                           | `"bun:test"`, `"@jest/globals"`      | `"vitest"`                                                           |
 | --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
 | Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
-| Array row in a `test.each` or `describe.each` table       | spread into arguments                | spread only if every row is an array                                 |
+| Array row in a `test.each` or `describe.each` table       | spread, unless `test` is extended    | spread only if every row is an array                                 |
 | `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
 | Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
 | `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |

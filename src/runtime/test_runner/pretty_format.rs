@@ -1975,10 +1975,9 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                         ));
 
-                        if let Some(message_value) = place
-                            .row_or("message", || value.fast_get(self.global_this, jsc::BuiltinName::Message))?
-                            .0
-                        {
+                        let (message_value, message_place) =
+                            place.row_or("message", || value.fast_get(self.global_this, jsc::BuiltinName::Message))?;
+                        if let Some(message_value) = message_value {
                             if message_value.is_string() {
                                 self.write_indent(writer.ctx).expect("unreachable");
                                 writer.print(format_args!(
@@ -1989,6 +1988,7 @@ impl<'a> Formatter<'a> {
                                 ));
 
                                 let tag = Tag::get(message_value, self.global_this)?;
+                                self.place.hand(message_place);
                                 self.format::<W, ENABLE_ANSI_COLORS>(
                                     tag, writer.ctx, message_value, self.global_this,
                                 )?;

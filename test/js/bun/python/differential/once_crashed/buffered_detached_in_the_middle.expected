@@ -1,0 +1,132 @@
+status: 0
+oracle: none
+---
+ from within: returned 'Raw'
+detaches | BufferedReader | read(64) | returned b'................................................................' | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | BufferedReader | read(3) | returned b'...' | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+ from within: ValueError(raw stream has been detached)
+ from within: ValueError(raw stream has been detached)
+detaches | BufferedReader | read() | returned 393216 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | BufferedReader | read1(64) | returned b'................................................................' | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | BufferedReader | peek() | returned b'................' | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | BufferedReader | readline() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | BufferedReader | readlines() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | BufferedReader | next() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | BufferedReader | readinto(64) | returned 64 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | BufferedReader | readinto1(64) | returned 64 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Writer | write(64) | returned 64 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Writer | write(1), flush() | returned (1, None) | ValueError(raw stream has been detached)
+detaches | Writer | write(1), close() | returned (1, None) | ValueError(write to closed file)
+ from within: returned 'Raw'
+detaches | Writer | write(1), seek(0) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+detaches | Writer | write(1), tell() | returned (1, 1) | returned (1, 2)
+ from within: returned 'Raw'
+detaches | Writer | write(1), truncate() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | read(64) | returned b'................................................................' | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | read(3) | returned b'...' | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+ from within: ValueError(raw stream has been detached)
+ from within: ValueError(raw stream has been detached)
+detaches | Random | read() | returned 393216 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | read1(64) | returned b'................................................................' | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | peek() | returned b'................' | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | readline() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | readlines() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | next() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | readinto(64) | returned 64 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | readinto1(64) | returned 64 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | write(64) | returned 64 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches | Random | write(1), flush() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+detaches | Random | write(1), close() | returned (1, None) | ValueError(write to closed file)
+ from within: returned 'Raw'
+detaches | Random | write(1), seek(0) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+detaches | Random | write(1), tell() | returned (1, 1) | returned (1, 2)
+ from within: returned 'Raw'
+detaches | Random | write(1), truncate() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | read(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | read(3) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+ from within: ValueError(raw stream has been detached)
+ from within: ValueError(raw stream has been detached)
+detaches_and_is_interrupted | BufferedReader | read() | returned 0 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | read1(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | peek() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | readline() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | readlines() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | next() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | readinto(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | BufferedReader | readinto1(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Writer | write(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Writer | write(1), flush() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+detaches_and_is_interrupted | Writer | write(1), close() | returned (1, None) | ValueError(write to closed file)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Writer | write(1), seek(0) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+detaches_and_is_interrupted | Writer | write(1), tell() | returned (1, 1) | returned (1, 2)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Writer | write(1), truncate() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | read(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | read(3) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+ from within: ValueError(raw stream has been detached)
+ from within: ValueError(raw stream has been detached)
+detaches_and_is_interrupted | Random | read() | returned 0 | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | read1(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | peek() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | readline() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | readlines() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | next() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | readinto(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | readinto1(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | write(64) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | write(1), flush() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+detaches_and_is_interrupted | Random | write(1), close() | returned (1, None) | ValueError(write to closed file)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | write(1), seek(0) | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+detaches_and_is_interrupted | Random | write(1), tell() | returned (1, 1) | returned (1, 2)
+ from within: returned 'Raw'
+detaches_and_is_interrupted | Random | write(1), truncate() | ValueError(raw stream has been detached) | ValueError(raw stream has been detached)
+['ValueError(raw stream has been detached)'] FileIO ValueError(raw stream has been detached)

@@ -78,7 +78,7 @@ jest.mock("@scope/package"); // __mocks__/@scope/package
 preload = ["./mocks.preload.ts"]
 ```
 
-Bun looks for the `__mocks__` directory where `bun test` runs. See [Mocking Without a Factory](/test/mocks#mocking-without-a-factory).
+Bun looks for `__mocks__/<package>` in the directory where `bun test` runs. For a package name that resolves to a file outside `node_modules`, such as a workspace package, it looks for `__mocks__/<file>` next to that file. See [Mocking Without a Factory](/test/mocks#mocking-without-a-factory).
 
 ---
 

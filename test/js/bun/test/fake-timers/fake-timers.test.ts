@@ -3372,6 +3372,49 @@ describe("a spy or stub that is undone under the fake clock", () => {
     expect(setTimeout).toBe(saved.setTimeout);
   });
 
+  test("a timer set between mockRestore() and useRealTimers() is real", async () => {
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    vi.useFakeTimers();
+    spy.mockRestore();
+    await new Promise(resolve => setTimeout(resolve, 1));
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  // The three below are as before: what the clock replaced is on the global again, or no spy or stub put it there.
+  test("useRealTimers() leaves a later stub of the same function in place", () => {
+    const stub = vi.fn();
+    vi.stubGlobal("setTimeout", stub);
+    vi.useFakeTimers();
+    vi.unstubAllGlobals();
+    vi.stubGlobal("setTimeout", stub);
+    vi.useRealTimers();
+    expect(setTimeout).toBe(stub);
+  });
+
+  test("useRealTimers() puts back a value that the test assigned over a stub", () => {
+    vi.stubGlobal("setTimeout", () => {});
+    const assigned = (() => {}) as unknown as typeof setTimeout;
+    globalThis.setTimeout = assigned;
+    vi.useFakeTimers();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    expect(setTimeout).toBe(assigned);
+  });
+
+  test.each(["an accessor", 'a "get" spy'])("%s over the fake, with a stub over it", over => {
+    vi.useFakeTimers();
+    if (over === "an accessor")
+      Object.defineProperty(globalThis, "setTimeout", { get: () => 1, set() {}, enumerable: true, configurable: true });
+    else jest.spyOn(globalThis, "setTimeout", "get");
+    vi.stubGlobal("setTimeout", () => {});
+    vi.useRealTimers();
+    expect(Object.getOwnPropertyDescriptor(globalThis, "setTimeout")).toEqual(descriptor);
+    const assigned = (() => {}) as unknown as typeof setTimeout;
+    globalThis.setTimeout = assigned;
+    expect(setTimeout).toBe(assigned);
+  });
+
   const nextFile = `
     import { test } from "bun:test";
     test("the next file", async () => {
@@ -3434,6 +3477,53 @@ describe("a spy or stub that is undone under the fake clock", () => {
     const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
     expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
       stdout: JSON.stringify({ isReal: true, outcome: "fired", now: "number" }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each([
+    [
+      "that did not exist is gone",
+      "",
+      `vi.stubGlobal("requestAnimationFrame", () => 0);
+       jest.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+       jest.spyOn(globalThis, "requestAnimationFrame");
+       vi.unstubAllGlobals();
+       jest.useRealTimers();
+       jest.restoreAllMocks();`,
+      { isOwn: false },
+    ],
+    [
+      "that was an accessor is that accessor",
+      `Object.defineProperty(globalThis, "requestAnimationFrame", { get: () => () => 0, set() {}, configurable: true });
+       globalThis.before = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");`,
+      `jest.spyOn(globalThis, "requestAnimationFrame");
+       jest.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+       vi.stubGlobal("requestAnimationFrame", () => 0);
+       jest.useRealTimers();
+       jest.restoreAllMocks();
+       vi.unstubAllGlobals();`,
+      { isOwn: true, isSameGetter: true, isSameSetter: true },
+    ],
+  ])("in the next test file, a global %s", async (_, setup, body, expected) => {
+    using dir = tempDir("fake-timers-undone-under", {
+      "a.test.ts": `
+        import { jest, test, vi } from "bun:test";
+        ${setup}
+        test("undoes in an order that is not the reverse", () => { ${body} });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("the next file", () => {
+          const now = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+          const before = globalThis.before;
+          console.log(JSON.stringify({ isOwn: !!now, isSameGetter: before && now.get === before.get, isSameSetter: before && now.set === before.set }));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
+    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
+      stdout: JSON.stringify(expected) + "\n",
       exitCode: 0,
     });
   });

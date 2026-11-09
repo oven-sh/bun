@@ -1,5 +1,5 @@
 import { heapStats } from "bun:jsc";
-import { afterEach, describe, expect, jest, mock, setSystemTime, test, vi } from "bun:test";
+import { afterEach, describe, expect, jest, mock, setSystemTime, spyOn, test, vi, type Mock } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -280,87 +280,6 @@ describe("vi.stubGlobal", () => {
     expect("viUtilsNew" in globalThis).toBe(false);
   });
 
-  test("a spy under the stub that is restored first stays away", () => {
-    const original = fetch;
-    const spy = jest.spyOn(globalThis, "fetch");
-    vi.stubGlobal("fetch", "stub");
-    spy.mockRestore();
-    vi.unstubAllGlobals();
-    expect(fetch).toBe(original);
-  });
-
-  test("a spy over the stub that is restored last puts back what the stub replaced", () => {
-    const original = fetch;
-    vi.stubGlobal("fetch", () => "stub");
-    const spy = jest.spyOn(globalThis, "fetch");
-    vi.unstubAllGlobals();
-    expect(fetch).toBe(original);
-    spy.mockRestore();
-    expect(fetch).toBe(original);
-  });
-
-  test("spies made between two vi.stubGlobal() calls of a name don't put a stub back", () => {
-    const original = fetch;
-    const spies = [jest.spyOn(globalThis, "fetch")];
-    vi.stubGlobal("fetch", () => "first");
-    spies.push(jest.spyOn(globalThis, "fetch"));
-    vi.stubGlobal("fetch", () => "second");
-    spies.push(jest.spyOn(globalThis, "fetch"));
-    vi.unstubAllGlobals();
-    expect(fetch).toBe(spies[0]);
-    expect(spies.map(spy => (spy.mockRestore(), fetch))).toEqual([original, original, original]);
-  });
-
-  // Two spies can be on one property: on its getter, on its setter, or on its value.
-  test.each<[string, PropertyDescriptor]>([
-    ["a function", { value: () => "original", writable: true }],
-    ["a getter and a setter", { get: () => "original", set() {} }],
-    ["a method that a getter returns", { get: () => Math.max, set() {} }],
-  ])("spies of %s that are restored under the stub are undone as without the stub", (_, property) => {
-    type Spy = ReturnType<typeof jest.spyOn>;
-    const accesses = [undefined, "get", "set"] as const;
-    /** The own descriptor after the calls, with each spy replaced by its index. */
-    const outcome = (first: number, second: number, restored: number[], isStubbed: boolean) => {
-      try {
-        Object.defineProperty(globalThis, "viUtilsSpied", { ...property, configurable: true });
-        let spies: Spy[];
-        try {
-          spies = [first, second].map(access => (jest.spyOn as any)(globalThis, "viUtilsSpied", accesses[access]));
-        } catch {
-          return "spyOn() throws";
-        }
-        if (isStubbed) vi.stubGlobal("viUtilsSpied", "stub");
-        for (const index of restored) spies[index].mockRestore();
-        if (isStubbed) vi.unstubAllGlobals();
-        const label = (value: any) => {
-          if (spies.includes(value)) return `spy ${spies.indexOf(value)}`;
-          // A spy of a method that a getter returns is installed as a bound getter that returns the spy.
-          const returned = typeof value === "function" && value.name.startsWith("bound ") && value();
-          return spies.includes(returned) ? `getter of spy ${spies.indexOf(returned)}` : value;
-        };
-        const descriptor = Object.getOwnPropertyDescriptor(globalThis, "viUtilsSpied");
-        return descriptor && Object.fromEntries(Object.entries(descriptor).map(([key, value]) => [key, label(value)]));
-      } finally {
-        vi.unstubAllGlobals();
-        jest.restoreAllMocks();
-        delete globalThis.viUtilsSpied;
-      }
-    };
-    const different: unknown[] = [];
-    for (const first of [0, 1, 2]) {
-      for (const second of [0, 1, 2].filter(access => access !== first)) {
-        for (const restored of [[0], [1], [0, 1], [1, 0]]) {
-          const withStub = outcome(first, second, restored, true);
-          // Without the stub, a restore that is not in the reverse order leaves the other spy behind.
-          const withoutStub = outcome(first, second, restored.toSorted().reverse(), false);
-          if (!Bun.deepEquals(withStub, withoutStub, true))
-            different.push({ first, second, restored, withStub, withoutStub });
-        }
-      }
-    }
-    expect(different).toEqual([]);
-  });
-
   test("the originals survive garbage collection", () => {
     try {
       Object.defineProperty(globalThis, "viUtilsDescriptor", { value: { marker: "original" }, configurable: true });
@@ -403,6 +322,339 @@ describe("vi.stubGlobal", () => {
       exitCode: 1,
     });
   });
+
+  // Vitest 4.1.9 and 5.0.3 put the restored spy back. It calls the original after mockRestore(), and keeps its mock
+  // implementation after vi.restoreAllMocks(). A restored spy of spyOn() or jest.spyOn() returns undefined.
+  describe.each([
+    ["spyOn()", spyOn],
+    ["jest.spyOn()", jest.spyOn],
+    ["vi.spyOn()", vi.spyOn],
+  ])("over a spy that %s made", (_, makeSpy) => {
+    type Spy = Mock<() => unknown>;
+    type Access = "value" | "get" | "set";
+    const spyOn = (object: object, key: string, access: Access = "value") =>
+      (makeSpy as (object: object, key: string, access?: "get" | "set") => Spy)(
+        object,
+        key,
+        access === "value" ? undefined : access,
+      );
+    const original = () => "original";
+    const getter = () => "original";
+    const getterOfMethod = () => original;
+    const setter = (_: unknown) => {};
+    const own = () => Object.getOwnPropertyDescriptor(globalThis, "viUtilsSpied");
+    const cleanUp = () => {
+      vi.unstubAllGlobals();
+      mock.restore();
+      delete globalThis.viUtilsSpied;
+      // @ts-expect-error
+      delete Object.prototype.viUtilsSpied;
+    };
+    afterEach(cleanUp);
+
+    const accessor = (descriptor: PropertyDescriptor) => () =>
+      void Object.defineProperty(globalThis, "viUtilsSpied", { ...descriptor, configurable: true });
+    const properties: [name: string, define: () => void, access: Access][] = [
+      ["a function", () => void (globalThis.viUtilsSpied = original), "value"],
+      ["a value that is not a function", () => void (globalThis.viUtilsSpied = "original"), "value"],
+      ["a getter", accessor({ get: getter }), "get"],
+      ["a setter", accessor({ set: setter }), "set"],
+      ["a getter and a setter", accessor({ get: getter, set: setter }), "get"],
+      ["a method that a getter returns", accessor({ get: getterOfMethod, set: setter }), "value"],
+      // @ts-expect-error
+      ["an inherited method", () => void (Object.prototype.viUtilsSpied = original), "value"],
+      ["a property that does not exist", () => {}, "value"],
+    ];
+    const restores: [name: string, restore: (spy: Spy) => void][] = [
+      ["mockRestore()", spy => spy.mockRestore()],
+      ["mock.restore()", () => mock.restore()],
+    ];
+
+    describe.each(properties)("of %s", (_, define, access) => {
+      test.each(restores)(
+        "a spy that %s restores while the global is stubbed stays away, unlike in Vitest",
+        (_, restore) => {
+          define();
+          const before = own();
+          const spy = spyOn(globalThis, "viUtilsSpied", access);
+          vi.stubGlobal("viUtilsSpied", "stub");
+          restore(spy);
+          vi.unstubAllGlobals();
+          expect(own()).toEqual(before);
+        },
+      );
+
+      test("a spy that is still installed is put back", () => {
+        define();
+        const before = own();
+        const spy = spyOn(globalThis, "viUtilsSpied", access);
+        const spied = own();
+        vi.stubGlobal("viUtilsSpied", "stub");
+        vi.unstubAllGlobals();
+        expect(own()).toEqual(spied);
+        spy.mockRestore();
+        expect(own()).toEqual(before);
+      });
+
+      test("one or two spies: the unstub leaves what the same restores leave without the stub", () => {
+        /** The own descriptor after the calls, with each spy replaced by the index of the `spyOn()` call that made it. */
+        const outcome = (accesses: Access[], restored: number[], isStubbed: boolean) => {
+          try {
+            define();
+            let spies: Spy[];
+            try {
+              spies = accesses.map(access => spyOn(globalThis, "viUtilsSpied", access));
+            } catch {
+              return "spyOn() throws";
+            }
+            if (isStubbed) vi.stubGlobal("viUtilsSpied", "stub");
+            for (const index of restored) spies[index].mockRestore();
+            if (isStubbed) vi.unstubAllGlobals();
+            const label = (value: unknown) => {
+              if (spies.includes(value as Spy)) return `spy ${spies.indexOf(value as Spy)}`;
+              // A spy of a method that a getter returns is installed as a bound getter that returns the spy.
+              const returned = typeof value === "function" && value.name.startsWith("bound ") && value();
+              return spies.includes(returned) ? `getter of spy ${spies.indexOf(returned)}` : value;
+            };
+            const descriptor = own();
+            return (
+              descriptor && Object.fromEntries(Object.entries(descriptor).map(([key, value]) => [key, label(value)]))
+            );
+          } finally {
+            cleanUp();
+          }
+        };
+        const kinds: Access[] = ["value", "get", "set"];
+        const different: unknown[] = [];
+        for (const first of kinds) {
+          for (const second of kinds) {
+            const accesses = first === second ? [first] : [first, second];
+            const orders = first === second ? [[], [0]] : [[], [0], [1], [0, 1], [1, 0]];
+            for (const restored of orders) {
+              const withStub = outcome(accesses, restored, true);
+              // A spy's own restore depends on the order. With the spy that was installed last first, none is left behind.
+              const withoutStub = outcome(
+                accesses,
+                restored.toSorted((a, b) => b - a),
+                false,
+              );
+              if (!Bun.deepEquals(withStub, withoutStub, true)) {
+                different.push({ spies: accesses.join(", "), restored: restored.join(", "), withStub, withoutStub });
+              }
+            }
+          }
+        }
+        expect(different).toEqual([]);
+      });
+    });
+
+    test.each(["onerror", "onmessage"] as const)("of %s, which native code stores", name => {
+      const before = Object.getOwnPropertyDescriptor(globalThis, name)!;
+      try {
+        for (const access of ["value", "get", "set"] as const) {
+          // With no handler there is no function to spy on.
+          if (access === "value") globalThis[name] = () => {};
+          const unspied = Object.getOwnPropertyDescriptor(globalThis, name);
+          const spy = spyOn(globalThis, name, access);
+          vi.stubGlobal(name, "stub");
+          spy.mockRestore();
+          vi.unstubAllGlobals();
+          expect(Object.getOwnPropertyDescriptor(globalThis, name)).toEqual(unspied);
+          // Only the native setter turns a value that is not a function into null.
+          globalThis[name] = "not a function";
+          expect(globalThis[name]).toBeNull();
+        }
+      } finally {
+        Object.defineProperty(globalThis, name, before);
+      }
+    });
+
+    test("a spy that `using` disposes while the global is stubbed stays away", () => {
+      globalThis.viUtilsSpied = original;
+      {
+        using spy = spyOn(globalThis, "viUtilsSpied");
+        vi.stubGlobal("viUtilsSpied", "stub");
+        expect(spy).not.toHaveBeenCalled();
+      }
+      vi.unstubAllGlobals();
+      expect(globalThis.viUtilsSpied).toBe(original);
+    });
+
+    test("a second stub after the spy is restored is undone too", () => {
+      globalThis.viUtilsSpied = original;
+      const spy = spyOn(globalThis, "viUtilsSpied");
+      vi.stubGlobal("viUtilsSpied", "first");
+      spy.mockRestore();
+      vi.stubGlobal("viUtilsSpied", "second");
+      expect(globalThis.viUtilsSpied).toBe("second");
+      vi.unstubAllGlobals();
+      expect(globalThis.viUtilsSpied).toBe(original);
+    });
+
+    test("with a spy that is made after the restore, the original is back once that spy is restored too", () => {
+      globalThis.viUtilsSpied = original;
+      const spy = spyOn(globalThis, "viUtilsSpied");
+      vi.stubGlobal("viUtilsSpied", "stub");
+      spy.mockRestore();
+      const second = spyOn(globalThis, "viUtilsSpied");
+      vi.unstubAllGlobals();
+      second.mockRestore();
+      expect(globalThis.viUtilsSpied).toBe(original);
+    });
+
+    test("what a restored spy replaced survives garbage collection", () => {
+      accessor({ get: () => ({ marker: "original" }) })();
+      const spy = spyOn(globalThis, "viUtilsSpied", "get");
+      vi.stubGlobal("viUtilsSpied", "stub");
+      spy.mockRestore();
+      Bun.gc(true);
+      vi.unstubAllGlobals();
+      expect([jest.isMockFunction(own()!.get), globalThis.viUtilsSpied]).toEqual([false, { marker: "original" }]);
+    });
+
+    // Such a spy is a value like any other, and the unstub puts it back.
+    test.each<[string, (object: Record<string, unknown>) => Spy, boolean]>([
+      ["of another object, under the same name", object => spyOn(object, "viUtilsSpied"), false],
+      ["of another global", () => spyOn(globalThis, "viUtilsOther"), false],
+      ["that was restored before the stub", object => spyOn(object, "viUtilsSpied"), true],
+    ])("over a spy %s, which the test put on the global", (_, spyOnOther, isRestoredFirst) => {
+      globalThis.viUtilsOther = original;
+      try {
+        const spy = spyOnOther({ viUtilsSpied: original });
+        if (isRestoredFirst) spy.mockRestore();
+        globalThis.viUtilsSpied = spy;
+        vi.stubGlobal("viUtilsSpied", "stub");
+        spy.mockRestore();
+        vi.unstubAllGlobals();
+        expect(globalThis.viUtilsSpied).toBe(spy);
+      } finally {
+        delete globalThis.viUtilsOther;
+      }
+    });
+  });
+
+  describe("over a spy", () => {
+    const spyOnGlobal = spyOn as (object: object, key: string, access?: "get" | "set") => Mock<() => unknown>;
+    afterEach(() => {
+      mock.restore();
+      delete globalThis.viUtilsSpied;
+    });
+
+    test("whose mockRestore() throws: the spy is still installed, so it is put back", () => {
+      let shouldThrow = false;
+      const original = new Proxy(function () {}, {
+        get(target, key, receiver) {
+          if (shouldThrow && key === "prototype") throw new Error("thrown by the trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      globalThis.viUtilsSpied = original;
+      const spy = (vi.spyOn as typeof spyOnGlobal)(globalThis, "viUtilsSpied");
+      // A mock reads the `prototype` of its implementation once its own `prototype` has been read.
+      spy.prototype;
+      vi.stubGlobal("viUtilsSpied", "stub");
+      shouldThrow = true;
+      expect(() => spy.mockRestore()).toThrow("thrown by the trap");
+      vi.unstubAllGlobals();
+      expect(globalThis.viUtilsSpied).toBe(spy);
+      shouldThrow = false;
+      spy.mockRestore();
+      expect(globalThis.viUtilsSpied).toBe(original);
+    });
+
+    test("that is made over the first stub of an accessor: the accessor is back once the spy is restored too", () => {
+      const accessor = { get: () => "original", set(_: unknown) {}, enumerable: false, configurable: true };
+      Object.defineProperty(globalThis, "viUtilsSpied", accessor);
+      vi.stubGlobal("viUtilsSpied", "first");
+      spyOnGlobal(globalThis, "viUtilsSpied", "get");
+      vi.stubGlobal("viUtilsSpied", "second");
+      vi.unstubAllGlobals();
+      mock.restore();
+      expect(Object.getOwnPropertyDescriptor(globalThis, "viUtilsSpied")).toEqual(accessor);
+      globalThis.viUtilsSpied = "assigned";
+      expect(globalThis.viUtilsSpied).toBe("original");
+    });
+  });
+
+  describe("under a spy", () => {
+    const original = fetch;
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      mock.restore();
+      globalThis.fetch = original;
+    });
+
+    test("the unstub takes the spy off, and the restore of the spy leaves what the stub replaced", () => {
+      vi.stubGlobal("fetch", () => "stub");
+      const spy = jest.spyOn(globalThis, "fetch");
+      vi.unstubAllGlobals();
+      expect(fetch).toBe(original);
+      spy.mockRestore();
+      expect(fetch).toBe(original);
+    });
+
+    test("spies made between two vi.stubGlobal() calls of a name don't put a stub back", () => {
+      const spies = [jest.spyOn(globalThis, "fetch")];
+      vi.stubGlobal("fetch", () => "first");
+      spies.push(jest.spyOn(globalThis, "fetch"));
+      vi.stubGlobal("fetch", () => "second");
+      spies.push(jest.spyOn(globalThis, "fetch"));
+      vi.unstubAllGlobals();
+      expect(fetch).toBe(spies[0]);
+      expect(spies.map(spy => (spy.mockRestore(), fetch))).toEqual([original, original, original]);
+    });
+
+    test.each<[string, PropertyKey]>([
+      ["a symbol", Symbol("viUtilsSpied")],
+      ["an index", 7],
+    ])("on a global that %s names", (_, name) => {
+      const before = () => "original";
+      globalThis[name] = before;
+      try {
+        vi.stubGlobal(name, () => "stub");
+        const spy = (jest.spyOn as Function)(globalThis, name);
+        vi.unstubAllGlobals();
+        spy.mockRestore();
+        expect(globalThis[name]).toBe(before);
+      } finally {
+        delete globalThis[name];
+      }
+    });
+
+    test.each([[() => "stub"], [undefined]])(
+      "on a global that did not exist, stubbed with %p: it is gone again",
+      value => {
+        vi.stubGlobal("viUtilsNew", value);
+        const spy = jest.spyOn(globalThis, "viUtilsNew");
+        vi.unstubAllGlobals();
+        spy.mockRestore();
+        expect("viUtilsNew" in globalThis).toBe(false);
+      },
+    );
+
+    // The two below are as without this: the spy replaced a value that is on the global again, or that no stub put.
+    test("the restore leaves a later stub of the same function in place", () => {
+      const stub = () => "stub";
+      vi.stubGlobal("fetch", stub);
+      const spy = jest.spyOn(globalThis, "fetch");
+      vi.unstubAllGlobals();
+      vi.stubGlobal("fetch", stub);
+      spy.mockRestore();
+      expect(fetch).toBe(stub);
+      vi.unstubAllGlobals();
+      expect(fetch).toBe(original);
+    });
+
+    test("a spy on a value that the test assigned over the stub puts that value back", () => {
+      vi.stubGlobal("fetch", () => "stub");
+      const assigned = (() => "assigned") as unknown as typeof fetch;
+      globalThis.fetch = assigned;
+      const spy = jest.spyOn(globalThis, "fetch");
+      vi.unstubAllGlobals();
+      spy.mockRestore();
+      expect(fetch).toBe(assigned);
+    });
+  });
 });
 
 describe.concurrent("stubs do not outlive their test file", () => {
@@ -442,24 +694,6 @@ describe.concurrent("stubs do not outlive their test file", () => {
     },
   );
 
-  test.each([
-    ["a spy under a stub", `jest.spyOn(globalThis, "fetch"); vi.stubGlobal("fetch", "stub");`],
-    ["a stub under a spy", `vi.stubGlobal("fetch", () => {}); jest.spyOn(globalThis, "fetch");`],
-  ])("%s on the same global, both left on", async (_, leave) => {
-    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
-      "a.test.ts": `
-        import { jest, test, vi } from "bun:test";
-        globalThis.realFetch = fetch;
-        test("a", () => { ${leave} });
-      `,
-      "b.test.ts": `
-        import { expect, test } from "bun:test";
-        test("b", () => expect(fetch).toBe(realFetch));
-      `,
-    });
-    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
-  });
-
   test("a file that fails to load", async () => {
     const { stderr, exitCode } = await run(
       ["test", "./a.test.ts", "./b.test.ts"],
@@ -478,6 +712,135 @@ describe.concurrent("stubs do not outlive their test file", () => {
     );
     expect(stderr).toContain("error: thrown while loading");
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) b"], exitCode: 1 });
+  });
+
+  // When a file ends, the runner restores its spies before it undoes its stubs.
+  describe("a stub over a spy", () => {
+    const stubOverSpy = (spyOn: string) => ({
+      "a.test.ts": `
+        import { jest, spyOn, test, vi } from "bun:test";
+        globalThis.realSetTimeout ??= setTimeout;
+        ${spyOn}(globalThis, "setTimeout");
+        vi.stubGlobal("setTimeout", () => "stub");
+        test("a", () => {});
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        test("b", () => expect(setTimeout).toBe(realSetTimeout));
+      `,
+    });
+
+    test.each(["spyOn", "jest.spyOn", "vi.spyOn"])("that %s() made", async spyOn => {
+      const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], stubOverSpy(spyOn));
+      expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+    });
+
+    test.each(["--rerun-each=2", "--parallel=1 --no-isolate"])("bun test %s", async flags => {
+      const { stderr, exitCode } = await run(
+        ["test", ...flags.split(" "), "./a.test.ts", "./b.test.ts"],
+        stubOverSpy("spyOn"),
+      );
+      expect({ results: [...new Set(results(stderr))], exitCode }).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    test("with a spy on each half of an accessor", async () => {
+      const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+        "a.test.ts": `
+          import { spyOn, test, vi } from "bun:test";
+          globalThis.accessor = { get: () => "original", set(value) {}, enumerable: false, configurable: true };
+          globalThis.names = [];
+          for (const halves of [["get", "set"], ["set", "get"]]) {
+            for (const suffix of ["A", "B", "C"]) {
+              const name = "viUtils" + halves[0] + "First" + suffix;
+              Object.defineProperty(globalThis, name, accessor);
+              for (const half of halves) spyOn(globalThis, name, half);
+              vi.stubGlobal(name, "stub");
+              names.push(name);
+            }
+          }
+          test("a", () => {});
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          test("b", () => {
+            expect(names.map(name => Object.getOwnPropertyDescriptor(globalThis, name))).toEqual(names.map(() => accessor));
+          });
+        `,
+      });
+      expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+    });
+
+    test("that a preload made and a test file restored", async () => {
+      const { stderr, exitCode } = await run(["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"], {
+        "preload.ts": `
+          import { spyOn, vi } from "bun:test";
+          globalThis.realSetTimeout = setTimeout;
+          spyOn(globalThis, "setTimeout");
+          vi.stubGlobal("setTimeout", () => "stub");
+        `,
+        "a.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("a", () => {
+            expect(setTimeout()).toBe("stub");
+            mock.restore();
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("b", () => {
+            expect(setTimeout()).toBe("stub");
+            vi.unstubAllGlobals();
+            expect(setTimeout).toBe(realSetTimeout);
+          });
+        `,
+      });
+      expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+    });
+  });
+
+  test("a spy over a stub, both left on", async () => {
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+      "a.test.ts": `
+        import { jest, test, vi } from "bun:test";
+        globalThis.realFetch = fetch;
+        test("a", () => {
+          vi.stubGlobal("fetch", () => {});
+          jest.spyOn(globalThis, "fetch");
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        test("b", () => expect(fetch).toBe(realFetch));
+      `,
+    });
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
+  // The end of a test file removes the stub of a preload and makes it again. The spy is over the same function then.
+  test("a spy of a preload over a stub of that preload, restored in a later file, leaves the stub", async () => {
+    const { stderr, exitCode } = await run(["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"], {
+      "preload.ts": `
+        import { spyOn, vi } from "bun:test";
+        globalThis.stubOfPreload = () => "stub";
+        vi.stubGlobal("fetch", stubOfPreload);
+        spyOn(globalThis, "fetch");
+      `,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("a", () => {});
+      `,
+      "b.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        test("b", () => {
+          mock.restore();
+          expect(fetch).toBe(stubOfPreload);
+        });
+      `,
+    });
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 });
 
@@ -1066,6 +1429,35 @@ describe.concurrent("vi.setConfig", () => {
         exitCode: 0,
       });
     });
+
+    test.each([
+      ["spyOn", "setConfig"],
+      ["jest.spyOn", "setConfig"],
+      ["vi.spyOn", "setConfig"],
+      ["spyOn", "bunfig"],
+    ] as const)(
+      "restoreMocks and unstubGlobals undo a stub over a spy that %s() made, through %s",
+      async (spyOn, through) => {
+        const { stderr, exitCode } = await run(["test", "./a.test.ts"], {
+          "a.test.ts": `
+            import { expect, jest, spyOn, test, vi } from "bun:test";
+            ${through === "setConfig" ? "vi.setConfig({ restoreMocks: true, unstubGlobals: true });" : ""}
+            const original = () => "original";
+            globalThis.viUtilsSpied = original;
+            test("first", () => {
+              ${spyOn}(globalThis, "viUtilsSpied");
+              vi.stubGlobal("viUtilsSpied", "stub");
+            });
+            test("second", () => expect(globalThis.viUtilsSpied).toBe(original));
+          `,
+          "bunfig.toml": through === "bunfig" ? "[test]\nrestoreMocks = true\nunstubGlobals = true\n" : "",
+        });
+        expect({ results: results(stderr), exitCode }).toEqual({
+          results: ["(pass) first", "(pass) second"],
+          exitCode: 0,
+        });
+      },
+    );
 
     test("bunfig.toml requires a boolean", async () => {
       const { stderr, exitCode } = await run(["test"], {

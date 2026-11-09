@@ -1,11 +1,16 @@
+#![allow(
+    clippy::large_types_passed_by_value,
+    reason = "only tests copy a probe"
+)]
+
 mod calls;
 mod control_flow;
 mod keys;
-mod likelihood;
 mod misuses;
 mod operations;
 
 use core::fmt;
+use std::sync::Arc;
 
 use bun_builtin_sources::{Archive, VIRTUAL_ROOT};
 use bun_sema::program::FileId;
@@ -14,25 +19,39 @@ use crate::builtins::id::BuiltinId;
 use crate::builtins::table;
 use crate::compile::testing::lower_program;
 use crate::ir::generated::{
-    EntryParameter, Function, TerminatorKind, print_value_fields, visit_terminator_fields,
+    EntryParameter, Function, Layout, TerminatorKind, print_value_fields, visit_terminator_fields,
     visit_value_fields,
 };
 use crate::ir::{
-    BlockId, BlockView, EntryPosition, FieldWord, FunctionId, Id, NameTables, Opcode,
-    PositionFlags, Printer, PropertyKey, PropertyKeyId, Reference, StringId, TerminatorView,
-    TypeId, TypeTable, ValueId, ValueView, WellKnownSymbol, print_function,
+    BlockId, BlockView, EntryPosition, FieldWord, FunctionId, FunctionKey, Id, LayoutId,
+    NameTables, Opcode, PositionFlags, Printer, PropertyKey, PropertyKeyId, PropertyKeyTable,
+    Reference, StringId, StringTable, TerminatorView, TypeId, TypeTable, ValueId, ValueView,
+    WellKnownSymbol, print_function,
 };
 use crate::load::host_platform;
-use crate::lower::{Fragment, LoweredFile, LoweringOptions};
+use crate::lower::{Fragment, LoweredFile, LoweringOptions, SharedTables, UnitTables};
 
 const MODULE_IMPORTER: (&str, &str) = ("main.ts", "import \"node:os\";");
 const MODULE_PATH: &str = "/$bun/js/node/os.ts";
 
-struct LoweredFiles(Vec<(FileId, LoweredFile)>);
+struct LoweredFiles {
+    files: Vec<(FileId, LoweredFile)>,
+    tables: Vec<(Arc<SharedTables>, UnitTables)>,
+}
+
+#[derive(Copy, Clone)]
+struct FragmentView<'a> {
+    file: FileId,
+    layouts: &'a [(LayoutId, Layout)],
+    strings: &'a StringTable,
+    property_keys: &'a PropertyKeyTable,
+    types: &'a TypeTable,
+    function_keys: &'a [FunctionKey],
+}
 
 #[derive(Copy, Clone)]
 struct Probe<'a> {
-    fragment: &'a Fragment,
+    fragment: FragmentView<'a>,
     id: FunctionId,
     function: &'a Function,
 }
@@ -48,13 +67,21 @@ fn lower_files(files: &[(&str, &str)]) -> LoweredFiles {
     let options = LoweringOptions {
         platform: host_platform(),
         embeds_function_text: false,
-        reports_type_mismatches: false,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
         counts_executions: false,
+        runs_tests: false,
     };
-    LoweredFiles(lower_program(files, options))
+    let files = lower_program(files, options);
+    let mut tables: Vec<(Arc<SharedTables>, UnitTables)> = Vec::new();
+    for (_, lowered) in &files {
+        let shared = &lowered.fragment.tables;
+        if !tables.iter().any(|(taken, _)| Arc::ptr_eq(taken, shared)) {
+            tables.push((Arc::clone(shared), *shared.take()));
+        }
+    }
+    LoweredFiles { files, tables }
 }
 
 fn lower_runtime_module(source: &str) -> LoweredFiles {
@@ -75,11 +102,11 @@ fn find_library_path(export_name: &str) -> String {
         .to_owned()
 }
 
-fn name_tables(fragment: &Fragment) -> NameTables<'_> {
+fn name_tables(fragment: FragmentView<'_>) -> NameTables<'_> {
     NameTables {
-        strings: &fragment.strings,
-        property_keys: &fragment.property_keys,
-        types: &fragment.types,
+        strings: fragment.strings,
+        property_keys: fragment.property_keys,
+        types: fragment.types,
     }
 }
 
@@ -102,14 +129,28 @@ fn terminator_operands(terminator: TerminatorView<'_>) -> Vec<ValueId> {
 
 impl LoweredFiles {
     fn files(&self) -> impl Iterator<Item = &LoweredFile> {
-        self.0.iter().map(|(_, lowered)| lowered)
+        self.files.iter().map(|(_, lowered)| lowered)
+    }
+
+    fn view<'a>(&'a self, fragment: &'a Fragment) -> FragmentView<'a> {
+        let mut taken = self.tables.iter();
+        let found = taken.find(|(shared, _)| Arc::ptr_eq(shared, &fragment.tables));
+        let (_, tables) = found.expect("the tables of every fragment are taken");
+        FragmentView {
+            file: fragment.file,
+            layouts: &fragment.layouts,
+            strings: &tables.strings,
+            property_keys: &tables.property_keys,
+            types: &tables.types,
+            function_keys: &tables.function_keys,
+        }
     }
 
     #[track_caller]
     fn function(&self, name: &str) -> Probe<'_> {
-        let fragments = self.files().map(|lowered| &lowered.fragment);
-        let mut probes = fragments.flat_map(|fragment| {
-            let functions = fragment.functions.iter();
+        let mut probes = self.files().flat_map(|lowered| {
+            let fragment = self.view(&lowered.fragment);
+            let functions = lowered.fragment.functions.iter();
             functions.map(move |(id, function)| Probe {
                 fragment,
                 id: *id,
@@ -321,7 +362,6 @@ impl Operation<'_> {
         self.value.id
     }
 
-    // What the program passes. A type that is only expected of a value changes nothing about what an intrinsic takes.
     fn operands(&self) -> Vec<ValueId> {
         let fields = self.value.fields;
         let mut operands = Vec::new();

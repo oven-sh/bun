@@ -1,0 +1,20 @@
+A star of a barrel brings a name that node:path has too, so the barrel lacks it. While a mock stands for node:path the file gives the name. The next test file mocks nothing: the name is ambiguous again.
+#### a.test.js
+import { test, vi } from "bun:test";
+vi.mock("node:path", () => ({ basename: "mock basename", sep: "mock sep" }));
+import { seen } from "./src/user.js";
+test("a", () => console.log("| CASE a", seen()));
+#### z.test.js
+import { test } from "bun:test";
+import { seen } from "./src/user.js";
+test("z", () => console.log("| CASE z", seen()));
+#### package.json
+{ "name": "p", "type": "module" }
+#### src/clash.js
+export const basename = "clash basename"; export const other = "other";
+#### src/barrel.js
+export * from "./clash.js";
+export * from "node:path";
+#### src/user.js
+import * as barrel from "./barrel.js";
+export const seen = () => "basename=" + typeof barrel.basename + " sep=" + barrel.sep + " has=" + ("basename" in barrel);

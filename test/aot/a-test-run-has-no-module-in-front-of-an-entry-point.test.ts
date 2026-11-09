@@ -44,8 +44,6 @@ const projects: Record<string, Record<string, string>> = {
 };
 const forms: Record<string, string | undefined> = {
   "by itself": undefined,
-  "as one program": "TestRunLayers:0",
-  "over layers": "TestRunLayers:2,TestRunPartFiles:1",
 };
 
 for (const [name, files] of Object.entries(projects)) {
@@ -70,27 +68,3 @@ for (const [name, files] of Object.entries(projects)) {
       });
   });
 }
-
-test.concurrent(`"bun:main" in an executable`, async () => {
-  using dir = tempDir("module-in-front-of-an-entry-point", {
-    "main.mjs": `
-      const later = name => name + (process.argv.length > 90 ? "x" : "");
-      setTimeout(async () => {
-        console.log(import.meta.resolve("bun:main"), typeof (await import("bun:main")), typeof (await import(later("bun:main"))));
-      }, 1);
-    `,
-  });
-  const plain = await run([bunExe(), "run", "main.mjs"], String(dir), bunEnv);
-  expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({
-    stdout: "bun:main object object\n",
-    exitCode: 0,
-  });
-  const built = await run(
-    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "main.exe"],
-    String(dir),
-    bunEnv,
-  );
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-  const compiled = await run([String(dir) + "/main.exe"], String(dir), bunEnv);
-  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-});

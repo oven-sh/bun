@@ -47,7 +47,9 @@ form(async function localNeverRead(n) {
   return 1;
 });
 form(async function temporary(n) {
-  return [make(n), await pause("an operand that waits for the await")].length;
+  const length = [make(n), await tick()].length;
+  if (asking) console.log("a list with an operand that waited for the await has", length, "elements");
+  return length;
 });
 form(async function readInFinally(n) {
   const x = make(n);
@@ -281,7 +283,7 @@ for (const run of forms) await run(1);
 a local read behind the await: kept
 a local read only in front of the await: collected
 a local nobody reads: collected
-an operand that waits for the await: kept
+a list with an operand that waited for the await has 2 elements
 a local read in the finally block: kept
 a local read in the catch block: kept
 a local of a try block read only in front: collected

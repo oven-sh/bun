@@ -1,0 +1,8 @@
+# it is not looked for above the constructor, where `constructor` finds Function
+# -- source: the-constructor-found-on-the-prototype-of-a-class-is-a-part-of-that-class.ts
+# const Found = WebSocket.prototype.constructor as typeof WebSocket;
+# new Found("ws://localhost:1");
+# -- end of source
+# OPTIONS: exclude=EvaluatedText
+# RUN: features
+# CHECK: by WebSocket named

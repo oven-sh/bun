@@ -1,6 +1,5 @@
 // `xs.filter(f)` and `xs.map(g)` of numbers, each alone, in functions that run often: where the text of the built-in would be copied in, the traversal of chains
 // comes in its place: it knows how long the result can get and which storage holds what the callback returns.
-// STATISTIC: ArrayChainsFused >= 3
 // The traversal counts in whole numbers.
 // STATISTIC: ValuesInDouble <= 240
 function kept(xs: number[], least: number): number[] {

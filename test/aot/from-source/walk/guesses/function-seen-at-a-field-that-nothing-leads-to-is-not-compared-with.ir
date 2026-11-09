@@ -1,0 +1,27 @@
+# A TEST FOR A CLOSURE MENTIONS THE FUNCTION. `look` is handed to unseen code; its parameter is written as A | B, so both layouts are expected there, though the flow never sees such an object arrive
+# unseen code has got hold of an object of B, so nothing is proven of `run` in the two together, and its read needs the look. held() has seen one function arrive there, in the one object of A, which nobody has got hold of
+# one call alone enters that function: it waits for that caller, and nothing leads to it from `look`. The guess at the shape opens for `x.a`. A compare of the slot with the function would bring its entry from where nobody has waited,
+# and the queue would end the build: "the code of function 2, Body, mentions function 1, GenericCallEntry, and LinkTables::referrers does not lead from the one to the other": so the build of a large application once ended
+# f1 = run, f2 = look
+# -- source: function-seen-at-a-field-that-nothing-leads-to-is-not-compared-with.ts
+# declare function sink(...values: unknown[]): void;
+# function run(n: number) { return n; }
+# class A { a: number; run: (n: number) => number; constructor(f: (n: number) => number) { this.a = 1; this.run = f; } }
+# class B { a: number; run: any; constructor() { this.a = 2; this.run = undefined; } }
+# const o = new A(run);
+# run(1);
+# sink(new B());
+# function look(x: A | B) { return x.run(x.a); }
+# sink(look);
+# -- end of source
+# RUN: walk f2 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f2:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0, L1]
+# CHECK: = GetSlot {{*}}key="run"
+# CHECK: = Call
+# RUN(NEVER): walk f2 mechanisms=all-ParameterGuards
+# NEVER-NOT: testedType=f1
+# RUN(LINK): link functions mechanisms=all-ParameterGuards
+# LINK: function f1 callers-known one-callee
+# RUN(WHOLE): units-with-code f2:Body mechanisms=all-ParameterGuards
+# WHOLE: unit f2:Body {{*}} bytes

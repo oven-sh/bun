@@ -1,0 +1,15 @@
+A module that waits for bun.
+#### helpers/beside.js
+globalThis.say("beside");
+#### helpers/waits.js
+const say = globalThis.say = word => { (globalThis.order ??= []).push(word); console.log("| CASE", word); };
+      say("waits: start");
+const bun = await import("bun");
+say("waits: behind " + typeof bun.version);
+#### order.test.js
+import { expect, mock, test } from "bun:test";
+import "./helpers/waits.js";
+import "./helpers/beside.js";
+test("order", () => console.log("| CASE", globalThis.order.join(" | ")));
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

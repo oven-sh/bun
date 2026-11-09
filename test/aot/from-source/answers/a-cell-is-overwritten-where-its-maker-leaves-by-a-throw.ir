@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Box = { lid: number; rim: number };
+# const holder: { inner: Box | null } = { inner: null };
+# function keep(box: Box): number { holder.inner = box; return 1; }
+# function make(i: number): number {
+#   const box = { lid: i, rim: i + 1 };
+#   const n = keep(box);
+#   if (i > 3) throw new RangeError("full");
+#   return n + i;
+# }
+# try { print(make(4)); } catch (e) { print("caught"); }
+# print(Object.keys(holder.inner!).length);
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: a throw that no handler of the unit takes leaves the unit as a return does.
+# The lie, testing=NoCalleeKeepsWhatItIsHanded: whatever a function entered is handed is taken to be kept by nobody.
+# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: caught
+# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL-NOT: went on
+# CALL: crashed
+# CALL: with

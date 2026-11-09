@@ -1,0 +1,13 @@
+# `inner` lays `f` in a variable of the module. `outer` only hands it on to `inner`, and `first` only to `outer`: the word that `inner` does not get is taken back from both.
+# f1 = inner, f2 = outer, f3 = first, f4 = maker
+# -- source: handed-on-to-a-function-that-keeps-it.ts
+# declare function sink(...values: unknown[]): void;
+# let kept: (() => number) | undefined;
+# function inner(k: number, f: () => number): number { if (k > 3) kept = f; return f() + k; }
+# function outer(f: () => number): number { const t = inner(4, f); return t + 1; }
+# function first(f: () => number): number { const t = outer(f); return t + 2; }
+# function maker(n: number) { const a = first(() => n * 2); return a + 1; }
+# sink(maker(1), maker(2), () => kept);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-NOT: only-called

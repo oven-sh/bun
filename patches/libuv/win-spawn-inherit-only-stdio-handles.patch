@@ -27,7 +27,7 @@ index 181db92e..d92b3553 100644
    HANDLE handle;
    memcpy(&handle, CHILD_STDIO_HANDLE(buffer, fd), sizeof(HANDLE));
 diff --git a/src/win/process.c b/src/win/process.c
-index 267f0c84..602f6a55 100644
+index 267f0c84..82de6ad0 100644
 --- a/src/win/process.c
 +++ b/src/win/process.c
 @@ -890,6 +890,47 @@ void uv__process_endgame(uv_loop_t* loop, uv_process_t* handle) {
@@ -184,14 +184,21 @@ index 267f0c84..602f6a55 100644
      /* Avoid creating console window if stdio is not inherited. */
      for (i = 0; i < options->stdio_count; i++) {
        if (options->stdio[i].flags & UV_INHERIT_FD)
-@@ -1107,11 +1167,15 @@ int uv_spawn(uv_loop_t* loop,
+@@ -1107,11 +1167,22 @@ int uv_spawn(uv_loop_t* loop,
      process_flags |= CREATE_SUSPENDED;
    }
  
-+  fprintf(stderr, "uv_spawn probe: stdio_count=%d handle_count=%d attr_list=%p flags=%lx inherit=%d cb=%lu sizeof=%u\n",
-+          child_stdio_buffer ? uv__stdio_count(child_stdio_buffer) : -1, handle_count, (void*) attr_list,
-+          (unsigned long) process_flags, (int) inherit_handles, (unsigned long) startup.StartupInfo.cb, (unsigned) sizeof(startup));
-+  fflush(stderr);
++  {
++    char probe[512];
++    DWORD written;
++    int n = snprintf(probe, sizeof(probe),
++        "uv_spawn probe: stdio_count=%d handle_count=%d attr_list=%p lpAttributeList=%p flags=%lx inherit=%d cb=%lu sizeof=%u h0=%p h1=%p h2=%p\n",
++        child_stdio_buffer ? uv__stdio_count(child_stdio_buffer) : -1, handle_count, (void*) attr_list,
++        (void*) startup.lpAttributeList, (unsigned long) process_flags, (int) inherit_handles,
++        (unsigned long) startup.StartupInfo.cb, (unsigned) sizeof(startup),
++        (void*) startup.StartupInfo.hStdInput, (void*) startup.StartupInfo.hStdOutput, (void*) startup.StartupInfo.hStdError);
++    WriteFile(GetStdHandle(STD_ERROR_HANDLE), probe, (DWORD) n, &written, NULL);
++  }
    if (!CreateProcessW(application_path,
                       arguments,
                       NULL,
@@ -201,7 +208,7 @@ index 267f0c84..602f6a55 100644
                       process_flags,
                       env,
                       cwd,
-@@ -1211,6 +1275,7 @@ int uv_spawn(uv_loop_t* loop,
+@@ -1211,6 +1282,7 @@ int uv_spawn(uv_loop_t* loop,
      DeleteProcThreadAttributeList(attr_list);
      uv__free(attr_list);
    }

@@ -903,7 +903,7 @@ impl<'a> Arguments<'a, '_> {
     }
 }
 
-fn object_of(key: &'static [u8], value: Expr) -> Expr {
+pub(crate) fn object_of(key: &'static [u8], value: Expr) -> Expr {
     Expr::init(
         E::Object {
             properties: G::PropertyList::init_one(G::Property {

@@ -21,7 +21,6 @@ use crate::ir::{
 };
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
-use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, ExportBinding, ExportLookup, ImportBinding, Interop, ModuleFailureKind, ModuleGraph,
     ModuleKind, ModuleRef, Shape, Spelling, SyntheticExportRule, compare_code_units,
@@ -657,8 +656,8 @@ impl RecordBuilder<'_, '_, '_> {
                 if graph.is_imported_as_namespace(own) {
                     record.flags |= ModuleFlags::IS_IMPORTED_AS_NAMESPACE;
                 }
-                record.type_attribute =
-                    type_attribute.map(|it| self.strings.intern(type_attribute_of(it).as_bytes()));
+                record.type_attribute = type_attribute
+                    .map(|it| self.strings.intern(it.import_attribute_type().as_bytes()));
             }
             ExternalKind::HostValue => {
                 record.external_kind = generated::ExternalKind::HostValue;

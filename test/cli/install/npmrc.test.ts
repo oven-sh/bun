@@ -15,6 +15,7 @@ import {
   unprivilegedSpawnOptions,
 } from "harness";
 import { createServer as createTlsServer } from "node:tls";
+import net from "node:net";
 import { dirname, join } from "path";
 import { once } from "node:events";
 import { createSecureServer } from "node:http2";
@@ -2021,12 +2022,12 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       expect(auth).toBe(`Bearer ${token}`);
     });
 
-    it("a complete pair replaces the registry URL's userinfo", async () => {
+    it("a complete pair preserves the registry URL's userinfo", async () => {
       const auth = await probeAuthorization(
         host => `//${host}${registryPath}:certfile=a.pem\n//${host}${registryPath}:keyfile=b.key`,
         { registry: "default", userinfo: "user:pass@" },
       );
-      expect(auth).toBe(null);
+      expect(auth).toBe(`Basic ${Buffer.from("user:pass").toString("base64")}`);
     });
 
     it("a complete pair on a shallower path leaves a bunfig.toml token intact", async () => {
@@ -6644,8 +6645,28 @@ cafile=client.pem
   });
 });
 
-describe.concurrent("certificate-only registry operations", () => {
-  async function runRegistryCase(kind: "retry" | "tarball-retry" | "userinfo" | "whoami" | "publish" | "auto-install") {
+describe.concurrent("registry client TLS credential flows", () => {
+  async function runRegistryCase(
+    kind:
+      | "retry"
+      | "tarball-retry"
+      | "userinfo"
+      | "registry-userinfo"
+      | "userinfo-token"
+      | "userinfo-basic"
+      | "whoami"
+      | "publish"
+      | "auto-install",
+  ) {
+    const isUserinfo = kind.startsWith("userinfo");
+    const authorization =
+      kind === "userinfo-token"
+        ? "Bearer configured-token"
+        : kind === "userinfo-basic"
+          ? `Basic ${Buffer.from("configured:password").toString("base64")}`
+          : isUserinfo || kind === "registry-userinfo"
+            ? `Basic ${Buffer.from("url-user:url-pass").toString("base64")}`
+            : null;
     const tarball = await new Bun.Archive({
       "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
       "package/index.js": 'module.exports = "mtls-package";',
@@ -6712,24 +6733,26 @@ describe.concurrent("certificate-only registry operations", () => {
         files: ["index.js"],
         ...(kind === "retry" || kind === "tarball-retry"
           ? { dependencies: { pkg: "1.0.0" } }
-          : kind === "userinfo"
+          : isUserinfo
             ? { dependencies: { pkg: `https://url-user:url-pass@localhost:${port}/pkg.tgz` } }
             : {}),
       }),
-      ".npmrc": `registry=${url}\n//localhost:${port}/:certfile=client.pem\n//localhost:${port}/:keyfile=client.key\n${kind === "auto-install" ? "" : "cafile=client.pem\n"}`,
+      ".npmrc": `registry=${kind === "registry-userinfo" ? url.replace("https://", "https://url-user:url-pass@") : url}\n${kind === "userinfo-token" ? `//localhost:${port}/:_authToken=configured-token\n` : kind === "userinfo-basic" ? `//localhost:${port}/:_auth=${Buffer.from("configured:password").toString("base64")}\n` : ""}//localhost:${port}/:certfile=client.pem\n//localhost:${port}/:keyfile=client.key\n${kind === "auto-install" ? "" : "cafile=client.pem\n"}`,
       "bunfig.toml": kind === "auto-install" ? '[install]\ncafile="client.pem"\n' : "",
       "client.pem": tls.cert,
       "client.key": tls.key,
       "index.js": 'console.log(require("pkg"));',
     });
     const args =
-      kind === "whoami"
-        ? ["pm", "whoami"]
-        : kind === "publish"
-          ? ["publish"]
-          : kind === "auto-install"
-            ? ["index.js"]
-            : ["install"];
+      kind === "registry-userinfo"
+        ? ["pm", "view", "pkg", "version"]
+        : kind === "whoami"
+          ? ["pm", "whoami"]
+          : kind === "publish"
+            ? ["publish"]
+            : kind === "auto-install"
+              ? ["index.js"]
+              : ["install"];
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd: String(dir),
@@ -6745,32 +6768,47 @@ describe.concurrent("certificate-only registry operations", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (kind === "whoami") expect(stdout.trim()).toBe("certificate-user");
+    if (kind === "registry-userinfo") expect(stdout.trim()).toBe("1.0.0");
+    else if (kind === "whoami") expect(stdout.trim()).toBe("certificate-user");
     else if (kind === "auto-install") expect(stdout.trim()).toBe("mtls-package");
     else if (kind === "publish") expect(stdout).toContain("app@1.0.0");
     else expect(stdout).toContain("1 package installed");
     expect(stderr).not.toContain("error:");
     expect(seen).toEqual(
-      (kind === "whoami"
-        ? ["/-/whoami"]
-        : kind === "publish"
-          ? ["/app"]
-          : kind === "userinfo"
-            ? ["/pkg.tgz"]
-            : kind === "tarball-retry"
-              ? ["/pkg", "/pkg.tgz", "/pkg.tgz"]
-              : kind === "retry"
-                ? ["/pkg", "/pkg", "/pkg.tgz"]
-                : ["/pkg", "/pkg.tgz"]
-      ).map(path => ({ path, certificate: true, authorization: null })),
+      (kind === "registry-userinfo"
+        ? ["/pkg"]
+        : kind === "whoami"
+          ? ["/-/whoami"]
+          : kind === "publish"
+            ? ["/app"]
+            : isUserinfo
+              ? ["/pkg.tgz"]
+              : kind === "tarball-retry"
+                ? ["/pkg", "/pkg.tgz", "/pkg.tgz"]
+                : kind === "retry"
+                  ? ["/pkg", "/pkg", "/pkg.tgz"]
+                  : ["/pkg", "/pkg.tgz"]
+      ).map(path => ({
+        path,
+        certificate: true,
+        authorization,
+      })),
     );
     expect(exitCode).toBe(0);
   }
 
-  test.each(["retry", "tarball-retry", "userinfo", "whoami", "publish", "auto-install"] as const)(
-    "%s with certificate-only registry credentials",
-    runRegistryCase,
-  );
+  // URL Basic is a fallback: https://github.com/nodejs/node/blob/v24.5.0/lib/_http_client.js#L353-L356
+  test.each([
+    "retry",
+    "tarball-retry",
+    "userinfo",
+    "registry-userinfo",
+    "userinfo-token",
+    "userinfo-basic",
+    "whoami",
+    "publish",
+    "auto-install",
+  ] as const)("%s with registry client certificates", runRegistryCase);
 });
 
 test.concurrent("registry mTLS identity stays inside an HTTPS proxy tunnel", async () => {
@@ -6789,7 +6827,6 @@ test.concurrent("registry mTLS identity stays inside an HTTPS proxy tunnel", asy
       });
     },
   });
-  const net = await import("node:net");
   const sockets = new Set<import("node:net").Socket>();
   const proxy = createTlsServer({ ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: false }, client => {
     identities.push(!!client.getPeerCertificate().raw);

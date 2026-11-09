@@ -433,6 +433,14 @@ describe("iterator", () => {
     c=d"
   `);
   });
+  test("an iterator that is done yields what set() adds after it, like FormData", () => {
+    const cookies = new Bun.CookieMap();
+    const iterator = cookies.entries();
+    expect(iterator.next()).toEqual({ value: undefined, done: true });
+    cookies.set("a", "b");
+    expect(iterator.next()).toEqual({ value: ["a", "b"], done: false });
+    expect(iterator.next()).toEqual({ value: undefined, done: true });
+  });
 });
 
 describe("cookie header values with non-ASCII characters", () => {

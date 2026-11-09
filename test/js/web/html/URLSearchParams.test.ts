@@ -91,6 +91,39 @@ describe("URLSearchParams", () => {
     expect(Array.from(params.keys())).toHaveLength(params.size);
   });
 
+  // https://github.com/oven-sh/bun/issues/48347
+  describe("an iterator that is done", () => {
+    it("yields what append() adds after it", () => {
+      const params = new URLSearchParams("a=1");
+      const iterator = params.entries();
+      expect(iterator.next()).toEqual({ value: ["a", "1"], done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+      params.append("b", "2");
+      expect(iterator.next()).toEqual({ value: ["b", "2"], done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+    });
+
+    it("yields what is added to an empty list after it", () => {
+      for (const kind of ["keys", "values", "entries", Symbol.iterator] as const) {
+        const params = new URLSearchParams();
+        const iterator = params[kind]();
+        expect(iterator.next()).toEqual({ value: undefined, done: true });
+        params.append("a", "1");
+        expect(iterator.next().done).toBe(false);
+        expect(iterator.next()).toEqual({ value: undefined, done: true });
+      }
+    });
+
+    it("yields what url.search adds after it", () => {
+      const url = new URL("https://example.com/?a=1");
+      const iterator = url.searchParams.keys();
+      expect([...iterator]).toEqual(["a"]);
+      url.search = "?a=1&b=2";
+      expect(iterator.next()).toEqual({ value: "b", done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+    });
+  });
+
   describe("non-standard extensions", () => {
     it("should support .length", () => {
       const params = new URLSearchParams();

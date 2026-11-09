@@ -711,6 +711,31 @@ describe("FormData", () => {
     expect(Bun.inspect(formData).length > 0).toBe(true);
   });
 
+  // https://github.com/oven-sh/bun/issues/48347
+  describe("an iterator that is done", () => {
+    it("yields what append() adds after it", () => {
+      const formData = new FormData();
+      formData.append("a", "1");
+      const iterator = formData.entries();
+      expect(iterator.next()).toEqual({ value: ["a", "1"], done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+      formData.append("b", "2");
+      expect(iterator.next()).toEqual({ value: ["b", "2"], done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+    });
+
+    it("yields what is added to an empty list after it", () => {
+      for (const kind of ["keys", "values", "entries", Symbol.iterator] as const) {
+        const formData = new FormData();
+        const iterator = formData[kind]();
+        expect(iterator.next()).toEqual({ value: undefined, done: true });
+        formData.append("a", "1");
+        expect(iterator.next().done).toBe(false);
+        expect(iterator.next()).toEqual({ value: undefined, done: true });
+      }
+    });
+  });
+
   describe("non-standard extensions", () => {
     it("should support .length", () => {
       const formData = new FormData();

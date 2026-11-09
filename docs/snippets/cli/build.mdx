@@ -16,7 +16,7 @@ bun build <entry points>
 
 <ParamField path="--bytecode-depth" type="number">
   How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all.
-  Only has an effect together with <code>--bytecode</code>
+  Without <code>--bytecode</code>, Bun checks the value and does not use it
 </ParamField>
 
 <ParamField path="--no-optimize-bytecode" type="boolean">
@@ -132,11 +132,11 @@ bun build <entry points>
   Imports that remain in the output keep their specifiers as written. In a TypeScript file, Bun removes imported names
   that the file never uses as a value, and an `import` statement with no name left. A side-effect import such as `import
   "./setup"` stays. Transpiler options such as `--define`, `--env`, `--drop`, `--loader`, `--jsx-runtime`, `--minify`
-  and `--tsconfig-override` apply, and so do the output options `--outdir`, `--outfile`, `--root` and `--entry-naming`.
-  Bun accepts options that describe a bundle (`--splitting`, `--external`, `--packages`, `--format`, `--banner`,
-  `--footer`, `--sourcemap`, `--metafile`, `--metafile-md`, `--bytecode`) but ignores them in this mode. `--watch` runs
-  the first build and then keeps the process alive without rebuilding. Bun rejects `--compile` together with
-  `--no-bundle`
+  and `--tsconfig-override` apply. So do `--outdir` and `--outfile`, and with `--outdir` also `--root` and
+  `--entry-naming`. Bun validates options that describe a bundle (`--splitting`, `--external`, `--packages`, `--format`,
+  `--banner`, `--footer`, `--sourcemap`, `--metafile`, `--metafile-md`, `--bytecode`) and then ignores them. The
+  validation can fail: without `--outdir`, `--splitting` and `--sourcemap=external` are errors. `--watch` runs the first
+  build and then keeps the process alive without rebuilding. Bun rejects `--compile` together with `--no-bundle`
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">

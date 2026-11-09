@@ -69,9 +69,9 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--pass-with-no-tests" type="boolean">
-  Exit with code 0 instead of 1 when <code>bun test</code> finds no test file to run, or when the files define tests and{" "}
-  <code>--test-name-pattern</code> matches none of them. A single path argument that does not exist still exits with
-  code 1
+  Exit with code 0 instead of 1 in three cases: <code>bun test</code> finds no test file, the filters or paths select no
+  test file, or the files define tests and <code>--test-name-pattern</code> matches none of them. Two cases still exit
+  with code 1: a single path that does not exist, and a <code>--files-from</code> list that contains no path
 </ParamField>
 
 ### Reporting

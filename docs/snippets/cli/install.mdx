@@ -175,8 +175,9 @@ bun install <name>@<version>
 
 <ParamField path="--trust" type="boolean">
   Add the packages named on the command line to <code>trustedDependencies</code> in the project's package.json and
-  install them. Has no effect on a bare <code>bun install</code> with no package names; use <code>bun pm trust</code>
-  for packages that are already installed
+  install them. With no package names, <code>bun install --trust</code> trusts nothing: blocked lifecycle scripts stay
+  blocked. Use <code>bun pm trust</code> for packages that are already installed. Bun rejects <code>--trust</code>{" "}
+  together with <code>--frozen-lockfile</code> or <code>--production</code>
 </ParamField>
 
 ### Concurrency & Performance

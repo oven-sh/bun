@@ -95,7 +95,10 @@ Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared
 bun test --pass-with-no-tests
 ```
 
-`--pass-with-no-tests` does not cover a single path that does not exist. `bun test ./missing.test.ts --pass-with-no-tests` prints `Test filter "./missing.test.ts" had no matches` and exits with code 1.
+Two cases exit with code 1 even with `--pass-with-no-tests`:
+
+- A single path that does not exist. `bun test ./missing.test.ts --pass-with-no-tests` prints `Test filter "./missing.test.ts" had no matches`.
+- A `--files-from` list that contains no path. `bun test --files-from ./list.txt --pass-with-no-tests` prints `error: --files-from file ./list.txt lists no test files`.
 
 ### Changing the Root Directory
 

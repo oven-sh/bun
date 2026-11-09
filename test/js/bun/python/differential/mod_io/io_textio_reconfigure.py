@@ -161,3 +161,33 @@ w = TW(BadFlush(), 'ascii')
 t(w.reconfigure, encoding='utf-8', line_buffering=True)
 print(state(w))
 BadFlush.flush = BytesIO.flush
+
+print('--- by what the stream is using, in the middle')
+class Acts(BytesIO):
+    act = None
+    def read1(self, size=-1):
+        act, self.act = self.act, None
+        if act:
+            act()
+        return super().read1(size)
+for size in (), (4,), (40,):
+    raw = Acts(b'ab\ncd\r\nef\ngh')
+    w = TW(raw, 'ascii', newline='\n')
+    raw.act = lambda: w.reconfigure(newline='\r\n')
+    print(size, repr(w.readline(*size)), repr(w.readline(*size)), repr(w.read()))
+import codecs
+class Encoder(codecs.IncrementalEncoder):
+    act = None
+    def encode(self, text, final=False):
+        act, Encoder.act = Encoder.act, None
+        if act:
+            act()
+        return text.encode('ascii')
+    def getstate(self):
+        return 0
+codecs.register(lambda name: codecs.CodecInfo(codecs.ascii_encode, codecs.ascii_decode, incrementalencoder=Encoder, incrementaldecoder=codecs.getincrementaldecoder('ascii'), name='acts') if name == 'acts' else None)
+for encoding in 'utf-16', 'utf-8-sig', 'utf-32':
+    raw = BytesIO()
+    w = TW(raw, 'acts')
+    Encoder.act = lambda: w.reconfigure(encoding=encoding)
+    print(w.write('a'), w.write('b'), w.flush(), raw.getvalue(), state(w))

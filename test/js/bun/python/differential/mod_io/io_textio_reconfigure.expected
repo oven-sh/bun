@@ -1,5 +1,5 @@
 status: 0
-script: 441b3a224e700a39
+script: 176fc724a26b17e7
 ---
 --- nothing changes
 None ('ascii', 'replace', True, True)
@@ -66,3 +66,10 @@ None
 --- the flush fails
 OSError: flush failed
 ('ascii', 'strict', False, False)
+--- by what the stream is using, in the middle
+() 'ab\ncd\r\n' 'ef\ngh' ''
+(4,) 'ab\nc' 'd\r\n' 'ef\ngh'
+(40,) 'ab\ncd\r\n' 'ef\ngh' ''
+1 1 None b'a\xff\xfeb\x00' ('utf-16', 'strict', False, False)
+1 1 None b'a\xef\xbb\xbfb' ('utf-8-sig', 'strict', False, False)
+1 1 None b'a\xff\xfe\x00\x00b\x00\x00\x00' ('utf-32', 'strict', False, False)

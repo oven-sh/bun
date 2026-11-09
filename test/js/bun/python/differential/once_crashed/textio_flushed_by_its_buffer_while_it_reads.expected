@@ -1,0 +1,435 @@
+status: 0
+script: 6b27040dce0596a3
+---
+ from within: returned 'NoneType'
+TextIOWrapper | flush | next | - | StopIteration() | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'NoneType'
+TextIOWrapper | flush | next | returned 'abc\n' | StopIteration() | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'NoneType'
+TextIOWrapper | flush | readlines | - | returned [] | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | readlines | returned 'abc\n' | returned [] | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | for | - | returned [] | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | for | returned 'abc\n' | returned [] | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | list | - | returned [] | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | list | returned 'abc\n' | returned [] | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | readline | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | readline | returned 'abc\n' | SystemError | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | readline(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | readline(2) | returned 'abc\n' | SystemError | returned 'ab' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | read | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | read | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | read(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | read(2) | returned 'abc\n' | SystemError | returned 'ab' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | returned '' | returned 0
+ from within: returned 'NoneType'
+TextIOWrapper | flush | read(20) | returned 'abc\n' | SystemError | returned 'abc\nabc\nabc\n' | returned 0
+ from within: returned 'Buffer'
+TextIOWrapper | detach | next | - | StopIteration() | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | next | returned 'abc\n' | StopIteration() | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | readlines | - | returned [] | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | readlines | returned 'abc\n' | returned [] | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | for | - | returned [] | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | for | returned 'abc\n' | returned [] | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | list | - | returned [] | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | list | returned 'abc\n' | returned [] | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | readline | - | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | readline | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | readline(2) | - | returned 'ab' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | readline(2) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | read | - | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | read | returned 'abc\n' | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | read(2) | - | returned 'ab' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | read(2) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | read(20) | - | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+TextIOWrapper | detach | read(20) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'NoneType'
+TextIOWrapper | close | next | - | StopIteration() | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | next | returned 'abc\n' | StopIteration() | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | readlines | - | returned [] | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | readlines | returned 'abc\n' | returned [] | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | for | - | returned [] | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | for | returned 'abc\n' | returned [] | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | list | - | returned [] | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | list | returned 'abc\n' | returned [] | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | readline | - | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | readline | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | readline(2) | - | returned 'ab' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | readline(2) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | read | - | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | read | returned 'abc\n' | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | read(2) | - | returned 'ab' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | read(2) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+TextIOWrapper | close | read(20) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | next | - | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | next | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | readlines | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | readlines | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | for | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | for | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | list | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | list | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: returned 'int'
+TextIOWrapper | tell | readline | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | readline | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+TextIOWrapper | tell | readline(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | readline(2) | returned 'abc\n' | returned 'ab' | returned 'c\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+TextIOWrapper | tell | read | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | read | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+TextIOWrapper | tell | read(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | read(2) | returned 'abc\n' | returned 'ab' | returned 'c\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+TextIOWrapper | tell | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | returned '' | returned 0
+ from within: OSError(telling position disabled by next() call)
+TextIOWrapper | tell | read(20) | returned 'abc\n' | returned 'abc\nabc\nabc\n' | returned '' | OSError(telling position disabled by next() call)
+ from within: returned 'NoneType'
+Derived | flush | next | - | SystemError | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'NoneType'
+Derived | flush | next | returned 'abc\n' | SystemError | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'NoneType'
+Derived | flush | readlines | - | SystemError | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+Derived | flush | readlines | returned 'abc\n' | SystemError | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+Derived | flush | for | - | SystemError | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+Derived | flush | for | returned 'abc\n' | SystemError | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+Derived | flush | list | - | SystemError | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+Derived | flush | list | returned 'abc\n' | SystemError | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+Derived | flush | readline | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | readline | returned 'abc\n' | SystemError | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | readline(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | readline(2) | returned 'abc\n' | SystemError | returned 'ab' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | read | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | read | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | read(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | read(2) | returned 'abc\n' | SystemError | returned 'ab' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | returned '' | returned 0
+ from within: returned 'NoneType'
+Derived | flush | read(20) | returned 'abc\n' | SystemError | returned 'abc\nabc\nabc\n' | returned 0
+ from within: returned 'Buffer'
+Derived | detach | next | - | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | next | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | readlines | - | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | readlines | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | for | - | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | for | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | list | - | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | list | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | readline | - | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | readline | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | readline(2) | - | returned 'ab' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | readline(2) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | read | - | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | read | returned 'abc\n' | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | read(2) | - | returned 'ab' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | read(2) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | read(20) | - | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+Derived | detach | read(20) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'NoneType'
+Derived | close | next | - | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | next | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | readlines | - | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | readlines | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | for | - | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | for | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | list | - | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | list | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | readline | - | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | readline | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | readline(2) | - | returned 'ab' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | readline(2) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | read | - | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | read | returned 'abc\n' | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | read(2) | - | returned 'ab' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | read(2) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+Derived | close | read(20) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | next | - | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | next | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | readlines | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | readlines | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | for | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | for | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | list | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | list | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: returned 'int'
+Derived | tell | readline | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | readline | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+Derived | tell | readline(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | readline(2) | returned 'abc\n' | returned 'ab' | returned 'c\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+Derived | tell | read | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | read | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+Derived | tell | read(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | read(2) | returned 'abc\n' | returned 'ab' | returned 'c\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+Derived | tell | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | returned '' | returned 0
+ from within: OSError(telling position disabled by next() call)
+Derived | tell | read(20) | returned 'abc\n' | returned 'abc\nabc\nabc\n' | returned '' | OSError(telling position disabled by next() call)
+ from within: returned 'NoneType'
+WithReadline | flush | next | - | SystemError | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'NoneType'
+WithReadline | flush | next | returned 'abc\n' | SystemError | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'NoneType'
+WithReadline | flush | readlines | - | SystemError | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | readlines | returned 'abc\n' | SystemError | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | for | - | SystemError | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | for | returned 'abc\n' | SystemError | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | list | - | SystemError | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | list | returned 'abc\n' | SystemError | returned ['abc\n', 'abc\n', 'abc\n'] | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | readline | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | readline | returned 'abc\n' | SystemError | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | readline(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | readline(2) | returned 'abc\n' | SystemError | returned 'ab' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | read | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | read | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | read(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | read(2) | returned 'abc\n' | SystemError | returned 'ab' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | returned '' | returned 0
+ from within: returned 'NoneType'
+WithReadline | flush | read(20) | returned 'abc\n' | SystemError | returned 'abc\nabc\nabc\n' | returned 0
+ from within: returned 'Buffer'
+WithReadline | detach | next | - | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | next | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | readlines | - | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | readlines | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | for | - | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | for | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | list | - | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | list | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | readline | - | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | readline | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | readline(2) | - | returned 'ab' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | readline(2) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | read | - | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | read | returned 'abc\n' | returned 'abc\n' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | read(2) | - | returned 'ab' | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | read(2) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | read(20) | - | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'Buffer'
+WithReadline | detach | read(20) | returned 'abc\n' | SystemError | ValueError(underlying buffer has been detached) | ValueError(underlying buffer has been detached)
+ from within: returned 'NoneType'
+WithReadline | close | next | - | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | next | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | readlines | - | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | readlines | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | for | - | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | for | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | list | - | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | list | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | readline | - | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | readline | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | readline(2) | - | returned 'ab' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | readline(2) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | read | - | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | read | returned 'abc\n' | returned 'abc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | read(2) | - | returned 'ab' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | read(2) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: returned 'NoneType'
+WithReadline | close | read(20) | returned 'abc\n' | SystemError | ValueError(I/O operation on closed file.) | ValueError(I/O operation on closed file.)
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | next | - | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | next | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | readlines | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | readlines | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | for | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | for | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | list | - | returned ['abc\n', 'abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | list | returned 'abc\n' | returned ['abc\n', 'abc\n', 'abc\n'] | returned [] | returned 0
+ from within: returned 'int'
+WithReadline | tell | readline | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | readline | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+WithReadline | tell | readline(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | readline(2) | returned 'abc\n' | returned 'ab' | returned 'c\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+WithReadline | tell | read | - | returned 'abc\n' | returned 'abc\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | read | returned 'abc\n' | returned 'abc\n' | returned 'abc\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+WithReadline | tell | read(2) | - | returned 'ab' | returned 'c\n' | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | read(2) | returned 'abc\n' | returned 'ab' | returned 'c\n' | OSError(telling position disabled by next() call)
+ from within: returned 'int'
+WithReadline | tell | read(20) | - | returned 'abc\nabc\nabc\nabc\n' | returned '' | returned 0
+ from within: OSError(telling position disabled by next() call)
+WithReadline | tell | read(20) | returned 'abc\n' | returned 'abc\nabc\nabc\n' | returned '' | OSError(telling position disabled by next() call)

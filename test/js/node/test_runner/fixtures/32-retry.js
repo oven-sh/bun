@@ -42,6 +42,23 @@ test("tags", { tags: ["declared"] }, t => {
   assert.strictEqual(attempts[t.name], 2, "the first attempt fails");
 });
 
+// Code that the first attempt left behind mocks a method while the second attempt runs. The end of the second
+// attempt restores that mock, as it restores its own.
+const target = { method: () => "real" };
+let first;
+test("late mock of the first attempt", t => {
+  if (attempt(t) === 1) {
+    first = t;
+    throw new Error("the first attempt fails");
+  }
+  first.mock.method(target, "method", () => "mocked");
+  log("late mock of the first attempt: method=" + target.method());
+});
+
+test("after the late mock", () => {
+  log("after the late mock: method=" + target.method());
+});
+
 // The second attempt has the options of the declaration too.
 test("expectFailure option", { expectFailure: true }, t => {
   if (attempt(t) === 2) throw new Error("fails on the second attempt, as expected");

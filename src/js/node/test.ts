@@ -1653,6 +1653,8 @@ class TestNode {
     next.options = this.options;
     next.ownTags = this.ownTags;
     next.expectFailure = this.expectFailure;
+    // One tracker for every attempt, so that the end of an attempt also restores what the attempt before it mocks late.
+    next.mockTracker = this.mockTracker ??= new MockTracker();
     if (todo !== false) next.todoFlag = true;
     if (typeof todo === "string") next.message = todo;
     return next;

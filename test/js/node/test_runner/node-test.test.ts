@@ -335,6 +335,8 @@ describe("node:test", () => {
       "t.after(): hook of attempt 2 runs=2",
       "tags: attempt 1 declared",
       "tags: attempt 2 declared",
+      "late mock of the first attempt: method=mocked",
+      "after the late mock: method=real",
     ]);
     expect(verdicts).toEqual([
       "(pass) t.plan() (attempt 2)",
@@ -342,6 +344,8 @@ describe("node:test", () => {
       "(fail) a subtest that fails on every attempt (attempt 2)",
       "(pass) t.after() (attempt 2)",
       "(pass) tags (attempt 2)",
+      "(pass) late mock of the first attempt (attempt 2)",
+      "(pass) after the late mock",
       "(pass) expectFailure option (attempt 2)",
       "(fail) plan option that is never met (attempt 2)",
       "(fail) fails, is not skipped (attempt 2)",

@@ -31,19 +31,42 @@ const cacheDir = join(tmpdir(), "bun-test-tonic-cache");
 // change to one file and not the other fails here, by name.
 test("the server's generated module has the methods and fields of helloworld.proto", async () => {
   const generated = await Bun.file(join(import.meta.dir, "fixtures/tonic-server/src/helloworld.rs")).text();
+  type Message = { name: string; field: { name: string; number: number; type: string }[] };
+  // What tonic calls the four shapes of a method, as in `tonic::server::UnaryService`.
+  const serviceKinds = ["Unary", "ServerStreaming", "ClientStreaming", "Streaming"];
   const proto = { methods: [] as string[], fields: [] as string[] };
   for (const definition of Object.values(packageDefinition)) {
     if ("format" in definition) {
-      const { name, field } = definition.type as { name: string; field: { name: string; number: number }[] };
-      for (const { name: fieldName, number } of field) proto.fields.push(`${name}.${fieldName} = ${number}`);
+      const { name, field } = definition.type as Message;
+      for (const { name: fieldName, number, type } of field) {
+        // TYPE_STRING is `string` in a prost attribute, and TYPE_ENUM is `enumeration`.
+        const prostType = type
+          .slice("TYPE_".length)
+          .toLowerCase()
+          .replace(/^enum$/, "enumeration");
+        proto.fields.push(`${name}.${fieldName}: ${prostType} = ${number}`);
+      }
     } else {
-      for (const method of Object.values(definition)) proto.methods.push(method.path);
+      for (const { path, requestStream, responseStream, requestType, responseType } of Object.values(definition)) {
+        const kind = serviceKinds[Number(requestStream) * 2 + Number(responseStream)];
+        proto.methods.push(
+          `${path}: ${kind}(${(requestType.type as Message).name}) -> ${(responseType.type as Message).name}`,
+        );
+      }
     }
   }
   const rust = {
-    methods: Array.from(generated.matchAll(/^ +"(\/[\w.]+\/\w+)" => \{$/gm), match => match[1]),
+    methods: Array.from(
+      generated.matchAll(
+        /^ +"(\/[\w.]+\/\w+)" => \{[^]*?tonic::server::(\w+)Service<super::(\w+)>[^]*?type Response = super::(\w+);/gm,
+      ),
+      ([, path, kind, request, response]) => `${path}: ${kind}(${request}) -> ${response}`,
+    ),
     fields: Array.from(generated.matchAll(/^pub struct (\w+) \{\n([^}]*)\}/gm)).flatMap(([, name, body]) =>
-      Array.from(body.matchAll(/tag = "(\d+)"\)\]\n +pub (\w+):/g), ([, tag, field]) => `${name}.${field} = ${tag}`),
+      Array.from(
+        body.matchAll(/#\[prost\((\w+)[^\]]*tag = "(\d+)"\)\]\n +pub (\w+):/g),
+        ([, type, tag, field]) => `${name}.${field}: ${type} = ${tag}`,
+      ),
     ),
   };
   expect({ methods: rust.methods.sort(), fields: rust.fields.sort() }).toEqual({

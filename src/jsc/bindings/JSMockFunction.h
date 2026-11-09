@@ -25,8 +25,14 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
-// vi.stubGlobal() is about to replace the global `name`, and keeps `descriptor` to put it back. A spy in it then has to say what it replaced after its restore too.
-void willKeepForStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor& descriptor);
+// What vi.stubGlobal() and vi.unstubAllGlobals() call. An entry of JSMockModule::stubbedGlobals is the property descriptor from before the first stub of the
+// name, as an object that also has the value that the last stub put. For a name that did not exist, the entry is that value.
+// The entry for a first stub that puts `value`. `descriptor` is null if the global does not exist.
+JSC::JSValue entryOfStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor* descriptor, JSC::JSValue value);
+// A later stub of `name` put `value`.
+void didStubAgain(Zig::GlobalObject*, JSC::JSMap* stubs, JSC::JSValue name, JSC::JSValue value);
+// The descriptor object of an entry, or null if the global did not exist.
+JSC::JSObject* descriptorOfStub(JSC::VM&, JSC::JSValue entry);
 // vi.unstubAllGlobals() is about to put `descriptor` back on the global `name`. True if a spy in it was restored since, and what the global has without that spy is there now.
 bool putBackForStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor& descriptor);
 
@@ -58,12 +64,14 @@ public:
 
     // Weak sets (ActiveSpySet), created on first use.
     JSC::WriteBarrier<JSC::Unknown> activeSpies;
+    // Spies that another spy, a stub or a fake timer replaced on their property. They say what they replaced after their restore too, until the end of the test file.
+    JSC::WriteBarrier<JSC::Unknown> keptSpies;
     // Mocks that were called, or had `.mock` read, since they were last cleared.
     JSC::WriteBarrier<JSC::Unknown> calledMocks;
     // Mocks whose implementation or mock name may differ from what mockReset() gives them.
     JSC::WriteBarrier<JSC::Unknown> configuredMocks;
 
-    // JSMaps from name to original value for `vi.stubEnv()` / `vi.stubGlobal()`, created on first use.
+    // JSMaps from name to original value for `vi.stubEnv()` / `vi.stubGlobal()`, created on first use. For a global, see entryOfStub().
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
     JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
     // JSMaps from name to stub for what a preload stubbed. Reapplied when a test file ends, so the next one starts with them.
@@ -75,8 +83,6 @@ public:
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
     bool preloadMayBeRunning { true };
-    // True if spyOn() put a spy on the accessor of a function that the fake timers replace, in this test file. The fake timers then look for it.
-    bool hasSpyOnAccessorOfFakeTimer { false };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

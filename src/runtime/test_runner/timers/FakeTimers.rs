@@ -11,39 +11,34 @@ use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{
-    JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSType, JSValue, JsError, JsResult,
-    Strong, StrongOptional,
+    JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
+    StrongOptional,
 };
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
-    safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
     // A spy or a `vi.stubGlobal()` value that a fake replaces can be undone while the clock is on. See `FakeTimers::retractable`.
-    /// The bit of each `Api` whose global is stubbed, bit 31 if a spy may be live, and `SPY_ON_ACCESSOR` if one may be on the
-    /// accessor of a function that the fake timers replace. Zero: no fake replaces a spy or a stub.
-    safe fn JSMock__sharersOfFakes(global: &JSGlobalObject) -> u32;
-    safe fn JSMock__entryOfFake(
+    /// The value that a fake for `owner[name]` replaces: what script reads there, or what an uninstalled fake that is there stands for.
+    /// Sets `entry` if a spy or a stub can take that value off the property while the clock is on. Empty if a getter threw.
+    safe fn JSMock__readForFake(
         global: &JSGlobalObject,
         owner: JSValue,
         name: &bun_core::String,
-        original: JSValue,
-        is_stubbed: bool,
-        may_be_on_accessor: bool,
+        originals: JSValue,
+        entry: &mut JSValue,
     ) -> JSValue;
-    safe fn JSMock__valueOfFakeEntry(
-        global: &JSGlobalObject,
-        owner: JSValue,
-        name: &bun_core::String,
-        entry: JSValue,
-    ) -> JSValue;
+    /// Puts back what the fake with this entry replaced, or what it stands for if `is_uninstalled`. Runs no JS.
     safe fn JSMock__putBackForFake(
         global: &JSGlobalObject,
         owner: JSValue,
         name: &bun_core::String,
+        originals: JSValue,
         entry: JSValue,
-    ) -> bool;
+        is_uninstalled: bool,
+    );
+    safe fn JSMock__didUndoTestFile(global: &JSGlobalObject);
 }
 
 unsafe extern "C" {
@@ -133,29 +128,18 @@ impl Api {
         ("Temporal", None),
     ];
 
-    const fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         Self::NAMES[self as usize].0
     }
 
     /// The property of `owner()` that holds the function.
-    const fn property(self) -> &'static str {
+    fn property(self) -> &'static str {
         match self {
             Api::Date | Api::Performance => "now",
             Api::PerformanceObject => "performance",
             _ => self.name(),
         }
     }
-
-    /// Bit `n` is set if the `property()` of a function has `n` bytes.
-    const PROPERTY_LENGTHS: u32 = {
-        let mut lengths = 0;
-        let mut index = 0;
-        while index < Self::FUNCTIONS.len() {
-            lengths |= 1 << Self::FUNCTIONS[index].property().len();
-            index += 1;
-        }
-        lengths
-    };
 
     fn put(self, global: &JSGlobalObject, function: JSValue) {
         let owner = self.owner(global);
@@ -524,10 +508,10 @@ pub(crate) struct FakeTimers {
     date_now_offset: f64,
     loop_limit: u32,
     replaced: Vec<Replaced>,
-    /// For each function in `replaced` whose original a test can take back while the clock is on (a spy, or a value that
-    /// `vi.stubGlobal()` put there): what `JSMock__entryOfFake` gave for it. Empty unless there was a spy or a stub at `useFakeTimers()`.
+    /// For each function in `replaced` whose original a test can take off the property while the clock is on (a spy, or what
+    /// `vi.stubGlobal()` put there): what `JSMock__readForFake` gave for it. Empty unless there was a spy or a stub at `useFakeTimers()`.
     retractable: Vec<(Api, Strong)>,
-    /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced.
+    /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced, or to its entry in `retractable`.
     originals: StrongOptional,
     reading_globals: bool,
     ticks: VecDeque<Tick>,
@@ -568,8 +552,6 @@ impl Default for FakeTimers {
 
 /// The `run_step` id reserved for `TickMode::NextAsync`. No [`AsyncDrive`] gets it.
 const AUTO_STEP: u32 = 0;
-/// A bit of what `JSMock__sharersOfFakes` returns.
-const SPY_ON_ACCESSOR: u32 = 1 << 30;
 
 /// `jest.setSystemTime` (C++ `JSMock__jsSetSystemTime`) writes
 /// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
@@ -923,12 +905,8 @@ impl FakeTimers {
         }
         let has_retractable = !deactivated.retractable.is_empty();
         for Replaced { api, original, .. } in deactivated.replaced {
-            // Restored while the clock was faked, it has already put back what it replaced.
-            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
+            if has_retractable && Self::put_back_retractable(global, api, &deactivated.retractable)
             {
-                continue;
-            }
-            if has_retractable && Self::put_back_retracted(global, api, &deactivated.retractable) {
                 continue;
             }
             api.put(global, original.get());
@@ -936,9 +914,9 @@ impl FakeTimers {
         deactivated.drives
     }
 
-    /// A restored spy and the value of a removed stub don't go back on the global: what they had replaced does. True if it did.
+    /// A restored spy and what a removed stub put don't go back on the property: what they had replaced does. True if `api` has an entry.
     #[cold]
-    fn put_back_retracted(
+    fn put_back_retractable(
         global: &JSGlobalObject,
         api: Api,
         retractable: &[(Api, Strong)],
@@ -947,18 +925,11 @@ impl FakeTimers {
             return false;
         };
         let owner = api.owner(global);
-        let name = bun_core::String::static_(api.property());
-        owner.is_object() && JSMock__putBackForFake(global, owner, &name, entry.get())
-    }
-
-    /// What `useFakeTimers()` keeps for `original` if a test can take it back while the clock is on, else empty.
-    #[cold]
-    fn entry_of_fake(global: &JSGlobalObject, api: Api, original: JSValue, sharers: u32) -> JSValue {
-        let name = bun_core::String::static_(api.property());
-        let is_stubbed = sharers & (1 << api as u32) != 0;
-        let may_be_on_accessor = sharers & SPY_ON_ACCESSOR != 0;
-        let owner = api.owner(global);
-        JSMock__entryOfFake(global, owner, &name, original, is_stubbed, may_be_on_accessor)
+        if owner.is_object() {
+            let name = bun_core::String::static_(api.property());
+            JSMock__putBackForFake(global, owner, &name, JSValue::ZERO, entry.get(), false);
+        }
+        true
     }
 
     /// Everything that can throw runs before any state changes. Returns drives to settle, like `uninstall`.
@@ -1005,7 +976,8 @@ impl FakeTimers {
         originals
     }
 
-    /// Each `original` is the value `uninstall(Restore::Always)` will leave on the global, never another fake.
+    /// Each `original` is the value `uninstall(Restore::Always)` will leave on the global, never another fake, unless the function has an
+    /// entry in the second list: then `uninstall` leaves what that entry stands for.
     fn fakes(
         global: &JSGlobalObject,
         faked: ApiSet,
@@ -1014,7 +986,6 @@ impl FakeTimers {
         let _reading = ReadingGlobals::begin();
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
-        let sharers = JSMock__sharersOfFakes(global);
         let mut fakes = Vec::new();
         let mut retractable = Vec::new();
         for api in Api::FUNCTIONS {
@@ -1038,22 +1009,10 @@ impl FakeTimers {
                     original
                 }
                 None => {
-                    let installed = api.owner(global).get(global, api.property())?;
-                    let installed = installed.unwrap_or(JSValue::UNDEFINED);
-                    let original = match original_of(originals, installed) {
-                        None => installed,
-                        Some(of_fake) => {
-                            what_stale_fake_stands_for(global, api, originals, of_fake)
-                                .unwrap_or(installed)
-                        }
-                    };
-                    // A spy is an `InternalFunction`, or is on an accessor.
-                    if sharers & (1 << api as u32 | SPY_ON_ACCESSOR) != 0
-                        || (sharers != 0 && original.js_type() == JSType::InternalFunction)
-                    {
-                        entry = Self::entry_of_fake(global, api, original, sharers);
-                    }
-                    original
+                    let name = bun_core::String::static_(api.property());
+                    bun_jsc::from_js_host_call(global, || {
+                        JSMock__readForFake(global, api.owner(global), &name, originals, &mut entry)
+                    })?
                 }
             };
             // Only a DOM library defines these two.
@@ -1095,7 +1054,7 @@ impl FakeTimers {
         Ok((fakes, retractable))
     }
 
-    /// Swaps any stale fake that was put back on a global for its original. Runs no JS.
+    /// Swaps any stale fake that was put back on a global for what it stands for. Runs no JS.
     fn take_off_stale_fakes(global: &JSGlobalObject) {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let Some(originals) = (unsafe { (*timer_all()).fake_timers.originals.get() }) else {
@@ -1110,10 +1069,9 @@ impl FakeTimers {
             let installed = Bun__FakeTimers__getDirect(global, owner, &name);
             // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
             if !unsafe { (*timer_all()).fake_timers.is_installed(installed) }
-                && let Some(of_fake) = original_of(originals, installed)
-                && let Some(original) = what_stale_fake_stands_for(global, api, originals, of_fake)
+                && let Some(entry) = original_of(originals, installed)
             {
-                api.put(global, original);
+                JSMock__putBackForFake(global, owner, &name, originals, entry, true);
             }
         }
     }
@@ -1637,57 +1595,6 @@ impl FakeTimers {
     }
 }
 
-/// What an uninstalled fake that is on a global stands for. `entry` is what the originals have for it.
-/// Its original can be another uninstalled fake, a restored spy or the value of a removed stub.
-#[cold]
-fn what_stale_fake_stands_for(
-    global: &JSGlobalObject,
-    api: Api,
-    originals: JSValue,
-    mut entry: JSValue,
-) -> Option<JSValue> {
-    let owner = api.owner(global);
-    let name = bun_core::String::static_(api.property());
-    for _ in 0..16 {
-        let value = JSMock__valueOfFakeEntry(global, owner, &name, entry);
-        if value.is_empty() {
-            return None;
-        }
-        match original_of(originals, value) {
-            Some(next) => entry = next,
-            None => return Some(value),
-        }
-    }
-    None
-}
-
-/// True for a fake timer function, installed or not.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__FakeTimers__isFake(_global: &JSGlobalObject, value: JSValue) -> bool {
-    // SAFETY: per-thread `timer::All`; field reads only.
-    let originals = unsafe { (*timer_all()).fake_timers.originals.get() };
-    originals.is_some_and(|originals| original_of(originals, value).is_some())
-}
-
-/// The bits of the functions whose property has this name, on the global object or on another object.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__FakeTimers__apisOfProperty(name: &bun_core::String, is_on_global: bool) -> u32 {
-    let name = name.to_encoded_slice();
-    // Most names are out here. A spy on a getter asks for each one.
-    if name.len >= 32 || Api::PROPERTY_LENGTHS & (1 << name.len) == 0 {
-        return 0;
-    }
-    let mut apis = 0;
-    for api in Api::FUNCTIONS {
-        if is_on_global != matches!(api, Api::NextTick | Api::Date | Api::Performance)
-            && name.eq_ascii(api.property().as_bytes())
-        {
-            apis |= 1 << api as u32;
-        }
-    }
-    apis
-}
-
 fn original_of(originals: JSValue, value: JSValue) -> Option<JSValue> {
     let original = Bun__FakeTimers__originalOf(originals, value);
     (!original.is_empty()).then_some(original)
@@ -1911,6 +1818,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }
     FakeTimers::take_off_stale_fakes(global);
+    JSMock__didUndoTestFile(global);
 }
 
 pub(crate) fn is_active() -> bool {

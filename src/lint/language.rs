@@ -266,8 +266,7 @@ pub struct ParseOptions {
     pub every_file_is_a_module: bool,
 }
 
-/// The parts of [`LanguageOptions`] that decide a file's tree and its parse error, as the bytes of a cache key. Only
-/// [`LanguageOptions::parse_identity`] builds one.
+/// The parts of [`LanguageOptions`] that decide a file's tree and its parse error, as the bytes of a cache key.
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ParseIdentity {
@@ -667,8 +666,7 @@ impl LanguageOptions {
         }
     }
 
-    /// The inputs of [`LanguageOptions::parse_options`] and of [`parse_error`](crate::linter::parse_error). Every
-    /// field is named here, so a new field has to be sorted in or out.
+    /// Every input of [`LanguageOptions::parse_options`] and of the parse error. A new field is sorted in or out here.
     pub fn parse_identity(&self) -> ParseIdentity {
         let LanguageOptions {
             ecma_version,

@@ -34,10 +34,6 @@ impl Folder<'_, '_> {
         let Some((object, key)) = hir.member_key(access) else {
             return Folded::UNKNOWN;
         };
-        let key = match key {
-            MemberKey::Computed(index) => hir.index_member_key(self.as_written(index)),
-            key => key,
-        };
         let literal = self.find_in_place(object);
         if self.is_assignment_target(access) || self.is_delete_operand(access) {
             return Folded::UNKNOWN;
@@ -209,9 +205,13 @@ impl Folder<'_, '_> {
             )
             && property.key == PropKey::Name(name)
             && name != known::__proto__;
-        let is_key_same_to_parser = match index {
-            Some(_) => text.is_ascii() && !is_identifier(text),
-            None => hir.is_name_resolved_by_transpiler(read.access, text),
+        let is_key_written = index.is_none_or(|index| {
+            let written = hir.index_member_key(self.as_written(index));
+            matches!(written, MemberKey::Name(_))
+        });
+        let is_key_same_to_parser = match is_key_written {
+            true => hir.is_name_resolved_by_transpiler(read.access, text),
+            false => text.is_ascii() && !is_identifier(text),
         };
         let is_same_to_parser = is_key_same_to_parser
             && (property.name_kind == NameKind::Identifier || text.is_ascii());

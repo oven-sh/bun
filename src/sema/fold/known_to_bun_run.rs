@@ -389,37 +389,44 @@ impl<'s> Folder<'_, 's> {
     /// What `fold_string_addition` of the parser has of `e`: a text it knows, a template it joins such texts to, or neither.
     fn find_text_shape(&self, e: ExprId) -> TextShape {
         let hir = self.hir;
-        let e = self.seen_by_bun_run(e);
         let is_ascii = |text: Atom| self.atoms.bytes(text).is_ascii();
-        if let Value::Known(value) = self.folded(e).value
-            && self.is_literal_to_bun_run(e)
-        {
-            return match self.evaluator.to_constant(value) {
-                Constant::BigInt(_) => TextShape::Neither,
-                Constant::String(text) if !is_ascii(text) => TextShape::Neither,
-                _ => TextShape::Known,
+        let mut addends_on_the_right: SmallVec<[ExprId; 4]> = SmallVec::new();
+        let mut leftmost = self.seen_by_bun_run(e);
+        let mut shape = loop {
+            if let Value::Known(value) = self.folded(leftmost).value
+                && self.is_literal_to_bun_run(leftmost)
+            {
+                break match self.evaluator.to_constant(value) {
+                    Constant::BigInt(_) => TextShape::Neither,
+                    Constant::String(text) if !is_ascii(text) => TextShape::Neither,
+                    _ => TextShape::Known,
+                };
+            }
+            match hir[leftmost].kind {
+                ExprKind::Template { exprs }
+                    if !exprs.is_empty() && hir.ids(hir.template_texts(exprs)).all(is_ascii) =>
+                {
+                    break TextShape::Template;
+                }
+                ExprKind::Binary {
+                    op: BinOp::Add,
+                    left,
+                    right,
+                } if self.computes_with_constants(leftmost) => {
+                    addends_on_the_right.push(right);
+                    leftmost = self.seen_by_bun_run(left);
+                }
+                _ => break TextShape::Neither,
+            }
+        };
+        while let Some(right) = addends_on_the_right.pop() {
+            shape = match (shape, self.find_text_shape(right)) {
+                (TextShape::Template, TextShape::Template | TextShape::Known)
+                | (TextShape::Known, TextShape::Template) => TextShape::Template,
+                _ => TextShape::Neither,
             };
         }
-        match hir[e].kind {
-            ExprKind::Template { exprs } if !exprs.is_empty() => {
-                match hir.ids(hir.template_texts(exprs)).all(is_ascii) {
-                    true => TextShape::Template,
-                    false => TextShape::Neither,
-                }
-            }
-            ExprKind::Binary {
-                op: BinOp::Add,
-                left,
-                right,
-            } if self.computes_with_constants(e) => {
-                match (self.find_text_shape(left), self.find_text_shape(right)) {
-                    (TextShape::Template, TextShape::Template | TextShape::Known)
-                    | (TextShape::Known, TextShape::Template) => TextShape::Template,
-                    _ => TextShape::Neither,
-                }
-            }
-            _ => TextShape::Neither,
-        }
+        shape
     }
 
     pub(super) fn is_hot_of_import_meta(&self, e: ExprId) -> bool {

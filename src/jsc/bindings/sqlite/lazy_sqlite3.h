@@ -70,6 +70,8 @@ typedef const char* (*lazy_sqlite3_db_filename_type)(sqlite3*, const char* zDbNa
 typedef sqlite3* (*lazy_sqlite3_db_handle_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_busy_timeout_type)(sqlite3*, int ms);
 typedef int (*lazy_sqlite3_wal_checkpoint_v2_type)(sqlite3*, const char* zDb, int eMode, int* pnLog, int* pnCkpt);
+typedef int (*lazy_sqlite3_db_readonly_type)(sqlite3*, const char* zDbName);
+typedef const char* (*lazy_sqlite3_db_name_type)(sqlite3*, int N);
 typedef const char* (*lazy_sqlite3_bind_parameter_name_type)(sqlite3_stmt*, int);
 typedef int (*lazy_sqlite3_exec_type)(sqlite3*, const char* sql, int (*callback)(void*, int, char**, char**), void*, char** errmsg);
 typedef int (*lazy_sqlite3_limit_type)(sqlite3*, int id, int newVal);
@@ -140,6 +142,8 @@ inline lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2;
 inline lazy_sqlite3_close_type lazy_sqlite3_close;
 inline lazy_sqlite3_busy_timeout_type lazy_sqlite3_busy_timeout;
 inline lazy_sqlite3_wal_checkpoint_v2_type lazy_sqlite3_wal_checkpoint_v2;
+inline lazy_sqlite3_db_readonly_type lazy_sqlite3_db_readonly;
+inline lazy_sqlite3_db_name_type lazy_sqlite3_db_name;
 inline lazy_sqlite3_file_control_type lazy_sqlite3_file_control;
 inline lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob;
 inline lazy_sqlite3_column_bytes_type lazy_sqlite3_column_bytes;
@@ -236,6 +240,8 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_close lazy_sqlite3_close
 #define sqlite3_busy_timeout lazy_sqlite3_busy_timeout
 #define sqlite3_wal_checkpoint_v2 lazy_sqlite3_wal_checkpoint_v2
+#define sqlite3_db_readonly lazy_sqlite3_db_readonly
+#define sqlite3_db_name lazy_sqlite3_db_name
 #define sqlite3_file_control lazy_sqlite3_file_control
 #define sqlite3_column_blob lazy_sqlite3_column_blob
 #define sqlite3_column_bytes lazy_sqlite3_column_bytes
@@ -389,6 +395,8 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
     lazy_sqlite3_close = (lazy_sqlite3_close_type)dlsym(sqlite3_handle, "sqlite3_close");
     lazy_sqlite3_busy_timeout = (lazy_sqlite3_busy_timeout_type)dlsym(sqlite3_handle, "sqlite3_busy_timeout");
     lazy_sqlite3_wal_checkpoint_v2 = (lazy_sqlite3_wal_checkpoint_v2_type)dlsym(sqlite3_handle, "sqlite3_wal_checkpoint_v2");
+    lazy_sqlite3_db_readonly = (lazy_sqlite3_db_readonly_type)dlsym(sqlite3_handle, "sqlite3_db_readonly");
+    lazy_sqlite3_db_name = (lazy_sqlite3_db_name_type)dlsym(sqlite3_handle, "sqlite3_db_name");
     lazy_sqlite3_file_control = (lazy_sqlite3_file_control_type)dlsym(sqlite3_handle, "sqlite3_file_control");
     lazy_sqlite3_column_blob = (lazy_sqlite3_column_blob_type)dlsym(sqlite3_handle, "sqlite3_column_blob");
     lazy_sqlite3_column_bytes = (lazy_sqlite3_column_bytes_type)dlsym(sqlite3_handle, "sqlite3_column_bytes");
@@ -497,6 +505,11 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
 
     if (!lazy_sqlite3_stmt_status) {
         lazy_sqlite3_stmt_status = [](sqlite3_stmt*, int, int) -> int { return 0; };
+    }
+
+    // sqlite3_db_name was added in 3.39.0. Without it the exit checkpoint only sees "main".
+    if (!lazy_sqlite3_db_name) {
+        lazy_sqlite3_db_name = [](sqlite3*, int N) -> const char* { return N == 0 ? "main" : nullptr; };
     }
 
     // sqlite3_changes64 was added in 3.37.0; macOS 12 ships 3.36.0. The

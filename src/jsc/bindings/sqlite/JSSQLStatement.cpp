@@ -267,10 +267,20 @@ VersionSqlite3::~VersionSqlite3()
 // waits on readers via the connection's busy-handler, so a large user-set
 // timeout plus a cross-process reader would stall process.exit(); with a
 // zero handler TRUNCATE degrades to a passive checkpoint immediately.
+// Checkpoint each schema on its own and skip the read-only ones. A read-only schema cannot be
+// written, yet its checkpoint still takes the WAL write lock and syncs the WAL before the
+// first write fails, so writers in other processes see SQLITE_BUSY for nothing. Read-only
+// is a property of each schema's file, not of the connection: a `file:?mode=ro` main can
+// have a writable ATTACHed database, and an unwritable file silently opens read-only.
 extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
 {
     sqlite3_busy_timeout(db, 0);
-    sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
+    for (int i = 0; const char* name = sqlite3_db_name(db, i); i++) {
+        // An empty name would mean "every schema" to sqlite3_wal_checkpoint_v2.
+        if (!name[0] || sqlite3_db_readonly(db, name) != 0)
+            continue;
+        sqlite3_wal_checkpoint_v2(db, name, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
+    }
 }
 
 // Called from the exiting VM's teardown once script is forbidden and its child workers are

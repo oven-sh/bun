@@ -1050,7 +1050,7 @@ describe.concurrent("vi.setConfig", () => {
         },
       );
 
-      // In each group, "running" has called its mock and still waits when another test starts.
+      // In each group, "running" has called its mock once and still waits when another test starts. Then it prints the calls.
       const inFirstWindow = {
         "a test starts": `
           const started = gate();
@@ -1058,7 +1058,7 @@ describe.concurrent("vi.setConfig", () => {
             const fn = vi.fn();
             fn();
             await started.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
           test("neighbour", () => started.resolve());
         `,
@@ -1068,7 +1068,7 @@ describe.concurrent("vi.setConfig", () => {
             const fn = vi.fn();
             fn();
             await started.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
           test("neighbour", () => started.resolve());
         `,
@@ -1078,7 +1078,7 @@ describe.concurrent("vi.setConfig", () => {
             const fn = vi.fn();
             queueMicrotask(fn);
             await started.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
           test("neighbour", () => started.resolve());
         `,
@@ -1092,7 +1092,7 @@ describe.concurrent("vi.setConfig", () => {
           test("running", async () => {
             const fn = made;
             await started.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
           test("neighbour", () => started.resolve());
         `,
@@ -1104,7 +1104,7 @@ describe.concurrent("vi.setConfig", () => {
             mine = undefined;
             if (!fn) return;
             await started.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
           test("running", () => {
             mine = vi.fn();
@@ -1122,7 +1122,7 @@ describe.concurrent("vi.setConfig", () => {
             const fn = vi.fn();
             fn();
             await started.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
           test("holds the other slot", () => {
             held.resolve();
@@ -1143,7 +1143,7 @@ describe.concurrent("vi.setConfig", () => {
             fn();
             called.resolve();
             await retried.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
         `,
         "a test behind is retried": `
@@ -1154,7 +1154,7 @@ describe.concurrent("vi.setConfig", () => {
             const fn = vi.fn();
             fn();
             await retried.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
           test("retried", { retry: 1 }, async () => {
             if (++attempts === 2) return retried.resolve();
@@ -1170,7 +1170,7 @@ describe.concurrent("vi.setConfig", () => {
             const fn = vi.fn();
             fn();
             await repeated.promise;
-            expect(fn).toHaveBeenCalledTimes(1);
+            calls(fn);
           });
           test("repeated", { repeats: 1 }, () => {
             if (++runs === 2) return repeated.resolve();
@@ -1185,33 +1185,81 @@ describe.concurrent("vi.setConfig", () => {
       ])(
         "a running test keeps its calls beside a start in the first window, with tests from %j",
         async (module, other, bunfig) => {
-          const { stderr, exitCode } = await run(["test", "--max-concurrency=2"], {
+          const { stdout, stderr, exitCode } = await run(["test", "--max-concurrency=2"], {
             "a.test.ts": `
-            import { afterEach, beforeEach, describe, expect, test, vi } from "${module}";
+            import { afterEach, beforeEach, describe, test, vi } from "${module}";
             import { test as other } from "${other}";
             const gate = () => Promise.withResolvers();
             ${Object.entries({ ...inFirstWindow, ...later })
-              .map(([name, tests]) => `describe.concurrent(${JSON.stringify(name)}, () => {${tests}});`)
+              .map(
+                ([name, tests]) => `describe.concurrent(${JSON.stringify(name)}, () => {
+                  const calls = fn => console.log(${JSON.stringify(name + ":")}, fn.mock.calls.length);
+                  ${tests}
+                });`,
+              )
               .join(`\ntest("alone", () => {});\n`)}
           `,
             "bunfig.toml": bunfig,
           });
-          // After more than 20 passes, what failed is listed again at the end.
-          const running = [...new Set(results(stderr).filter(line => line.endsWith("> running")))];
           expect({
-            running,
-            failed: results(stderr).filter(line => !line.startsWith("(pass)") && !running.includes(line)),
+            seen: stdout.split("\n").filter(line => line.includes(":")),
+            failed: results(stderr).filter(line => !line.startsWith("(pass)")),
             exitCode,
           }).toEqual({
-            running: [
-              ...Object.keys(inFirstWindow).map(name => `(pass) ${name} > running`),
-              ...Object.keys(later).map(name => `(fail) ${name} > running`),
+            seen: [
+              ...Object.keys(inFirstWindow).map(name => `${name}: 1`),
+              ...Object.keys(later).map(name => `${name}: 0`),
             ],
             failed: [],
-            exitCode: 1,
+            exitCode: 0,
           });
         },
       );
+
+      test("a test in an onTestFinished() callback or in the teardown of a fixture still runs", async () => {
+        const { stdout, stderr, exitCode } = await run(["test", "--max-concurrency=2"], {
+          "a.test.ts": `
+            import { describe, test, vi } from "vitest";
+            const gate = () => Promise.withResolvers();
+            describe.concurrent("onTestFinished()", () => {
+              const started = gate();
+              test("running", ({ onTestFinished }) => {
+                const fn = vi.fn();
+                fn();
+                onTestFinished(async () => {
+                  await started.promise;
+                  console.log("onTestFinished():", fn.mock.calls.length);
+                });
+              });
+              test("neighbour", () => started.resolve());
+            });
+            test("alone", () => {});
+            describe.concurrent("the teardown of a fixture", () => {
+              const started = gate();
+              const withFixture = test.extend({
+                fn: async ({}, use) => {
+                  const fn = vi.fn();
+                  fn();
+                  await use(fn);
+                  await started.promise;
+                  console.log("the teardown of a fixture:", fn.mock.calls.length);
+                },
+              });
+              withFixture("running", ({ fn }) => {});
+              test("neighbour", () => started.resolve());
+            });
+          `,
+        });
+        expect({
+          seen: stdout.split("\n").filter(line => line.includes(":")),
+          failed: results(stderr).filter(line => !line.startsWith("(pass)")),
+          exitCode,
+        }).toEqual({
+          seen: ["onTestFinished(): 1", "the teardown of a fixture: 1"],
+          failed: [],
+          exitCode: 0,
+        });
+      });
 
       const running = (config = "") => `
         import { expect, test, vi } from "vitest";

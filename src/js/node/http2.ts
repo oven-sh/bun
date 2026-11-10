@@ -2275,9 +2275,8 @@ function endErroredStream(stream: Http2Stream) {
   if (stream[bunHTTP2WaitForTrailers]) return;
   const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
   if (!native) return;
-  // Like node, a reset with an error code takes the place of END_STREAM. CANCEL follows it.
-  const rstCode = stream.rstCode;
-  if (rstCode && rstCode !== NGHTTP2_CANCEL) return;
+  // A reset with an error code takes the place of END_STREAM, which would tell the peer that the body is complete.
+  if (stream.rstCode) return;
   stream[bunHTTP2StreamStatus] = status | StreamState.EndStreamSent;
   native.writeStream(stream.id, "", "ascii", true);
   native.flush();
@@ -2300,10 +2299,10 @@ function streamOnErrored(this: Http2Stream) {
     process.nextTick(destroyIfNotDestroyedNT, this);
     return;
   }
-  if ((status & StreamState.EndedByClose) === 0 || this.rstCode === NGHTTP2_CANCEL) {
-    // Like _final, a stream that close() ended sends END_STREAM only ahead of a CANCEL.
+  if ((status & StreamState.EndedByClose) === 0) {
     endErroredStream(this);
   } else if ((status & StreamState.ResetAtFinish) !== 0) {
+    // RST_STREAM ends a stream that close() ended, with or without an error code. This one waited for 'finish'.
     this[bunHTTP2StreamStatus] = status | StreamState.ResetScheduled;
     const native = this[bunHTTP2Session]?.[bunHTTP2Native];
     // A frame that waits behind the frames of another stream goes out ahead of the reset.

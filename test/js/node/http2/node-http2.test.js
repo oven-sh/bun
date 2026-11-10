@@ -7459,37 +7459,6 @@ describe.concurrent("write() after end()", () => {
         ]);
       });
 
-      // Like node, and like _final on a stream with no late write: END_STREAM goes out ahead of a CANCEL.
-      it.each([
-        ["the request has ended", {}, []],
-        ["the request is open", { open: true }, [http2.constants.NGHTTP2_CANCEL]],
-      ])("close(NGHTTP2_CANCEL) ends the stream first (%s)", async (_, client, resets) => {
-        const result = await closeThenLateWrite((stream, late) => {
-          stream.respond({ ":status": 200 });
-          stream.write("done");
-          stream.close(http2.constants.NGHTTP2_CANCEL);
-          stream.write("late", late);
-        }, client);
-        expect(result).toEqual([{ length: 4, endStream: true, resets }, lateWriteEvents]);
-      });
-
-      it("close(NGHTTP2_CANCEL) after end() and the late write ends the stream first", async () => {
-        const result = await closeThenLateWrite(
-          (stream, late) => {
-            stream.respond({ ":status": 200 });
-            stream.write("done");
-            stream.end();
-            stream.write("late", late);
-            stream.close(http2.constants.NGHTTP2_CANCEL);
-          },
-          { open: true },
-        );
-        expect(result).toEqual([
-          { length: 4, endStream: true, resets: [http2.constants.NGHTTP2_CANCEL] },
-          lateWriteEvents,
-        ]);
-      });
-
       // Raw HTTP/2 server for one session. `request` resolves with what the client sent on stream 1, once the
       // client has answered a PING that follows the END_STREAM or the first RST_STREAM of that stream.
       function rawServer() {
@@ -7582,18 +7551,39 @@ describe.concurrent("write() after end()", () => {
         },
       );
 
-      // Guard, passes without the fix too: the END_STREAM must not go out ahead of a reset with an error code.
-      it("close(code) resets the stream with that code", async () => {
-        const result = await closeThenLateWrite((stream, late) => {
-          stream.respond({ ":status": 200 });
-          stream.write("done");
-          stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
-          stream.write("late", late);
+      // Guards, pass without the fix too: a reset with an error code takes the place of END_STREAM, which would tell
+      // the peer that the body is complete. Node v26 sends END_STREAM ahead of a CANCEL if close() runs while the
+      // session reads, as in these 'stream' listeners, and the RST_STREAM alone from a timer.
+      describe.each([
+        ["NGHTTP2_INTERNAL_ERROR", http2.constants.NGHTTP2_INTERNAL_ERROR],
+        ["NGHTTP2_CANCEL", http2.constants.NGHTTP2_CANCEL],
+      ])("close(%s)", (_, code) => {
+        it.each([
+          ["the request has ended", {}],
+          ["the request is open", { open: true }],
+        ])("resets the stream with that code (%s)", async (_, client) => {
+          const result = await closeThenLateWrite((stream, late) => {
+            stream.respond({ ":status": 200 });
+            stream.write("done");
+            stream.close(code);
+            stream.write("late", late);
+          }, client);
+          expect(result).toEqual([{ length: 4, endStream: false, resets: [code] }, lateWriteEvents]);
         });
-        expect(result).toEqual([
-          { length: 4, endStream: false, resets: [http2.constants.NGHTTP2_INTERNAL_ERROR] },
-          lateWriteEvents,
-        ]);
+
+        it("after end() and the late write resets the stream with that code", async () => {
+          const result = await closeThenLateWrite(
+            (stream, late) => {
+              stream.respond({ ":status": 200 });
+              stream.write("done");
+              stream.end();
+              stream.write("late", late);
+              stream.close(code);
+            },
+            { open: true },
+          );
+          expect(result).toEqual([{ length: 4, endStream: false, resets: [code] }, lateWriteEvents]);
+        });
       });
     });
   });

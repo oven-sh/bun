@@ -1,6 +1,10 @@
 import zlib from "browserify-zlib";
 
+// browserify-zlib has the Z_* values on the module only. Node also has them on `zlib.constants`.
+zlib.constants = Object.fromEntries(Object.entries(zlib).filter(([key]) => key.startsWith("Z_")));
+
 export const {
+  constants,
   Z_NO_FLUSH,
   Z_PARTIAL_FLUSH,
   Z_SYNC_FLUSH,

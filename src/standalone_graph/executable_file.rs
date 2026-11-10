@@ -437,8 +437,7 @@ fn write_pieces<'a>(
     Ok((size, size - bytes_kept))
 }
 
-/// Replaces the section header table of the written file with one that names the symbols, if there are any, and the
-/// word that holds the payload's address. Returns whether the file has the symbols.
+/// Names the symbols, if there are any, and the word that holds the payload's address. Whether the file has the symbols.
 fn write_section_tail(
     file: &bun_sys::File,
     size: u64,

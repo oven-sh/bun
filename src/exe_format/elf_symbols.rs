@@ -82,8 +82,7 @@ impl<'a> SymbolTable<'a> {
     }
 }
 
-/// Bytes that end a file: the section names, new sections, and a section header table that replaces the file's.
-/// They go at `offset`: behind the file, or over the names and the table that they replace when those end the file.
+/// The section names, new sections and a section header table that replace the file's, at `offset`.
 pub struct SectionTail {
     pub bytes: Vec<u8>,
     pub offset: u64,
@@ -184,8 +183,7 @@ impl TailBuilder {
         tail
     }
 
-    /// The tail replaces the section names and the table. It takes their place when nothing else stands behind them, so
-    /// that the file holds one copy of each, and a compile into the file writes the same bytes as one into its template.
+    /// Over the old names and table when they end the file, so that a re-compile writes the same bytes. Else behind it.
     fn start(file_size: u64, ehdr: &Elf64_Ehdr, sections: &SectionTable) -> u64 {
         let headers = &sections.headers;
         let table_end = ehdr.e_shoff.saturating_add(headers.len() as u64);
@@ -346,9 +344,7 @@ fn read_own_symbols(
     })
 }
 
-/// The word that holds the payload's address, in a file whose writer did not say where it is: `.bun` as linked
-/// followed the section before it, at its own alignment, and the compile that moved `.bun` onto the payload left
-/// the word there. The moved header keeps the alignment: 8 since 1.4.1, 16 KB in 1.3.12 to 1.4.0.
+/// The word behind the section before `.bun`, at `.bun`'s alignment as linked (8 since 1.4.1, 16 KB before).
 fn find_pointer_word(
     read: &mut impl FnMut(u64, &mut [u8]) -> bool,
     sections: &SectionTable,
@@ -375,9 +371,7 @@ fn find_pointer_word(
     })
 }
 
-/// `.bun.pointer`: the section over the word that holds the payload's address. After a compile, `.bun` names the
-/// payload and no section covers the word, and a tool that rewrites the file from its section headers (GNU `strip`,
-/// `objcopy`) writes zeros there. `None` when the file has the section, or the word is not found.
+/// `.bun.pointer` names the word that `.bun` left when it moved onto the payload, so that GNU `strip` keeps it.
 fn pointer_section(
     read: &mut impl FnMut(u64, &mut [u8]) -> bool,
     sections: &SectionTable,
@@ -405,8 +399,7 @@ fn pointer_section(
     })
 }
 
-/// A tail that adds `.bun.pointer` to a compiled executable. `word`: where the compile wrote the payload's address.
-/// `None` when the file has the section already, or the word is not found.
+/// A tail that adds `.bun.pointer`. `None` when the file has it, or the word is not found.
 pub fn pointer_tail(
     file_size: u64,
     mut read: impl FnMut(u64, &mut [u8]) -> bool,
@@ -573,7 +566,6 @@ fn append_debug_frame(
 }
 
 /// A tail that adds the symbols of the compiled code, a `.debug_frame` for its frames, and `.bun.pointer`.
-/// `word`: where the compile wrote the payload's address.
 pub fn symbols_tail(
     file_size: u64,
     mut read: impl FnMut(u64, &mut [u8]) -> bool,

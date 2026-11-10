@@ -282,6 +282,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !matches!(hir[inner].kind, ExprKind::Ident(_)) {
             let name = match hir[inner].kind {
                 ExprKind::Await(_) => self.file.find_callee_name(inner),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => match self.file.written_name_of_hoisted_import(right) {
+                    Some(written) => Some(self.file.intern_bytes(written)),
+                    None => None,
+                },
                 _ => None,
             };
             return Callee::without_key(self.lower_chain_base(callee, exit), None, name);
@@ -300,6 +308,9 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn find_callee_name(&mut self, callee: ExprId) -> Option<StringId> {
         let hir = self.hir;
         let inner = self.skip_type_syntax(callee);
+        if let Some(written) = self.written_name_of_hoisted_import(inner) {
+            return Some(self.intern_bytes(written));
+        }
         if let ExprKind::Ident(name) = hir[inner].kind
             && self.queries.atom_bytes(name).is_ascii()
         {
@@ -350,6 +361,10 @@ impl FileLowering<'_, '_, '_, '_> {
         const LONGEST_PATH: usize = 80;
         let hir = self.hir;
         let inner = self.skip_type_syntax(expression);
+        if let Some(written) = self.written_name_of_hoisted_import(inner) {
+            path.extend_from_slice(written);
+            return path.len() <= LONGEST_PATH;
+        }
         let wraps = match hir[inner].kind {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
                 is_link_in_brackets(chain, has_parent_outside_chain)

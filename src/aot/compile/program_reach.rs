@@ -67,6 +67,7 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub isolates_code_from_disk: bool,
     pub mocks_any_module: bool,
     pub files_started_by_runner: &'a [FileId],
+    pub files_with_kept_imports: &'a [FileId],
     pub starts_of_workers: &'a [(FileId, ExprId, FileId)],
     pub beside: Beside<'a>,
 }
@@ -1526,9 +1527,9 @@ impl<'a, 's> FileScan<'a, 's> {
 
     fn add_requests(&mut self) {
         let graph = self.input.graph;
-        let started_by_runner = self.input.files_started_by_runner;
-        let is_started_by_runner = started_by_runner.binary_search(&self.file).is_ok();
-        let keeps_every_file = is_started_by_runner || graph.load_failure(self.file).is_some();
+        let with_kept_imports = self.input.files_with_kept_imports;
+        let keeps_every_file = with_kept_imports.binary_search(&self.file).is_ok()
+            || graph.load_failure(self.file).is_some();
         for request in graph.requests(self.file) {
             if request.kind == ModuleRequestKind::Require {
                 continue;
@@ -4286,9 +4287,15 @@ pub(crate) fn find_left_out_code_seeding_last(
         walk.loads_by_unknown_name_outside_units(file)
             || walk.loads_isolated_code_outside_units(file)
     };
+    let evaluates_text = |file: &FileId| {
+        left_out.files.binary_search(file).is_err()
+            && parsed_source(input.files, *file)
+                .is_some_and(|source| source.builtins.mentions_evaluator())
+    };
     left_out.holds_every_load_by_unknown_name = !loads.is_any_reached
         && !loads_isolated_code
-        && !input.files.compiled_files().iter().any(loads_outside_units);
+        && !input.files.compiled_files().iter().any(loads_outside_units)
+        && !input.files.compiled_files().iter().any(evaluates_text);
     left_out.files_alive_through_last_seeds_alone = (not_alive_in_front.into_iter())
         .filter(|file| left_out.files.binary_search(file).is_err())
         .collect();

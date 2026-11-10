@@ -11,8 +11,10 @@ use bun_sema::atom::{Atom, Interner, InternerPerThread, known};
 use bun_sema::bind::{BindOptions, Binding, Bound, RuntimeBindOptions};
 use bun_sema::file_analysis::{analyze_file, bind_file};
 use bun_sema::fold::{FoldInputs, FoldOptions};
-use bun_sema::hir::{ExprId, ExprKind, File, FileKind, MemberKey, PropKey, StmtId, StmtKind};
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, find_statement_sites};
+use bun_sema::hir::{Expr, ExprId, ExprKind, File, FileKind, MemberKey, PropKey, StmtId, StmtKind};
+use bun_sema::import_sites::{
+    ImportSiteKind, ImportSpecifier, find_sites_by_name, find_statement_sites,
+};
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{ancestors, inside};
 use bun_sema::session::{Arena, Session};
@@ -342,9 +344,29 @@ fn has_sites_that_need_folding(hir: &File<'_>, atoms: &Interner<'_>) -> bool {
     })
 }
 
-struct SitesOfFile<'s> {
-    bound: Bound<'s>,
+struct SitesOfFile {
     specifiers: Vec<(Atom, bool)>,
+    has_test_runner_name: bool,
+}
+
+impl SitesOfFile {
+    fn of_bound_file(
+        hir: &File<'_>,
+        bound: &Bound<'_>,
+        specifiers: Vec<(Atom, bool)>,
+        given: &[Atom],
+    ) -> SitesOfFile {
+        let is_free = |(expression, node): (ExprId, &Expr)| {
+            matches!(node.kind, ExprKind::Ident(name) if given.contains(&name))
+                && bound.is_evaluated_ident(expression)
+                && bound.binding(expression) == Binding::Free
+        };
+        let mut expressions = (0..).map(ExprId).zip(hir.exprs.iter());
+        SitesOfFile {
+            specifiers,
+            has_test_runner_name: !bound.ran_out_of_stack && expressions.any(is_free),
+        }
+    }
 }
 
 fn bind_options() -> BindOptions {
@@ -361,40 +383,70 @@ fn exports_again(kind: ImportSiteKind) -> bool {
     )
 }
 
+fn list_specifiers(sites: Vec<(ImportSiteKind, Atom)>) -> Vec<(Atom, bool)> {
+    let sites = sites.into_iter();
+    sites
+        .map(|(kind, specifier)| (specifier, exports_again(kind)))
+        .collect()
+}
+
+fn spells_exported_path(hir: &File<'_>, specifiers: &[(Atom, bool)]) -> bool {
+    let is_exported_again = |text: Atom| {
+        let mut exported = specifiers.iter().filter(|it| it.1);
+        exported.any(|it| it.0 == text)
+    };
+    hir.exprs.iter().any(
+        |node| matches!(node.kind, ExprKind::String(text) if text.is_some() && is_exported_again(text)),
+    )
+}
+
 fn find_sites_of_file<'s>(
     hir: &mut File<'s>,
     fold: &FoldInputs<'s>,
+    given: &[Atom],
     atoms: &Interner<'s>,
     arena: &'s Arena,
-) -> SitesOfFile<'s> {
+) -> SitesOfFile {
+    if !has_sites_that_need_folding(hir, atoms)
+        && let Some(found) = find_sites_by_name(hir, fold, given)
+    {
+        let specifiers = list_specifiers(found.sites);
+        if !spells_exported_path(hir, &specifiers) {
+            return SitesOfFile {
+                specifiers,
+                has_test_runner_name: found.has_free_name,
+            };
+        }
+    }
+    bind_and_find_sites(hir, fold, given, atoms, arena)
+}
+
+fn bind_and_find_sites<'s>(
+    hir: &mut File<'s>,
+    fold: &FoldInputs<'s>,
+    given: &[Atom],
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> SitesOfFile {
     if !has_sites_that_need_folding(hir, atoms) {
         let bound = bind_file(hir, bind_options(), fold, atoms, arena);
         if !bound.ran_out_of_stack && !bound.runtime.depends_on_sloppy_mode() {
-            let sites = find_statement_sites(hir, &bound, fold).into_iter();
-            let specifiers: Vec<(Atom, bool)> = sites
-                .map(|(kind, specifier)| (specifier, exports_again(kind)))
-                .collect();
-            let is_exported_again = |text: Atom| {
-                let mut exported = specifiers.iter().filter(|it| it.1);
-                exported.any(|it| it.0 == text)
-            };
-            let spells_exported_path = hir.exprs.iter().any(
-                |node| matches!(node.kind, ExprKind::String(text) if text.is_some() && is_exported_again(text)),
-            );
-            if !spells_exported_path {
-                return SitesOfFile { bound, specifiers };
+            let specifiers = list_specifiers(find_statement_sites(hir, &bound, fold));
+            if !spells_exported_path(hir, &specifiers) {
+                return SitesOfFile::of_bound_file(hir, &bound, specifiers, given);
             }
         }
     }
-    find_sites_by_analysis(hir, fold, atoms, arena)
+    find_sites_by_analysis(hir, fold, given, atoms, arena)
 }
 
 fn find_sites_by_analysis<'s>(
     hir: &mut File<'s>,
     fold: &FoldInputs<'s>,
+    given: &[Atom],
     atoms: &Interner<'s>,
     arena: &'s Arena,
-) -> SitesOfFile<'s> {
+) -> SitesOfFile {
     let file = inputs_of_file_that_nobody_describes();
     let (bound, analysis) = analyze_file(hir, bind_options(), fold, file, atoms, arena);
     let sites = analysis.import_sites.iter();
@@ -404,11 +456,11 @@ fn find_sites_by_analysis<'s>(
             _ => None,
         })
         .collect();
-    SitesOfFile { bound, specifiers }
+    SitesOfFile::of_bound_file(hir, &bound, specifiers, given)
 }
 
 type FindSites =
-    for<'s> fn(&mut File<'s>, &FoldInputs<'s>, &Interner<'s>, &'s Arena) -> SitesOfFile<'s>;
+    for<'s> fn(&mut File<'s>, &FoldInputs<'s>, &[Atom], &Interner<'s>, &'s Arena) -> SitesOfFile;
 
 fn read_what_file_writes(path: &[u8], text: &[u8], atoms: &Interner<'_>) -> Written {
     read_what_file_writes_by(find_sites_of_file, path, text, atoms)
@@ -437,8 +489,18 @@ fn read_what_file_writes_by(
     }
     hir.text = Cow::Borrowed(text);
     let fold = FoldInputs::new(FoldOptions::default(), arena);
-    let SitesOfFile { bound, specifiers } = find_sites(&mut hir, &fold, atoms, arena);
-    let mut written = Written::default();
+    let given: Vec<Atom> = Jest::GLOBALS
+        .iter()
+        .map(|name| atoms.intern(name.as_bytes()))
+        .collect();
+    let SitesOfFile {
+        specifiers,
+        has_test_runner_name,
+    } = find_sites(&mut hir, &fold, &given, atoms, arena);
+    let mut written = Written {
+        takes_from_test_runner: has_test_runner_name,
+        ..Written::default()
+    };
     let folder = dirname::<Posix>(path);
     for (specifier, exports_again) in specifiers {
         let specifier = atoms.bytes(specifier);
@@ -449,25 +511,15 @@ fn read_what_file_writes_by(
         }
     }
     let sited: FxHashSet<Vec<u8>> = written.paths.iter().map(|it| it.0.clone()).collect();
-    for (expression, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
-        match node.kind {
-            ExprKind::String(text) if text.is_some() && is_relative(atoms.bytes(text)) => {
-                let path = from_argument(folder, atoms.bytes(text));
-                if !sited.contains(&path) {
-                    written.paths.push((path, true));
-                }
+    for node in hir.exprs.iter() {
+        if let ExprKind::String(text) = node.kind
+            && text.is_some()
+            && is_relative(atoms.bytes(text))
+        {
+            let path = from_argument(folder, atoms.bytes(text));
+            if !sited.contains(&path) {
+                written.paths.push((path, true));
             }
-            ExprKind::Ident(name) if name.is_some() && !written.takes_from_test_runner => {
-                let is_free = || {
-                    !bound.ran_out_of_stack
-                        && bound.is_evaluated_ident(expression)
-                        && bound.binding(expression) == Binding::Free
-                };
-                let mut given = Jest::GLOBALS.iter();
-                written.takes_from_test_runner =
-                    given.any(|it| it.as_bytes() == atoms.bytes(name)) && is_free();
-            }
-            _ => {}
         }
     }
     written
@@ -1161,6 +1213,88 @@ mod tests {
             "const { require: load } = import.meta; load(\"./a\" + \"b\");",
             "arguments[0] = eval(\"test\"); it(\"one\");",
             "let expect: typeof import(\"./a\"); expect = 1; export const b = expect;",
+            "import { A } from \"./a\"; interface B extends A {} export const b = {} as B;",
+            "import { A } from \"./a\"; class B implements A {} new B();",
+            "import { A } from \"./a\"; let x: typeof A; x = 1;",
+            "import { a } from \"./a\"; let x: typeof a.b; x = a;",
+            "import { a } from \"./a\"; export { a };",
+            "import { a } from \"./a\"; export { a as b, c };",
+            "import { a } from \"./a\"; export type { a };",
+            "import { a } from \"./a\"; export { type a };",
+            "import { a } from \"./a\"; export default a;",
+            "import { a } from \"./a\"; export = a;",
+            "import { a } from \"./a\"; function f(a: number) { return a; } f(1);",
+            "import { a } from \"./a\"; function a() {} a();",
+            "import type { a } from \"./a\"; a();",
+            "import type a from \"./a\"; export const b: a = 1;",
+            "import { type a, b } from \"./a\"; a(); let c: b;",
+            "import { type it, b } from \"./a\"; it(\"one\"); b();",
+            "import { describe } from \"./a\"; describe();",
+            "import a, { type b } from \"./a\"; const c: b = 1; it(c);",
+            "import a, * as b from \"./a\"; let c: b.C;",
+            "import * as a from \"./a\"; let b: a.C; enum E { X = a.d }",
+            "import { a } from \"./a\"; const b = { a };",
+            "import { a } from \"./a\"; const { a: c } = { a: 1 }; export const d: a = c;",
+            "import { a } from \"./a\"; type T = { [a]: 1 };",
+            "import { a } from \"./a\"; class C { [a] = 1 }",
+            "import { a } from \"./a\"; declare const b: typeof a; declare function f(c?: any): void;",
+            "import { a } from \"./a\"; abstract class C { abstract m(x: typeof a): void; m2(x = a) {} }",
+            "import { a } from \"./a\"; declare module \"./b\" { const c: typeof a; }",
+            "import { a } from \"./a\"; namespace N { export const b = a; }",
+            "import { a } from \"./a\"; declare class C { m(b: typeof a): void; }",
+            "import { test } from \"./a\"; label: for (;;) { break label; }",
+            "import \"./a\"; export * as b from \"./c\"; test(\"x\");",
+            "import { a } from \"./a\"; a++; import { b } from \"./b\"; b.c = 1;",
+            "import { a } from \"./a\"; import { a as b } from \"./b\"; b(); a satisfies unknown;",
+            "import { a } from \"./a\"; a<string>(1); (a as any)(); a!;",
+            "import { a } from \"./a\"; eval(\"a\");",
+            "import { a } from \"./a\"; let { b = a } = c; [d = a] = e;",
+            "import { a } from \"./a\"; for (const b of a) {}",
+            "import { a } from \"./a\"; new a.B();",
+            "import { a } from \"./a\"; a`x`;",
+            "import { a } from \"./a\"; class C extends a {}",
+            "import { a } from \"./a\"; class C extends b<a> {}",
+            "import { a } from \"./a\"; @a class C {}",
+            "import { a } from \"./a\"; const f = async (b: a): Promise<a> => { await b; };",
+            "import { a } from \"./a\"; const f = (b) => b?.a;",
+            "import { a } from \"./a\"; try {} catch (a) { a; }",
+            "import { a } from \"./a\"; return; a();",
+            "import { a } from \"./a\"; function f() { return; a(); }",
+            "import { it } from \"vitest\"; it(\"x\");",
+            "import { it } from \"vitest\"; let x: typeof it;",
+            "export {}; it(\"x\");",
+            "export {}; let x: typeof it;",
+            "export {}; type it = 1; it(\"x\");",
+            "export {}; interface it {} it();",
+            "export {}; export { it };",
+            "export {}; const x = { it }; const { test: y } = x;",
+            "export {}; function f(it: any) { it(\"x\"); } test.each;",
+            "import it from \"./a\"; it();",
+            "import * as it from \"./a\"; let x: it.B; it;",
+            "import { a, b } from \"./a\"; import { c } from \"./c\"; a(); const d: c = 1;",
+            "import {} from \"./a\"; import { } from \"./b\"; it;",
+            "import { a } from \"./a\"; <a>b; let c = b as a;",
+            "import { a } from \"./a\"; const b = <a />; const c = <a.d></a.d>;",
+            "import { a } from \"./a\"; const b = <div>{a}</div>;",
+            "import { A } from \"./a\"; const b = <A></A>;",
+            "import { a } from \"./a\"; import a2 = a.b; a2();",
+            "import { a } from \"./a\"; a: while (true) break a;",
+            "import { a } from \"./a\"; const b = { a() {}, get a() { return 1; }, \"a\": 1 }; b.a;",
+            "import { a } from \"./a\"; type T<a> = a; let x: T<1>;",
+            "import { a } from \"./a\"; function f<a>(x: a) { return x; }",
+            "import { a } from \"./a\"; let x: (a: number) => void;",
+            "import { a } from \"./a\"; let x: { a: 1; b(a: 2): a };",
+            "import { a } from \"./a\"; function f(this: a) {} f;",
+            "import { a } from \"./a\"; function f(x): x is a { return true; } f(1);",
+            "import { a } from \"./a\"; enum E { a, b = a }",
+            "import { a } from \"./a\"; const { [a]: b } = c;",
+            "import { a } from \"./a\"; var x = function a() { a; };",
+            "import { a } from \"./a\"; var x = class a { m() { a; } };",
+            "import { a } from \"./a\"; { let a = 1; a; }",
+            "import { a } from \"./a\"; export class B { private a = 1; m() { return this.a; } }",
+            "import { a } from \"./a\"; export class B { constructor(private a: number) {} }",
+            "import { a } from \"./a\"; let x: import(\"./b\").a; let y: typeof import(\"./c\");",
+            "import { a } from \"./a\" with { type: \"json\" }; export const b = a;",
         ];
         for text in texts {
             for path in [

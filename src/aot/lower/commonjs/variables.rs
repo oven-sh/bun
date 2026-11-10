@@ -22,6 +22,7 @@ use crate::load::contents::worker_entries::{
 };
 use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::parsed_source;
+use crate::lower::context::CreatedRequire;
 use crate::lower::member::PropertyName;
 use crate::lower::scope::{ArgumentsObject, BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, module};
@@ -290,10 +291,31 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(in crate::lower) fn find_text_made_of_own_path(
         &self,
-        expression: ExprId,
+        mut expression: ExprId,
     ) -> Option<Vec<u8>> {
+        let mut right_operands = Vec::new();
+        loop {
+            expression = self.skip_type_syntax(expression);
+            let ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } = self.hir[expression].kind
+            else {
+                break;
+            };
+            right_operands.push(right);
+            expression = left;
+        }
+        let mut text = self.find_own_path_operand(expression)?;
+        while let Some(right) = right_operands.pop() {
+            text.extend(self.find_text_made_of_own_path(right)?);
+        }
+        Some(text)
+    }
+
+    fn find_own_path_operand(&self, expression: ExprId) -> Option<Vec<u8>> {
         let hir = self.hir;
-        let expression = self.skip_type_syntax(expression);
         match hir[expression].kind {
             ExprKind::String(text) => Some(self.queries.atom_bytes(text).to_vec()),
             ExprKind::Dot {
@@ -321,15 +343,6 @@ impl FileLowering<'_, '_, '_, '_> {
                     known::url => write_url_of_path(&path),
                     _ => None,
                 }
-            }
-            ExprKind::Binary {
-                op: BinOp::Add,
-                left,
-                right,
-            } => {
-                let mut text = self.find_text_made_of_own_path(left)?;
-                text.extend(self.find_text_made_of_own_path(right)?);
-                Some(text)
             }
             ExprKind::Template { exprs } => {
                 let mut parts = hir.template_parts(expression).iter();
@@ -405,10 +418,15 @@ impl FileLowering<'_, '_, '_, '_> {
         for directory in &directories {
             let directory = with_forward_slashes(directory.clone());
             for (place, candidate) in candidates.iter().enumerate() {
-                let parts = [directory.clone(), spelling_of(candidate)];
-                let Some(joined) = resolve_paths(&parts) else {
+                let written = spelling_of(candidate);
+                let names_folder =
+                    bun_core::strings::without_trailing_slash(&written).len() < written.len();
+                let Some(mut joined) = resolve_paths(&[directory.clone(), written]) else {
                     continue;
                 };
+                if names_folder && joined.last() != Some(&b'/') {
+                    joined.push(b'/');
+                }
                 let joined = with_separators_of_host(&joined, is_windows);
                 let seen = match directories.iter().find(|it| joined.starts_with(it)) {
                     Some(cut) => {
@@ -502,7 +520,7 @@ pub(in crate::lower) fn find_wrapper_path(
     }
 }
 
-fn directory_of_source(path: &[u8]) -> &[u8] {
+pub(super) fn directory_of_source(path: &[u8]) -> &[u8] {
     let separator = if cfg!(windows) { b'\\' } else { b'/' };
     let first = bun_core::strings::index_of_char_usize(path, separator);
     match bun_core::strings::last_index_of_char(path, separator) {
@@ -650,6 +668,9 @@ pub(in crate::lower) fn keeps_wrapper(
 
 pub(in crate::lower) fn prepare(file: &mut FileLowering<'_, '_, '_, '_>) {
     file.modules.commonjs = file.compute_state();
+    if file.modules.commonjs.names_source_path {
+        file.modules.path_comparisons = file.find_path_comparisons();
+    }
 }
 
 const fn builtin_of(variable: CommonJsVariable) -> BuiltinId {
@@ -810,8 +831,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn find_requirer_object(&mut self) -> Option<ValueId> {
-        if let Some(made) = self.made_require_of_site {
-            return Some(self.lower_expression(made));
+        match self.created_require_of_site {
+            Some(CreatedRequire::Variable(require)) => return Some(self.lower_expression(require)),
+            Some(CreatedRequire::Value(require)) => return Some(require),
+            Some(CreatedRequire::Callee) | None => {}
         }
         let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
         let stored = BindingRef::Slot(module::file_scope(self.file), slot);

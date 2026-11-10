@@ -1,29 +1,40 @@
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
 use bun_core::identifier::is_identifier;
 use bun_core::printer::write_pre_quoted_string;
-use bun_core::strings::{CodepointIterator, Cursor, Encoding, contains_char, index_of};
+use bun_core::strings::{CodepointIterator, Cursor, Encoding, index_of, index_of_char_usize};
 use bun_sema::atom::{Atom, known, written_name};
-use bun_sema::bind::{FnOwner, Parent};
+use bun_sema::bind::{FnOwner, Parent, PatParent};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
     BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, NameKind, PatId,
-    PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind, end_of_expr, start_of,
+    PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId, VarKind, end_of_expr,
+    start_of,
 };
 use bun_sort_by_number::SortByNumber;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::cell::Cell;
 
 use super::expression::is_link_in_brackets;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::QuotedSource;
+use crate::load::hoisted_mocks::is_namespace_of_hoisted_import;
 use crate::load::test_runner_names::{skip_to_written_use, written_name_of_local};
 
 #[derive(Default)]
 pub(in crate::lower) struct QuotedSources {
     text: Vec<u8>,
     places: FxHashMap<ExprId, (u32, u32)>,
+    places_of_patterns: PlacesOfPatterns,
     is_printed: Vec<u64>,
     quoted: Vec<QuotedSource>,
+    line: Cell<Option<(usize, usize)>>,
+}
+
+#[derive(Default)]
+struct PlacesOfPatterns {
+    bound: FxHashMap<PatId, (u32, u32)>,
+    assigned: FxHashMap<ExprId, (u32, u32)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -126,6 +137,8 @@ struct Printer<'f, 'a, 'c, 'p, 's> {
     file: &'f FileLowering<'a, 'c, 'p, 's>,
     text: Vec<u8>,
     places: FxHashMap<ExprId, (u32, u32)>,
+    places_of_patterns: PlacesOfPatterns,
+    is_assigned_pattern: bool,
     minifies_syntax: bool,
     gaps: u32,
     end_of_number: usize,
@@ -298,6 +311,7 @@ impl Printer<'_, '_, '_, '_, '_> {
     fn pattern(&mut self, pattern: PatId) {
         let hir = self.file.hir;
         let written = hir[pattern];
+        let (start, gaps) = (self.text.len(), self.gaps);
         match written.kind {
             PatKind::Missing => {}
             PatKind::Ident(name) => {
@@ -364,6 +378,11 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.text
                     .extend_from_slice(if properties.is_empty() { b"}" } else { b" }" });
             }
+        }
+        let is_nested = matches!(written.kind, PatKind::Array(_) | PatKind::Object(_));
+        if is_nested && self.gaps == gaps {
+            let place = (start as u32, self.text.len() as u32);
+            self.places_of_patterns.bound.insert(pattern, place);
         }
     }
 
@@ -524,8 +543,13 @@ impl Printer<'_, '_, '_, '_, '_> {
             (PropKind::Init | PropKind::Shorthand, PropKey::Name(key)) => {
                 let value = self.file.skip_to_written_expression(property.value);
                 let text = self.file.queries.atom_bytes(key);
-                let is_named_like_key = matches!(hir[value].kind, ExprKind::Ident(name) if written_name_of_local(self.file.queries.atom_bytes(name)) == text)
-                    && self.constant_of(value).is_none();
+                let is_named_like_key = match self.file.written_name_of_hoisted_import(value) {
+                    Some(written) => written == text,
+                    None => {
+                        matches!(hir[value].kind, ExprKind::Ident(name) if written_name_of_local(self.file.queries.atom_bytes(name)) == text)
+                            && self.constant_of(value).is_none()
+                    }
+                };
                 let is_name = self.key(text, property.name_kind);
                 let sets_prototype = key == known::__proto__ && property.kind == PropKind::Init;
                 if is_name && is_named_like_key && !sets_prototype {
@@ -748,12 +772,21 @@ impl Printer<'_, '_, '_, '_, '_> {
     fn expression(&mut self, expression: ExprId, level: Level, mut around: Around) {
         let hir = self.file.hir;
         let expression = self.file.skip_to_written_expression(expression);
-        if let Some(constant) = self.constant_of(expression) {
+        let imported_name = self.file.written_name_of_hoisted_import(expression);
+        if imported_name.is_none()
+            && let Some(constant) = self.constant_of(expression)
+        {
             return self.constant(constant, level);
         }
         let gaps = self.gaps;
         let whole = |printer: &Printer<'_, '_, '_, '_, '_>| (printer.text.len(), false);
         let (start, wraps) = match hir[expression].kind {
+            ExprKind::Ident(_) | ExprKind::Dot { .. } if imported_name.is_some() => {
+                self.space_before_name();
+                let start = whole(self);
+                append_printed_name(imported_name.unwrap_or_default(), &mut self.text);
+                start
+            }
             ExprKind::Missing => whole(self),
             ExprKind::Ident(name) => {
                 let written = written_name_of_local(self.file.queries.atom_bytes(name));
@@ -1102,13 +1135,39 @@ impl Printer<'_, '_, '_, '_, '_> {
         if is_quoted && self.gaps == gaps {
             self.places.insert(expression, (start as u32, end as u32));
         }
+        let may_be_pattern = self.is_assigned_pattern && !wraps;
+        if may_be_pattern
+            && self.gaps == gaps
+            && matches!(
+                hir[expression].kind,
+                ExprKind::Array(_) | ExprKind::Object(_)
+            )
+        {
+            let place = (start as u32, end as u32);
+            self.places_of_patterns.assigned.insert(expression, place);
+        }
     }
 }
 
 impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     fn is_on_one_line(&self, start: u32, end: u32) -> bool {
-        let text = self.hir.text.get(start as usize..end as usize);
-        text.is_some_and(|text| !contains_char(text, b'\n'))
+        let (text, start, end) = (&self.hir.text, start as usize, end as usize);
+        if start > end || end > text.len() {
+            return false;
+        }
+        let line = match self.quoted_sources.line.get() {
+            Some(line) if line.0 <= start && start <= line.1 => line,
+            Some((from, line_break)) if start < from => {
+                let offset = index_of_char_usize(&text[start..from], b'\n');
+                (start, offset.map_or(line_break, |offset| start + offset))
+            }
+            _ => {
+                let offset = index_of_char_usize(&text[start..], b'\n');
+                (start, offset.map_or(text.len(), |offset| start + offset))
+            }
+        };
+        self.quoted_sources.line.set(Some(line));
+        end <= line.1
     }
 
     #[inline]
@@ -1118,7 +1177,40 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             ExprKind::Cond { .. } => {
                 skip_to_written_use(self.hir, |name| self.queries.atom_bytes(name), written)
             }
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                left,
+                right,
+            } if self.hir[left].pos == self.hir[left].end
+                && self.written_name_of_hoisted_import(right).is_some() =>
+            {
+                right
+            }
             _ => written,
+        }
+    }
+
+    pub(in crate::lower) fn written_name_of_hoisted_import(
+        &self,
+        expression: ExprId,
+    ) -> Option<&'a [u8]> {
+        let hir = self.hir;
+        let written = hir[expression];
+        let namespace = match written.kind {
+            ExprKind::Dot { obj, .. }
+                if hir[obj].pos == written.pos && hir[obj].end == written.end =>
+            {
+                obj
+            }
+            _ => expression,
+        };
+        match hir[namespace].kind {
+            ExprKind::Ident(name)
+                if is_namespace_of_hoisted_import(self.queries.atom_bytes(name)) =>
+            {
+                hir.text.get(written.pos as usize..written.end as usize)
+            }
+            _ => None,
         }
     }
 
@@ -1176,6 +1268,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let mut printer = Printer {
             text,
             places: core::mem::take(&mut self.quoted_sources.places),
+            places_of_patterns: core::mem::take(&mut self.quoted_sources.places_of_patterns),
+            is_assigned_pattern: false,
             minifies_syntax: self.inputs.options.removable.minifies_syntax(),
             file: self,
             gaps: 0,
@@ -1186,11 +1280,16 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         };
         print(&mut printer);
         let Printer {
-            text, places, gaps, ..
+            text,
+            places,
+            places_of_patterns,
+            gaps,
+            ..
         } = printer;
         let end = text.len();
         self.quoted_sources.text = text;
         self.quoted_sources.places = places;
+        self.quoted_sources.places_of_patterns = places_of_patterns;
         (gaps == 0).then_some((start as u32, end as u32))
     }
 
@@ -1254,10 +1353,58 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let ExprKind::Binary { op, left, right } = hir[binary].kind else {
             return hir[binary].pos;
         };
+        let is_simple = matches!(
+            hir[right].kind,
+            ExprKind::Ident(_) | ExprKind::This | ExprKind::String(_) | ExprKind::Number(_)
+        );
+        if is_simple && !self.shares_last_token(binary) {
+            return hir[right].pos;
+        }
         let from = end_of_expr(hir, left);
         let between = hir.text.get(from as usize..start_of(hir, right) as usize);
         let written = between.and_then(|between| index_of(between, level_and_text_of(op).1));
         written.map_or(hir[binary].pos, |written| from + written as u32)
+    }
+
+    fn array_pattern_position(&self, pattern: PatId) -> u32 {
+        let hir = self.hir;
+        let found = match self.bound.pat_parent[pattern.idx()] {
+            PatParent::Prop(_, property)
+                if matches!(hir.runtime_binding_key(property), PropKey::Name(_)) =>
+            {
+                Some(hir[property].pos)
+            }
+            PatParent::Var(declaration) => self.start_of_declarations(declaration),
+            _ => None,
+        };
+        found.unwrap_or(hir[pattern].pos)
+    }
+
+    fn start_of_declarations(&self, declaration: VarDeclId) -> Option<u32> {
+        let (hir, bound) = (self.hir, self.bound);
+        let statement = bound.var_stmt[declaration.idx()];
+        let StmtKind::Var(declarations) = hir[statement].kind else {
+            return None;
+        };
+        let stands_in_list = match bound.parent_of_stmt(statement) {
+            Parent::Stmt(parent) => matches!(hir[parent].kind, StmtKind::Block(_)),
+            Parent::FnBody(_) | Parent::File => true,
+            _ => false,
+        };
+        let start = hir[statement].start;
+        let may_be_joined = declaration.0.checked_sub(1).is_some_and(|before| {
+            let before = hir[VarDeclId(before)];
+            let between = hir.text.get(before.loc.end as usize..start as usize);
+            before.kind == hir[declaration].kind
+                && between.is_some_and(|between| {
+                    let mut written = between
+                        .iter()
+                        .filter(|byte| !byte.is_ascii_whitespace() && **byte != b';');
+                    matches!(written.next(), None | Some(b'/'))
+                })
+        });
+        (stands_in_list && !may_be_joined && declarations.iter().next() == Some(declaration))
+            .then_some(start)
     }
 
     pub(in crate::lower) fn take_quoted_sources(&mut self) -> (Vec<QuotedSource>, Vec<u8>) {
@@ -1319,6 +1466,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             unreachable!("report_at_member takes a Dot or an Index expression");
         };
         self.set_position(self.file.last_token_position_of(object));
+        let reads_import = self.file.written_name_of_hoisted_import(access).is_some();
+        if self.file.should_quote_source() && !reads_import {
+            let quoted = self.file.find_expression_quoted_for_member(access);
+            self.quote_if_next_fails(quoted);
+        }
+    }
+
+    pub(in crate::lower) fn report_at_deletion(&mut self, access: ExprId) {
+        let Some((object, _)) = self.file.hir.member_key(access) else {
+            unreachable!("report_at_deletion takes a Dot or an Index expression");
+        };
+        let reported = match self.file.shares_last_token(access) {
+            true => object,
+            false => access,
+        };
+        self.set_position(self.file.last_token_position_of(reported));
         if self.file.should_quote_source() {
             let quoted = self.file.find_expression_quoted_for_member(access);
             self.quote_if_next_fails(quoted);
@@ -1365,14 +1528,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn quote_pattern_if_next_fails(&mut self, pattern: PatId) {
-        self.set_position(self.file.hir[pattern].pos);
-        self.quote_printed_if_next_fails(|printer| printer.pattern(pattern));
+        self.set_position(self.file.array_pattern_position(pattern));
+        let places = &self.file.quoted_sources.places_of_patterns.bound;
+        match places.get(&pattern).copied() {
+            Some(place) => self.quote_failing_place(place),
+            None => self.quote_printed_if_next_fails(|printer| printer.pattern(pattern)),
+        }
     }
 
     pub(in crate::lower) fn quote_assigned_pattern_if_next_fails(&mut self, pattern: ExprId) {
         self.set_position(self.file.hir[pattern].pos);
-        self.quote_printed_if_next_fails(|printer| {
-            printer.expression(pattern, Level::Assign, Around::default())
+        let places = &self.file.quoted_sources.places_of_patterns.assigned;
+        match places.get(&pattern).copied() {
+            Some(place) => self.quote_failing_place(place),
+            None => self.quote_printed_if_next_fails(|printer| {
+                printer.is_assigned_pattern = true;
+                printer.expression(pattern, Level::Assign, Around::default())
+            }),
+        }
+    }
+
+    fn quote_failing_place(&mut self, (start, end): (u32, u32)) {
+        let position = self.position();
+        self.file.quoted_sources.quoted.push(QuotedSource {
+            position,
+            start,
+            end,
         });
     }
 

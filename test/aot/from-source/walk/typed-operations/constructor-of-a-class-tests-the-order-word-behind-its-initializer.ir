@@ -1,11 +1,11 @@
 # -- source: constructor-of-a-class-tests-the-order-word-behind-its-initializer.ts
 # declare function report(value: unknown): void;
 # declare function register(value: unknown): void;
-# declare function made(): string;
-# class Exchange { flags: number; state: number; label = made(); count: number; constructor(flags: number) { this.flags = flags; this.state = 0; register(this); this.count = 1; } }
+# declare function made(of: unknown): string;
+# class Exchange { flags: number; state: number; label = made(this); count: number; constructor(flags: number) { this.flags = flags; this.state = 0; register(this); this.count = 1; } }
 # report(new Exchange(1));
 # -- end of source
-# `class Exchange { flags: number; state: number; label = made(); count: number; constructor(flags) { this.flags = flags; this.state = 0; register(this); this.count = 1; } }`: the initializer of fields DEFINES all four names, so the constructor's stores create nothing.
+# `class Exchange { flags: number; state: number; label = made(this); count: number; constructor(flags) { this.flags = flags; this.state = 0; register(this); this.count = 1; } }`: the initializer of fields DEFINES all four names, so the constructor's stores create nothing.
 # The constructor of a base class allocates `this` itself, and that is no literal: each of its rows tests the order word of what the initializer has defined, and behind the test each store is a plain store into its slot.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body

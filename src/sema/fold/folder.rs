@@ -126,6 +126,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
     pub(super) conditions: Conditions,
     pub(super) short_circuited_links: PositionSet,
+    pub(super) constant_reads: Vec<(ExprId, Constant)>,
     pub(super) goes_on_to_the_right: Vec<ExprId>,
     pub(super) stands_alone_in_bun_run: PositionSet,
     pub(super) is_main_of_import_meta_written: OnceCell<bool>,
@@ -188,6 +189,7 @@ pub(super) fn run<'s>(
         nullish_logical_results: FxHashMap::default(),
         conditions: Conditions::new(hir.exprs.len()),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
+        constant_reads: Vec::new(),
         goes_on_to_the_right: Vec::new(),
         stands_alone_in_bun_run: PositionSet::new(hir.exprs.len()),
         is_main_of_import_meta_written: OnceCell::new(),
@@ -353,6 +355,13 @@ impl<'s> Folder<'_, 's> {
         constants
     }
 
+    fn collect_constant_reads(&self) -> Vec<(ExprId, Constant)> {
+        let mut reads = self.constant_reads.clone();
+        reads.shared_sort_unstable_by_key(|read| read.0);
+        reads.dedup_by_key(|read| read.0);
+        reads
+    }
+
     fn collect_strings_and_numbers_behind_what_is_left_out(
         &self,
         dead: &MarkedNodes,
@@ -478,6 +487,7 @@ impl<'s> Folder<'_, 's> {
             dead_stmts_under_minify_syntax,
             dead_functions: NodeBits::freeze(&dead.functions, arena),
             short_circuited_links: NodeBits::freeze(&self.short_circuited_links, arena),
+            constant_reads: slice_in(&self.collect_constant_reads(), arena),
             truthy_without_effects: NodeBits::freeze(&self.collect_truthy_without_effects(), arena),
             member_reads: NodeBits::freeze(&self.collect_member_reads(), arena),
             folded_under_minify_syntax: NodeBits::freeze(

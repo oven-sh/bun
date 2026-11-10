@@ -1171,6 +1171,14 @@ pub struct Newest<C, A: Allocator + Clone = Global, S: Series<C, A> = Fixed<C, 1
     owns: Owns<C>,
 }
 
+/// `Alloc::free_when_unread`
+pub type FreeWhenUnread<A> = unsafe fn(&A, NonNull<u8>, Layout) -> bool;
+
+/// The slices that a reader may still be using are freed with the whole `Newest`.
+pub(crate) unsafe fn free_with_all<A>(_: &A, _: NonNull<u8>, _: Layout) -> bool {
+    false
+}
+
 impl<C: Zeroed, A: Allocator + Clone + Default, S: Series<C, A>> Default for Newest<C, A, S> {
     fn default() -> Self {
         Self::new_in(A::default())
@@ -1211,7 +1219,19 @@ impl<C: Zeroed, A: Allocator + Clone, S: Series<C, A>> Newest<C, A, S> {
     /// Replaces the newest slice of `series` with `len` zeroed cells. `len` must be a power of two. `fill` stores into
     /// the new cells before any reader sees them. Only one thread at a time may replace a given series, so the caller
     /// must either lock the series or have exclusive use of the `Newest`.
+    #[cfg(test)]
     pub fn replace(&self, series: usize, len: usize, fill: impl FnOnce(&[C])) -> &[C] {
+        self.replace_and_free(series, len, free_with_all, fill)
+    }
+
+    /// `replace`, which frees the older slice with `free_when_unread` if that can.
+    pub fn replace_and_free(
+        &self,
+        series: usize,
+        len: usize,
+        free_when_unread: FreeWhenUnread<A>,
+        fill: impl FnOnce(&[C]),
+    ) -> &[C] {
         assert!(len.is_power_of_two());
         let layout = Slice::<C>::layout(len);
         let Ok(block) = self.alloc.allocate_zeroed(layout) else {
@@ -1223,7 +1243,14 @@ impl<C: Zeroed, A: Allocator + Clone, S: Series<C, A>> Newest<C, A, S> {
         touch_pages(cells);
         fill(cells);
         let old = (self.newest.entry(series)).swap(Slice::new(first, len).0, Ordering::Release);
-        self.retire(Slice(old));
+        let old = Slice(old);
+        if let Some(block) = NonNull::new(old.first()) {
+            let layout = Slice::<C>::layout(old.len());
+            // SAFETY: `replace` allocated the slice with this layout, and it isn't the newest of its series anymore.
+            if !unsafe { free_when_unread(&self.alloc, block.cast(), layout) } {
+                self.retire(old);
+            }
+        }
         cells
     }
 }

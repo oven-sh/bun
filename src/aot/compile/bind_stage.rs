@@ -5,9 +5,7 @@ use super::program_reach::{
 };
 use super::summary::{collect_names_followed, collect_program_file_paths};
 use super::{BoundBuild, BoundProject, Build, LoadedBuild};
-use crate::builtins::{
-    BuiltinValuePaths, RuntimeModule, builtin_type_paths, is_module_cache, table,
-};
+use crate::builtins::{BuiltinValuePaths, RuntimeModule, builtin_type_paths, table};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span, range_of_node};
 use crate::ir::generated::ModuleRequestKind;
@@ -31,8 +29,8 @@ use bun_paths::is_absolute;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::bind::{
-    Binding, Decl, FnOwner, FunctionFlags, Parent, ReferentCertainty, ResolvedReferent,
-    StaticReferent, static_referent,
+    Binding, CommonJsVariable, Decl, FnOwner, FunctionFlags, Parent, ReferentCertainty,
+    ResolvedReferent, StaticReferent, static_referent,
 };
 use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef};
 use bun_sema::fold::{Constant, FoldedValue};
@@ -71,22 +69,36 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules, left_out_fi
         true => graph.find_imports_of_lookups(left_out_files, &keeps),
         false => FxHashSet::default(),
     };
-    graph.limit_requests(|referrer, request| {
+    let keeps = |referrer: ModuleRef, request: &ModuleRequest| {
         let is_needed = matches!(
             (referrer, request.target, request.kind),
             (ModuleRef::File(importer), ModuleRef::File(target), ModuleRequestKind::Import)
                 if needed.contains(&(importer, target))
         );
         is_needed || keeps(referrer, request)
-    });
+    };
+    let cut_off_built_ins = match reached.drops_imports() {
+        true => graph.find_cut_off_built_ins(left_out_files, &keeps),
+        false => Vec::new(),
+    };
+    graph.limit_requests(keeps);
     graph.add_imports(&reached.readers_of_built_in_modules);
+    graph.add_imports(&cut_off_built_ins);
 }
 
 fn key_names_no_file_of_program(files: &Files<'_>, file: FileId, entry: ExprId) -> bool {
     let (hir, analysis) = (files.hir(file), files.analysis(file));
-    let path = match hir.member_key(entry) {
-        Some((_, MemberKey::Name(text) | MemberKey::PrivateName(text))) => text,
-        Some((_, MemberKey::Computed(key))) => {
+    let key_of_deletion = match hir[entry].kind {
+        ExprKind::Call(call) => hir.ids(hir[call].args).nth(1),
+        _ => None,
+    };
+    let key = match key_of_deletion {
+        Some(key) => Some(hir.index_member_key(hir.skip_type_assertions(key))),
+        None => hir.member_key(entry).map(|it| it.1),
+    };
+    let path = match key {
+        Some(MemberKey::Name(text) | MemberKey::PrivateName(text)) => text,
+        Some(MemberKey::Computed(key)) => {
             let key = hir.skip_type_assertions(key);
             if let Some(site) = analysis.import_site_of_call(key)
                 && analysis.import_sites[site].kind == ImportSiteKind::RequireResolve(key)
@@ -117,9 +129,9 @@ fn hands_module_cache_to_code_out_of_sight(
     handed: ExprId,
 ) -> bool {
     let (hir, bound) = (project.files.hir(file), project.files.bound(file));
-    let named = parsed_source(project.files, file)
-        .and_then(|source| source.builtins.builtin_of_expression(handed));
-    if named.is_some_and(is_module_cache) {
+    if parsed_source(project.files, file)
+        .is_some_and(|source| source.builtins.hands_on_module_cache_itself(handed))
+    {
         return true;
     }
     let mut operand = handed;
@@ -335,6 +347,12 @@ fn is_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, file: FileId, 
     }
 }
 
+fn names_build_machine_paths(files: &Files<'_>, file: FileId) -> bool {
+    use CommonJsVariable::{Dirname, Filename};
+    let mut names = files.bound(file).ident_bindings().iter();
+    names.any(|it| matches!(it.1, Binding::CommonJs(Filename | Dirname)))
+}
+
 fn warn_about_unembedded_reads(
     diagnostics: &mut Diagnostics,
     view: ProgramView<'_, '_>,
@@ -365,6 +383,7 @@ fn warn_about_unembedded_reads(
                 .map(|it| (handed.argument, it.path))
         });
         let read = analysis.module_relative_reads.iter().copied();
+        let mut names_build_paths = None;
         for (operand, path) in read.chain(read_by_functions_called) {
             let path = from_argument(folder, files.atoms.bytes(path));
             let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
@@ -373,6 +392,19 @@ fn warn_about_unembedded_reads(
             let may_not_be_embedded =
                 !is_code && !is_not_embedded && provider.is_embedding_undecided(to_native(&path));
             if !is_not_embedded && !may_not_be_embedded {
+                let module = to_native(files.module(file).file_name());
+                let is_out_of_reach = !is_code
+                    && graph.kind(file) == ModuleKind::SourceText
+                    && provider.is_asset_unreachable(module, to_native(&path))
+                    && !*names_build_paths
+                        .get_or_insert_with(|| names_build_machine_paths(files, file))
+                    && !is_in_left_out_code(files, left_out, file, operand);
+                if is_out_of_reach {
+                    let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
+                    let name = compute_display_path(project_root, to_native(&path));
+                    let code = Code::EmbeddedFileOutOfReach;
+                    diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+                }
                 continue;
             }
             if is_in_left_out_code(files, left_out, file, operand) {
@@ -380,7 +412,14 @@ fn warn_about_unembedded_reads(
             }
             let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
             let name = compute_display_path(project_root, to_native(&path));
-            let warning = Diagnostic::new(Code::UnembeddedFileRead, Some(span), &[&name]);
+            let link = provider.find_symlink_in_asset(to_native(&path));
+            let link = link.map(|link| compute_display_path(project_root, &link));
+            let warning = match &link {
+                Some(link) => {
+                    Diagnostic::new(Code::FileBehindLinkInAsset, Some(span), &[&name, link])
+                }
+                None => Diagnostic::new(Code::UnembeddedFileRead, Some(span), &[&name]),
+            };
             match is_not_embedded {
                 true => diagnostics.add(Some(view), warning),
                 false => {
@@ -711,6 +750,18 @@ impl Build<'_> {
                     .filter(|_| self.runner_starts_entry_points())
                     .collect();
                 files_started_by_runner.sort_unstable();
+                let workers = view.files().entry_points().iter().copied();
+                let workers = workers
+                    .skip(written_entry_point_count)
+                    .zip(&contents.found_entry_points)
+                    .filter(|(_, found)| found.because.is_for_worker())
+                    .map(|(file, _)| file);
+                let written = view.files().entry_points().iter().copied();
+                let mut files_with_kept_imports: Vec<FileId> = written
+                    .take(written_entry_point_count)
+                    .chain(workers)
+                    .collect();
+                files_with_kept_imports.sort_unstable();
                 let found = view.files().entry_points().get(written_entry_point_count..);
                 let found = found
                     .unwrap_or_default()
@@ -754,6 +805,7 @@ impl Build<'_> {
                     isolates_code_from_disk: self.options.aot.isolates_code_from_disk,
                     mocks_any_module: contents.mocks_any_module || contents.stores_loader_functions,
                     files_started_by_runner: &files_started_by_runner,
+                    files_with_kept_imports: &files_with_kept_imports,
                     starts_of_workers: &starts_of_workers,
                     beside: &beside,
                 };
@@ -858,7 +910,9 @@ impl Build<'_> {
                 }
                 steps.end_with(|| format!("{project_name}: root folders that paths spell"));
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
-                for warning in std::mem::take(&mut self.resolves_that_miss) {
+                let without_file = std::mem::take(&mut self.missing_node_workers);
+                let resolves = std::mem::take(&mut self.resolves_that_miss);
+                for warning in without_file.into_iter().chain(resolves) {
                     let is_unreached = |span| lies_in_left_out_code(view.files(), &left_out, span);
                     if !warning.span.is_some_and(is_unreached) {
                         self.diagnostics.add(Some(view), warning);

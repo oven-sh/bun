@@ -1,12 +1,12 @@
-use super::SourceDialect;
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
-use super::resolver::Resolver;
+use super::resolver::{ResolvedValue, Resolver};
 use super::written_members::holder_of;
-use crate::builtins::table::{self, BuiltinId};
+use super::{BuiltinPath, SourceDialect};
+use crate::builtins::table::{self, BuiltinId, BuiltinName, Mutability};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Parent, SymbolId};
-use bun_sema::hir::{ExprId, ExprKind, MemberKey};
+use bun_sema::hir::{ExprId, ExprKind, MemberKey, PropKey};
 use bun_sema::util::FxHashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -22,6 +22,10 @@ pub fn is_module_cache(id: BuiltinId) -> bool {
         BuiltinId::NodeModule_cache,
     ];
     (tables.map(table::canonical_id)).contains(&table::canonical_id(id))
+}
+
+pub(super) fn name_of_module_cache() -> BuiltinName {
+    table::entry(BuiltinId::ModuleRequireCache).name
 }
 
 pub fn is_table_of_loaders(id: BuiltinId) -> bool {
@@ -81,10 +85,38 @@ impl Resolver<'_, '_> {
             && (table::members(holder_of(id)).iter()).any(|&it| is_module_cache(it))
         {
             self.output.places_that_hand_module_cache_on.push(holder);
+            if self.assigns_module_cache_to_name(holder, id) {
+                self.output.module_caches_handed_on.push(holder);
+            }
         }
     }
 
-    fn find_key_that_call_deletes(&self, table: ExprId) -> Option<ExprId> {
+    fn assigns_module_cache_to_name(&self, holder: ExprId, id: BuiltinId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let Parent::Expr(user) = bound.parent_of_expr(self.outermost_assertion_of(holder)) else {
+            return false;
+        };
+        let ExprKind::Assign {
+            op: None, target, ..
+        } = hir[user].kind
+        else {
+            return false;
+        };
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(target)].kind else {
+            return false;
+        };
+        let object = ResolvedValue::object(BuiltinPath {
+            id,
+            mutability: Mutability::ChangesOnItsOwn,
+        });
+        properties.iter().any(|property| match hir[property].key {
+            PropKey::Name(name) => (self.find_named_member(object, name))
+                .is_some_and(|member| is_module_cache(member.id)),
+            _ => true,
+        })
+    }
+
+    fn find_call_that_deletes(&self, table: ExprId) -> Option<(ExprId, ExprId)> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut operand = table;
         while let Parent::Expr(parent) = bound.parent_of_expr(operand)
@@ -104,6 +136,7 @@ impl Resolver<'_, '_> {
             == Some(BuiltinId::ReflectDeleteProperty);
         let key = (operands.next() == Some(operand)).then(|| operands.next())?;
         key.filter(|&key: &ExprId| is_deletion && !matches!(hir[key].kind, ExprKind::Spread(_)))
+            .map(|key| (user, key))
     }
 
     fn is_stored_to(&self, entry: ExprId) -> bool {
@@ -166,6 +199,23 @@ impl Resolver<'_, '_> {
         (let_out.get_or_init(|| self.find_variables_let_out_of_sight())).contains(&variable)
     }
 
+    pub(super) fn note_cache_of_unresolved_require(&mut self, require: ExprId) {
+        let Some(table) = self.find_member_of(require) else {
+            return;
+        };
+        let Some((_, MemberKey::Name(name))) = self.input.hir.member_key(table) else {
+            return;
+        };
+        let object = ResolvedValue::object(BuiltinPath {
+            id: BuiltinId::ModuleRequire,
+            mutability: Mutability::ChangesOnItsOwn,
+        });
+        let member = self.find_named_member(object, name);
+        if member.is_some_and(|member| is_module_cache(member.id)) {
+            self.note_use_of_module_cache(table);
+        }
+    }
+
     pub(super) fn note_use_of_module_cache(&mut self, table: ExprId) {
         let hir = self.input.hir;
         if let Some(entry) = self.find_member_of(table) {
@@ -196,7 +246,8 @@ impl Resolver<'_, '_> {
             self.output.gets_at_entries_of_module_cache = true;
             return;
         }
-        if let Some(key) = self.find_key_that_call_deletes(table) {
+        if let Some((deletion, key)) = self.find_call_that_deletes(table) {
+            self.output.entries_deleted_from_module_cache.push(deletion);
             let key = match hir.index_member_key(hir.skip_type_assertions(key)) {
                 MemberKey::Name(text) | MemberKey::PrivateName(text) => {
                     KeyOfModuleCache::Text(text)
@@ -220,6 +271,7 @@ impl Resolver<'_, '_> {
         self.output.hands_module_cache_on |= is_handed_on;
         if is_handed_on && self.input.dialect == SourceDialect::Program {
             self.output.places_that_hand_module_cache_on.push(table);
+            self.output.module_caches_handed_on.push(table);
         }
     }
 }

@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: the form in which a number crosses a call is a matter of the calling convention: the checks read every unit against the plan
-// STATISTIC: MethodCallsThroughTable >= 1
+// STATISTIC: MethodCallsThroughTable = 0
 // The call in the loop hands every row a whole number. A call of its own hands one row a fraction: that body takes a double, the others an int32, and the selector takes what holds both.
 interface Tick { ticked(by: number): number }
 class First implements Tick { constructor(private at: number) {} ticked(by: number): number { this.at = (this.at + by) | 0; return this.at; } }

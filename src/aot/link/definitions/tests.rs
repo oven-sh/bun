@@ -260,7 +260,7 @@ fn in_which_order_a_unit_defines_the_types_of_a_layout_changes_nothing() {
                 let position = |site: DefinitionSite| {
                     prepared.units[site.unit as usize].layout_definitions[site.index as usize]
                         .1
-                        .position
+                        .position()
                 };
                 sites.map(position).collect::<Vec<u32>>()
             })

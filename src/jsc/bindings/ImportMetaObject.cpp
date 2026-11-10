@@ -43,7 +43,9 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <wtf/Scope.h>
 #include "BunCompiledModules.h"
+#include "CodeGenerationFromStrings.h"
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSPromise.h>
@@ -215,6 +217,10 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     auto resolved = resolvedPath.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (auto module = Bun::compiledModuleForPath(resolved)) {
+        if (Bun::isModuleRefusedByName(resolved)) [[unlikely]] {
+            JSC::throwException(globalObject, scope, Bun::createCodeGenerationFromStringsError(globalObject));
+            return;
+        }
         WTF::String requesterPath = from.isString() ? from.toWTFString(globalObject) : WTF::String();
         RETURN_IF_EXCEPTION(scope, );
         // The asker chooses the words of the refusal alone.
@@ -263,6 +269,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         Bun::willRequire(lexicalGlobalObject, moduleName);
         RETURN_IF_EXCEPTION(scope, {});
     }
+
+    std::optional<bool> previousResolution;
+    if (Bun::hasCompiledModules()) [[unlikely]]
+        previousResolution = Bun::willResolveName(lexicalGlobalObject, parentModule);
+    auto restoreResolution = makeScopeExit([&] {
+        if (previousResolution) [[unlikely]]
+            Bun::didResolveName(lexicalGlobalObject, *previousResolution);
+    });
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {

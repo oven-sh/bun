@@ -11,7 +11,7 @@
 // INITIALIZER: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}}} results=
 
 export class C {
-  x = Math.abs(1);
+  x = Object.keys(this).length;
   constructor() {
     this.x = 2;
   }

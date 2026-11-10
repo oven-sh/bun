@@ -1,0 +1,12 @@
+# -- source: arguments-object-is-made-where-apply-is-not-built-in.cjs
+# 'use strict';
+# module.exports = function (fn) { return function only(a) { return arguments.length === 0 ? null : fn.apply(this, arguments); }; };
+# -- end of source
+# The arguments object of `fn.apply(this, arguments)`, and the list of the arguments behind the parameters, are made on the way where the apply found is not the built-in one.
+# RUN: walk f2:GenericCallEntry mechanisms=all
+# CHECK-LABEL: code f2:GenericCallEntry
+# CHECK-NOT: = CreateRest
+# CHECK-NOT: = CreateUnmappedArguments
+# CHECK: frequency=Rare
+# CHECK: = CreateRest
+# CHECK: = CreateUnmappedArguments

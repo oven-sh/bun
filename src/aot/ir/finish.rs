@@ -654,18 +654,16 @@ impl Encoder<'_> {
     }
 
     #[inline]
-    fn encode_value(&mut self, id: ValueId, written: Range<usize>) {
+    fn encode_value(&mut self, id: ValueId, mut written: Range<usize>) {
         debug_assert!(
             self.values[id.index()].next != IS_PARAMETER,
             "a block lists no parameter as a value"
         );
         self.number_value(id);
         let head = self.words[written.start];
-        debug_assert_eq!(
-            head & MARKS & !STANDS_IN_TAIL_POSITION,
-            0,
-            "no word for a written position follows the fields"
-        );
+        if head & WRITTEN_POSITION_FOLLOWS != 0 {
+            written.end -= 1;
+        }
         let opcode = Opcode::ALL.get((head & !MARKS) as usize).copied();
         let opcode = opcode.expect("an operation begins with its opcode");
         self.number_operands(written, |words, visit| {

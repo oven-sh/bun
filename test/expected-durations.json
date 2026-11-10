@@ -1200,9 +1200,21 @@
     "default": 9900,
     "asan": 39600
   },
+  "aot/coverage-emitted-enums.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/coverage-macro.test.ts": {
     "default": 3100,
     "asan": 12400
+  },
+  "aot/coverage-stored-fields.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/cpu-profile-wasm-traps.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/cpu.test.ts": {
     "default": 1900,
@@ -1492,6 +1504,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/entry-point-path-comparisons.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/env-file-pipe.test.ts": {
     "default": 30300,
     "asan": 121200
@@ -1549,6 +1565,10 @@
     "asan": 240000
   },
   "aot/everyday-awaiting-programs-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-errors.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -1631,6 +1651,10 @@
   "aot/export-in-commonjs.test.ts": {
     "default": 2800,
     "asan": 11200
+  },
+  "aot/factory-imports-in-larger-program.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/fake-clock.test.ts": {
     "default": 700,
@@ -1860,11 +1884,19 @@
     "default": 5000,
     "asan": 20000
   },
+  "aot/messages-quote-hoisted-imports.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/messages-without-function-source.test.ts": {
     "default": 60000,
     "asan": 240000
   },
   "aot/methods-of-instances-of-classes-below-map-and-set.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/misnumbered-function-records.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -2244,6 +2276,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/names-left-to-the-loader-load-as-one-graph.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/names-of-the-generated-tables-end-in-the-executable.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -2299,6 +2335,10 @@
   "aot/package-worker-file.test.ts": {
     "default": 6200,
     "asan": 24800
+  },
+  "aot/packages-of-code-from-disk.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/pages-64k.test.ts": {
     "default": 300,
@@ -2691,6 +2731,10 @@
   "aot/spies-in-written-code.test.ts": {
     "default": 3000,
     "asan": 12000
+  },
+  "aot/spies-on-native-modules.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/spy-fixed-members.test.ts": {
     "default": 1000,

@@ -80,6 +80,6 @@ fn delete_member(
         MemberKey::Name(_) | MemberKey::Computed(_) => lowering.lower_member_key(key),
         MemberKey::PrivateName(_) => return lowering.builder.boolean(true),
     };
-    lowering.report_at_member(access);
+    lowering.report_at_deletion(access);
     lowering.emit_delete(base, name)
 }

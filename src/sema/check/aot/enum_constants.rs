@@ -47,15 +47,15 @@ struct PathMember {
 }
 
 pub(crate) fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) -> bool {
-    let mut around = hir.parent(hir.node(name));
+    let mut holders: SmallVec<[Node; 8]> = SmallVec::new();
+    let mut around = hir.nearest_holder(hir.node(name));
     while around.is_some() {
-        let mut declarations = declarations.iter();
-        if declarations.any(|&declaration| hir.parent(hir.node(declaration)) == around) {
-            return true;
-        }
-        around = hir.parent(around);
+        holders.push(around);
+        around = hir.nearest_holder(around);
     }
-    false
+    declarations
+        .iter()
+        .any(|&declaration| holders.contains(&hir.parent(hir.node(declaration))))
 }
 
 pub fn find_link_followed_by_transpiler<'a>(
@@ -86,28 +86,25 @@ fn find_link_under_key_followed_by_transpiler<'a>(
 }
 
 pub fn is_member_visited_before(hir: &hir::File<'_>, member: EnumMemberId, access: ExprId) -> bool {
-    let count_ancestors = |mut node: Node| {
+    let count_holders = |mut node: Node| {
         let mut count = 0usize;
         while node.is_some() {
-            node = hir.parent(node);
+            node = hir.nearest_holder(node);
             count += 1;
         }
         count
     };
     let (mut toward_member, mut toward_access) = (hir.node(member), hir.node(access));
-    let (above_member, above_access) = (
-        count_ancestors(toward_member),
-        count_ancestors(toward_access),
-    );
+    let (above_member, above_access) = (count_holders(toward_member), count_holders(toward_access));
     for _ in above_access..above_member {
-        toward_member = hir.parent(toward_member);
+        toward_member = hir.nearest_holder(toward_member);
     }
     for _ in above_member..above_access {
-        toward_access = hir.parent(toward_access);
+        toward_access = hir.nearest_holder(toward_access);
     }
-    while hir.parent(toward_member) != hir.parent(toward_access) {
-        toward_member = hir.parent(toward_member);
-        toward_access = hir.parent(toward_access);
+    while hir.nearest_holder(toward_member) != hir.nearest_holder(toward_access) {
+        toward_member = hir.nearest_holder(toward_member);
+        toward_access = hir.nearest_holder(toward_access);
     }
     let is_enum = |node: Node| hir.kind(node) == Kind::EnumDeclaration;
     match (is_enum(toward_member), is_enum(toward_access)) {

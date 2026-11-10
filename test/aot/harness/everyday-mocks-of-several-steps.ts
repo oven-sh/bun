@@ -142,16 +142,6 @@ export function mocksInAChainIn(part: number, parts: number) {
 // compiled run may do, the run has to say so at its end: `saysSo`.
 const stillWrong: [cases: RegExp, printed: string, what: string, saysSo?: true][] = [
   [
-    /^[a-z-]+--the-original-in-the-factory--reset-modules--laid-again--imported-at-run-time$/,
-    "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; laid 2 ; threw EvalError",
-    "a mock that needs the original, imported again behind resetModules()",
-  ],
-  [
-    /^[a-z-]+--the-original-in-the-factory--reset-modules--left-as-it-is--imported-at-run-time$/,
-    "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; threw EvalError",
-    "the same",
-  ],
-  [
     /^vi-do-mock--a-factory--nothing-between--laid-again--imported-at-run-time$/,
     "laid 1 ; 1 mock1 mocked 0 ; laid 2 ; 2 mock2 mocked 0 ; held mock2 mocked",
     "the room does not run again, so what the test held from its first import() follows the second mock",

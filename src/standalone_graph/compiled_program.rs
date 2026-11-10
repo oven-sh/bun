@@ -2,6 +2,8 @@
 
 use core::mem::size_of;
 use core::ptr::read_unaligned;
+#[cfg(not(windows))]
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::borrow::Cow;
 
 use bun_collections::StringArrayHashMap;
@@ -15,6 +17,8 @@ use bun_resolver::compiled_program::{
 };
 use bun_resolver::package_names::FurtherPackageName;
 use bun_sys::{Fd, Stat};
+#[cfg(not(windows))]
+use bun_sys::{Maybe, PosixStat};
 
 use crate::Error;
 #[cfg(windows)]
@@ -43,6 +47,9 @@ const HAS_LEVELS_ABOVE_ROOT: u32 = 1024;
 const HAS_REFUSED_DATA: u32 = 2048;
 /// Behind the refused data: the length of `CompiledProgramInput::loaders_given_to_build`, then the bytes.
 const HAS_LOADERS_GIVEN_TO_BUILD: u32 = 4096;
+/// `st_dev` of embedded files and folders. No real device has this number.
+const EMBEDDED_FILES_DEVICE: u32 = 0x6275_6e66;
+
 /// Behind the loaders: the length of `CompiledProgramInput::files_for_file_system_alone`, then the bytes.
 const HAS_FILES_FOR_FILE_SYSTEM_ALONE: u32 = 8192;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
@@ -813,11 +820,10 @@ fn is_normalized_posix_path(name: &[u8]) -> bool {
     name.is_empty() || (!name.ends_with(b"/") && bun_highway::index_of_untidy_slash(name).is_none())
 }
 
-/// `a.json/`, `a.json/.` and `a.json/..`: no file answers to them.
-fn asks_for_folder(name: &[u8]) -> bool {
+/// Whether `name` ends like `a.json/`, `a.json/.` or `a.json/..`, which only a folder can match. Windows strips those endings first.
+fn requests_directory(name: &[u8]) -> bool {
     let without_dots = name.strip_suffix(b"..").or_else(|| name.strip_suffix(b"."));
-    let last = without_dots.unwrap_or(name).last();
-    last.is_some_and(|&byte| byte == b'/' || (cfg!(windows) && byte == b'\\'))
+    !cfg!(windows) && without_dots.unwrap_or(name).last() == Some(&b'/')
 }
 
 /// Writes `path.resolve(base, name)` without a trailing `/` and returns its length. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a name.
@@ -946,6 +952,41 @@ fn load_graph_file(descriptor: Fd, size: usize) -> Option<*mut u8> {
 pub enum SourcePathKind {
     File,
     Directory,
+}
+
+#[cfg(not(windows))]
+struct Descriptor {
+    opened: PosixStat,
+    path: &'static [u8],
+}
+
+#[cfg(not(windows))]
+static DESCRIPTORS: bun_threading::Guarded<Vec<Option<Box<Descriptor>>>> =
+    bun_threading::Guarded::new(Vec::new());
+
+/// Has a bit for each index of `DESCRIPTORS`, modulo 64.
+#[cfg(not(windows))]
+static DESCRIPTOR_FILTER: AtomicU64 = AtomicU64::new(0);
+
+/// Whether a descriptor of an embedded path was ever opened.
+#[cfg(not(windows))]
+#[inline(always)]
+pub fn has_descriptors() -> bool {
+    DESCRIPTOR_FILTER.load(Ordering::Relaxed) != 0
+}
+
+#[cfg(not(windows))]
+fn filter_bit(fd: Fd) -> u64 {
+    1 << (fd.native() as u64 % 64)
+}
+
+#[cfg(not(windows))]
+fn stat_descriptor(fd: Fd) -> Maybe<PosixStat> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if bun_sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
+        return bun_sys::fstatx(fd, bun_sys::STATX_MASK_FOR_STATS);
+    }
+    bun_sys::fstat(fd).map(|stat| PosixStat::init(&stat))
 }
 
 impl StandaloneModuleGraph {
@@ -1257,10 +1298,70 @@ impl StandaloneModuleGraph {
 
     /// `Bun.embeddedFiles` passes over it.
     pub fn is_file_for_file_system_alone(&self, file: &File) -> bool {
-        self.find_for_file_system_alone(file.name).is_some()
+        self.find_for_file_system_alone(file.name)
+            .is_some_and(|found| !found.is_asset)
     }
 
-    /// What a file on a disk has and a file of the graph has not: a number of its own, a link to it, an owner, blocks, and the times it had when the program was built.
+    /// Records that `fd` was opened for the embedded `path`.
+    #[cfg(not(windows))]
+    pub fn add_descriptor(&self, fd: Fd, path: &'static [u8]) {
+        let Ok(opened) = stat_descriptor(fd) else {
+            return;
+        };
+        let index = fd.native() as usize;
+        let mut descriptors = DESCRIPTORS.lock();
+        if descriptors.len() <= index {
+            descriptors.resize_with(index + 1, || None);
+        }
+        descriptors[index] = Some(Box::new(Descriptor { opened, path }));
+        DESCRIPTOR_FILTER.fetch_or(filter_bit(fd), Ordering::Relaxed);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        bun_sys::IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
+    }
+
+    /// For a descriptor of an embedded path, returns the `lstat()` of the path with any changes made through the descriptor.
+    #[cfg(not(windows))]
+    #[cold]
+    pub fn fstat(&self, fd: Fd) -> Maybe<PosixStat> {
+        let now = stat_descriptor(fd)?;
+        if DESCRIPTOR_FILTER.load(Ordering::Relaxed) & filter_bit(fd) == 0 {
+            return Ok(now);
+        }
+        let mut descriptors = DESCRIPTORS.lock();
+        let Some(slot) = descriptors.get_mut(fd.native() as usize) else {
+            return Ok(now);
+        };
+        let Some(Descriptor { opened, path }) = slot.as_deref() else {
+            return Ok(now);
+        };
+        let made = (opened.dev, opened.ino, opened.nlink, opened.birthtim);
+        if (now.dev, now.ino, now.nlink, now.birthtim) != made {
+            *slot = None;
+            return Ok(now);
+        }
+        let mut shown = self.stat(path).map_or(now, |named| PosixStat::init(&named));
+        if now.mode != opened.mode {
+            shown.mode = now.mode;
+        }
+        if (now.uid, now.gid) != (opened.uid, opened.gid) {
+            (shown.uid, shown.gid) = (now.uid, now.gid);
+        }
+        if (now.size, now.blocks) != (opened.size, opened.blocks) {
+            (shown.size, shown.blocks) = (now.size, now.blocks);
+        }
+        if now.atim != opened.atim {
+            shown.atim = now.atim;
+        }
+        if now.mtim != opened.mtim {
+            shown.mtim = now.mtim;
+        }
+        if now.ctim != opened.ctim {
+            shown.ctim = now.ctim;
+        }
+        Ok(shown)
+    }
+
+    /// Fills in what only files on disk have: device, inode, link count, owner, blocks, and the times as of the build.
     pub(crate) fn fill_stat_for_file_system_alone(&self, key: &[u8], stat: &mut Stat) {
         let Some(found) = self.find_for_file_system_alone(key) else {
             return;
@@ -1272,6 +1373,7 @@ impl StandaloneModuleGraph {
         if found.is_folder {
             stat.st_size = 4096;
         }
+        stat.st_dev = EMBEDDED_FILES_DEVICE as _;
         stat.st_ino = found.number as _;
         stat.st_nlink = if found.is_folder { 2 } else { 1 };
         stat.st_blksize = 4096;
@@ -1316,14 +1418,11 @@ impl StandaloneModuleGraph {
             .filter(|file| self.is_asset_of_compiled_program(name, file))
     }
 
-    pub(crate) fn key_of_asset_named_at_root(&self, name: &[u8]) -> Option<Vec<u8>> {
-        self.keys_of_assets_named_at_root(name)?.next()
+    pub(crate) fn root_asset_key(&self, name: &[u8]) -> Option<Vec<u8>> {
+        self.root_asset_keys(name)?.next()
     }
 
-    fn keys_of_assets_named_at_root<'a>(
-        &'a self,
-        name: &'a [u8],
-    ) -> Option<impl Iterator<Item = Vec<u8>> + 'a> {
+    fn root_asset_keys<'a>(&'a self, name: &'a [u8]) -> Option<impl Iterator<Item = Vec<u8>> + 'a> {
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
         let program = self.compiled_program.as_ref()?;
         let below_root = name.strip_prefix(root)?;
@@ -1331,18 +1430,65 @@ impl StandaloneModuleGraph {
         let (base_name, below_asset) = below_root.split_at(end);
         let mut paths = program.assets_named_at_root(base_name).peekable();
         paths.peek()?;
-        // The graph has no file for a compiled module that is no entry point.
-        let is_taken = program.holds_module_at(name) || program.holds_module_below(name);
-        if is_taken || self.climbs_out_of_what_is_no_folder(name) {
+        if self.traverses_non_directory(name) {
             return None;
         }
-        let may_be_file = !asks_for_folder(name);
-        let keys = paths.filter_map(move |path| match path.starts_with(b"../") {
-            true => program.join_public_asset_path(root, &[path, below_asset].concat()),
-            false => below_asset.is_empty().then(|| [root, path].concat()),
+        let may_be_file = !requests_directory(name);
+        let keys = paths.filter_map(move |path| {
+            if !path.starts_with(b"../") {
+                let at_root = || ([root, path].concat(), 0);
+                return below_asset.is_empty().then(at_root);
+            }
+            let asset = program.join_public_asset_path(root, path)?;
+            let key = program.join_public_asset_path(root, &[path, below_asset].concat())?;
+            key.starts_with(&asset).then(|| (key, asset.len()))
         });
-        let is_file = move |key: &Vec<u8>| may_be_file && self.files.contains(key);
-        Some(keys.filter(move |key| is_file(key) || self.dirs.contains(key)))
+        let mut earlier_folders: Vec<Vec<u8>> = Vec::new();
+        Some(keys.filter_map(move |(key, folder_length)| {
+            let (folder, below) = key.split_at(folder_length);
+            let is_file = may_be_file && self.files.contains(&key);
+            let normalized_name = [root, base_name, below].concat();
+            let mut earlier = earlier_folders.iter();
+            let is_found = (is_file || self.dirs.contains(&key))
+                && self.is_unshadowed_by_root(program, &normalized_name, is_file)
+                && earlier.all(|it| self.is_unshadowed_by_folder(it, below, is_file));
+            earlier_folders.push(folder.to_vec());
+            is_found.then_some(key)
+        }))
+    }
+
+    /// Outside folders with the same base name are tried in order, so an earlier one shadows a later one as the root shadows both.
+    fn is_unshadowed_by_folder(&self, earlier_folder: &[u8], below: &[u8], is_file: bool) -> bool {
+        let name_prefix = |end: usize| [earlier_folder, &below[..end]].concat();
+        let ends = (1..below.len()).filter(|&at| below[at] == b'/');
+        let mut ancestor_names = ends.chain([below.len()]).map(name_prefix);
+        !ancestor_names.any(|name| self.files.contains(&name))
+            && !(is_file && self.dirs.contains(&name_prefix(below.len())))
+    }
+
+    /// Entries of the root come first, as in `bun run`: a file shadows its name and everything below it, and a folder shadows a file. Folders merge.
+    fn is_unshadowed_by_root(
+        &self,
+        program: &CompiledProgram,
+        normalized_name: &[u8],
+        is_file: bool,
+    ) -> bool {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        // The graph has no file for a compiled module that is no entry point.
+        let is_own_file = |path: &[u8]| self.files.contains(path) || program.holds_module_at(path);
+        let is_own_folder =
+            || self.dirs.contains(normalized_name) || program.holds_module_below(normalized_name);
+        let ends = (root.len()..normalized_name.len()).filter(|&at| normalized_name[at] == b'/');
+        let mut ancestor_names = ends
+            .chain([normalized_name.len()])
+            .map(|end| &normalized_name[..end]);
+        !ancestor_names.any(is_own_file) && !(is_file && is_own_folder())
+    }
+
+    /// Whether `name`, below the root, resolves to the file or folder at `key`. Listings only show what can be read.
+    pub(crate) fn is_named_at_root(&self, name: &[u8], key: &[u8]) -> bool {
+        self.root_asset_keys(name)
+            .is_some_and(|mut keys| keys.any(|it| it == key))
     }
 
     /// `pub/a.txt` for the key of `../lib/pub/a.txt`, where `--asset ../lib/pub` is also found by its base name and that name leads to this file.
@@ -1356,7 +1502,7 @@ impl StandaloneModuleGraph {
                 return None;
             }
             let name = [bun_paths::basename(path), below].concat();
-            let found = self.key_of_asset_named_at_root(&[root, &name[..]].concat())?;
+            let found = self.root_asset_key(&[root, &name[..]].concat())?;
             (found == key).then_some(name)
         })
     }
@@ -1385,13 +1531,17 @@ impl StandaloneModuleGraph {
                 continue;
             }
             for (below, is_dir) in self.list_folder(&key, true) {
-                listed.push(([base_name, b"/", &below[..]].concat().into(), is_dir));
+                let name = [base_name, b"/", &below[..]].concat();
+                let place = [&key[..], b"/", &below[..]].concat();
+                if self.is_named_at_root(&[root, &name[..]].concat(), &place) {
+                    listed.push((name.into(), is_dir));
+                }
             }
         }
         listed
     }
 
-    /// The key that `name` shares with other folders, and those folders, where `found` is what `directory_key` made of it. A folder that is named by its own place stands for itself alone.
+    /// The key that `name` shares with other folders, and those folders. `found` is its `directory_key`. A folder outside the root that is named by its own path shares no key.
     pub(crate) fn find_folders_named_alike(
         &self,
         name: &[u8],
@@ -1404,9 +1554,9 @@ impl StandaloneModuleGraph {
         };
         let program = self.compiled_program.as_ref().zip(written);
         let as_read = program.and_then(|it| Self::key_under_own_root(it.0, it.1));
-        let as_read = as_read.filter(|it| it != found)?;
+        let as_read = as_read?;
         let is_other_folder = |key: &Vec<u8>| key != found && self.dirs.contains(key);
-        let keys = self.keys_of_assets_named_at_root(&as_read)?;
+        let keys = self.root_asset_keys(&as_read)?;
         let others: Vec<Vec<u8>> = keys.filter(is_other_folder).collect();
         (!others.is_empty()).then_some((as_read, others))
     }
@@ -1414,7 +1564,7 @@ impl StandaloneModuleGraph {
     /// Before it was mounted, the base name of such an asset was its key, so `__dirname` led to it.
     fn key_of_mounted_asset(&self, name: &[u8]) -> Option<Vec<u8>> {
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
-        let key = self.key_of_asset_named_at_root(name)?;
+        let key = self.root_asset_key(name)?;
         let is_mounted = key
             .strip_prefix(root)
             .is_none_or(|it| it.starts_with(b"_.._/"));
@@ -1428,11 +1578,11 @@ impl StandaloneModuleGraph {
         if is_below_root && is_normalized_posix_path(name) {
             return None;
         }
-        if asks_for_folder(name) || self.climbs_out_of_what_is_no_folder(name) {
+        if requests_directory(name) || self.traverses_non_directory(name) {
             return None;
         }
         let key = Self::key_under_own_root(program, name)?;
-        let named_at_root = || self.key_of_asset_named_at_root(&key);
+        let named_at_root = || self.root_asset_key(&key);
         let is_file = self.files.contains(&key);
         Some((!is_file).then(named_at_root).flatten().unwrap_or(key))
     }
@@ -1452,9 +1602,12 @@ impl StandaloneModuleGraph {
         name.map_or_else(|| Cow::Borrowed(file.display_name()), Cow::Owned)
     }
 
-    /// `sub/../a.json` is `a.json` only where `sub` is a folder: the key of a path is made of its text alone.
-    fn climbs_out_of_what_is_no_folder(&self, name: &[u8]) -> bool {
-        let is_separator = |byte: u8| byte == b'/' || (cfg!(windows) && byte == b'\\');
+    /// Keys are normalized lexically, but `sub/../a.json` is `a.json` only if `sub` is a folder. Windows normalizes lexically too.
+    fn traverses_non_directory(&self, name: &[u8]) -> bool {
+        if cfg!(windows) {
+            return false;
+        }
+        let is_separator = |byte: u8| byte == b'/';
         let is_folder = |path: &[u8]| {
             self.find_dir(path)
                 || matches!(
@@ -1481,7 +1634,7 @@ impl StandaloneModuleGraph {
         if !program.preserves_source_paths && program.root_on_build_machine().is_none() {
             return None;
         }
-        if asks_for_folder(name) || self.climbs_out_of_what_is_no_folder(name) {
+        if requests_directory(name) || self.traverses_non_directory(name) {
             return None;
         }
         let mut buffer = path_buffer_pool::get();
@@ -1600,7 +1753,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::StandaloneModuleGraph::{
         BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, CompileTarget, Flags, GraphRequest, Offsets,
-        RuntimeOptions, to_bytes, to_graph_bytes, with_graph_slices,
+        RuntimeOptions, has_prefix_ignoring_drive_case, normalize_windows_key, to_bytes,
+        to_graph_bytes, with_graph_slices,
     };
     use crate::executable_request::graph_bytes;
 
@@ -1967,6 +2121,7 @@ pub(crate) mod tests {
             path_below_root: path.to_vec(),
             modified_at,
             is_folder,
+            is_asset: path.ends_with(b".toml"),
         };
         let files = encode_files_for_file_system_alone(vec![
             laid(b"data/b.json", 1_700_000_000_123, false),
@@ -1981,17 +2136,21 @@ pub(crate) mod tests {
         let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
         assert_eq!(record_end, bytes.len());
         assert_eq!(program.loaders_given_to_build(), b".pic\0text\0");
-        let found = |number: u32, modified_at: i64, is_folder: bool| {
+        let found = |number: u32, modified_at: i64, is_folder: bool, is_asset: bool| {
             Some(FoundForFileSystemAlone {
                 number,
                 modified_at,
                 is_folder,
+                is_asset,
             })
         };
         let find = |path: &[u8]| program.find_for_file_system_alone(path);
-        assert_eq!(find(b"data"), found(1, 7, true));
-        assert_eq!(find(b"data/a.toml"), found(2, -5, false));
-        assert_eq!(find(b"data/b.json"), found(3, 1_700_000_000_123, false));
+        assert_eq!(find(b"data"), found(1, 7, true, false));
+        assert_eq!(find(b"data/a.toml"), found(2, -5, false, true));
+        assert_eq!(
+            find(b"data/b.json"),
+            found(3, 1_700_000_000_123, false, false)
+        );
         for path in [&b"data/b.jso"[..], b"data/b.json5", b"data/", b""] {
             assert_eq!(find(path), None);
         }
@@ -2027,6 +2186,35 @@ pub(crate) mod tests {
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)
         );
+    }
+
+    #[test]
+    fn prefix_ignores_drive_case() {
+        for (path, is_found) in [
+            (&b"B:/~BUN/root/a.txt"[..], true),
+            (b"b:/~BUN/root/a.txt", true),
+            (b"C:/~BUN/root/a.txt", false),
+            (b"b:/~bun/root/a.txt", false),
+            (b"b", false),
+            (b"", false),
+        ] {
+            assert_eq!(has_prefix_ignoring_drive_case(path, b"B:/~BUN/"), is_found);
+        }
+    }
+
+    #[test]
+    fn normalizes_windows_keys() {
+        for (key, tidy) in [
+            (&b"b:/~BUN/root/a.txt"[..], &b"B:/~BUN/root/a.txt"[..]),
+            (b"B:/~BUN/root/a.txt/", b"B:/~BUN/root/a.txt"),
+            (b"B:/~BUN/root/a.txt//", b"B:/~BUN/root/a.txt"),
+            (b"B:/", b"B:/"),
+            (b"", b""),
+        ] {
+            let mut key = key.to_vec();
+            let length = normalize_windows_key(&mut key);
+            assert_eq!(&key[..length], tidy);
+        }
     }
 
     #[test]

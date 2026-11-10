@@ -1,0 +1,24 @@
+# -- source: counters-copy-keeps-pending-blocks.js
+# function fill(values) {
+#   const spare = [];
+#   const list = [];
+#   for (const value of values)
+#     list.push(value);
+#   const doubled = [];
+#   let last = -1;
+#   const n = list.length + 0.5;
+#   for (let i = n - 1; i >= 0; i--) {
+#     if (list[i] === last)
+#       last = list[i];
+#     doubled[i * 2] = list[i] + 1;
+#   }
+#   return spare.length + "/" + last + "/" + doubled.length;
+# }
+# print(fill(JSON.parse("[1,2,3]")), fill([]));
+# -- end of source
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 0/-1/6 0/-1/0
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

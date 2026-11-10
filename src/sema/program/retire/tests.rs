@@ -5,6 +5,7 @@ use crate::hir::StmtId;
 use crate::program::code_test_host::{StatementsHost, TestBuild, load_files};
 use crate::program::few_in;
 use crate::session::Session;
+use std::alloc::{Allocator, Layout};
 
 static ONE_TEST_AT_A_TIME: Guarded<()> = Guarded::new(());
 
@@ -32,6 +33,44 @@ const SOURCES: &[(&str, &str)] = &[
     ("/x.ts", "import \"./a\""),
     ("/rest.ts", "import \"./a\""),
 ];
+
+fn free_block_of(session: &Session) {
+    let block = session.allocate(Layout::new::<[u64; 32]>());
+    let block = block.expect("there is memory").cast();
+    // SAFETY: nothing refers to it.
+    assert!(unsafe { session.free_when_unread(block) });
+}
+
+fn count_unread_blocks() -> usize {
+    TASKS.lock().unread.len()
+}
+
+#[test]
+fn block_is_freed_behind_its_readers() {
+    let _alone = ONE_TEST_AT_A_TIME.lock();
+    let session = Session::new();
+    session.set_readers_are_tasks(true);
+    let early = ReadingTask::begin();
+    free_block_of(&session);
+    let late = ReadingTask::begin();
+    free_block_of(&session);
+    drop(late);
+    assert_eq!(count_unread_blocks(), 2);
+    drop(early);
+    assert_eq!(count_unread_blocks(), 0);
+}
+
+#[test]
+fn ended_session_forgets_its_blocks() {
+    let _alone = ONE_TEST_AT_A_TIME.lock();
+    let session = Session::new();
+    session.set_readers_are_tasks(true);
+    let reading = ReadingTask::begin();
+    free_block_of(&session);
+    drop(session);
+    assert_eq!(count_unread_blocks(), 0);
+    drop(reading);
+}
 
 struct Program<'a, 's> {
     files: &'a Files<'s>,

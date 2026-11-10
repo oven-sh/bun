@@ -13,6 +13,8 @@
 # REQUIRES: as-written
 # RUN: compile KnownInductionsUsed mechanisms=all
 # blur() is a nest four deep: the loop over x, inside the typed copy of the loop over y, holds a loop that holds a loop: its other copy buys the innermost loop alone: 27 inductions became 15 with one loop fewer built twice.
-# CHECK: statistic KnownInductionsUsed 15
+# In pack() a hole of `best` is read as NaN: no test of its own asks for the length in front of the read: 14.
+# `best`, stored into under a test, is asked before the loop over `c`, so that loop is built twice: 8,477 > 7,358 instructions: 24.
+# CHECK: statistic KnownInductionsUsed 24
 # RUN(SHELL): run-in-shell globalThis.sink = answers => print(answers.join(" "));
 # SHELL: 44901 559.5 0 41.5 11 0.5

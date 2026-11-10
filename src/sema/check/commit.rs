@@ -89,9 +89,10 @@ use crate::local::{Log, node_word};
 use crate::program::{FileId, Files, ReadingNoTrees, Sym};
 use crate::session::Arena;
 use crate::table::{Prepared, Publish};
-use crate::util::{FxHashMap, SharedSort};
+use crate::util::{FxBuild, FxHashMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use std::cell::{Cell, RefCell};
+use std::hash::{BuildHasher, Hash};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -155,10 +156,82 @@ pub(super) struct CycleCommit {
     number: u32,
     /// The keys from `Task::take_logged_at_cycles`, sorted. They cover the queries in the cycles and whatever else was
     /// stored while those queries were on the stack. A record key is its table's slot and `Publish::identity_of_logged`.
-    record_keys: Vec<(u32, u64)>,
-    node_keys: Vec<[u32; 3]>,
+    record_keys: SortedKeys<(u32, u64)>,
+    node_keys: SortedKeys<[u32; 3]>,
+    /// The files of `node_keys`, sorted.
+    files: Vec<u32>,
     /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
     members: Vec<u64>,
+}
+
+/// Nearly every lookup misses, because every task looks up what it has logged in every `CycleCommit`.
+struct SortedKeys<K> {
+    sorted: Vec<K>,
+    filter: KeyFilter,
+}
+
+impl<K: Copy + Ord + Hash> SortedKeys<K> {
+    fn new(mut keys: Vec<K>) -> SortedKeys<K> {
+        keys.shared_sort_unstable();
+        let filter = KeyFilter::new(keys.len(), keys.iter().map(KeyFilter::hash));
+        SortedKeys {
+            sorted: keys,
+            filter,
+        }
+    }
+
+    /// True if one of `keys` is in the list. Each comes with its `KeyFilter::hash`.
+    fn contain_any(&self, keys: &[(u64, K)]) -> bool {
+        (keys.iter()).any(|(hash, key)| {
+            self.filter.may_hold(*hash) && self.sorted.binary_search(key).is_ok()
+        })
+    }
+}
+
+fn with_hashes<K: Hash>(keys: Vec<K>) -> Vec<(u64, K)> {
+    let with_hash = |key| (KeyFilter::hash(&key), key);
+    keys.into_iter().map(with_hash).collect()
+}
+
+/// A Bloom filter with two bits for each key, both in one word.
+struct KeyFilter {
+    /// A power of two of them.
+    words: Box<[u64]>,
+}
+
+impl KeyFilter {
+    const KEYS_PER_WORD: usize = 4;
+
+    fn hash<K: Hash>(key: &K) -> u64 {
+        FxBuild.hash_one(key)
+    }
+
+    fn new(count: usize, hashes: impl Iterator<Item = u64>) -> KeyFilter {
+        let words = count.div_ceil(Self::KEYS_PER_WORD).next_power_of_two();
+        let mut filter = KeyFilter {
+            words: vec![0; words].into_boxed_slice(),
+        };
+        for hash in hashes {
+            filter.words[filter.word_of(hash)] |= Self::bits(hash);
+        }
+        filter
+    }
+
+    #[inline]
+    fn word_of(&self, hash: u64) -> usize {
+        (hash >> 12) as usize & (self.words.len() - 1)
+    }
+
+    #[inline]
+    fn bits(hash: u64) -> u64 {
+        1 << (hash & 63) | 1 << (hash >> 6 & 63)
+    }
+
+    #[inline]
+    fn may_hold(&self, hash: u64) -> bool {
+        let bits = Self::bits(hash);
+        self.words[self.word_of(hash)] & bits == bits
+    }
 }
 
 impl Drop for Commits<'_> {
@@ -799,7 +872,11 @@ impl<'s> Checker<'_, 's> {
         // Copied because `identities_of` borrows the task's buffer again.
         let (record_keys, node_keys) = self.task.logged_since_idle();
         let (record_keys, node_keys) = (record_keys.to_vec(), node_keys.to_vec());
-        let record_keys = identities_of(&tables_of(self.p), &self.task, &record_keys);
+        let record_keys = match record_keys.is_empty() {
+            true => Vec::new(),
+            false => identities_of(&tables_of(self.p), &self.task, &record_keys),
+        };
+        let (record_keys, node_keys) = (with_hashes(record_keys), with_hashes(node_keys));
         let cycle_commits = self.p.commits.cycle_commits.lock();
         let from =
             cycle_commits.partition_point(|ring| ring.number <= last_idle_commit.min(compared));
@@ -809,15 +886,11 @@ impl<'s> Checker<'_, 's> {
         };
         let has_missed = cycle_commits[from..].iter().any(|ring| {
             ring.number > compared
-                && ring.node_keys.iter().any(|key| key[1] == view.pinned.get())
+                && ring.files.binary_search(&view.pinned.get()).is_ok()
                 && !is_of_later_file(ring.number)
                 || ring.number > last_idle_commit
-                    && (record_keys
-                        .iter()
-                        .any(|key| ring.record_keys.binary_search(key).is_ok())
-                        || node_keys
-                            .iter()
-                            .any(|key| ring.node_keys.binary_search(key).is_ok()))
+                    && (ring.record_keys.contain_any(&record_keys)
+                        || ring.node_keys.contain_any(&node_keys))
         });
         view.compared_with_pinned.set(compared.max(newest));
         if has_missed && !self.task.was_discarded() {
@@ -1058,12 +1131,14 @@ impl<'s> Checker<'_, 's> {
                 record_keys.extend(identities_of(&tables, &self.task, logged));
                 node_keys.extend_from_slice(log.node_keys.get(from[1]..to[1]).unwrap_or(&[]));
             }
-            record_keys.shared_sort_unstable();
-            node_keys.shared_sort_unstable();
+            let mut files: Vec<u32> = node_keys.iter().map(|key| key[1]).collect();
+            files.shared_sort_unstable();
+            files.dedup();
             CycleCommit {
                 number: 0,
-                record_keys,
-                node_keys,
+                record_keys: SortedKeys::new(record_keys),
+                node_keys: SortedKeys::new(node_keys),
+                files,
                 members: self.task.take_cycle_members(),
             }
         });
@@ -1203,4 +1278,33 @@ pub enum RefusedInstantiations {
     None,
     Computed,
     StillRefused,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KeyFilter, SortedKeys, with_hashes};
+
+    #[test]
+    fn sorted_keys_find_members() {
+        let held: Vec<(u32, u64)> = (0..1000).map(|at| (at % 7, u64::from(at) * 3)).collect();
+        let keys = SortedKeys::new(held.clone());
+        for key in with_hashes(held) {
+            assert!(keys.contain_any(&[key]));
+        }
+        let absent: Vec<(u32, u64)> = (0..1000)
+            .map(|at| (at % 7, u64::from(at) * 3 + 1))
+            .collect();
+        assert!(!keys.contain_any(&with_hashes(absent)));
+        let none: SortedKeys<[u32; 3]> = SortedKeys::new(Vec::new());
+        assert!(!none.contain_any(&with_hashes(vec![[0, 1, 2]])));
+    }
+
+    #[test]
+    fn filter_rejects_absent_keys() {
+        let hashes = |from: u32| (from..from + 4096).map(|at| KeyFilter::hash(&[at % 9, at, 1]));
+        let filter = KeyFilter::new(4096, hashes(0));
+        assert!(hashes(0).all(|hash| filter.may_hold(hash)));
+        let accepted = hashes(100_000).filter(|&hash| filter.may_hold(hash));
+        assert!(accepted.count() < 4096 / 16);
+    }
 }

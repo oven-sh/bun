@@ -55,6 +55,8 @@ pub struct AotBuildRequest<'r, 'a> {
     pub module_prefix: &'r [u8],
     /// The absolute path of the executable that the build writes.
     pub outfile: Option<&'r [u8]>,
+    /// The real path of the file that the executable replaces, if any.
+    pub replaced_file: Option<&'r [u8]>,
     /// `transpiler.log`. The resolver and the bundler write through that pointer while the build
     /// runs, so no reference to the log is held across a call that may reach them.
     pub log: *mut Log,
@@ -86,6 +88,8 @@ pub struct AotBuild {
     /// `CompiledProgram::refused_data`
     pub refused_data: Vec<u8>,
     pub files_for_file_system: FilesForFileSystem,
+    /// Whether `AotBuildRequest::replaced_file` is a source of the program or an embedded file.
+    pub is_source_replaced: bool,
     /// `CompiledProgram::loaders_given_to_build`
     pub loaders_given_to_build: Vec<u8>,
     pub output_files: Vec<OutputFile>,
@@ -120,6 +124,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         image_form,
         module_prefix,
         outfile,
+        replaced_file,
         log,
         arena,
         event_loop,
@@ -297,7 +302,13 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
                 shown: &options.paths.entry_point_names,
                 embedded: &options.paths.entry_point_file_names,
             };
+            let is_source_replaced = replaced_file.is_some_and(|replaced| {
+                let mut sources = compilation.program_files.iter();
+                sources.any(|source| source.source_path == replaced)
+                    || embedded.iter().any(|file| file.src_path.text == replaced)
+            });
             let mut build = output::finish_build(compilation, &names, embedded);
+            build.is_source_replaced = is_source_replaced;
             build.package_names = package_names;
             build.further_package_names = further_package_names;
             build.refused_data = refused_data;

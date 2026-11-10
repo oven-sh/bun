@@ -76,6 +76,8 @@ pub(super) fn resolve_code_imports<'s, 'r>(
                 .analysis
                 .is_path_from_own_directory(site.specifier_node),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
+            is_written_in_load: !may_have_unread_type(hir, site)
+                && is_path_written_in_load(hir, site, names),
         };
         let resolution = resolve_site(context, key, hir, site, alternatives, names, written);
         let is_json = |path: &[u8]| path.ends_with(b".json");
@@ -355,7 +357,7 @@ fn resolve_site<'r>(
         .unwrap_or(resolution);
     let resolution =
         resolve_file_loaded_another_way(context, key, hir, site, specifier, resolution);
-    let resolution = resolve_data_url(context, hir, site, resolution).unwrap_or(resolution);
+    let resolution = resolve_data_url(context, hir, site, names, resolution).unwrap_or(resolution);
     let resolution =
         resolve_database(context, hir, site, written, specifier, resolution).unwrap_or(resolution);
     let resolution =
@@ -446,6 +448,7 @@ fn resolve_data_url<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     hir: &hir::File<'_>,
     site: &ImportSite,
+    names: NamesKnown,
     resolution: CodeResolution<'r>,
 ) -> Option<CodeResolution<'r>> {
     let CodeResolution::External {
@@ -455,12 +458,28 @@ fn resolve_data_url<'r>(
     else {
         return None;
     };
-    let type_attribute = context.atoms.bytes(loader_attribute(hir, site)?);
-    let path = (context.host).create_file_from_data_url(specifier, type_attribute)?;
+    let has_type = loader_attribute(hir, site).is_some() || may_have_unread_type(hir, site);
+    if has_type || !is_path_written_in_load(hir, site, names) {
+        return None;
+    }
+    let path = context.host.create_module_from_data_url(specifier)?;
     Some(CodeResolution::File(CodeFile {
         path: context.resolver.keep(&path),
         host_module: None,
     }))
+}
+
+fn is_path_written_in_load(hir: &hir::File<'_>, site: &ImportSite, names: NamesKnown) -> bool {
+    match site.kind {
+        ImportSiteKind::Import(_)
+        | ImportSiteKind::ExportFrom(_)
+        | ImportSiteKind::ExportStar(_)
+        | ImportSiteKind::ImportEquals(_) => true,
+        ImportSiteKind::ImportCall(_) | ImportSiteKind::Require(_) => {
+            names == NamesKnown::ToTranspiler && is_name_written_out(hir, site.specifier_node)
+        }
+        _ => false,
+    }
 }
 
 fn resolve_database<'r>(

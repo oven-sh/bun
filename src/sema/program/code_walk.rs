@@ -1390,16 +1390,19 @@ fn forget_files_folded_with_main_module(
     context: &CodeLoadContext<'_, '_, '_>,
     state: &mut WalkState<'_, '_>,
 ) -> bool {
-    if !context.host.may_any_file_become_main_module() {
+    if !context.host.may_any_file_become_main_module() && !context.host.may_start_workers() {
         return false;
     }
     let is_decided = |file: &WalkedFile<'_, '_>| {
         file.parsed.as_ref().is_some_and(|parsed| {
             let analyzed = &parsed.code.analyzed;
-            analyzed.import_meta_main.is_some() && analyzed.analysis.asks_for_main_module
+            analyzed.import_meta_main.is_some()
+                && analyzed.analysis.asks_for_main_module
+                && import_meta_main(context, file.target.key).is_none()
         })
     };
-    let decided = take_noted_files(&mut state.askers_for_main_module, &state.files, is_decided);
+    let mut askers = state.askers_for_main_module.clone();
+    let decided = take_noted_files(&mut askers, &state.files, is_decided);
     for &index in &decided {
         forget_parsed_file(state, index);
     }

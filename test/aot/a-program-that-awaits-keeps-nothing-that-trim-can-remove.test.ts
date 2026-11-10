@@ -42,6 +42,7 @@ test.concurrent.each([
   `process.nextTick(console.log, 1);`,
   `queueMicrotask(() => console.log(1));`,
   `setTimeout(() => console.log(1), 1);`,
+  `setTimeout(console.log, 1, 1);`,
 ])(
   "%s",
   async text => {
@@ -57,11 +58,6 @@ test.concurrent.each([
 // the list above.
 const asLoadingEvents = 'the same as `import "node:events";` alone';
 for (const [text, kept, likeWhat] of [
-  [
-    `setTimeout(console.log, 1, 1);`,
-    121,
-    "the same as a delay of 1.5; none where a function of the program is the callback",
-  ],
   [`process.emitWarning("a warning");`, 41, asLoadingEvents],
   [`process.emitWarning(new Error("a warning"));`, 41, asLoadingEvents],
   [`process.emitWarning("a warning", "Mine", "CODE");`, 41, asLoadingEvents],

@@ -1,8 +1,10 @@
 mod body;
 mod exports;
+mod path_comparisons;
 mod variables;
 
 pub(in crate::lower) use self::exports::{emit_module_value, is_erased, lower_export_reference};
+pub(in crate::lower) use self::path_comparisons::PathComparison;
 #[cfg(test)]
 pub(in crate::lower) use self::variables::WRAPPER_PARAMETERS;
 pub(in crate::lower) use self::variables::{

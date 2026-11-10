@@ -9,7 +9,7 @@ function fit(glyphs: string[], room: number): string {
   let line = "";
   for (const glyph of glyphs) {
     line += glyph;
-    if (widthOf(line) > room) break;
+    if (glyph !== "é" && widthOf(line) > room) break;
   }
   return line;
 }

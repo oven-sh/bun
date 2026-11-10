@@ -26,14 +26,44 @@ fn find_builtin_name(hash: u64, bytes: &[u8]) -> Option<BuiltinName> {
         .copied()
 }
 
+#[derive(Copy, Clone, Default)]
+struct NameFacts(u32);
+
+impl NameFacts {
+    const CLASS_BITS: u32 = 4;
+
+    #[inline]
+    fn new(class: NameClass, builtin: Option<BuiltinName>) -> NameFacts {
+        const { assert!(NameClass::COUNT <= 1 << NameFacts::CLASS_BITS) };
+        let builtin = builtin.map_or(0, |name| name.0 + 1);
+        debug_assert!(builtin <= u32::MAX >> NameFacts::CLASS_BITS);
+        NameFacts(builtin << NameFacts::CLASS_BITS | class.to_wire())
+    }
+
+    #[inline]
+    fn class(self) -> NameClass {
+        NameClass::ALL[(self.0 & ((1 << NameFacts::CLASS_BITS) - 1)) as usize]
+    }
+
+    #[inline]
+    fn builtin(self) -> Option<BuiltinName> {
+        let builtin = (self.0 >> NameFacts::CLASS_BITS).checked_sub(1);
+        builtin.map(BuiltinName)
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct StringTable {
     bytes: Vec<u8>,
-    ends: Vec<usize>,
+    ends: Vec<u32>,
     hashes: Vec<u64>,
-    name_classes: Vec<NameClass>,
-    builtin_names: Vec<Option<BuiltinName>>,
+    name_facts: Vec<NameFacts>,
     ids: hashbrown::HashTable<StringId>,
+}
+
+#[inline]
+fn end_of(bytes: &[u8]) -> u32 {
+    u32::try_from(bytes.len()).expect("the strings of a program fit 32 bits")
 }
 
 impl StringTable {
@@ -52,38 +82,38 @@ impl StringTable {
             bytes: Vec::new(),
             ends: vec![0; count],
             hashes: vec![0; count],
-            name_classes: vec![NameClass::default(); count],
-            builtin_names: vec![None; count],
+            name_facts: vec![NameFacts::default(); count],
             ids: hashbrown::HashTable::with_capacity(count),
         };
         let ends = table.ends.chunks_mut(STRINGS_IN_A_TASK);
         let hashes = table.hashes.chunks_mut(STRINGS_IN_A_TASK);
-        let name_classes = table.name_classes.chunks_mut(STRINGS_IN_A_TASK);
-        let builtin_names = table.builtin_names.chunks_mut(STRINGS_IN_A_TASK);
-        let lists = ends.zip(hashes).zip(name_classes.zip(builtin_names));
+        let name_facts = table.name_facts.chunks_mut(STRINGS_IN_A_TASK);
+        let lists = ends.zip(hashes).zip(name_facts);
         let mut tasks: Vec<_> = lists.enumerate().collect();
         for_each_mut(&mut tasks, in_parallel, &|(task, lists)| {
-            let ((ends, hashes), (name_classes, builtin_names)) = lists;
+            let ((ends, hashes), name_facts) = lists;
             let first = *task * STRINGS_IN_A_TASK;
             for offset in 0..ends.len() {
                 let (source, id) = string_at(first + offset);
-                ends[offset] = source.get(id).len();
+                ends[offset] = end_of(source.get(id));
                 hashes[offset] = source.hash(id);
-                name_classes[offset] = source.name_class(id);
-                builtin_names[offset] = source.builtin_name(id);
+                name_facts[offset] = source.name_facts[id.index()];
             }
         });
-        let mut end = 0;
+        let mut end = 0u32;
         for length in &mut table.ends {
-            end += *length;
+            end = end
+                .checked_add(*length)
+                .expect("the strings of a program fit 32 bits");
             *length = end;
         }
-        table.bytes = vec![0; end];
+        table.bytes = vec![0; end as usize];
         let (mut rest, mut start) = (table.bytes.as_mut_slice(), 0);
         let mut tasks = Vec::with_capacity(count.div_ceil(STRINGS_IN_A_TASK));
         for (task, ends) in table.ends.chunks(STRINGS_IN_A_TASK).enumerate() {
             let end = ends[ends.len() - 1];
-            let (bytes, after) = core::mem::take(&mut rest).split_at_mut(end - start);
+            let length = (end - start) as usize;
+            let (bytes, after) = core::mem::take(&mut rest).split_at_mut(length);
             tasks.push((task * STRINGS_IN_A_TASK, ends, start, bytes));
             (rest, start) = (after, end);
         }
@@ -94,7 +124,8 @@ impl StringTable {
             bytes,
         )| {
             let mut start = 0;
-            for (offset, end) in ends.iter().map(|end| end - *first_byte).enumerate() {
+            let ends = ends.iter().map(|end| (end - *first_byte) as usize);
+            for (offset, end) in ends.enumerate() {
                 let (source, id) = string_at(*first + offset);
                 bytes[start..end].copy_from_slice(source.get(id));
                 start = end;
@@ -133,10 +164,10 @@ impl StringTable {
     fn add_hashed(&mut self, hash: u64, bytes: &[u8]) -> StringId {
         let id = StringId::new(self.len());
         self.bytes.extend_from_slice(bytes);
-        self.ends.push(self.bytes.len());
+        self.ends.push(end_of(&self.bytes));
         self.hashes.push(hash);
-        self.name_classes.push(classify_name(bytes));
-        self.builtin_names.push(find_builtin_name(hash, bytes));
+        let facts = NameFacts::new(classify_name(bytes), find_builtin_name(hash, bytes));
+        self.name_facts.push(facts);
         let hashes = &self.hashes;
         self.ids.insert_unique(hash, id, |&id| hashes[id.index()]);
         id
@@ -149,10 +180,9 @@ impl StringTable {
         }
         let id = StringId::new(self.len());
         self.bytes.extend_from_slice(bytes);
-        self.ends.push(self.bytes.len());
+        self.ends.push(end_of(&self.bytes));
         self.hashes.push(hash);
-        self.name_classes.push(other.name_class(string));
-        self.builtin_names.push(other.builtin_name(string));
+        self.name_facts.push(other.name_facts[string.index()]);
         let hashes = &self.hashes;
         self.ids.insert_unique(hash, id, |&id| hashes[id.index()]);
         id
@@ -172,12 +202,10 @@ impl StringTable {
                 let _ = entry.remove();
             }
         }
-        let byte_len = length.checked_sub(1).map_or(0, |last| self.ends[last]);
-        self.bytes.truncate(byte_len);
+        self.bytes.truncate(self.start_of(length));
         self.ends.truncate(length);
         self.hashes.truncate(length);
-        self.name_classes.truncate(length);
-        self.builtin_names.truncate(length);
+        self.name_facts.truncate(length);
     }
 
     #[cfg(test)]
@@ -188,8 +216,13 @@ impl StringTable {
     #[inline]
     pub fn get(&self, id: StringId) -> &[u8] {
         let index = id.index();
-        let start = if index == 0 { 0 } else { self.ends[index - 1] };
-        &self.bytes[start..self.ends[index]]
+        &self.bytes[self.start_of(index)..self.ends[index] as usize]
+    }
+
+    #[inline]
+    fn start_of(&self, index: usize) -> usize {
+        let before = index.checked_sub(1);
+        before.map_or(0, |before| self.ends[before] as usize)
     }
 
     #[inline]
@@ -199,12 +232,12 @@ impl StringTable {
 
     #[inline]
     pub fn name_class(&self, id: StringId) -> NameClass {
-        self.name_classes[id.index()]
+        self.name_facts[id.index()].class()
     }
 
     #[inline]
     pub fn builtin_name(&self, id: StringId) -> Option<BuiltinName> {
-        self.builtin_names[id.index()]
+        self.name_facts[id.index()].builtin()
     }
 
     #[inline]
@@ -228,8 +261,7 @@ impl StringTable {
     }
 
     pub fn bytes_of(&self, strings: Range<usize>) -> &[u8] {
-        let start_of = |index: usize| index.checked_sub(1).map_or(0, |before| self.ends[before]);
-        &self.bytes[start_of(strings.start)..start_of(strings.end)]
+        &self.bytes[self.start_of(strings.start)..self.start_of(strings.end)]
     }
 
     pub fn ids(&self) -> impl ExactSizeIterator<Item = StringId> + Clone + use<> {

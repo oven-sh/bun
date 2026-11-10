@@ -562,7 +562,7 @@ function ClientRequest(
       }
     } else {
       $debug("CLIENT use net.createConnection", opts);
-      this.onSocket(require("node:net").createConnection(opts));
+      this.onSocket(require("node:net").createConnection(opts) as $Node.HttpClientSocket);
     }
   }
   if (onClientRequestCreatedChannel.hasSubscribers) {

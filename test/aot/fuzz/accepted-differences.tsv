@@ -14,7 +14,7 @@ different output plain ".*\{ ?\}.*" compiled ".*\{"$	language	Function.prototype
 different output plain " +collectInside\(\);" compiled "collectInside\(\);"	language	the text of a function into which a call was written without indentation: the source text in a compiled program, the transpiler's output, indented anew, in plain Bun
 function (\w+)\(\) \{\s*\w+\+\+;?\s*try \{\s*\1\(\)	language	the recursion depth at which the stack overflows is unspecified	reduced
 different output plain ".*iterable should have an iterator symbol.*" compiled ".*is not iterable	language	engine error messages differ
-different output plain ".* at /.*program\.[jt]s:\d+:\d+" compiled ".*\$bunfs	runner	the program's path in a printed stack trace
+different output plain ".* at /.*program\.[jt]s:\d+:\d+" compiled ".* at \.\.?/(.*/)?program\.[jt]s:\d+:\d+	runner	the program's path in a printed stack trace
 build error .*Class constructor may not be an accessor	language	not a valid program: plain Bun rejects it too
 ^engine \w+ different output plain ".*" compiled "undefined"$	runner	a stand-in returns undefined for a built-in that is written in JavaScript and that no probe covers
 compiled "[^\n]*(EvalError|couldn't tell at build time)	language	a call that reaches eval(), the Function constructor or a module loader through a value the build does not follow throws an error that says so

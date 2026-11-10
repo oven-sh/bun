@@ -7,7 +7,7 @@ use super::{
     EngineResult, FeatureUseRecord, FormBytesRecord, FunctionNameRecord, InternalErrorRecord,
     LayoutNameRecord, LocaleUseRecord, MissingFunctionRecord, MissingModuleRecord,
     ModuleBytesRecord, ObfuscatedSiteRecord, ResultRecord, TypeTestRecord, UnseenCodeRecord,
-    UserDiagnosticRecord, WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
+    UserDiagnosticRecord, WorkerEntryRecord, WorkerStartRecord, WorkerURLStartRecord,
 };
 use crate::ir::generated::StatisticId;
 
@@ -96,7 +96,7 @@ pub(crate) struct ResultRecords<'a> {
     pub locales_used: &'a [LocaleUseRecord],
     pub worker_entries: &'a [WorkerEntryRecord],
     pub worker_starts_without_name: &'a [WorkerStartRecord],
-    pub worker_urls: &'a [WorkerURLRecord],
+    pub worker_starts_from_urls: &'a [WorkerURLStartRecord],
     pub missing_library_functions: &'a [MissingFunctionRecord],
     pub missing_library_modules: &'a [MissingModuleRecord],
     pub obfuscated_sites: &'a [ObfuscatedSiteRecord],
@@ -123,7 +123,7 @@ impl ResultRecords<'_> {
             .with_records(self.locales_used)
             .with_records(self.worker_entries)
             .with_records(self.worker_starts_without_name)
-            .with_records(self.worker_urls)
+            .with_records(self.worker_starts_from_urls)
             .with_records(self.missing_library_functions)
             .with_records(self.missing_library_modules)
             .with_records(self.obfuscated_sites)

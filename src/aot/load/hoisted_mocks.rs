@@ -14,6 +14,10 @@ use crate::builtins::{RuntimeModule, table};
 
 const NAMESPACE_PREFIX: &str = "%import:";
 
+pub(crate) fn is_namespace_of_hoisted_import(name: &[u8]) -> bool {
+    name.starts_with(NAMESPACE_PREFIX.as_bytes())
+}
+
 fn text_of<'a>(atoms: &'a Interner<'_>, text: Atom) -> &'a [u8] {
     match text.is_none() {
         true => b"",

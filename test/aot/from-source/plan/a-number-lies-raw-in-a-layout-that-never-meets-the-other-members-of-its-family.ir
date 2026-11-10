@@ -1,0 +1,136 @@
+# -- source: main.ts
+# declare function print(value: unknown): void;
+# declare const given: number;
+# type Length = number | `${number}%`;
+# interface Size { width: number; height: number }
+# interface Style { width: Length; height: Length; gap: number }
+# const initial: Style = { width: 1, height: "50%", gap: 0 };
+# class Box { readonly style: Style; width = 0; height = 0; constructor(style: Partial<Style>) { this.style = { ...initial, ...style }; } }
+# function sizeOf(box: Box): Size { return { width: box.width * 1.5, height: box.height * 2.5 }; }
+# const box = new Box({ width: given }), other = new Box({ gap: 2 });
+# box.width = given / 3; box.height = given / 7;
+# const size = sizeOf(box), second = sizeOf(other);
+# print(size.width + size.height + second.width + second.height);
+# print(box.style.width); print(other.style.height);
+# -- end of source
+# Partial<Style> fits whatever has a `width`, so the box, the size, the style and what the box is made of are one family, and their fields lie at the same offsets. No value is ever a box or a style, a size
+# or a style: the box and the size keep their numbers raw, though the style holds texts under the same names.
+# RUN: plan layouts mechanisms=all
+# CHECK-LABEL: layout L0 CompiledObject
+# CHECK: "width" OptionalDouble Inline
+# CHECK: "height" OptionalDouble Inline
+# CHECK-LABEL: layout L1 CompiledObject
+# CHECK: "width" JSValue Inline
+# CHECK-LABEL: layout L3 CompiledObject
+# CHECK: "height" OptionalDouble Inline
+# CHECK: "width" OptionalDouble Inline
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Box" module=m0 position=290 constructor=f2 fields=[{key="style" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="width" declared={type=number} flags=[IsRequired]}, {key="height" declared={type=number} flags=[IsRequired]}] place=290 ownFieldCount=3
+layout L1 module=m0 position=171 fields=[{key="gap" declared={type=number} flags=[IsRequired]}, {key="height" declared={type=undefined|null|number|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="width" declared={type=undefined|null|number|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[2, 1, 0] place=171 ownFieldCount=3
+layout L2 fields=[{key="gap" declared={type=undefined|number}}, {key="height" declared={type=undefined|null|number|string flags=[IsExpected, OmitsNull]}}, {key="width" declared={type=undefined|null|number|string flags=[IsExpected, OmitsNull]}}] declaredOrder=[2, 1, 0] ownFieldCount=3
+layout L3 module=m0 position=122 fields=[{key="height" declared={type=number} flags=[IsRequired]}, {key="width" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] place=122 ownFieldCount=2
+data d0 root=Object{layout=L1 members=[{key="width" value=Number{value=1}}, {key="height" value=String{value="50%"}}, {key="gap" value=Number{}}]} module=m0
+data d1 root=Object{layout=L2 members=[{key="gap" value=Number{value=2}}]} module=m0
+variable g0 name="initial" module=m0 declared={type=undefined|null|absent|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=12
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=44
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @284
+    v3 = NewClass v2 layout=L0 @284
+    PutModuleVariable v3 variable=g1 @284
+    v5 = FinishClass v3 layout=L0 @284
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @284
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @284
+    v8 = Data data=d0 @247
+    v9 = Convert v8 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} @247
+    PutModuleVariable v9 variable=g0 @230
+    v11 = Builtin builtin=GlobalThis @548
+    v12 = PropGet v11 key="given" [isFreeName] @548
+    v13 = Convert v12 declared={type=undefined|null|number|string flags=[OmitsNull]} @548
+    v14 = NewObject -, v13 layout=L2 fields=[2] @539
+    v15 = FinishObject v14 @539
+    v16 = Construct v7, -, v15 calleeName="Box" @535
+    v17 = Data data=d1 @574
+    v18 = Construct v7, -, v17 calleeName="Box" @570
+    v19 = Builtin builtin=GlobalThis @599
+    v20 = PropGet v19 key="given" [isFreeName] @599
+    v21 = Integer integer=3 @607
+    v22 = Div v20, v21 @607
+    PropSet v16, v22 key="width" @587
+    v24 = Builtin builtin=GlobalThis @623
+    v25 = PropGet v24 key="given" [isFreeName] @623
+    v26 = Integer integer=7 @631
+    v27 = Div v25, v26 @631
+    PropSet v16, v27 key="height" @610
+    v29 = Call v1, -, v16 calleeName="sizeOf" @647
+    v30 = Convert v29 declared={type=undefined|null|L3 flags=[IsExpected]} @647
+    v31 = Call v1, -, v18 calleeName="sizeOf" @669
+    v32 = Convert v31 declared={type=undefined|null|L3 flags=[IsExpected]} @669
+    v33 = Builtin builtin=GlobalThis @684
+    v34 = PropGet v33 key="print" [isFreeName] @684
+    v35 = PropGet v30 key="width" @690
+    v36 = PropGet v30 key="height" @703
+    v37 = Add v35, v36 @703
+    v38 = PropGet v32 key="width" @717
+    v39 = Add v37, v38 @717
+    v40 = PropGet v32 key="height" @732
+    v41 = Add v39, v40 @732
+    v42 = Call v34, -, v41 calleeName="print" @684
+    v43 = Builtin builtin=GlobalThis @748
+    v44 = PropGet v43 key="print" [isFreeName] @748
+    v45 = PropGet v16 key="style" @754
+    v46 = PropGet v45 key="width" @758
+    v47 = Call v44, -, v46 calleeName="print" @748
+    v48 = Builtin builtin=GlobalThis @772
+    v49 = PropGet v48 key="print" [isFreeName] @772
+    v50 = PropGet v18 key="style" @778
+    v51 = PropGet v50 key="height" @784
+    v52 = Call v49, -, v51 calleeName="print" @772
+    v53 = Undefined @772
+    Return v53 @772
+}
+function f1 name="sizeOf" module=m0 position=422 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="width" @472
+    v2 = Double number=1.5 @484
+    v3 = Mul v1, v2 @484
+    v4 = Convert v3 declared={type=number} @472
+    v5 = PropGet v0 key="height" @497
+    v6 = Double number=2.5 @510
+    v7 = Mul v5, v6 @510
+    v8 = Convert v7 declared={type=number} @497
+    v9 = NewObject -, v4, v8 layout=L3 fields=[1, 0] @463
+    v10 = FinishObject v9 @463
+    v11 = Convert v10 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]} @463
+    Return v11 @463
+}
+function f2 name="Box" module=m0 position=353 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: undefined|null|number|string|symbol|bigint|L2):
+    v2 = GetConstructPrototype v0 layout=L0 @353
+    v3 = NewObject v2 layout=L0 @353
+    v4 = Convert v3 declared={type=L0} @353
+    v5 = GetModuleVariable variable=g0 @397
+    v6 = CheckInitialized v5 name="initial" @397
+    v7 = NewObject layout=L1 @397
+    CopyDataProperties v7, v6 @397
+    CopyDataProperties v7, v1 @409
+    v10 = FinishObject v7 @392
+    PropDefine v4, v10 key="style" @305
+    v12 = Integer @327
+    v13 = Convert v12 declared={type=number} @327
+    PropDefine v4, v13 key="width" @319
+    v15 = Integer @339
+    v16 = Convert v15 declared={type=number} @339
+    PropDefine v4, v16 key="height" @330
+    v18 = Undefined @392
+    v19 = TypeTest v18 testedType=object @392
+    Branch v19 -> taken b1(| 0), notTaken b2(v4) @392
+  b1(v20):
+    Jump -> next b2(v20) @392
+  b2(v21):
+    Return v21 @392
+}

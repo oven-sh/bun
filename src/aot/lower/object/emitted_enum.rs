@@ -6,7 +6,7 @@ use bun_sema::bind::{
 use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    BinOp, Chain, ExprId, ExprKind, Flags, FnBody, FnKind, PatKind, StmtKind, UnOp, VarDeclId,
+    BinOp, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, PatKind, StmtKind, UnOp, VarDeclId,
 };
 use bun_sema::program::Sym;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -24,6 +24,7 @@ struct Member {
 }
 
 pub(in crate::lower) struct EmittedEnum {
+    function: FnId,
     literal: ExprId,
     stores: Option<ExprId>,
     members: Vec<Member>,
@@ -280,6 +281,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let are_fields = (names.iter())
             .all(|&name| self.is_field_name(name) && !self.is_name_on_object_prototype(name));
         (names.len() == members.len() && !members.is_empty() && are_fields).then_some(EmittedEnum {
+            function,
             literal,
             stores,
             members,
@@ -429,6 +431,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn lower_call_of_emitted_enum(&mut self, found: &EmittedEnum) -> ValueId {
+        self.count_function(found.function);
         match found.stores {
             Some(stores) => {
                 self.lower_expression_for_effect(stores);

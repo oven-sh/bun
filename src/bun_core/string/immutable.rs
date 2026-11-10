@@ -1422,6 +1422,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 pub use highway::contains_newline_or_non_ascii_or_quote;
 pub use highway::line_starts;
 pub use highway::{ScannerStops, ScannerStopsBuffer};
+pub use highway::{pack_words, unpack_words};
 
 /// Supports:
 /// - `"`

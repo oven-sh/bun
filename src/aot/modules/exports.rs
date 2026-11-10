@@ -527,6 +527,7 @@ struct ResolutionGraph<'a> {
     commonjs: &'a CommonJsTexts,
     files: &'a [FileId],
     nodes: &'a NameNodes,
+    left_to_mocks: &'a FxHashSet<u32>,
     starts: Vec<Summary>,
     edges: Vec<Vec<u32>>,
     statements_ahead_of_stars: Vec<(NodeKey, Resolution)>,
@@ -596,7 +597,11 @@ impl ResolutionGraph<'_> {
                     name: export_name,
                 }
             }
-            (&ScannedSite::Module(target), ExportEntry::Indirect { name, .. }) => {
+            (&ScannedSite::Module(target), ExportEntry::Indirect { name, written, .. }) => {
+                let is_statement_beside_stars = has_stars && written.is_some();
+                if is_statement_beside_stars && self.is_left_to_mocks(target, name) {
+                    return;
+                }
                 return self.follow(node, NodeKind::Indirect, target, name);
             }
             (&ScannedSite::Module(module), ExportEntry::Namespace { .. }) => {
@@ -620,6 +625,14 @@ impl ResolutionGraph<'_> {
         self.starts[node as usize].binding = binding;
     }
 
+    fn is_left_to_mocks(&self, target: ModuleRef, name: Atom) -> bool {
+        let ModuleRef::File(file) = target else {
+            return false;
+        };
+        let node = self.nodes.index.get(&(file, name));
+        node.is_some_and(|node| self.left_to_mocks.contains(node))
+    }
+
     fn follow(&mut self, node: u32, kind: NodeKind, target: ModuleRef, name: Atom) {
         let (nodes, modules) = (self.nodes, self.modules);
         let mut end = Summary::EMPTY;
@@ -628,7 +641,10 @@ impl ResolutionGraph<'_> {
             (None, NodeKind::Star) => end.provider = captured_resolution(modules, target, name),
             (Some(table), _) => {
                 let file = self.files[table];
-                if let Some(&target_node) = nodes.index.get(&(file, name)) {
+                let target_node = nodes.index.get(&(file, name));
+                if let Some(&target_node) = target_node
+                    && !self.left_to_mocks.contains(&target_node)
+                {
                     self.edges[node as usize].push(target_node);
                     end.ends_in_file_that_may_be_mocked =
                         matches!(kind, NodeKind::Indirect) && nodes.tables[table].may_be_mocked;
@@ -745,6 +761,67 @@ impl ResolutionGraph<'_> {
             }
         }
         tables
+    }
+}
+
+fn find_failing_mocked_names(
+    nodes: &NameNodes,
+    entries: &[ExportEntries],
+    results: &[(Atom, ResolvedName)],
+) -> Vec<u32> {
+    let tables = nodes.tables.iter().zip(entries);
+    let failing = tables
+        .filter(|(table, _)| table.may_be_mocked)
+        .flat_map(|(table, module)| {
+            let own = (table.nodes.start..).zip(&module.own);
+            own.filter(|&(node, &(name, entry))| {
+                let fails = match results[node as usize].1.resolution {
+                    Resolution::NotFound => !module.drops_absent_exports,
+                    Resolution::Ambiguous => true,
+                    _ => false,
+                };
+                fails && name != known::default && matches!(entry, ExportEntry::Indirect { .. })
+            })
+        });
+    failing.map(|(node, _)| node).collect()
+}
+
+fn extend_to_stars_above(
+    scans: &Scans,
+    nodes: &NameNodes,
+    entries: &[ExportEntries],
+    left_to_mocks: &mut FxHashSet<u32>,
+) {
+    let names: FxHashSet<Atom> = (left_to_mocks.iter())
+        .map(|&node| nodes.keys[node as usize].1)
+        .collect();
+    let mut users: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+    let mut waits: FxHashMap<u32, usize> = FxHashMap::default();
+    for (table, module) in nodes.tables.iter().zip(entries) {
+        for node in table.star_nodes() {
+            let (_, name) = nodes.keys[node as usize];
+            if !names.contains(&name) {
+                continue;
+            }
+            for target in star_targets(scans, module) {
+                if let ModuleRef::File(file) = target
+                    && let Some(&target_node) = nodes.index.get(&(file, name))
+                {
+                    users.entry(target_node).or_default().push(node);
+                    *waits.entry(node).or_default() += 1;
+                }
+            }
+        }
+    }
+    let mut pending: Vec<u32> = left_to_mocks.iter().copied().collect();
+    while let Some(target) = pending.pop() {
+        for user in users.remove(&target).unwrap_or_default() {
+            let waiting = waits.get_mut(&user).expect("a user waits for its targets");
+            *waiting -= 1;
+            if *waiting == 0 && left_to_mocks.insert(user) {
+                pending.push(user);
+            }
+        }
     }
 }
 
@@ -979,24 +1056,39 @@ pub(super) fn resolve_begun_exports(
         ..
     } = begun;
     let mut steps = StepClock::new(Stage::BindModules);
-    let mut graph = ResolutionGraph {
-        scans,
-        modules,
-        commonjs,
-        files: &table_files,
-        nodes: &nodes,
-        starts: vec![Summary::EMPTY; nodes.keys.len()],
-        edges: vec![Vec::new(); nodes.keys.len()],
-        statements_ahead_of_stars: Vec::new(),
+    let mut solve = |left_to_mocks: &FxHashSet<u32>| {
+        let mut graph = ResolutionGraph {
+            scans,
+            modules,
+            commonjs,
+            files: &table_files,
+            nodes: &nodes,
+            left_to_mocks,
+            starts: vec![Summary::EMPTY; nodes.keys.len()],
+            edges: vec![Vec::new(); nodes.keys.len()],
+            statements_ahead_of_stars: Vec::new(),
+        };
+        for (table, module) in nodes.tables.iter().zip(&entries) {
+            graph.add_file(table, module);
+        }
+        steps.end("exports: what each name leads to");
+        let statements_ahead_of_stars = core::mem::take(&mut graph.statements_ahead_of_stars);
+        let (results, followed_tables) = graph.solve();
+        steps.end("exports: solve");
+        (results, followed_tables, statements_ahead_of_stars)
     };
-    for (table, module) in nodes.tables.iter().zip(&entries) {
-        graph.add_file(table, module);
+    let mut solved = solve(&FxHashSet::default());
+    let failing = find_failing_mocked_names(&nodes, &entries, &solved.0);
+    if !failing.is_empty() {
+        let mut left_to_mocks: FxHashSet<u32> = failing.iter().copied().collect();
+        extend_to_stars_above(scans, &nodes, &entries, &mut left_to_mocks);
+        let failed = core::mem::replace(&mut solved, solve(&left_to_mocks)).0;
+        for node in failing {
+            solved.0[node as usize] = failed[node as usize];
+        }
     }
-    steps.end("exports: what each name leads to");
-    let mut statements_ahead_of_stars = core::mem::take(&mut graph.statements_ahead_of_stars);
+    let (results, followed_tables, mut statements_ahead_of_stars) = solved;
     statements_ahead_of_stars.shared_sort_by_key(|&((file, name), _)| (file, name.0));
-    let (results, followed_tables) = graph.solve();
-    steps.end("exports: solve");
     let with_statements = statements_ahead_of_stars.iter();
     let with_statements = with_statements
         .filter_map(|&((file, _), _)| find_table(&table_files, ModuleRef::File(file)));

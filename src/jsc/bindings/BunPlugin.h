@@ -213,8 +213,8 @@ public:
             JSC::Strong<JSC::JSObject> mock;
             // Settles behind the factory, or once the mock has ended and somebody else asks for the module.
             JSC::Strong<JSC::JSPromise> patched;
-            // A fetch that waits holds its whole load up.
-            bool isWaitedForByFetch { false };
+            // By the fetch of the mocked file itself, not of a file above it, which belongs to another load.
+            bool isWaitedForByOwnFetch { false };
             // It could not wait, so nobody does.
             bool wasStartedByRequire { false };
             // The load that such a require() left goes on under `bun test`, and fails with the factory.

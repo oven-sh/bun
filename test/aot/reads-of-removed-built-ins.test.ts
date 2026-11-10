@@ -203,4 +203,34 @@ async function builtExecutables(folder: string, file: string) {
       }),
     600_000,
   );
+
+  test(
+    "what prints an object prints one that holds a removed function",
+    () =>
+      slot(async () => {
+        const printed: Record<string, string> = {
+          "the global object": "inspect(globalThis)",
+          "the global object, deeper": "inspect(globalThis, { depth: 4 })",
+          "Bun under a name from run time": "inspect(found)",
+          "Bun under a name from run time, by format()": 'format("%o", found)',
+          "Bun under a name from run time, by Bun.inspect()": "Bun.inspect(found)",
+        };
+        for (const [title, expression] of Object.entries(printed)) {
+          using dir = tempDir("reads-of-removed-built-ins", {
+            "program.mjs": `import { format, inspect } from "node:util";
+const box = { self: globalThis };
+const found = box[process.argv[2]][process.argv[3]];
+console.log(${expression}.length > 100);
+`,
+          });
+          const folder = String(dir);
+          await builtExecutables(folder, "program.mjs");
+          const answers: string[] = [];
+          for (const name of ["whole", "trimmed"])
+            answers.push((await spawned([join(folder, name), "self", "Bun"], folder, bunEnv)).stdout);
+          expect({ title, answers }).toEqual({ title, answers: ["true\n", "true\n"] });
+        }
+      }),
+    600_000,
+  );
 });

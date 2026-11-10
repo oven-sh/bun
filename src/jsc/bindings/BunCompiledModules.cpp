@@ -197,6 +197,7 @@ extern "C" uint64_t Bun__AOT__transpilerJobsCompleted(JSC::JSGlobalObject*);
 extern "C" uint64_t Bun__AOT__computeFileStamp(const char* path, size_t length);
 extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__allowsCodeFromDisk();
+extern "C" bool Bun__AOT__setResolvesForCodeFromDisk(JSC::JSGlobalObject*, bool);
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 extern "C" bool isBunTest;
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
@@ -468,12 +469,18 @@ static bool refusesFileToAsker(JSGlobalObject* globalObject, AOT::ModuleID modul
 
 void willResolveImport(Zig::GlobalObject* globalObject, const String& key, JSValue importer)
 {
-    if (!hasCompiledModules() || !importer || !importer.isString())
+    if (!hasCompiledModules())
         return;
     auto module = compiledModuleForPath(key);
     if (!module)
         return;
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    if (isModuleRefusedByName(key)) [[unlikely]] {
+        throwException(globalObject, scope, createCodeGenerationFromStringsError(globalObject));
+        return;
+    }
+    if (!importer || !importer.isString())
+        return;
     String path = importer.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     AOT::ModuleRequesterScope requesterScope(globalObject, requesterForImporter(path));
@@ -829,6 +836,8 @@ struct TransferredRequire {
 static constinit thread_local TransferredRequire s_transferredRequire;
 
 static void requireCompiledModuleInto(Zig::GlobalObject*, JSCommonJSModule* target, AOT::ModuleID, JSString* key);
+static void linkToModuleObjects(Zig::GlobalObject*, JSCommonJSModule* requirer, JSCommonJSModule* target, AOT::ModuleID, bool isFirstRequire);
+static void appendModuleChildren(JSGlobalObject*, JSObject* module, JSObject* childOrNull);
 static JSObject* attachRequireFunction(VM&, Zig::GlobalObject*, JSCommonJSModule*, JSString* path);
 static void layOnModuleObject(Zig::GlobalObject*, JSCommonJSModule*, JSString* path, AOT::ModuleID, OptionSet<AOT::ModuleObjectTrait>, AOT::ModuleObjects& out);
 static bool tryBindExportsVariable(Zig::GlobalObject*, JSCommonJSModule*, AOT::ModuleID);
@@ -905,9 +914,17 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         return true;
     }
     JSString* key = jsString(vm, path);
+    JSCommonJSModule* requirer = target->m_parent.get();
+    bool isFirstRequire = requirer && !AOT::parentModuleObject(globalObject, *module);
+    RETURN_IF_EXCEPTION(scope, false);
     requireCompiledModuleInto(globalObject, target, *module, key);
     RETURN_IF_EXCEPTION(scope, false);
-    target->hasEvaluated = true;
+    // As in `bun run`, where `loaded` stays false for an ES module.
+    target->hasEvaluated = !AOT::isESModule(*module);
+    if (requirer && target->compiledModuleLoadedInto != JSCommonJSModule::noCompiledModule) {
+        linkToModuleObjects(globalObject, requirer, target, *module, isFirstRequire);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     // A module of the executable is in no cache. The next require() of the name asks the engine again, which answers what the module exports then.
     JSValue held = globalObject->requireMap()->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
@@ -916,6 +933,28 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         RETURN_IF_EXCEPTION(scope, false);
     }
     return true;
+}
+
+static void linkToModuleObjects(Zig::GlobalObject* globalObject, JSCommonJSModule* requirer, JSCommonJSModule* target, AOT::ModuleID module, bool isFirstRequire)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* parent = AOT::parentModuleObject(globalObject, module);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (parent && parent != requirer)
+        target->m_overriddenParent.set(vm, target, parent);
+    // `bun run` adds no child for the first require() of an ES module.
+    if (isFirstRequire && parent && AOT::isESModule(module)) {
+        target->isListedAsChild = true;
+        return;
+    }
+    JSObject* child = AOT::childModuleObject(globalObject, module);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!child || child == target)
+        return;
+    target->isListedAsChild = true;
+    if (requirer->listsAsChild(target))
+        RELEASE_AND_RETURN(scope, appendModuleChildren(globalObject, requirer, child));
 }
 
 static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module, JSString* key)
@@ -928,13 +967,21 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
     if (referrer)
         target->compiledModule = module.index();
     bool isAdopted = false;
-    if (requirer && !referrer) {
-        target->compiledModuleLoadedInto = module.index();
-        AOT::willRequireFromUncompiledCode(globalObject, module, requirer);
+    // Test runs manage their own entries of the require map.
+    bool isOwnRequire = referrer && !reloadsFilesFromDisk() && requirer->compiledModule == referrer->index();
+    if (requirer && (!referrer || isOwnRequire)) {
+        if (!referrer) {
+            target->compiledModuleLoadedInto = module.index();
+            AOT::willRequireFromUncompiledCode(globalObject, module, requirer);
+        }
         isAdopted = tryAdoptModuleObject(globalObject, target, module, key);
         RETURN_IF_EXCEPTION(scope, void());
-        if (isAdopted)
+        if (isAdopted) {
             target->hasEvaluated = true;
+            // The engine tracks calls of a created require().
+            if (referrer)
+                target->m_parent = {};
+        }
     }
     if (reloadsFilesFromDisk()) {
         if (AOT::isESModule(module))
@@ -1223,6 +1270,7 @@ void willResetModules(Zig::GlobalObject* globalObject, ASCIILiteral call, bool k
         takeOutOfProgram(globalObject, file, takeOut);
         RETURN_IF_EXCEPTION(scope, );
     }
+    AOT::resetModulesAfterEvaluation(globalObject, [&](const String& path) { return isKept(path); });
 }
 
 Vector<String> restorePreloadModules(Zig::GlobalObject* globalObject)
@@ -1361,6 +1409,20 @@ String requesterForRequire(JSCommonJSModule* target, const String& written)
     // `createRequire(__dirname + "/locales/")`: no file of the executable has the path, and code of the executable asks all the same.
     // Nothing vouches for any other object, or for none, and what it calls its path is a claim.
     return requirer && (compiledModuleOf(requirer) || requirer->isMadeByCodeOfImage) ? AOT::compiledCodeRequester() : written;
+}
+
+std::optional<bool> willResolveName(JSGlobalObject* globalObject, JSValue requirer)
+{
+    if (!keepsFilesFromCodeFromDisk())
+        return std::nullopt;
+    auto* module = dynamicDowncast<JSCommonJSModule>(requirer);
+    bool isCodeFromDisk = module && !compiledModuleOf(module) && !module->isMadeByCodeOfImage;
+    return Bun__AOT__setResolvesForCodeFromDisk(globalObject, isCodeFromDisk);
+}
+
+void didResolveName(JSGlobalObject* globalObject, bool previous)
+{
+    Bun__AOT__setResolvesForCodeFromDisk(globalObject, previous);
 }
 
 // bun:main is the host's own module: where it imports the entry point, the host starts the program. No text gets that key, or none.
@@ -2506,6 +2568,8 @@ bool letsTestRunLoadAddon(JSGlobalObject*, const String&) { return false; }
 bool isFileInExecutable(const String&) { return false; }
 JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
 String pathInExecutable(const String&) { return {}; }
+std::optional<bool> willResolveName(JSGlobalObject*, JSValue) { return std::nullopt; }
+void didResolveName(JSGlobalObject*, bool) {}
 JSValue mainModuleOfExecutable(Zig::GlobalObject*) { return jsUndefined(); }
 void willSetMainModulePath(Zig::GlobalObject*, JSValue) {}
 bool appendNewChildrenOfCompiledModule(JSGlobalObject*, JSCommonJSModule*) { return true; }

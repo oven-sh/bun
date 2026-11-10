@@ -4,6 +4,10 @@
 // # RUN(WALK): walk f4 mechanisms=all
 // # WALK: frame {{*}}callee=f3
 // # WALK: frame {{*}}callee=f2 {{*}}parent=
+// # The position comes round the loop as an int32: the version for other numbers is rare and calls.
+// # WALK: frequency=Rare isLoopHead=true
+// # WALK: : i32 @Int32{{*}}) isInLoop=true isLoopHead=true
+// # WALK: = GetStringCodeUnit
 // # WALK-NOT: CallDirect {{*}}function=f2
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

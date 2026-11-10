@@ -1,6 +1,7 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, ScopeId, ScopeKind, SymbolId};
 use bun_sema::hir::{self, ModuleName};
+use rustc_hash::FxHashSet;
 
 use crate::ir::ValueId;
 use crate::lower::{FunctionLowering, object, scope};
@@ -62,12 +63,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ) else {
                 return false;
             };
-            let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
-            let local = bound.lookup(locals, name).unwrap_or(binding);
-            let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
-            let exported = &bound.symbol(exported).decls;
-            (bound.symbol(local).decls.iter()).any(|it| !exported.contains(it))
+            self.has_two_tables(binding, name)
         })
+    }
+
+    fn has_two_tables(&self, binding: SymbolId, name: Atom) -> bool {
+        let known = &self.file.namespaces_with_two_tables;
+        if let Some(&has_two) = known.borrow().get(&binding) {
+            return has_two;
+        }
+        let bound = self.file.bound;
+        let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
+        let local = bound.lookup(locals, name).unwrap_or(binding);
+        let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
+        let has_two = local != exported && {
+            let listed: FxHashSet<Decl> = bound.symbol(exported).decls.iter().copied().collect();
+            let mut declarations = bound.symbol(local).decls.iter();
+            declarations.any(|declaration| !listed.contains(declaration))
+        };
+        known.borrow_mut().insert(binding, has_two);
+        has_two
     }
 
     fn produces_code(&self, declaration: Decl) -> bool {

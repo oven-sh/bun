@@ -426,7 +426,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     JSValue returnValue = jsNull();
     // See requireCompiledModule().
     bool isListedByHost = moduleObject->compiledModule == JSCommonJSModule::noCompiledModule || moduleObject->compiledModuleLoadedInto != JSCommonJSModule::noCompiledModule;
-    if (referrer && isListedByHost && referrer->listsAsChild(moduleObject)) [[likely]] {
+    if (referrer && isListedByHost && !std::exchange(moduleObject->isListedAsChild, false) && referrer->listsAsChild(moduleObject)) [[likely]] {
         if (referrer->m_childrenValue) [[unlikely]] {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)

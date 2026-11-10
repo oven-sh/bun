@@ -667,7 +667,7 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 
 static constexpr int32_t contextOfMacros = std::numeric_limits<int32_t>::max();
 
-static const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
+const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
 {
     if (Bun__hasStandaloneModuleGraph())
         return Zig::StandaloneGlobalObject::globalObjectMethodTable();
@@ -1022,6 +1022,15 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
                 --index;
             awaiting.insert(index, std::pair { order, specifier });
         });
+        const auto& plugins = globalObject->onLoadPlugins;
+        for (const auto& factory : plugins.factoriesOfCompiledMocks.span().subspan(plugins.numberOfFactoriesSetAside)) {
+            // The loader fetches nothing for an import() of the mocked module itself.
+            if (!factory.isWaitedForByImporter || factory.patched->status() != JSC::JSPromise::Status::Pending)
+                continue;
+            String path = JSC::AOT::moduleFilePath(JSC::AOT::ModuleID(factory.module));
+            if (!fetching.contains(path))
+                fetching.append(path);
+        }
     }
 #endif
     for (auto& key : unfinished)
@@ -2598,7 +2607,7 @@ JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSV
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* debugIDs = constructEmptyObject(globalObject);
-    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapFileURL(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
+    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapDisplayPath(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
     if (JSObject* holder = JSValue::decode(thisValue).getObject())
         holder->putDirect(vm, property, debugIDs, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(debugIDs);

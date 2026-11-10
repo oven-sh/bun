@@ -61,6 +61,116 @@ console.log(fs.readdirSync(path.join(__dirname, "outer")).join(), fs.readFileSyn
     expect(compiled).toEqual(plain);
   }, 120_000);
 
+  test.skipIf(isWindows)(
+    "opened asset matches lstat",
+    async () => {
+      using dir = tempDir("aot-opened-asset-matches-lstat", {
+        "app/main.cjs": `const fs = require("node:fs");
+const { join } = require("node:path");
+const at = path => join(__dirname, path);
+const same = (a, b) => [a.dev === b.dev, a.ino === b.ino, a.mode === b.mode, a.mtimeNs === b.mtimeNs, a.nlink === b.nlink, a.isFile() === b.isFile()].join();
+const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW } = fs.constants;
+const big = { bigint: true };
+const said = read => { try { return String(read()); } catch (error) { return error.code; } };
+for (const [path, flags] of [["data/note.txt", O_RDONLY | O_NOFOLLOW], ["one.txt", O_RDONLY], ["data/deep/empty.txt", O_RDONLY], ["data", O_RDONLY | O_DIRECTORY], ["data/deep", O_RDONLY]]) {
+  const before = fs.lstatSync(at(path), big);
+  const fd = fs.openSync(at(path), flags);
+  const opened = fs.fstatSync(fd, big);
+  fs.closeSync(fd);
+  console.log(path, same(before, opened), same(opened, fs.lstatSync(at(path), big)), before.dev > 0n, before.ino > 0n, before.nlink > 0n, before.mtimeNs > 0n);
+}
+console.log(new Set(["data/note.txt", "one.txt", "data/deep/empty.txt", "data", "data/deep"].map(path => fs.lstatSync(at(path)).ino)).size);
+console.log(said(() => fs.openSync(at("one.txt"), O_RDONLY | O_DIRECTORY)), said(() => fs.openSync(at("data/nothing"), "r")));
+(async () => {
+  const handle = await fs.promises.open(at("data/note.txt"));
+  console.log(same(await handle.stat(big), await fs.promises.lstat(at("data/note.txt"), big)), await handle.readFile("utf8"));
+  await handle.close();
+})();
+`,
+        "app/data/note.txt": "a note",
+        "app/data/deep/empty.txt": "",
+        "app/one.txt": "one file",
+      });
+      const { plain, compiled } = await bothWays(String(dir), "./main.cjs", "--asset", "data", "--asset", "one.txt");
+      const all = "true,true,true,true,true,true";
+      const line = (path: string) => `${path} ${all} ${all} true true true true\n`;
+      expect(plain).toEqual({
+        stdout: `${["data/note.txt", "one.txt", "data/deep/empty.txt", "data", "data/deep"].map(line).join("")}5\nENOTDIR ENOENT\n${all} a note\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
+  test.skipIf(!isLinux)(
+    "reused descriptor reports its file",
+    async () => {
+      using dir = tempDir("aot-reused-asset-descriptor", {
+        "app/main.cjs": `const fs = require("node:fs");
+const { join } = require("node:path");
+const same = (a, b) => a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.mtimeMs === b.mtimeMs && a.size === b.size;
+const asset = join(__dirname, "data", "note.txt");
+let usedAgain = 0, wrong = 0;
+for (let i = 0; i < 40; i++) {
+  const path = i % 2 ? asset : join(asset, "..");
+  const fd = fs.openSync(path, "r");
+  if (!same({ ...fs.fstatSync(fd), size: 0 }, { ...fs.lstatSync(path), size: 0 })) wrong++;
+  const held = [];
+  do held.push(fs.openSync("/dev/null", "r")); while (held.at(-1) < fd);
+  fs.closeSync(fd);
+  const real = i % 3 ? process.cwd() : process.execPath;
+  const next = fs.openSync(real, "r");
+  if (next === fd) usedAgain++;
+  if (!same(fs.fstatSync(next), fs.statSync(real))) wrong++;
+  for (const each of [next, ...held]) fs.closeSync(each);
+}
+console.log(usedAgain, wrong);
+`,
+        "app/data/note.txt": "a note",
+      });
+      const { plain, compiled } = await bothWays(String(dir), "./main.cjs", "--asset", "data");
+      expect(plain).toEqual({ stdout: "40 0\n", stderr: "", exitCode: 0 });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
+  test.skipIf(isWindows)(
+    "descriptor changes show at once",
+    async () => {
+      using dir = tempDir("aot-asset-descriptor-changes", {
+        "app/main.cjs": `const fs = require("node:fs");
+const { join } = require("node:path");
+const asset = join(__dirname, "data", "note.txt");
+const isSameFile = fd => { const [a, b] = [fs.fstatSync(fd), fs.lstatSync(asset)]; return a.dev === b.dev && a.ino === b.ino && a.nlink === b.nlink; };
+for (let i = 0; i < 20; i++) {
+  const fd = fs.openSync(asset, "r");
+  const before = fs.fstatSync(fd);
+  fs.futimesSync(fd, 1000 + i, 2000 + i);
+  const timed = fs.fstatSync(fd);
+  fs.fchmodSync(fd, 0o640);
+  const moded = fs.fstatSync(fd);
+  console.log(timed.atimeMs, timed.mtimeMs, timed.mode === before.mode, timed.size, (moded.mode & 0o777).toString(8), moded.mtimeMs, isSameFile(fd));
+  fs.fchmodSync(fd, before.mode & 0o777);
+  fs.closeSync(fd);
+}
+`,
+        "app/data/note.txt": "a note",
+      });
+      const { plain, compiled } = await bothWays(String(dir), "./main.cjs", "--asset", "data");
+      const line = (i: number) => `${(1000 + i) * 1000} ${(2000 + i) * 1000} true 6 640 ${(2000 + i) * 1000} true\n`;
+      expect(plain).toEqual({
+        stdout: Array.from({ length: 20 }, (_, i) => line(i)).join(""),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
   test("an asset beside the entry point leaves the entry point at the root", async () => {
     using dir = tempDir("aot-asset-beside-the-entry-point-itself", {
       "app/main.cjs": `const fs = require("node:fs");
@@ -304,6 +414,171 @@ console.log(read("pub", "same.txt"), read("pub", "only.txt"));
     expect(compiled).toEqual({ stdout: "of-one of-two only-in-two\nof-one only-in-two\n", stderr: "", exitCode: 0 });
   }, 120_000);
 
+  test("an asset that import.meta cannot reach is warned of", async () => {
+    const say = `const say = (label, at) => {
+  try {
+    console.log(label, fs.readFileSync(at, "utf8"));
+  } catch (error) {
+    console.log(label, error.code);
+  }
+};`;
+    const head = `import fs from "node:fs";\nimport path from "node:path";\n${say}`;
+    using dir = tempDir("aot-asset-out-of-reach", {
+      "app/middle/server/main.mjs": `${head}
+import "./sub/below.mjs";
+import "./build-path.mjs";
+import "./own-dirname.mjs";
+import "../beside/above.mjs";
+import { createRequire } from "node:module";
+say("entry", path.join(import.meta.dirname, "..", "..", "far", "a.txt"));
+say("one folder up", path.join(import.meta.dirname, "..", "near", "b.txt"));
+createRequire(import.meta.url)("./common.cjs");
+`,
+      "app/middle/server/sub/below.mjs": `${head}
+say("below the root", path.join(import.meta.dirname, "..", "..", "..", "far", "a.txt"));
+`,
+      "app/middle/server/build-path.mjs": `${head}
+say("__dirname", path.join(__dirname, "..", "..", "far", "a.txt"));
+`,
+      "app/middle/server/own-dirname.mjs": `${head}
+import { fileURLToPath } from "node:url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+say("a __dirname of its own", path.join(__dirname, "..", "..", "far", "a.txt"));
+`,
+      "app/middle/beside/above.mjs": `${head}
+say("above the root", path.join(import.meta.dirname, "..", "..", "far", "a.txt"));
+`,
+      "app/middle/server/common.cjs": `const fs = require("node:fs"), path = require("node:path");
+${say}
+say("CommonJS", path.join(__dirname, "..", "..", "far", "a.txt"));
+`,
+      "app/far/a.txt": "far",
+      "app/middle/near/b.txt": "near",
+    });
+    const flags = ["--asset", "../../far", "--asset", "../near"];
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app/middle/server", "./main.mjs", ...flags);
+    const imported = ["below the root", "__dirname", "a __dirname of its own", "above the root"];
+    const order = [...imported, "entry", "one folder up", "CommonJS"];
+    const text = (label: string) => (label === "one folder up" ? "near" : "far");
+    expect(plain.stdout).toBe(order.map(label => `${label} ${text(label)}\n`).join(""));
+    const isOutOfReach = (label: string) => ["entry", "below the root", "a __dirname of its own"].includes(label);
+    expect(compiled).toEqual({
+      stdout: order.map(label => `${label} ${isOutOfReach(label) ? "ENOENT" : text(label)}\n`).join(""),
+      stderr: "",
+      exitCode: 0,
+    });
+    const output = (built.stdout + built.stderr).replaceAll("\\", "/");
+    const warned = [...output.matchAll(/TS100087[^\n]*\n[^\n]*?at ([^\n:]+):(\d+)/g)].map(it => `${it[1]}:${it[2]}`);
+    expect({ warnings: output.split("TS100087").length - 1, others: output.split("TS100098").length - 1 }).toEqual({
+      warnings: 3,
+      others: 0,
+    });
+    expect(output).toContain(
+      `This reads "../../far/a.txt", which is in the executable, but this path doesn't lead there`,
+    );
+    expect(warned.length === 0 || warned.every(it => /main\.mjs|below\.mjs|own-dirname\.mjs/.test(it))).toBe(true);
+  }, 120_000);
+
+  test.skipIf(isWindows)(
+    "the written path decides whether import.meta reaches an asset",
+    async () => {
+      using dir = tempDir("aot-asset-reach-through-links", {
+        "app/middle/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const say = (label, ask) => {
+  try {
+    console.log(label, String(ask()));
+  } catch (error) {
+    console.log(label, error.code);
+  }
+};
+say("a link one up", () => fs.readFileSync(path.join(import.meta.dirname, "..", "near-link", "a.txt"), "utf8"));
+say("a link two up", () => fs.readFileSync(path.join(import.meta.dirname, "..", "..", "far-link", "b.txt"), "utf8"));
+say("a folder two up", () => fs.existsSync(path.join(import.meta.dirname, "..", "..", "far")));
+say("its listing", () => fs.readdirSync(path.join(import.meta.dirname, "..", "..", "far")));
+`,
+        "app/far/a.txt": "far",
+        "app/middle/near/b.txt": "near",
+      });
+      symlinkSync("../far", join(String(dir), "app/middle/near-link"));
+      symlinkSync("middle/near", join(String(dir), "app/far-link"));
+      const flags = ["../near-link", "../../far-link", "../../far"].flatMap(asset => ["--asset", asset]);
+      const { plain, built, compiled } = await bothWaysIn(String(dir), "app/middle/server", "./main.mjs", ...flags);
+      expect(plain.stdout).toBe("a link one up far\na link two up near\na folder two up true\nits listing a.txt\n");
+      expect(compiled).toEqual({
+        stdout: "a link one up far\na link two up ENOENT\na folder two up false\nits listing ENOENT\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      const output = built.stdout + built.stderr;
+      const warned = [...output.matchAll(/TS100087: This reads "([^"]+)"/g)].map(it => it[1]).sort();
+      // A gap: the build follows no listing, so "../../far" stands here once, for existsSync(), and not twice.
+      expect(warned).toEqual(["../../far", "../../far-link/b.txt"]);
+    },
+    120_000,
+  );
+
+  test.skipIf(isWindows)(
+    "a read through a link inside an asset folder is warned of",
+    async () => {
+      const files = {
+        "app/middle/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const here = import.meta.dirname;
+const say = (label, read) => {
+  try {
+    console.log(label, read());
+  } catch (error) {
+    console.log(label, error.code);
+  }
+};
+say("through a folder link", () => fs.readFileSync(path.join(here, "..", "box", "inner", "a.txt"), "utf8"));
+say("through a file link", () => fs.readFileSync(path.join(here, "..", "box", "file-link.txt"), "utf8"));
+say("beside them", () => fs.readFileSync(path.join(here, "..", "box", "own.txt"), "utf8"));
+say("below the root", () => fs.readFileSync(path.join(here, "held", "inner", "a.txt"), "utf8"));
+`,
+        "app/far/a.txt": "far",
+        "app/middle/box/own.txt": "own",
+        "app/middle/server/held/own.txt": "own",
+      };
+      const links = (dir: string) => {
+        symlinkSync("../../far", join(dir, "app/middle/box/inner"));
+        symlinkSync("../../far/a.txt", join(dir, "app/middle/box/file-link.txt"));
+        symlinkSync("../../../far", join(dir, "app/middle/server/held/inner"));
+      };
+      const asked = "through a folder link far\nthrough a file link far\nbeside them own\nbelow the root far\n";
+      const given = ["--asset", "../box", "--asset", "held"];
+      let advised: string[];
+      {
+        using dir = tempDir("aot-links-inside-assets", files);
+        links(String(dir));
+        const { plain, built, compiled } = await bothWaysIn(String(dir), "app/middle/server", "./main.mjs", ...given);
+        expect(plain.stdout).toBe(asked);
+        expect(compiled.stdout).toBe(
+          "through a folder link ENOENT\nthrough a file link ENOENT\nbeside them own\nbelow the root ENOENT\n",
+        );
+        const warnings = /(TS\d+): This reads "([^"]+)"[^\n]*? Embed it with --asset (\S+)/g;
+        const found = [...(built.stdout + built.stderr).matchAll(warnings)];
+        expect(found.map(it => `${it[1]} ${it[2]} > ${it[3]}`).sort()).toEqual([
+          "TS100165 ../box/file-link.txt > ../box/file-link.txt",
+          "TS100165 ../box/inner/a.txt > ../box/inner",
+          "TS100165 held/inner/a.txt > held/inner",
+        ]);
+        advised = found.map(it => it[3]);
+      }
+      {
+        // What the messages advise, word for word.
+        using dir = tempDir("aot-links-given-as-assets", files);
+        links(String(dir));
+        const flags = [...given, ...advised.flatMap(asset => ["--asset", asset])];
+        const { built, compiled } = await bothWaysIn(String(dir), "app/middle/server", "./main.mjs", ...flags);
+        expect(compiled.stdout).toBe(asked);
+        expect(built.stdout + built.stderr).not.toContain("This reads");
+      }
+    },
+    240_000,
+  );
+
   test("an outside folder without files gets no name in the root", async () => {
     using dir = tempDir("aot-outside-folder-without-files", {
       "app/server/main.mjs": `import fs from "node:fs";
@@ -316,6 +591,211 @@ console.log(fs.readdirSync(import.meta.dirname).join(), fs.existsSync(path.join(
     expect(plain).toEqual({ stdout: "main.mjs false\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual(plain);
   }, 120_000);
+
+  test.each(["mjs", "cjs"] as const)(
+    "in %s a folder below the root shares its base name with one outside",
+    async kind => {
+      const head =
+        kind === "mjs"
+          ? `import fs from "node:fs"; import path from "node:path"; const here = import.meta.dirname;`
+          : `const fs = require("node:fs"), path = require("node:path"), here = __dirname;`;
+      using dir = tempDir("aot-own-folder-shares-base-name", {
+        [`app/server/main.${kind}`]: `${head}
+const read = (...names) => {
+  try {
+    return fs.readFileSync(path.join(here, ...names), "utf8");
+  } catch (error) {
+    return error.code;
+  }
+};
+const tidy = it => it.replaceAll("\\\\", "/");
+console.log("own place", read("pub", "in.txt"), read("pub", "same.txt"), read("..", "one", "pub", "out.txt"), read("..", "one", "pub", "same.txt"));
+console.log("base name", read("pub", "out.txt"), read("pub", "deep", "far.txt"), read("pub", "absent.txt"));
+console.log("outside", fs.readdirSync(path.join(here, "..", "one", "pub")).sort().join());
+console.log("listed", fs.readdirSync(path.join(here, "pub")).sort().join());
+console.log("below", fs.readdirSync(path.join(here, "pub"), { recursive: true }).map(tidy).sort().join());
+console.log("glob", [...new Bun.Glob("pub/**/*.txt").scanSync({ cwd: here })].map(tidy).sort().join());
+console.log("embedded", Bun.embeddedFiles.map(it => tidy(it.name)).filter(it => !it.startsWith("main")).sort().join());
+`,
+        "app/server/pub/in.txt": "in",
+        "app/server/pub/same.txt": "own",
+        "app/one/pub/out.txt": "out",
+        "app/one/pub/same.txt": "outside",
+        "app/one/pub/deep/far.txt": "far",
+      });
+      const flags = ["--asset", "../one/pub", "--asset", "pub"];
+      const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", `./main.${kind}`, ...flags);
+      expect((built.stdout + built.stderr).split("\n").filter(line => line.includes("share the path"))).toEqual([
+        `warn: assets "pub/same.txt" and "../one/pub/same.txt" share the path "pub/same.txt" in the executable. That path reads "pub/same.txt". Each asset is also at its own path`,
+      ]);
+      const ownPlace = "own place in own out outside";
+      const outside = "outside deep,out.txt,same.txt";
+      expect(plain).toEqual({
+        stdout: `${ownPlace}
+base name ENOENT ENOENT ENOENT
+${outside}
+listed in.txt,same.txt
+below in.txt,same.txt
+glob pub/in.txt,pub/same.txt
+embedded 
+`,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(compiled).toEqual({
+        stdout: `${ownPlace}
+base name out far ENOENT
+${outside}
+listed deep,in.txt,out.txt,same.txt
+below deep,deep/far.txt,in.txt,out.txt,same.txt
+glob pub/deep/far.txt,pub/in.txt,pub/out.txt,pub/same.txt
+embedded _.._/one/pub/same.txt,pub/deep/far.txt,pub/in.txt,pub/out.txt,pub/same.txt
+`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
+  test.each(["mjs", "cjs"] as const)(
+    "in %s what the root holds hides an outside entry of its name",
+    async kind => {
+      const head =
+        kind === "mjs"
+          ? `import fs from "node:fs"; import path from "node:path"; import "./pub/code.mjs"; const here = import.meta.dirname;`
+          : `const fs = require("node:fs"), path = require("node:path"), here = __dirname; require("./pub/code.cjs");`;
+      using dir = tempDir("aot-own-entries-hide-outside-ones", {
+        [`app/server/main.${kind}`]: `${head}
+const say = (label, ask) => {
+  try {
+    console.log(label, String(ask()));
+  } catch (error) {
+    console.log(label, error.code);
+  }
+};
+const at = (...names) => path.join(here, ...names);
+const tidy = it => it.replaceAll("\\\\", "/");
+const open = folder => {
+  const opened = fs.opendirSync(folder);
+  const first = opened.readSync().name;
+  opened.closeSync();
+  return first;
+};
+say("as plain: the own folder is one", () => fs.statSync(at("pub", "folder")).isDirectory());
+say("as plain: the own folder is read", () => fs.readFileSync(at("pub", "folder"), "utf8"));
+say("as plain: the own folder is listed", () => fs.readdirSync(at("pub", "folder")).join());
+say("as plain: the own folder is opened", () => open(at("pub", "folder")));
+say("as plain: the own file is read", () => fs.readFileSync(at("pub", "file"), "utf8"));
+say("as plain: below the own file", () => fs.readFileSync(at("pub", "file", "in.txt"), "utf8"));
+say("as plain: the outside file", () => fs.readFileSync(at("..", "one", "pub", "folder"), "utf8"));
+say("as plain: the outside folder", () => fs.readFileSync(at("..", "one", "pub", "file", "in.txt"), "utf8"));
+say("outside alone", () => fs.readFileSync(at("pub", "only.txt"), "utf8"));
+say("listed", () => fs.readdirSync(at("pub")).sort().join());
+say("below", () => fs.readdirSync(at("pub"), { recursive: true }).map(tidy).sort().join());
+`,
+        [`app/server/pub/code.${kind}`]: kind === "mjs" ? "export {};\n" : "exports.loaded = true;\n",
+        "app/server/pub/folder/in.txt": "own in",
+        "app/server/pub/file": "own file",
+        "app/one/pub/folder": "outside file",
+        "app/one/pub/file/in.txt": "outside in",
+        "app/one/pub/only.txt": "only",
+      });
+      const flags = ["--asset", "../one/pub", "--asset", "pub"];
+      const { plain, compiled } = await bothWaysIn(String(dir), "app/server", `./main.${kind}`, ...flags);
+      const isAsPlain = (line: string) => line.startsWith("as plain: ");
+      const asPlain = plain.stdout.split("\n").filter(isAsPlain);
+      expect(asPlain).toHaveLength(8);
+      // A gap in CommonJS off Windows: a name below a file of the executable fails with ENOENT where `bun run` says ENOTDIR. The day it says ENOTDIR this fails: take the line out.
+      const hasGap = kind === "cjs" && !isWindows;
+      const expected = asPlain.map(line => (hasGap ? line.replace("own file ENOTDIR", "own file ENOENT") : line));
+      expect(compiled.stdout.split("\n").filter(isAsPlain)).toEqual(expected);
+      const rest = compiled.stdout.split("\n").filter(line => !isAsPlain(line));
+      expect({ ...compiled, stdout: rest.join("\n") }).toEqual({
+        stdout: `outside alone only
+listed code.${kind},file,folder,only.txt
+below code.${kind},file,folder,folder/in.txt,only.txt
+`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
+  test.each([
+    ["the file", ["../one/pub", "../two/pub"], "file of one", "no file", "only.txt,x", "only.txt,x"],
+    ["the folder", ["../two/pub", "../one/pub"], "EISDIR", "in two", "only.txt,x", "only.txt,x,x/in.txt"],
+  ] as const)(
+    "of two outside folders the earlier one decides: %s",
+    async (_, assets, entry, below, listed, listedBelow) => {
+      using dir = tempDir("aot-earlier-folder-hides-later-one", {
+        "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const say = (label, ask) => {
+  try {
+    console.log(label, String(ask()));
+  } catch (error) {
+    console.log(label, error.code === "ENOTDIR" || error.code === "ENOENT" ? "no file" : error.code);
+  }
+};
+const at = (...names) => path.join(import.meta.dirname, "pub", ...names);
+say("entry", () => fs.readFileSync(at("x"), "utf8"));
+say("below", () => fs.readFileSync(at("x", "in.txt"), "utf8"));
+say("is a folder", () => fs.statSync(at("x")).isDirectory());
+say("listed", () => fs.readdirSync(at()).sort().join());
+say("listed below", () => fs.readdirSync(at(), { recursive: true }).map(it => it.replaceAll("\\\\", "/")).sort().join());
+`,
+        "app/one/pub/x": "file of one",
+        "app/one/pub/only.txt": "only",
+        "app/two/pub/x/in.txt": "in two",
+      });
+      const flags = assets.flatMap(asset => ["--asset", asset]);
+      const { compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+      expect(compiled).toEqual({
+        stdout: `entry ${entry}
+below ${below}
+is a folder ${entry === "EISDIR"}
+listed ${listed}
+listed below ${listedBelow}
+`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
+  test.each([
+    ["a file", { "app/zero/pub/x": "file" }, "x/same.txt", "pub/x/same.txt", "no file"],
+    ["a folder", { "app/zero/pub/x/in.txt": "in" }, "x", "pub/x", "EISDIR"],
+    ["nothing", { "app/zero/pub/other.txt": "other" }, "x", "pub/x", "of one"],
+  ] as const)(
+    "the warning on a shared path says what the path reads where %s comes first",
+    async (_, earlier, shared, name, read) => {
+      using dir = tempDir("aot-shared-path-behind-earlier-entry", {
+        "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+try {
+  console.log(fs.readFileSync(path.join(import.meta.dirname, ${JSON.stringify(name)}), "utf8"));
+} catch (error) {
+  console.log(error.code === "ENOTDIR" || error.code === "ENOENT" ? "no file" : error.code);
+}
+`,
+        ...earlier,
+        [`app/one/pub/${shared}`]: "of one",
+        [`app/two/pub/${shared}`]: "of two",
+      });
+      const flags = ["zero", "one", "two"].flatMap(folder => ["--asset", `../${folder}/pub`]);
+      const { built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+      expect(compiled).toEqual({ stdout: `${read}\n`, stderr: "", exitCode: 0 });
+      const sentence = read === "of one" ? `"../one/${name}"` : `none of them: "../zero/pub/x" comes first`;
+      expect((built.stdout + built.stderr).replaceAll("\\", "/")).toContain(
+        `assets "../one/${name}" and "../two/${name}" share the path "${name}" in the executable. That path reads ${sentence}. Each`,
+      );
+    },
+    120_000,
+  );
 
   const namedAtRoot = [
     ["a folder", ["--asset", "../lib/pub"], "pub", "pub/a.txt", "../lib", ["pub/a.txt", "pub/deep/c.txt"]],
@@ -342,8 +822,8 @@ const tidy = it => it.replaceAll("\\\\", "/");
 const isFile = at => {
   try {
     return fs.statSync(at, { throwIfNoEntry: false })?.isFile() ?? null;
-  } catch {
-    return null;
+  } catch (error) {
+    return error.code;
   }
 };
 const ask = async at => [fs.existsSync(at), isFile(at), await Bun.file(at).exists()];
@@ -388,29 +868,24 @@ const spell = names => {
       const asPlain = rowsOf(plain, "own");
       const found = "[true,true,true]";
       const absent = "[false,null,false]";
+      const noFolder = '[false,"ENOTDIR",false]';
       const onPosix = {
         tidy: found,
         untidy: found,
         doubled: found,
-        slash: absent,
-        separator: absent,
+        slash: noFolder,
+        separator: noFolder,
         backslash: absent,
       };
-      const alsoOnPosix = { climbs: absent, backslashes: absent, forward: found, lower: found, upper: found };
+      const alsoOnPosix = { climbs: noFolder, backslashes: absent, forward: found, lower: found, upper: found };
       const said = Object.entries({ ...onPosix, ...alsoOnPosix }).map(([name, answer]) => `${name} ${answer}`);
       expect(isWindows ? asPlain.slice(0, 1) : asPlain).toEqual(isWindows ? said.slice(0, 1) : said);
       // CI cuts the middle out of a long failure, so only the rows that differ are shown, each with both answers.
-      const everyDiffering = ["short", "own"].flatMap(way => {
+      const differing = ["short", "own"].flatMap(way => {
         const rows = rowsOf(compiled, way);
         const missing = rows.length === asPlain.length ? [] : [`${way}: ${rows.length} rows of ${asPlain.length}`];
         return [...missing, ...rows.filter((row, at) => row !== asPlain[at]).map(row => `${way} ${row}`)];
       });
-      // A gap on Windows: before it looks, libuv drops separators behind a name, `a.txt/..` and the case of the drive letter. The executable's lookups do not, so `bun run` alone finds these. The day they all agree this fails: ask them with the others.
-      const endings = ["slash", "separator", "backslash", "climbs"];
-      const gapOnWindows = isWindows ? [...endings, ...(kind === "mjs" ? ["lower"] : [])] : [];
-      const isGap = (it: string) => gapOnWindows.includes(it.split(" ")[1]);
-      expect(everyDiffering.some(isGap)).toBe(isWindows);
-      const differing = everyDiffering.filter(it => !isGap(it));
       const differingInPlain = asPlain.filter(row => differing.some(it => it.split(" ")[1] === row.split(" ")[0]));
       expect({ executable: differing, plain: differingInPlain }).toEqual({ executable: [], plain: [] });
       const rest = linesOf(compiled).filter(line => !/^(short|own) /.test(line));

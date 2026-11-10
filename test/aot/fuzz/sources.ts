@@ -1023,6 +1023,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "shapes-collected-and-recreated",
     "workers-terminated-midway",
     "calls-with-many-arguments",
+    "webassembly-modules",
+    "webassembly-control-flow",
     "rope-strings",
     "string-width-change-under-substrings",
     "mutation-during-iteration",

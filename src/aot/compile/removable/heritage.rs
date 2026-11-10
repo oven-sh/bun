@@ -18,18 +18,37 @@ impl Removable<'_, '_> {
         node.flags.contains(Flags::AMBIENT) || self.is_valid_heritage(node.extends)
     }
 
-    fn is_valid_heritage(&self, heritage: ExprId) -> bool {
+    fn is_valid_heritage(&self, mut heritage: ExprId) -> bool {
         let hir = self.hir;
-        if heritage.is_none() || self.analysis.decisions.is_dead_expr(heritage) {
-            return true;
+        loop {
+            if heritage.is_none() || self.analysis.decisions.is_dead_expr(heritage) {
+                return true;
+            }
+            heritage = hir.skip_type_assertions(heritage);
+            if let Some(constant) = self.find_constant(heritage) {
+                return matches!(constant, Constant::Null);
+            }
+            if let Some(Resolved::Builtin(path)) = self.builtins.of_pure_expr(heritage) {
+                return is_locked_constructor(path);
+            }
+            heritage = match hir[heritage].kind {
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => right,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } if self.is_valid_heritage(right) => left,
+                _ => return self.is_valid_heritage_operand(heritage),
+            };
         }
-        let heritage = hir.skip_type_assertions(heritage);
-        if let Some(constant) = self.find_constant(heritage) {
-            return matches!(constant, Constant::Null);
-        }
-        if let Some(Resolved::Builtin(path)) = self.builtins.of_pure_expr(heritage) {
-            return is_locked_constructor(path);
-        }
+    }
+
+    fn is_valid_heritage_operand(&self, heritage: ExprId) -> bool {
+        let hir = self.hir;
         match hir[heritage].kind {
             ExprKind::Null | ExprKind::Class(_) => true,
             ExprKind::Fn(function) => {
@@ -58,13 +77,6 @@ impl Removable<'_, '_> {
                 let branches = hir.branches(branches);
                 self.is_valid_heritage(branches.yes) && self.is_valid_heritage(branches.no)
             }
-            ExprKind::Binary { op, left, right } => match op {
-                BinOp::Comma => self.is_valid_heritage(right),
-                BinOp::And | BinOp::Or | BinOp::Nullish => {
-                    self.is_valid_heritage(left) && self.is_valid_heritage(right)
-                }
-                _ => false,
-            },
             _ => false,
         }
     }

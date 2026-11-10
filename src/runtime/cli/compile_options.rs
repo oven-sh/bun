@@ -38,7 +38,7 @@ const HARDENING_ALLOWED: &str = "a list of these names: proof-checks, ignore-tol
 /// Each name that `--aot-harden` takes, and the words of the engine that it stands for. None is on by default.
 const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
     // What the compiler has proven of a value is tested where the value arrives. That nobody keeps a cell is a proof that no test can repeat: every cell stays in the heap.
-    // Hoisted calls are repeated and compared. Declared allocations are tested for being new.
+    // Hoisted calls are repeated and compared, and results declared as fresh are checked. The build also verifies the output of each stage, which adds nothing to the program.
     (
         b"proof-checks",
         &[
@@ -46,6 +46,7 @@ const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
             b"testing=DisableFrameCells",
             b"testing=CheckHoistedCallsAtRunTime",
             b"testing=CheckResultFreshnessAtRunTime",
+            b"check=VerifyEachStage",
         ],
     ),
     // Every access by position reads the length and tests the position where it stands, whatever an earlier test or the head of a loop has shown.

@@ -4,6 +4,7 @@ import { closeSync, existsSync, openSync, readdirSync, readFileSync, writeFileSy
 import { open } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
+import { bytesAndStoredStrings } from "../harness/executable-bytes";
 import { buildFlags } from "../harness/flags";
 import { describe, test } from "../supported";
 
@@ -237,7 +238,7 @@ console.log(new Function("a", "b", "return a " + (process.argv.length > 90 ? "-"
         const obfuscated = await spawned([executable], folder, env);
         expect({ ...obfuscated }).toMatchObject({ stdout: plain.stdout, stderr: plain.stderr, exitCode: 0 });
 
-        const bytes = readFileSync(executable);
+        const bytes = bytesAndStoredStrings(executable);
         const held = (name: string) => bytes.includes(name);
         // A require() keeps the name that it spells: "./requiredByName".
         const unread = [
@@ -255,9 +256,9 @@ console.log(new Function("a", "b", "return a " + (process.argv.length > 90 ? "-"
         expect(readMap(executable).sources.map(source => basename(source))).toEqual(
           expect.arrayContaining(["unreadWhole.ts", "unreadLazy.ts"]),
         );
-        expect(unread.filter(name => readFileSync(join(folder, executableName("plain"))).includes(name))).toEqual(
-          unread,
-        );
+        expect(
+          unread.filter(name => bytesAndStoredStrings(join(folder, executableName("plain"))).includes(name)),
+        ).toEqual(unread);
       }),
     buildLimit,
   );

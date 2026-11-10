@@ -5,8 +5,8 @@
 // # f1 = tell, f2 = show, f3 = least
 // # RUN(LEAST): walk f3 mechanisms=all-Inlining
 // # LEAST-LABEL: code f3:Body
-// # LEAST: ({{*}}: number @Double, {{*}}) isInLoop=true isLoopHead=true:
-// # LEAST: ([[left]]: int[-2147483648, 4294967296] @Int64, {{*}}) isInLoop=true isLoopHead=true:
+// # LEAST: ({{*}}: number @Double, {{*}}) frequency=Rare isLoopHead=true:
+// # LEAST: ([[left]]: int[-2147483648, {{*}}] @Int64, {{*}}) isInLoop=true isLoopHead=true:
 // # LEAST: = Add [[left]], {{*}} form=Integers
 // # LEAST: @Int64 = CallInline {{*}} inlineBuiltin=MathMin
 // # RUN(COUNT): compile AbsentElementWideningsAvoided mechanisms=all-Inlining

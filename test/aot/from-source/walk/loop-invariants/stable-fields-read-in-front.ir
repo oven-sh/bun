@@ -1,0 +1,20 @@
+# f2 = area, f3 = late
+# -- source: main.ts
+# class Board { readonly width: number; readonly cells: number[]; turns = 0; constructor(width: number, cells: number[]) { this.width = width; this.cells = cells; } step() { this.turns++; return this.turns; } }
+# function area(board: Board, last: number): number { let sum = 0; for (let at = 0; at < last; at++) { sum += board.width * at; sum += deep(board, at % 3); sum -= board.width; } return sum; }
+# function late(board: Board, last: number): number { let sum = 0; for (let at = 0; at < last; at++) { sum += board.turns * at; sum += deep(board, at % 3); sum -= board.turns; } return sum; }
+# function deep(board: Board, depth: number): number { if (depth > 0) return deep(board, depth - 1); return board.step(); }
+# const list = JSON.parse("[3,2,1]") as number[]; const board = new Board(list[0]!, list);
+# console.log(area(board, 5), late(board, 5), board.turns);
+# -- end of source
+# A field that the class only writes before anybody else sees the object holds one value ever after: `area` reads the width once, in front of its loop, though every turn runs code that nobody follows.
+# `turns` is written later, so `late` reads it anew behind the call.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetSlot {{*}}key="width"
+# CHECK-NOT: = GetSlot {{*}}key="width"
+# RUN(LATE): walk f3 mechanisms=all
+# LATE-LABEL: code f3:Body
+# LATE-COUNT-2: = GetSlot {{*}}key="turns"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 30 80 10

@@ -546,6 +546,64 @@ unsafe extern "C" fn highway_line_starts(p: *const u8, len: usize, out: *mut u32
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_pack_words(
+    words: *const u32,
+    groups: usize,
+    controls: *mut u8,
+    data: *mut u8,
+) -> usize {
+    let mut used = 0;
+    for group in 0..groups {
+        let mut control = 0;
+        for place in 0..4 {
+            // SAFETY: the caller passes four words for each group.
+            let word = unsafe { words.add(4 * group + place).read() };
+            let folded = (word << 1) ^ (word >> 31).wrapping_neg();
+            let code = u8::from(folded != 0) + u8::from(folded > 0xFF) + u8::from(folded > 0xFFFF);
+            control |= code << (2 * place);
+            for &byte in &folded.to_le_bytes()[..(1 << code) >> 1] {
+                // SAFETY: the caller passes room for 16 bytes for each group.
+                unsafe { data.add(used).write(byte) };
+                used += 1;
+            }
+        }
+        // SAFETY: the caller passes room for a control byte for each group.
+        unsafe { controls.add(group).write(control) };
+    }
+    used
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_unpack_words(
+    controls: *const u8,
+    groups: usize,
+    data: *const u8,
+    data_len: usize,
+    words: *mut u32,
+    used: *mut usize,
+) -> usize {
+    // SAFETY: the caller passes slices, as pointers and lengths.
+    let (controls, data) = unsafe { (bytes(controls, groups), bytes(data, data_len)) };
+    let (mut at, mut group) = (0, 0);
+    while group < groups && data_len - at >= 16 {
+        for place in 0..4 {
+            let size = (1 << (controls[group] >> (2 * place) & 3)) >> 1;
+            let mut word = [0; 4];
+            word[..size].copy_from_slice(&data[at..at + size]);
+            let folded = u32::from_le_bytes(word);
+            let word = (folded >> 1) ^ (folded & 1).wrapping_neg();
+            // SAFETY: the caller passes room for four words for each group.
+            unsafe { words.add(4 * group + place).write(word) };
+            at += size;
+        }
+        group += 1;
+    }
+    // SAFETY: the caller passes a place for it.
+    unsafe { used.write(at) };
+    group
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64) {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };

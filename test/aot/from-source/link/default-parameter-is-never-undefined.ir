@@ -1,0 +1,17 @@
+# -- source: main.ts
+# const box: { n: number }[] = [];
+# function keep(x = 1) { box.push({ n: x }); }
+# keep();
+# keep(2.5);
+# class Link { constructor(public next: Link | null, public name: string | number) {} }
+# const taken: { of: unknown }[] = [];
+# function take(link: Link | null) { if (link === null) return; taken.push({ of: link }); }
+# function other(name: string | number) { if (typeof name === "string") return; box.push({ n: name }); }
+# const first = new Link(null, "a");
+# take(first); take(first.next); other(first.name); other(3);
+# console.log(box.length, taken.length);
+# -- end of source
+# A type test that fails hands over what the tested primitives leave: a default parameter is never undefined, and behind a test for null there is no null.
+# RUN: link fields mechanisms=all
+# CHECK: "of" proven=L
+# CHECK: "n" proven=number

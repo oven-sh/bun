@@ -63,6 +63,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the kind of an event is a text that the program hands over, no name: in front of it stands the built-in that adds a listener to the global object",
   },
   {
+    paths: /^src\/aot\/builtins\/resolve\/written_members\.rs$/,
+    lines: /known::(contexts|instances|mock\w*|withImplementation)\b/,
+    reason:
+      "the members through which a spy shows its receiver: asked only in a test file that spies on a built-in object, and all they do is expose that object. A function of the program with such a name changes no answer",
+  },
+  {
     paths: /^src\/aot\/ir\/name_class\.rs$/,
     reason:
       "the class of a name (an index, a number as JavaScript prints it, a word that the schema lists) is read off its text once",
@@ -75,6 +81,17 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/aot\/options\.rs$/,
     reason: "option words are the build's own, not the program's",
+  },
+  {
+    paths: /^src\/aot\/load\/import_functions\.rs$/,
+    reason:
+      "the text of a constant string that the program evaluates is code, and is read as code. `Function` and `eval` are asked for only in a file that declares neither",
+  },
+  {
+    paths: /^src\/aot\/lower\/commonjs\/path_comparisons\.rs$/,
+    lines: /^(?:\| )?b"\w+"$/,
+    reason:
+      "asked only of a value made of the file's own `__filename` or `__dirname`, and it only chooses the equalities that also compare the file's other path. A function of the program with such a name changes no answer: whole paths are compared",
   },
   {
     paths: /^src\/aot\/load\/test_runner_names\.rs$/,
@@ -168,7 +185,7 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/sema\/(import_sites\/alternatives|fold\/folder_calls)\.rs$/,
     lines:
-      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|entries|getOwnPropertyNames|ownKeys|defineProperty|mainModule|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
+      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|entries|getOwnPropertyNames|ownKeys|defineProperty|mainModule|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push|parse|search|hash)\b/,
     reason:
       "a member behind a value: whoever follows a text has the list, the Set that `new Set(..)` of the free name made, the text, the URL, the object literal or the global `Object` or `Reflect` in hand where it reads the name of the member, and built-ins are frozen",
   },

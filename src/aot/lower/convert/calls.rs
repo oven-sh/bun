@@ -41,9 +41,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let callee = self.hir[site].callee;
         self.hir.member_key(callee)?;
         let method = self.find_written_type(callee)?;
-        let ShapeKind::Function(&[signature]) = self.queries.type_shape(method).ok()?.kind else {
+        let ShapeKind::Function(signatures) = self.queries.type_shape(method).ok()?.kind else {
             return None;
         };
+        let signature = self.queries.only_signature(signatures)?;
         let shape = self.queries.signature(signature);
         let declared = self.queries.function_signature(shape.declaration?);
         let written = shape.result.written;

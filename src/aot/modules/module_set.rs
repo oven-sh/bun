@@ -525,7 +525,6 @@ fn answer_require_with_what_the_loader_holds(
     let mut code_checked_first: Vec<(FileId, FileId)> = Vec::new();
     for &(file, form) in forms {
         let Some(interop) = interops[file.idx()].filter(|it| it.kind == ModuleKind::Data) else {
-            // Once the code at the path has been required, require() of a typed form answers with its exports.
             if interops[file.idx()].is_some() && (is_any_required || is_required[form.idx()]) {
                 code_checked_first.push((form, file));
             }
@@ -547,8 +546,16 @@ fn answer_require_with_what_the_loader_holds(
         compiled_files,
         interops,
     ));
-    for &(_, form) in &checked_first {
+    for &(file, form) in &checked_first {
         if let Some(interop) = &mut interops[form.idx()] {
+            interop.require_result = RequireResult::NamespaceIfImported;
+        }
+        if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
+            stands_for_string(input, form)
+                && !stands_for_string(input, file)
+                && it.kind == ModuleKind::Data
+                && it.require_result == RequireResult::DefaultExport
+        }) {
             interop.require_result = RequireResult::NamespaceIfImported;
         }
     }

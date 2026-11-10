@@ -10,5 +10,5 @@
 # turns, where the poll stands; there the double is asked again to lie within 2^52, so that every sum on the way is exact.
 # f1 = sum
 # RUN: compile UnrolledLoopsForIndexingType UnrolledLoopIntegerElementSums mechanisms=all
-# CHECK: statistic UnrolledLoopsForIndexingType 2
+# CHECK: statistic UnrolledLoopsForIndexingType 4
 # CHECK: statistic UnrolledLoopIntegerElementSums 1

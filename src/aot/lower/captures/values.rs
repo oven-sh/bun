@@ -1,4 +1,5 @@
 use bun_sema::bind::Binding;
+use bun_sema::program::Sym;
 use smallvec::SmallVec;
 
 use super::{Capture, CaptureList};
@@ -173,7 +174,13 @@ impl FileLowering<'_, '_, '_, '_> {
             Capture::Value(BindingRef::Symbol(_)) if is_left_out => DeclaredType::untyped().into(),
             Capture::Value(binding) => {
                 let name = self.written_name(binding);
-                let declared = self.stored_position(binding);
+                let mut declared = self.stored_position(binding);
+                if let BindingRef::Symbol(id) = binding
+                    && declared.ty == TypeTable::ANYTHING
+                {
+                    let file = self.file;
+                    declared = self.compute_literal_position(Sym { file, id });
+                }
                 DeclaredCapture::new(self.mark_variable_of_module(binding, declared), name)
             }
         });

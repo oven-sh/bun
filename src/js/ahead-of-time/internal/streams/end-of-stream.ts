@@ -27,6 +27,11 @@ const {
   isReadableSideFinished,
   isNodeStreamClosed,
   willNodeStreamEmitClose,
+  plainStreamSides,
+  hasReadableSide,
+  hasWritableSide,
+  isReadableStateFinished,
+  isWritableStateFinished,
   kIsClosedPromise,
 } = require("internal/streams/utils");
 
@@ -37,6 +42,16 @@ const sideOfHeir = IS_COMPILED_AHEAD_OF_TIME ? streamState.internals.readableSid
 
 const enum Flag {
   ErrorEmitted = 1 << 1,
+  AutoDestroy = 1 << 2,
+  EmitClose = 1 << 3,
+  Closed = 1 << 5,
+}
+
+/** As in internal/streams/utils. */
+const enum Sides {
+  Unknown,
+  Readable,
+  Both,
 }
 
 const SymbolDispose: typeof Symbol.dispose = Symbol.dispose;
@@ -202,6 +217,8 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
   // common ecosystem modules that do properly emit 'close' but fail
   // this generic check.
   if (IS_COMPILED_AHEAD_OF_TIME && options !== sideOfHeir) own = kindOfOwnStream(stream);
+  let sides: number = Sides.Unknown;
+  let isPlainStreamClosed = false;
   let willEmitClose: boolean | null;
   let writableFinished: boolean | null;
   let readableFinished: boolean | null;
@@ -209,6 +226,19 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
     willEmitClose = willNodeStreamEmitClose(stream) && readable === true && writable === (own === Own.Response);
     writableFinished = own === Own.Response ? isWritableSideFinished(stream, false) : null;
     readableFinished = isReadableSideFinished(stream, false);
+  } else if (IS_COMPILED_AHEAD_OF_TIME && (sides = plainStreamSides(stream)) !== Sides.Unknown) {
+    const hasReadable = hasReadableSide(stream, sides);
+    const hasWritable = hasWritableSide(stream, sides);
+    const plainReadableState = stream._readableState as $Node.ReadableState;
+    const plainWritableState = stream._writableState as $Node.WritableState;
+    const flags = sides === Sides.Readable ? plainReadableState[kState] : plainWritableState[kState];
+    willEmitClose =
+      (flags & (Flag.AutoDestroy | Flag.EmitClose | Flag.Closed)) === (Flag.AutoDestroy | Flag.EmitClose) &&
+      hasReadable === readable &&
+      hasWritable === writable;
+    isPlainStreamClosed = (plainReadableState[kState] & Flag.Closed) !== 0;
+    writableFinished = hasWritable ? isWritableStateFinished(plainWritableState, false) : null;
+    readableFinished = hasReadable ? isReadableStateFinished(plainReadableState, false) : null;
   } else {
     willEmitClose =
       _willEmitClose(stream) && isReadableNodeStream(stream) === readable && isWritableNodeStream(stream) === writable;
@@ -225,7 +255,13 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
    * Error: an error occurred
    */
   let immediateResult: Error | null | undefined;
-  if (own !== Own.Unknown ? isNodeStreamClosed(stream) : isClosed(stream)) {
+  if (
+    IS_COMPILED_AHEAD_OF_TIME && sides !== Sides.Unknown
+      ? isPlainStreamClosed
+      : own !== Own.Unknown
+        ? isNodeStreamClosed(stream)
+        : isClosed(stream)
+  ) {
     immediateResult = getEosOnCloseError(stream, readable, readableFinished, writable, writableFinished);
   } else if (
     (isWritableState(wState) ? (wState[kState] & Flag.ErrorEmitted) !== 0 : wState?.errorEmitted) ||

@@ -137,6 +137,7 @@ pub(crate) fn describe_checker_queries(
         checked_elsewhere: &[],
         builtin_types: &builtin_types,
         named_values: &*named_values,
+        alias_mentions: None,
         max_inference_nodes: limits.get(LimitId::MaxInferenceNodes),
         limits: limits.for_queries(),
     };

@@ -6,7 +6,7 @@
 //
 //   bun run-alone.ts --bun <the Bun that builds and runs> --work <folder> --finds <folder> [--draws ts|js] [--scene <name>,<name>] [--families 25] [--programs <folder>] [--seconds 3600]
 //
-// `--scene a,b` draws every program from those scenes of write-ordinary-scenes.ts, one scene to a program. Without it a program has one to three scenes of any kind.
+// `--scene a,b` draws every program from those scenes of write-ordinary-scenes.ts, one scene to a program, or `--scenes-in-one <n>` of them. Without it a program has one to three scenes of any kind.
 // `--families 25` draws 25 programs of 100 from the sources of ../sources.ts that give one file.
 // `--programs <folder>` takes the files of the folder, once each, in place of draws.
 // `--checks-proofs 50` builds 50 programs of 100 once more with --aot-testing=CheckProofsAtRunTime or another word under which the executable checks itself, `--writes-straight 50` with --aot-testing=ForceStraightCompilation. Both executables have to do as `bun <file>` does.
@@ -64,6 +64,7 @@ const { values: options } = parseArgs({
     stored: { type: "string", default: process.env.FUZZ_STORED_PROGRAMS ?? "" },
     hours: { type: "string", default: "2" },
     together: { type: "string", default: "1" },
+    "scenes-in-one": { type: "string", default: "1" },
     "changes-draws": { type: "string", default: "0" },
   },
 });
@@ -84,6 +85,7 @@ for (const name of [
   "hours",
   "together",
   "changes-draws",
+  "scenes-in-one",
 ])
   options[name] = String(options[name]);
 if (!work || !finds) throw new Error("Expected --work and --finds");
@@ -96,12 +98,13 @@ const away = join(work, `away-${process.pid}`);
 mkdirSync(away, { recursive: true });
 
 type Ended = { stdout: string; stderr: string; end: string; seconds: number };
-async function spawn(cmd: string[], seconds: number, cwd = folder): Promise<Ended> {
+const maxOutput = 1 << 20;
+async function spawn(cmd: string[], seconds: number, cwd = folder, environment = {}): Promise<Ended> {
   const began = performance.now();
   const child = Bun.spawn({
     cmd,
     cwd,
-    env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", NO_COLOR: "1" },
+    env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", NO_COLOR: "1", ...environment },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -114,7 +117,7 @@ async function spawn(cmd: string[], seconds: number, cwd = folder): Promise<Ende
     child.exited,
   ]);
   return {
-    stdout: stdout.slice(0, 1 << 20),
+    stdout: stdout.slice(0, maxOutput),
     stderr: stderr.slice(-8000),
     end: child.signalCode === "SIGKILL" ? "time" : (child.signalCode ?? String(exitCode)),
     seconds: (performance.now() - began) / 1000,
@@ -132,12 +135,17 @@ const withoutDetails = (output: string) =>
 const agree = (a: Ended, b: Ended) => a.end === b.end && withoutDetails(a.stdout) === withoutDetails(b.stdout);
 /** The two runs differ in where the lines of a function's text break and in parentheses that change nothing. As in run-batch.ts. */
 const withoutLayout = (output: string) => withoutDetails(output).replace(/\\n|%20|%0A|%09|[\s()]/g, "");
+/** The text of a function as a key or an element that `console.log` prints in quotes. */
+const withoutQuotedFunctions = (output: string) =>
+  withoutDetails(output).replace(/"(?:[^"\\\n]|\\.)*(?:=>|\bfunction\b|\bclass\b)(?:[^"\\\n]|\\.)*"/g, '"function"');
 /** Where a program lies: the folder of the run, and the root inside an executable. A program that asks hears another folder there. That alone is declared: what still parts with the two taken out is a difference like any other. */
 const withoutRoots = (output: string) =>
   withoutDetails(output)
     .replaceAll(realpathSync(folder), "<root>")
     .replaceAll(folder, "<root>")
     .replaceAll("/$bunfs/root", "<root>")
+    // A stack trace names a source by its path from the folder of the build.
+    .replace(/(?<![^\s(])\.\/(?=[\w-]+\.[cm]?[jt]s:\d)/g, "<root>/")
     // What `process.argv` begins with.
     .replaceAll(bun, "bun")
     .replace(/<root>\/(?:program\.\w+|executable|plain-executable)\b/g, "<entry>");
@@ -167,7 +175,10 @@ function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: E
   if (stopAtAFalseProof.test(ours.stderr)) return "false-proof";
   // No page declares a death.
   if (/^SIG/.test(ours.end) || Number(ours.end) >= 128) return "signal";
-  if (ours.end === plainAgain.end && withoutLayout(ours.stdout) === withoutLayout(plainAgain.stdout))
+  if (
+    ours.end === plainAgain.end &&
+    [withoutLayout, withoutQuotedFunctions].some(change => change(ours.stdout) === change(plainAgain.stdout))
+  )
     return "function source";
   // Where the first line on which they part is a line of the program itself, `bun <file>` prints the source of a function.
   const [left, right] = [withoutDetails(ours.stdout).split("\n"), withoutDetails(plainAgain.stdout).split("\n")];
@@ -189,6 +200,22 @@ function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: E
   return ours.end !== plainAgain.end ? "exit-code" : "stdout";
 }
 const kept = ["false-proof", "signal", "exit-code", "stdout", "limit", "never-ends"];
+/**
+ * Whether `bun <file>` prints something else on a smaller stack and the executable prints no other lines than it, each more or less often. Frames of an executable have another size.
+ * Where a smaller stack gives other lines too, nothing is left to compare.
+ */
+async function differsByStackDepth(command: string[], plain: Ended, ours: Ended) {
+  const smaller = await spawn(command, 60, folder, { BUN_JSC_maxPerThreadStackUsage: "2500000" });
+  if (smaller.end === "time" || agree(smaller, plain)) return false;
+  const lines = ({ stdout }: Ended) =>
+    new Set(withoutDetails(stdout.length < maxOutput ? stdout : stdout.slice(0, stdout.lastIndexOf("\n"))).split("\n"));
+  const hasAll = (all: Set<string>, some: Set<string>) => [...some].every(line => all.has(line));
+  const [inPlain, inSmaller, inOurs] = [lines(plain), lines(smaller), lines(ours)];
+  if (!hasAll(inPlain, inSmaller) || !hasAll(inSmaller, inPlain)) return true;
+  return (
+    plain.end === ours.end && hasAll(inPlain, inOurs) && (ours.stdout.length >= maxOutput || hasAll(inOurs, inPlain))
+  );
+}
 /**
  * The program without the statements of which the build says that they throw: a store to a read-only built-in (TS100014).
  * Such a program is judged again without them, so that the refusal hides no other difference. A statement is a line that ends in a semicolon and closes what it opens.
@@ -240,6 +267,7 @@ if (Number(options.families) > 0) {
 }
 const bed = { name: "product", binary: "", accepts: () => true, allows: () => true, batch: 1 };
 const scenes = options.scene.split(",").filter(Boolean);
+const scenesInOne = Number(options["scenes-in-one"]);
 const given = options.programs
   ? readdirSync(options.programs)
       .filter(name => /\.[cm]?[jt]s$/.test(name))
@@ -357,8 +385,8 @@ function drawAScene(): Drawn | undefined {
   const text = writeOrdinaryScenes(
     start,
     options.draws === "ts",
-    scenes.length ? scenes[seed % scenes.length] : undefined,
-    scenes.length ? 1 : undefined,
+    scenesInOne > 1 ? scenes : scenes.length ? scenes[seed % scenes.length] : undefined,
+    scenes.length ? scenesInOne : undefined,
   );
   // A text that needs nothing of a module is a CommonJS file now and then, and always where it says that it stays a script.
   const script = text.replace(/^export \{\};\n/gm, "");
@@ -633,6 +661,10 @@ while (performance.now() < lastStart || waiting.length) {
       // Where `bun build --compile` without --aot parts from `bun <file>` too, and in the same way, the bundler and the runner read something differently: a tsconfig.json in a folder, the path of
       // a file, when an `import()` settles. That is no fault of the compiler.
       if (kind === "stdout" || kind === "exit-code") {
+        if (await differsByStackDepth([bun, "program" + extension], plainAgain, ours)) {
+          add(inCompany + arm + "differs by the depth of the stack");
+          continue;
+        }
         await spawn(
           [bun, "build", "--compile", "./program" + extension, "--outfile", join(folder, "plain-executable")],
           300,

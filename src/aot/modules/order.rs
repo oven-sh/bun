@@ -147,9 +147,14 @@ pub(super) struct EvaluationOrder {
     is_on_cycle: Vec<bool>,
     is_half_at_link: Vec<bool>,
     needs_loader: Vec<bool>,
+    leaves_cycles_to_loader: bool,
 }
 
 impl EvaluationOrder {
+    pub(super) fn leaves_cycles_to_loader(&self) -> bool {
+        self.leaves_cycles_to_loader
+    }
+
     fn has(&self, set: &[bool], module: ModuleRef) -> bool {
         let number = self.parts.numbers.number_of(module);
         number.is_some_and(|number| set[number])
@@ -196,6 +201,7 @@ pub(super) struct OrderParts {
     pub is_required_at_any_time: Vec<bool>,
     pub is_loaded_by_loader: Vec<bool>,
     pub is_required_during_load: Vec<bool>,
+    pub may_fail_in_require: Vec<bool>,
     pub is_importable_during_evaluation: Vec<bool>,
     pub makes_values_at_load: Vec<bool>,
     pub is_imported_as_es_module: Vec<bool>,
@@ -215,6 +221,7 @@ impl OrderParts {
             is_required_at_any_time: vec![false; file_count],
             is_loaded_by_loader: vec![false; file_count],
             is_required_during_load: vec![false; file_count],
+            may_fail_in_require: vec![false; file_count],
             is_importable_during_evaluation: vec![false; file_count],
             makes_values_at_load: vec![false; file_count],
             is_imported_as_es_module: vec![false; file_count],
@@ -813,6 +820,7 @@ fn find_program_code(
 struct LoadsSeenByProgram {
     is_loaded_by_loader: Vec<bool>,
     is_required_during_load: Vec<bool>,
+    may_fail_in_require: Vec<bool>,
     is_importable_during_evaluation: Vec<bool>,
 }
 
@@ -845,6 +853,7 @@ fn find_loads_seen_by_program(
     let mut seen = LoadsSeenByProgram {
         is_loaded_by_loader: vec![false; count],
         is_required_during_load: vec![false; count],
+        may_fail_in_require: vec![false; count],
         is_importable_during_evaluation: vec![false; count],
     };
     let kind_of = |module: ModuleRef| match module {
@@ -885,6 +894,19 @@ fn find_loads_seen_by_program(
     let edges = &edges[..];
     let imported = imports.iter().map(|(_, file)| file.0).collect();
     let runs_during_load = find_reached(edges, imported);
+    let caught: Vec<u32> = (planned.iter())
+        .flat_map(|(_, file_sites)| {
+            let sites = file_sites.sites.iter();
+            let late = sites.filter(|site| site.position == SitePosition::Late);
+            let candidates = file_sites.required_candidates.iter().map(|load| load.1);
+            late.map(|site| site.target).chain(candidates)
+        })
+        .filter_map(|target| Some(kind_of(target)?.0.0))
+        .collect();
+    let runs_where_caught = find_reached(edges, caught);
+    for &(_, file) in &imports {
+        seen.may_fail_in_require[file.idx()] = runs_where_caught[file.idx()];
+    }
     let mut component_of = None;
     let mut components_that_lead_back = Vec::new();
     let mut components_imported_back = Vec::new();
@@ -990,20 +1012,56 @@ fn find_loads_seen_by_program(
     seen
 }
 
-fn find_importers_that_ask_for_several_types(modules: &ModuleSet) -> Vec<u32> {
-    let typed = || {
-        let statements = modules.left_to_loader.iter();
-        statements.filter_map(|&((importer, _, asked), file)| Some((importer, asked?, file)))
-    };
-    let mut first_types = FxHashMap::default();
-    let mut asked_under_several = FxHashSet::default();
-    for (_, asked, file) in typed() {
-        if *first_types.entry(file).or_insert(asked) != asked {
-            asked_under_several.insert(file);
+fn find_files_that_come_to_several_types(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+) -> Option<Vec<bool>> {
+    let mut typed: FxHashMap<FileId, Vec<(u8, u32)>> = FxHashMap::default();
+    for &((importer, _, asked), file) in &modules.left_to_loader {
+        if let Some(asked) = asked {
+            typed
+                .entry(file)
+                .or_default()
+                .push((asked as u8, importer.0));
         }
     }
-    let asking = typed().filter(|it| asked_under_several.contains(&it.2));
-    asking.map(|it| it.0.0).collect()
+    typed.retain(|_, statements| statements.iter().any(|it| it.0 != statements[0].0));
+    if typed.is_empty() {
+        return None;
+    }
+    let count = input.files.modules.len();
+    let mut loaders = vec![Vec::new(); count];
+    for &loader in &modules.compiled_files {
+        let scan = scans.of(loader);
+        let named = scan.sites.iter().filter_map(|site| match site {
+            ScannedSite::Module(named) => Some(*named),
+            _ => None,
+        });
+        let requested = scan.requests.iter().map(|request| request.target);
+        for loaded in requested
+            .chain(named)
+            .chain(scan.candidates.iter().copied())
+        {
+            let loaded = match modules.module_behind(loaded) {
+                ModuleRef::File(loaded) | ModuleRef::Facade(loaded) => loaded,
+                _ => continue,
+            };
+            loaders[loaded.idx()].push(loader.0);
+        }
+    }
+    let mut comes_to_several = vec![false; count];
+    for statements in typed.values_mut() {
+        statements.sort_unstable();
+        let mut comes_to_one = vec![false; count];
+        for of_type in statements.chunk_by(|a, b| a.0 == b.0) {
+            let comes = find_reached(&loaders, of_type.iter().map(|it| it.1).collect());
+            for (module, _) in comes.into_iter().enumerate().filter(|it| it.1) {
+                comes_to_several[module] |= core::mem::replace(&mut comes_to_one[module], true);
+            }
+        }
+    }
+    Some(comes_to_several)
 }
 
 fn find_prefix_roots(
@@ -1184,12 +1242,11 @@ pub(super) fn compute_order(
         &planned,
         &found_by_made_names,
     );
-    let ask_for_several_types = find_importers_that_ask_for_several_types(modules);
-    if !ask_for_several_types.is_empty() {
-        let comes_to_them = find_reached(&importers, ask_for_several_types);
+    let leaves_cycles_to_loader = loads.is_loaded_by_loader.contains(&true);
+    if let Some(comes) = find_files_that_come_to_several_types(input, scans, modules) {
         let is_loaded_by_loader = loads.is_loaded_by_loader.iter_mut();
         for (is_loaded, (comes, is_code)) in
-            is_loaded_by_loader.zip(comes_to_them.iter().zip(&is_code_of_program))
+            is_loaded_by_loader.zip(comes.iter().zip(&is_code_of_program))
         {
             *is_loaded |= *comes && *is_code;
         }
@@ -1231,6 +1288,7 @@ pub(super) fn compute_order(
         is_required_at_any_time,
         is_loaded_by_loader: loads.is_loaded_by_loader,
         is_required_during_load: loads.is_required_during_load,
+        may_fail_in_require: loads.may_fail_in_require,
         is_importable_during_evaluation: loads.is_importable_during_evaluation,
         makes_values_at_load,
         is_imported_as_es_module,
@@ -1243,6 +1301,7 @@ pub(super) fn compute_order(
         is_on_cycle,
         is_half_at_link,
         needs_loader,
+        leaves_cycles_to_loader,
     };
     let mut sites = PlannedSites {
         by_file: vec![Vec::new(); file_count],

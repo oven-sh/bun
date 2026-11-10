@@ -480,6 +480,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.convert_argument_values(expression, &mut arguments);
         self.set_position(self.file.construct_position(expression));
         self.quote_if_next_fails(expression);
+        if let Some(start) = self.file.construction_start(expression) {
+            self.builder.set_construction_start(start);
+        }
         let value = self.emit_construct(callee.function, arguments, callee.name);
         self.set_position(self.file.hir[expression].pos);
         self.claim_call_result(expression, value)

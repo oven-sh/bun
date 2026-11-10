@@ -1,11 +1,11 @@
 use super::program_keys::KeyContext;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
-    Data, DeclaredRecord, EvalScope, ExpectedResult, Function, Layout, RuntimeFunctionEntry,
-    Variable,
+    Data, DeclaredRecord, EvalScope, ExpectedResult, RuntimeFunctionEntry, Variable,
 };
 use crate::ir::{
-    DataId, EvalScopeId, ExpectedResultId, FunctionId, LayoutId, PropertyKeyId, VariableId,
+    DataId, EvalScopeId, ExpectedResultId, FunctionId, LayoutId, PackScratch, PackedFunction,
+    PackedLayout, PropertyKeyId, VariableId,
 };
 use crate::load::ProgramFile;
 use crate::lower::{
@@ -30,8 +30,8 @@ pub struct LinkUnit {
     pub(super) shared: Arc<SharedTables>,
     pub(super) lengths: TableLengths,
     pub(super) tables: u32,
-    pub(super) function_definitions: Vec<(FunctionId, Arc<Function>)>,
-    pub(super) layout_definitions: Vec<(LayoutId, Layout)>,
+    pub(super) function_definitions: Vec<(FunctionId, PackedFunction)>,
+    pub(super) layout_definitions: Vec<(LayoutId, PackedLayout)>,
     pub(super) object_types: Vec<(u32, ObjectTypeKey)>,
     said_types: Vec<CheckerTypeId>,
     pub(super) layouts_named_by_code: Vec<LayoutId>,
@@ -49,6 +49,17 @@ pub struct LinkUnit {
     pub(super) module: ModuleFragment,
 }
 
+fn trimmed<T: Copy>(list: Vec<T>) -> Vec<T> {
+    match list.capacity() - list.len() > list.len() / 8 {
+        true => list[..].to_vec(),
+        false => list,
+    }
+}
+
+fn trim<T: Copy>(list: &mut Vec<T>) {
+    *list = trimmed(core::mem::take(list));
+}
+
 const fn assert_send<T: Send>() {}
 
 const _: () = assert_send::<LinkUnit>();
@@ -64,14 +75,23 @@ impl LinkUnit {
         said_types.note_commit(self.file.file, self.is_checked, &self.said_types);
     }
 
-    pub fn new(context: &KeyContext<'_>, mut fragment: Fragment) -> LinkUnit {
+    pub fn new(context: &KeyContext<'_>, fragment: Fragment) -> LinkUnit {
         debug_assert!(fragment.layouts_named_by_code.is_sorted());
-        let mut scratch = Vec::new();
-        for (_, function) in &mut fragment.functions {
-            if let Some(function) = Arc::get_mut(function) {
-                function.body.pack(&mut scratch);
-            }
+        let mut scratch = PackScratch::default();
+        let mut function_definitions = Vec::with_capacity(fragment.functions.len());
+        for (id, function) in fragment.functions {
+            function_definitions.push((id, PackedFunction::new(function, &mut scratch)));
         }
+        let mut layout_definitions = Vec::with_capacity(fragment.layouts.len());
+        for (id, layout) in fragment.layouts {
+            layout_definitions.push((id, PackedLayout::new(&layout, &mut scratch)));
+        }
+        let mut module = fragment.module;
+        let positions = &mut module.positions;
+        trim(&mut positions.line_starts);
+        trim(&mut positions.column_adjustments);
+        trim(&mut positions.quoted_sources);
+        trim(&mut positions.quoted_source_text);
         LinkUnit {
             file: ProgramFile {
                 project: context.project,
@@ -81,28 +101,28 @@ impl LinkUnit {
             shared: fragment.tables,
             lengths: fragment.lengths,
             tables: u32::MAX,
-            function_definitions: fragment.functions,
-            layout_definitions: fragment.layouts,
-            object_types: fragment.object_types,
-            said_types: fragment.said_types,
-            layouts_named_by_code: fragment.layouts_named_by_code,
-            allocated_layouts: fragment.allocated_layouts,
-            written_keys: fragment.written_keys,
-            read_keys: fragment.read_keys,
-            keys_laid_by_descriptors: fragment.keys_laid_by_descriptors,
-            variable_definitions: fragment.variables,
+            function_definitions,
+            layout_definitions,
+            object_types: trimmed(fragment.object_types),
+            said_types: trimmed(fragment.said_types),
+            layouts_named_by_code: trimmed(fragment.layouts_named_by_code),
+            allocated_layouts: trimmed(fragment.allocated_layouts),
+            written_keys: trimmed(fragment.written_keys),
+            read_keys: trimmed(fragment.read_keys),
+            keys_laid_by_descriptors: trimmed(fragment.keys_laid_by_descriptors),
+            variable_definitions: trimmed(fragment.variables),
             records: UnitRecords {
                 eval_scopes: fragment.eval_scopes,
                 data: fragment.data,
                 expected_results: fragment.expected_results,
                 declared_records: fragment.declared_records,
             },
-            supertype_edges: fragment.supertype_edges,
-            function_type_edges: fragment.function_type_edges,
+            supertype_edges: trimmed(fragment.supertype_edges),
+            function_type_edges: trimmed(fragment.function_type_edges),
             builtin_members: fragment.builtin_members,
             family_facts: fragment.family_facts,
             runtime_functions: fragment.runtime_functions,
-            module: fragment.module,
+            module,
         }
     }
 }

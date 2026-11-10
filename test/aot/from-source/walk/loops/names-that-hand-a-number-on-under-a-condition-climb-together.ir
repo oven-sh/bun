@@ -15,7 +15,7 @@
 # f1 = shift
 # OPTIONS: check=Validate
 # RUN: compile LoopVisits
-# CHECK: statistic LoopVisits 3
+# CHECK: statistic LoopVisits 2
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 192
 # SHELL: exited with 0

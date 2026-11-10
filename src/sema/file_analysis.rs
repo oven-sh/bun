@@ -15,6 +15,7 @@ use crate::hir_from_data::HostValue;
 use crate::import_sites::{
     CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
     ImportSpecifier, JsxImport, JsxImportSet, JsxMode, OwnUrlArgument, ResolvedForm, ResolvedFrom,
+    WorkerName,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -39,7 +40,7 @@ pub struct FileAnalysis<'s> {
     alternatives: &'s [ImportSpecifier],
     paths_from_own_directory: &'s [ExprId],
     answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
-    names_of_workers: &'s [(ExprId, ImportSpecifier)],
+    names_of_workers: &'s [WorkerName],
     pub paths_of_changed_files: &'s [ChangedPath],
     pub module_relative_reads: &'s [(ExprId, Atom)],
     pub caller_relative_reads: &'s [CallerRelativeRead],
@@ -110,10 +111,10 @@ impl FileAnalysis<'_> {
         index.ok().map(|index| answers[index].1)
     }
 
-    pub fn find_name_of_worker(&self, argument: ExprId) -> Option<&ImportSpecifier> {
+    pub fn find_name_of_worker(&self, argument: ExprId) -> Option<&WorkerName> {
         let names = self.names_of_workers;
-        let index = names.binary_search_by_key(&argument, |&(argument, _)| argument);
-        index.ok().map(|index| &names[index].1)
+        let index = names.binary_search_by_key(&argument, |it| it.argument);
+        index.ok().map(|index| &names[index])
     }
 
     pub fn find_key_stored_in_cache(&self, key: ExprId) -> Option<&ImportSpecifier> {

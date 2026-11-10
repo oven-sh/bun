@@ -58,6 +58,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         mentions_own_name: Vec::new(),
         has_direct_eval: Vec::new(),
         import_meta_may_be_modified: false,
+        writes_import_meta_path: false,
         has_import_meta: false,
     };
     pass.resolve_idents();
@@ -85,6 +86,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         mentions_own_name,
         has_direct_eval,
         import_meta_may_be_modified,
+        writes_import_meta_path,
         has_import_meta,
         ..
     } = pass;
@@ -114,6 +116,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     exported_block_bindings.record(&mut bound.runtime.declarations);
     bound.runtime.depends_on_sloppy_mode |= has_sloppy_eval;
     bound.runtime.import_meta_may_be_modified = import_meta_may_be_modified;
+    bound.runtime.writes_import_meta_path = writes_import_meta_path;
     bound.ids.extend(eval_symbol_ids);
     for unit in uses_arguments {
         match unit {
@@ -194,6 +197,7 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) mentions_own_name: Vec<FnId>,
     pub(super) has_direct_eval: Vec<FnId>,
     pub(super) import_meta_may_be_modified: bool,
+    pub(super) writes_import_meta_path: bool,
     pub(super) has_import_meta: bool,
 }
 

@@ -766,6 +766,32 @@ export const shapes: Shape[] = [
         `  let said;\n  try { said = (await import("./user.mjs")).look(); } catch (error) { said = error.name; }\n  expect(said).toBe("Error");\n});\n`,
     }),
   },
+  // Diamonds: a barrel stars two files, and each of them exports one name from the next barrel. Nobody declares the name, so each file was followed once per path: 16 diamonds took 14 G instructions,
+  // and 20 took 206 G and 17 GB. The first shape mocks the barrels, the second the files between them.
+  ...[true, false].map(
+    (mocksBarrels): Shape => ({
+      name: `diamonds of barrels whose two files export one name of the next barrel, ${mocksBarrels ? "the barrels" : "the files between"} mocked, in a test run`,
+      counted: "diamonds",
+      size: 10,
+      entry: "a.test.js",
+      isTestRun: true,
+      write: size => ({
+        "package.json": `{ "name": "p", "type": "module" }\n`,
+        "leaf.cjs": `exports[["fou", "nd"].join("")] = 1;\n`,
+        ...Object.fromEntries(
+          upTo(size, level => [
+            [`barrel${level}.mjs`, level + 1 < size ? `export * from "./left${level}.mjs";\nexport * from "./right${level}.mjs";\n` : `export * from "./leaf.cjs";\n`],
+            ...["left", "right"].map(side => [`${side}${level}.mjs`, level + 1 < size ? `export { found } from "./barrel${level + 1}.mjs";\n` : ""]),
+          ]).flat(),
+        ),
+        "user.mjs": size ? `import { found } from "./barrel0.mjs";\nexport const look = () => found;\n` : `export const look = () => 1;\n`,
+        "a.test.js":
+          `import { expect, test, vi } from "bun:test";\ntest("it loads", async () => {\n  if (process.argv.length > 99) {\n` +
+          lines(size, level => (mocksBarrels ? ["barrel"] : ["left", "right"]).map(name => `    vi.doMock("./${name}${level}.mjs", () => ({}));`).join("\n")) +
+          `  }\n  expect((await import("./user.mjs")).look()).toBe(1);\n});\n`,
+      }),
+    }),
+  ),
   // One name that only the run can find, read as many times as the barrel that it is read off has stars, and one file behind the stars mocked. Each read asked every star for the name: reads x stars:
   // 4,000 took 43 G instructions, and take 7. The places of the stars by name were kept where the program is linked, and were not handed to the lowering of a read.
   // At these sizes the build holds too little for its memory to be judged: at 1,000 and 2,000 that read 2.00 to 2.06 times, with and without the mend.
@@ -969,6 +995,22 @@ export const shapes: Shape[] = [
         `  let sum = 0; for (let i = 0; i < ${size * 5}; i++) sum += require("./top.mjs").ok; expect(sum).toBe(${size * 5}); });\n`,
     }),
   },
+  // A package without side effects whose files each export everything of the next. All but the last are left out, and each of them walked the rest of the chain for the requests that it passes on.
+  // What is left of the square is the checker's: each file keeps the files that its stars lead to.
+  {
+    name: "files of a package without side effects that each export everything of the next, of which one name of the last is read",
+    counted: "files",
+    size: 1500,
+    entry: "main.mjs",
+    mostGrowthInInstructions: 2.4,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "node_modules/chain/package.json": `{ "name": "chain", "main": "f0.mjs", "sideEffects": false }\n`,
+      ...Object.fromEntries(upTo(size, index => [`node_modules/chain/f${index}.mjs`, `export * from "./f${index + 1}.mjs";\n`])),
+      [`node_modules/chain/f${size}.mjs`]: `export const last = 7;\n`,
+      "main.mjs": `import { last } from "chain";\nconsole.log(last);\n`,
+    }),
+  },
   // A barrel, which is what real suites have. For each name that it has from a star the build walked, and entered, every star in front of the file that declares the name: names x stars.
   {
     name: "a file that exports everything of many files, loaded behind a mock of the last, in a test run",
@@ -976,8 +1018,7 @@ export const shapes: Shape[] = [
     size: 500,
     entry: "a.test.js",
     isTestRun: true,
-    // What is left is the run: the namespace of the barrel resolves each of its names through all of its stars.
-    growsSoFarInInstructions: "3.07 times in instructions",
+    // The run resolved each name of the namespace through all the stars: 2,000 files took 8.7 G instructions, and take 3.3.
     write: size => ({
       "package.json": `{ "name": "p", "type": "module" }\n`,
       ...Object.fromEntries(upTo(size + 1, index => [`m${index}.js`, `export const x${index} = ${index};\n`])),
@@ -2639,6 +2680,8 @@ export const shapes: Shape[] = [
     counted: "sums",
     size: 1000,
     entry: "main.ts",
+    // Under musl this reads 1.94 to 2.12. The memory is a straight line: 2,000 sums more add 129 MB, 4,000 more 246, 8,000 more 482.
+    mostGrowthInMemory: 2.2,
     write: size => ({
       "main.ts": `function total(held: Uint8Array): number {\n  let sum = 0;\n  for (let i = 0; i < held.length; i++)\n    for (let j = 0; j < 2; j++) {\n${lines(size, () => `      sum += held.length;`)}    }\n  return sum;\n}\nconsole.log(total(new Uint8Array(3)), total(Buffer.from([1, 2, 3])));\n`,
     }),
@@ -3440,6 +3483,19 @@ export const shapes: Shape[] = [
       }),
     }),
   ),
+  // The same patterns, many levels deep. The emitter looked through the blocks of the function for the users of each iterator, and each pattern was printed anew for the message of its failure:
+  // 4,000 levels took 69 G instructions, and take 6.
+  ...["const ", ""].map(
+    (declares): Shape => ({
+      name: `list patterns nested in one another, many levels deep, ${declares ? "that declare" : "that assign"}`,
+      counted: "levels",
+      size: 1000,
+      entry: "main.js",
+      write: size => ({
+        "main.js": `let value = Number("7");\nfor (let i = 0; i < ${size}; i++) value = [value];\n${declares ? "" : "let inmost;\n"}${declares}${"[".repeat(size)}inmost${"]".repeat(size)} = value;\nconsole.log(inmost);\n`,
+      }),
+    }),
+  ),
   // Each pattern takes one element of what the pattern around it has taken, and the iterator of the outer one is open for as long as the inner ones run.
   {
     name: "list patterns nested in one another",
@@ -3649,6 +3705,52 @@ export const shapes: Shape[] = [
       "main.ts":
         `${declaredConsole}type Kind = ${upTo(Math.max(size, 1), index => `"text${index}"`).join(" | ")};\nconst all: Kind[] = [${upTo(size, index => `"text${index}"`).join(", ")}];\n` +
         `function weigh(kind: Kind): number {\n  switch (kind) {\n${lines(size, index => `    case "text${index}":\n      return ${index};`)}  }\n  return -1;\n}\nlet sum = 0;\nfor (const kind of all) sum += weigh(kind);\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    // For each enum, every block of the namespace was searched for every other: 1,000 took 6 G, and 2,000 took 42 G.
+    name: "blocks of one namespace, each with an enum that is read",
+    counted: "blocks",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}namespace Space { export enum First { One } }\n${lines(size, index => `namespace Space { export enum Kind${index} { One = ${index} } }`)}` +
+        `function isOver(value: number): boolean { return value > 0; }\nlet found = 0;\n${lines(size, index => `if (isOver(Space.Kind${index}.One)) found++;`)}console.log(found, Space.First.One);\n`,
+    }),
+  },
+  {
+    // Whether the member is declared in front of the read, and its enum around it, was asked by a walk up every operator above the read: 10,000 reads took 13 G.
+    name: "reads of a member of an enum, operands of one expression",
+    counted: "reads",
+    size: 10000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}enum Kind { One = 1 }\nconst sum = ${upTo(size + 1, () => "Kind.One").join(" + ")};\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "names of a member of an enum, operands of the initializer of the next member",
+    counted: "names",
+    size: 20000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}enum Kind { One = 1, Sum = ${upTo(size + 1, () => "One").join(" + ")} }\nconsole.log(Kind.Sum);\n`,
+    }),
+  },
+  {
+    name: "reads of a member of an enum, tests of one if with many else ifs",
+    counted: "reads",
+    size: 4000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}enum Kind { None, One }\nfunction isOver(value: number): boolean { return value > 0; }\nlet found = 0;\n` +
+        `if (isOver(Kind.None)) found = 1;\n${lines(size, index => `else if (isOver(Kind.None)) found = ${index};`)}console.log(found);\n`,
     }),
   },
   {

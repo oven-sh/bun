@@ -68,7 +68,7 @@ fn describe(input: &BindInput<'_, '_>, steps: &[Step]) -> Vec<String> {
                 false => format!("{file} may have {name}"),
             }
         }
-        Step::FileItself { file, name } => {
+        Step::FileItself { file, name, .. } => {
             let file = name_of(input, file);
             let name = String::from_utf8_lossy(input.files.atoms.bytes(name)).into_owned();
             format!("{file} itself is asked for {name}")
@@ -1384,6 +1384,54 @@ fn what_lies_behind_a_station_that_holds_another_is_written_out_once() {
         find_way_through_layers_that_are_all_mocked(40).len(),
         6 * 40 - 5
     );
+}
+
+fn find_way_through_diamonds(levels: usize, is_mocked: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut files = vec![(
+        String::from("leaf.cjs"),
+        String::from("exports[['f', 'n'].join('')] = 1;\n"),
+    )];
+    for level in 0..levels {
+        let is_last = level + 1 == levels;
+        let text = match is_last {
+            true => String::from("export * from './leaf.cjs';\n"),
+            false => format!("export * from './l{level}.js';\nexport * from './r{level}.js';\n"),
+        };
+        files.push((format!("b{level}.js"), text));
+        if !is_last {
+            let text = format!("export {{ fn }} from './b{}.js';\n", level + 1);
+            files.push((format!("l{level}.js"), text.clone()));
+            files.push((format!("r{level}.js"), text));
+        }
+    }
+    let others: Vec<(&str, &str)> = files.iter().map(|it| (&*it.0, &*it.1)).collect();
+    let mocked = others.iter().map(|it| it.0);
+    let mocked: Vec<&str> = mocked.filter(|name| is_mocked(name)).collect();
+    find_way(&mocked, &others, ("b0.js", "fn"))
+}
+
+#[test]
+fn diamond_steps_are_linear() {
+    let are_barrels = |name: &str| name.starts_with('b');
+    let are_left = |name: &str| name.starts_with('l') && name != "leaf.cjs";
+    let are_sides = |name: &str| are_left(name) || name.starts_with('r');
+    let shapes: [&dyn Fn(&str) -> bool; 6] = [
+        &are_barrels,
+        &are_left,
+        &are_sides,
+        &|name| name == "b0.js",
+        &|name| are_barrels(name) || are_left(name),
+        &|name| are_barrels(name) || are_sides(name),
+    ];
+    for (shape, is_mocked) in shapes.into_iter().enumerate() {
+        let steps = |levels: usize| find_way_through_diamonds(levels, is_mocked).len();
+        let (ten, twenty, forty) = (steps(10), steps(20), steps(40));
+        assert_eq!(
+            forty - twenty,
+            2 * (twenty - ten),
+            "{shape}: {ten} {twenty} {forty}"
+        );
+    }
 }
 
 #[test]

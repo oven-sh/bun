@@ -476,6 +476,42 @@ fn a_file_that_may_be_mocked_has_every_name() {
 }
 
 #[test]
+fn mocked_failing_names_stay_open() {
+    for is_mocked in [true, false] {
+        let mock = match is_mocked {
+            true => "import { mock } from 'bun:test'; mock.module('./mocked.js', () => ({}));\n",
+            false => "",
+        };
+        let main = format!("{mock}import './holder.js'; import './hands_on.js'");
+        let files = [
+            ("main.test.js", main.as_str()),
+            (
+                "mocked.js",
+                "export { round } from './way.js'; export const held = 1",
+            ),
+            ("way.js", "export * from './mocked.js'"),
+            ("holder.js", "export * from './way.js'"),
+            ("hands_on.js", "export { round } from './mocked.js'"),
+        ];
+        with_export_tables(&files, |tables, modules, input| {
+            let round = input.files.atoms.intern(b"round");
+            let resolve = |file: &str| {
+                let file = file_named(input, file);
+                tables.resolve(modules, file, round).resolution
+            };
+            let fails = |file: &str| !tables.failures_of(file_named(input, file)).is_empty();
+            assert!(fails("mocked.js"));
+            assert_eq!(resolve("mocked.js"), Resolution::NotFound);
+            assert_eq!(fails("hands_on.js"), !is_mocked);
+            for barrel in ["way.js", "holder.js"] {
+                let is_open = matches!(resolve(barrel), Resolution::DynamicStar { .. });
+                assert_eq!(is_open, is_mocked, "{barrel}");
+            }
+        });
+    }
+}
+
+#[test]
 fn a_name_that_a_statement_takes_from_a_file_that_may_be_mocked_is_compared_at_run_time() {
     let lay = |mock: &str| {
         [

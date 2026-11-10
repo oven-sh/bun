@@ -27,6 +27,8 @@ mod body_walk;
 mod finish;
 mod name_class;
 mod packed_body;
+mod packed_function;
+mod packed_layout;
 #[cfg(any(test, feature = "ir_text"))]
 mod print_body;
 #[cfg(any(test, feature = "ir_text"))]
@@ -53,6 +55,8 @@ pub use ids::{
 };
 pub use keys::{ClassSlot, FunctionKey, LayoutKey, PrivateStatePart, VariableKey};
 pub use name_class::classify_name;
+pub use packed_function::PackedFunction;
+pub use packed_layout::{PackScratch, PackedLayout};
 pub use parallel::{InParallel, drop_each, extend_from_boxes, for_each_mut, run_serially};
 #[cfg(any(test, feature = "ir_text"))]
 pub use print::{

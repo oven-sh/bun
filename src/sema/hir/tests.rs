@@ -508,6 +508,52 @@ fn imported_require_is_found_by_its_names() {
     }
 }
 
+fn block_of<'a>(numbers: &[u64], arena: &'a Arena) -> (ListBlock<'a>, usize) {
+    let mut block = ListBlock::new_in(arena, ListBlock::room_for(numbers));
+    let list = block.copy(numbers, arena);
+    let first = list.as_ptr().addr();
+    assert_eq!(list[..], *numbers);
+    (block, first)
+}
+
+#[test]
+fn freed_block_is_laid_again() {
+    let session = Session::new();
+    let arena = session.arena();
+    let (_before, _) = block_of(&[1; 64], arena);
+    let (first, at_first) = block_of(&[2; 64], arena);
+    let (second, at_second) = block_of(&[3; 64], arena);
+    let (_behind, at_end) = block_of(&[4; 64], arena);
+    drop(first);
+    drop(second);
+    let (_large, at_large) = block_of(&[5; 100], arena);
+    let (_rest, at_rest) = block_of(&[6; 28], arena);
+    let (_next, at_next) = block_of(&[7; 64], arena);
+    assert_eq!(at_large, at_first);
+    assert_eq!(at_rest, at_first + 800);
+    assert_eq!((at_second, at_end), (at_first + 512, at_first + 1024));
+    assert!(at_next > at_end);
+}
+
+#[test]
+fn blocks_keep_what_they_hold() {
+    let session = Session::new();
+    let arena = session.arena();
+    let mut held: Vec<(ListBlock<'_>, Fixed<'_, u64>, u64)> = Vec::new();
+    for number in 0..2000u64 {
+        let numbers = vec![number; 1 + (number * 37 % 900) as usize];
+        let mut block = ListBlock::new_in(arena, ListBlock::room_for(&numbers));
+        let list = block.copy(&numbers, arena);
+        held.push((block, list, number));
+        if number % 3 != 0 {
+            held.swap_remove((number * 7 % held.len() as u64) as usize);
+        }
+    }
+    for (_, list, number) in &held {
+        assert!(list.iter().all(|it| it == number));
+    }
+}
+
 #[test]
 fn narrow_ids_come_back_from_a_block() {
     let session = Session::new();

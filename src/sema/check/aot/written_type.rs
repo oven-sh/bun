@@ -215,9 +215,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub(super) fn mentions_untrusted_alias(&mut self, file: FileId, node: TypeNodeId) -> bool {
+        let known = self.inputs.alias_mentions;
+        if let Some(mentions) = known.and_then(|known| known.get(file, node)) {
+            return mentions;
+        }
         let mut named = NamedTypes::default();
         self.collect_named_types(file, [node], &mut named);
-        self.has_untrusted_mention(&named)
+        let mentions = self.has_untrusted_mention(&named);
+        if let Some(known) = known
+            && !self.is_cut_short()
+            && !self.c.is_stack_low()
+        {
+            let node_count = self.c.hir(file).types.len();
+            known.note(file, node, node_count, mentions);
+        }
+        mentions
     }
 
     fn collect_named_types(

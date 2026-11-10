@@ -11,6 +11,10 @@ function ofDefine(): number { let sum = 0; for (const x of byDefine.map(x => x *
 function ofReflect(): number { let sum = 0; for (const x of byReflect.filter(x => x > 1)) sum += x; return sum; }
 function ofAssign(): number { let sum = 0; for (const x of byAssign.map(x => x * 2)) sum += x; return sum; }
 function ofPrototype(): number { let sum = 0; for (const x of byPrototype.map(x => x * 2)) sum += x; return sum; }
+const named: number[] = [1, 2, 3];
+function grown(x: number): number { return Math.max(x, said.length) + heavier(x); }
+function heavier(x: number): number { let sum = 0; for (let i = 0; i < x; i++) sum += x ^ i; return sum; }
+function ofNamed(): number { let sum = 0; for (const x of named.map(grown)) sum += x; return sum; }
 function spoil(list: any): void { list.constructor = other; }
 const said: string[] = [];
 for (let turn = 0; turn < 40; turn++) {
@@ -21,6 +25,6 @@ for (let turn = 0; turn < 40; turn++) {
     Object.assign(byAssign, { constructor: other });
     Object.setPrototypeOf(byPrototype, Stack.prototype);
   }
-  if (turn > 27) said.push([ofWhole, ofAlias, ofDefine, ofReflect, ofAssign, ofPrototype].map(tried).join());
+  if (turn > 27) said.push([ofWhole, ofAlias, ofDefine, ofReflect, ofAssign, ofPrototype, ofNamed].map(tried).join());
 }
 console.log(said.join("|")); export {};

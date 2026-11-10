@@ -1,17 +1,19 @@
 // docs/compiler/debugging.mdx, "Use with Sentry": an executable built with --minify --sourcemap=external reports errors through
 // the stock @sentry/bun SDK, and the map beside the executable leads from the event back to the sources. Nothing is sent: the
-// transport prints the envelopes. The SDK is installed into the temporary folder, so that no other test sees its packages.
+// transport prints the envelopes. The SDK is installed into the temporary folder, so that no other test sees its packages. An
+// executable without an external map reports the paths of its sources. Either way the SDK counts a frame of the program as "in app".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { built, slot, spawned } from "../harness/commands";
+import { bytesAndStoredStrings } from "../harness/executable-bytes";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const buildLimit = 300_000;
-const frameFile = isWindows ? "B:\\~BUN\\root\\compiled.js" : "/$bunfs/root/compiled.js";
+const frameFile = "./compiled.js";
 
 const program = {
   "package.json": JSON.stringify({ name: "app", private: true, dependencies: { "@sentry/bun": "11.9.0" } }),
@@ -113,12 +115,15 @@ interface SourceMap {
   x_facebook_sources: [FunctionMap][];
 }
 
-async function build(folder: string) {
+async function installSDK(folder: string) {
   const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, env);
   expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({
     stderr: expect.not.stringMatching(/^error\b/m),
     exitCode: 0,
   });
+}
+
+async function build(folder: string) {
   const flags = ["--minify", "--sourcemap=external", "--outfile", "dist/app"];
   const result = await spawned([bunExe(), "compile", "app.ts", ...flags], folder, env);
   built(result);
@@ -269,6 +274,7 @@ describe("--sourcemap=external with @sentry/bun", () => {
       slot(async () => {
         using dir = tempDir("aot-sentry-source-map", program);
         const folder = String(dir);
+        await installSDK(folder);
         const { executable, buildID, map } = await build(folder);
 
         const debugID = buildID.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
@@ -279,7 +285,7 @@ describe("--sourcemap=external with @sentry/bun", () => {
           `//# sourceMappingURL=${name}.map\n//# debugId=${debugID}\n`,
         );
 
-        const file = readFileSync(executable);
+        const file = bytesAndStoredStrings(executable);
         expect(writtenNames.filter(name => file.includes(name) || file.includes(Buffer.from(name, "utf16le")))).toEqual(
           [],
         );
@@ -307,6 +313,29 @@ describe("--sourcemap=external with @sentry/bun", () => {
             frames.map(() => ({ filename: frameFile, in_app: true })),
           );
           expect(await resolve(map, sent)).toEqual(frames);
+        }
+      }),
+    buildLimit,
+  );
+
+  test(
+    "without it, events name the sources by their paths from the folder of the build, and their frames are in app",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-sentry", program);
+        const folder = String(dir);
+        await installSDK(folder);
+        built(await spawned([bunExe(), "compile", "app.ts", "--outfile", "dist/app"], folder, env));
+        const executable = join(folder, "dist", isWindows ? "app.exe" : "app");
+        for (const { argument, exitCode, frames } of cases) {
+          const run = await spawned([executable, argument], folder, env);
+          expect({ argument, exitCode: run.exitCode }).toEqual({ argument, exitCode });
+          const [event, ...others] = eventsIn(run.stdout);
+          expect(others).toEqual([]);
+          const sent = event!.exception.values[0]!.stacktrace.frames;
+          expect(sent.map(frame => ({ filename: frame.filename, line: frame.lineno, in_app: frame.in_app }))).toEqual(
+            frames.map(({ file, line }) => ({ filename: "./" + file, line, in_app: true })),
+          );
         }
       }),
     buildLimit,

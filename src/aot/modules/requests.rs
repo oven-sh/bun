@@ -224,7 +224,7 @@ fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scan
 pub(super) fn leave_imports_of_test_files_to_loader(
     input: &BindInput<'_, '_>,
     scans: &mut Scans,
-    may_load_again: &dyn Fn(FileId) -> bool,
+    asks_loader: &dyn Fn(FileId, FileId) -> bool,
 ) {
     struct Statement {
         importer: FileId,
@@ -260,7 +260,7 @@ pub(super) fn leave_imports_of_test_files_to_loader(
                 ImportSpecifier::Constant(specifier),
                 &ScannedSite::Module(ModuleRef::File(target)),
             ) = (is_statement, site.specifier, answer)
-                && ((is_test_file && may_load_again(target))
+                && ((is_test_file && asks_loader(importer, target))
                     || given_to_several_types.contains(&target))
             {
                 let hir = input.files.hir(importer);

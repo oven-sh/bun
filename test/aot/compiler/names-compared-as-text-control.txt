@@ -123,6 +123,17 @@ allows src/aot/lower/function/original_asked_for.rs a word that `bun test` searc
     return name == known::importActual;
 allows src/aot/options.rs option words, which are the build's own
     return key == "threads";
+allows src/aot/lower/commonjs/path_comparisons.rs a member of a path that is a path too
+    matches!(
+        name,
+        b"dirname"
+            | b"join"
+    )
+allows src/aot/load/import_functions.rs the callee of a call that makes code from a string
+    match atoms.bytes(callee) {
+        b"Function" => read_function_body(atoms, parameter, body),
+        _ => None,
+    }
 allows src/aot/load/test_runner_names.rs a name that no program can write
     return name.starts_with(b"%");
 allows src/aot/lower/function/text_read_back.rs a word of a kept text that the compiler reads back to check itself
@@ -253,6 +264,10 @@ allows src/sema/check/aot/prototype_links.rs a call that may hand on a receiver
     return name == known::call || name == known::apply;
 finds src/sema/check/aot/prototype_links.rs ==
     return name == known::eval;
+allows src/aot/builtins/resolve/written_members.rs a member through which a spy shows its receiver
+    return matches!(name, known::contexts | known::instances);
+finds src/aot/builtins/resolve/written_members.rs matches!
+    return matches!(name, known::value | known::resolve);
 allows src/aot/load/hoisted_mocks.rs a member of vi or jest
     return matches!(name, known::mock | known::unmock);
 finds src/aot/load/hoisted_mocks.rs matches!

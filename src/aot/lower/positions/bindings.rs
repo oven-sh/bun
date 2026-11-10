@@ -1,10 +1,12 @@
 use bun_sema::atom::known;
 use bun_sema::bind::{Bound, ClassOwner, Decl, InitialState, Parent, PatParent, SymbolId};
 use bun_sema::check::aot::{ClassRef, FunctionRef, GaveUp, PositionTypes, declares_type_alone};
-use bun_sema::hir::{ExprKind, File, Flags, FnBody, PatId, StmtKind, VarDeclId, VarKind};
+use bun_sema::hir::{ClassId, ExprKind, File, Flags, FnBody, PatId, StmtKind, VarDeclId, VarKind};
 use bun_sema::program::{FileId, Sym};
 
-use crate::ir::{DeclaredType, FunctionKey, LayoutKey, Mapped, PositionFlags, TypeTable};
+use crate::ir::{
+    DeclaredType, FunctionKey, LayoutKey, Mapped, PositionFlags, Primitives, TypeTable,
+};
 use crate::lower::FileLowering;
 use crate::lower::function_types::find_explicit_constructor;
 
@@ -65,6 +67,19 @@ fn comes_from_elsewhere(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bo
     }
 }
 
+fn may_hold_string_literals(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return false;
+    };
+    let declaration = &hir[declaration];
+    declaration.kind == VarKind::Const
+        && declaration.init.is_some()
+        && matches!(
+            hir[hir.skip_type_assertions(declaration.init)].kind,
+            ExprKind::Index { .. } | ExprKind::Cond { .. }
+        )
+}
+
 fn is_list_written_out(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
     match bound.pat_parent[pattern.idx()] {
         PatParent::Var(declaration) => {
@@ -122,6 +137,32 @@ impl FileLowering<'_, '_, '_, '_> {
         let written = self.queries.written_variable_type(symbol);
         let checked = self.queries.binding_type(pattern);
         self.create_expected_position(PositionTypes { written, checked }, is_made_by_the_text)
+    }
+
+    pub(in crate::lower) fn compute_literal_position(&mut self, symbol: Sym) -> DeclaredType {
+        let files = self.queries.files();
+        let &[(declaring_file, Decl::Var(pattern))] = &files.decls_of(symbol)[..] else {
+            return DeclaredType::untyped();
+        };
+        if declaring_file != self.file
+            || !self.is_checked()
+            || !may_hold_string_literals(self.hir, self.bound, pattern)
+        {
+            return DeclaredType::untyped();
+        }
+        let written = self.queries.written_variable_type(symbol);
+        let checked = self.queries.binding_type(pattern);
+        let position = self.create_expected_position(PositionTypes { written, checked }, false);
+        let ty = self.fragment.types.get(position.ty);
+        let nullish = Primitives::UNDEFINED | Primitives::NULL;
+        let holds_literals_alone = !ty.strings.is_empty()
+            && nullish.contains(ty.primitives)
+            && ty.layouts.is_empty()
+            && ty.functions.is_empty();
+        match holds_literals_alone {
+            true => position,
+            false => DeclaredType::untyped(),
+        }
     }
 
     pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
@@ -292,22 +333,37 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_bound_function(&self, symbol: Sym, class: Option<ClassRef>) -> Option<FunctionKey> {
-        let key = match class {
-            Some(class) => {
-                let left_out = self.inputs.library_functions.left_out_declarations();
-                match left_out.is_class_left_out(class.file, class.class) {
-                    true => None,
-                    false => find_class_constructor(self, class),
-                }
+    pub(in crate::lower) fn class_object_position(&mut self, class: ClassId) -> DeclaredType {
+        let ty = match self.find_lowered_constructor(self.own_class(class)) {
+            Some(key) => {
+                let function = self.reference_function(key);
+                self.fragment.types.intern_function(function)
             }
-            None => self.find_defined_function(find_only_definition(self, symbol)?),
+            None => TypeTable::FUNCTION,
         };
+        DeclaredType::from_compiler(ty)
+    }
+
+    fn find_lowered_constructor(&self, class: ClassRef) -> Option<FunctionKey> {
+        let left_out = self.inputs.library_functions.left_out_declarations();
+        match left_out.is_class_left_out(class.file, class.class) {
+            true => None,
+            false => find_class_constructor(self, class).filter(|key| self.is_in_program(key)),
+        }
+    }
+
+    fn is_in_program(&self, key: &FunctionKey) -> bool {
         let modules = self.inputs.modules;
-        key.filter(|key| {
-            let home = key.home_file();
-            modules.load_failure(home).is_none() && !modules.is_placeholder(home)
-        })
+        let home = key.home_file();
+        modules.load_failure(home).is_none() && !modules.is_placeholder(home)
+    }
+
+    fn find_bound_function(&self, symbol: Sym, class: Option<ClassRef>) -> Option<FunctionKey> {
+        let Some(class) = class else {
+            let defined = self.find_defined_function(find_only_definition(self, symbol)?);
+            return defined.filter(|key| self.is_in_program(key));
+        };
+        self.find_lowered_constructor(class)
     }
 
     fn is_function_binding(&self, symbol: Sym, declarations: &[(FileId, Decl)]) -> bool {

@@ -22,6 +22,7 @@ pub use compile::{
 };
 
 use bstr::ByteSlice;
+use bun_core::file_steps::{self, FileStep};
 use bun_core::strings;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
@@ -771,6 +772,7 @@ impl<'a> Region<'a> {
         if from >= self.count {
             return false;
         }
+        bun_core::current_work::ensure_build_signal_stack();
         let has_returned = self.panic.catch(|| {
             for i in from..(from + self.run).min(self.count) {
                 (self.work)(i);
@@ -5012,6 +5014,29 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         let imported = edges.iter().chain(code_edges);
         imported.filter_map(|file| index_of_file.get(file).copied())
     };
+    // `imports_of` every file, made when the first visit is discarded: where each file's begin, and all of them.
+    let all_imports: OnceLock<(Vec<u32>, Vec<u32>)> = OnceLock::new();
+    let list_all_imports = || {
+        let (mut starts, mut imported) = (vec![0], Vec::new());
+        for importer in 0..to_check.len() {
+            imported.extend(imports_of(importer).map(|it| it as u32));
+            starts.push(imported.len() as u32);
+        }
+        (starts, imported)
+    };
+    // The files that `to_check[index]` leads to, and that file itself.
+    let reached_from = |index: usize| {
+        let (starts, imported) = all_imports.get_or_init(list_all_imports);
+        let mut is_seen = vec![false; to_check.len()];
+        let (mut seen, mut followed) = (vec![index], 0);
+        while let Some(&importer) = seen.get(followed) {
+            followed += 1;
+            let range = starts[importer] as usize..starts[importer + 1] as usize;
+            let imported = imported[range].iter().map(|&it| it as usize);
+            seen.extend(imported.filter(|&it| !std::mem::replace(&mut is_seen[it], true)));
+        }
+        seen
+    };
     // Whether the files in the import cycle of `to_check[index]` that come before it are final. `final_files`: what the lock holds.
     let is_first_in_component = |index: usize, final_files: &(Vec<bool>, usize)| {
         let (is_checked, next) = final_files;
@@ -5343,7 +5368,10 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 let passes_over_depth_limit = file_work.is_some() && is_last_round;
                 checker.leave_depth_limit_unreported(passes_over_depth_limit);
                 checker.allow_refused_instantiations_of_next_file();
+                let step = file_steps::count(FileStep::Check);
+                let began = step.as_ref().map(|it| it.now());
                 let mut checked = checker.check_file(file);
+                drop(step);
                 if passes_over_depth_limit && questions.is_none() {
                     loop {
                         match checker.compute_refused_instantiations() {
@@ -5380,6 +5408,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 if let Some((work, after_file)) = questions
                     && !checker.was_discarded()
                 {
+                    let _step = file_steps::count(FileStep::Lower);
                     loop {
                         checker.set_requested(work.requested_while_asked(program.files, file));
                         after_file(&mut checker, file);
@@ -5406,7 +5435,13 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 // A task caches what it evaluated about other files, and a file's own check must not hit what a later
                 // file's check evaluated. So a task only moves forward in program order.
                 let is_last = upcoming.is_none_or(|it| it < index) || spent >= task_cost;
-                if !checker.commit_after_file(is_last) {
+                let step = file_steps::count(FileStep::Commit);
+                let is_kept = checker.commit_after_file(is_last);
+                if let (Some(step), Some(began), false) = (&step, began, is_kept) {
+                    step.note_discarded_visit(began);
+                }
+                drop(step);
+                if !is_kept {
                     if let Some(progress) = request.progress {
                         progress.checked.fetch_sub(1, Ordering::Relaxed);
                         let bytes = bytes_of(index);
@@ -5416,15 +5451,10 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                         let component_of = |index: usize| {
                             (program.files.components.of_file).get(to_check[index].idx())
                         };
-                        let mut is_seen = vec![false; to_check.len()];
-                        let (mut seen, mut followed) = (vec![index], 0);
-                        while let Some(&importer) = seen.get(followed) {
-                            followed += 1;
-                            let imported = imports_of(importer);
-                            seen.extend(
-                                imported.filter(|&it| !std::mem::replace(&mut is_seen[it], true)),
-                            );
-                        }
+                        let mut seen = match checker.can_recheck_early() {
+                            true => reached_from(index),
+                            false => Vec::new(),
+                        };
                         let final_files = final_files.lock();
                         seen.retain(|&it| {
                             !final_files.0[it] && component_of(it) != component_of(index)
@@ -5761,12 +5791,15 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let run_all_rounds = |expected: Requested| {
         enter_cycles_of_earlier_passes();
         let all: Vec<usize> = (0..to_check.len()).collect();
+        let session = program.types.session();
+        session.set_readers_are_tasks(file_work.is_some());
         run_tasks(0, &all, expected, false);
         let mut again = std::mem::take(&mut *lost.lock());
         if !again.is_empty() {
             again.shared_sort_unstable();
             run_tasks(1, &again, expected, true);
         }
+        session.set_readers_are_tasks(false);
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.
     let global_errors = || -> Vec<Diagnostic> {

@@ -1,7 +1,7 @@
 // A loop that is built twice reads some variables in front of its turns and asks each one thing: is it a whole number above zero, where the turns divide by it; a record of the one layout; one of a few
 // functions; the one function of another file; a number, where the turns add to it. Who fails the question takes the loop as it is written.
 // `fuzz/fuzzilli/write-variable-that-a-loop-uses-sweep.ts` writes programs whose variable holds something else when the loop begins. Here is one for each question. A counter says that the read was laid.
-// `--aot-testing=IgnoreVariableChecks` sends both answers into the typed copy. Under `--aot-harden=proof-checks` what a test has let pass is asked again at run time: with both the
+// `--aot-testing=IgnoreVariableChecks` sends both answers into the typed copy. Under the run-time words of `--aot-harden=proof-checks` what a test has let pass is asked again at run time: with both the
 // program stops by name. `FailSpeculations` stands beside the word on both sides: it lays a road of its own to the loop as written, which the word would leave without one.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -14,7 +14,9 @@ import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const writer = join(import.meta.dir, "fuzz", "fuzzilli", "write-variable-that-a-loop-uses-sweep.ts");
-const CHECKED = "--aot-harden=proof-checks";
+// What --aot-harden=proof-checks lays into the program. The name also runs the compiler's verifier, which refuses the build with the fault.
+const CHECKED =
+  "--aot-testing=CheckProofsAtRunTime,DisableFrameCells,CheckHoistedCallsAtRunTime,CheckResultFreshnessAtRunTime";
 const GUESSES = "FailSpeculations:7:97";
 const WORD = "IgnoreVariableChecks";
 const letPass = "in a value narrowed by a branch";
@@ -102,8 +104,12 @@ describe.skipIf(!!unsupported)("what a loop asks of a variable in front of its t
           stdout: plain.stdout,
           exitCode: plain.exitCode,
         });
+        const refusal = "a Narrowed stands in a block that has not exactly one incoming edge";
+        const refused = await build("refused", "--aot-harden=proof-checks", `--aot-testing=${WORD},${GUESSES}`);
+        expect(refused.stderr).toContain(refusal);
+        expect(refused.exitCode).toBe(1);
         const built = await build("held", `--aot-testing=${WORD},${GUESSES}`);
-        if (!expectFaultyBuild(built, "a Narrowed stands in a block that has not exactly one incoming edge")) return;
+        if (!expectFaultyBuild(built, refusal)) return;
         const held = await spawned([executable("held")], folder, { ...env, ...withoutCrashReport });
         expect(held.stderr).toContain(stops);
         expect(held.exitCode).not.toBe(0);

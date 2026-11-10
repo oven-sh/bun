@@ -263,6 +263,28 @@ fn count_levels_above(root: &[u8], asset: &[u8]) -> usize {
     steps.take_while(|&step| step == b"..").count()
 }
 
+/// Embedding an asset's folder does not follow symlinks below it, so their targets are not embedded. `asset` itself may be a symlink.
+fn is_reached_through_symlink(asset: &[u8], path: &[u8]) -> bool {
+    let (mut first, mut second) = (
+        bun_paths::path_buffer_pool::get(),
+        bun_paths::path_buffer_pool::get(),
+    );
+    let real_asset = bun_sys::realpath(&ZBox::from_bytes(asset), &mut first).ok();
+    let real_path = bun_sys::realpath(&ZBox::from_bytes(path), &mut second).ok();
+    let matches_written_path = |(real_asset, real_path): (&[u8], &[u8])| {
+        real_path.strip_prefix(real_asset) == path.strip_prefix(asset)
+    };
+    !real_asset.zip(real_path).is_some_and(matches_written_path)
+}
+
+/// Purely lexical, because the executable does not follow symlinks.
+fn count_lexical_levels_above(root: &[u8], written: &[u8]) -> usize {
+    let folder = bun_paths::dirname(written).unwrap_or(written);
+    let relative = bun_paths::resolve_path::relative(root, folder);
+    let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
+    steps.take_while(|&step| step == b"..").count()
+}
+
 pub(crate) struct NamesWanted {
     pub(crate) runs_in_place: bool,
     pub(crate) loads_code_from_disk: bool,
@@ -340,10 +362,13 @@ impl BundlerServices {
 
     fn is_embeddable_as_asset(&self, source_path: &[u8]) -> bool {
         let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
-        let mut assets = self.assets.iter();
-        is_at_or_below(source_path, &self.assets_root)
-            && !assets.any(|asset| is_at_or_below(source_path, asset))
-            && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
+        let is_around = |asset: &&Vec<u8>| is_at_or_below(source_path, asset);
+        let mut around = self.assets.iter().filter(is_around).peekable();
+        let is_left_out = match around.peek() {
+            None => is_at_or_below(source_path, &self.assets_root),
+            Some(_) => around.all(|asset| is_reached_through_symlink(asset, source_path)),
+        };
+        is_left_out && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
     }
 
     pub(crate) fn take_files_for_file_system(&self) -> FilesForFileSystem {
@@ -523,6 +548,16 @@ impl SourceProvider for BundlerServices {
             .collect()
     }
 
+    fn data_url_loader(&self, url: &[u8]) -> Option<Loader> {
+        use bun_http_types::MimeType::Category;
+        let url = DataURL::parse(url).ok().flatten()?;
+        match url.decode_mime_type().category {
+            Category::Javascript => Some(Loader::Tsx),
+            Category::Json => Some(Loader::Json),
+            _ => None,
+        }
+    }
+
     fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
         let url = DataURL::parse(url).ok().flatten()?;
         url.decode_data().ok()
@@ -607,6 +642,32 @@ impl SourceProvider for BundlerServices {
 
     fn is_embedding_undecided(&self, source_path: &[u8]) -> bool {
         self.is_found_by_pattern(source_path) && self.is_embeddable_as_asset(source_path)
+    }
+
+    fn is_asset_unreachable(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        // Almost every file is below the root.
+        if self.names_wanted.runs_in_place || is_at_or_below(source_path, root) {
+            return false;
+        }
+        let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
+        let mut assets = self.assets.iter();
+        assets.any(|asset| is_at_or_below(source_path, asset))
+            && count_lexical_levels_above(root, source_path) >= 2
+            && count_levels_above(root, module_path) == 0
+            && kind().is_ok()
+    }
+
+    fn find_symlink_in_asset(&self, source_path: &[u8]) -> Option<Vec<u8>> {
+        let is_around = |asset: &&Vec<u8>| is_at_or_below(source_path, asset);
+        let around = self.assets.iter().filter(is_around);
+        let asset = around.max_by_key(|it| it.len())?;
+        let is_end = |&at: &usize| bun_paths::is_sep_any(source_path[at]);
+        let ends = (asset.len() + 1..source_path.len()).filter(is_end);
+        let ends = ends.chain([source_path.len()]);
+        let mut names = ends.map(|end| &source_path[..end]);
+        let link = names.find(|name| is_reached_through_symlink(asset, name))?;
+        Some(link.to_vec())
     }
 
     fn warn_if_not_embedded(&self, source_path: &[u8], warning: Msg) {

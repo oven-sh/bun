@@ -65,6 +65,15 @@ const project = {
       delete require.cache["node:path"];
       console.log("untouched:", typeof require("util").inspect, typeof require("path").join);
     });`,
+  "evaluated.test.js": `${head}
+    test("in a file with a direct eval", () => {
+      const local = 5;
+      console.log("evaluated:", eval("local"));
+      require.cache["zlib"] = { exports: { gzipSync: 1 } };
+      console.log("zlib:", typeof require("zlib").gzipSync, typeof require("node:zlib").gzipSync);
+      delete require.cache["zlib"];
+      console.log("zlib again:", typeof require("zlib").gzipSync);
+    });`,
 };
 
 // `bun run` reads require("fs") as require("node:fs") in a CommonJS file that an import loads, and as it is written in one that require() loads. The first load counts.

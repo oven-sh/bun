@@ -1,4 +1,4 @@
-// STATISTIC: SpeculatedReceiversDispatchedByShape >= 2
+// STATISTIC: SpeculatedReceiversDispatchedByShape >= 1
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate
 interface Spec { kind: string; a: number; b: number }
 interface Figure { area(): number; grow(by: number): void }

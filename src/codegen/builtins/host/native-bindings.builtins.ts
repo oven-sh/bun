@@ -1,5 +1,6 @@
 // The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
+import { fsOperandUses, heapsOfViews } from "./fs-operands.ts";
 import { answering, constructing, retainedByNativeCode } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
@@ -51,7 +52,60 @@ const configuresServer = (operands: Readonly<Record<string, readonly b.UseSpec[]
     implementation: b.generic,
   }) satisfies b.FunctionField;
 
+// The options of a node:fs operation decide the type of its result (args::*::from_js in node_fs.rs).
+const parsesFsOptions = (args: Readonly<Record<string, b.TableType>>, returns: b.TableType) =>
+  ({
+    ...operandCodeOnly,
+    args,
+    returns,
+    uses: Object.fromEntries(Object.keys(args).map(name => [name, fsOperandUses])),
+    reads: heapsOfViews,
+    writes: heapsOfViews,
+    implementation: b.hostCall,
+  }) satisfies b.FunctionField;
+const withoutFsOptions = (returns: b.TableType) => ({
+  ...parsesFsOptions({ path: b.any, options: b.notPassed }, returns),
+  isSpecialCase: true,
+});
+const fsSyncFunction = (
+  name: string,
+  returns: b.TableType,
+  ...specialCases: readonly (b.FunctionField & { isSpecialCase: boolean })[]
+) =>
+  b.static(`native:Bindgen:node_fs_binding.bind.ts:${name}`, [
+    ...specialCases,
+    parsesFsOptions({ operands: b.any.rest }, returns),
+  ]);
+const statsIfFound = b.union(b.instance("Stats"), b.instance("BigIntStats"), b.undefined).fresh;
+const stringEncodings = b.enumeration([
+  "ascii",
+  "base64",
+  "base64url",
+  "binary",
+  "hex",
+  "latin1",
+  "ucs-2",
+  "ucs2",
+  "utf-16le",
+  "utf-8",
+  "utf16-le",
+  "utf16le",
+  "utf8",
+]);
+
 export default b.declarations(
+  fsSyncFunction("lstatSync", statsIfFound, withoutFsOptions(b.instance("Stats").fresh)),
+  fsSyncFunction(
+    "readdirSync",
+    b.instance("Array").holding({ element: b.union(b.string, b.instance("Buffer"), b.instance("Dirent")).fresh }).fresh,
+    withoutFsOptions(b.instance("Array").holding({ element: b.string }).fresh),
+  ),
+  fsSyncFunction("readFileSync", b.union(b.string, b.instance("Buffer")).fresh, {
+    ...parsesFsOptions({ path: b.any, encoding: stringEncodings, others: b.any.rest }, b.string),
+    isSpecialCase: true,
+  }),
+  fsSyncFunction("statSync", statsIfFound, withoutFsOptions(b.instance("Stats").fresh)),
+
   bagOfFunctions(ttyFunctions, {
     isatty: {
       ...operandCodeOnly,

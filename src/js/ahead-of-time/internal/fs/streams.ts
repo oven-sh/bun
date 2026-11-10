@@ -3,7 +3,9 @@
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
-const { Readable, Writable, finished } = require("node:stream");
+const { Readable: StoredReadable, Writable: StoredWritable, finished } = require("node:stream");
+const Readable = require("internal/streams/readable");
+const Writable = require("internal/streams/writable");
 const fs = require("node:fs");
 const { read, write, fsync, writev } = fs;
 // `bun run` loads node:fs/promises here. A test that has replaced a built-in function hears the calls of that load.
@@ -258,6 +260,14 @@ function validateWindowsHandle(
   }
 }
 
+// The classes extend the exports of node:stream as of the first file stream.
+function extendStoredBase(Class: Function, StoredBase: Function) {
+  const Twin = function () {};
+  $toClass(Twin, "Twin", StoredBase);
+  Object.setPrototypeOf(Class, $getPrototypeOf(Twin));
+  Object.setPrototypeOf(Class.prototype, $getPrototypeOf(Twin.prototype));
+}
+
 function ReadStream(
   this: $Node.ReadStream,
   path: string | URL | null | undefined,
@@ -346,10 +356,15 @@ function ReadStream(
   // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
   if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
-  Readable.$call(this, options);
+  if (StoredReadable === Readable) Readable.$call(this, options);
+  else {
+    ("unlikely");
+    StoredReadable.$call(this, options);
+  }
   return this as unknown as void;
 }
 $toClass(ReadStream, "ReadStream", Readable);
+if (StoredReadable !== Readable) extendStoredBase(ReadStream, StoredReadable);
 const readStreamPrototype = ReadStream.prototype;
 
 Object.defineProperty(readStreamPrototype, "autoClose", {
@@ -639,7 +654,11 @@ function WriteStream(
   // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
   if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
-  Writable.$call(this, options);
+  if (StoredWritable === Writable) Writable.$call(this, options);
+  else {
+    ("unlikely");
+    StoredWritable.$call(this, options);
+  }
 
   const encoding = options.encoding;
   if (encoding) {
@@ -648,6 +667,7 @@ function WriteStream(
   return this as unknown as void;
 }
 $toClass(WriteStream, "WriteStream", Writable);
+if (StoredWritable !== Writable) extendStoredBase(WriteStream, StoredWritable);
 const writeStreamPrototype = WriteStream.prototype;
 
 writeStreamPrototype.open = streamNoop;
@@ -840,7 +860,7 @@ function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
 }
 
 // This function implementation is not correct.
-const writablePrototypeWrite = Writable.prototype.write;
+const writablePrototypeWrite = StoredWritable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
 function writeFast(
   this: $Node.WriteStream,

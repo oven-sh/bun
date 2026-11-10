@@ -5,7 +5,7 @@ function paint(cells: { color: number; glyph: string }[], seen: (soFar: string) 
   for (const cell of cells) {
     out += "\x1b[38;5;" + cell.color + "m";
     out += cell.glyph;
-    seen(out);
+    if (cell.color !== 37) seen(out);
     out += "\x1b[0m";
   }
   return out;

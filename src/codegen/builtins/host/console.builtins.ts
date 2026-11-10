@@ -77,6 +77,8 @@ export default b.declarations(
   ["Console", "_stdout", "_stderr"].flatMap(name =>
     b.extend(`console.${name}`, { mutability: "ConstantUnlessWritten" }),
   ),
+  // The console of a test run has none.
+  b.extend("console.timeStamp", { marks: ["MayBeAbsent"] }),
   b.namespace("console", {
     log: enteredBy("Bun__ConsoleObject__logValues"),
     info: enteredBy("Bun__ConsoleObject__infoValues"),

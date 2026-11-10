@@ -25,6 +25,11 @@ const isDate = types.isDate;
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
+// The compiler knows the results of native functions. The trace agent replaces methods of the binding, so they are bound if it may run.
+const nativeExistsSync =
+  IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+    ? ($bindgen("node_fs_binding.bind.ts", "existsSync") as (path: unknown) => boolean)
+    : undefined;
 
 const constants = $processBindingConstants.fs;
 
@@ -494,7 +499,9 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
   existsSync = function existsSync(_path: string) {
     try {
-      return IS_COMPILED_AHEAD_OF_TIME ? fs.existsSync(_path) : fs.existsSync.$apply(fs, arguments);
+      return IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+        ? nativeExistsSync!(_path)
+        : fs.existsSync.$apply(fs, arguments);
     } catch {
       return false;
     }
@@ -522,7 +529,10 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   lchmodSync = constants.O_SYMLINK !== undefined ? fs.lchmodSync.bind(fs) : undefined, // lchmod is only available on macOS
   lchownSync = fs.lchownSync.bind(fs),
   linkSync = fs.linkSync.bind(fs),
-  lstatSync = fs.lstatSync.bind(fs),
+  lstatSync =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+      ? ($bindgen("node_fs_binding.bind.ts", "lstatSync") as never)
+      : fs.lstatSync.bind(fs),
   mkdirSync = fs.mkdirSync.bind(fs),
   mkdtempSync = fs.mkdtempSync.bind(fs),
   mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options?) {
@@ -579,19 +589,22 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       throw err;
     }
   },
-  readdirSync = fs.readdirSync.bind(fs),
-  readFileSync = fs.readFileSync.bind(fs),
+  readdirSync =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+      ? ($bindgen("node_fs_binding.bind.ts", "readdirSync") as never)
+      : fs.readdirSync.bind(fs),
+  readFileSync =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+      ? ($bindgen("node_fs_binding.bind.ts", "readFileSync") as never)
+      : fs.readFileSync.bind(fs),
   fdatasyncSync = fs.fdatasyncSync.bind(fs),
   writeFileSync = fs.writeFileSync.bind(fs),
   readlinkSync = fs.readlinkSync.bind(fs),
   renameSync = fs.renameSync.bind(fs),
-  statSync = IS_COMPILED_AHEAD_OF_TIME
-    ? ({
-        statSync(_path) {
-          return fs.statSync.$apply(fs, arguments);
-        },
-      }.statSync as never)
-    : fs.statSync.bind(fs),
+  statSync =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+      ? ($bindgen("node_fs_binding.bind.ts", "statSync") as never)
+      : fs.statSync.bind(fs),
   statfsSync = fs.statfsSync.bind(fs),
   symlinkSync = fs.symlinkSync.bind(fs),
   truncateSync = fs.truncateSync.bind(fs),

@@ -51,12 +51,15 @@ impl ImportUses {
     }
 }
 
+pub(super) fn names_eval(e: &Expr) -> bool {
+    matches!(e.kind, ExprKind::Ident(name) if name == known::eval)
+}
+
 pub fn find_imports_of_unused_names(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
 ) -> Vec<ImportId> {
-    let names_eval = |e: &Expr| matches!(e.kind, ExprKind::Ident(name) if name == known::eval);
     if hir.exprs.iter().any(names_eval) {
         return Vec::new();
     }

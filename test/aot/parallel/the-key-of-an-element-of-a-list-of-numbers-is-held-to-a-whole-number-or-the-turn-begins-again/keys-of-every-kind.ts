@@ -16,7 +16,16 @@ class Field {
     }
     return -1 - seen;
   }
+  probeFromDistance(square: number, want: number): number {
+    let seen = 0;
+    for (const step of STEPS) {
+      const from = Math.abs(square) + step;
+      if (!(from & 0x88) && this.cells[from] === want) return from * 1000 + seen;
+      seen++;
+    }
+    return -1 - seen;
+  }
 }
 const f = new Field();
 (f.cells as any)["35.5"] = 90; (f.cells as any)["NaN"] = 91; (f.cells as any)[String(2 ** 32 + 2)] = 92; (f.cells as any)["1.5"] = 93; (f.cells as any)["Infinity"] = 94; (f.cells as any)["-0"] = 95;
-for (let r = 0; r < rounds; r++) for (const s of squares) console.log(say(s), [0, 3, 6, 90, 91, 92, 93, 94, 95].map(w => say(f.probe(s, w))).join(" "));
+for (let r = 0; r < rounds; r++) for (const s of squares) console.log(say(s), [0, 3, 6, 90, 91, 92, 93, 94, 95].map(w => say(f.probe(s, w)) + say(f.probeFromDistance(s, w))).join(" "));

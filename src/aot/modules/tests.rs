@@ -728,11 +728,11 @@ fn each_test_file_with_a_loader_of_its_own_says_which_type_comes_first() {
         let (jsonc, text) = (Some(bun_ast::Loader::Jsonc), Some(bun_ast::Loader::Text));
         assert_eq!(types_left_to_loader(&graph, "a.test.js"), [jsonc]);
         assert_eq!(types_left_to_loader(&graph, "below.js"), [text]);
-        for name in ["a.test.js", "b.test.js", "below.js"] {
-            assert!(is_loaded_by_loader(&graph, name), "{name}");
-        }
+        assert!(is_loaded_by_loader(&graph, "a.test.js"));
         assert!(types_left_to_loader(&graph, "c.test.js").is_empty());
-        assert!(!is_loaded_by_loader(&graph, "c.test.js"));
+        for name in ["b.test.js", "below.js", "c.test.js"] {
+            assert!(!is_loaded_by_loader(&graph, name), "{name}");
+        }
     });
 }
 

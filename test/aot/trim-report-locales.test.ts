@@ -154,7 +154,7 @@ describe.concurrent("locales", () => {
     [
       "new Intl.DateTimeFormat()",
       `console.log(typeof new Intl.DateTimeFormat());`,
-      `${leftOut} (Intl.DateTimeFormat) at main.ts:2:29`,
+      `${leftOut} (Intl.DateTimeFormat) at main.ts:2:20`,
     ],
   ])("all with %s", async (_, text, locales) => {
     expect(await localesOf(text)).toEqual([locales]);

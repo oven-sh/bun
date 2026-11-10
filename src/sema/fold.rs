@@ -205,6 +205,7 @@ pub struct Decisions<'s> {
     dead_exprs_under_minify_syntax: NodeBits<'s>,
     dead_stmts_under_minify_syntax: NodeBits<'s>,
     short_circuited_links: NodeBits<'s>,
+    constant_reads: &'s [(ExprId, Constant)],
     truthy_without_effects: NodeBits<'s>,
     member_reads: NodeBits<'s>,
     folded_under_minify_syntax: NodeBits<'s>,
@@ -215,6 +216,12 @@ pub struct Decisions<'s> {
 impl<'s> Decisions<'s> {
     pub fn is_constant_under_minify_syntax(&self, hir: &File<'_>, expr: ExprId) -> bool {
         self.is_constant_in_bun_run(hir, expr) || self.folded_under_minify_syntax.has(expr.idx())
+    }
+
+    pub fn constant_read(&self, expr: ExprId) -> Option<Constant> {
+        let reads = self.constant_reads;
+        let found = reads.binary_search_by_key(&expr, |read| read.0);
+        found.ok().map(|index| reads[index].1)
     }
 
     #[inline]

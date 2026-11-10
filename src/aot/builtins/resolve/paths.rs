@@ -1,3 +1,4 @@
+use super::module_cache::name_of_module_cache;
 use super::module_objects::{find_listed_module, find_module_object_in};
 use super::resolver::{ExprState, HolderKind, ResolvedValue, Resolver};
 use super::{BUN_OF_TEST_FILE, BuiltinPath, SourceDialect};
@@ -233,7 +234,15 @@ impl Resolver<'_, '_> {
             None => self.find_holder_above_function_written_here(object),
         };
         let Some(holder) = known.or_else(|| self.find_made_require(object)).or(above) else {
-            return ExprState::Unresolved;
+            let cache = match key {
+                MemberKey::Name(name)
+                    if input.names.atom_of(name_of_module_cache()) == Some(name) =>
+                {
+                    self.find_module_cache_of_made_require(object)
+                }
+                _ => None,
+            };
+            return cache.map_or(ExprState::Unresolved, ExprState::Held);
         };
         if let Some(listed) = find_listed_module(holder, key) {
             return ExprState::Held(listed);

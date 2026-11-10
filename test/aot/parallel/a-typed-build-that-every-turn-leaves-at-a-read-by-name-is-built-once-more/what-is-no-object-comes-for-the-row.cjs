@@ -1,5 +1,5 @@
 // A number, a text, a Proxy, null.
-// STATISTIC: SiteCachedReadsBesideCalls >= 1
+// STATISTIC: SiteCachedReadsEmitted >= 1
 "use strict";
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }

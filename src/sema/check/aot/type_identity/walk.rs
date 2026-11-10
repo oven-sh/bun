@@ -315,10 +315,7 @@ impl Walk {
             ShapeKind::Symbol => Ok(leaf(Tag::Symbol)),
             ShapeKind::AnyObject => Ok(leaf(Tag::AnyObject)),
             ShapeKind::Function(signatures) => {
-                let declaration = match signatures {
-                    &[signature] => queries.signature_declaration(signature),
-                    overloads => queries.first_overload(overloads),
-                };
+                let declaration = queries.declaration_of_signatures(signatures.declared);
                 let mut description = Description::new(Tag::Function);
                 description.word(u64::from(declaration.is_some()));
                 if let Some(declaration) = declaration {

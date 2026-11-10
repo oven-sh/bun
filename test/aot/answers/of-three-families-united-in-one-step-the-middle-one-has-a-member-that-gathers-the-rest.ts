@@ -24,7 +24,7 @@ function a2(x: number): number { return 2; }
 function a3(x: number): number { return 3; }
 function a4(x: number): number { return 4; }
 function a5(x: number): number { return 5; }
-function a6(x: number): number { return 6; }
+function a6(x: number): number { let sum = 0; for (let k = 0; k < x; k++) sum += k; return sum; }
 let a: Step = a1;
 if (n > 5) a = a2;
 if (n > 6) a = a3;
@@ -35,7 +35,7 @@ function b1(x: number, ...rest: unknown[]): number { if (rest.length) seen.right
 function b2(x: number, y?: unknown): number { return 12; }
 function b3(x: number, y?: unknown): number { return 13; }
 function b4(x: number, y?: unknown): number { return 14; }
-function b5(x: number, y?: unknown): number { return 15; }
+function b5(x: number, y?: unknown): number { let sum = 0; for (let k = 0; k < x; k++) sum += k; return sum; }
 let b: Step = b1;
 if (n > 5) b = b2;
 if (n > 6) b = b3;

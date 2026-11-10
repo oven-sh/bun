@@ -91,7 +91,7 @@ bun compile ./strings.ts && ./strings
 `eval`, `new Function` and `node:vm` work, under a computed name like `globalThis[name](code)` too. The build can't see that code and the executable has no JIT, so Bun interprets it.
 
 - Where the build can't tell that a call evaluates code, the call throws an `EvalError`. `fn[name](code)` does if `"constructor"` isn't written anywhere in your code.
-- Code from a string can `import()` your entry points. Any other file may throw `Cannot load`. Pass the module to that code instead.
+- Code from a string can `import()` your entry points. Any other file may throw `Cannot load`. Pass the module to that code instead. `new Function("path", "return import(path)")` and `eval("import('./a.js')")`, with strings that are written out like that, are compiled as that `import()`.
 - A script from a string can't declare a built-in global at its top level. `vm.runInThisContext("let Array = 5")` throws a `SyntaxError`. It works in a block, in a function or in a `node:vm` context of its own.
 
 Interpreted code is fine for a template or a config file. It costs you when a library generates its hot code this way, as zod 4, ajv, fast-json-stringify and Elysia do.
@@ -147,6 +147,7 @@ The build compiles every file it can reach from your entry point. Where a path i
 - `import.meta.glob()` is expanded at build time, and every file that matches is compiled.
 - `require.resolve()` and `import.meta.resolve()` return a path. They don't embed the file. Neither do `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()`. With those three the build warns if the path names a file that isn't in the executable (`TS100099`). `require.resolve()` returns where the file was when you built, so reading it fails on another machine.
 - `require("./notes.txt")` returns the text itself, as in `bun build --compile`. `bun run` returns an object with the text as its `default`.
+- An `import()` at the top level of an ES module that a `require()` loads runs its module after that `require()` returns, as in Node.js and `bun build --compile`. Under `bun run`, it runs during the `require()`.
 - A query, as in `import("./a.ts?v=2")`, loads one more copy of the file, as in `bun run`. `?worker` works too. `?raw`, `?url`, a query on a data file and a query in a `require()` stop the build (`TS100159`).
 
 ### A file that isn't in the executable
@@ -208,6 +209,8 @@ Every compiled file has a path under `/$bunfs/root`, laid out like your sources.
 
 `/$bunfs/root` is the folder of your entry point. A file above it, like a package in a `node_modules` beside `src`, is under `/$bunfs/_.._` instead. For a folder more than one level above your entry point, use `__dirname`: `path.join(import.meta.dir, "../../commands")` is `/commands` in an executable.
 
+A comparison of `__filename` with another path of the same file, like `process.argv[1] === __filename`, gives what it gives under `bun run`. It may go through variables, `path.resolve()`, `path.dirname()`, `fs.realpathSync()`, `fileURLToPath()`, `pathToFileURL()` and `replace()`. The two strings stay different: `[__filename].includes(process.argv[1])` is `false`.
+
 `require.main === module`, `import.meta.main`, `module.paths`, `module.parent` and `createRequire(import.meta.url)` work as under `bun run`.
 
 An executable runs your entry point by itself, so a program that starts a copy of itself must not pass the file. Write `spawn(process.execPath, ["child"])`. After `spawn(process.execPath, [process.argv[1], "child"])` or `fork(__filename, ["child"])`, the child finds the path in `process.argv[2]` and `"child"` in `process.argv[3]`.
@@ -234,6 +237,10 @@ bun compile ./render.js --asset ./template.html && ./render
 That path is inside the executable, so the read only finds a file that's in there too. The build embeds what you `import` or `require()`, not what you read. Without [`--asset`](/compiler/executables#embed-directories) the read fails with `ENOENT` and `fs.existsSync()` returns `false`. Where the build can see the read, it warns and names the flag (`TS100098`).
 
 A read through `__dirname` finds the file on the machine that built the executable, and the embedded one anywhere else.
+
+A path made from `import.meta.dirname` climbs at most one folder above the root of the executable. An asset that lies two or more folders above it is embedded, but such a path doesn't find it. Where the build can see the read, it warns (`TS100087`). `__dirname` finds it.
+
+`--asset` follows no symbolic links inside a folder, so what they lead to isn't embedded. Where the build can see such a read, it warns and names the link to pass as an asset of its own (`TS100165`).
 
 Your own code is in there as machine code, not as text. `fs.existsSync()` finds a compiled file, but its size is `0` and reading it fails with `ENOENT`.
 
@@ -274,9 +281,10 @@ With that field, a package says that loading its files does nothing except defin
 | `import "pure"`                                  | Removed. The package's file never runs |
 | `import { x } from "pure"`, and nothing uses `x` | Removed                                |
 | `import { x } from "pure"`, and `x` is used      | The file runs                          |
+| Any of these in an entry point                   | The file runs                          |
 | `require("pure")`, `await import("pure")`        | The file runs                          |
 
-The field in your own `package.json` covers your own files, so `import "./setup.ts"` is removed too.
+The field in your own `package.json` covers your own files, so `import "./setup.ts"` is removed too, except in an entry point. The entry points are the files that you build and the files that a `Worker` starts from.
 
 If you import such a package for what it does when it loads, like a polyfill or a plugin that registers itself, its field is wrong. Build with `--ignore-dce-annotations`. `zod@3.25.76` is such a package: after `import * as z from "zod/v4"`, every message is `Invalid input`.
 
@@ -300,7 +308,7 @@ An executable can collect an object earlier or later than `bun run` does. Only a
 
 ## Error messages
 
-The class of an error and the lines in its stack trace are the same as under `bun run`. The paths in the stack trace start with `/$bunfs/root`. An uncaught error prints without the source excerpt that `bun run` shows above it.
+The class of an error and the lines in its stack trace are the same as under `bun run`. The paths in the stack trace are relative to the folder you ran the build in: `./src/server.ts:12:9`. `getFileName()` of a call site, which packages use to find files, returns the path that `import.meta.path` has. An uncaught error prints without the source excerpt that `bun run` shows above it.
 
 A message that quotes your code can differ. An executable quotes what you wrote, and leaves out functions and literals that span lines. `bun run` quotes what its transpiler printed.
 

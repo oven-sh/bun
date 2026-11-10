@@ -4,9 +4,12 @@
 // CHECK: module [[definer]] path="{{*}}definer.mjs"
 // CHECK: module [[taken]] path="{{*}}taken.mjs"
 // CHECK: module [[used]] path="{{*}}used.mjs"
-// CHECK: module {{*}}main.mjs" {{*}}requests=[{target=[[definer]] completes=true}, {target=[[taken]] completes=true}, {target=[[used]] completes=true}] exports=
+// CHECK: module {{*}}page.mjs" {{*}}requests=[{target=[[definer]] completes=true}, {target=[[taken]] completes=true}, {target=[[used]] completes=true}] positions=
 
 // FILE: main.mjs
+export { later } from "./page.mjs";
+
+// FILE: page.mjs
 import { a, taken } from "./index.mjs";
 import "./bare.mjs";
 import { unused } from "./bare.mjs";

@@ -144,28 +144,31 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
     600_000,
   );
 
-  test("a file of the user's that lies where the executable is written is what the program names", async () => {
+  test("an executable takes the place of no file of its program", async () => {
     await slot(async () => {
       const reads = `import data from "./app" with { type: "file" };\nconsole.log((await Bun.file(data).text()).trim());\n`;
-      using dir = tempDir("aot-the-file-at-the-outfile-is-meant", {
+      const files: Record<string, string> = {
         "beside/app.mjs": reads,
         "beside/app": "the data\n",
         "script/cli": `console.log("cli");\n`,
-      });
+      };
+      using dir = tempDir("aot-the-file-at-the-outfile-is-kept", files);
       const printed: string[] = [];
-      for (const [folder, entry, executable] of [
-        ["beside", "./app.mjs", "app"],
-        ["script", "./cli", "cli"],
+      for (const [folder, entry, name, role] of [
+        ["beside", "./app.mjs", "app", "part of the program"],
+        ["script", "./cli", "cli", "an entry point"],
       ]) {
         const directory = join(String(dir), folder);
-        built(
-          await spawned(
-            [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", entry],
-            directory,
-            bunEnv,
-          ),
-        );
-        const ran = await spawned([join(directory, isWindows ? executable + ".exe" : executable)], directory, bunEnv);
+        const command = [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", entry];
+        // The default path ends with ".exe" on Windows.
+        if (!isWindows) {
+          const refused = await spawned(command, directory, bunEnv);
+          expect(refused.stderr).toContain(`error: the executable would overwrite ${name}, which is ${role}.`);
+          expect(refused.exitCode).toBe(1);
+        }
+        built(await spawned([...command, "--outfile", "out"], directory, bunEnv));
+        expect(readFileSync(join(directory, name), "utf8")).toBe(files[`${folder}/${name}`]);
+        const ran = await spawned([join(directory, isWindows ? "out.exe" : "out")], directory, bunEnv);
         printed.push(ran.stdout.trim());
       }
       expect(printed).toEqual(["the data", "cli"]);

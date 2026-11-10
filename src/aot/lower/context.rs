@@ -12,7 +12,7 @@ use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_esca
 use bun_core::strings::{CodepointIterator, Cursor};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, SymbolId};
-use bun_sema::check::aot::{BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
+use bun_sema::check::aot::{AliasMentions, BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
 use bun_sema::erasure::{ReplacedText, TypeRanges};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
@@ -54,6 +54,7 @@ use crate::modules::{CommonJsExports, KnownMemberValues, KnownObjects, ModuleGra
 use crate::options::RemovableOptions;
 use crate::statistics::{LimitId, LimitValues};
 
+pub(in crate::lower) use self::function::CreatedRequire;
 pub(crate) use self::function::FunctionLowering;
 
 pub(super) fn regexp_pattern_as_printed(written: &[u8]) -> Cow<'_, [u8]> {
@@ -150,6 +151,7 @@ pub struct LoweringInputs<'a> {
     pub limits: &'a LimitValues,
     pub options: LoweringOptions,
     pub said_types: &'a SaidTypes,
+    pub alias_mentions: &'a AliasMentions,
 }
 
 impl<'a> LoweringInputs<'a> {
@@ -170,6 +172,7 @@ impl<'a> LoweringInputs<'a> {
             checked_elsewhere: &[],
             builtin_types: self.builtin_types,
             named_values: self.named_values,
+            alias_mentions: Some(self.alias_mentions),
             max_inference_nodes: self.limits.get(LimitId::MaxInferenceNodes),
             limits: self.limits.for_queries(),
         }
@@ -211,6 +214,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) stores_by_name_in_lists: RefCell<FxHashMap<u32, StoresByNameInList>>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
+    pub(in crate::lower) namespaces_with_two_tables: RefCell<FxHashMap<SymbolId, bool>>,
     pub(in crate::lower) names_word_that_mock_looks_for: Option<bool>,
     pub(in crate::lower) ranges_of_types: OnceCell<TypeRanges>,
     pub(in crate::lower) statements_that_nest: OnceCell<StatementsThatNest>,
@@ -325,6 +329,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             stores_by_name_in_lists: RefCell::default(),
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             enum_member_reads: FxHashMap::default(),
+            namespaces_with_two_tables: RefCell::default(),
             names_word_that_mock_looks_for: None,
             ranges_of_types: OnceCell::new(),
             statements_that_nest: OnceCell::new(),

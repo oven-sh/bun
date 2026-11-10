@@ -996,7 +996,10 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         self.certainty = ReferentCertainty::Expected;
         match loaded {
             LoadedValue::Namespace(module) => Step::Linked(LinkedBinding::Namespace(module)),
-            LoadedValue::DefaultExport(file) => self.step_default_export(file),
+            LoadedValue::DefaultExport(file) => {
+                self.follows_stored_members = true;
+                self.step_default_export(file)
+            }
             LoadedValue::ModuleExports(file) => self.step_module_exports(file),
         }
     }

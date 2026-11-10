@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function half(x: number): number { return (x | 0) / 2; }
+# const given: number[] = JSON.parse("[1, 2.5, -3]");
+# for (const x of given) print(half(x));
+# -- end of source
+# An integer becomes a number without a zeroing in front where nothing has written the register shortly before.
+# REQUIRES: x86_64
+# RUN: bytes f1 mechanisms=all-Inlining
+# CHECK: unit f1:Body
+# CHECK-NEXT: size=35 frame=0@24-31
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: 0.5
+# SHELL-NEXT: 1
+# SHELL-NEXT: -1.5

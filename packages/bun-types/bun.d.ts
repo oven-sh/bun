@@ -4069,7 +4069,7 @@ declare module "bun" {
      *
      * - `"proof-checks"`: check the type that the compiler has proven of a value again at each read,
      *   and check again what the compiler remembers from earlier code. Objects stay on the heap, not
-     *   on the stack.
+     *   on the stack. The build also runs the compiler's own verifier.
      * - `"ignore-told-ranges"`: check every index against the length, where the index is used.
      *
      * A check that fails aborts the process.

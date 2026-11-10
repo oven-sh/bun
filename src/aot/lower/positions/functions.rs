@@ -1,5 +1,5 @@
 use bun_sema::atom::known;
-use bun_sema::bind::{Binding, BindingInitializer, CodeUnit, FnOwner, Parent};
+use bun_sema::bind::{Binding, BindingInitializer, CodeUnit, FnOwner, Parent, SymbolId};
 use bun_sema::check::aot::{
     ClassRef, FunctionRef, GaveUp, PositionTypes, ShapeKind, SignatureShape, WrittenType,
 };
@@ -204,6 +204,11 @@ fn compute_this_position(
     if let Some(layout) = find_layout_whose_prototype_holds(file, source.function) {
         return expect_type(file.fragment.types.intern_layout(layout));
     }
+    if let Some(constructor) = file.queries.find_constructor_of_prototype_function(source)
+        && let Some(layout) = find_layout_made_by(file, constructor)
+    {
+        return expect_type(file.fragment.types.intern_layout(layout));
+    }
     if let Some(layout) = file.constructor_function_layout(source)
         && file
             .queries
@@ -266,7 +271,15 @@ fn find_layout_whose_prototype_holds(
     let Binding::Symbol(symbol) = bound.binding(obj) else {
         return None;
     };
-    let constructor = match bound.binding_initializer(hir, symbol) {
+    find_layout_made_by(file, symbol)
+}
+
+fn find_layout_made_by(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    constructor: SymbolId,
+) -> Option<LayoutId> {
+    let (hir, bound) = (file.hir, file.bound);
+    let constructor = match bound.binding_initializer(hir, constructor) {
         BindingInitializer::Class(class) => return Some(file.own_class_layout(class)),
         BindingInitializer::Function(constructor) => constructor,
         BindingInitializer::Expression(initializer) => match hir[initializer].kind {

@@ -1,9 +1,9 @@
-# The close of a loop that breaks calls `return` of the program's iterator WITHOUT AN ARGUMENT. Link lists that call at the IteratorClose, and the walk builds the operation as a direct call of a function of the library,
-# which makes the call of `return`. If the call that was built counted for the call that is listed, nothing would be left for the method there, and its parameter would be proven what the one call by hand passes: a number.
+# The close of a loop that breaks calls `return` of the program's iterator WITHOUT AN ARGUMENT. Link lists that call at the IteratorClose, and the walk builds the operation as a direct call of the method where the method is in sight (of a function of the library otherwise),
+# without an argument. If the call that was built counted for the call that is listed as it is written by hand, nothing would be left for the method there, and its parameter would be proven what the one call by hand passes: a number.
 # class Countdown { .. return(reason) { console.log(typeof reason); .. } }   for (const left of new Countdown(from)) { .. break; }   countdown.return(7)
 # RUN: walk f1 f2 f6 mechanisms=none+TypedOperations+DirectCalls+Arrivals
 # CHECK-LABEL: code f1:Body
-# CHECK: = CallDirect {{*}}function=f8
+# CHECK: = CallDirect {{*}}function=f6
 # CHECK-LABEL: code f2:Body
 # CHECK: = CallDirect {{*}}function=f6
 # CHECK-LABEL: code f6:Body

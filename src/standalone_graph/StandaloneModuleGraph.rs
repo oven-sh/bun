@@ -185,8 +185,21 @@ pub fn target_base_public_path(
 }
 
 pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
+    if cfg!(windows) {
+        return has_prefix_ignoring_drive_case(str_, BASE_PATH.as_bytes())
+            || has_prefix_ignoring_drive_case(str_, BASE_PUBLIC_PATH.as_bytes());
+    }
     str_.starts_with(BASE_PATH.as_bytes())
-        || (cfg!(windows) && str_.starts_with(BASE_PUBLIC_PATH.as_bytes()))
+}
+
+/// Drive letters are case-insensitive on Windows.
+pub(crate) fn has_prefix_ignoring_drive_case(path: &[u8], base: &[u8]) -> bool {
+    match (path.split_first(), base.split_first()) {
+        (Some((drive, rest)), Some((base_drive, base_rest))) => {
+            drive.eq_ignore_ascii_case(base_drive) && rest.starts_with(base_rest)
+        }
+        _ => base.is_empty(),
+    }
 }
 
 pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
@@ -218,7 +231,7 @@ impl StandaloneModuleGraph {
         let name = normalize_file_key(name, &mut buf);
         self.files
             .get(name)
-            .or_else(|| self.files.get(&self.key_of_asset_named_at_root(name)?))
+            .or_else(|| self.files.get(&self.root_asset_key(name)?))
             .or_else(|| self.files.get(&self.key_of_file_above_root(name)?))
     }
 
@@ -296,9 +309,14 @@ impl StandaloneModuleGraph {
         let found = self.directory_key(name, &mut buf)?;
         let mut listed = self.list_folder(found, recursive);
         let others = self.find_folders_named_alike(name, found);
-        for folder in others.iter().flat_map(|it| &it.1) {
+        let (shared, folders) = others.unwrap_or_default();
+        for folder in &folders {
             let more = self.list_folder(folder, recursive);
-            let is_new = |entry: &(Box<[u8]>, bool)| !listed.iter().any(|it| it.0 == entry.0);
+            let is_new = |entry: &(Box<[u8]>, bool)| {
+                let below = |folder: &[u8]| [folder, b"/", &entry.0[..]].concat();
+                !listed.iter().any(|it| it.0 == entry.0)
+                    && self.is_named_at_root(&below(&shared), &below(folder))
+            };
             let more: Vec<_> = more.into_iter().filter(is_new).collect();
             listed.extend(more);
         }
@@ -381,7 +399,7 @@ impl StandaloneModuleGraph {
             return self.files.get_mut(name);
         }
         let key = self
-            .key_of_asset_named_at_root(name)
+            .root_asset_key(name)
             .or_else(|| self.key_of_file_above_root(name))?;
         self.files.get_mut(&key)
     }
@@ -403,7 +421,22 @@ fn keep_key_of_directory_with_code_alone(key: &[u8]) -> &'static [u8] {
 #[cfg(windows)]
 pub(crate) fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
     let input = strings::paths::without_nt_prefix::<u8>(name);
-    path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
+    let length = path::resolve_path::platform_to_posix_buf::<u8>(input, buf).len();
+    let length = normalize_windows_key(&mut buf[..length]);
+    &buf[..length]
+}
+
+/// Keys have an uppercase drive letter and no trailing separator. Returns the new length.
+#[cfg(any(windows, test))]
+pub(crate) fn normalize_windows_key(key: &mut [u8]) -> usize {
+    if let [drive, b':', ..] = key {
+        drive.make_ascii_uppercase();
+    }
+    let mut length = key.len();
+    while length > 3 && key[length - 1] == b'/' {
+        length -= 1;
+    }
+    length
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at

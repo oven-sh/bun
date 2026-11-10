@@ -221,17 +221,23 @@ impl Drop for WorkGuard<'_> {
 pub fn working_on(step: Step, path: &[u8]) -> WorkGuard<'_> {
     let started_at = milliseconds_now();
     let previous = CURRENT.replace(Some((step, core::ptr::from_ref(path), started_at)));
-    // A build that runs out of stack on this thread says so, and whoever says it needs a stack of its own.
-    #[cfg(unix)]
-    if STEP_OF_BUILD.load(Relaxed) != 0 {
-        let _ = AT_END_OF_THREAD.try_with(GivesRecordBack::ensure_signal_stack);
-    }
+    ensure_build_signal_stack();
     if let Some(record) = record_of_this_thread() {
         record.set(Some((step, path, started_at)));
     }
     WorkGuard {
         previous,
         path: PhantomData,
+    }
+}
+
+/// Gives this thread an alternate signal stack, so that a build that overflows the stack can report it. Does nothing
+/// outside a build.
+#[inline]
+pub fn ensure_build_signal_stack() {
+    #[cfg(unix)]
+    if STEP_OF_BUILD.load(Relaxed) != 0 {
+        let _ = AT_END_OF_THREAD.try_with(GivesRecordBack::ensure_signal_stack);
     }
 }
 

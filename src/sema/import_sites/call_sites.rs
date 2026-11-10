@@ -1,7 +1,8 @@
 use super::alternatives::{
-    AskedOfDataFiles, AskedOfOwnExports, Folder, WrittenNames, find_alternatives,
-    find_elements_of_list_that_nothing_changes, find_names_as_written, find_path_around_parameter,
-    find_texts_of_key, names_own_url,
+    AskedOfDataFiles, AskedOfOwnExports, FindingsOfFile, Folder, Found, UnknownValues,
+    WrittenNames, find_alternatives, find_elements_of_list_that_nothing_changes,
+    find_names_as_written, find_path_around_parameter, find_texts_of_key, find_worker_names,
+    names_own_url, writes_url_path,
 };
 use super::changed_files::{TextsOfFile, find_file_path_operands};
 use super::made_requires::{
@@ -12,7 +13,7 @@ use super::made_requires::{
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
     Alternatives, CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
-    ImportSpecifier, OwnUrlArgument, ResolvedForm, ResolvedFrom, ScanInputs,
+    ImportSpecifier, OwnUrlArgument, ResolvedForm, ResolvedFrom, ScanInputs, WorkerName,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{
@@ -686,20 +687,25 @@ pub fn is_name_read_by_transpiler(
             == Some(OwnRequire::OfFile)
 }
 
-pub fn is_name_written_out(hir: &File<'_>, name: ExprId) -> bool {
-    match hir[hir.skip_type_assertions(name)].kind {
-        ExprKind::String(_) => true,
-        ExprKind::Template { exprs } => hir.ids(exprs).next().is_none(),
-        ExprKind::Binary {
-            op: BinOp::Add,
-            left,
-            right,
-        } => is_name_written_out(hir, left) && is_name_written_out(hir, right),
-        ExprKind::Cond { branches, .. } => {
-            let Branches { yes, no } = hir.branches(branches);
-            is_name_written_out(hir, yes) && is_name_written_out(hir, no)
-        }
-        _ => false,
+pub fn is_name_written_out(hir: &File<'_>, mut name: ExprId) -> bool {
+    loop {
+        name = match hir[hir.skip_type_assertions(name)].kind {
+            ExprKind::String(_) => return true,
+            ExprKind::Template { exprs } => return hir.ids(exprs).next().is_none(),
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } if is_name_written_out(hir, right) => left,
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
+                if !is_name_written_out(hir, yes) {
+                    return false;
+                }
+                no
+            }
+            _ => return false,
+        };
     }
 }
 
@@ -718,6 +724,7 @@ fn read_path_given_to_create_require(
         &asked,
         given,
         Folder::OfFile,
+        None,
         None,
         None,
     )
@@ -837,7 +844,16 @@ fn find_folders_listed_under(
     let folders = hir.ids(folders).map(|folder| {
         let asked = AskedOfDataFiles::default();
         let from = Folder::OfFile;
-        let found = find_alternatives(inputs, written_names, &asked, folder, from, None, None)?;
+        let found = find_alternatives(
+            inputs,
+            written_names,
+            &asked,
+            folder,
+            from,
+            None,
+            None,
+            None,
+        )?;
         match (
             &found.alternatives[..],
             found.start_at_own_directory,
@@ -854,7 +870,7 @@ pub(super) struct ScannedCalls {
     pub(super) alternatives: Vec<ImportSpecifier>,
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
-    pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
+    pub(super) names_of_workers: Vec<WorkerName>,
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
     pub(super) module_relative_reads: Vec<(ExprId, Atom)>,
     pub(super) caller_relative_reads: Vec<CallerRelativeRead>,
@@ -1053,7 +1069,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     paths_given_to_create_require.dedup();
     alternatives.paths_from_own_directory.shared_sort_unstable();
     alternatives.answers_of_resolvers.shared_sort_unstable();
-    names_of_workers.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
+    names_of_workers.shared_sort_unstable_by_key(|it: &WorkerName| it.argument);
     keys_stored_in_caches.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
     exported_file_changers
         .shared_sort_unstable_by_key(|it| (it.export.0, it.place, it.reaches_below));
@@ -1249,7 +1265,7 @@ fn find_name_of_worker(
     inputs: &ScanInputs<'_, '_>,
     construction: ExprId,
     alternatives: &mut FoundAlternatives,
-) -> Option<(ExprId, ImportSpecifier)> {
+) -> Option<WorkerName> {
     let &ScanInputs {
         hir,
         bound,
@@ -1265,12 +1281,72 @@ fn find_name_of_worker(
         return None;
     }
     let argument = hir.ids(hir[call].args).next()?;
-    let specifier = call_specifier(inputs, argument, alternatives);
+    let mut specifier = call_specifier(inputs, argument, alternatives);
+    let is_on_trust = specifier == ImportSpecifier::Unknown;
+    if is_on_trust {
+        specifier = find_known_worker_names(inputs, argument, alternatives);
+    }
+    if let ImportSpecifier::OneOf(Alternatives { first, count }) = specifier
+        && find_url_name(hir, argument)
+            .is_some_and(|name| writes_url_path(inputs, &alternatives.written_names, name))
+    {
+        let known = &alternatives.found[first as usize..][..count as usize];
+        let found = [known, &[ImportSpecifier::Unknown]].concat();
+        let first = alternatives.found.len() as u32;
+        let count = found.len() as u32;
+        alternatives.found.extend(found);
+        specifier = ImportSpecifier::OneOf(Alternatives { first, count });
+    }
     let is_known_in_part = matches!(
         specifier,
         ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_)
     );
-    is_known_in_part.then_some((argument, specifier))
+    is_known_in_part.then_some(WorkerName {
+        argument,
+        name: specifier,
+        is_on_trust,
+    })
+}
+
+fn find_url_name(hir: &File<'_>, argument: ExprId) -> Option<ExprId> {
+    let mut e = argument;
+    loop {
+        e = hir.skip_type_assertions(e);
+        e = match expr_kind(hir, e)? {
+            ExprKind::Ident(_) => return Some(e),
+            ExprKind::Dot { obj, .. } => obj,
+            ExprKind::Call(call) if hir[call].args.len() == 1 => hir.id_at(hir[call].args, 0),
+            _ => return None,
+        };
+    }
+}
+
+fn find_known_worker_names(
+    inputs: &ScanInputs<'_, '_>,
+    argument: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> ImportSpecifier {
+    let find = |unknown_values| {
+        find_worker_names(
+            inputs,
+            &alternatives.written_names,
+            &alternatives.data_file_queries,
+            argument,
+            unknown_values,
+            &alternatives.findings,
+        )
+    };
+    let unknown = ImportSpecifier::Unknown;
+    let whole = find(UnknownValues::Reject);
+    let is_whole = whole.is_some() && !inputs.bound.writes_import_meta_path();
+    let Some(mut found) = whole.or_else(|| find(UnknownValues::Skip)) else {
+        return unknown;
+    };
+    if !is_whole {
+        found.alternatives.push(unknown);
+    }
+    found.is_from_data_file = false;
+    record_alternatives(inputs, argument, unknown, found, alternatives)
 }
 
 fn is_ordinary_builtin_call(site: &ImportSite) -> bool {
@@ -1357,6 +1433,7 @@ struct FoundAlternatives {
     paths_from_own_directory: Vec<ExprId>,
     answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     written_names: WrittenNames,
+    findings: FindingsOfFile,
     data_file_queries: AskedOfDataFiles,
     other_file_queries: AskedOfDataFiles,
     own_export_queries: AskedOfOwnExports,
@@ -1418,6 +1495,7 @@ fn find_specifier(
         Folder::OfFile,
         reads_other_files.then_some(&alternatives.other_file_queries),
         Some(&alternatives.own_export_queries),
+        Some(&alternatives.findings),
     );
     let is_followed = found.as_ref().is_some_and(|found| {
         let mut names = found.alternatives.iter();
@@ -1431,6 +1509,16 @@ fn find_specifier(
     let Some(found) = found else {
         return folded;
     };
+    record_alternatives(inputs, argument, folded, found, alternatives)
+}
+
+fn record_alternatives(
+    inputs: &ScanInputs<'_, '_>,
+    argument: ExprId,
+    folded: ImportSpecifier,
+    found: Found,
+    alternatives: &mut FoundAlternatives,
+) -> ImportSpecifier {
     if found.is_from_data_file {
         let names = found.alternatives.iter().filter_map(|it| match *it {
             ImportSpecifier::Constant(name) => Some((name, argument, false)),
@@ -1675,6 +1763,7 @@ fn find_path_below_working_directory(
         path,
         folder,
         of_other_files,
+        None,
         None,
     )?;
     if !found.start_at_own_directory || found.is_from_data_file {

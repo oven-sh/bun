@@ -220,19 +220,7 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
     ("unlikely");
     return initializeProxyReceiver(this, opts);
   }
-  let hasNoTableOfItsOwn = this._events === undefined;
-  if (!hasNoTableOfItsOwn) {
-    let holder: object | null = CAN_REPLACE_BUILT_INS ? null : this;
-    while (holder !== null && !$isProxyObject(holder) && !Object.hasOwn(holder, "__proto__")) {
-      holder = $getPrototypeOf(holder);
-      if (holder === Object.prototype) break;
-    }
-    hasNoTableOfItsOwn =
-      holder === Object.prototype && this !== Object.prototype
-        ? this._events === ($getPrototypeOf(this) as any)._events
-        : this._events === (this as any).__proto__._events;
-  }
-  if (hasNoTableOfItsOwn) {
+  if (this._events === undefined || this._events === (this as any).__proto__._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;
@@ -413,7 +401,12 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
   }
   // Compiled ahead of time, the loop is a function of its own, so that what is left is small enough to go where it is called.
   // In `bun run` that is one more call for every event with several listeners, a sixth more in the interpreter.
-  if (IS_COMPILED_AHEAD_OF_TIME) return emitToEach(this, handler, handler.length, args);
+  // With one argument or two no list of them is made.
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    const count = args.length;
+    if (count > 2) return emitToEach(this, handler, handler.length, args);
+    return emitFewToEach(this, handler, handler.length, count, args[0], args[1]);
+  }
   // No defensive clone: stored arrays are never mutated in place (mutators
   // install a copy), so this list stays stable for the whole loop even if a
   // listener adds/removes listeners.
@@ -441,6 +434,22 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
 };
 
 // The loop of emit() once more, for an executable that was compiled ahead of time. It takes the place of emit() in a stack trace, under its name.
+const emitFewToEach = function emit(
+  emitter: $Node.EventEmitter,
+  listeners: $Node.Listener[],
+  length: number,
+  count: number,
+  first: unknown,
+  second: unknown,
+): boolean {
+  for (let i = 0; i < length; i += 1) {
+    const listener = listeners[i];
+    if (count === 1) listener.$call(emitter, first);
+    else if (count === 0) listener.$call(emitter);
+    else listener.$call(emitter, first, second);
+  }
+  return true;
+};
 const emitToEach = function emit(
   emitter: $Node.EventEmitter,
   listeners: $Node.Listener[],

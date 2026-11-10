@@ -1,10 +1,12 @@
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bstr::BStr;
 use bun_ast::{Loader, Loc};
+use bun_core::CodeGenerationFromStrings;
 use bun_core::strings::{contains_char, is_all_whitespace};
 use bun_paths::fs::PathName;
 use bun_paths::path_buffer_pool;
@@ -12,7 +14,7 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
-use bun_sema::hir::{self, ExprId, NodeData};
+use bun_sema::hir::{self, ExprId, File, NodeData};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -48,6 +50,7 @@ use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
 use crate::load::externals::{contains, is_external};
+use crate::load::import_functions;
 use crate::load::import_meta_glob;
 use crate::load::is_host_path;
 use crate::load::loaders::{
@@ -176,9 +179,11 @@ pub(crate) struct LoadHost<'a> {
     has_found_entry_points: AtomicBool,
     files_of_packages_that_worker_may_start: Guarded<Vec<Vec<u8>>>,
     may_store_path_of_main_module: AtomicBool,
+    may_start_workers: AtomicBool,
     has_file_that_asks_for_what_unseen_code_finds: AtomicBool,
     levels_above_root: AtomicUsize,
     levels_of_texts: Guarded<FxHashMap<Vec<u8>, usize>>,
+    data_urls_in_program: Guarded<BTreeSet<Vec<u8>>>,
     holds_texts_of_levels: AtomicBool,
     highest_level_named: AtomicUsize,
     file_lost_with_texts_of_other_levels: Guarded<Option<Vec<u8>>>,
@@ -336,6 +341,10 @@ impl<'a> LoadHost<'a> {
         Some(path)
     }
 
+    pub(crate) fn data_urls_in_program(&self) -> Vec<Vec<u8>> {
+        self.data_urls_in_program.lock().iter().cloned().collect()
+    }
+
     pub(crate) fn begin_at(&self, entry_points: &[Vec<u8>]) {
         let paths = collect_entry_point_paths(self.disk, self.input.options, entry_points);
         self.has_found_entry_points
@@ -399,8 +408,10 @@ impl<'a> LoadHost<'a> {
             has_found_entry_points: AtomicBool::new(false),
             files_of_packages_that_worker_may_start: Guarded::new(Vec::new()),
             may_store_path_of_main_module: AtomicBool::new(false),
+            may_start_workers: AtomicBool::new(options.aot.loads_code_from_disk),
             levels_above_root: AtomicUsize::new(0),
             levels_of_texts: Guarded::new(FxHashMap::default()),
+            data_urls_in_program: Guarded::new(BTreeSet::new()),
             holds_texts_of_levels: AtomicBool::new(false),
             highest_level_named: AtomicUsize::new(provider.highest_asset_level()),
             file_lost_with_texts_of_other_levels: Guarded::new(None),
@@ -1048,6 +1059,22 @@ impl LoadHost<'_> {
         change
     }
 
+    fn write_import_functions<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        hir: &mut File<'s>,
+        source: &ParsedSource,
+    ) -> TreeChange {
+        let code_from_strings = self.input.options.aot.code_generation_from_strings;
+        match source.kind == SourceKind::Program
+            && code_from_strings == CodeGenerationFromStrings::Allowed
+        {
+            true => import_functions::write_import_functions(arena, atoms, hir),
+            false => TreeChange::Unchanged,
+        }
+    }
+
     fn compile_components_and_expand_globs<'s>(
         &self,
         arena: &'s Arena,
@@ -1269,6 +1296,24 @@ impl CodeHost for LoadHost<'_> {
                 needs_extension,
                 path: path.to_vec(),
             });
+    }
+
+    fn create_module_from_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
+        let options = &self.input.options;
+        if options.load.runs_tests || options.aot.runs_in_place {
+            return None;
+        }
+        let text = EntryText {
+            name: url.to_vec(),
+            contents: self.input.provider.decode_data_url(url)?,
+            loader: self.input.provider.data_url_loader(url)?,
+        };
+        if text.loader == Loader::Json {
+            return Some(self.plugins.add_entry_text(&text, None));
+        }
+        let path = self.begin_at_text_of_blob(&text, None)?;
+        self.data_urls_in_program.lock().insert(text.name);
+        Some(path)
     }
 
     fn create_file_of_database(&self, specifier: &[u8]) -> Option<Vec<u8>> {
@@ -1499,6 +1544,10 @@ impl CodeHost for LoadHost<'_> {
 
     fn may_any_file_become_main_module(&self) -> bool {
         self.may_store_path_of_main_module.load(Ordering::Relaxed)
+    }
+
+    fn may_start_workers(&self) -> bool {
+        self.may_start_workers.load(Ordering::Relaxed)
     }
 
     fn loader_of_code_in_place_of_typed_file(&self, path: &[u8]) -> Option<HostLoader> {
@@ -1748,6 +1797,7 @@ impl CodeHost for LoadHost<'_> {
             return false;
         }
         let source = parsed_source_mut(payload);
+        self.write_import_functions(arena, atoms, request.hir, source);
         self.compile_components_and_expand_globs(arena, atoms, request, source);
         true
     }
@@ -1763,6 +1813,9 @@ impl CodeHost for LoadHost<'_> {
         if source.kind == SourceKind::Program
             && made_own_require::keep_own_require(request) == TreeChange::Changed
         {
+            return TreeChange::ChangedAndUnfinished;
+        }
+        if self.write_import_functions(arena, atoms, request.hir, source) == TreeChange::Changed {
             return TreeChange::ChangedAndUnfinished;
         }
         let runs_tests = self.input.options.load.runs_tests;
@@ -1816,6 +1869,7 @@ impl CodeHost for LoadHost<'_> {
         let write_url =
             |text: &[u8], base: Option<&[u8]>| self.input.provider.write_url(text, base);
         let scan = ScanInput {
+            builtin_names: self.input.builtin_names,
             runtime_modules: self.input.runtime_modules,
             runs_tests: load.runs_tests,
             loads_code_from_disk: self.input.options.aot.loads_code_from_disk,
@@ -1826,6 +1880,13 @@ impl CodeHost for LoadHost<'_> {
             write_url: &write_url,
         };
         source.contents = scan_file(request, &source.builtins, &scan);
+        let builtins = &source.builtins;
+        let starts_workers = source.contents.names_worker_constructor
+            || builtins.mentions_evaluator()
+            || builtins.exposes_global_object();
+        if starts_workers {
+            self.may_start_workers.store(true, Ordering::Relaxed);
+        }
         if scan.runs_tests {
             source.of_run = crate::test_runs::look_at_file_of_run(request, &source.builtins, &scan);
         }

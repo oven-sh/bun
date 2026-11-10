@@ -1071,6 +1071,10 @@ impl<'s> Program<'s> {
             unrelated_classes: Default::default(),
             grown_unions: Default::default(),
             unions_less_a_member: Default::default(),
+            unions_without_member: Default::default(),
+            subsets_of_unions: Default::default(),
+            have_same_members: Default::default(),
+            unions_of_large_unions: Default::default(),
             grown_signatures: Default::default(),
             union_members_compared: 0,
             union_calls: Default::default(),
@@ -1898,6 +1902,14 @@ pub struct Checker<'p, 's> {
     unrelated_classes: unions::UnrelatedClasses,
     grown_unions: FxHashMap<TypeId, unions::Growth>,
     unions_less_a_member: FxHashMap<TypeId, unions::Loss>,
+    /// The rest of a union by the union and the member that was removed.
+    unions_without_member: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// `isTypeSubsetOfUnion` of unions of `unions::MANY_MEMBERS` or more.
+    subsets_of_unions: FxHashMap<(TypeId, TypeId), bool>,
+    /// Whether two different unions of `unions::MANY_MEMBERS` or more have the same members.
+    have_same_members: FxHashMap<(TypeId, TypeId), bool>,
+    /// `unionOfUnionTypes`, for `UnionReductionLiteral`, where one of the two has `unions::MANY_MEMBERS` or more: the lower id first.
+    unions_of_large_unions: FxHashMap<(TypeId, TypeId), TypeId>,
     /// The same for the signature of a union of function types: the signature that combines one fewer, and the one more.
     grown_signatures: FxHashMap<SigId, (SigId, SigId)>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.

@@ -29,7 +29,7 @@ use bun_sema::atom::known;
 use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::check::Checker;
 use bun_sema::check::aot::{
-    DiagnosticClass, Effect, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
+    AliasMentions, DiagnosticClass, Effect, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
 };
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::import_sites::ImportSiteKind;
@@ -1043,6 +1043,7 @@ impl Build<'_> {
             limits: &self.limits,
             options: self.lowering_options(),
             said_types: &SaidTypes::default(),
+            alias_mentions: &AliasMentions::new(files.modules.len()),
         });
     }
 }

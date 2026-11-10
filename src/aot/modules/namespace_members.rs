@@ -457,7 +457,10 @@ impl FileBinder<'_, '_> {
                     return self.imports.unread_sites.push((call, false));
                 }
             }
-            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
+            Parent::Stmt(statement)
+                if matches!(hir[statement].kind, StmtKind::Expr(_))
+                    && !self.context.tables.commonjs.is_replaced_late(site.target) =>
+            {
                 return self.imports.unread_sites.push((call, true));
             }
             _ => {}

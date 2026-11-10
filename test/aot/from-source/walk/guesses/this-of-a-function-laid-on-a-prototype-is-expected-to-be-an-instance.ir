@@ -10,6 +10,7 @@
 # Scale.prototype.tick = function weigh(by) { this.total += by + this.step; return this; };
 # const box = {};
 # box['k' + [].length] = [new Meter(1), new Fine(2), new Scale(3), { step: 4, total: 'a', tick: Meter.prototype.tick }];
+# globalThis['box' + [].length] = [box, Meter, Fine, Scale];
 # function turn(at, by) { return box.k0[at].tick(by).total; }
 # print(turn(0, 5), turn(1, 5), turn(2, 5), turn(3, 5));
 # -- end of source

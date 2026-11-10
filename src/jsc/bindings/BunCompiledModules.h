@@ -51,6 +51,9 @@ JSC::JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const WTF::String& p
 JSC::JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const WTF::String& path);
 // Whom the engine is to hear of as the asker of a require() that loads into `target`: JSC::AOT::ModuleRequesterScope. `written` is what the program can store over.
 WTF::String requesterForRequire(JSCommonJSModule* target, const WTF::String& written);
+// Called before and after require() and require.resolve() resolve a name. For importers from disk, files on disk take precedence over compiled ones. Null: nothing to restore.
+std::optional<bool> willResolveName(JSC::JSGlobalObject*, JSC::JSValue requirer);
+void didResolveName(JSC::JSGlobalObject*, bool previous);
 void didCreateRequire(JSC::VM&, JSC::CallFrame*, JSC::JSObject* require);
 void didCreateRequireOfCompiledModule(JSC::JSObject* require);
 // Who asks, by the key of the importing module in the loader.

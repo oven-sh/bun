@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use std::mem::take;
 
 use bun_ast::Loader;
-use bun_core::strings;
+use bun_core::{CodeGenerationFromStrings, strings};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::join_spill;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CodeUnit};
-use bun_sema::hir::{ExprKind, Flags, StmtKind};
+use bun_sema::hir::{ExprId, ExprKind, Flags, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedForm};
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files, NamingLoad};
 use bun_sema::resolve::{CodeHost, CodeOptions, Host, is_declaration_file_name, to_path};
@@ -47,7 +47,7 @@ pub(crate) enum FoundBecause {
 }
 
 impl FoundBecause {
-    fn is_for_worker(self) -> bool {
+    pub(crate) fn is_for_worker(self) -> bool {
         matches!(
             self,
             FoundBecause::StartsWorker | FoundBecause::MayStartWorker
@@ -339,6 +339,44 @@ fn count_as_sure(entry_points: &mut [(Vec<u8>, FoundEntryPoint)], key: &[u8]) {
             entry_point.because = FoundBecause::StartsWorker;
         }
     }
+}
+
+fn collect_named_workers(
+    files: &Files<'_>,
+    is_followed: impl Fn(Named) -> bool,
+) -> Vec<(FileId, ExprId)> {
+    let mut workers = Vec::new();
+    let mut compiled = files.compiled_files().iter();
+    let stores_path_of_parameter = compiled.any(|&file| {
+        parsed_source_in(files, file).is_some_and(|it| it.contents.stores_path_of_parameter)
+    });
+    for &file in files.compiled_files() {
+        let Some(source) = parsed_source_in(files, file) else {
+            continue;
+        };
+        let contents = &source.contents;
+        let loses_paths =
+            stores_path_of_parameter && files.bound(file).import_meta_may_be_modified();
+        let starts = contents.worker_starts.iter();
+        let starts = starts.filter(|start| start.place == PlaceOfName::Constructor);
+        let followed = starts.filter(|start| {
+            let mut names = files.analysis(file).alternatives_of(&start.name).iter();
+            let has_unknown_name = start.form != WorkerNameForm::OwnFile
+                && names.any(|name| *name == ImportSpecifier::Unknown);
+            !has_unknown_name
+                && !(start.is_on_trust && loses_paths)
+                && Mention::of_start(files, file, start)
+                    .is_some_and(|mention| is_followed(mention.named))
+        });
+        workers.extend(followed.map(|start| (file, start.at)));
+        let of_code = contents.known_code_workers.iter();
+        workers.extend(of_code.map(|&at| (file, at)));
+    }
+    workers
+}
+
+pub(crate) fn find_named_workers(files: &Files<'_>) -> Vec<(FileId, ExprId)> {
+    collect_named_workers(files, |_| true)
 }
 
 impl Mention {
@@ -693,6 +731,15 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 mentions.append(&mut self.mention_code_of_workers(code, found, levels, held));
             }
         }
+        if !self.is_strict() {
+            let urls = self.input.host.data_urls_in_program().into_iter();
+            mentions.extend(urls.map(|url| Mention {
+                named: Named::Url { url, levels: None },
+                because: FoundBecause::NamedByData,
+                started_at: None,
+                named_by: None,
+            }));
+        }
         if !self.input.options.load.runs_tests {
             let followed = find_files_followed_further_than_bundler(code).into_iter();
             mentions.extend(followed.map(|path| Mention {
@@ -712,6 +759,11 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         mentions
     }
 
+    fn is_strict(&self) -> bool {
+        let level = self.input.options.aot.code_generation_from_strings;
+        level == CodeGenerationFromStrings::Strict
+    }
+
     fn mention_code_of_workers(
         &self,
         code: &dyn CodeView<'_>,
@@ -719,6 +771,9 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         levels: Option<usize>,
         code_of_workers: CodeOfWorkers,
     ) -> Vec<Mention> {
+        if self.is_strict() {
+            return Vec::new();
+        }
         let CodeOfWorkers { urls, texts } = code_of_workers;
         let is_unread = |name: &[u8]| !found.urls_read.contains(&(name.to_vec(), levels));
         let urls = urls.into_iter().map(|url| code.atoms().bytes(url));
@@ -1353,7 +1408,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         mut self,
         files: &Files<'_>,
         written_count: usize,
-    ) -> Vec<FoundEntryPoint> {
+    ) -> (Vec<FoundEntryPoint>, Vec<(FileId, ExprId)>) {
         let found = take(self.found.get_mut());
         let told = found.entry_points.iter();
         let told: FxHashMap<&[u8], &FoundEntryPoint> = told
@@ -1374,12 +1429,30 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             })
             .collect();
         self.list_starts(files, &found, &keys, &mut entry_points);
+        let followed_workers = self.list_followed_workers(files, &found);
         if crate::statistics::logs_stages() {
             let of_workers = entry_points.iter();
             let of_workers = of_workers.filter(|it| it.because.is_for_worker());
             crate::test_run_report::say_load_goes_on(of_workers.count());
         }
-        entry_points
+        (entry_points, followed_workers)
+    }
+
+    fn list_followed_workers(
+        &self,
+        files: &Files<'_>,
+        found: &FoundSoFar,
+    ) -> Vec<(FileId, ExprId)> {
+        let begun_at = files.entry_points().iter();
+        let begun_at: FxHashSet<Vec<u8>> = begun_at
+            .map(|&file| self.key_of(files.module(file).file_name()))
+            .collect();
+        collect_named_workers(files, |named| match named {
+            Named::ByName(question) => (found.asked.get(&question))
+                .is_some_and(|keys| keys.iter().any(|key| begun_at.contains(key))),
+            Named::File { path, .. } => begun_at.contains(&self.key_of(&path)),
+            Named::Url { .. } | Named::Text { .. } => false,
+        })
     }
 
     fn list_starts(

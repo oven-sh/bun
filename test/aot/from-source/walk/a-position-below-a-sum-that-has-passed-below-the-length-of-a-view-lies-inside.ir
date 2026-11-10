@@ -8,8 +8,8 @@
 # BEYOND-COUNT-2: [keyIsIntegral, isInsideView]
 # BEYOND-COUNT-2: [keyIsIntegral]
 # RUN(ATMOST): walk f3:Body mechanisms=all
-# ATMOST-COUNT-2: [keyIsIntegral, isInsideView]
-# ATMOST-COUNT-1: [keyIsIntegral]
+# `at + 2 <= bytes.length - 1` does not admit the length: all three lie inside.
+# ATMOST-COUNT-3: [keyIsIntegral, isInsideView]
 # RUN(BELOW): walk f4:Body mechanisms=all
 # BELOW-NOT: isInsideView
 # RUN(SAID): run-in-shell mechanisms=all

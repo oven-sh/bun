@@ -440,17 +440,17 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
         // Both names read the same function.
         for (auto name : { "sql"_s, "postgres"_s }) {
             JSValue value = bunObject->getDirect(vm, Identifier::fromString(vm, name));
-            if (value && value.inherits<ProxyObject>())
+            if (Bun::isRemovedSQLFunction(value))
                 return value;
         }
-        return Bun::createRemovedFunction(bunObject->globalObject(), Bun::Feature::Sql, { "sql"_s, "Bun.sql"_s, 2, false });
+        return Bun::createRemovedSQLFunction(bunObject->globalObject(), "sql"_s, 2, false);
     }
     return checkedBunObjectValue(vm, bunObject, createBunSql);
 }
 static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
 {
     if (readsRemovedSql(bunObject)) [[unlikely]]
-        return Bun::createRemovedFunction(bunObject->globalObject(), Bun::Feature::Sql, { "SQL"_s, "Bun.SQL"_s });
+        return Bun::createRemovedSQLFunction(bunObject->globalObject(), "SQL"_s, 0, true);
     return checkedBunObjectValue(vm, bunObject, createBunSQLConstructor);
 }
 

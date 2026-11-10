@@ -20,6 +20,8 @@ pub mod StandaloneModuleGraph;
 pub mod compiled_program;
 mod executable_file;
 pub mod executable_request;
+#[cfg(not(windows))]
+pub use compiled_program::has_descriptors;
 pub use compiled_program::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput, CompiledProgramInput,
 };

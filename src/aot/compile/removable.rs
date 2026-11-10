@@ -73,6 +73,20 @@ impl Primitive {
     }
 }
 
+fn primitive_of_operator(op: BinOp, left: Primitive, right: Primitive) -> Primitive {
+    match (op, left, right) {
+        (BinOp::And | BinOp::Or, left, right) => left.merge(right),
+        (BinOp::Nullish, Primitive::Null | Primitive::Undefined, right) => right,
+        (BinOp::Nullish, Primitive::Unknown, _)
+        | (BinOp::Nullish, Primitive::Mixed, Primitive::Unknown) => Primitive::Unknown,
+        (BinOp::Nullish, left, _) => left,
+        (_, Primitive::String, _) | (_, _, Primitive::String) => Primitive::String,
+        (_, Primitive::BigInt, _) | (_, _, Primitive::BigInt) => Primitive::BigInt,
+        (_, left, right) if left.is_one_kind() && right.is_one_kind() => Primitive::Number,
+        _ => Primitive::Mixed,
+    }
+}
+
 fn is_read_without_code(builtin: BuiltinId, is_global: bool) -> bool {
     let entry = table::entry(builtin);
     match entry.kind {
@@ -158,6 +172,7 @@ pub(crate) struct Removable<'a, 's> {
     hoists_classes: bool,
     modules: Option<(&'a ModuleGraph, FileId)>,
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
+    settled_members: Cell<u32>,
     parents_above_long_chains: RefCell<FxHashMap<ExprId, Parent>>,
     is_value_taken: Cell<bool>,
     is_below_void: Cell<bool>,
@@ -192,6 +207,7 @@ impl<'a, 's> Removable<'a, 's> {
             hoists_classes: kind == Some(SourceKind::Program),
             modules: None,
             member_constants: RefCell::default(),
+            settled_members: Cell::new(0),
             parents_above_long_chains: RefCell::default(),
             is_value_taken: Cell::new(false),
             is_below_void: Cell::new(false),
@@ -372,19 +388,27 @@ impl<'a, 's> Removable<'a, 's> {
     }
 
     pub(crate) fn expression(&self, expression: ExprId) -> bool {
-        let hir = self.hir;
+        self.decided_expression(expression)
+            .unwrap_or_else(|| self.undecided_expression(expression))
+    }
+
+    fn decided_expression(&self, expression: ExprId) -> Option<bool> {
         let decisions = &self.analysis.decisions;
         if expression.is_none() || decisions.is_dead_expr(expression) {
-            return true;
+            return Some(true);
         }
         match decisions.decision(expression) {
-            Decision::Constant(_) | Decision::Data(_) => return true,
-            Decision::GlobalPath(_) | Decision::DeferredData => return false,
+            Decision::Constant(_) | Decision::Data(_) => return Some(true),
+            Decision::GlobalPath(_) | Decision::DeferredData => return Some(false),
             Decision::Unknown => {}
         }
-        if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
-            return true;
-        }
+        let is_constant =
+            !decisions.reads_member(expression) && self.find_constant(expression).is_some();
+        is_constant.then_some(true)
+    }
+
+    fn undecided_expression(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
         match hir[expression].kind {
             ExprKind::Ident(_) => self.identifier(expression),
             ExprKind::Template { exprs } => hir.ids(exprs).all(|substitution| {
@@ -695,7 +719,45 @@ impl<'a, 's> Removable<'a, 's> {
     }
 
     fn binary(&self, op: BinOp, left: ExprId, right: ExprId) -> bool {
-        let converts_nothing = match op {
+        self.with_value_taken(self.is_value_taken.get(), || {
+            self.binary_chain(op, left, right)
+        })
+    }
+
+    fn binary_chain(&self, mut op: BinOp, mut left: ExprId, mut right: ExprId) -> bool {
+        let mut outer: SmallVec<[(BinOp, ExprId, ExprId, bool); 2]> = SmallVec::new();
+        let is_innermost_removable = loop {
+            if !self.converts_nothing(op, left, right) {
+                return false;
+            }
+            outer.push((op, left, right, self.is_value_taken.get()));
+            if op == BinOp::Comma {
+                self.is_value_taken.set(false);
+            }
+            if let Some(is_removable) = self.decided_expression(left) {
+                break is_removable;
+            }
+            match self.hir[left].kind {
+                ExprKind::Binary {
+                    op: inner_op,
+                    left: inner_left,
+                    right: inner_right,
+                } => (op, left, right) = (inner_op, inner_left, inner_right),
+                _ => break self.undecided_expression(left),
+            }
+        };
+        is_innermost_removable
+            && outer.iter().rev().all(|&(op, left, right, is_taken)| {
+                self.is_value_taken.set(is_taken);
+                let is_guarded = matches!(op, BinOp::Or | BinOp::And)
+                    && self.is_guarded_free_name(right, left, op == BinOp::And);
+                !self.is_decided_by_member_read(left, &[right])
+                    && (is_guarded || self.expression(right))
+            })
+    }
+
+    fn converts_nothing(&self, op: BinOp, left: ExprId, right: ExprId) -> bool {
+        match op {
             BinOp::EqEqEq
             | BinOp::NotEqEq
             | BinOp::Comma
@@ -714,16 +776,7 @@ impl<'a, 's> Removable<'a, 's> {
                 ) && kind == self.primitive(right)
             }
             _ => false,
-        };
-        let is_guarded = matches!(op, BinOp::Or | BinOp::And)
-            && self.is_guarded_free_name(right, left, op == BinOp::And);
-        converts_nothing
-            && match op {
-                BinOp::Comma => self.with_value_taken(false, || self.expression(left)),
-                _ => self.expression(left),
-            }
-            && !self.is_decided_by_member_read(left, &[right])
-            && (is_guarded || self.expression(right))
+        }
     }
 
     fn is_decided_by_member_read(&self, test: ExprId, arms: &[ExprId]) -> bool {
@@ -990,13 +1043,14 @@ impl<'a, 's> Removable<'a, 's> {
         if let Some(&constant) = self.member_constants.borrow().get(&member) {
             return constant;
         }
-        for earlier in (0..=member.0).map(EnumMemberId) {
-            if self.member_constants.borrow().contains_key(&earlier) {
-                continue;
+        for earlier in (self.settled_members.get()..=member.0).map(EnumMemberId) {
+            if !self.member_constants.borrow().contains_key(&earlier) {
+                self.member_constants.borrow_mut().insert(earlier, None);
+                let constant = self.compute_member_constant(earlier);
+                self.member_constants.borrow_mut().insert(earlier, constant);
             }
-            self.member_constants.borrow_mut().insert(earlier, None);
-            let constant = self.compute_member_constant(earlier);
-            self.member_constants.borrow_mut().insert(earlier, constant);
+            let settled = self.settled_members.get().max(earlier.0 + 1);
+            self.settled_members.set(settled);
         }
         self.member_constants.borrow()[&member]
     }
@@ -1034,19 +1088,27 @@ impl<'a, 's> Removable<'a, 's> {
 
     fn enum_constant(&self, initializer: ExprId) -> Option<Primitive> {
         let hir = self.hir;
-        let initializer = hir.skip_type_assertions(initializer);
-        if let Some(literal) = self.literal(initializer) {
-            return matches!(literal, Primitive::Number | Primitive::String).then_some(literal);
-        }
         let is_number = |operand: ExprId| self.enum_constant(operand) == Some(Primitive::Number);
-        let is_folded = if let ExprKind::Unary { op, operand } = hir[initializer].kind {
-            matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot) && is_number(operand)
-        } else if let ExprKind::Binary { op, left, right } = hir[initializer].kind {
-            is_arithmetic(op) && is_number(left) && is_number(right)
-        } else {
-            false
-        };
-        is_folded.then_some(Primitive::Number)
+        let mut operand = hir.skip_type_assertions(initializer);
+        loop {
+            if let Some(literal) = self.literal(operand) {
+                let is_initializer = operand == hir.skip_type_assertions(initializer);
+                let is_constant =
+                    literal == Primitive::Number || literal == Primitive::String && is_initializer;
+                return is_constant.then_some(literal);
+            }
+            let innermost = match hir[operand].kind {
+                ExprKind::Unary {
+                    op: UnOp::Plus | UnOp::Minus | UnOp::BitNot,
+                    operand,
+                } => operand,
+                ExprKind::Binary { op, left, right } if is_arithmetic(op) && is_number(right) => {
+                    left
+                }
+                _ => return None,
+            };
+            operand = hir.skip_type_assertions(innermost);
+        }
     }
 
     fn primitive_of_either(&self, first: ExprId, second: ExprId) -> Primitive {
@@ -1061,12 +1123,46 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    fn primitive(&self, expression: ExprId) -> Primitive {
+    fn primitive(&self, mut expression: ExprId) -> Primitive {
         let hir = self.hir;
-        let expression = hir.skip_type_assertions(expression);
-        if let Some(literal) = self.literal(expression) {
-            return literal;
-        }
+        let decisions = &self.analysis.decisions;
+        let mut outer: SmallVec<[(BinOp, ExprId); 2]> = SmallVec::new();
+        let innermost = loop {
+            expression = hir.skip_type_assertions(expression);
+            if let Some(literal) = self.literal(expression) {
+                break literal;
+            }
+            let ExprKind::Binary { op, left, right } = hir[expression].kind else {
+                break self.primitive_of_operand(expression);
+            };
+            expression = match op {
+                BinOp::Comma => right,
+                BinOp::And | BinOp::Or if decisions.is_dead_expr(left) => right,
+                BinOp::And | BinOp::Or | BinOp::Nullish if decisions.is_dead_expr(right) => left,
+                BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Add => {
+                    outer.push((op, right));
+                    left
+                }
+                BinOp::EqEqEq
+                | BinOp::NotEqEq
+                | BinOp::EqEq
+                | BinOp::NotEq
+                | BinOp::Lt
+                | BinOp::Le
+                | BinOp::Gt
+                | BinOp::Ge
+                | BinOp::In
+                | BinOp::Instanceof => break Primitive::Boolean,
+                _ => break Primitive::Mixed,
+            };
+        };
+        outer.iter().rev().fold(innermost, |left, &(op, right)| {
+            primitive_of_operator(op, left, self.primitive(right))
+        })
+    }
+
+    fn primitive_of_operand(&self, expression: ExprId) -> Primitive {
+        let hir = self.hir;
         match hir[expression].kind {
             ExprKind::Null => Primitive::Null,
             ExprKind::True | ExprKind::False => Primitive::Boolean,
@@ -1091,41 +1187,7 @@ impl<'a, 's> Removable<'a, 's> {
                 },
                 UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => Primitive::Mixed,
             },
-            ExprKind::Binary { op, left, right } => self.primitive_of_binary(op, left, right),
             _ => Primitive::Unknown,
-        }
-    }
-
-    fn primitive_of_binary(&self, op: BinOp, left: ExprId, right: ExprId) -> Primitive {
-        match op {
-            BinOp::EqEqEq
-            | BinOp::NotEqEq
-            | BinOp::EqEq
-            | BinOp::NotEq
-            | BinOp::Lt
-            | BinOp::Le
-            | BinOp::Gt
-            | BinOp::Ge
-            | BinOp::In
-            | BinOp::Instanceof => Primitive::Boolean,
-            BinOp::And | BinOp::Or => self.primitive_of_either(left, right),
-            BinOp::Nullish if self.analysis.decisions.is_dead_expr(right) => self.primitive(left),
-            BinOp::Nullish => match (self.primitive(left), self.primitive(right)) {
-                (Primitive::Null | Primitive::Undefined, right) => right,
-                (Primitive::Unknown, _) | (Primitive::Mixed, Primitive::Unknown) => {
-                    Primitive::Unknown
-                }
-                (Primitive::Mixed, _) => Primitive::Mixed,
-                (left, _) => left,
-            },
-            BinOp::Add => match (self.primitive(left), self.primitive(right)) {
-                (Primitive::String, _) | (_, Primitive::String) => Primitive::String,
-                (Primitive::BigInt, _) | (_, Primitive::BigInt) => Primitive::BigInt,
-                (left, right) if left.is_one_kind() && right.is_one_kind() => Primitive::Number,
-                _ => Primitive::Mixed,
-            },
-            BinOp::Comma => self.primitive(right),
-            _ => Primitive::Mixed,
         }
     }
 }

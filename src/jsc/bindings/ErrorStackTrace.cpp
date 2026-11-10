@@ -311,6 +311,8 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
             m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->startOfExpression().line), OrdinalNumber::fromOneBasedInt(position->startOfExpression().column) };
             m_sourcePositionsState = SourcePositionsState::Calculated;
             m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode || frame.codeType() == JSC::EvalCode;
+            if (!JSC::AOT::FunctionDescription(frame.compiledFrame().function).isHelperOfCompiler())
+                m_compiledModule = position->source;
         }
         return;
 #endif
@@ -507,6 +509,12 @@ String externalSourceMapFileURL()
     return String(url);
 }
 
+String externalSourceMapDisplayPath()
+{
+    static const auto path = MAKE_STATIC_STRING_IMPL(AOT_BUILD_FOLDER_PREFIX "compiled.js");
+    return String(path);
+}
+
 String sourceURL(const JSC::AOT::SourcePosition& position)
 {
     if (position.source)
@@ -519,6 +527,15 @@ String sourceURL(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePositi
     if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
         return JSC::AOT::compilerHelpersModule;
     return sourceURL(position);
+}
+
+String displayPath(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosition& position)
+{
+    if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
+        return JSC::AOT::compilerHelpersModule;
+    if (position.source)
+        return JSC::AOT::displayPathOf(position.source);
+    return hasExternalSourceMap() ? externalSourceMapDisplayPath() : String();
 }
 #endif
 
@@ -540,6 +557,18 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 #endif
 
     return sourceURL(frame.codeBlock());
+}
+
+String displayPath(JSC::VM& vm, const JSC::StackFrame& frame)
+{
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame() && frame.hasLineAndColumnInfo()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position ? displayPath(frame.compiledFrame(), *position) : String();
+    }
+#endif
+
+    return sourceURL(vm, frame);
 }
 
 String sourceURL(JSC::StackVisitor& visitor)

@@ -97,11 +97,17 @@ impl Resolver<'_, '_> {
     fn may_have_hook_of_instanceof(&self, right: ExprId) -> bool {
         match self.hooks_of_instanceof_supposed.get() {
             HooksOfInstanceof::OnWhatIsNoBuiltin => {
-                !self.is_resolved(self.input.hir.skip_type_assertions(right))
+                let right = self.input.hir.skip_type_assertions(right);
+                !self.is_resolved(right) || self.is_own_exports(right)
             }
             HooksOfInstanceof::Nowhere => false,
             HooksOfInstanceof::Everywhere => true,
         }
+    }
+
+    fn is_own_exports(&self, e: ExprId) -> bool {
+        let value = self.value_of(e).or_else(|| self.held_value_of(e));
+        value.is_some_and(|value| value.path.id == BuiltinId::ModuleObjectExports)
     }
 
     pub(super) fn classify_use(&self, e: ExprId) -> MentionUse {
@@ -327,7 +333,8 @@ impl Resolver<'_, '_> {
                 if is_first
                     && self.input.runs_tests
                     && writes_on_first_operand(builtin)
-                    && !self.is_of_loader(operand) =>
+                    && !self.is_of_loader(operand)
+                    && !self.exposes_first_operand(call, builtin) =>
             {
                 MentionUse::Inspected
             }

@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function scaled(x: number): number { return (x + 0.1) * 1e300; }
+# const given: number[] = JSON.parse("[0.4, 2, -0.1]");
+# for (const x of given)
+#     print(scaled(x));
+# -- end of source
+# A double constant is one load off the instruction pointer. No register holds its address.
+# REQUIRES: x86_64
+# RUN: bytes f1 mechanisms=all-Inlining
+# CHECK: unit f1:Body
+# CHECK-NEXT: size=74 frame=0@53-71
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: 5e+299
+# SHELL-NEXT: 2.1e+300
+# SHELL-NEXT: 0

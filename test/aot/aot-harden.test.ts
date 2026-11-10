@@ -134,6 +134,9 @@ console.log(Math.min(...list), list.join(), list.length);
 // What an iteration reads of them is hoisted: it is read once, in the preheader.
 // Each program stays within memory that is still there: it reads no element, or it reads one at its old location, and it stores nothing.
 const asInFront = "--aot-testing=AssumeInvariantArrayStorage";
+// What --aot-harden=proof-checks lays into the program. The name also runs the compiler's verifier, which refuses some injected faults before there is a program to stop.
+const runTimeProofChecks =
+  "--aot-testing=CheckProofsAtRunTime,DisableFrameCells,CheckHoistedCallsAtRunTime,CheckResultFreshnessAtRunTime";
 const movedInTurns = [
   [
     "the length of a list that the turns shorten",
@@ -535,7 +538,7 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     "stops the program at %s, taken to be as in front of the loop",
     async (_, source) => {
       using folder = tempDir("aot-harden", { "program.ts": source });
-      await build(String(folder), ["--aot-harden=proof-checks", asInFront]);
+      await build(String(folder), [runTimeProofChecks, asInFront]);
       const { stdout, stderr, exitCode } = await runBuilt(String(folder));
       expect(stderr).toMatch(stopAtWhatWasReadInFront);
       expect(stdout).toBe("");
@@ -543,6 +546,13 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     },
     120_000,
   );
+
+  test("refuses the build where the verifier sees the fault", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": movedInTurns[1][1] });
+    const refused = await spawned(commandLine(["--aot-harden=proof-checks", asInFront]), String(folder));
+    expect(refused.stderr).toContain("OpcodeNotInForm");
+    expect(refused.exitCode).toBe(1);
+  }, 120_000);
 
   test("stops the program at a position that the library vouches for and that is false", async () => {
     using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
@@ -617,7 +627,7 @@ const storesByAnotherListsLength = [
   "a-store-by-another-lists-length-into-fractions.cjs",
   "a-store-by-another-lists-length-into-whole-numbers.cjs",
 ].flatMap(name =>
-  ["--aot-harden=proof-checks", "--aot-harden=ignore-told-ranges", "--aot-testing=CheckBoundsInEmittersOnly"].map(
+  [runTimeProofChecks, "--aot-harden=ignore-told-ranges", "--aot-testing=CheckBoundsInEmittersOnly"].map(
     word => [name, word] as const,
   ),
 );
@@ -636,6 +646,18 @@ describe.concurrent("a ground that is handed over unproven", () => {
       const { stderr, exitCode } = await runBuilt(String(folder));
       expect(stderr).toMatch(/^bun: internal AOT error: .+ check failed at \S+:\d+:\d+/m);
       expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
+
+  test.each(storesByAnotherListsLength.filter(row => row[1] === runTimeProofChecks))(
+    "%s is refused at the build under --aot-harden=proof-checks",
+    async name => {
+      using folder = tempDir("aot-harden", { "program.cjs": readFileSync(join(storedBelowSums, name), "utf8") });
+      const flags = ["--aot-harden=proof-checks", unprovenGround, "program.cjs", "--outfile", "built"];
+      const refused = await spawned([bunExe(), "build", "--compile", "--aot", ...flags], String(folder));
+      expect(refused.stderr).toContain("OpcodeNotInForm");
+      expect(refused.exitCode).toBe(1);
     },
     120_000,
   );
@@ -924,6 +946,7 @@ describe.concurrent("compile.aotHarden", () => {
         "--aot-testing=DisableFrameCells",
         "--aot-testing=CheckHoistedCallsAtRunTime",
         "--aot-testing=CheckResultFreshnessAtRunTime",
+        "--aot-check=VerifyEachStage",
       ],
     ],
     [

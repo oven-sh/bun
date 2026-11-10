@@ -22,12 +22,12 @@
 # print(raised(JSON.parse("3")));
 # print(mixed(JSON.parse("2")));
 # -- end of source
-# The loop of filter grows its target in the turn: it leans on the word that the loop fills only what is made here.
+# The loop of filter grows its target in the turn: it leans on the word that the loop fills only what is made here. Its callback takes any number, so the loop has a copy for int32s and one for fractions: two.
 # Both copies of map take the run whose slow stores stand behind the loop, so their turns write the storage of no list and need no such word: the list that `x => x + 1` fills is born for fractions; the list that the map of
 # mixed values fills is born without a kind, and its store takes the list as it finds it or refuses. (Before, that store was TryPutIndex, which may turn the list in the turn, and that loop was counted here too: 2.)
 # A count cannot tell a loop that needs the word no more from a loop that has lost its typed run: so the run over `prices` in the map of mixed values is pinned itself.
 # RUN(EVENT): compile VersionedLoopsFillingLocalArrays mechanisms=all
-# EVENT: statistic VersionedLoopsFillingLocalArrays 1
+# EVENT: statistic VersionedLoopsFillingLocalArrays 2
 # RUN(MIXED): walk f2 mechanisms=all
 # MIXED-LABEL: code f2:Body
 # MIXED: = HasArrayStorage {{*}}arrayStorage=Double

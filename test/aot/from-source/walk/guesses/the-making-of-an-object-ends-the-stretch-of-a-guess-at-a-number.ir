@@ -6,7 +6,6 @@
 # console.log(fresh(1, 2).name + String(fresh(2, 3).price));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: = NewObject
 # CHECK-NOT: = IsNotFrozen
 # CHECK-NOT: = FinishObject

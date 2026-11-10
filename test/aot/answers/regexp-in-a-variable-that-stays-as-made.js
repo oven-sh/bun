@@ -1,11 +1,9 @@
 // answers: with-library
 // # a RegExp in a variable stays as made: lastIndex is read and stored as ever, and what replace gives is iterated over as a text
 // # RUN(FORM): link variables
-// # REQUIRES(FORM): entries-of-bun
 // # FORM: variable g0 
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 10 of 10 of 10
 // # CHECK-NEXT: exited with 0
 const marks = /b/g;

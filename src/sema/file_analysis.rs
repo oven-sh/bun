@@ -13,8 +13,8 @@ use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
-    ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier, JsxImport,
-    JsxImportSet, JsxMode, ResolvedForm, ResolvedFrom,
+    ChangedPath, ExportedFileChanger, FileReadBesideCaller, ImportSite, ImportSiteKind,
+    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, OwnUrlHanded, ResolvedForm, ResolvedFrom,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -41,10 +41,16 @@ pub struct FileAnalysis<'s> {
     answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub paths_of_changed_files: &'s [ChangedPath],
+    pub paths_of_files_read: &'s [(ExprId, Atom)],
+    pub files_read_beside_callers: &'s [FileReadBesideCaller],
+    pub own_urls_handed: &'s [OwnUrlHanded],
     pub exported_file_changers: &'s [ExportedFileChanger],
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],
-    pub names_out_of_data_files: &'s [(Atom, ExprId)],
+    pub asked_of_own_exports: &'s [Atom],
+    pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
+    pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
+    pub options_of_resolves_with_unread_folders: &'s [ExprId],
     keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],

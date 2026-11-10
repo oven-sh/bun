@@ -1,0 +1,25 @@
+# A getter, a setter and a method are written in a literal (L1) that is handed out, so nothing is proven of their `this`. By their own text it is an object created below the literal, where one is created: L2, made by Object.create two steps below.
+# It is an expectation with its test, as `this` of a method of a class: the entry is guarded and the accesses are typed.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 cycle
+# CHECK-NEXT: parameter 0 expected=L2 declared
+# CHECK: function f3 cycle
+# CHECK-NEXT: parameter 0 expected=L2 declared
+# CHECK: function f4 cycle
+# CHECK-NEXT: parameter 0 expected=L2 declared
+# RUN(GETTER): walk f2 mechanisms=all
+# GETTER: b0(v0: L2?ParameterOfEscapedFunction
+# GETTER: = GetSlotOrUndefined v0 {{*}}key="_body" receivers=[L2] level=Expected
+# RUN(SETTER): walk f3 mechanisms=all
+# SETTER: = PutSlotOrAdd v0, v1 {{*}}key="_body" receivers=[L2] level=Expected
+# -- source: this-of-a-member-written-in-a-literal-is-expected-to-be-of-the-literal-or-created-below-it.js
+# const reply = {
+#   get body() { return this._body; },
+#   set body(value) { this._body = value; },
+#   describe(tag) { return tag + this._body; },
+# };
+# globalThis.kept = reply;
+# function App() { this.reply = Object.create(reply); }
+# App.prototype.create = function (value) { const made = Object.create(this.reply); made.body = value; return made; };
+# console.log(new App().create(1).describe("b"));
+# -- end of source

@@ -1,0 +1,36 @@
+# Behind a no to Dog the object is known as one of the kin that stands where it was made, and the kin decide every shape for the next question. Between the two questions a function out of sight lays a Bird below the prototype of Cat: what was known of where it stands has ended.
+# THE LIE, testing=ValuesAskedForClassesAreTakenToStandWhereTheyWereMade: the value is taken to stand where it was made whatever the state knows.
+# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) what the walk remembers of the cell is asked of the cell again, in front of the hold of the answer, or the process ends.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 22 23
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=ValuesAskedForClassesAreTakenToStandWhereTheyWereMade
+# WRONG: 22 22
+# WRONG-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=ValuesAskedForClassesAreTakenToStandWhereTheyWereMade,CheckProofsAtRunTime
+# HELD: AOT: f{{*}}what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# class Animal { n: number; constructor(n: number) { this.n = n; } }
+# class Dog extends Animal { bark(): number { return 1; } }
+# class Cat extends Animal { purr(): number { return 2; } }
+# class Bird extends Animal { sing(): number { return 3; } }
+# const lay: (object: object, above: object | null) => void = id((object: object, above: object | null): void => { Object.setPrototypeOf(object, above); });
+# const things: unknown[] = id([new Dog(1), new Cat(2), new Bird(3), new Dog(4), new Cat(5)]);
+# let turn = 0;
+# const deed: (thing: unknown) => void = id((thing: unknown): void => { if (turn === 1 && thing === things[2]) lay(thing as object, Cat.prototype); });
+# function cats(): number {
+#   let sum = 0;
+#   for (let i = 0; i < things.length; i++) {
+#     const thing = things[i];
+#     if (thing instanceof Dog) sum += 10;
+#     else { deed(thing); if (thing instanceof Cat) sum++; }
+#   }
+#   return sum;
+# }
+# const first = cats();
+# turn = 1;
+# print(first, cats());
+# -- end of source

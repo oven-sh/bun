@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function letters(words: string[]): number {
+#   let sum = 0;
+#   for (const word of words) { for (const letter of word) sum += letter.charCodeAt(0); }
+#   return sum;
+# }
+# sink(letters);
+# -- end of source
+# f1 = letters
+# `word` is what a step over `words` hands out: nothing is proven of it, and it is expected to be a text because the list is written to hold texts. The inner for-of tests it for a text; that test is asked
+# once in front of the inner loop and the loop is built twice, as it is for a parameter written `string`: the copy behind the passing test steps the text by index and asks nothing of `word` in its turns.
+# STATISTIC: LoopsOverTextsBuiltTwice >= 1
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=string

@@ -308,7 +308,8 @@ test("matches", () => { expect(yearOf("2026-10")).toBe("2026"); });`,
 import { expect, test } from "bun:test";
 import { pattern } from "./dates";
 test("only writes the pattern", () => { expect(pattern.flags).toBe(""); });`,
-    "f.test.ts": lastFile(`import "./dates";`),
+    // As in the case on a read that never ends, one collection is waited for before the one that counts.
+    "f.test.ts": lastFile(`import "./dates";\nBun.gc(true);\nawait Bun.sleep(1);`),
   });
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });

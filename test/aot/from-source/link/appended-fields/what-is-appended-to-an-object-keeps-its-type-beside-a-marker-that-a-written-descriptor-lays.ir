@@ -1,0 +1,17 @@
+# The marker makes the layout one that may gain a property, and that word stays. But nothing is gained that nobody names: the key is written, the descriptor lays a value, and the value comes to the name's own node. So what the stores lay under the other names is known.
+# -- source: what-is-appended-to-an-object-keeps-its-type-beside-a-marker-that-a-written-descriptor-lays.js
+# const tools = Object.freeze({ __proto__: null, twice(x) { return x * 2; }, half(x) { return x / 2; } });
+# const other = Object.freeze({ __proto__: null, size: 7, twice(x) { return x * 3; }, third(x) { return x / 3; } });
+# const box = {};
+# function run(n) { let s = 0; for (let i = 0; i < n; i++) s += box.tools.twice(i); return s; }
+# function show() { print(run(5), box.marked, box.count); }
+# function fill(b) { b.tools = tools; b.count = 3; Object.defineProperty(b, "marked", { value: true }); }
+# fill(box); show();
+# -- end of source
+# OPTIONS: check=FlowFixpoint
+# RUN: link fields mechanisms=all
+# CHECK: "marked" appended proven=true writers-known
+# CHECK: "tools" appended proven=L{{*}} writers-known
+# CHECK: "count" appended proven=i32 writers-known
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 20 true 3

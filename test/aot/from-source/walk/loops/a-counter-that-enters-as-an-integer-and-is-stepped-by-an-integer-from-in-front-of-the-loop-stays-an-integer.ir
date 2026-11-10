@@ -1,0 +1,27 @@
+# The marks of a sieve: `for (let j = i * 2; j <= limit; j += i) marked[j] = true`. The bound is a number, the counter enters as twice an int32 and is stepped by an int32 that stands in front of the loop.
+# The head's relation was held against the lesser of the bound and the greatest int32 only for a counter that enters as an int32 and is stepped by a written whole number: this one went round as a double,
+# was boxed for the key in every turn and asked again whether it is an int32: 22 instructions a turn.
+# Below that lesser bound the counter is an int32, with the step it has 33 bits: the head holds integers and the turn adds and compares integers.
+# fraction: a step with a fraction is no such step.
+# -- source: a-counter-that-enters-as-an-integer-and-is-stepped-by-an-integer-from-in-front-of-the-loop-stays-an-integer.ts
+# declare function hidden(): number;
+# declare function say(x: number): void;
+# function marks(limit: number): number { const marked: boolean[] = []; for (let i = 0; i <= limit; i++) marked.push(false); let count = 0;
+#   for (let i = 2; i <= limit; i++) { if (!marked[i]) { count++; for (let j = i * 2; j <= limit; j += i) marked[j] = true; } } return count; }
+# function fraction(limit: number): number { const marked: boolean[] = []; for (let i = 0; i <= limit; i++) marked.push(false); let count = 0;
+#   for (let i = 2; i <= limit; i++) { const step = i + 0.5; for (let j = i * 2; j <= limit; j += step) { marked[j] = true; count++; } } return count; }
+# say(marks(hidden())); say(marks(hidden())); say(marks(hidden())); say(fraction(hidden()));
+# -- end of source
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : int[4, 4294967294] @Int64) isInLoop=true isLoopHead=true
+# CHECK: = LessEq {{*}}form=Integers
+# CHECK: = PutArrayElement {{*}}[keyIsIntegral]
+# CHECK: : int[6, 4294967294] @Int64 = Add {{*}}form=Integers
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: : int[4, 4294967294] @Int64) isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell const all = [100, 30.5, 1, 20]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: 25
+# SHELL-NEXT: 10
+# SHELL-NEXT: 0
+# SHELL-NEXT: 23

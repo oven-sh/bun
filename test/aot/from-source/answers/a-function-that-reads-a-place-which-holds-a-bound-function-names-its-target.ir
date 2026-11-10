@@ -1,0 +1,84 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# function low(a) { return a & 15; }
+# const plus = add.bind(null);
+# let least = low.bind(null);
+# exports.shared = add.bind(null);
+# function overVariables(t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + plus(i, t) + least(i)) | 0; return s; }
+# function overParameter(bound, t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + bound(i, t)) | 0; return s; }
+# function overName(t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + exports.shared(i, t)) | 0; return s; }
+# function attempt(run, first, second) { try { return run(first, second); } catch (error) { return error.constructor.name; } }
+# print(overVariables(1), overParameter(plus, 1), overName(1));
+# least = swap(least, low, add);
+# exports.shared = swap(exports.shared, add, low);
+# print(attempt(overVariables, 2), outside(overParameter, plus, add, low), attempt(overName, 2));
+# -- end of source
+# f1 = add, f2 = low, f3 = overVariables, f4 = overParameter, f5 = overName, f6 = attempt
+# A bound function that is made in one function and called in a loop of another: out of a variable of the file, out of a parameter.
+# Link writes what is seen in the place: BoundFunction<add, never, never>. The walk takes it for an expectation and asks the cell: a bound function . no bound argument . its target a closure of add: and enters add.
+# A unit may mention only what its function names (LinkTables::mayBeMentionedBy): the reader of the place names the target that the type of the place writes, as it names a closure that the type writes.
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 
+# LINK: referrers f0, f3, f4
+# LINK: function f2 
+# LINK: referrers f0, f3
+# RUN(FORM3): walk f3 mechanisms=all
+# FORM3: = TypeTest {{*}}testedType=BoundFunction
+# FORM3: = HasNumberOfBoundArguments
+# FORM3: = GetWordOfBoundFunction
+# FORM3: = TypeTest {{*}}testedType=f1
+# RUN(FORM4): walk f4 mechanisms=all
+# FORM4: = TypeTest {{*}}testedType=BoundFunction
+# FORM4: = HasNumberOfBoundArguments
+# FORM4: = GetWordOfBoundFunction
+# FORM4: = TypeTest {{*}}testedType=f1
+# The shell lays whatever it likes into the places between the two runs, and calls overParameter itself, out of sight of Link, with the same.
+# RUN(NOTHING): run-in-shell swap = function (bound) { return bound; }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# NOTHING: 17 11 11
+# NOTHING-NEXT: 30 20 20
+# NOTHING-NEXT: exited with 0
+# RUN(CLOSURE): run-in-shell swap = function (bound, target) { return function (a, b) { return -target(a, b | 0); }; }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# CLOSURE: 17 11 11
+# CLOSURE-NEXT: 10 -20 -20
+# CLOSURE-NEXT: exited with 0
+# RUN(OTHERTARGET): run-in-shell swap = function (bound, target, other) { return other.bind(null); }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# OTHERTARGET: 17 11 11
+# OTHERTARGET-NEXT: 20 10 10
+# OTHERTARGET-NEXT: exited with 0
+# RUN(OTHERTHIS): run-in-shell swap = function (bound, target) { return target.bind({ }); }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# OTHERTHIS: 17 11 11
+# OTHERTHIS-NEXT: 30 20 20
+# OTHERTHIS-NEXT: exited with 0
+# RUN(COUNT): run-in-shell swap = function (bound, target) { return target.bind(null, 100); }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# COUNT: 17 11 11
+# COUNT-NEXT: 40 510 510
+# COUNT-NEXT: exited with 0
+# RUN(FIVE): run-in-shell swap = function (bound, target) { return target.bind(null, 1, 2, 3, 4, 5); }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# FIVE: 17 11 11
+# FIVE-NEXT: 25 15 15
+# FIVE-NEXT: exited with 0
+# RUN(TWICE): run-in-shell swap = function (bound) { return bound.bind(null); }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# TWICE: 17 11 11
+# TWICE-NEXT: 30 20 20
+# TWICE-NEXT: exited with 0
+# RUN(PROXY): run-in-shell swap = function (bound) { return new Proxy(bound, { }); }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# PROXY: 17 11 11
+# PROXY-NEXT: 30 20 20
+# PROXY-NEXT: exited with 0
+# RUN(NATIVE): run-in-shell swap = function () { return Math.abs; }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# NATIVE: 17 11 11
+# NATIVE-NEXT: 30 10 10
+# NATIVE-NEXT: exited with 0
+# RUN(TEXTS): run-in-shell swap = function (bound, target) { return function (a) { return "t" + a; }; }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# TEXTS: 17 11 11
+# TEXTS-NEXT: 0 0 0
+# TEXTS-NEXT: exited with 0
+# RUN(NUMBER): run-in-shell swap = function () { return 5; }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# NUMBER: 17 11 11
+# NUMBER-NEXT: TypeError TypeError TypeError
+# NUMBER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime swap = function (bound, target) { return target.bind(null, 100); }; outside = function (run, bound, target, other) { try { return run(swap(bound, target, other), 2); } catch (error) { return error.constructor.name; } };
+# CHECKED: 17 11 11
+# CHECKED-NEXT: 40 510 510
+# CHECKED-NEXT: exited with 0

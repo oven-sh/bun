@@ -408,6 +408,21 @@ fn object_that_a_call_answers_is_opened_where_the_answer_goes_on() {
 }
 
 #[test]
+fn a_spread_among_the_operands_of_a_writer_opens_the_built_in_in_front_of_it() {
+    for (source, holder) in [
+        ("Object.defineProperty(Date, ...use());", BuiltinId::Date),
+        ("Object.assign(Math, ...use());", BuiltinId::Math),
+        ("Reflect.set(JSON, ...use());", BuiltinId::JSON),
+        ("Reflect.deleteProperty(Math, ...use());", BuiltinId::Math),
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            let opened = case.resolved.opened_holders();
+            assert!(opened.contains(&holder), "{source}: {opened:?}");
+        });
+    }
+}
+
+#[test]
 fn reading_an_inherited_object_prototype_member_opens_the_holder() {
     for source in [
         "Date.constructor;",

@@ -1,0 +1,19 @@
+# Tagged gets `make` by a descriptor, and its class object leaves with the definition. `Other.make` goes Other, Function.prototype and finds nothing: the call throws, and what it would have handed over stays in sight.
+# -- source: main.js
+# class O { constructor() { this.x = 1; } }
+# class Other {}
+# class Tagged {}
+# Object.defineProperty(Tagged, "make", { value: (v) => { v.x = "text"; return 1; } });
+# const o = new O();
+# let said;
+# try { said = Other.make(o); } catch (error) { said = error.constructor.name; }
+# print(said, o.x + 1, Tagged.make(new Tagged()));
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field {{*}} "x" proven=i32
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: TypeError 2 1
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: TypeError 2 1
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: TypeError 2 1

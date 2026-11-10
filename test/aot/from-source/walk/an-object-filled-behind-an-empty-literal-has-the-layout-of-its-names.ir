@@ -1,0 +1,13 @@
+# `const N = {}` and then `N.a = 1; ..`: the literal writes NOTHING; its names come from the stores behind it. A literal ALL of whose names are functions has a layout of its own file; of a literal
+# without a name "all" is true and says nothing: so N had a layout of its own file (L0) beside the layout of the names a, b, c, d (L1), `{ ...N, a: i }` no longer copied field by field
+# (TryCopyFields) and took CopyDataProperties at every turn: 5,115 > 24,430 instructions a call of f. f1 = f . L0 = the one layout of the names a, b, c, d.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TryCopyFields {{*}}layout=L0
+# -- source: an-object-filled-behind-an-empty-literal-has-the-layout-of-its-names.cjs
+# 'use strict';
+# const N = {};
+# N.a = 1; N.b = 2; N.c = 3; N.d = 'x';
+# function f(t) { let s = t & 1; for (let i = 0; i < 64; i++) { const c = { ...N, a: i }; s += c.a + c.b; } return s; }
+# const n = +process.argv[2]; let sum = 0; for (let t = 0; t < n; t++) sum = (sum + f(t)) % 1000003; console.log(Math.floor(sum));
+# -- end of source

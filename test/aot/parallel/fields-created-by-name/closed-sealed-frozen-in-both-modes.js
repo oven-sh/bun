@@ -1,0 +1,6 @@
+const unseen = (x) => [x][JSON.parse("0")], no = JSON.parse("false");
+class Ash { constructor(early) { this.first = 1; if (early) this.late = 0; this.last = 2; } } class Elm { constructor(early) { this.zero = 0; this.first = 1; if (early) this.late = 0; this.last = 2; } }
+const make = (n) => unseen(JSON.parse(String(n % 2)) ? new Elm(no) : new Ash(no)), tried = (f, o, v) => { try { return f(o, v); } catch (e) { return e instanceof TypeError ? "TypeError" : "other"; } };
+function layLoose(o, v) { let w = 0; for (let i = 0; i < 2; i++) w = (w + i) | 0; o.late = v; return "stored"; } function layStrict(o, v) { "use strict"; let w = 0; for (let i = 0; i < 2; i++) w = (w + i) | 0; o.late = v; return "stored"; }
+for (const [name, deed] of [["open", (o) => o], ["closed", (o) => Object.preventExtensions(o)], ["sealed", (o) => Object.seal(o)], ["frozen", (o) => Object.freeze(o)]]) for (let n = 0; n < 2; n++) { const a = deed(make(n)), b = deed(make(n)); console.log(name, n, tried(layLoose, a, JSON.parse("7")), Object.keys(a).join(), String(a.late), tried(layStrict, b, JSON.parse("8")), Object.keys(b).join(), String(b.late)); }
+console.log((function () { return this === undefined; })() ? "strict file" : "sloppy file");

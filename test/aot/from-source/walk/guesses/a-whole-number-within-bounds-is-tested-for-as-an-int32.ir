@@ -1,0 +1,13 @@
+# `const p = [0]` and the turns push sums onto it: the list is written to hold 0, so 0 is what is expected of `p[i]`. A test for that one number holds in the first turn alone.
+# The test of a guess asks for an int32 wherever the expectation names whole numbers within an int32's bounds: it costs no more and holds for what comes next.
+# f1 = go
+# -- source: main.js
+# function go(s) { const p = [0]; for (let i = 0; i < s.length; i++) p.push(p[i] + s[i]); return p[9]; }
+# globalThis.keep = go;
+# print(go([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: = TypeTest {{*}}testedType=0
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 45
+# ANSWERS-NEXT: exited with 0

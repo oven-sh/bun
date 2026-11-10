@@ -787,7 +787,10 @@ fn entry_point_default_export_is_served() {
         argument: 0,
     };
     assert_eq!(read.read_use, served);
-    assert_eq!(read.names_looked_for, [name("fetch"), name("app")]);
+    assert_eq!(
+        read.names_looked_for,
+        [name("fetch"), name("app"), name("stop")]
+    );
     let mut plugin_reads = host_reads(HostReadContext::Plugin);
     assert!(plugin_reads.all(|read| read.context == HostReadContext::Plugin));
     assert!(host_reads(HostReadContext::Plugin).all(|read| read.read_use != served));

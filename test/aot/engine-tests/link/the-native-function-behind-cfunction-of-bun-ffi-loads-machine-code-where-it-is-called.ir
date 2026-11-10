@@ -1,0 +1,26 @@
+# require("bun:ffi")(undefined, undefined), and bun:ffi answers a function that asks for its native function and calls it. Nothing else of bun:ffi is in the wire.
+# The call is counted on the binding, and the binding says under which name of bun:ffi it loads machine code.
+# RUN: causes mechanisms=all
+# CHECK: machine-code BunFfiCFunction
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="bun:ffi" displayPath="bun:ffi" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunFfi body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="bun:ffi"
+    v1 = Undefined
+    v2 = Call v0, -, v1, v1 calleeName="made"
+    Return v2
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="made" module=m1 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NativeBinding builtin=NativeBindgenFfiBindTsMakeFunction
+    v3 = Call v2, -, v0, v1 calleeName="native"
+    Return v3
+}

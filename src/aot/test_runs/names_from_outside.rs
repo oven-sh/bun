@@ -1,12 +1,13 @@
 use bun_core::strings::split;
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{
     Binding, BindingInitializer, Bound, Decl, FnOwner, Parent, PatParent, SymbolId,
 };
 use bun_sema::fold::{Constant, FoldedValue, KnownSets};
 use bun_sema::hir::{
-    BinOp, CallId, ExprId, ExprKind, File, Flags, FnKind, IdList, ImportId, MemberKey, NodeData,
-    ParamId, PatId, PatKind, PropKey, PropKind, StmtKind, UnOp,
+    BinOp, CallId, ExprId, ExprKind, File, Flags, FnKind, IdList, ImportId, MemberKey, NameKind,
+    NodeData, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtKind, TypeNodeId,
+    TypeNodeKind, UnOp,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter};
 use bun_sema::program::{CodeAnswer, FileId, Files};
@@ -153,6 +154,7 @@ pub(super) struct NamesFromOutside<'a, 's> {
     is_in_package: bool,
     calls: Vec<(ExprId, CallId)>,
     names_stored: Vec<Atom>,
+    names_stored_above_literals: Vec<(BuiltinId, Atom)>,
 }
 
 impl<'a, 's> NamesFromOutside<'a, 's> {
@@ -167,6 +169,7 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             is_in_package,
             calls: Vec::new(),
             names_stored: Vec::new(),
+            names_stored_above_literals: Vec::new(),
         }
     }
 
@@ -181,6 +184,153 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             FoldedValue::Constant(_)
             | FoldedValue::ConstantOutsideDeadZone(_)
             | FoldedValue::Unknown => None,
+        }
+    }
+
+    fn collect_texts_of_written_type(&self, written: TypeNodeId, texts: &mut Vec<Atom>) -> bool {
+        let hir = self.request.hir;
+        match written.some().map(|written| hir[written].kind) {
+            Some(TypeNodeKind::StringLit(text)) => {
+                texts.push(text);
+                true
+            }
+            Some(TypeNodeKind::Union(parts)) => hir
+                .ids(parts)
+                .all(|part| self.collect_texts_of_written_type(part, texts)),
+            _ => false,
+        }
+    }
+
+    fn find_texts_of_key(&self, key: ExprId) -> Vec<Atom> {
+        let &FinishedFile {
+            hir,
+            bound,
+            analysis,
+            ..
+        } = self.request;
+        if let Some(text) = self.find_constant_text(key) {
+            return vec![text];
+        }
+        let key = hir.skip_type_assertions(key);
+        if !matches!(hir[key].kind, ExprKind::Ident(_)) {
+            return Vec::new();
+        }
+        if let Some(values) = find_values_of_parameter(hir, bound, &analysis.decisions, key) {
+            let texts = values.into_iter().map(|it| self.find_constant_text(it));
+            if let Some(texts) = texts.collect::<Option<Vec<Atom>>>() {
+                return texts;
+            }
+        }
+        let Binding::Symbol(name) = bound.binding(key) else {
+            return Vec::new();
+        };
+        let &[Decl::Param(pattern)] = bound.symbol(name).decls else {
+            return Vec::new();
+        };
+        let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
+            return Vec::new();
+        };
+        let mut texts = Vec::new();
+        let is_as_written = bound.stores_to(name).is_empty()
+            && !bound.is_visible_to_eval(name)
+            && self.collect_texts_of_written_type(hir[parameter].ty, &mut texts);
+        match is_as_written {
+            true => texts,
+            false => Vec::new(),
+        }
+    }
+
+    fn may_lie_right_below_object_prototype(&self, value: ExprId) -> bool {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let mut value = hir.skip_type_assertions(value);
+        if let (ExprKind::Ident(_), Binding::Symbol(name)) = (hir[value].kind, bound.binding(value))
+            && let BindingInitializer::Expression(written) = bound.binding_initializer(hir, name)
+            && bound.stores_to(name).is_empty()
+        {
+            value = hir.skip_type_assertions(written);
+        }
+        let ExprKind::Object(properties) = hir[value].kind else {
+            return false;
+        };
+        let lays_something_else_above = |property: PropId| {
+            let property = hir[property];
+            let is_object_or_null = matches!(
+                hir[hir.skip_type_assertions(property.value)].kind,
+                ExprKind::Null
+                    | ExprKind::Object(_)
+                    | ExprKind::Array(_)
+                    | ExprKind::Fn(_)
+                    | ExprKind::Class(_)
+                    | ExprKind::Regex { .. }
+            );
+            property.kind == PropKind::Init
+                && property.key == PropKey::Name(known::__proto__)
+                && property.name_kind != NameKind::ComputedString
+                && is_object_or_null
+        };
+        !properties.iter().any(lays_something_else_above)
+    }
+
+    fn find_closed_holder_above_literal(&self, object: ExprId) -> Option<BuiltinId> {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let object = hir.skip_type_assertions(object);
+        if !matches!(hir[object].kind, ExprKind::Ident(_)) {
+            return None;
+        }
+        let Binding::Symbol(holder) = bound.binding(object) else {
+            return None;
+        };
+        if !bound.stores_to(holder).is_empty() || bound.is_visible_to_eval(holder) {
+            return None;
+        }
+        let read = match bound.binding_initializer(hir, holder) {
+            BindingInitializer::Expression(read) => hir.skip_type_assertions(read),
+            BindingInitializer::PatternProperty { source, path } => {
+                let finds_link = path.as_slice() == [known::__proto__];
+                return (finds_link && self.may_lie_right_below_object_prototype(source))
+                    .then_some(BuiltinId::ObjectPrototype);
+            }
+            _ => return None,
+        };
+        let may_name_link = |key: ExprId| {
+            self.find_constant_text(key)
+                .is_none_or(|text| text == known::__proto__)
+        };
+        let (receiver, finds_link) = match (hir.member_key(read), hir[read].kind) {
+            (Some((receiver, MemberKey::Name(name))), _) => (receiver, name == known::__proto__),
+            (Some((receiver, MemberKey::Computed(key))), _) => (receiver, may_name_link(key)),
+            (None, ExprKind::Call(call)) => {
+                let callee = self.builtins.builtin_of_expression(hir[call].callee);
+                let mut operands = hir.ids(hir[call].args);
+                match (
+                    callee.map(table::canonical_id),
+                    operands.next(),
+                    operands.next(),
+                    operands.next(),
+                ) {
+                    (Some(BuiltinId::ReflectGet), Some(receiver), Some(key), None) => {
+                        (receiver, may_name_link(key))
+                    }
+                    (
+                        Some(BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf),
+                        Some(receiver),
+                        None,
+                        None,
+                    ) => (receiver, true),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        (finds_link && self.may_lie_right_below_object_prototype(receiver))
+            .then_some(BuiltinId::ObjectPrototype)
+    }
+
+    fn note_store_above_literal(&mut self, object: ExprId, key: ExprId) {
+        if let Some(holder) = self.find_closed_holder_above_literal(object) {
+            let texts = self.find_texts_of_key(key).into_iter();
+            self.names_stored_above_literals
+                .extend(texts.map(|text| (holder, text)));
         }
     }
 
@@ -260,6 +410,15 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         let Some((object, key)) = hir.member_key(hir.skip_type_assertions(target)) else {
             return;
         };
+        match key {
+            MemberKey::Name(name) => {
+                if let Some(holder) = self.find_closed_holder_above_literal(object) {
+                    self.names_stored_above_literals.push((holder, name));
+                }
+            }
+            MemberKey::Computed(key) => self.note_store_above_literal(object, key),
+            MemberKey::PrivateName(_) => {}
+        }
         let name = match key {
             MemberKey::Name(name) => Some(name),
             MemberKey::Computed(key) => self.find_constant_text(key),
@@ -282,8 +441,11 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             )
         );
         let mut operands = hir.ids(hir[call].args);
-        if let (true, Some(object), Some(key)) = (stores, operands.next(), operands.next())
-            && let Some(name) = self.find_constant_text(key)
+        let (true, Some(object), Some(key)) = (stores, operands.next(), operands.next()) else {
+            return;
+        };
+        self.note_store_above_literal(object, key);
+        if let Some(name) = self.find_constant_text(key)
             && self.is_object_from_somewhere(object)
         {
             self.names_stored.push(name);
@@ -862,6 +1024,7 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         self.names_stored.shared_sort_unstable_by_key(|name| name.0);
         self.names_stored.dedup();
         found.names_stored_on_unknown_objects = self.names_stored;
+        found.names_stored_above_literals = self.names_stored_above_literals;
     }
 }
 

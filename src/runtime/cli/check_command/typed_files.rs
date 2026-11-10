@@ -17,11 +17,11 @@ use bun_sema_driver::typed_files::{
     ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
     module_types, tsconfig_of_sources, typed_path_beside,
 };
-use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
+use bun_sema_driver::{Category, Diagnostic, PlanOptions, Report, Request};
 use bun_threading::Guarded;
 
 use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
-use super::{Entries, Paths, already_read, request, script_kinds_by_extension, with_pages};
+use super::{Entries, Paths, request, script_kinds_by_extension, with_pages};
 
 const SKIPPED_TYPED_FILES: &str =
     "the .aot.ts files that --aot compiles a package from are left out";
@@ -276,6 +276,7 @@ pub(crate) fn typed_files_for_build(
     let sources_tsconfig = tsconfig;
     let tsconfig_path = without_sources.as_ref().map(|file| bundler_path(&file.0));
     let tsconfig = tsconfig_path.as_deref();
+    // Returns the report, and whether the files had no error before `annotate_implicit_any` wrote into them.
     let check = |typed: &mut Texts, declarations: &Texts, libs: &Texts| {
         let paths: Vec<Vec<u8>> = (typed.iter().chain(libs))
             .map(|file| file.0.clone())
@@ -290,16 +291,17 @@ pub(crate) fn typed_files_for_build(
         let mut rounds = 0;
         loop {
             let texts = typed.iter().chain(declarations).chain(libs);
-            let texts = texts.chain(&without_sources);
             let provided = Provided {
-                already_read: already_read(cwd, &mut texts.map(|file| (&file.0[..], &file.1[..]))),
+                already_read: texts.chain(&without_sources).cloned().collect(),
                 ..Default::default()
             };
             let provided = with_pages(cwd, provided);
             let report = bun_sema_driver::check_provided_then(&request, provided, |report| report);
             rounds += 1;
             if rounds == 3 || !annotate_implicit_any(typed, &report.diagnostics) {
-                return report;
+                let mut diagnostics = report.diagnostics.iter();
+                let has_errors = diagnostics.any(|reported| reported.category == Category::Error);
+                return (report, rounds == 1 && !has_errors);
             }
         }
     };
@@ -336,9 +338,8 @@ pub(crate) fn typed_files_for_build(
             after_file: Some(&note),
             ..request(cwd, sources_tsconfig, &entries, options, 0, None)
         };
-        let mut texts = emitted.iter().map(|file| (&file.0[..], &file.1[..]));
         let provided = Provided {
-            already_read: already_read(cwd, &mut texts),
+            already_read: emitted.iter().cloned().collect(),
             ..Default::default()
         };
         bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |_| ());
@@ -360,22 +361,21 @@ pub(crate) fn typed_files_for_build(
         Ok(found) => found,
         Err(why) => return warn(format_args!("{why}")),
     };
-    let mut report = check(
+    let (mut report, is_clean) = check(
         &mut found.typed,
         &found.declarations_while_checked,
         &newest_lib,
     );
-    // `export {}` makes what a script declares local. With errors, the typed files are written and judged without it.
-    if first_error(&report).is_some()
+    // `export {}` makes what a script declares local. If the check then reports an error, the text without it is judged.
+    if !is_clean
         && found.empty_exports > 0
-        && let Ok(plain) = build_typed_files(outdir, &outputs, modules, &emitted_modules, false)
+        && let Ok(mut plain) = build_typed_files(outdir, &outputs, modules, &emitted_modules, false)
     {
-        found = plain;
-        report = check(
-            &mut found.typed,
-            &found.declarations_while_checked,
-            &newest_lib,
-        );
+        let declarations = &plain.declarations_while_checked;
+        let plain_report = check(&mut plain.typed, declarations, &newest_lib).0;
+        if first_error(&plain_report).is_none() || first_error(&report).is_some() {
+            (found, report) = (plain, plain_report);
+        }
     }
     if let Some(first) = first_error(&report) {
         let path = bundler_path(&first.path);
@@ -390,7 +390,8 @@ pub(crate) fn typed_files_for_build(
             &mut found.typed,
             &found.declarations_while_checked,
             &Vec::new(),
-        );
+        )
+        .0;
         let under = match first_error(&without_newest_lib) {
             None => {
                 " under \"lib\": [\"esnext\"], which a project that installs the package may have"

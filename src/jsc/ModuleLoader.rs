@@ -8,6 +8,7 @@
 use bun_alloc::Arena as ArenaAllocator;
 use bun_options_types::LoaderExt as _;
 
+use crate::resolved_source::ValidatorKind;
 use crate::virtual_machine::{MAIN_FILE_NAME, MainEntryPoint, VirtualMachine};
 use crate::{
     self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
@@ -361,6 +362,59 @@ extern "C" fn Bun__getDefaultLoader(
 extern "C" fn Bun__hashPluginContents(contents: &bun_core::EncodedSlice, loader: u8) -> u64 {
     let encoding = (u64::from(contents.is_16bit()) << 1) | u64::from(contents.is_utf8());
     bun_wyhash::hash_with_seed((u64::from(loader) << 2) | encoding, contents.byte_slice()) | 1
+}
+
+/// One `stat` of `path`, which need not end in a NUL. `None` if it fails or the path is too long.
+fn stat_of_path(path: &[u8]) -> Option<bun_sys::PosixStat> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if path.len() >= buf.len() {
+        return None;
+    }
+    let stat = bun_sys::stat(bun_paths::resolve_path::z(path, &mut buf)).ok()?;
+    Some(bun_sys::PosixStat::init(&stat))
+}
+
+/// `dev`, `ino`, `size`, `mtime` and `ctime` as one number. Never 0.
+fn stamp_of(stat: &bun_sys::PosixStat) -> u64 {
+    let fields = [
+        stat.dev,
+        stat.ino,
+        stat.size,
+        stat.mtim.sec as u64,
+        stat.mtim.nsec as u64,
+        stat.ctim.sec as u64,
+        stat.ctim.nsec as u64,
+    ];
+    bun_wyhash::hash(bun_core::bytes_of(&fields)) | 1
+}
+
+/// C++ entry point: whether the file at `path` is still what a cached source's `validator` of `kind` was taken from.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__canReuseCachedSource(
+    vm: &VirtualMachine,
+    path: &bun_core::String,
+    kind: u8,
+    validator: u64,
+) -> bool {
+    const STAMP: u8 = ValidatorKind::Stamp as u8;
+    const CONTENT: u8 = ValidatorKind::Content as u8;
+    let path = path.to_utf8();
+    // A cached source would keep a `require.extensions` handler for this file from running.
+    if crate::node_module_module::find_longest_registered_extension(vm, &path).is_some() {
+        return false;
+    }
+    match kind {
+        STAMP => stat_of_path(&path).is_some_and(|stat| stamp_of(&stat) == validator),
+        CONTENT => bun_sys::File::read_from(bun_sys::Fd::cwd(), &path).is_ok_and(|bytes| {
+            // The validator may be `RuntimeTranspilerCache`'s input hash, which is of the text after `bun_resolver::fs` has stripped or converted a byte-order mark.
+            let bytes = match bun_core::strings::BOM::detect(&bytes) {
+                Some(bom) => bom.remove_and_convert_to_utf8_and_free(bytes),
+                None => bytes,
+            };
+            crate::runtime_transpiler_cache::hash(&bytes) == validator
+        }),
+        _ => false,
+    }
 }
 
 pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {

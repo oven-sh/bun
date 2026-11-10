@@ -299,7 +299,7 @@ describe("bundler", () => {
     target: "browser",
     run: [{ stdout: cryptoDefaultImport }, { file: "/without-node-globals.js", stdout: cryptoDefaultImport }],
   });
-  itBundled("browser/NodeStreamTicksOnTheHostProcess", {
+  itBundled("browser/NodeStreamTicksBeforeSetImmediate", {
     files: {
       "/entry.js": /* js */ `
         import { PassThrough } from "node:stream";

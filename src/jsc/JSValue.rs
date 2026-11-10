@@ -2548,7 +2548,7 @@ impl JSValue {
         JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// `for_each_property_ordered_calling_getters` for the object at `place`: a matched row is passed in place of its property, which is not read. SAFETY: `rows` is the live matched rows cell that a `jest_deep_match` call returned. Any `place` is safe: C++ treats a number that is not a place of the cell as a place without rows.
+    /// `for_each_property_ordered_calling_getters` with the matched rows of `place`. SAFETY: `rows` is the live cell of a `jest_deep_match` call.
     #[inline(always)]
     pub(crate) unsafe fn for_each_property_ordered_calling_getters_with_rows(
         self,
@@ -2578,7 +2578,7 @@ impl JSValue {
         };
         scope.return_if_exception().map(|()| is_same)
     }
-    /// `for_each_property_ordered_with_non_enumerable` for the object at `place`, with its matched rows. SAFETY: as for `for_each_property_ordered_calling_getters_with_rows`.
+    /// `for_each_property_ordered_with_non_enumerable` with the matched rows of `place`. SAFETY: as above.
     #[inline(always)]
     pub(crate) unsafe fn for_each_property_ordered_with_non_enumerable_with_rows(
         self,
@@ -2865,7 +2865,7 @@ impl JSValue {
             JSC__JSValue__jestStrictDeepEquals(self, other, global)
         })
     }
-    /// `expect(a).toMatchObject(b)` and snapshot property matchers. `rows_when: Some(result)` also returns the matchers that passed, if the comparison gives `result`.
+    /// `expect(a).toMatchObject(b)` and snapshot property matchers. With `rows_when: Some(result)`, also the matchers that passed if the comparison gives `result`.
     pub fn jest_deep_match(
         self,
         subset: JSValue,

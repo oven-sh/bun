@@ -5411,8 +5411,6 @@ bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_
     return false;
 }
 
-static BunString nameOfFunction(JSC::VM&, JSC::JSObject*);
-
 BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
@@ -5434,12 +5432,6 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
         }
     }
 
-    return nameOfFunction(vm, obj);
-}
-
-// The name of `obj` if it is a function, and nothing if it is not. JSC__JSValue__getNameProperty() returns it for an object whose tag is no name.
-static BunString nameOfFunction(JSC::VM& vm, JSC::JSObject* obj)
-{
 #if ENABLE(AOT)
     if (WTF::String declaredName = obj->vm().hasCompiledCode() ? JSC::AOT::closureDeclaredName(obj) : WTF::String(); !declaredName.isNull())
         return toStringAdopt(WTF::move(declaredName));
@@ -5460,107 +5452,6 @@ static BunString nameOfFunction(JSC::VM& vm, JSC::JSObject* obj)
     }
 
     return BunStringEmpty;
-}
-
-// JSC__JSValue__getNameProperty() for the object of `place` in `rows`, the cell that the walkers with rows take. A row that the place has for Symbol.toStringTag stands in for the tag, which is not read: a row is a matcher or an object, so it is no name.
-extern "C" BunString JSC__JSValue__getNamePropertyWithRows(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rows, uint32_t place)
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
-    if (!object || !Bun::matchedRow(JSC::JSValue::decode(rows).asCell(), place, vm.propertyNames->toStringTagSymbol).value)
-        return JSC__JSValue__getNameProperty(JSValue0, globalObject);
-    return nameOfFunction(vm, object);
-}
-
-// The name that JSObject::calculatedClassName() takes from `constructor` if it is a function. Null if it is not.
-static WTF::String displayNameOfConstructor(JSC::VM& vm, JSC::JSValue constructor)
-{
-    JSC::JSObject* object = constructor.getObject();
-    if (!object)
-        return {};
-    if (auto* function = dynamicDowncast<JSC::JSFunction>(object))
-        return function->calculatedDisplayName(vm);
-    if (auto* function = dynamicDowncast<JSC::InternalFunction>(object))
-        return function->calculatedDisplayName(vm);
-    if (WTF::String name = JSC::isCompiledCalleeType(object->type()) ? JSC::getCalculatedDisplayName(vm, object) : WTF::String(); !name.isEmpty())
-        return name;
-    return {};
-}
-
-// JSObject::calculatedClassName() for an object that is `object` with `constructorRow` as its own "constructor", unless that is empty, and, if `hasTagRow`, with an own Symbol.toStringTag that is no string. Neither of the two is read from `object`. The steps are those of calculatedClassName(), so no JavaScript runs.
-static WTF::String calculatedClassNameWithRows(JSC::JSObject* object, JSC::JSValue constructorRow, bool hasTagRow)
-{
-    auto* globalObject = object->realmMayBeNull();
-    if (!globalObject)
-        return object->structure()->classInfoForCells()->className;
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    WTF::String constructorName;
-    if (constructorRow)
-        constructorName = displayNameOfConstructor(vm, constructorRow);
-    else {
-        JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
-        bool isOwn = object->ordinaryGetOwnPropertySlot(globalObject, vm.propertyNames->constructor, slot);
-        (void)scope.tryClearException();
-        if (isOwn && slot.isValue())
-            constructorName = displayNameOfConstructor(vm, slot.getValue(globalObject, vm.propertyNames->constructor));
-    }
-
-    if (constructorName.isNull() && !object->structure()->typeInfo().overridesGetPrototype()) {
-        JSC::JSValue prototype = object->getPrototypeDirect();
-        if (prototype.isObject()) {
-            JSC::PropertySlot slot(prototype, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
-            bool isFound = asObject(prototype)->getPropertySlot(globalObject, vm.propertyNames->constructor, slot);
-            (void)scope.tryClearException();
-            if (isFound && slot.isValue())
-                constructorName = displayNameOfConstructor(vm, slot.getValue(globalObject, vm.propertyNames->constructor));
-        }
-    }
-
-    if (constructorName.isNull() || constructorName == "Object"_s) {
-        if (!hasTagRow) {
-            JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
-            bool isFound = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
-            (void)scope.tryClearException();
-            JSC::JSValue tag = isFound && slot.isValue() ? slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol) : JSC::JSValue();
-            if (tag && tag.isString()) {
-                WTF::String text = tag.toWTFString(globalObject);
-                (void)scope.tryClearException();
-                return text;
-            }
-        }
-
-        WTF::String classInfoName = object->classInfo()->className;
-        if (!classInfoName.isNull())
-            return classInfoName;
-        if (constructorName.isNull())
-            return "Object"_s;
-    }
-
-    return constructorName;
-}
-
-// JSC__JSValue__getClassName() for the object of `place` in `rows`, the cell that the walkers with rows take. The rows that the place has for "constructor" and for Symbol.toStringTag stand in for those two properties, which are not read.
-extern "C" BunString JSC__JSValue__getClassNameWithRows(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rows, uint32_t place)
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSCell* rowsCell = JSC::JSValue::decode(rows).asCell();
-    JSC::JSValue constructorRow = Bun::matchedRow(rowsCell, place, vm.propertyNames->constructor).value;
-    bool hasTagRow = !!Bun::matchedRow(rowsCell, place, vm.propertyNames->toStringTagSymbol).value;
-    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
-    if (!object || (!constructorRow && !hasTagRow))
-        return JSC__JSValue__getClassName(JSValue0, globalObject);
-
-    const char* ptr = object->className();
-    auto view = WTF::StringView(std::span { ptr, strlen(ptr) });
-    if (view.length() == 0 || StringView("Function"_s) == view || object->inherits<JSC::InternalFunction>())
-        return JSC__JSValue__getNamePropertyWithRows(JSValue0, globalObject, rows, place);
-
-    auto calculated = calculatedClassNameWithRows(object, constructorRow, hasTagRow);
-    if (calculated.length() > 0)
-        return toStringAdopt(WTF::move(calculated));
-    return { BunStringTag::StaticEncodedSlice, { .encoded = { reinterpret_cast<const unsigned char*>(ptr), view.length() } } };
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__getName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, BunString* arg2)
@@ -6462,43 +6353,11 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
             object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
         if constexpr (std::is_same_v<Visitor, MatchedRowsVisitor>) {
-            // A matched name that is not listed, such as a getter of the class, gets a line at its sorted place.
+            // A matched name that the object does not list, such as a getter of its class, gets a line too.
             auto& names = properties.data()->propertyNameVector();
             WTF::Vector<Identifier> missing;
             Bun::appendMissingMatchedRowNames(iter.rows, iter.place, names.span(), missing);
-            if (!missing.isEmpty()) {
-                // std::sort is not stable, and a string and a symbol with the same text compare equal: which of them prints first depends on the order here. Stored snapshots have the text that follows from the order in which the object would list the names if every row were an enumerable property of its own.
-                if (!withNonEnumerable) {
-                    // The row of an own property that is not enumerable goes where the object has the property.
-                    JSC::PropertyNameArrayBuilder all(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-                    object->methodTable()->getOwnPropertyNames(object, globalObject, all, DontEnumPropertiesMode::Include);
-                    RETURN_IF_EXCEPTION(scope, );
-                    WTF::UncheckedKeyHashSet<WTF::UniquedStringImpl*> unplaced;
-                    for (auto& name : names)
-                        unplaced.add(name.impl());
-                    for (auto& name : missing)
-                        unplaced.add(name.impl());
-                    PropertyNameArray::PropertyNameVector placed;
-                    auto placeFrom = [&](const auto& list) {
-                        for (auto& name : list) {
-                            if (unplaced.remove(name.impl()))
-                                placed.append(name);
-                        }
-                    };
-                    placeFrom(all);
-                    placeFrom(names);
-                    placeFrom(missing);
-                    names = WTF::move(placed);
-                } else
-                    names.appendVector(missing);
-                // The row of any other property goes where a property added in the order of the walk would be listed: an index among the indices, which come first in numeric order, and a string ahead of the symbols.
-                auto listRank = [](const Identifier& name) -> uint64_t {
-                    if (name.isSymbol())
-                        return static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1;
-                    return parseIndex(name).value_or(std::numeric_limits<uint32_t>::max());
-                };
-                std::stable_sort(names.begin(), names.end(), [&](const Identifier& a, const Identifier& b) { return listRank(a) < listRank(b); });
-            }
+            names.appendVector(missing);
         }
     }
 

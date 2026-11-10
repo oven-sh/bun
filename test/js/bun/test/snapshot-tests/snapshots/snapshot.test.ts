@@ -2387,121 +2387,6 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("is offered an object as it is where the property matchers that matched are all under private names", async () => {
-    const unclaimed = `\n{\n  "a": Private {\n    "n": 1,\n  },\n  "n": 1,\n}\n`;
-    const printed = [
-      `\n{\n  "n": 1,\n  "secret": Secret(S, read 1),\n}\n`,
-      `Secret(S, read 1)`,
-      `Entity(e, read 1)`,
-      `\n{\n  "list": [\n    Entity(e, read 1),\n  ],\n  "n": 1,\n}\n`,
-      unclaimed,
-      `\n{\n  "a": Private {\n    "n": 1,\n  },\n  "count": 1,\n}\n`,
-    ];
-    // The classes with private fields are made at run time. Where a build compiles a fixture, the private fields
-    // of a class that it compiles are no names that the comparison lists, so no matcher under one is recorded.
-    const atRunTime = (text: string) => `new Function(${JSON.stringify("return " + text)})()`;
-    const counted = `
-      const Private = ${atRunTime(`class Private {
-        #x;
-        constructor(x, n) {
-          this.#x = x;
-          this.n = n;
-        }
-      }`)};
-      // The getter returns a new object each time, and its n says which of them is printed.
-      let reads = 0;
-      const counted = x => ({
-        get a() {
-          return new Private(x, ++reads);
-        },
-        n: 1,
-      });
-    `;
-    using dir = tempDir("snapshot-serializer-private", {
-      "a.test.js": `
-          // Only an instance has #tag, so the getter throws a TypeError for any other object that has the prototype.
-          const Secret = ${atRunTime(`class Secret {
-            #value;
-            #tag = "S";
-            constructor(value, read) {
-              this.#value = value;
-              this.read = read;
-            }
-            get tag() {
-              return this.#tag;
-            }
-          }`)};
-          // Keeps its Secret as data, so a read of the property gives the object that was compared.
-          class Entity {
-            constructor(secret) {
-              this.name = "e";
-              this.secret = secret;
-            }
-          }
-          ${counted}
-          const number = expect.any(Number);
-          expect.addSnapshotSerializer({
-            test: value => value instanceof Secret,
-            serialize: value => "Secret(" + value.tag + ", read " + value.read + ")",
-          });
-          expect.addSnapshotSerializer({
-            test: value => value instanceof Entity,
-            serialize: value => "Entity(" + value.name + ", read " + value.secret.read + ")",
-          });
-          test("t", () => {
-            for (const value of [1, 2]) {
-              const made = [];
-              const received = {
-                get secret() {
-                  made.push(new Secret(value, made.length + 1));
-                  return made.at(-1);
-                },
-                n: 1,
-              };
-              // No plain object can have the matcher in place of #value. The serializer gets the object that was compared.
-              expect(received).toMatchSnapshot({ secret: new Secret(number, 1) });
-              expect(made).toHaveLength(1);
-              expect(new Secret(value, 1)).toMatchSnapshot(new Secret(number, 1));
-              // Nothing stands in for a property of an object that keeps such an object as data, so the serializer for its class gets it too.
-              expect(new Entity(new Secret(value, 1))).toMatchSnapshot({ secret: new Secret(number, 1) });
-              expect({ list: [new Entity(new Secret(value, 1))], n: 1 }).toMatchSnapshot({ list: [{ secret: new Secret(number, 1) }] });
-              // An object that the serializer is not for prints as it does without a serializer.
-              reads = 0;
-              expect(counted(value)).toMatchSnapshot({ a: new Private(number, 1) });
-              expect(reads).toBe(1);
-              // Nothing is built for the serializers out of an object that keeps such an object as data, so a getter beside it runs once.
-              let counts = 0;
-              const beside = {
-                get count() {
-                  return ++counts;
-                },
-                a: new Private(value, 1),
-              };
-              expect(beside).toMatchSnapshot({ a: new Private(number, 1) });
-              expect(counts).toBe(1);
-            }
-          });
-        `,
-      "b.test.js": `
-          ${counted}
-          test("t", () => {
-            for (const value of [1, 2]) {
-              reads = 0;
-              expect(counted(value)).toMatchSnapshot({ a: new Private(expect.any(Number), 1) });
-              expect(reads).toBe(1);
-            }
-          });
-        `,
-    });
-    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
-    expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
-    // Each text is there twice, once for each value that the matcher matched.
-    const entries = (texts: string[]) => texts.map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join("");
-    expect(snap(dir)).toBe(headers.bun + entries([...printed, ...printed]));
-    expect(snap(dir, "b.test.js")).toBe(headers.bun + entries([unclaimed, unclaimed]));
-    expect(exitCode).toBe(0);
-  });
-
   test.each(isolationFlags)(
     "lasts until the end of its test file, and for every file when a preload script adds it %j",
     async args => {
@@ -2784,12 +2669,6 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       "ErrorEvent": `ErrorEvent {\n  type: "error",\n  error: Any<Error>\n}`,
       "class with a private tag": `T \nTagged {\n  "a": Any<Number>,\n  "b": 2,\n}\n`,
       "own getter": `\n{\n  "a": Any<Number>,\n  "total": [native code],\n}\n`,
-      "own tag": `\n{\n  [Symbol(Symbol.toStringTag)]: Any<String>,\n  "a": 1,\n}\n`,
-      "own tag of an object in an object": `\n{\n  "c": {\n    [Symbol(Symbol.toStringTag)]: Any<String>,\n    "a": 1,\n  },\n}\n`,
-      "own constructor": `{}`,
-      "own constructor and another property": `\n{\n  "a": 1,\n}\n`,
-      "own tag and an own getter": `\n{\n  [Symbol(Symbol.toStringTag)]: Any<String>,\n  "total": [native code],\n}\n`,
-      "own constructor and an own getter": `\n{\n  "total": [native code],\n}\n`,
     };
     const older =
       headers.bun +
@@ -2823,12 +2702,6 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             expect(withGetter()).toMatchSnapshot({ a: number });
             expect(withGetter()).toMatchInlineSnapshot({ a: number }, \`${printed["own getter"]}\`);
           });
-          test("own tag", () => { expect({ [Symbol.toStringTag]: "Foo", a: 1 }).toMatchSnapshot({ [Symbol.toStringTag]: string }); });
-          test("own tag of an object in an object", () => { expect({ c: { [Symbol.toStringTag]: "Foo", a: 1 } }).toMatchSnapshot({ c: { [Symbol.toStringTag]: string } }); });
-          test("own constructor", () => { expect({ constructor: Tagged }).toMatchSnapshot({ constructor: expect.any(Function) }); });
-          test("own constructor and another property", () => { expect({ constructor: Tagged, a: 1 }).toMatchSnapshot({ constructor: expect.any(Function) }); });
-          test("own tag and an own getter", () => { expect({ [Symbol.toStringTag]: "Foo", get total() { return 2; } }).toMatchSnapshot({ [Symbol.toStringTag]: string }); });
-          test("own constructor and an own getter", () => { expect({ constructor: Tagged, get total() { return 2; } }).toMatchSnapshot({ constructor: expect.any(Function) }); });
         `,
       "__snapshots__/a.test.js.snap": older,
     });

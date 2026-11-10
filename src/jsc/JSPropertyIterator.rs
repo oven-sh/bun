@@ -164,46 +164,6 @@ impl<'a> JSPropertyIterator<'a> {
         })
     }
 
-    /// [`Self::init`] with `skip_empty_name` and without `include_value` for `object`, the object at `place` in `rows`: the names of the rows of the place that `init` would not list are listed too, see `MatchedPlace::own_properties`. SAFETY: `rows` is the live matched rows cell that a `jest_deep_match` call returned. Any `place` is safe: C++ treats a number that is not a place of the cell as a place without rows.
-    pub(crate) unsafe fn init_with_matched_rows(
-        global_object: &'a JSGlobalObject,
-        object: *mut JSObject,
-        rows: JSValue,
-        place: u32,
-    ) -> JsResult<Self> {
-        unsafe extern "C" {
-            fn Bun__JSPropertyIterator__createWithMatchedRows(
-                global_object: &JSGlobalObject,
-                encoded_value: JSValue,
-                count: &mut usize,
-                rows: JSValue,
-                place: u32,
-            ) -> *mut JSPropertyIteratorImpl;
-        }
-        debug_assert!(rows.is_cell() && place != 0);
-        let mut len: usize = 0;
-        JSValue::from_cell(object).ensure_still_alive();
-        // SAFETY: the caller vouches for `rows`, C++ answers for any `place`, and the rest is the contract of `Bun__JSPropertyIterator__create`, which may return null without an exception.
-        let raw = from_js_host_call_generic(global_object, || unsafe {
-            Bun__JSPropertyIterator__createWithMatchedRows(
-                global_object,
-                JSValue::from_cell(object),
-                &mut len,
-                rows,
-                place,
-            )
-        })?;
-        Ok(Self {
-            len,
-            i: Cell::new(0),
-            iter_i: Cell::new(0),
-            impl_: NonNull::new(raw),
-            global_object,
-            object,
-            options: JSPropertyIteratorOptions::new(true, false),
-        })
-    }
-
     /// The name borrows the C++ iterator's storage (no ref) and is valid until
     /// `self` drops, hence `&self`: a yielded name may be held across later
     /// calls. The value is `JSValue::ZERO` unless `options.include_value`.
@@ -269,42 +229,6 @@ impl<'a> JSPropertyIterator<'a> {
 
             return Ok(Some((name, value)));
         }
-    }
-
-    /// The value of the property that `next()` last yielded, read as `next()` reads it with `include_value`. None if the object no longer has the property.
-    pub(crate) fn value_of_last(&self) -> JsResult<Option<JSValue>> {
-        let i = self.i.get() as usize;
-        let Some(iter) = self.impl_ else {
-            return Ok(None);
-        };
-        if i >= self.len {
-            return Ok(None);
-        }
-        let iter = JSPropertyIteratorImpl::opaque_mut(iter.as_ptr());
-        let object = JSObject::opaque_ref(self.object);
-        let mut name = bun_core::StringView::DEAD;
-        let value = if self.options.observable {
-            JSPropertyIteratorImpl::get_name_and_value(
-                iter,
-                self.global_object,
-                object,
-                &mut name,
-                i,
-            )?
-        } else {
-            JSPropertyIteratorImpl::get_name_and_value_non_observable(
-                iter,
-                self.global_object,
-                object,
-                &mut name,
-                i,
-            )?
-        };
-        if value.is_empty() {
-            return Ok(None);
-        }
-        value.ensure_still_alive();
-        Ok(Some(value))
     }
 }
 

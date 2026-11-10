@@ -255,7 +255,6 @@ CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JS
 #pragma mark - Bun::JestMatchedRows
 
 CPP_DECL uint32_t Bun__JestMatchedRows__root(JSC::EncodedJSValue rows);
-CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__holder(JSC::EncodedJSValue rows, uint32_t place);
 CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__get(JSC::EncodedJSValue rows, uint32_t place, const BunString* name, uint32_t* childPlace);
 CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValue rows, uint32_t place, uint32_t index, uint32_t* childPlace);
 CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__forSerializers(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rows, uint32_t place);

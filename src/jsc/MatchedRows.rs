@@ -1,13 +1,11 @@
-//! What a `bun:test` printer shows in place of the properties that matched an asymmetric matcher. The C++ half is `bindings/JestMatchedRows.cpp`.
+//! What a `bun:test` printer shows in place of the properties that matched an asymmetric matcher (C++: `bindings/JestMatchedRows.cpp`).
 
 use core::ffi::c_void;
 
 use crate::js_value::ForEachPropertyWithRowsCallback;
-use crate::{
-    IntoIterObject, JSGlobalObject, JSPropertyIterator, JSValue, JsResult, PropertyIteratorOptions,
-};
+use crate::{JSGlobalObject, JSValue, JsResult};
 
-/// The rows of one `JSValue::jest_deep_match` call, or none. It is a GC cell with no `Strong`: the stack roots it, so keep it in locals, arguments and a formatter that is a local.
+/// The rows of one `JSValue::jest_deep_match` call, or none. A GC cell that only the stack roots: keep it in locals.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
 pub struct MatchedRows(JSValue);
@@ -18,7 +16,7 @@ impl MatchedRows {
         self.0.is_empty()
     }
 
-    /// The place of the object that was matched and of the pattern it was matched with. None if there are no rows.
+    /// The place of the object that was matched. None if there are no rows.
     pub fn root(self) -> MatchedPlace {
         if self.is_empty() {
             return MatchedPlace::default();
@@ -30,16 +28,15 @@ impl MatchedRows {
     }
 }
 
-/// Names a place inside one rows cell. C++ hands them out and answers for any number.
+/// Names a place inside one rows cell. 0 is no place, and C++ answers for any number.
 pub type PlaceHandle = u32;
 
-/// The handle that names no place.
 const NO_PLACE: PlaceHandle = 0;
 
-/// What to print for a property in place of reading it: the matcher that it matched, or the value that the comparison read. With it comes the place of that value.
+/// What to print for a property in place of reading it, and the place of that value.
 pub type MatchedRow = (JSValue, MatchedPlace);
 
-/// An object together with the pattern it was compared with, if that pattern leads to a matcher that passed. Otherwise none.
+/// An object together with the pattern it was compared with, if that pattern leads to a matcher that passed.
 #[derive(Clone, Copy, Default)]
 pub struct MatchedPlace {
     rows: MatchedRows,
@@ -101,13 +98,13 @@ impl MatchedPlace {
         (!value.is_empty()).then_some((value, place))
     }
 
-    /// What snapshot serializers are offered in place of the object of this place, which must not be none: a plain object, or an array for an array, that has the object's own enumerable properties in their order, with each row in place of its property. A function is offered as it is, and so is an object that has no row: no matcher shows in it or below it, as when they all matched under private names, and a read of its properties gives what the comparison read. The rows cell keeps what it builds, so a place is built once. A property whose getter throws is left out.
+    /// What snapshot serializers get for the object of this place (not none): a plain object or array with each row in place of its property.
     pub fn for_serializers(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let (rows, place) = self.cell_and_handle();
         crate::cpp::Bun__JestMatchedRows__forSerializers(global, rows, place)
     }
 
-    /// `JSValue::for_each_property_ordered_calling_getters` on `object`, the object of this place, which must not be none. A row is passed in place of its property, which is not read.
+    /// `JSValue::for_each_property_ordered_calling_getters` on the object of this place (not none). A row is passed in place of its property, which is not read.
     #[inline(always)]
     #[allow(clippy::not_unsafe_ptr_arg_deref)] // `ctx` is not read here: C++ hands it back to `callback`
     pub fn for_each_property_ordered_calling_getters(
@@ -118,7 +115,7 @@ impl MatchedPlace {
         callback: ForEachPropertyWithRowsCallback,
     ) -> JsResult<bool> {
         let (rows, place) = self.cell_and_handle();
-        // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
+        // SAFETY: `rows` is the cell that `jest_deep_match` returned, and its holder keeps it on the stack.
         unsafe {
             object.for_each_property_ordered_calling_getters_with_rows(
                 global, ctx, callback, rows, place,
@@ -126,7 +123,7 @@ impl MatchedPlace {
         }
     }
 
-    /// `JSValue::for_each_property_ordered_with_non_enumerable` on `object`, with rows in place of properties as above.
+    /// `JSValue::for_each_property_ordered_with_non_enumerable` on the object of this place, with rows as above.
     #[inline(always)]
     #[allow(clippy::not_unsafe_ptr_arg_deref)] // `ctx` is not read here: C++ hands it back to `callback`
     pub fn for_each_property_ordered_with_non_enumerable(
@@ -137,7 +134,7 @@ impl MatchedPlace {
         callback: ForEachPropertyWithRowsCallback,
     ) -> JsResult<()> {
         let (rows, place) = self.cell_and_handle();
-        // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
+        // SAFETY: `rows` is the cell that `jest_deep_match` returned, and its holder keeps it on the stack.
         unsafe {
             object.for_each_property_ordered_with_non_enumerable_with_rows(
                 global, ctx, callback, rows, place,
@@ -145,97 +142,10 @@ impl MatchedPlace {
         }
     }
 
-    /// `object.get_name_property` for the object of this place, or for any value if this place is none. A row that the place has for `Symbol.toStringTag` stands in for the tag, which is not read: a row is a matcher or an object, so it is no name.
-    #[inline]
-    pub fn name_property(
-        self,
-        object: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<bun_core::String> {
-        if self.is_none() {
-            return object.get_name_property(global);
-        }
-        let (rows, place) = self.cell_and_handle();
-        // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
-        crate::call_check_slow(global, || unsafe {
-            JSC__JSValue__getNamePropertyWithRows(object, global, rows, place)
-        })
-    }
-
-    /// `object.get_class_name` for the object of this place, or for any value if this place is none. The rows that the place has for `constructor` and for `Symbol.toStringTag` stand in for those two properties, which are not read.
-    #[inline]
-    pub fn class_name(
-        self,
-        object: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<bun_core::String> {
-        if self.is_none() {
-            return object.get_class_name(global);
-        }
-        let (rows, place) = self.cell_and_handle();
-        // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
-        crate::call_check_slow(global, || unsafe {
-            JSC__JSValue__getClassNameWithRows(object, global, rows, place)
-        })
-    }
-
-    /// The own enumerable properties of `object` that a string names, as `JSPropertyIterator` yields them with `skip_empty_name` and `include_value`, for the object of this place, or for any object if this place is none. With a place, a row is yielded in place of its property, which is not read, and the name of every row is listed: where the property is if `object` owns it, and otherwise where a property added under that name would be, in the order of the walk.
-    pub fn own_properties<'a>(
-        self,
-        object: impl IntoIterObject,
-        global: &'a JSGlobalObject,
-    ) -> JsResult<PropertiesWithRows<'a>> {
-        let object = object.into_iter_object();
-        let names = if self.is_none() {
-            let options = PropertyIteratorOptions {
-                skip_empty_name: true,
-                include_value: true,
-            };
-            JSPropertyIterator::init(global, object, options)?
-        } else {
-            let (rows, place) = self.cell_and_handle();
-            // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
-            unsafe { JSPropertyIterator::init_with_matched_rows(global, object, rows, place)? }
-        };
-        Ok(PropertiesWithRows {
-            len: names.len,
-            names,
-            place: self,
-        })
-    }
-
-    /// The rows cell and the handle of this place, which must not be none. The handle is not checked against the cell: C++ answers for any number.
     #[inline(always)]
     fn cell_and_handle(self) -> (JSValue, PlaceHandle) {
         assert!(!self.is_none() && !self.rows.is_empty());
         (self.rows.0, self.handle)
-    }
-}
-
-/// What [`MatchedPlace::own_properties`] lists.
-pub struct PropertiesWithRows<'a> {
-    /// How many names are listed. As with `JSPropertyIterator::len`, `next` may yield fewer.
-    pub len: usize,
-    names: JSPropertyIterator<'a>,
-    place: MatchedPlace,
-}
-
-impl PropertiesWithRows<'_> {
-    /// The name of the next property, the value to print for it and the place of that value. The name is valid until `self` drops.
-    pub fn next(&self) -> JsResult<Option<(bun_core::StringView<'_>, JSValue, MatchedPlace)>> {
-        if self.place.is_none() {
-            let next = self.names.next()?;
-            return Ok(next.map(|(name, value)| (name, value, MatchedPlace::default())));
-        }
-        while let Some((name, _)) = self.names.next()? {
-            if let Some((value, place)) = self.place.row_named(&name) {
-                return Ok(Some((name, value, place)));
-            }
-            if let Some(value) = self.names.value_of_last()? {
-                return Ok(Some((name, value, MatchedPlace::default())));
-            }
-        }
-        Ok(None)
     }
 }
 
@@ -278,7 +188,7 @@ impl MatchedPlaceScope {
         self.next = child;
     }
 
-    /// The print of a value starts: the place handed for it becomes current. Give the result to [`Self::leave`] on every way out.
+    /// The print of a value starts: the place handed for it becomes current. Give the result to [`Self::leave`].
     #[inline]
     #[must_use]
     pub fn enter(&mut self) -> PlaceHandle {
@@ -302,7 +212,7 @@ impl MatchedPlaceScope {
 }
 
 unsafe extern "C" {
-    // safe: C++ answers for any `rows` and `place`, uses `name` and `child` only during the call, and enters no JS. `crate::cpp` has the accessors that take no pointer.
+    // safe: C++ answers for any `rows` and `place`, uses `name` and `child` only during the call, and enters no JS.
     safe fn Bun__JestMatchedRows__get(
         rows: JSValue,
         place: PlaceHandle,
@@ -315,17 +225,4 @@ unsafe extern "C" {
         index: u32,
         child: &mut PlaceHandle,
     ) -> JSValue;
-    // Not safe: `rows` has to be the cell of a `jest_deep_match` call, as for the walkers with rows that `JSValue.rs` declares. Both can throw, and the caller owns what they return.
-    fn JSC__JSValue__getNamePropertyWithRows(
-        this: JSValue,
-        global: &JSGlobalObject,
-        rows: JSValue,
-        place: PlaceHandle,
-    ) -> bun_core::String;
-    fn JSC__JSValue__getClassNameWithRows(
-        this: JSValue,
-        global: &JSGlobalObject,
-        rows: JSValue,
-        place: PlaceHandle,
-    ) -> bun_core::String;
 }

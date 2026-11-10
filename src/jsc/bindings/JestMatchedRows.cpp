@@ -25,7 +25,7 @@ public:
     static constexpr uint32_t notAnIndex = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t rootPlace = 1;
 
-    // One object can meet a different pattern in each place it appears, so a place stands for the pair. `merged` is what mergedOf() made for it, if anything.
+    // One object can meet a different pattern in each place it appears. `merged` is what mergedOf() made for the place.
     struct Place {
         JSC::WriteBarrier<JSC::JSObject> holder;
         JSC::WriteBarrier<JSC::JSObject> merged;
@@ -77,12 +77,6 @@ public:
     Place* placeAt(uint32_t place)
     {
         return place && place <= m_places.size() ? &m_places[place - 1] : nullptr;
-    }
-
-    static Place* placeOf(JSC::EncodedJSValue rows, uint32_t place)
-    {
-        auto* cell = from(rows);
-        return cell ? cell->placeAt(place) : nullptr;
     }
 
     std::span<const Row> rowsOf(uint32_t place) const
@@ -194,6 +188,9 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
     WTF::Vector<unsigned, 32> handleOf(WTF::FillWith {}, numbers.size(), 0u);
     WTF::Vector<unsigned, 32> childOf(WTF::FillWith {}, records, none);
     for (size_t i = 0; i < records; i++) {
+        // The printer lists no private names.
+        if (state.recordedNames[i].isPrivateName())
+            continue;
         if (isMatcher(i)) {
             handleOf[holderOf[i]] = 1;
             continue;
@@ -231,12 +228,9 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
     WTF::Vector<Pending, 32> pending;
     for (size_t i = 0; i < records; i++) {
         unsigned place = handleOf[holderOf[i]];
-        // A nested record whose place is not kept is no row: the printer reads that property from the object.
-        if (!place || (!isMatcher(i) && (childOf[i] == none || !handleOf[childOf[i]])))
-            continue;
         auto& name = state.recordedNames[i];
-        // The printer lists no private names. The place of a record under one is kept all the same: the row that leads to that place has the object that the walk read, and a getter may return another one.
-        if (name.isPrivateName())
+        // A nested record whose place is not kept is no row: the printer reads that property from the object.
+        if (!place || name.isPrivateName() || (!isMatcher(i) && (childOf[i] == none || !handleOf[childOf[i]])))
             continue;
         pending.append(Pending { place, JSC::parseIndex(name).value_or(JestMatchedRows::notAnIndex), name.impl(), static_cast<unsigned>(i) });
     }
@@ -248,52 +242,14 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
         return !JestMatchedRows::isBefore(b.index, b.name, a.index, a.name) && a.record < b.record;
     });
     // A cycle back to the root walks the root place twice. The last record of a name wins, as when the records were applied in order.
-    unsigned candidateCount = 0;
+    unsigned rowCount = 0;
     for (size_t i = 0; i < pending.size(); i++) {
         bool isLastOfName = i + 1 == pending.size() || pending[i].place != pending[i + 1].place || JestMatchedRows::isBefore(pending[i].index, pending[i].name, pending[i + 1].index, pending[i + 1].name);
         if (isLastOfName)
-            pending[candidateCount++] = pending[i];
+            pending[rowCount++] = pending[i];
     }
 
     auto& vm = JSC::getVM(globalObject);
-    // True only if the printer, with no row, lists the name and reads the value that the walk read: the holder keeps that value under the name as enumerable data of its own. No code of the program runs.
-    auto holdsAsOwnData = [&](unsigned record) {
-        JSC::JSObject* holder = JSC::asObject(state.recorded.at(record * 4));
-        JSC::JSValue value = state.recorded.at(record * 4 + 2);
-        auto& name = state.recordedNames[record];
-        if (auto index = JSC::parseIndex(name))
-            return holder->canGetIndexQuickly(*index) && holder->getIndexQuickly(*index) == value;
-        unsigned attributes = 0;
-        return holder->getDirect(vm, name, attributes) == value && !(attributes & JSC::PropertyAttribute::DontEnum);
-    };
-    // A nested record stays a row only where the row is needed: the place of its value has a row, or the holder does not keep the value, as with a getter, which may return another object. An object that gets no row is offered to serializers as it is.
-    WTF::Vector<bool, 32> hasRow(WTF::FillWith {}, placeCount + 1, false);
-    WTF::Vector<bool, 32> isRow(WTF::FillWith {}, candidateCount, false);
-    for (unsigned i = 0; i < candidateCount; i++) {
-        if (isMatcher(pending[i].record) || !holdsAsOwnData(pending[i].record)) {
-            isRow[i] = true;
-            hasRow[pending[i].place] = true;
-        }
-    }
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (unsigned i = candidateCount; i-- > 0;) {
-            if (isRow[i] || !hasRow[handleOf[childOf[pending[i].record]]])
-                continue;
-            isRow[i] = true;
-            hasRow[pending[i].place] = true;
-            changed = true;
-        }
-    }
-    unsigned rowCount = 0;
-    for (unsigned i = 0; i < candidateCount; i++) {
-        if (isRow[i])
-            pending[rowCount++] = pending[i];
-    }
-    // The printer reaches every row through the rows of the root, which sort first. Without a row of the root there is nothing to show.
-    if (!rowCount || pending[0].place != JestMatchedRows::rootPlace)
-        return {};
-
     // `state.recorded` roots every value until the cell holds it.
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* cell = JestMatchedRows::create(vm, zigGlobal->mockModule.matchedRowsStructure.getInitializedOnMainThread(zigGlobal), placeCount, rowCount);
@@ -349,7 +305,7 @@ void appendMissingMatchedRowNames(JSC::JSCell* cell, uint32_t place, std::span<c
         missing.append(row->name);
 }
 
-// The object that serializers are offered for `place`. The first time, it is made and `place` is added to `toFill`, so a row that leads back to a place finds the object that the place already has.
+// The object that serializers get for `place`, made on first use. `toFill` gets the places that still lack their properties.
 JSC::JSObject* JestMatchedRows::mergedOf(JSC::JSGlobalObject* globalObject, uint32_t place, PlacesToFill& toFill)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -359,7 +315,7 @@ JSC::JSObject* JestMatchedRows::mergedOf(JSC::JSGlobalObject* globalObject, uint
         return merged;
     JSC::JSObject* holder = found.holder.get();
     JSC::JSObject* object = holder;
-    // A function is offered as it is, which is what jest-snapshot's merge of the property matchers does with one. So is an object without a row: nothing stands in for a property of it, and a serializer that goes by its class still claims it.
+    // A function and an object without a row are offered as they are, as in jest-snapshot's merge of the property matchers.
     if (!holder->isCallable() && found.rowCount) {
         if (dynamicDowncast<JSC::JSArray>(holder)) {
             object = JSC::constructEmptyArray(globalObject, nullptr);
@@ -372,7 +328,7 @@ JSC::JSObject* JestMatchedRows::mergedOf(JSC::JSGlobalObject* globalObject, uint
     return object;
 }
 
-// Gives the object that mergedOf() made for `place` the holder's own enumerable properties, in their order, and then the rows of other names, in the order of the walk. A row stands in for its property, which is not read.
+// Gives the object of mergedOf() the holder's own enumerable properties, with each row in place of its property, which is not read.
 void JestMatchedRows::fillMergedOf(JSC::JSGlobalObject* globalObject, uint32_t place, PlacesToFill& toFill)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -422,7 +378,7 @@ void JestMatchedRows::fillMergedOf(JSC::JSGlobalObject* globalObject, uint32_t p
 JSC::JSValue JestMatchedRows::forSerializers(JSC::JSGlobalObject* globalObject, uint32_t place)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    // Places are filled from this list, in the order in which they are reached, and never from inside one another: a long chain of places takes no stack.
+    // Filled from a list and not by recursion, so a long chain of places takes no stack.
     PlacesToFill toFill;
     JSC::JSObject* merged = mergedOf(globalObject, place, toFill);
     RETURN_IF_EXCEPTION(scope, {});
@@ -435,16 +391,10 @@ JSC::JSValue JestMatchedRows::forSerializers(JSC::JSGlobalObject* globalObject, 
 
 } // namespace Bun
 
-// The functions below answer for any `rows` and `place`: a value that is not a rows cell has no place. Only Bun__JestMatchedRows__forSerializers enters JavaScript.
+// These answer for any `rows` and `place`: a value that is not a rows cell has no place.
 extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__JestMatchedRows__root(JSC::EncodedJSValue rows)
 {
     return Bun::JestMatchedRows::from(rows) ? Bun::JestMatchedRows::rootPlace : 0;
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JestMatchedRows__holder(JSC::EncodedJSValue rows, uint32_t place)
-{
-    auto* found = Bun::JestMatchedRows::placeOf(rows, place);
-    return JSC::JSValue::encode(found ? JSC::JSValue(found->holder.get()) : JSC::JSValue());
 }
 
 // Rust declares the two that take pointers by hand, with references. cppbind would hand out raw pointers.
@@ -464,7 +414,7 @@ extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValu
     return JSC::JSValue::encode(row.value);
 }
 
-// What snapshot serializers are offered in place of the object of `place`, built once for the place. For each object that has a row, it reads the properties that have none, which runs their getters, and what those throw does not fail it. Undefined if there is no such place.
+// A plain object or array that snapshot serializers get in place of the object of `place`. Undefined if there is no such place.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JestMatchedRows__forSerializers(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rows, uint32_t place)
 {
     auto* cell = Bun::JestMatchedRows::from(rows);

@@ -99,57 +99,6 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     return JSPropertyIterator::create(vm, array.releaseData());
 }
 
-// The names that the bun:test printer lists for `encodedValue`, the object of `place` in the matched rows cell `encodedRows`: those that Bun__JSPropertyIterator__create() lists for its own properties, and the name of every other row, because a row is shown in place of its property. Such a name is where the object has the property if it owns it, and otherwise where a property added under that name would be, in the order of the walk.
-extern "C" JSPropertyIterator* Bun__JSPropertyIterator__createWithMatchedRows(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, JSC::EncodedJSValue encodedRows, uint32_t place)
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSObject* object = JSValue::decode(encodedValue).getObject();
-    JSC::JSCell* rows = JSValue::decode(encodedRows).asCell();
-    ASSERT(object);
-    ASSERT(count);
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (object->hasNonReifiedStaticProperties()) [[unlikely]] {
-        object->reifyAllStaticProperties(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-
-    JSC::PropertyNameArrayBuilder enumerable(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, globalObject, enumerable, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RefPtr<JSC::PropertyNameArray> names = enumerable.data();
-
-    WTF::Vector<Identifier> unlisted;
-    Bun::appendMissingMatchedRowNames(rows, place, names->propertyNameVector().span(), unlisted);
-    if (!unlisted.isEmpty()) {
-        JSC::PropertyNameArrayBuilder own(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        object->methodTable()->getOwnPropertyNames(object, globalObject, own, DontEnumPropertiesMode::Include);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        WTF::UncheckedKeyHashSet<WTF::UniquedStringImpl*> isEnumerable;
-        for (auto& name : enumerable)
-            isEnumerable.add(name.impl());
-        JSC::PropertyNameArrayBuilder withRows(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        for (auto& name : own) {
-            if (isEnumerable.contains(name.impl()) || Bun::matchedRow(rows, place, name).value)
-                withRows.add(name);
-        }
-        for (auto& name : unlisted)
-            withRows.add(name);
-        // An index that the object does not own goes among its indices, which come first.
-        auto& merged = withRows.data()->propertyNameVector();
-        std::stable_sort(merged.begin(), merged.end(), [](const Identifier& a, const Identifier& b) {
-            constexpr uint32_t notAnIndex = std::numeric_limits<uint32_t>::max();
-            return parseIndex(a).value_or(notAnIndex) < parseIndex(b).value_or(notAnIndex);
-        });
-        names = withRows.releaseData();
-    }
-
-    *count = names->propertyNameVector().size();
-    if (!*count)
-        return nullptr;
-    return JSPropertyIterator::create(vm, WTF::move(names));
-}
-
 extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     size_t longest = 0;

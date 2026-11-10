@@ -12,7 +12,6 @@ use super::compare_code_units;
 use super::deferred_exports::mirrors_an_object;
 use super::failures::{ModuleFailure, ModuleFailureId};
 use super::imports::NamedMember;
-use super::instances::InstanceLayout;
 use super::interop::{Interop, ModuleKind};
 use super::known_members::list_data_linked_by_names_alone;
 use super::order::SiteKey;
@@ -62,7 +61,6 @@ pub struct ModuleGraph {
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
     pub(super) member_stores: Vec<OnceLock<MemberStores>>,
-    pub(super) instance_layouts: Vec<OnceLock<InstanceLayout>>,
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
     pub(super) folders_of_databases: Vec<FileId>,
@@ -107,7 +105,6 @@ pub(super) struct FileRow {
     pub exports: Vec<ModuleExport>,
     pub ambiguous_names: Vec<Atom>,
     pub unread_exports: Vec<SymbolId>,
-    pub unread_instances: Vec<FileId>,
     pub names_left_out: Vec<Atom>,
     pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,

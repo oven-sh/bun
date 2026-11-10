@@ -146,21 +146,6 @@ fn computed_load(analysis: &FileAnalysis<'_>, site: &ImportSite) -> Option<ExprI
         .then_some(call)
 }
 
-pub(crate) fn has_computed_load_in_program(view: ProgramView<'_, '_>) -> bool {
-    let files = view.files();
-    let mut own = files
-        .compiled_files()
-        .iter()
-        .filter(|&&it| is_edited_by_user(view.origin(it)));
-    own.any(|&file| {
-        let analysis = files.analysis(file);
-        analysis
-            .import_sites
-            .iter()
-            .any(|site| computed_load(analysis, site).is_some())
-    })
-}
-
 fn is_edited_by_user(origin: FileOrigin) -> bool {
     matches!(
         origin,
@@ -283,12 +268,6 @@ impl Diagnostics {
             silenced_code,
             codes: codes.collect(),
         });
-    }
-
-    pub(crate) fn add_withheld(&mut self, view: ProgramView<'_, '_>, warning: &Diagnostic) {
-        if let Some(span) = warning.span {
-            self.withhold(view, warning.code.number(), span);
-        }
     }
 
     fn withhold(&mut self, view: ProgramView<'_, '_>, number: u32, span: Span) {

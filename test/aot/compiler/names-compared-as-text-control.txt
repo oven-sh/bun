@@ -226,6 +226,8 @@ allows src/sema/import_sites/call_sites.rs a query behind a specifier
     if strings::contains_char(inputs.atoms.bytes(name), b'?'));
 allows src/sema/import_sites/call_sites.rs a constructor that cannot be followed
     return by_binding.unwrap_or(name == known::Worker);
+allows src/aot/test_runs/files_of_run.rs a name that may be a loader
+    return name == known::require || name == known::createRequire;
 allows src/sema/import_sites/import_uses.rs the identifier eval as it is written
     return matches!(e.kind, ExprKind::Ident(name) if name == known::eval);
 finds src/sema/import_sites/import_uses.rs ==

@@ -10,11 +10,9 @@ use super::test_run_ways::{
 use crate::builtins::id::{BuiltinId, BuiltinName};
 use crate::builtins::{BuiltinPath, Mutability, Resolved, table};
 use crate::ir::generated::{ImportPhase, ModuleKind};
-use crate::ir::{
-    Edge, LayoutKey, ModuleId, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey,
-};
+use crate::ir::{Edge, ModuleId, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 use crate::lower::member::PropertyName;
-use crate::lower::{FileLowering, FunctionLowering, commonjs, scope};
+use crate::lower::{FileLowering, FunctionLowering, commonjs};
 use crate::modules::{
     ExportBinding, ImportBinding, ModuleGraph, ModuleRef, Shape, SiteAnswer, SyntheticExportId,
     View,
@@ -86,30 +84,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn emit_variable_read(&mut self, key: VariableKey, name: StringId) -> ValueId {
         let variable = self.file.ensure_variable(key);
         let value = self.builder.get_module_variable(variable);
-        self.builder.check_initialized(value, name)
-    }
-
-    pub(crate) fn emit_exported_variable_read(&mut self, symbol: Sym, name: StringId) -> ValueId {
-        let modules = self.file.inputs.modules;
-        let exporter = modules.instance_layout(symbol.file);
-        let Some(field) = exporter.and_then(|fields| fields.field_of_export(symbol.id)) else {
-            return self.emit_variable_read(VariableKey::Symbol(symbol), name);
-        };
-        let own_file = self.file.file;
-        let link = modules.instance_layout(own_file);
-        let link = link.and_then(|fields| fields.field_of_link(symbol.file));
-        let instance = match link {
-            _ if symbol.file == own_file => self.get_module_instance(),
-            Some(link) => {
-                let own_instance = self.get_module_instance();
-                let own_layout = scope::instance_layout(self.file);
-                (self.builder).get_environment_field(own_instance, own_layout, link)
-            }
-            None => self.emit_current_instance(symbol.file),
-        };
-        let key = LayoutKey::ModuleInstance(symbol.file);
-        let layout = self.file.fragment.declare_layout(key);
-        let value = self.builder.get_environment_field(instance, layout, field);
         self.builder.check_initialized(value, name)
     }
 
@@ -549,7 +523,9 @@ fn emit_unmocked_binding(
     path: Option<BuiltinPath>,
 ) -> ValueId {
     match binding {
-        ImportBinding::Variable(symbol) => lowering.emit_exported_variable_read(symbol, name),
+        ImportBinding::Variable(symbol) => {
+            lowering.emit_variable_read(VariableKey::Symbol(symbol), name)
+        }
         ImportBinding::Synthetic(export) => lowering.emit_synthetic_read(export, name),
         ImportBinding::Namespace { module, phase } => lowering.emit_module_namespace(module, phase),
         ImportBinding::Builtin(id) => lowering.emit_builtin_import(id, path),

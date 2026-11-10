@@ -46,7 +46,6 @@ pub enum LayoutKey {
         file: FileId,
         environment: u32,
     },
-    ModuleInstance(FileId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -92,8 +91,6 @@ pub enum VariableKey {
     RequiresMadeForOwnFile(FileId),
     RequiresMadeForOtherFolders(FileId),
     RequiresMadeForPaths(FileId),
-    InstanceOf(FileId),
-    InstanceAllocator(FileId),
 }
 
 impl FunctionKey {
@@ -167,8 +164,7 @@ impl LayoutKey {
             },
             LayoutKey::UntypedLiteral { file, .. }
             | LayoutKey::CreatedObject { file, .. }
-            | LayoutKey::Environment { file, .. }
-            | LayoutKey::ModuleInstance(file) => Some(file),
+            | LayoutKey::Environment { file, .. } => Some(file),
             LayoutKey::Container(symbol) => Some(symbol.file),
         }
     }
@@ -186,9 +182,7 @@ impl VariableKey {
             | VariableKey::RequiresMadeForOwnFile(file)
             | VariableKey::RequiresMadeForOtherFolders(file)
             | VariableKey::RequiresMadeForPaths(file)
-            | VariableKey::EnvironmentMadeAhead(file)
-            | VariableKey::InstanceOf(file)
-            | VariableKey::InstanceAllocator(file) => Some(file),
+            | VariableKey::EnvironmentMadeAhead(file) => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
             VariableKey::RequiredAnswer(holder) => Some(holder.file),
@@ -283,7 +277,6 @@ mod tests {
                 file: FILE,
                 environment: 0,
             },
-            LayoutKey::ModuleInstance(FILE),
         ];
         keys.extend(origins.map(|origin| LayoutKey::ObjectType {
             origin,

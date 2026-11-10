@@ -79,36 +79,11 @@ console.log("SAID", ask(() => require.resolve("gauge", { paths: [second, __dirna
   });
 }
 
-// `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()` embed nothing. The build says so where the path names a file that the executable doesn't hold (TS100099),
-// and where it can't read the path while some code of the project is left out (TS100087). Once the file is an entry point too, as both warnings advise, the build is quiet.
+// `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()` embed nothing. The build says so where a written path names a file that the executable
+// doesn't hold (TS100099). Once the file is an entry point too, as the warning advises, the build is quiet.
 const made = `atob("Li9wYXJ0LmNqcw==")`;
 const missed = "ERR_MODULE_NOT_FOUND";
 const resolvers: Record<string, { asks: string; warnings: string[]; found: string }> = {
-  "Bun.resolveSync() of a computed path": {
-    asks: `Bun.resolveSync(${made}, import.meta.dir)`,
-    warnings: ["TS100087"],
-    found: missed,
-  },
-  "Bun.resolve() of a computed path": {
-    asks: `await Bun.resolve(${made}, import.meta.dir)`,
-    warnings: ["TS100087"],
-    found: missed,
-  },
-  "import.meta.resolveSync() of a computed path": {
-    asks: `import.meta.resolveSync(${made})`,
-    warnings: ["TS100087"],
-    found: missed,
-  },
-  "Bun.resolveSync.call() of a computed path": {
-    asks: `Bun.resolveSync.call(Bun, ${made}, import.meta.dir)`,
-    warnings: ["TS100087"],
-    found: missed,
-  },
-  "Bun.resolveSync.apply() of a computed path": {
-    asks: `Bun.resolveSync.apply(Bun, [${made}, import.meta.dir])`,
-    warnings: ["TS100087"],
-    found: missed,
-  },
   "Bun.resolveSync() of a written path": {
     asks: `Bun.resolveSync("./part.cjs", import.meta.dir)`,
     warnings: ["TS100099"],
@@ -163,7 +138,7 @@ for (const [name, { asks, warnings, found }] of Object.entries(resolvers)) {
   });
 }
 
-test.each([`Bun.resolveSync(${made}, import.meta.dir)`, `Bun.resolveSync("./part.cjs", import.meta.dir)`])(
+test.each([`Bun.resolveSync("./part.cjs", import.meta.dir)`])(
   "the build is quiet once the file is in the executable: %s",
   async asks => {
     const files = {
@@ -174,24 +149,6 @@ test.each([`Bun.resolveSync(${made}, import.meta.dir)`, `Bun.resolveSync("./part
     expect(compiled).toEqual({ stdout: "SAID root/part.cjs\n", stderr: "", exitCode: 0 });
   },
 );
-
-test.each([
-  "LICENSE",
-  "Makefile",
-  "types.d.ts",
-  ".hidden.js",
-  ".hidden/part.js",
-  "notes.md",
-  "node_modules/made-up/index.js",
-])("a file that is no code of the project keeps no warning alive: %s", async beside => {
-  const files = {
-    "main.mjs": `import "./part.cjs";\n` + asking(`Bun.resolveSync(${made}, import.meta.dir)`),
-    "part.cjs": `module.exports = "part";\n`,
-    [beside]: "\n",
-  };
-  const { compiled } = await buildAndRun(files, "main.mjs", []);
-  expect(compiled).toEqual({ stdout: "SAID root/part.cjs\n", stderr: "", exitCode: 0 });
-});
 
 // The executable holds no code that nothing reaches, so a call there misses nothing.
 const part = { "part.cjs": `module.exports = "part";\n` };
@@ -218,42 +175,12 @@ test("a call in an exported function that nothing imports gets no warning", asyn
 test("a call in a function that is called gets its warning", async () => {
   const files = {
     "main.mjs":
-      never(`Bun.resolveSync(${made}, import.meta.dir)`) +
+      never(`Bun.resolveSync("./part.cjs", import.meta.dir)`) +
       `let said;\ntry {\n  said = never();\n} catch (error) {\n  said = error.code;\n}\nconsole.log("SAID", said);\n`,
     ...part,
   };
-  const { compiled } = await buildAndRun(files, "main.mjs", [], ["TS100087"]);
+  const { compiled } = await buildAndRun(files, "main.mjs", [], ["TS100099"]);
   expect(compiled).toEqual({ stdout: `SAID ${missed}\n`, stderr: "", exitCode: 0 });
-});
-
-test.each([
-  ["", ["TS100087"], "MODULE_NOT_FOUND"],
-  [`require("./part.cjs");\n`, [], "x/part.cjs"],
-])("require.resolve() of a computed path, behind %j", async (before, warnings, found) => {
-  const files = { "main.cjs": before + asking(`"x/" + require.resolve(${made}).split("/").pop()`), ...part };
-  const { compiled } = await buildAndRun(files, "main.cjs", [], warnings);
-  expect(compiled).toEqual({ stdout: `SAID ${found}\n`, stderr: "", exitCode: 0 });
-});
-
-// The sources are gone when these run: the first path is absolute and would find the file where it lay.
-const besideScript = (asks: string) => ({
-  "app/main.cjs": asking(`"x/" + ${asks}.split("/").pop()`),
-  "app/part.cjs": `module.exports = "part";\n`,
-  "app/scripts/left-out.mjs": `export default 1;\n`,
-});
-test.each([
-  `require.resolve(require("node:path").join(process.argv[2] ?? __dirname, "part.cjs"))`,
-  `require.resolve("/" + (process.argv[2] ?? __dirname.slice(1) + "/part.cjs"))`,
-  `require.resolve("." + (process.argv[2] ?? "/part.cjs"))`,
-])("a path whose beginning names no folder: %s", async asks => {
-  const { compiled } = await buildAndRun(besideScript(asks), "app/main.cjs", ["app"], ["TS100087"]);
-  expect(compiled).toEqual({ stdout: "SAID MODULE_NOT_FOUND\n", stderr: "", exitCode: 0 });
-});
-
-test("require.resolve() of a path whose beginning is known finds the file, and the build is quiet", async () => {
-  const asks = `require.resolve("./" + (process.argv[2] ?? "part") + ".cjs")`;
-  const { compiled } = await buildAndRun(besideScript(asks), "app/main.cjs", ["app"]);
-  expect(compiled).toEqual({ stdout: "SAID x/part.cjs\n", stderr: "", exitCode: 0 });
 });
 
 test("a require made for a folder looks from the folder above", async () => {

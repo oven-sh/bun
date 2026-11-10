@@ -32,9 +32,7 @@ pub(super) fn place_bindings(
     made_ahead.sort_unstable();
     let place = |binding: BindingRef| {
         let scope = context.scope_of(binding);
-        let storage = if let Some(field) = find_by_key(&sharing.instance_fields, binding) {
-            Storage::Instance { field }
-        } else if let Some(key) = find_by_key(&sharing.variables, binding) {
+        let storage = if let Some(key) = find_by_key(&sharing.variables, binding) {
             Storage::Variable(key)
         } else if let Ok(position) = fields.binary_search(&(scope, binding)) {
             let first_of_scope = fields.partition_point(|field| field.0 < scope);
@@ -52,7 +50,7 @@ pub(super) fn place_bindings(
         let has_local = match storage {
             Storage::Local => true,
             Storage::Field { .. } if fields_of_others.binary_search(&binding).is_err() => true,
-            Storage::Field { .. } | Storage::Variable(_) | Storage::Instance { .. } => {
+            Storage::Field { .. } | Storage::Variable(_) => {
                 is_immutable && !starts_as_function && !is_made_ahead
             }
         };

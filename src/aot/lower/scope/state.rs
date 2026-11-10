@@ -111,7 +111,6 @@ pub(crate) struct ScopeState {
     pub(super) environments_put_off: Vec<EnvironmentPutOff>,
     pub(in crate::lower) locals: Locals,
     pub(in crate::lower) entry_this: Option<ValueId>,
-    pub(in crate::lower) allocated_instance: Option<ValueId>,
     pub(in crate::lower) unpacked_captures: Vec<ValueId>,
     pub(super) created_functions: FxHashMap<SymbolId, ValueId>,
 }

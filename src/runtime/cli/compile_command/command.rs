@@ -35,6 +35,7 @@ impl CompileCommand {
                 || has_only_html_entry_points(&ctx.args.entry_points)
             {
                 ctx.bundler_options.aot = None;
+                ctx.bundler_options.keeps_entry_points = true;
                 configuration::load_script_as_code(ctx);
                 return BuildCommand::exec(ctx, None);
             }

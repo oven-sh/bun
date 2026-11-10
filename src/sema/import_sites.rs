@@ -52,6 +52,7 @@ pub use parameters::{
     find_values_passed_for, is_exported,
 };
 pub(crate) use scan::collect_import_sites;
+pub use statements::find_statement_sites;
 pub(crate) use statements::is_runtime_import;
 pub(crate) use touched_exports::{
     is_module_that_reaches_modules, reaches_modules_unnamed, touches_export,
@@ -215,10 +216,10 @@ pub(crate) struct ImportScan<'s> {
     pub known_load_names: &'s [(ExprId, Atom)],
     pub own_url_arguments: &'s [OwnUrlArgument],
     pub exported_file_changers: &'s [ExportedFileChanger],
-    pub asked_of_other_files: &'s [(Atom, Atom)],
-    pub asked_of_data_files: &'s [(Atom, Atom)],
-    pub asked_of_own_exports: &'s [Atom],
-    pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
+    pub other_file_queries: &'s [(Atom, Atom)],
+    pub data_file_queries: &'s [(Atom, Atom)],
+    pub own_export_queries: &'s [Atom],
+    pub names_from_data_files: &'s [(Atom, ExprId, bool)],
     pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
     pub options_of_resolves_with_unread_folders: &'s [ExprId],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],

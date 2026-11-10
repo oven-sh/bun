@@ -9,6 +9,7 @@
 // answers it wrongly: `Object.is(id(v), v)` is true whatever `v` is, and one literal that is evaluated twice gives two objects. A use of the value in front of the question may settle what the compiler
 // makes of it, so the value is used otherwise only where the name of the program says so. The first 17,458 programs are every question, way and value with a constant of the file that is not used otherwise.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // A is the value behind its way round, B the value. ANY and RET are the types written in a typed file.
 const questions: [string, string, string][] = [
@@ -187,7 +188,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laid < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laid++;
   }
   console.log(laid);
@@ -197,7 +198,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

@@ -29,8 +29,6 @@ for (const [form, maker] of Object.entries(makers)) {
         "main.cjs": `let table = null;\n${maker}\n${use}\nconsole.log("SAID", require(table.a));\n`,
         "a.cjs": `module.exports = "a";\n`,
         "b.cjs": `module.exports = "b";\n`,
-        // The build stops warning of a computed name once every code file of the project is in the executable.
-        "left-out.cjs": `module.exports = "left out";\n`,
       });
       const cwd = String(dir);
       const built = await run(

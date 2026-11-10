@@ -201,7 +201,7 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
-    /// Jobs handed to the thread pool, and jobs that have settled their module promise. JS thread only.
+    /// JS thread only.
     pub jobs_scheduled: u64,
     pub jobs_completed: u64,
 }

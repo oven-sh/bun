@@ -217,38 +217,6 @@ fn collect_entry_point_paths(
     paths
 }
 
-pub(crate) struct CodeLeftOut {
-    pub(crate) file: Option<Vec<u8>>,
-    has_unread_folder: bool,
-}
-
-impl CodeLeftOut {
-    pub(crate) fn is_known_to_be_none(&self) -> bool {
-        self.file.is_none() && !self.has_unread_folder
-    }
-}
-
-fn is_skipped_folder_name(name: &[u8]) -> bool {
-    name == b"node_modules" || name.starts_with(b".")
-}
-
-fn is_walked(folder: &[u8], root: &[u8]) -> bool {
-    let Some(below) = folder.strip_prefix(root) else {
-        return false;
-    };
-    below.is_empty()
-        || below
-            .strip_prefix(b"/")
-            .is_some_and(|below| !bun_core::strings::split(below, b"/").any(is_skipped_folder_name))
-}
-
-fn is_code_file_name(name: &[u8]) -> bool {
-    !name.starts_with(b".")
-        && !bun_paths::extension(name).is_empty()
-        && !is_declaration_file_name(name)
-        && loader_by_name(name).is_javascript_like()
-}
-
 fn collect_entry_points_by_file(options: &Options<'_>) -> Vec<(Vec<u8>, Vec<u8>)> {
     let paths = &options.paths;
     let names = paths.entry_point_file_names.iter();
@@ -597,49 +565,6 @@ impl<'a> LoadHost<'a> {
             self.note_way_named(&way);
         }
         find_file_on_way(paths, way)
-    }
-
-    pub(crate) fn find_code_left_out(&self, held: &FxHashSet<&[u8]>) -> CodeLeftOut {
-        let root = from_native(&self.input.options.paths.root_directory);
-        let root = root.strip_suffix(b"/").unwrap_or(&root);
-        let real_root = self.disk.realpath(root);
-        let mut found = CodeLeftOut {
-            file: None,
-            has_unread_folder: root.is_empty(),
-        };
-        let mut pending = vec![(root.to_vec(), real_root.clone())];
-        while let Some((folder, real_folder)) = pending.pop() {
-            let (mut files, mut folders) = self.entries(&folder);
-            files.sort_unstable();
-            for name in files {
-                let path = [&folder[..], b"/", &name[..]].concat();
-                if is_code_file_name(&name) && !held.contains(&self.disk.realpath(&path)[..]) {
-                    found.file = Some(path);
-                    return found;
-                }
-            }
-            folders.retain(|name| !is_skipped_folder_name(name));
-            folders.sort_unstable_by(|one, other| other.cmp(one));
-            for name in folders {
-                let path = [&folder[..], b"/", &name[..]].concat();
-                let real = self.disk.realpath(&path);
-                let is_link = real != [&real_folder[..], b"/", &name[..]].concat();
-                if !is_link {
-                    pending.push((path, real));
-                } else if !is_walked(&real, &real_root) {
-                    found.has_unread_folder = true;
-                }
-            }
-        }
-        found
-    }
-
-    pub(crate) fn has_several_code_entry_points(&self) -> bool {
-        let options = &self.input.options;
-        let is_code = |path: &&Vec<u8>| is_code_file_name(bun_paths::basename(path));
-        let root = from_native(&options.paths.root_directory);
-        options.entry_points.iter().filter(is_code).nth(1).is_some()
-            && !bun_core::strings::contains(&root, b"node_modules")
     }
 
     pub(crate) fn find_file_that_require_finds(

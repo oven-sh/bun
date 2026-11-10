@@ -772,8 +772,12 @@ impl CompiledProgram {
     }
 
     pub fn assets_named_at_root(&self, base_name: &[u8]) -> impl Iterator<Item = &'static [u8]> {
-        bun_core::strings::split(self.assets_named_at_root, b"\0")
-            .filter(move |path| !path.is_empty() && bun_paths::basename(path) == base_name)
+        self.paths_named_at_root()
+            .filter(move |path| bun_paths::basename(path) == base_name)
+    }
+
+    pub fn paths_named_at_root(&self) -> impl Iterator<Item = &'static [u8]> {
+        bun_core::strings::split(self.assets_named_at_root, b"\0").filter(|path| !path.is_empty())
     }
 
     /// Where the file that the executable knows as `path` lay on the machine that built it: what `require.resolve` answers, as with `bun build --compile`.
@@ -1031,7 +1035,7 @@ impl CompiledProgram {
             && self.is_hidden_name(&[path, mark].concat(), how.is_require)
     }
 
-    /// Drops each step up out of the root directory that the next name undoes: `../app/note.txt` is `note.txt` where the root directory is `app` and the program spells that name.
+    /// Removes `..` steps that the next name undoes: `../app/note.txt` is `note.txt` in the root directory `app`.
     fn cancel_root_folders<'p>(&self, parts: &[&'p [u8]]) -> Vec<&'p [u8]> {
         let folders: Vec<&[u8]> = split_path(self.root_folders_spelled).collect();
         let mut above = count_levels_above_root(parts);

@@ -34,7 +34,7 @@ use bun_trim::TrimPlan;
 
 use super::{
     AssetError, BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
-    configuration, reports, trimming,
+    RequestOrigin, configuration, reports, trimming,
 };
 use crate::cli::build_command::{collect_compile_assets, to_embedded_name};
 
@@ -118,6 +118,13 @@ pub(crate) fn compile_to_executable(
         CompileProduct::Executable { outfile } => Some(Some(outfile)),
     };
     if let Some(outfile) = outfile {
+        if let Some(outfile) = outfile
+            && request.origin == RequestOrigin::CompileCommand
+        {
+            let written = request.entry_points.iter().copied();
+            let sources = build.entry_points.iter().map(|it| &it.source_path[..]);
+            check_entry_points_are_kept(outfile, written, sources)?;
+        }
         let product = ProductInputs {
             module_prefix,
             outfile,
@@ -135,6 +142,46 @@ pub(crate) fn compile_to_executable(
     log_part_outside_stages("behind the engine: drop the build");
     log_time_outside_stages("behind the engine");
     Ok(outcome)
+}
+
+/// Letter case and `./` spell one place in several ways, so the files themselves are compared. The executable replaces what
+/// is at `outfile`: a link to an entry point is another place, unless it is the entry point as it was `written`.
+pub(crate) fn check_entry_points_are_kept<'a>(
+    outfile: &[u8],
+    mut written: impl Iterator<Item = &'a [u8]>,
+    mut sources: impl Iterator<Item = &'a [u8]>,
+) -> Result<(), CompileFailure> {
+    let path = ZBox::from_bytes(outfile);
+    let (Ok(place), Ok(target)) = (bun_sys::lstat(&path), bun_sys::stat(&path)) else {
+        return Ok(());
+    };
+    let is_same =
+        |a: &bun_sys::Stat, b: &bun_sys::Stat| a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+    let source = sources.find(|path| {
+        bun_sys::stat(&ZBox::from_bytes(path)).is_ok_and(|found| is_same(&found, &target))
+    });
+    let Some(source) = source else {
+        return Ok(());
+    };
+    let is_overwritten = match is_same(&place, &target) {
+        // Of a file with several hard links, one is replaced and the others stay.
+        true => target.st_nlink == 1 || real_path(outfile) == real_path(source),
+        false => written.any(|path| {
+            bun_sys::lstat(&ZBox::from_bytes(path)).is_ok_and(|found| is_same(&found, &place))
+        }),
+    };
+    match is_overwritten {
+        true => Err(CompileFailure::OverwritesEntryPoint {
+            outfile: outfile.to_vec(),
+        }),
+        false => Ok(()),
+    }
+}
+
+fn real_path(path: &[u8]) -> Option<Vec<u8>> {
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let found = bun_sys::realpath(&ZBox::from_bytes(path), &mut buffer).ok()?;
+    Some(found.to_vec())
 }
 
 #[allow(clippy::needless_pass_by_value)] // made for this call
@@ -574,6 +621,7 @@ fn add_assets(
     );
     // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
     let log = unsafe { &mut *request.log };
+    warn_about_shared_asset_names(&named_at_root, output_files, log);
     emit_not_embedded_warnings(
         files_for_file_system,
         root_directory,
@@ -582,6 +630,41 @@ fn add_assets(
         log,
     );
     Ok((named_at_root, encode_files_for_file_system_alone(laid)))
+}
+
+/// `named_at_root` is `CompiledProgram::assets_named_at_root`: the executable tries its folders in that order, so the first one that holds a name hides the others.
+fn warn_about_shared_asset_names(
+    named_at_root: &[u8],
+    output_files: &[OutputFile],
+    log: &mut bun_ast::Log,
+) {
+    let mut paths_by_name: std::collections::BTreeMap<Vec<u8>, Vec<&[u8]>> = Default::default();
+    let folders = bun_core::strings::split(named_at_root, b"\0");
+    for folder in folders.filter(|it| !it.is_empty()) {
+        for file in output_files {
+            let path = bun_core::strings::remove_leading_dot_slash(&file.dest_path);
+            if let Some(below @ [b'/', ..]) = path.strip_prefix(folder) {
+                let name = [bun_paths::basename(folder), below].concat();
+                paths_by_name.entry(name).or_default().push(path);
+            }
+        }
+    }
+    for (name, paths) in paths_by_name.iter().filter(|it| it.1.len() > 1) {
+        let quoted: Vec<String> = paths
+            .iter()
+            .map(|path| bun_core::fmt::quote(path).to_string())
+            .collect();
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "assets {} share the path {} in the executable. That path reads {}. Each asset is also at its own path",
+                quoted.join(" and "),
+                bun_core::fmt::quote(name),
+                quoted[0],
+            ),
+        );
+    }
 }
 
 fn emit_not_embedded_warnings(
@@ -997,7 +1080,7 @@ fn find_assets_named_at_root(
         .collect()
 }
 
-/// `a/config.json`, or `../lib/data.txt` for an asset outside the root directory. `None` where no relative path leads there, as on another Windows drive.
+/// `None` if no relative path leads there, as on another Windows drive.
 fn path_from_root(
     root_directory: &[u8],
     working_directory: &[u8],

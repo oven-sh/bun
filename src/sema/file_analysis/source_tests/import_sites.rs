@@ -1454,7 +1454,7 @@ const ASKED_OF_OWN_EXPORTS: &[(&str, &[&str])] = &[
 fn what_is_followed_through_the_exports_asks_who_else_touches_them() {
     for &(text, expected) in ASKED_OF_OWN_EXPORTS {
         analyzed("a.cjs", text, |s| {
-            let asked = s.analysis.asked_of_own_exports.iter();
+            let asked = s.analysis.own_export_queries.iter();
             let asked: Vec<&str> = asked.map(|&it| s.workspace.text(it)).collect();
             assert_eq!(asked, expected, "{text}");
         });
@@ -1465,7 +1465,7 @@ fn what_is_followed_through_the_exports_asks_who_else_touches_them() {
 fn names_of_loads_ask_for_texts_of_other_files() {
     for &(path, text, expected) in ASKED_OF_DATA_FILES {
         analyzed(path, text, |s| {
-            let asked = s.analysis.asked_of_data_files.iter();
+            let asked = s.analysis.data_file_queries.iter();
             let mut asked: Vec<(&str, &str)> = asked
                 .map(|it| (s.workspace.text(it.0), s.workspace.text(it.1)))
                 .collect();
@@ -1502,7 +1502,7 @@ const ASKED_WHERE_FILES_LIE: &[(&str, &str, &[&str])] = &[
 fn what_goes_on_from_answer_of_resolver_asks_where_file_lies_for_each_call() {
     for &(path, text, expected) in ASKED_WHERE_FILES_LIE {
         analyzed(path, text, |s| {
-            let asked = s.analysis.asked_of_data_files.iter();
+            let asked = s.analysis.data_file_queries.iter();
             let mut asked: Vec<(&str, &str)> = asked
                 .map(|it| (s.workspace.text(it.0), s.workspace.text(it.1)))
                 .collect();
@@ -3357,10 +3357,10 @@ fn finds_module_relative_reads() {
                 .map(|&(_, path)| s.workspace.text(path).to_string())
                 .collect();
             assert_eq!(described, paths, "{text}");
-            let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
-                && s.analysis.asked_of_other_files.is_empty()
-                && s.analysis.asked_of_data_files.is_empty()
-                && s.analysis.asked_of_own_exports.is_empty();
+            let lays_nothing_else = s.analysis.names_from_data_files.is_empty()
+                && s.analysis.other_file_queries.is_empty()
+                && s.analysis.data_file_queries.is_empty()
+                && s.analysis.own_export_queries.is_empty();
             assert!(lays_nothing_else, "{text}");
         });
     }
@@ -3955,10 +3955,10 @@ fn finds_caller_relative_reads() {
                 })
                 .collect();
             assert_eq!(described, handed, "{text}");
-            let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
-                && s.analysis.asked_of_other_files.is_empty()
-                && s.analysis.asked_of_data_files.is_empty()
-                && s.analysis.asked_of_own_exports.is_empty();
+            let lays_nothing_else = s.analysis.names_from_data_files.is_empty()
+                && s.analysis.other_file_queries.is_empty()
+                && s.analysis.data_file_queries.is_empty()
+                && s.analysis.own_export_queries.is_empty();
             assert!(lays_nothing_else, "{text}");
         });
     }

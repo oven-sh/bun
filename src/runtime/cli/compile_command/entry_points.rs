@@ -157,7 +157,7 @@ pub(super) fn find_default_entry_point(
     }
 }
 
-/// `bun compile rollup`: `written` can name an executable that an installed package provides, as in `bun run rollup`.
+/// `written` can name an executable of an installed package, as in `bun run rollup`.
 /// Source of that name in the working directory goes first.
 pub(super) fn find_named_entry_point(
     working_directory: &[u8],
@@ -252,7 +252,7 @@ fn read_start<'a>(path: &[u8], buffer: &'a mut [u8]) -> &'a [u8] {
     &buffer[..length]
 }
 
-/// A command-line tool such as `node_modules/rollup/dist/bin/rollup`: nothing in its name says that it is code.
+/// A command-line tool such as `node_modules/rollup/dist/bin/rollup` has no file extension.
 pub(super) fn is_script_without_extension(working_directory: &[u8], written: &[u8]) -> bool {
     let path = join(working_directory, written);
     bun_paths::extension(&path).is_empty() && (has_script_shebang(&path) || is_named_by_bin(&path))
@@ -310,8 +310,8 @@ fn find_package_executable(
     }
 }
 
-/// A link in `node_modules/.bin` leads to the file. Windows and pnpm put a launcher there instead, so the package whose
-/// `"bin"` has the name is searched for.
+/// Windows and pnpm put a launcher in `node_modules/.bin`, so packages are searched for
+/// the name in `"bin"`.
 fn find_linked_executable(
     node_modules: &[u8],
     executable_name: &[u8],
@@ -342,7 +342,7 @@ fn read_link(path: &[u8]) -> Option<Vec<u8>> {
     Some(buffer[..length].to_vec())
 }
 
-/// `name` and `@scope/name`, sorted: the order of a directory's entries differs between file systems.
+/// Sorted: the order of a directory's entries differs between file systems.
 fn installed_packages(node_modules: &[u8]) -> Vec<Vec<u8>> {
     let mut packages = Vec::new();
     for name in directory_entries(node_modules) {

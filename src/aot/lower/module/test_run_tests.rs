@@ -1015,7 +1015,7 @@ fn program_that_mocks_no_file_has_no_station() {
 }
 
 #[test]
-fn name_read_off_what_require_gives_is_read_off_the_object() {
+fn name_read_off_what_require_gives_is_asked_of_the_file_that_is_required() {
     let others = [
         ("declares.js", "export const v = 'real';\n"),
         ("mocked.js", "export { v } from './declares.js';\n"),
@@ -1030,7 +1030,7 @@ fn name_read_off_what_require_gives_is_read_off_the_object() {
         "const { v } = require('./barrel.js');\nconsole.log(v);\n",
         "const { v: inner = 'none' } = require('./barrel.js');\nconsole.log(inner);\n",
     ] {
-        assert_eq!(find(rest), [""; 0], "{rest}");
+        assert_eq!(find(rest), by_import, "{rest}");
     }
 }
 
@@ -1057,9 +1057,13 @@ fn name_of_a_commonjs_file_read_off_a_barrel_is_asked_of_the_barrel() {
         ("mocked.js", "export { v } from './declares.cjs';\n"),
         ("barrel.js", "export { v } from './mocked.js';\n"),
     ];
-    let rest = "import * as all from './barrel.js';\nconsole.log(all.v);\n";
-    let stations = find_stations(&["mocked.js"], rest, &others);
-    assert_eq!(stations, ["mocked.js seen by barrel.js"]);
+    for rest in [
+        "import * as all from './barrel.js';\nconsole.log(all.v);\n",
+        "console.log(require('./barrel.js').v);\n",
+    ] {
+        let stations = find_stations(&["mocked.js"], rest, &others);
+        assert_eq!(stations, ["mocked.js seen by barrel.js"], "{rest}");
+    }
 }
 
 #[test]
@@ -1132,13 +1136,12 @@ fn name_read_off_an_object_that_another_object_shows_is_asked_of_its_module() {
     let find = |rest: &str| find_stations(&["mocked.js"], rest, &others);
     let by_name = find("import { inner } from './barrel.js';\nconsole.log(inner.v);\n");
     assert_eq!(by_name, ["mocked.js seen by barrel.js"]);
-    let by_namespace = "import * as all from './barrel.js';\nconsole.log(all.inner.v);\n";
-    assert_eq!(find(by_namespace), by_name);
     for rest in [
+        "import * as all from './barrel.js';\nconsole.log(all.inner.v);\n",
         "console.log(require('./barrel.js').inner.v);\n",
         "const all = require('./barrel.js');\nconsole.log(all.inner.v);\n",
     ] {
-        assert_eq!(find(rest), [""; 0], "{rest}");
+        assert_eq!(find(rest), by_name, "{rest}");
     }
 }
 

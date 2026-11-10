@@ -345,8 +345,6 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
       mkdirSync(dirname(join(sources, path)), { recursive: true });
       copyFileSync(addon, join(sources, path));
     }
-    // The build stops warning of a computed name once every code file of the project is in the executable. These tests read that warning.
-    writeFileSync(join(sources, dirname(program.entry), "left-out.cjs"), "module.exports = 0;\n");
   }
   const said = ({ stdout, stderr, exitCode, signal }: Awaited<ReturnType<typeof spawned>>) => ({
     stdout,

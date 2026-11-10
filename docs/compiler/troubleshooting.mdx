@@ -35,34 +35,32 @@ The build reports type errors in your own files only. If a package has type erro
 
 An `error` stops the build. After a `warn` you still get an executable, but the line it points at may fail when it runs.
 
-| Message                                         | What to do                                                                                                                    |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `TS100014: this assignment always throws`       | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only)                                             |
-| `TS100053: Macros are disabled`                 | `bun compile` doesn't run macros. Pass `--no-aot`                                                                             |
-| `TS100073: This comment silences nothing`       | Delete the [`bun-ignore` comment](#silence-a-warning), or fix the code it names                                               |
-| `TS100308: The package "x" has 2 type errors`   | Your build doesn't stop for them. `bun check --aot --all` lists them, so you can report them to the package                   |
-| `TS100064: this import path isn't a constant`   | The build may not find the file. [Pass it as another entry point](/compiler/compatibility#a-file-that-isnt-in-the-executable) |
-| `TS100064: this call loads a module`            | Import the `node:` or `bun:` module by name somewhere in your program                                                         |
-| `TS100080`, `TS100091`, `TS100092`, `TS100093`  | [Loader hooks and `require.cache`](/compiler/compatibility#loader-hooks-and-the-module-cache) don't reach compiled modules    |
-| `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                                                                    |
-| `--aot does not apply to a package.json script` | Put `--aot` on the `bun` command inside the script                                                                            |
-| `this build of Bun doesn't support --trim`      | Use a release of Bun, not one you built                                                                                       |
-
-`TS100064: this import path isn't a constant` stops by itself once you pass more than one code file as an entry point and every code file of your project is in the executable. It stays if you compile a package from `node_modules`, because the files its users name lie outside the package.
+| Message                                         | What to do                                                                                                                                                                    |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TS100014: this assignment always throws`       | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only)                                                                                             |
+| `TS100053: Macros are disabled`                 | `bun compile` doesn't run macros. Pass `--no-aot`                                                                                                                             |
+| `TS100073: This comment silences nothing`       | Delete the [`bun-ignore` comment](#silence-a-warning), or fix the code it names                                                                                               |
+| `TS100308: The package "x" has 2 type errors`   | Your build doesn't stop for them. `bun check --aot --all` lists them, so you can report them to the package                                                                   |
+| `TS100064: this import path isn't a constant`   | The build may not find the file. [Pass it as another entry point](/compiler/compatibility#a-file-that-isnt-in-the-executable), then [silence the warning](#silence-a-warning) |
+| `TS100064: this call loads a module`            | Import the `node:` or `bun:` module by name somewhere in your program                                                                                                         |
+| `TS100080`, `TS100091`, `TS100092`, `TS100093`  | [Loader hooks and `require.cache`](/compiler/compatibility#loader-hooks-and-the-module-cache) don't reach compiled modules                                                    |
+| `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                                                                                                                    |
+| `--aot does not apply to a package.json script` | Put `--aot` on the `bun` command inside the script                                                                                                                            |
+| `this build of Bun doesn't support --trim`      | Use a release of Bun, not one you built                                                                                                                                       |
 
 ### Silence a warning
 
 If you've checked a line and its warning doesn't apply, write a `bun-ignore` comment with the warning's code. Put it on the line above, or at the end of the line:
 
 ```ts
-// bun-ignore TS100064 the plugin folder ships next to the executable
+// bun-ignore TS100064 every plugin is an entry point
 const plugin = require(pluginPath);
 
-const found = Bun.resolveSync(name, root); // bun-ignore TS100087
+const found = Bun.resolveSync("./plugin.js", import.meta.dir); // bun-ignore TS100099 only under bun run
 ```
 
 - Any text after the codes is yours, so say why.
-- To silence several warnings on one line, list their codes: `// bun-ignore TS100064, TS100087`. No form silences every warning.
+- To silence several warnings on one line, list their codes: `// bun-ignore TS100064, TS100099`. No form silences every warning.
 - It silences the compiler's own warnings and notes, `TS100000` to `TS100999`. It never silences a type error, an error that stops the build, or a warning that isn't about a line, such as `TS100308`.
 - A comment that silences nothing gets a warning of its own, `TS100073`, so stale comments don't pile up. A comment in code that this build leaves out, such as a function it never calls, isn't stale: another build of the same file may need it. A build that stops at an error calls no comment stale.
 - It works in `.js`, `.ts`, `.jsx` and `.tsx` files, and in dependencies. Between JSX elements, write `{/* bun-ignore TS100064 */}`.

@@ -5,7 +5,6 @@ use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{
     Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
-    has_computed_load_in_program,
 };
 use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
@@ -16,7 +15,7 @@ use crate::load::contents::{
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
-use crate::load::host::{CodeLeftOut, LoadHost, LoadHostInput, create_disk};
+use crate::load::host::{LoadHost, LoadHostInput, create_disk};
 use crate::load::module_paths::{count_folders, spell_with_other_levels};
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
@@ -51,7 +50,7 @@ use bun_sema_driver::{
     load_program,
 };
 use bun_threading::Guarded;
-use std::cell::{Cell, LazyCell};
+use std::cell::Cell;
 use std::mem::take;
 use std::thread::Scope;
 
@@ -179,7 +178,7 @@ fn warn_of_guesses_left_out(
             let found = host.find_file_that_require_finds(&folder, name);
             found.is_some_and(|path| held.contains(&path[..]))
         };
-        let guessed = files.analysis(file).names_out_of_data_files.iter();
+        let guessed = files.analysis(file).names_from_data_files.iter();
         let guessed = guessed.filter(|it| it.2 && !is_held(files.atoms().bytes(it.0)));
         let guessed: Vec<(ExprId, Atom)> = guessed.map(|it| (it.1, it.0)).collect();
         for of_site in guessed.chunk_by(|one, next| one.0 == next.0) {
@@ -249,15 +248,11 @@ fn warn_of_folders_unread_at_resolves(
     }
 }
 
-fn find_resolves_that_miss(
-    view: ProgramView<'_, '_>,
-    host: &LoadHost<'_>,
-    held: &FxHashSet<&[u8]>,
-    code_left_out: &LazyCell<CodeLeftOut, impl FnOnce() -> CodeLeftOut>,
-    withheld: &mut Vec<Diagnostic>,
-) -> Vec<Diagnostic> {
+fn find_resolves_that_miss(view: ProgramView<'_, '_>, host: &LoadHost<'_>) -> Vec<Diagnostic> {
     let mut warnings = Vec::new();
     let files = view.files();
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
     for &file in files.compiled_files() {
         let (analysis, hir) = (files.analysis(file), files.hir(file));
         let Some(source) = parsed_source(files, file) else {
@@ -287,7 +282,6 @@ fn find_resolves_that_miss(
                     Binding::CommonJs(CommonJsVariable::Dirname | CommonJsVariable::Filename)
                 )
         };
-        let mut computed: Vec<ExprId> = Vec::new();
         for expression in (0..hir.exprs.len() as u32).map(ExprId) {
             let ExprKind::Call(call) = hir[expression].kind else {
                 continue;
@@ -320,11 +314,9 @@ fn find_resolves_that_miss(
             let name = match analysis.decisions.constant(hir, path) {
                 FoldedValue::Constant(Constant::String(name))
                 | FoldedValue::ConstantOutsideDeadZone(Constant::String(name)) => name,
-                FoldedValue::Constant(_) | FoldedValue::ConstantOutsideDeadZone(_) => continue,
-                FoldedValue::Unknown => {
-                    computed.push(path);
-                    continue;
-                }
+                FoldedValue::Constant(_)
+                | FoldedValue::ConstantOutsideDeadZone(_)
+                | FoldedValue::Unknown => continue,
             };
             if takes_folder(resolver) && !given.get(1).is_some_and(|&it| is_own_folder(it)) {
                 continue;
@@ -336,39 +328,6 @@ fn find_resolves_that_miss(
                 let found = host.display_path_of(&found);
                 warnings.push(Diagnostic::new(code, Some(span), &[&found]));
             }
-        }
-        for site in analysis.import_sites {
-            let ImportSiteKind::RequireResolve(call) = site.kind else {
-                continue;
-            };
-            let mut written = analysis.alternatives_of(&site.specifier).iter();
-            let is_unread = |it: &ImportSpecifier| match *it {
-                ImportSpecifier::Unknown => true,
-                ImportSpecifier::Pattern { prefix, .. } => {
-                    let prefix = files.atoms().bytes(prefix);
-                    prefix == b"/" || prefix.iter().all(|&byte| byte == b'.')
-                }
-                ImportSpecifier::Constant(_) | ImportSpecifier::OneOf(_) => false,
-            };
-            if written.any(is_unread)
-                && !analysis.decisions.is_dead_expr(call)
-                && !is_load_found_late(hir, files.bound(file), &analysis.decisions, call)
-            {
-                computed.push(site.specifier_node);
-            }
-        }
-        let left_out = match computed.is_empty() {
-            true => &None,
-            false => &code_left_out.file,
-        };
-        let (said, left_out) = match left_out {
-            Some(left_out) => (&mut warnings, host.display_path_of(left_out)),
-            None => (&mut *withheld, Default::default()),
-        };
-        for path in computed {
-            let span = Span::of_node(hir, file, NodeData::Expr(path));
-            let code = Code::ResolvedPathIsComputed;
-            said.push(Diagnostic::new(code, Some(span), &[&left_out]));
         }
     }
     warnings
@@ -897,22 +856,7 @@ impl<'a> Build<'a> {
                 warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
                 warn_of_folders_unread_at_resolves(&mut self.diagnostics, view, host);
                 warn_of_made_requires_that_go_out_of_sight(&mut self.diagnostics, view);
-                let compiled = files.compiled_files().iter();
-                let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
-                let code_left_out = LazyCell::new(|| host.find_code_left_out(&held));
-                let mut withheld = Vec::new();
-                self.resolves_that_miss =
-                    find_resolves_that_miss(view, host, &held, &code_left_out, &mut withheld);
-                for warning in &withheld {
-                    self.diagnostics.add_withheld(view, warning);
-                }
-                let is_in_package =
-                    |&it| bun_core::strings::contains(files.file_name(it), b"node_modules");
-                self.diagnostics.has_all_project_code = !options.load.runs_tests
-                    && host.has_several_code_entry_points()
-                    && !files.entry_points().iter().any(is_in_package)
-                    && has_computed_load_in_program(view)
-                    && code_left_out.is_known_to_be_none();
+                self.resolves_that_miss = find_resolves_that_miss(view, host);
             }
         }
         let aot = &options.aot;

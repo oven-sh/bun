@@ -218,7 +218,7 @@ public:
             // It could not wait, so nobody does.
             bool wasStartedByRequire { false };
             // The load that such a require() left goes on under `bun test`, and fails with the factory.
-            bool isWaitedForByLoadThatRequireLeft { false };
+            bool isAwaitedByDetachedLoad { false };
             // The newest earlier call of a factory for the module had not settled: under `bun test` the module's entry is still being fetched for that call, and nothing takes this one's promise.
             bool cameToFetchInFlight { false };
             bool cameToFetchInFlightWhenCalled { false };

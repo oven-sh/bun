@@ -912,8 +912,6 @@ impl Build<'_> {
                 graph.limit_exports(&in_parallel, &|file, export| {
                     left_out.find_export_use(file, export)
                 });
-                let has_link = |file, target| left_out.has_instance_link(file, target);
-                graph.limit_instance_links(&has_link);
                 steps.end_with(|| format!("{project_name}: limit exports"));
                 left_out
             }

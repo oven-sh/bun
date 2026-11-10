@@ -1335,7 +1335,7 @@ impl ContentsScan<'_, '_> {
         names.loads_by_unknown_name |= builtins.loads_unknown_modules();
         names.loads_by_unknown_path |=
             builtins.hands_on_loader_of_paths() || !names.files_missing_at_build_at.is_empty();
-        for &(name, ..) in request.analysis.names_out_of_data_files {
+        for &(name, ..) in request.analysis.names_from_data_files {
             let module = find_module(input, atoms, name);
             names.written_as_values.extend(module);
         }

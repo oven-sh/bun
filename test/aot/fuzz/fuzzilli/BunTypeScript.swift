@@ -36,6 +36,8 @@ struct TypeScriptSettings {
     var withoutCasts = 25
     /// How often what follows a declaration is a scene of a place that is given what its type doesn't allow.
     var places = 20
+    /// How often what follows a declaration is a scene of objects that share fields with classes.
+    var sharedFields = 0
     /// How often a program is its scenes without a cast and nothing else.
     var scenesAlone = 0
     /// Added to what is computed from a program to seed its choices.
@@ -72,6 +74,7 @@ struct TypeScriptSettings {
             case "tested": settings.tested = value
             case "without-casts": settings.withoutCasts = value
             case "places": settings.places = value
+            case "shared-fields": settings.sharedFields = value
             case "scenes-alone": settings.scenesAlone = value
             case "seed": settings.seed = UInt64(value)
             default: fatalError("BUN_FUZZILLI_TYPES: unknown setting \(part)")
@@ -3461,6 +3464,7 @@ extension TypeScriptPlan {
         }
         guard choices.percent(settings.tested) else { return [] }
         sitesWithTests += 1
+        if settings.sharedFields > 0, choices.percent(settings.sharedFields) { return sceneOfSharedFields(site: v.number) }
         if choices.percent(settings.places) { return sceneOfATypedPlace(site: v.number) }
         if choices.percent(settings.withoutCasts) { return withTwin(sceneWithoutCasts(of: v, named: name), site: v.number) }
         if choices.percent(30), let lines = disturb(v, named: name) { return lines }
@@ -4445,6 +4449,44 @@ extension TypeScriptPlan {
                     ? "\(call).then(note, () => note(\"rejected\"));" : "try { note(\(call)); } catch (error) { note((error as any)?.name); \(Self.messageToStderr) }")
         }
         helpers.insert("note")
+        return ["{"] + indented(lines) + ["}"]
+    }
+
+    /// Loops read and store number fields of an object while classes with some of the same fields exist beside it, constructed or not, and start them at other kinds of values.
+    fileprivate func sceneOfSharedFields(site n: Int) -> [String] {
+        let names = ["n", "sum", "last"]
+        let numbers = ["0", "0", "1", "7", "0.5", "2.5", "-1"]
+        let values = numbers + ["true", "\"7\"", "null", "-0", "2147483648"]
+        let field = choices.pick(names)
+        let other = choices.pick(names.filter { $0 != field })
+        var lines = [String]()
+        for index in 0..<choices.pick([1, 2, 4, 4, 4]) {
+            let own = names.filter { _ in choices.percent(index == 0 ? 65 : 10) }
+            // A declared field starts as undefined, so most of the classes only store theirs.
+            let isDeclared = choices.percent(30)
+            let this = isDeclared ? "this" : "(this as any)"
+            let declared = isDeclared ? "list: any; " + own.map { "\($0): any; " }.joined() : ""
+            let stores = own.map { " \(this).\($0) = \(choices.pick(numbers));" }.joined()
+            lines.append("class Shared\(n)_\(index) { \(declared)constructor(list: any) { \(this).list = list;\(stores) } }")
+        }
+        lines.append("const revive\(n) = (value: any): any => JSON.parse(\"0\", () => value);")
+        let step = choices.pick(["+= 0.5", "+= 0.5", "+= 0.5", "/= 2", "+= 1", "+= 2 ** 40", "+= \"x\""])
+        let store = choices.pick(["(o.\(other) + 1) | 0", "(o.\(other) + 1) | 0", "i", "o.\(other) + 0.5", "o.\(field)"])
+        let computed = choices.pick(["(o.\(field) * 31 + o.list[i >> 1]) | 0", "(o.\(field) + o.list[i >> 1]) | 0", "(o.\(field) * 31 + i) | 0", "Math.floor(o.\(field) * 31 + o.list[i >> 1])"])
+        var body = ["        o.\(other) = \(store);", "        o.\(field) = \(computed);"]
+        if choices.percent(20) { body.reverse() }
+        lines += ["function tally\(n)(o: any): string {", "    for (let j = 0; j < \(choices.pick([1, 3, 3, 4])); j++) o.\(field) \(step);", "    for (let i = 0; i < \(choices.pick([1, 8, 8])); i++) {"] + body
+        lines += ["    }", "    return o.\(field) + \"/\" + o.\(other);", "}"]
+        switch choices.below(4) {
+        case 0, 1: lines += ["const rows\(n): any[] = [];", "for (const row of rows\(n)) printValue(\"made\", typeof new Shared\(n)_0(row));"]
+        case 2: lines.append("printValue(\"made\", typeof new Shared\(n)_0([1]));")
+        default: break
+        }
+        let order = choices.percent(80) ? ["list"] + names : ["sum", "n", "list", "last"]
+        let members = order.map { $0 == "list" ? "list: [1, 2, 3, 4]" : "\($0): \(choices.percent(70) ? choices.pick(numbers) : choices.pick(values))" }
+        let object = "{ \(members.joined(separator: ", ")) }"
+        let made = choices.pick(["revive\(n)(\(object))", "revive\(n)(\(object))", object, "{ ...\(object) }", "JSON.parse(JSON.stringify(\(object)))", "[\(object)][JSON.parse(\"0\")]"])
+        lines.append("try { printValue(\"fields\", tally\(n)(\(made))); } catch (error) { printValue(\"threw\", (error as any)?.name); \(Self.messageToStderr) }")
         return ["{"] + indented(lines) + ["}"]
     }
 

@@ -1,8 +1,8 @@
-use super::import_uses::ImportUses;
+use super::import_uses::{ImportUses, compute_import_uses};
 use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, known};
 use crate::bind::{Bound, Decl, Parent, SymbolId};
-use crate::fold::{FoldError, FoldErrorKind};
+use crate::fold::{Decisions, FoldError, FoldErrorKind, FoldInputs};
 use crate::hir::{
     ExprId, File, Flags, ImportEqualsId, ImportEqualsTarget, ImportId, NodeData, StmtId, StmtKind,
 };
@@ -123,6 +123,19 @@ pub(super) fn scan_statements(
         }
     }
     result
+}
+
+pub fn find_statement_sites(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    inputs: &FoldInputs<'_>,
+) -> Vec<(ImportSiteKind, Atom)> {
+    debug_assert!(hir.import_equals.is_empty());
+    let drops_unused_imports = hir.has_typescript_semantics() && !inputs.preserves_unused_imports();
+    let uses = drops_unused_imports.then(|| compute_import_uses(hir, bound, &Decisions::default()));
+    hir.ids(hir.body)
+        .filter_map(|stmt| statement_site(hir, bound, stmt, uses.as_ref()))
+        .collect()
 }
 
 fn macro_export_error(kind: ImportSiteKind) -> Option<FoldErrorKind> {

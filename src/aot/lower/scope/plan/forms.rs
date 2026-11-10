@@ -93,10 +93,7 @@ pub(super) fn normalize_uses(
     let mut is_in_order = true;
     for &(user, used) in &walk.uses {
         let is_kept = match used {
-            BindingRef::Symbol(symbol) => {
-                matches!(forms[symbol.idx()], BindingForm::Stored)
-                    && context.find_instance_field(symbol).is_none()
-            }
+            BindingRef::Symbol(symbol) => matches!(forms[symbol.idx()], BindingForm::Stored),
             BindingRef::Slot(_, ScopeSlot::CommonJs(_)) => !has_mapped_wrapper_parameters,
             BindingRef::Slot(..) => true,
         };
@@ -306,9 +303,6 @@ fn normalize_binding(
             BindingForm::ContainerMember { container } => {
                 symbol = find_container_binding(bound, top_scope(context, user), container);
             }
-            BindingForm::Import if context.is_read_through_instance(symbol) => {
-                return Some(context.instance_slot());
-            }
             BindingForm::NotAValue | BindingForm::Import => return None,
             BindingForm::Callee { function } => {
                 let walked = walk.function_of_fn[function.idx()]?;
@@ -321,9 +315,6 @@ fn normalize_binding(
             BindingForm::MappedArgument { unit, .. } => {
                 let scope = bound.top_scope(context.input.hir, unit);
                 return Some(BindingRef::Slot(scope, ScopeSlot::Arguments));
-            }
-            BindingForm::Stored if context.find_instance_field(symbol).is_some() => {
-                return Some(context.instance_slot());
             }
             BindingForm::Stored => return Some(BindingRef::Symbol(symbol)),
         }

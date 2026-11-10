@@ -312,6 +312,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the keys of a package.json, the scope in the name of a package and the names of folders on the disk: data that a test run reads to find its files, no name of the program",
   },
   {
+    paths: /^src\/aot\/test_runs\/files_of_run\.rs$/,
+    lines: /known::(?:require|createRequire|resolve|getBuiltinModule)\b|^let may_load = \[$/,
+    reason:
+      "whether the whole analysis reads a file that the run does not load: a file that spells the name of a loader gets it, whatever the name is bound to, and the analysis asks the binding",
+  },
+  {
     paths: /^src\/aot\/test_runs\/texts\.rs$/,
     lines: /^b"@jest\/globals" \| b"vitest" =>/,
     reason: "the specifier in the record of an import: which module it names is a question about a path",

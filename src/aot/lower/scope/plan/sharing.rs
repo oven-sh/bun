@@ -97,13 +97,8 @@ pub(super) fn compute_sharing(
         let is_used = find_by_key(&sharing.variables[..used_count], binding).is_some();
         if forms[symbol.idx()] == BindingForm::Stored && !is_used {
             sharing.shared.push(binding);
-            match context.find_instance_field(symbol) {
-                Some(field) => sharing.instance_fields.push((binding, field)),
-                None => {
-                    let key = symbol_key(context, symbol);
-                    sharing.variables.push((binding, key));
-                }
-            }
+            let key = symbol_key(context, symbol);
+            sharing.variables.push((binding, key));
         }
     }
     sharing
@@ -345,8 +340,7 @@ fn create_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option
             | ScopeSlot::ArgumentsBinding
             | ScopeSlot::WithObject
             | ScopeSlot::EvalVariables
-            | ScopeSlot::ParameterEvalVariables
-            | ScopeSlot::ModuleInstance,
+            | ScopeSlot::ParameterEvalVariables,
         ) => None,
     }
 }

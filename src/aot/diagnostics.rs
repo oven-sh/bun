@@ -24,7 +24,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 pub(crate) use self::engine_records::package_with_slow_code;
 pub(crate) use self::front_end::{describe_first_fold_error, syntax_errors_of};
 use self::ignore_comments::IgnoreComment;
-pub(crate) use self::ignore_comments::{IgnoreCommentOptions, has_computed_load_in_program};
+pub(crate) use self::ignore_comments::IgnoreCommentOptions;
 pub use self::shared::{InternalError, Severity};
 pub use self::sink::log_diagnostic;
 pub(crate) use self::spans::range_of_node;
@@ -317,5 +317,4 @@ pub(crate) struct Diagnostics {
     withheld: Vec<Entry>,
     pub(crate) has_run_to_end: bool,
     should_list_silenced: bool,
-    pub(crate) has_all_project_code: bool,
 }

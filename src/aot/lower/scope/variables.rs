@@ -5,7 +5,7 @@ use bun_sema::program::Sym;
 
 use super::{BindingRef, ScopeSlot, Storage, environments};
 use crate::ir::generated::{Variable, VariableFlags, VariableInitialization};
-use crate::ir::{ClassSlot, DeclaredType, FunctionKey, Type, TypeTable, VariableId, VariableKey};
+use crate::ir::{ClassSlot, DeclaredType, Type, TypeTable, VariableId, VariableKey};
 use crate::lower::{FileLowering, class, function, module};
 use crate::modules::ModuleRef;
 
@@ -48,10 +48,6 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             VariableKey::InstantiationState(_) => Variable {
                 name: None,
-                flags: match self.inputs.modules.has_instances(self.file) {
-                    true => VariableFlags::IS_REPLACEABLE | VariableFlags::GUARDS_INSTANCE,
-                    false => VariableFlags::default(),
-                },
                 ..self.create_untyped_variable(known::default)
             },
             VariableKey::EnvironmentMadeAhead(_) => {
@@ -62,27 +58,6 @@ impl FileLowering<'_, '_, '_, '_> {
                     name: None,
                     declared: DeclaredType::from_compiler(ty),
                     initialization: VariableInitialization::Uninitialized,
-                    ..self.create_untyped_variable(known::default)
-                }
-            }
-            VariableKey::InstanceOf(_) => {
-                let layout = environments::instance_layout(self);
-                let ty = self.fragment.types.intern(Type::environment(layout));
-                Variable {
-                    name: None,
-                    declared: DeclaredType::from_compiler(ty),
-                    initialization: VariableInitialization::Uninitialized,
-                    flags: VariableFlags::HOLDS_INSTANCE,
-                    ..self.create_untyped_variable(known::default)
-                }
-            }
-            VariableKey::InstanceAllocator(file) => {
-                let allocation = self.reference_function(FunctionKey::Instantiation(file));
-                Variable {
-                    name: None,
-                    initialization: VariableInitialization::Function,
-                    function: Some(allocation),
-                    flags: VariableFlags::IS_REPLACEABLE | VariableFlags::ALLOCATES_INSTANCE,
                     ..self.create_untyped_variable(known::default)
                 }
             }
@@ -133,8 +108,6 @@ impl FileLowering<'_, '_, '_, '_> {
             VariableKey::EnvironmentMadeAhead(_) => one_a_file + 3,
             VariableKey::RequiresMadeForOwnFile(_) => one_a_file + 4,
             VariableKey::RequiresMadeForOtherFolders(_) => one_a_file + 5,
-            VariableKey::InstanceOf(_) => one_a_file + 14,
-            VariableKey::InstanceAllocator(_) => one_a_file + 15,
             VariableKey::ModulePath { variable, .. } => one_a_file + 6 + variable as u32,
             VariableKey::RequiresMadeForPaths(_) => one_a_file + 12,
             VariableKey::Symbol(symbol) => match self.scopes.place_at_module_level(symbol.id) {
@@ -172,13 +145,7 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn is_export_that_code_fills(&self, symbol: SymbolId) -> bool {
         let placement = self.scopes.placement(BindingRef::Symbol(symbol));
         let (file, id) = (self.file, symbol);
-        let is_shown_to_importers = |placement: super::Placement| {
-            matches!(
-                placement.storage,
-                Storage::Variable(_) | Storage::Instance { .. }
-            )
-        };
-        placement.is_some_and(is_shown_to_importers)
+        placement.is_some_and(|placement| matches!(placement.storage, Storage::Variable(_)))
             && matches!(self.bound.initial_state(symbol), InitialState::Initialized)
             && self.scopes.initial_function(symbol).is_none()
             && self.is_exported_variable(VariableKey::Symbol(Sym { file, id }))

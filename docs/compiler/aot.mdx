@@ -119,7 +119,7 @@ bun compile ./server.ts --aot-harden=proof-checks,ignore-told-ranges
 | `proof-checks`       | Checks the type again at each read, and checks again what the compiler remembers from earlier code. Objects stay on the heap, not on the stack | Runs about 5 times slower       |
 | `ignore-told-ranges` | Checks every index against the length, where the index is used                                                                                 | Runs about 1.7 times slower     |
 
-A check that fails prints `internal AOT error` with the place in your code, then Bun's crash report, and aborts the process. The program can't catch it. Neither name is on by default, and neither changes what a correct program does. In `Bun.build`, pass `compile: { aot: true, aotHarden: ["proof-checks"] }`.
+A check that fails prints `internal AOT error` with the place in your code, then Bun's crash report, and aborts the process. The program can't catch it. Neither name is on by default, and neither changes what a correct program does. `proof-checks` tests what the compiler believes about values, not every compiler mistake. In `Bun.build`, pass `compile: { aot: true, aotHarden: ["proof-checks"] }`.
 
 ## Read next
 

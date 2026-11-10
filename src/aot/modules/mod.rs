@@ -6,7 +6,6 @@ mod exports;
 mod failures;
 mod graph;
 mod imports;
-mod instances;
 mod interop;
 #[cfg(test)]
 mod kept_frames_tests;
@@ -45,7 +44,6 @@ pub(crate) use commonjs_exports::find_literal_exported_under_name;
 pub use deferred_exports::DeferredExports;
 pub use failures::{FailureEffect, ModuleFailure, ModuleFailureId, ModuleFailureKind};
 pub use graph::ModuleGraph;
-pub use instances::InstanceLayout;
 pub use interop::{ImportPhase, Interop, ModuleKind, RequireResult, SyntheticExportRule};
 pub(crate) use known_members::{KnownMemberValues, KnownObjects, Validity, is_enum};
 pub use plan::{Member, ModuleRef, Shape, Site, View};
@@ -159,8 +157,6 @@ pub struct ScannedModules {
     evicted: EvictedModules,
     modules: ModuleSet,
     run_again: Vec<ModuleRef>,
-    reloadable_es_modules: Vec<ModuleRef>,
-    is_reloadable: Vec<bool>,
 }
 
 pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
@@ -207,21 +203,12 @@ pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
     run_again.extend(test_run_evictions::find_es_packages_that_mocks_name(
         input, &scans,
     ));
-    let is_reloadable = test_run_evictions::find_reloadable_files(input, &scans);
-    let compiled_files = input.files.compiled_files().iter();
-    let reloadable_es_modules = compiled_files.filter(|file| {
-        is_reloadable[file.idx()] && scans.of(**file).interop.kind == ModuleKind::SourceText
-    });
-    let reloadable_es_modules = reloadable_es_modules.map(|&file| ModuleRef::File(file));
-    let reloadable_es_modules = reloadable_es_modules.collect();
     ScannedModules {
         scans,
         unloadable,
         evicted,
         modules,
         run_again,
-        reloadable_es_modules,
-        is_reloadable,
     }
 }
 
@@ -232,13 +219,10 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         evicted,
         mut modules,
         run_again,
-        reloadable_es_modules,
-        is_reloadable,
     } = scanned;
     let file_count = input.files.modules.len();
     let mut steps = StepClock::new(Stage::BindModules);
-    let all_that_run_again = [&run_again[..], &reloadable_es_modules[..]].concat();
-    modules.find_inner_modules(input, &all_that_run_again);
+    modules.find_inner_modules(input, &run_again);
     let modules = modules;
     steps.end("bind: collect modules: modules inside files");
     let ((order, mut sites, texts), (mocked, begun)) = run_steps_beside(
@@ -690,7 +674,6 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
                 false => Vec::new(),
             },
             unread_exports: Vec::new(),
-            unread_instances: Vec::new(),
             names_left_out: Vec::new(),
             is_left_to_loader: is_left_to_loader[file.idx()],
             required_names: imports.required_names,
@@ -723,7 +706,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         plan.set_files_with_late_stars(files_with_late_stars);
         plan.test_run = input.run.plan_of_files();
         test_run_evictions::fill_plan_of_loads(input, evicted.modules(), &mut plan);
-        test_run_evictions::fill_plan_of_reloads(input, &scans, is_reloadable, &mut plan);
+        test_run_evictions::fill_plan_of_reloads(input, &scans, &mut plan);
         for &module in &mocked_modules {
             plan.set_may_be_mocked(module);
         }
@@ -809,9 +792,6 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             let is_es_module = modules.interop(module).kind == ModuleKind::SourceText;
             plan.set_may_be_reevaluated(module, is_es_module);
         }
-        for module in reloadable_es_modules {
-            plan.set_may_be_reevaluated(module, false);
-        }
         test_run_evictions::fill_plan_of_copies(
             input, &scans, &modules, &evicted, &mocked, &mut plan,
         );
@@ -880,7 +860,6 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         commonjs_exports,
         plan,
         member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
-        instance_layouts: (0..file_count).map(|_| OnceLock::new()).collect(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: modules.forms_require_checks_first,
         folders_of_databases: modules.folders_of_databases,

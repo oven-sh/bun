@@ -38,7 +38,7 @@ const HARDENING_ALLOWED: &str = "a list of these names: proof-checks, ignore-tol
 /// Each name that `--aot-harden` takes, and the words of the engine that it stands for. None is on by default.
 const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
     // What the compiler has proven of a value is tested where the value arrives. That nobody keeps a cell is a proof that no test can repeat: every cell stays in the heap.
-    // A call that was hoisted out of a loop is made again in each iteration and compared. A result that a built-in is declared to allocate is tested for being new.
+    // Hoisted calls are repeated and compared. Declared allocations are tested for being new.
     (
         b"proof-checks",
         &[
@@ -1016,7 +1016,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         exit_with_unknown_test_run_word(word);
     }
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
-        // For a test of what the runner prints then. No flag of `bun test` builds a run without function source.
+        // For runner tests: no flag of `bun test` omits function source.
         embeds_function_source: !words_read_here.contains(&&b"TestRunWithoutFunctionSource"[..]),
         erases_types: words_read_here.contains(&&b"erase-types"[..]),
         takes_first_texts: words_read_here.contains(&&b"FirstTexts"[..]),

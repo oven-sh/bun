@@ -328,9 +328,9 @@ impl AskedOfOwnExports {
 struct Follower<'i, 'a, 's> {
     inputs: &'i ScanInputs<'a, 's>,
     written_names: &'i WrittenNames,
-    asked_of_data_files: &'i AskedOfDataFiles,
-    asked_of_other_files: Option<&'i AskedOfDataFiles>,
-    asked_of_own_exports: Option<&'i AskedOfOwnExports>,
+    data_file_queries: &'i AskedOfDataFiles,
+    other_file_queries: Option<&'i AskedOfDataFiles>,
+    own_export_queries: Option<&'i AskedOfOwnExports>,
     takes_all_as_written: bool,
     keeps_known_alternatives: bool,
     skips_reassigned_bindings: bool,
@@ -379,23 +379,23 @@ pub(super) struct Found {
     pub(super) alternatives: Vec<ImportSpecifier>,
     pub(super) start_at_own_directory: bool,
     pub(super) resolved_form: Option<ResolvedForm>,
-    pub(super) is_out_of_data_file: bool,
+    pub(super) is_from_data_file: bool,
 }
 
 impl<'i, 'a, 's> Follower<'i, 'a, 's> {
     fn new(
         inputs: &'i ScanInputs<'a, 's>,
         written_names: &'i WrittenNames,
-        asked_of_data_files: &'i AskedOfDataFiles,
+        data_file_queries: &'i AskedOfDataFiles,
         follows_key: bool,
         folder: Folder,
     ) -> Follower<'i, 'a, 's> {
         Follower {
             inputs,
             written_names,
-            asked_of_data_files,
-            asked_of_other_files: None,
-            asked_of_own_exports: None,
+            data_file_queries,
+            other_file_queries: None,
+            own_export_queries: None,
             takes_all_as_written: false,
             keeps_known_alternatives: false,
             skips_reassigned_bindings: false,
@@ -429,13 +429,13 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
 pub(super) fn find_texts_of_key(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
-    asked_of_data_files: &AskedOfDataFiles,
+    data_file_queries: &AskedOfDataFiles,
     key: ExprId,
 ) -> Option<Vec<ImportSpecifier>> {
     let mut follower = Follower::new(
         inputs,
         written_names,
-        asked_of_data_files,
+        data_file_queries,
         true,
         Folder::OfFile,
     );
@@ -476,15 +476,15 @@ pub(super) fn find_texts_of_key(
 pub(super) fn find_alternatives(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
-    asked_of_data_files: &AskedOfDataFiles,
+    data_file_queries: &AskedOfDataFiles,
     argument: ExprId,
     folder: Folder,
-    asked_of_other_files: Option<&AskedOfDataFiles>,
-    asked_of_own_exports: Option<&AskedOfOwnExports>,
+    other_file_queries: Option<&AskedOfDataFiles>,
+    own_export_queries: Option<&AskedOfOwnExports>,
 ) -> Option<Found> {
-    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
-    follower.asked_of_other_files = asked_of_other_files;
-    follower.asked_of_own_exports = asked_of_own_exports;
+    let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
+    follower.other_file_queries = other_file_queries;
+    follower.own_export_queries = own_export_queries;
     find_alternatives_with(&mut follower, argument)
 }
 
@@ -497,11 +497,11 @@ pub(super) struct OpenParameter {
 pub(super) fn find_known_alternatives(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
-    asked_of_data_files: &AskedOfDataFiles,
+    data_file_queries: &AskedOfDataFiles,
     argument: ExprId,
 ) -> (Option<Found>, Option<OpenParameter>) {
     let folder = Folder::OfFile;
-    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
+    let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
     follower.keeps_known_alternatives = true;
     let found = find_alternatives_with(&mut follower, argument);
     (found, follower.open_parameters.first().copied())
@@ -510,11 +510,11 @@ pub(super) fn find_known_alternatives(
 pub(super) fn find_known_load_names(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
-    asked_of_data_files: &AskedOfDataFiles,
+    data_file_queries: &AskedOfDataFiles,
     argument: ExprId,
 ) -> Option<Found> {
     let folder = Folder::OfFile;
-    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
+    let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
     follower.keeps_known_alternatives = true;
     follower.skips_reassigned_bindings = true;
     find_alternatives_with(&mut follower, argument)
@@ -523,7 +523,7 @@ pub(super) fn find_known_load_names(
 pub(super) fn find_caller_relative_alternatives(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
-    asked_of_data_files: &AskedOfDataFiles,
+    data_file_queries: &AskedOfDataFiles,
     argument: ExprId,
     mention: ExprId,
     property: Option<Atom>,
@@ -532,7 +532,7 @@ pub(super) fn find_caller_relative_alternatives(
         return None;
     };
     let folder = Folder::OfCaller;
-    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
+    let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
     follower.stand_in = Some(parameter);
     follower.stand_in_property = property;
     follower.keeps_known_alternatives = true;
@@ -605,7 +605,7 @@ pub(super) fn find_path_around_parameter(
     let (&[ImportSpecifier::Constant(text)], None, false) = (
         &found.alternatives[..],
         found.resolved_form,
-        found.is_out_of_data_file,
+        found.is_from_data_file,
     ) else {
         return None;
     };
@@ -696,7 +696,7 @@ fn find_alternatives_with(follower: &mut Follower<'_, '_, '_>, argument: ExprId)
         alternatives: alternatives.collect(),
         start_at_own_directory,
         resolved_form,
-        is_out_of_data_file: follower.has_read_data_file.get(),
+        is_from_data_file: follower.has_read_data_file.get(),
     })
 }
 
@@ -785,7 +785,7 @@ impl Follower<'_, '_, '_> {
         let atoms = self.inputs.atoms;
         let question = atoms.intern(&write_question_where_file_lies(call));
         let asked = (atoms.intern(name), question);
-        self.asked_of_data_files.0.borrow_mut().push(asked);
+        self.data_file_queries.0.borrow_mut().push(asked);
     }
 
     fn note_call_of_resolver(&self, name: &[u8], call: ExprId) {
@@ -812,7 +812,7 @@ impl Follower<'_, '_, '_> {
         let key = (asked.0.0, asked.1.0);
         let at = answers.binary_search_by_key(&key, |it| (it.specifier.0, it.path.0));
         let known = answers[at.ok()?];
-        self.asked_of_data_files.0.borrow_mut().push(asked);
+        self.data_file_queries.0.borrow_mut().push(asked);
         Some(Held::Text(Text {
             starts_at_own_directory: true,
             is_file_url: form == ResolvedForm::Url,
@@ -2550,7 +2550,7 @@ impl Follower<'_, '_, '_> {
     fn takes_export_as_written(&self, target: ExprId) -> bool {
         let hir = self.inputs.hir;
         let (Some((_, MemberKey::Name(key))), Some(asked)) =
-            (hir.member_key(target), self.asked_of_own_exports)
+            (hir.member_key(target), self.own_export_queries)
         else {
             return false;
         };
@@ -3244,7 +3244,7 @@ impl Follower<'_, '_, '_> {
         };
         let &ScanInputs { hir, atoms, .. } = self.inputs;
         let name = atoms.intern(&path);
-        if let Some(asked) = self.asked_of_other_files
+        if let Some(asked) = self.other_file_queries
             && path.len() == key.len()
         {
             asked.0.borrow_mut().push((specifier, name));
@@ -3259,7 +3259,7 @@ impl Follower<'_, '_, '_> {
                 });
             }
         }
-        self.asked_of_data_files
+        self.data_file_queries
             .0
             .borrow_mut()
             .push((specifier, name));

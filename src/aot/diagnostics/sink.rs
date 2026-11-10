@@ -49,7 +49,6 @@ impl Diagnostics {
             withheld: Vec::new(),
             has_run_to_end: false,
             should_list_silenced: false,
-            has_all_project_code: false,
         }
     }
 

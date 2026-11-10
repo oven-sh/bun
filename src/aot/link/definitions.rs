@@ -845,7 +845,7 @@ pub(super) fn empty_layout(key: &LayoutKey) -> Layout {
         | LayoutKey::ConstructorFunction(_)
         | LayoutKey::Library(_)
         | LayoutKey::CreatedObject { .. } => LayoutKind::Instance,
-        LayoutKey::Environment { .. } | LayoutKey::ModuleInstance(_) => LayoutKind::Environment,
+        LayoutKey::Environment { .. } => LayoutKind::Environment,
         _ => LayoutKind::Record,
     };
     Layout {

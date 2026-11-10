@@ -100,7 +100,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 (Some(local), _) => self.builder.read_variable(local.variable),
                 (None, Some(placement)) => match placement.storage {
                     Storage::Field { scope, .. } => self.get_environment(scope),
-                    Storage::Local | Storage::Variable(_) | Storage::Instance { .. } => continue,
+                    Storage::Local | Storage::Variable(_) => continue,
                 },
                 (None, None) => continue,
             };
@@ -133,7 +133,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let is_initialized = local.dead_zone != DeadZone::Uninitialized;
                 is_initialized.then(|| self.builder.read_variable(local.variable))
             }
-            Storage::Local | Storage::Variable(_) | Storage::Instance { .. } => None,
+            Storage::Local | Storage::Variable(_) => None,
         }
     }
 }

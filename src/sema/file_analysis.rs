@@ -46,10 +46,10 @@ pub struct FileAnalysis<'s> {
     pub known_load_names: &'s [(ExprId, Atom)],
     pub own_url_arguments: &'s [OwnUrlArgument],
     pub exported_file_changers: &'s [ExportedFileChanger],
-    pub asked_of_other_files: &'s [(Atom, Atom)],
-    pub asked_of_data_files: &'s [(Atom, Atom)],
-    pub asked_of_own_exports: &'s [Atom],
-    pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
+    pub other_file_queries: &'s [(Atom, Atom)],
+    pub data_file_queries: &'s [(Atom, Atom)],
+    pub own_export_queries: &'s [Atom],
+    pub names_from_data_files: &'s [(Atom, ExprId, bool)],
     pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
     pub options_of_resolves_with_unread_folders: &'s [ExprId],
     keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
@@ -184,6 +184,16 @@ pub fn analyze_file<'s>(
     arena: &'s Arena,
 ) -> (Bound<'s>, FileAnalysis<'s>) {
     analyze::run(hir, options, inputs, &file, atoms, arena)
+}
+
+pub fn bind_file<'s>(
+    hir: &mut File<'s>,
+    options: BindOptions,
+    inputs: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> Bound<'s> {
+    analyze::bind(hir, options, inputs, atoms, arena)
 }
 
 pub struct AnalyzedAgain<'s> {

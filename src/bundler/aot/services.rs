@@ -248,7 +248,6 @@ pub(super) fn is_at_or_below(path: &[u8], folder: &[u8]) -> bool {
     rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
 }
 
-/// How many `..` the path from `root` to `asset` starts with, as `path_from_root` of the CLI spells it.
 fn count_levels_above(root: &[u8], asset: &[u8]) -> usize {
     let Some(written_folder) = bun_paths::dirname(asset) else {
         return 0;
@@ -380,7 +379,7 @@ pub struct FilesForFileSystem {
     pub data_found_by_patterns: Vec<Box<[u8]>>,
     /// The compiled files that `node:fs` finds in the executable. Empty where there is no such data file.
     pub code_seen: Vec<Box<[u8]>>,
-    /// The path of one of the data files above, with the warning to emit if `node:fs` won't find it in the executable. Sorted by location and text, without duplicates.
+    /// A data file's path and the warning if `node:fs` can't find it. Sorted, without duplicates.
     pub warnings_if_not_embedded: Vec<(Box<[u8]>, Msg)>,
 }
 

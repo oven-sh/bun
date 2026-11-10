@@ -246,7 +246,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let placement = file.scopes.placement(binding);
         match placement.map(|placement| placement.storage) {
             Some(Storage::Variable(_)) => true,
-            Some(Storage::Instance { .. }) => self.reaches_stored(file.instance_slot()),
             Some(Storage::Field { scope, .. }) => {
                 let captured = self.find_captured_value(Capture::Environment(scope));
                 captured.is_some() || self.is_enclosing_scope(scope)

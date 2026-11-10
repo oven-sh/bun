@@ -208,7 +208,7 @@ unsafe extern "C" fn Bun__encoding__constructFromUTF16(
     bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, &mut slice[..]))
 }
 
-/// What `Buffer.from(string, encoding)` holds, for the ahead-of-time compiler, which stores it for a constant string.
+/// `Buffer.from(string, encoding)` at compile time, for a constant string.
 ///
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading and that `append` may be called with `sink`.

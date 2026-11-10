@@ -28,7 +28,7 @@ use bun_standalone_graph::StandaloneModuleGraph::{
 use bun_sys::Fd;
 use bun_trim::TrimError;
 
-pub(crate) use self::build::compile_to_executable;
+pub(crate) use self::build::{check_entry_points_are_kept, compile_to_executable};
 pub(crate) use self::command::compile_from_context;
 pub(crate) use self::configuration::DEFAULT_LIBRARY_OUTDIR;
 pub(crate) use self::library::{
@@ -127,7 +127,7 @@ pub(crate) struct CompileOutcome {
     pub(crate) module_count: u32,
     pub(crate) line_count: u64,
     pub(crate) untyped_file_count: u64,
-    /// `bun check --aot`: the files of dependencies that have type errors which are not listed, or that it can't check.
+    /// `bun check --aot`: dependency files with unlisted type errors, or that it can't check.
     pub(crate) unverified_dependency_file_count: u64,
     /// `Compilation::names_added_to_builtins`
     pub(crate) names_added_to_builtins: Vec<(u32, Vec<u8>)>,
@@ -175,6 +175,9 @@ pub(crate) enum CompileFailure {
     Trim(TrimError),
     Executable(CompileError),
     Graph(bun_standalone_graph::Error),
+    OverwritesEntryPoint {
+        outfile: Vec<u8>,
+    },
     FileNotWritten {
         path: Vec<u8>,
         error: bun_sys::Error,

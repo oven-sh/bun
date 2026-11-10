@@ -121,9 +121,8 @@ pub struct AotOptions {
     /// What `--define` or bunfig.toml names, without what the build defines by itself. `bun run` replaces these too.
     pub user_defined_names: Vec<Box<[u8]>>,
     pub option_words: Vec<Box<[u8]>>,
-    /// The names given to `--aot-harden`.
     pub hardening_names: Vec<Box<[u8]>>,
-    /// The words of `option_words` that no developer option asked for: a name of `hardening_names` stands for them.
+    /// Option words that only `hardening_names` ask for.
     pub hardening_words: Vec<Box<[u8]>>,
 }
 
@@ -138,7 +137,7 @@ pub struct ReplacedByTests {
     pub preloads: Vec<Vec<u8>>,
 }
 
-/// What `bun check --aot` does with type errors in the TypeScript sources of dependencies. A build never looks for them.
+/// `bun check --aot`: type errors in the TypeScript sources of dependencies.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum DependencyTypeErrors {
     #[default]

@@ -30,7 +30,8 @@ async function bothWaysIn(dir: string, folder: string, entryPoint: string, ...fl
   ]);
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   renameSync(join(dir, "app"), join(dir, "moved-away"));
-  return { plain, compiled: await run(dir, ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" }) };
+  const compiled = await run(dir, ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+  return { plain, built, compiled };
 }
 
 describe.concurrent("--asset", () => {
@@ -222,7 +223,7 @@ if (at("elsewhere")) console.log(fs.readdirSync(path.join(here, "elsewhere")).jo
         "../data.txt",
       );
       expect(plain).toEqual({ stdout: "main.cjs,main.mjs the text\n", stderr: "", exitCode: 0 });
-      expect(compiled).toEqual({ ...plain, stdout: `${entryPoint} the text\n` });
+      expect(compiled).toEqual({ ...plain, stdout: `data.txt,${entryPoint} the text\n` });
     },
     120_000,
   );
@@ -242,6 +243,145 @@ console.log(at("..", "one", "pub", "a.txt"), at("..", "two", "pub", "b.txt"), at
     expect(plain).toEqual({ stdout: "true true false false false\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual({ ...plain, stdout: "true true true true false\n" });
   }, 120_000);
+
+  test("a shared base name lists every folder", async () => {
+    using dir = tempDir("aot-shared-base-name-lists-all", {
+      "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const attempt = run => {
+  try {
+    return run().sort().join();
+  } catch (error) {
+    return error.code;
+  }
+};
+const at = (...names) => path.join(import.meta.dirname, ...names);
+for (const folder of [at("pub"), at("pub", "deep"), at("..", "one", "pub"), at("..", "two", "pub")]) {
+  console.log(attempt(() => fs.readdirSync(folder)));
+}
+console.log(attempt(() => (fs.existsSync(at("pub")) ? [...new Bun.Glob("*.txt").scanSync({ cwd: at("pub") })] : [])));
+`,
+      "app/one/pub/a.txt": "a",
+      "app/one/pub/deep/c.txt": "c",
+      "app/two/pub/b.txt": "b",
+      "app/two/pub/deep/d.txt": "d",
+    });
+    const flags = ["--asset", "../one/pub", "--asset", "../two/pub"];
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+    expect(built.stdout + built.stderr).not.toContain("share the path");
+    const byOwnPlace = "a.txt,deep\nb.txt,deep\n";
+    expect(plain).toEqual({ stdout: `ENOENT\nENOENT\n${byOwnPlace}\n`, stderr: "", exitCode: 0 });
+    expect(compiled).toEqual({
+      ...plain,
+      stdout: `a.txt,b.txt,deep\nc.txt,d.txt\n${byOwnPlace}a.txt,b.txt\n`,
+    });
+  }, 120_000);
+
+  test("a file name in two folders of one base name is warned of", async () => {
+    using dir = tempDir("aot-asset-name-in-two-folders", {
+      "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const read = (...names) => {
+  try {
+    return fs.readFileSync(path.join(import.meta.dirname, ...names), "utf8");
+  } catch (error) {
+    return error.code;
+  }
+};
+console.log(read("..", "one", "pub", "same.txt"), read("..", "two", "pub", "same.txt"), read("..", "two", "pub", "only.txt"));
+console.log(read("pub", "same.txt"), read("pub", "only.txt"));
+`,
+      "app/one/pub/same.txt": "of-one",
+      "app/two/pub/same.txt": "of-two",
+      "app/two/pub/only.txt": "only-in-two",
+    });
+    const flags = ["--asset", "../one/pub", "--asset", "../two/pub"];
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+    expect((built.stdout + built.stderr).split("\n").filter(line => line.includes("share the path"))).toEqual([
+      `warn: assets "../one/pub/same.txt" and "../two/pub/same.txt" share the path "pub/same.txt" in the executable. That path reads "../one/pub/same.txt". Each asset is also at its own path`,
+    ]);
+    expect(plain).toEqual({ stdout: "of-one of-two only-in-two\nENOENT ENOENT\n", stderr: "", exitCode: 0 });
+    expect(compiled).toEqual({ stdout: "of-one of-two only-in-two\nof-one only-in-two\n", stderr: "", exitCode: 0 });
+  }, 120_000);
+
+  const namedAtRoot = [
+    ["a folder", ["--asset", "../lib/pub"], "pub", "pub/a.txt", ["pub/a.txt", "pub/deep/c.txt"]],
+    ["a file", ["--asset", "../lib/note.txt"], "note.txt", "note.txt", ["note.txt"]],
+    [
+      "two folders",
+      ["--asset", "../lib/pub", "--asset", "../more/pub"],
+      "pub",
+      "pub/b.txt",
+      ["pub/a.txt", "pub/b.txt", "pub/deep/c.txt"],
+    ],
+  ] as const;
+  test.each(namedAtRoot.flatMap(row => (["mjs", "cjs"] as const).map(kind => [kind, ...row] as const)))(
+    "in %s the base name of %s from outside answers as a path does",
+    async (kind, _, flags, top, file, all) => {
+      const head =
+        kind === "mjs"
+          ? `import fs from "node:fs"; import path from "node:path"; const here = import.meta.dirname;`
+          : `const fs = require("node:fs"), path = require("node:path"), here = __dirname;`;
+      using dir = tempDir("aot-base-names-at-root", {
+        [`app/server/main.${kind}`]: `${head}
+const names = ${JSON.stringify(file.split("/"))};
+const file = path.join(here, ...names), folder = path.dirname(file), base = path.basename(file);
+const tidy = it => it.replaceAll("\\\\", "/");
+const ask = async at => [fs.existsSync(at), fs.statSync(at, { throwIfNoEntry: false })?.isFile() ?? null, await Bun.file(at).exists()];
+(async () => {
+  const spelled = {
+    tidy: file,
+    untidy: folder + "/./" + base,
+    doubled: folder + "//" + base,
+    slash: file + "/",
+    separator: file + path.sep,
+    backslash: file + "\\\\",
+    climbs: file + "/../" + base,
+    backslashes: here + "\\\\" + names.join("\\\\"),
+    forward: tidy(file),
+    lower: file[0].toLowerCase() + file.slice(1),
+    upper: file[0].toUpperCase() + file.slice(1),
+  };
+  for (const [name, at] of Object.entries(spelled)) console.log(name, JSON.stringify(await ask(at)));
+  console.log("embedded", Bun.embeddedFiles.map(it => tidy(it.name)).filter(it => !it.startsWith("main")).sort().join());
+  console.log("root", fs.readdirSync(here).sort().join());
+  console.log("glob", [...new Bun.Glob("**/*.txt").scanSync({ cwd: here })].map(tidy).sort().join());
+  console.log("globSync", fs.globSync("**/*.txt", { cwd: here }).map(tidy).sort().join());
+})();
+`,
+        "app/lib/pub/a.txt": "a",
+        "app/lib/pub/deep/c.txt": "c",
+        "app/lib/note.txt": "n",
+        "app/more/pub/b.txt": "b",
+      });
+      const { compiled } = await bothWaysIn(String(dir), "app/server", `./main.${kind}`, ...flags);
+      const found = "[true,true,true]";
+      const absent = "[false,null,false]";
+      // Not found yet, as on main: the lookup takes the first name below the root for the base name, and that is "." or "".
+      const untidy = kind === "mjs" && top === file ? absent : found;
+      expect(compiled).toEqual({
+        stdout: `tidy ${found}
+untidy ${untidy}
+doubled ${untidy}
+slash ${absent}
+separator ${absent}
+backslash ${absent}
+climbs ${absent}
+backslashes ${isWindows ? found : absent}
+forward ${found}
+lower ${found}
+upper ${found}
+embedded ${all.join()}
+root ${[`main.${kind}`, top].sort().join()}
+glob ${all.join()}
+globSync ${all.join()}
+`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
   test("an untidy path finds an embedded file", async () => {
     // Windows drops `absent/..` from a path before it looks, so plain Bun finds these three there.
@@ -399,7 +539,7 @@ console.log(fs.existsSync(path.join(import.meta.dirname, "data.txt")), Bun.embed
     });
     const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", "--asset", "../lib/data.txt");
     expect(plain).toEqual({ stdout: "false \n", stderr: "", exitCode: 0 });
-    expect(compiled).toEqual({ ...plain, stdout: "true _.._/lib/data.txt\n" });
+    expect(compiled).toEqual({ ...plain, stdout: "true data.txt\n" });
   }, 120_000);
 
   // macOS and Windows have no such names.

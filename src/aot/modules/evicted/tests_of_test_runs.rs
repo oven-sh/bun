@@ -19,7 +19,7 @@ fn files_that_run_again<'a>(
 }
 
 #[test]
-fn an_es_package_that_a_mock_names_may_run_again_with_its_es_importers() {
+fn an_es_package_that_a_mock_names_may_run_again_and_nothing_around_it() {
     let es = r#"{ "type": "module", "main": "index.js" }"#;
     let test_file = "import { test, vi } from 'bun:test';\nimport './reader.ts';\nvi.mock('kit');\nvi.mock('old');\nvi.mock('./own.ts');\ntest('t', () => import('kit'));";
     let files = [
@@ -42,7 +42,7 @@ fn an_es_package_that_a_mock_names_may_run_again_with_its_es_importers() {
         code.filter(|name| graph.may_be_reevaluated(file_named(input, name)))
             .collect()
     });
-    assert_eq!(marked, ["reader.ts", "own.ts", "node_modules/kit/index.js"]);
+    assert_eq!(marked, ["node_modules/kit/index.js"]);
 }
 
 fn reloadable_files<'a>(files: &[(&'a str, &str)], test_files: usize) -> Vec<&'a str> {
@@ -92,34 +92,6 @@ fn importers_of_a_mocked_built_in_module_are_reloadable() {
         ),
     ];
     assert_eq!(reloadable_files(&files, 2), ["a.test.ts", "reader.ts"]);
-}
-
-#[test]
-fn a_reloadable_es_module_has_instances_and_a_commonjs_file_has_none() {
-    let files = [
-        (
-            "a.test.ts",
-            "import { vi } from 'bun:test';\nimport { read } from './user.ts';\nimport './old.cjs';\nvi.doMock('./dep.ts', () => ({}));\nread();",
-        ),
-        (
-            "user.ts",
-            "import { who } from './dep.ts';\nexport const read = () => who;\nexport let count = 0;\nlet hidden = 1;\nhidden++;",
-        ),
-        ("old.cjs", "exports.dep = require('./dep.ts');"),
-        ("dep.ts", "export const who = 1;"),
-    ];
-    with_graph_of_test_files(&files, 1, 0, |graph, input| {
-        let (user, dep) = (file_named(input, "user.ts"), file_named(input, "dep.ts"));
-        let layout = graph.instance_layout(user);
-        let layout = layout.expect("user.ts imports a mocked file");
-        assert_eq!(layout.exports().len(), 2);
-        assert_eq!(layout.links(), [dep]);
-        assert_eq!(layout.field_of_link(dep), Some(2));
-        assert_eq!(layout.field_of_scope(), 3);
-        assert!(graph.has_instances(file_named(input, "a.test.ts")));
-        assert!(graph.is_reloadable(file_named(input, "old.cjs")));
-        assert!(!graph.has_instances(file_named(input, "old.cjs")));
-    });
 }
 
 #[test]

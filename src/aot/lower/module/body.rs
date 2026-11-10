@@ -7,7 +7,7 @@ use bun_sema::program::FileId;
 use super::runtime_value::{emit_module_value, find_module_value};
 use super::{ModuleRoots, file_scope};
 use crate::ir::generated::{Function, FunctionFlags, FunctionKind};
-use crate::ir::{FunctionId, FunctionKey, TypeTable, ValueId, VariableKey};
+use crate::ir::{FunctionId, FunctionKey, TypeTable, VariableKey};
 use crate::lower::fragment::ModuleFragment;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs, function, scope};
@@ -20,10 +20,8 @@ pub(super) fn declare_module_body(file: &mut FileLowering<'_, '_, '_, '_>) -> Mo
     let body = file.declare_function(key, |file| file.create_body_header(kind));
     let modules = file.inputs.modules;
     for export in modules.exports(file.file) {
-        let fields_of_instance = modules.instance_layout(file.file);
         if let ExportBinding::Variable(symbol) = export.binding
             && symbol.file == file.file
-            && fields_of_instance.is_none_or(|fields| fields.field_of_export(symbol.id).is_none())
         {
             file.ensure_variable(VariableKey::Symbol(symbol));
         }
@@ -122,43 +120,9 @@ impl FileLowering<'_, '_, '_, '_> {
             header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
             header
         });
-        if self.inputs.modules.has_instances(self.file) {
-            self.ensure_variable(VariableKey::InstanceAllocator(self.file));
-        }
-    }
-
-    fn lower_instance_allocation(&mut self, function: FunctionId) {
-        let scope = file_scope(self);
-        let own_file = self.file;
-        let fields = self.inputs.modules.instance_layout(own_file);
-        let fields = fields.expect("only a reloadable ES module has instances");
-        let mut lowering = FunctionLowering::begin(self, function);
-        let instance = lowering.emit_instance_allocation();
-        let layout = scope::instance_layout(lowering.file);
-        lowering.scopes.allocated_instance = Some(instance);
-        lowering.enter_scope_made_by(scope, scope::MakerOfScope::Instantiation);
-        lowering.store_environment_made_ahead(scope);
-        for &target in fields.links() {
-            let field = fields.field_of_link(target);
-            let field = field.expect("the layout lists the link");
-            let linked = lowering.emit_current_instance(target);
-            lowering
-                .builder
-                .put_environment_field(instance, layout, field, linked);
-        }
-        finish_body(lowering, Some(scope));
-    }
-
-    pub(super) fn lower_empty_instance_allocation(&mut self, function: FunctionId) {
-        let mut lowering = FunctionLowering::begin(self, function);
-        lowering.emit_instance_allocation();
-        finish_body(lowering, None);
     }
 
     pub(crate) fn lower_instantiation(&mut self, function: FunctionId) {
-        if self.inputs.modules.has_instances(self.file) {
-            return self.lower_instance_allocation(function);
-        }
         let scope = file_scope(self);
         let modules = self.inputs.modules;
         let own_file = self.file;
@@ -183,7 +147,6 @@ impl FileLowering<'_, '_, '_, '_> {
             if let ModuleRef::File(target) = request.target
                 && target != own_file
                 && modules.is_instantiated_ahead(target)
-                && !modules.has_instances(target)
                 && !modules.is_left_out(request.target)
                 && !requested.contains(&target)
             {
@@ -201,14 +164,10 @@ impl FileLowering<'_, '_, '_, '_> {
     fn lower_es_module_body(&mut self, function: FunctionId) {
         let scope = file_scope(self);
         let load_failure = self.inputs.modules.load_failure(self.file);
+        let is_instantiated_ahead = self.inputs.modules.is_instantiated_ahead(self.file);
         let makes_scope_ahead = self.inputs.modules.makes_scope_ahead(self.file);
-        let has_instances = self.inputs.modules.has_instances(self.file);
-        let is_in_rerun_component = self.inputs.modules.is_in_rerun_component(self.file);
-        let own_file = self.file;
         let mut lowering = FunctionLowering::begin(self, function);
-        if has_instances && is_in_rerun_component {
-            lowering.emit_current_instance(own_file);
-        } else if is_in_rerun_component {
+        if is_instantiated_ahead {
             lowering.emit_instantiation_of_own_file();
         }
         lowering.enter_scope_made_by(
@@ -260,35 +219,6 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn emit_instance_allocation(&mut self) -> ValueId {
-        let own_file = self.file.file;
-        let guard = VariableKey::InstantiationState(own_file);
-        let guard = self.file.ensure_variable(guard);
-        let is_allocated = self.builder.get_module_variable(guard);
-        let split = self.split_on_type(is_allocated, TypeTable::UNDEFINED);
-        self.builder.switch_to(split.not_taken);
-        let undefined = self.builder.undefined();
-        self.emit_return(undefined, None);
-        self.builder.switch_to(split.taken);
-        let layout = scope::instance_layout(self.file);
-        let instance = self.builder.new_object(layout, &[], None, &[]);
-        let variable = VariableKey::InstanceOf(own_file);
-        let variable = self.file.ensure_variable(variable);
-        self.builder.put_module_variable(variable, instance);
-        let is_allocated = self.builder.boolean(true);
-        self.builder.put_module_variable(guard, is_allocated);
-        instance
-    }
-
-    pub(in crate::lower) fn emit_current_instance(&mut self, file: FileId) -> ValueId {
-        let allocation = self
-            .file
-            .reference_function(FunctionKey::Instantiation(file));
-        self.builder.call_direct(allocation, &[]);
-        let variable = self.file.ensure_variable(VariableKey::InstanceOf(file));
-        self.builder.get_module_variable(variable)
-    }
-
     fn emit_instantiation_of_own_file(&mut self) {
         let own_file = self.file.file;
         let state = self

@@ -13,7 +13,7 @@ use bun_trim::UsedFeatures;
 use super::trimming::Trimming;
 use super::{CompileFailure, CompileOutcome};
 
-/// The checker answers questions while the program is lowered, so the two have one time.
+/// The checker runs while the program is lowered, so the two share one time.
 const CHECK_STAGES: RangeInclusive<Stage> = Stage::BindModules..=Stage::Lower;
 const MODULE_STATISTICS: [StatisticId; 3] = [
     StatisticId::SourceFilesChecked,

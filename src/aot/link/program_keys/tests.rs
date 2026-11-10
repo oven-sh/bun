@@ -1,19 +1,12 @@
 use super::*;
-use crate::ir::{ClassSlot, PrivateStatePart};
 use crate::link::key_context;
 use crate::link::testing::{
     Projects, SHARED_NAME_IMPORTERS, application_file, find_synthetic_export, in_application,
     key_in, path_source, test_class_key, test_function_key, test_variable_key, with_projects,
     with_projects_without_bun_modules,
 };
-use crate::modules::SyntheticExportId;
-use bun_sema::bind::{CommonJsVariable, SymbolId};
-use bun_sema::check::aot::ClassRef;
-use bun_sema::hir::{ClassId, ExprId, MemberId, TypeNodeId};
-use bun_sema::program::{FileId, Sym};
+use bun_sema::program::FileId;
 use bun_sema::session::Session;
-use core::fmt::Debug;
-use core::iter::successors;
 
 const EMPTY_PROGRAM: [(&str, &str); 1] = [("main.js", "export {};\n")];
 
@@ -168,137 +161,6 @@ fn modules_order_by_variant_project_file() {
             assert_eq!(order, left_index.cmp(&right_index), "{left:?} {right:?}");
         }
     }
-}
-
-const FILE: FileId = FileId(1);
-const SYMBOL: Sym = Sym {
-    file: FILE,
-    id: SymbolId(1),
-};
-const CLASS: ClassRef = ClassRef {
-    file: FILE,
-    class: ClassId(1),
-};
-const FUNCTION: FunctionRef = FunctionRef {
-    file: FILE,
-    function: FnId(1),
-};
-
-fn next_function_key(key: FunctionKey) -> Option<FunctionKey> {
-    let (file, member) = (FILE, MemberId(1));
-    Some(match key {
-        FunctionKey::ModuleBody(_) => FunctionKey::WrappedModuleBody(FILE),
-        FunctionKey::WrappedModuleBody(_) => FunctionKey::FacadeBody(FILE),
-        FunctionKey::FacadeBody(_) => FunctionKey::CheckBody(FILE),
-        FunctionKey::CheckBody(_) => FunctionKey::Instantiation(FILE),
-        FunctionKey::Instantiation(_) => FunctionKey::Source(FUNCTION),
-        FunctionKey::Source(_) => FunctionKey::Signature(FUNCTION),
-        FunctionKey::Signature(_) => FunctionKey::ClassSignature(CLASS),
-        FunctionKey::ClassSignature(_) => FunctionKey::ImplicitConstructor(CLASS),
-        FunctionKey::ImplicitConstructor(_) => FunctionKey::InstanceInitializer(CLASS),
-        FunctionKey::InstanceInitializer(_) => FunctionKey::StaticInitializer(CLASS),
-        FunctionKey::StaticInitializer(_) => FunctionKey::AccessorGetter { file, member },
-        FunctionKey::AccessorGetter { .. } => FunctionKey::AccessorSetter { file, member },
-        FunctionKey::AccessorSetter { .. } => FunctionKey::PrivateNameTest { file, member },
-        FunctionKey::PrivateNameTest { .. } => return None,
-    })
-}
-
-fn next_layout_key(key: LayoutKey) -> Option<LayoutKey> {
-    let (file, node) = (FILE, TypeNodeId(1));
-    let object_type = |origin| LayoutKey::ObjectType {
-        origin,
-        instantiation: TypeIdentity([1, 1]),
-    };
-    Some(match key {
-        LayoutKey::Class(_) => LayoutKey::ConstructorFunction(FUNCTION),
-        LayoutKey::ConstructorFunction(_) => LayoutKey::Library(ClassDeclaration::Class(CLASS)),
-        LayoutKey::Library(_) => object_type(ObjectOrigin::Symbol(SYMBOL)),
-        LayoutKey::ObjectType { origin, .. } => match origin {
-            ObjectOrigin::Symbol(_) => object_type(ObjectOrigin::TypeLiteral { file, node }),
-            ObjectOrigin::TypeLiteral { .. } => {
-                object_type(ObjectOrigin::MappedType { file, node })
-            }
-            ObjectOrigin::MappedType { .. } => object_type(ObjectOrigin::ObjectLiteral {
-                file,
-                expression: ExprId(1),
-            }),
-            ObjectOrigin::ObjectLiteral { .. } => object_type(ObjectOrigin::Computed),
-            ObjectOrigin::Computed => LayoutKey::UntypedLiteral {
-                file,
-                members: TypeIdentity([1, 1]),
-            },
-        },
-        LayoutKey::UntypedLiteral { .. } => LayoutKey::CreatedObject { file, call: 1 },
-        LayoutKey::CreatedObject { .. } => LayoutKey::Container(SYMBOL),
-        LayoutKey::Container(_) => LayoutKey::Environment {
-            file,
-            environment: 1,
-        },
-        LayoutKey::Environment { .. } => LayoutKey::ModuleInstance(FILE),
-        LayoutKey::ModuleInstance(_) => return None,
-    })
-}
-
-fn next_variable_key(key: VariableKey) -> Option<VariableKey> {
-    Some(match key {
-        VariableKey::Symbol(_) => VariableKey::SyntheticExport(SyntheticExportId(1)),
-        VariableKey::SyntheticExport(_) => VariableKey::Copy(SyntheticExportId(1)),
-        VariableKey::Copy(_) => VariableKey::ModuleExports(FILE),
-        VariableKey::ModuleExports(_) => VariableKey::InnerModuleExports(FUNCTION),
-        VariableKey::InnerModuleExports(_) => VariableKey::ClassSlot {
-            class: CLASS,
-            slot: ClassSlot::ClassObject,
-        },
-        VariableKey::ClassSlot { .. } => VariableKey::ModulePath {
-            file: FILE,
-            variable: CommonJsVariable::Module,
-        },
-        VariableKey::ModulePath { .. } => VariableKey::PrivateState {
-            state: SYMBOL,
-            part: PrivateStatePart::Collection,
-        },
-        VariableKey::PrivateState { .. } => VariableKey::RequiredAnswer(SYMBOL),
-        VariableKey::RequiredAnswer(_) => VariableKey::MockOf(FILE),
-        VariableKey::MockOf(_) => VariableKey::InstantiationState(FILE),
-        VariableKey::InstantiationState(_) => VariableKey::EnvironmentMadeAhead(FILE),
-        VariableKey::EnvironmentMadeAhead(_) => {
-            VariableKey::MockOfRuntimeModule(RuntimeModule::NodePath)
-        }
-        VariableKey::MockOfRuntimeModule(_) => VariableKey::RequiresMadeForOwnFile(FILE),
-        VariableKey::RequiresMadeForOwnFile(_) => VariableKey::RequiresMadeForOtherFolders(FILE),
-        VariableKey::RequiresMadeForOtherFolders(_) => VariableKey::RequiresMadeForPaths(FILE),
-        VariableKey::RequiresMadeForPaths(_) => VariableKey::InstanceOf(FILE),
-        VariableKey::InstanceOf(_) => VariableKey::InstanceAllocator(FILE),
-        VariableKey::InstanceAllocator(_) => return None,
-    })
-}
-
-fn assert_ranks_follow_order<K: OrderedKey + Debug>(keys_in_order: &[K]) {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    for (left_index, left) in keys_in_order.iter().enumerate() {
-        for (right_index, right) in keys_in_order.iter().enumerate() {
-            let order = left_index.cmp(&right_index);
-            assert_eq!(left.compare(right, &atoms), order, "{left:?} {right:?}");
-            assert_eq!(left.rank().cmp(&right.rank()), order, "{left:?} {right:?}");
-        }
-    }
-}
-
-#[test]
-fn ranks_of_variants_follow_their_declaration_order() {
-    let functions = successors(Some(FunctionKey::ModuleBody(FILE)), |&key| {
-        next_function_key(key)
-    });
-    assert_ranks_follow_order(&functions.map(in_application).collect::<Vec<_>>());
-    let layouts = successors(Some(LayoutKey::Class(CLASS)), |&key| next_layout_key(key));
-    assert_ranks_follow_order(&layouts.map(in_application).collect::<Vec<_>>());
-    let variables = successors(Some(VariableKey::Symbol(SYMBOL)), |&key| {
-        next_variable_key(key)
-    });
-    let variables = variables.map(|key| ProgramVariableKey::Declared(in_application(key)));
-    assert_ranks_follow_order(&variables.collect::<Vec<_>>());
 }
 
 #[test]

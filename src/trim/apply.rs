@@ -939,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_that_cannot_be_counted_stops_no_cut() {
+    fn uncountable_plan_still_cuts() {
         let apply_with = |unrequested: UnrequestedCut| {
             let mut executable = toy_elf(EM_X86_64, TABLE_BYTES);
             let mut plan = cut_and_fill_plan();

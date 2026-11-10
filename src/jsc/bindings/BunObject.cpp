@@ -23,6 +23,7 @@
 #include <JavaScriptCore/JSONObject.h>
 #include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
@@ -427,8 +428,31 @@ static JSValue checkedBunObjectValue(VM& vm, JSObject* bunObject, JSValue (*crea
 }
 
 static JSValue constructBunShell(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunShell); }
-static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunSql); }
-static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunSQLConstructor); }
+// The executable holds bun:sql, and not the native code that it calls while it loads. An executable without bun:sql refuses the read, trimmed or not.
+static bool readsRemovedSql(JSObject* bunObject)
+{
+    return JSC::isFeatureRemoved(Bun::Feature::Sql) && ::Bun::DeclaredModuleLoad::canLoad(defaultGlobalObject(bunObject->globalObject()), ::Bun::InternalModuleRegistry::Field::BunSql);
+}
+
+static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    if (readsRemovedSql(bunObject)) [[unlikely]] {
+        // Both names read the same function.
+        for (auto name : { "sql"_s, "postgres"_s }) {
+            JSValue value = bunObject->getDirect(vm, Identifier::fromString(vm, name));
+            if (value && value.inherits<ProxyObject>())
+                return value;
+        }
+        return Bun::createRemovedFunction(bunObject->globalObject(), Bun::Feature::Sql, { "sql"_s, "Bun.sql"_s, 2, false });
+    }
+    return checkedBunObjectValue(vm, bunObject, createBunSql);
+}
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    if (readsRemovedSql(bunObject)) [[unlikely]]
+        return Bun::createRemovedFunction(bunObject->globalObject(), Bun::Feature::Sql, { "SQL"_s, "Bun.SQL"_s });
+    return checkedBunObjectValue(vm, bunObject, createBunSQLConstructor);
+}
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {

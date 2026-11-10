@@ -2958,7 +2958,7 @@ pub struct FileIn<S: Storage> {
     pub texts_of_data_files: S::Few<TextOfDataFile>,
     /// Set by the loader.
     pub imported_file_changers: S::Few<ImportedFileChanger>,
-    /// Among those that `FileAnalysis::asked_of_other_files` names. Set by the loader.
+    /// Among those that `FileAnalysis::other_file_queries` names. Set by the loader.
     pub texts_of_other_files: S::Few<TextOfOtherFile>,
     pub exports_that_others_touch: S::Few<Atom>,
     pub texts_written_by_loader: S::Few<TextWrittenByLoader>,

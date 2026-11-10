@@ -68,7 +68,7 @@ impl ImportEdges {
         kept.map(|edge| edge.target)
     }
 
-    fn may_be_cut_off(&self, importer: FileId, answer: &[FileId]) -> bool {
+    fn may_become_unreachable(&self, importer: FileId, answer: &[FileId]) -> bool {
         let may_lose_path = |file: &FileId| self.is_behind_dropped_edge[file.idx()];
         answer.iter().any(may_lose_path)
             && !self.kept_targets(importer).any(|it| answer.contains(&it))
@@ -190,7 +190,7 @@ impl ModuleGraph {
                     && self.has_record(exporter)
                     && is_alive(exporter)
                     && is_always_looked_up(required)
-                    && edges.may_be_cut_off(importer, &[exporter])
+                    && edges.may_become_unreachable(importer, &[exporter])
                 {
                     let answer = *index_by_exporter.entry(exporter).or_insert_with(|| {
                         exporters.push([exporter]);
@@ -239,7 +239,7 @@ impl ModuleGraph {
                 let importer = self.failure(failure).importer;
                 if let Some(facades) = facades.get(&copy)
                     && is_alive(importer)
-                    && edges.may_be_cut_off(importer, facades)
+                    && edges.may_become_unreachable(importer, facades)
                 {
                     let answer = *index_by_facades.entry(facades).or_insert_with(|| {
                         answers.push(facades);

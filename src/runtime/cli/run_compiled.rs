@@ -1402,7 +1402,6 @@ pub(crate) extern "C" fn Bun__AOT__hasImmediatesYetToRun(global: &bun_jsc::JSGlo
     !event_loop.immediate_tasks.is_empty() || !event_loop.next_immediate_tasks.is_empty()
 }
 
-/// BunCompiledModules.cpp. How many files the loader has handed to the transpiler threads so far.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__transpilerJobsScheduled(
     global: &bun_jsc::JSGlobalObject,
@@ -1410,7 +1409,6 @@ pub(crate) extern "C" fn Bun__AOT__transpilerJobsScheduled(
     global.bun_vm().transpiler_store.jobs_scheduled
 }
 
-/// BunCompiledModules.cpp. How many of them have settled their module promise.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__transpilerJobsCompleted(
     global: &bun_jsc::JSGlobalObject,

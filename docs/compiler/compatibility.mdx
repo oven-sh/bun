@@ -145,7 +145,7 @@ The build compiles every file it can reach from your entry point. Where a path i
 - `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
 - `fs.readdirSync()` and `fs.existsSync()` see the compiled files, so a loader that lists a folder and calls `require()` on each file works.
 - `import.meta.glob()` is expanded at build time, and every file that matches is compiled.
-- `require.resolve()` and `import.meta.resolve()` return a path. They don't embed the file. Neither do `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()`. With those three the build warns if the path names a file that isn't in the executable (`TS100099`). With those three and `require.resolve()` it warns if the path isn't a constant and some of your code isn't in the executable (`TS100087`). `require.resolve()` returns where the file was when you built, so reading it fails on another machine.
+- `require.resolve()` and `import.meta.resolve()` return a path. They don't embed the file. Neither do `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()`. With those three the build warns if the path names a file that isn't in the executable (`TS100099`). `require.resolve()` returns where the file was when you built, so reading it fails on another machine.
 - `require("./notes.txt")` returns the text itself, as in `bun build --compile`. `bun run` returns an object with the text as its `default`.
 - A query, as in `import("./a.ts?v=2")`, loads one more copy of the file, as in `bun run`. `?worker` works too. `?raw`, `?url`, a query on a data file and a query in a `require()` stop the build (`TS100159`).
 

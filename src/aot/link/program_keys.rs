@@ -345,7 +345,6 @@ impl OrderedKey for ProgramLayoutKey {
             LayoutKey::CreatedObject { file, call } => (0x500, [file.0, call, 0]),
             LayoutKey::Container(it) => (0x600, [it.file.0, it.id.0, 0]),
             LayoutKey::Environment { file, environment } => (0x700, [file.0, environment, 0]),
-            LayoutKey::ModuleInstance(file) => (0x800, [file.0, 0, 0]),
         };
         join_rank(self.project, variant, words)
     }
@@ -378,8 +377,6 @@ impl OrderedKey for ProgramVariableKey {
             VariableKey::RequiresMadeForOwnFile(file) => (14, file.0, 0),
             VariableKey::RequiresMadeForOtherFolders(file) => (15, file.0, 0),
             VariableKey::RequiresMadeForPaths(file) => (16, file.0, 0),
-            VariableKey::InstanceOf(file) => (17, file.0, 0),
-            VariableKey::InstanceAllocator(file) => (18, file.0, 0),
         };
         join_rank(declared.project, variant, [first, second, 0])
     }

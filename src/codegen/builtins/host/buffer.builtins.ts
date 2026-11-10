@@ -544,7 +544,7 @@ export default b.declarations(
       writeUIntLE: numberWriteWithWidth,
     },
   }),
-  // A widely used gzip wrapper replaces it for the length of each write if the descriptor says that it can.
+  // A popular gzip wrapper replaces it during each write if the descriptor says it can.
   b.extend("Buffer.concat", { marks: ["IsReportedAsReadOnly"] }),
   b.same("Buffer.prototype.toLocaleString", "Buffer.prototype.toString"),
   b.same("Buffer.prototype.@@@nodejs.util.inspect.custom", "Buffer.prototype.inspect"),

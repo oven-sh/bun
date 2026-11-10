@@ -345,7 +345,7 @@ impl<'a, 's> TextsOfFile<'a, 's> {
             None,
         )?;
         match found.alternatives[..] {
-            [ImportSpecifier::Constant(text)] if !found.is_out_of_data_file => {
+            [ImportSpecifier::Constant(text)] if !found.is_from_data_file => {
                 Some((text, found.start_at_own_directory, found.resolved_form))
             }
             _ => None,
@@ -375,7 +375,7 @@ impl<'a, 's> TextsOfFile<'a, 's> {
     }
 
     fn to_module_relative_paths(&self, found: &Found) -> SmallVec<[Atom; 2]> {
-        if found.is_out_of_data_file {
+        if found.is_from_data_file {
             return SmallVec::new();
         }
         let is_from_own_folder = |text: Atom| match found.resolved_form {
@@ -409,7 +409,7 @@ impl<'a, 's> TextsOfFile<'a, 's> {
             return self.to_module_relative_paths(&found);
         }
         let texts = found.alternatives.iter().filter_map(|it| match *it {
-            ImportSpecifier::Constant(text) if !found.is_out_of_data_file => Some(text),
+            ImportSpecifier::Constant(text) if !found.is_from_data_file => Some(text),
             _ => None,
         });
         texts.collect()

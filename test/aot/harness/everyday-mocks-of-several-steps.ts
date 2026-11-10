@@ -80,6 +80,9 @@ export { each };
 export function mocksFromOneTestFileToTheNextIn(part: number, parts: number) {
   each(mocksFromOneTestFileToTheNext(), part, parts, (name, plain, compiled) => {
     expect({ ...compiled, printed: [], didNotRunAgain: 0 }).toEqual({ ...plain, printed: [] });
+    // What a line says may differ then, but not that each test file prints its line, and how it is made.
+    const shapeOf = (line: string) => line.replace(/^(SAID \S+) .* ran \d+$/, "$1 ran");
+    expect(compiled.printed.map(shapeOf)).toEqual(plain.printed.map(shapeOf));
     if (!Bun.deepEquals(compiled.printed, plain.printed)) expect(compiled.didNotRunAgain).toBeGreaterThan(0);
   });
 }

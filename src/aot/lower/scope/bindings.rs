@@ -21,10 +21,6 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn code_unit_slot(&self, unit: CodeUnit, slot: ScopeSlot) -> BindingRef {
         BindingRef::Slot(self.bound.top_scope(self.hir, unit), slot)
     }
-
-    pub(in crate::lower) fn instance_slot(&self) -> BindingRef {
-        self.code_unit_slot(CodeUnit::File, ScopeSlot::ModuleInstance)
-    }
 }
 
 #[inline]
@@ -64,19 +60,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         .is_some()
             }
             Some(Storage::Variable(_)) => true,
-            Some(Storage::Instance { .. }) => self.reaches_stored(self.file.instance_slot()),
             Some(Storage::Local) | None => false,
-        }
-    }
-
-    pub(in crate::lower) fn get_module_instance(&mut self) -> ValueId {
-        if let Some(instance) = self.scopes.allocated_instance {
-            return instance;
-        }
-        let slot = self.file.instance_slot();
-        match self.reaches_stored(slot) {
-            true => self.get_stored(slot),
-            false => self.emit_current_instance(self.file.file),
         }
     }
 
@@ -99,11 +83,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Storage::Variable(key) => {
                 let variable = self.file.ensure_variable(key);
                 self.builder.get_module_variable(variable)
-            }
-            Storage::Instance { field } => {
-                let instance = self.get_module_instance();
-                let layout = environments::instance_layout(self.file);
-                self.builder.get_environment_field(instance, layout, field)
             }
             Storage::Local => {
                 unreachable!("the scope of a local is entered before code that names it")
@@ -172,12 +151,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Storage::Variable(key) => {
                 let variable = self.file.ensure_variable(key);
                 self.builder.put_module_variable(variable, value);
-            }
-            Storage::Instance { field } => {
-                let instance = self.get_module_instance();
-                let layout = environments::instance_layout(self.file);
-                self.builder
-                    .put_environment_field(instance, layout, field, value);
             }
             Storage::Local => debug_assert!(
                 local.is_some(),

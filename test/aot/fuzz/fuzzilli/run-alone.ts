@@ -189,6 +189,22 @@ function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: E
   return ours.end !== plainAgain.end ? "exit-code" : "stdout";
 }
 const kept = ["false-proof", "signal", "exit-code", "stdout", "limit", "never-ends"];
+/**
+ * The program without the statements of which the build says that they throw: a store to a read-only built-in (TS100014).
+ * Such a program is judged again without them, so that the refusal hides no other difference. A statement is a line that ends in a semicolon and closes what it opens.
+ */
+function withoutRefusedStatements(text: string, built: Ended): string | undefined {
+  const lines = text.split("\n");
+  let isShorter = false;
+  for (const [, line] of `${built.stdout}\n${built.stderr}`.matchAll(/TS100014:.*\n\s*at \S*\bprogram\.\w+:(\d+):/g)) {
+    const statement = lines[Number(line) - 1] ?? "";
+    const isWhole = ["()", "[]", "{}"].every(([open, close]) => statement.split(open).length === statement.split(close).length); // prettier-ignore
+    if (!isWhole || !statement.trimEnd().endsWith(";")) continue;
+    lines[Number(line) - 1] = "";
+    isShorter = true;
+  }
+  return isShorter ? lines.join("\n") : undefined;
+}
 function firstDifference(ours: Ended, plain: Ended) {
   const [left, right] = [withoutDetails(ours.stdout).split("\n"), withoutDetails(plain.stdout).split("\n")];
   const line = left.findIndex((each, at) => each !== right[at]);
@@ -556,9 +572,10 @@ while (performance.now() < lastStart || waiting.length) {
         for (const member of members!) waiting.push({ ...member, arms: [[arm, more]], company: record });
       };
       if (!existsSync(join(folder, "executable"))) {
-        const stop = /internal compiler error.*$|Stopped while compiling.*$|^panic.*$|^AOT: .*$|^bun: internal AOT error: .*$/m.exec(
-          built.stderr + built.stdout,
-        )?.[0];
+        const stop =
+          /internal compiler error.*$|Stopped while compiling.*$|^panic.*$|^AOT: .*$|^bun: internal AOT error: .*$/m.exec(
+            built.stderr + built.stdout,
+          )?.[0];
         if (stop === undefined && built.end === "1") {
           add(`${arm}refused`);
           // One member that the build refuses takes its company along.
@@ -604,6 +621,15 @@ while (performance.now() < lastStart || waiting.length) {
         ? "documented difference"
         : kindOfDifference(text, plain, plainAgain, oursAgain);
       ours = oursAgain;
+      const shorter =
+        !members && ["stdout", "exit-code", "documented difference"].includes(kind)
+          ? withoutRefusedStatements(text, built)
+          : undefined;
+      if (shorter !== undefined) {
+        add(arm + "judged again without a refused statement");
+        waiting.push({ ...program, text: shorter, arms: [[arm, more]] });
+        continue;
+      }
       // Where `bun build --compile` without --aot parts from `bun <file>` too, and in the same way, the bundler and the runner read something differently: a tsconfig.json in a folder, the path of
       // a file, when an `import()` settles. That is no fault of the compiler.
       if (kind === "stdout" || kind === "exit-code") {

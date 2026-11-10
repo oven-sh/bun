@@ -59,7 +59,7 @@ impl ContextParameter {
             .unwrap_or(ContextParameter::Other(None))
     }
 
-    /// The source of a function that `bun test --aot` compiled is the whole function as it's written, without its types.
+    /// The whole function as written, without its types, if `bun test --aot` compiled it.
     #[cold]
     fn of_compiled(function: JSValue, index: usize) -> ContextParameter {
         let mut is_text_left_out = false;

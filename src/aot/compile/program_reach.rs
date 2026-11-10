@@ -2254,7 +2254,6 @@ struct Walk<'a, 's> {
     every_file_has_module_object: bool,
     run_by_statements: SharedSet<(FileId, FileId)>,
     followed_imports: SharedSet<(FileId, ExportedItem)>,
-    instance_links: SharedSet<(FileId, FileId)>,
     names_looked_for: SharedSet<(FileId, Atom)>,
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     names_asked_of_stars: SharedSet<(FileId, Atom)>,
@@ -2352,7 +2351,6 @@ impl<'a, 's> Walk<'a, 's> {
             every_file_has_module_object,
             run_by_statements: SharedSet::default(),
             followed_imports: SharedSet::default(),
-            instance_links: SharedSet::default(),
             names_looked_for: SharedSet::default(),
             names_read_from_objects: SharedSet::default(),
             names_asked_of_stars: SharedSet::default(),
@@ -2924,13 +2922,8 @@ impl Reacher<'_, '_, '_> {
             ExportedItem::Namespace(module) => module,
         };
         self.note_statement_runs(importer, definer);
-        if let ExportedItem::Variable(defined) = item {
-            if defined.file == importer {
-                return;
-            }
-            if graph.is_reloadable(importer) && graph.is_reloadable(defined.file) {
-                walk.instance_links.insert((importer, defined.file));
-            }
+        if matches!(item, ExportedItem::Variable(defined) if defined.file == importer) {
+            return;
         }
         let Some(exporters) = walk.exporters.get(&item) else {
             return;
@@ -3965,16 +3958,11 @@ pub(crate) struct LeftOutCode {
     files_read_by_name: Vec<FileId>,
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
-    instance_links: SharedSet<(FileId, FileId)>,
     pub holds_every_load_by_unknown_name: bool,
     pub files_alive_through_last_seeds_alone: Vec<FileId>,
 }
 
 impl LeftOutCode {
-    pub(crate) fn has_instance_link(&self, file: FileId, target: FileId) -> bool {
-        self.instance_links.contains(&(file, target))
-    }
-
     pub(crate) fn find_export_use(&self, file: FileId, export: &ModuleExport) -> ExportUse {
         if self.files_read_by_name.binary_search(&file).is_err()
             || self.names_read_from_objects.contains(&(file, export.name))
@@ -4316,7 +4304,6 @@ pub(crate) fn find_left_out_code_seeding_last(
     steps.end("reach: drop the scans");
     left_out.names_read_from_objects = walk.names_read_from_objects;
     left_out.bound_variables = walk.bound_variables;
-    left_out.instance_links = walk.instance_links;
     reached_modules.required = walk.required;
     steps.end_with(|| {
         format!(

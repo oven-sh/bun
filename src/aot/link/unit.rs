@@ -64,8 +64,14 @@ impl LinkUnit {
         said_types.note_commit(self.file.file, self.is_checked, &self.said_types);
     }
 
-    pub fn new(context: &KeyContext<'_>, fragment: Fragment) -> LinkUnit {
+    pub fn new(context: &KeyContext<'_>, mut fragment: Fragment) -> LinkUnit {
         debug_assert!(fragment.layouts_named_by_code.is_sorted());
+        let mut scratch = Vec::new();
+        for (_, function) in &mut fragment.functions {
+            if let Some(function) = Arc::get_mut(function) {
+                function.body.pack(&mut scratch);
+            }
+        }
         LinkUnit {
             file: ProgramFile {
                 project: context.project,

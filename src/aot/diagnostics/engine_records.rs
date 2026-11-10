@@ -21,12 +21,6 @@ fn is_about_load_by_unknown_name(record: &UserDiagnosticRecord) -> bool {
     )
 }
 
-fn is_computed_path_in_program(record: &UserDiagnosticRecord, texts: &SourceTexts) -> bool {
-    record.kind == UserDiagnosticKind::NonConstantImportPath
-        && position_of(record.location)
-            .is_some_and(|it| matches!(texts.origin(it.module), ModuleOrigin::Program))
-}
-
 pub(super) fn package_name_in(path: &[u8]) -> Option<&[u8]> {
     const FOLDER: &[u8] = b"node_modules/";
     let name = &path[strings::last_index_of(path, FOLDER)? + FOLDER.len()..];
@@ -58,7 +52,6 @@ impl Diagnostics {
         lists_slow_code_in_packages: bool,
     ) {
         let mut locator = ModuleLocator::new(texts);
-        let is_advice_followed = self.has_all_project_code;
         for record in result
             .user_diagnostics()
             .iter()
@@ -67,11 +60,7 @@ impl Diagnostics {
                 lists_slow_code_in_packages || package_with_slow_code(record, texts).is_none()
             })
         {
-            let first_new = self.entries.len();
             self.add_user_diagnostic(record, result.text(record.message), texts, &mut locator);
-            if is_advice_followed && is_computed_path_in_program(record, texts) {
-                self.withheld.extend(self.entries.drain(first_new..));
-            }
         }
         for record in result.internal_errors() {
             self.add_internal_error_record(record, result.text(record.message), &mut locator);

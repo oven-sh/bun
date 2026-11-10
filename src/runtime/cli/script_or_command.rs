@@ -376,7 +376,7 @@ pub(super) const LAUNCHER_SUFFIXES: &[&[u8]] = match cfg!(windows) {
     false => &[b""],
 };
 
-/// Whether `bun <name>` in `cwd` finds a file to run, or an executable that a package has installed, here or further up.
+/// Whether `bun <name>` in `cwd` finds a file or an installed executable.
 /// Not for `check`, which has been a command for longer.
 fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
     if name == b"check" {

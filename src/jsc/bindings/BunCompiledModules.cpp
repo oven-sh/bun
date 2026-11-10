@@ -819,14 +819,14 @@ static JSValue loaderOfProgramForFile(Zig::GlobalObject* globalObject, const Str
 }
 
 // While a loader of the program runs: the object that require() has made, and the file that it has made it for.
-struct RequireHandedToLoaderOfProgram {
+struct TransferredRequire {
     JSCommonJSModule* target { nullptr };
     const String* path { nullptr };
     uint32_t module { 0 };
     // The engine has taken `target` for the file's `module`.
     bool isModuleOfFile { false };
 };
-static constinit thread_local RequireHandedToLoaderOfProgram s_requireHandedToLoaderOfProgram;
+static constinit thread_local TransferredRequire s_transferredRequire;
 
 static void requireCompiledModuleInto(Zig::GlobalObject*, JSCommonJSModule* target, AOT::ModuleID, JSString* key);
 static JSObject* attachRequireFunction(VM&, Zig::GlobalObject*, JSCommonJSModule*, JSString* path);
@@ -835,7 +835,7 @@ static bool tryBindExportsVariable(Zig::GlobalObject*, JSCommonJSModule*, AOT::M
 
 bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path)
 {
-    RequireHandedToLoaderOfProgram handed = s_requireHandedToLoaderOfProgram;
+    TransferredRequire handed = s_transferredRequire;
     if (!handed.target || handed.target != target || *handed.path != path)
         return false;
     // `bun run` leaves the object as it is: JSCommonJSModule::evaluate() runs nothing into an object that has been evaluated.
@@ -845,7 +845,7 @@ bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject* globalObject, JSC
         AOT::throwCompileOverrideError(globalObject, AOT::ModuleID(handed.module));
         return false;
     }
-    SetForScope nothingIsHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram {});
+    SetForScope nothingIsHanded(s_transferredRequire, TransferredRequire {});
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     // Ahead of the body, as in `bun run`: a file that throws is not run again by a second call.
     target->hasEvaluated = true;
@@ -854,7 +854,6 @@ bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject* globalObject, JSC
     return true;
 }
 
-// A CommonJS file that has no `module` yet takes the object that require() made, as in `bun run`.
 static bool tryAdoptModuleObject(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module, JSString* key)
 {
     if (!AOT::newModuleObjectTraits(globalObject, module))
@@ -891,7 +890,7 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         // Until the file runs it is an object of require() like any other: `exports` is the empty object that lies there, and it is a child of whoever asked.
         bool isAdopted = tryAdoptModuleObject(globalObject, target, *module, key);
         RETURN_IF_EXCEPTION(scope, false);
-        SetForScope isHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram { target, &path, module->index(), isAdopted });
+        SetForScope isHanded(s_transferredRequire, TransferredRequire { target, &path, module->index(), isAdopted });
         MarkedArgumentBuffer arguments;
         arguments.append(target);
         arguments.append(key);
@@ -982,9 +981,9 @@ static void takeForModuleObjectOfFile(Zig::GlobalObject* globalObject, JSCommonJ
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    RequireHandedToLoaderOfProgram handed = s_requireHandedToLoaderOfProgram;
+    TransferredRequire handed = s_transferredRequire;
     if (handed.target && (handed.target == target || handed.module == module.index())) {
-        s_requireHandedToLoaderOfProgram = {};
+        s_transferredRequire = {};
         if (handed.isModuleOfFile)
             AOT::releaseModuleObject(globalObject, AOT::ModuleID(handed.module));
     }
@@ -1177,6 +1176,8 @@ void willResetModules(Zig::GlobalObject* globalObject, ASCIILiteral call, bool k
     if (!hasCompiledModules() || !reloadsFilesFromDisk())
         return;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    AOT::finishLoadsAwaitingLoader(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
     String packages = makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP);
     // isExternalizedByVitest(): Vitest loads an ES module that Node would read as CommonJS like the project's modules, and resets it with them.
     auto isKept = [&](const String& path) {
@@ -2049,7 +2050,7 @@ static void fulfillFetchesInLaterTick(WebCore::ScriptExecutionContext& context, 
         // A task behind the yield that an immediate has posted runs in the same iteration, ahead of the next immediates. The thread of `bun test` is not that fast.
         if (isBunTest && !wasPostponed && (Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(context.globalObject()) || Bun__AOT__hasImmediatesYetToRun(context.globalObject()))) [[unlikely]]
             return fulfillFetchesInLaterTick(context, true);
-        // A compiled test run reads some files from disk too, the original of a mocked file for one. `bun test` hands every read to one pool, so a read that was requested earlier ends first.
+        // As under `bun test`, a read that was requested earlier ends first.
         if (!AOT::fulfillDeferredFetches(context.vm(), Bun__AOT__transpilerJobsCompleted(context.globalObject()))) [[unlikely]]
             return fulfillFetchesInLaterTick(context, wasPostponed);
         // What the delivery has queued runs here, ticks too, so that the run time hears where it ends: what a later turn calls for is held again.
@@ -2069,7 +2070,7 @@ static uint64_t scheduleFetchFulfillment(JSGlobalObject* globalObject)
         return 0;
     }
     fulfillFetchesInLaterTick(context, false);
-    // What a factory imports is decided at its call. The run time decides it again when the source arrives, so such a fetch is not moved behind the reads from disk.
+    // The fetches of a factory are not moved behind the reads from disk.
     return Zig::isInsideMockFactory(defaultGlobalObject(globalObject)) ? 0 : Bun__AOT__transpilerJobsScheduled(globalObject);
 }
 

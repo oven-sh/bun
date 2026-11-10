@@ -857,7 +857,6 @@ fn exports_are_sorted_by_code_units_not_by_string_id() {
             atoms,
             modules: &prepared.modules,
             functions: &prepared.functions,
-            layouts: &prepared.layouts,
             variables: &prepared.variables,
             definitions: &prepared.definitions,
             numbering: &numbering,

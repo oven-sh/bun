@@ -5,9 +5,7 @@ use super::entries::build_entries;
 use super::merged_keys::MergedKeys;
 use super::module_table::find_unit;
 use super::numbering::Numbering;
-use super::program_keys::{
-    ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey,
-};
+use super::program_keys::{ProgramFunctionKey, ProgramModule, ProgramVariableKey};
 use super::state::{Definitions, ExportWriter, ModuleRecords, ModuleTable, VariableDefinition};
 use super::unit::LinkUnit;
 use super::{LinkProject, key_context};
@@ -18,8 +16,8 @@ use crate::ir::generated::{
 };
 use crate::ir::parallel::{extend_from_lists, map_each};
 use crate::ir::{
-    DataId, FunctionId, Id, IdMap, InParallel, LayoutId, LayoutKey, ModuleId, StringId,
-    StringTable, VariableId, VariableKey, for_each_mut,
+    DataId, FunctionId, Id, IdMap, InParallel, ModuleId, StringId, StringTable, VariableId,
+    VariableKey, for_each_mut,
 };
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
@@ -47,7 +45,6 @@ pub(super) struct RecordInput<'a, 's> {
     pub modules: &'a ModuleTable,
     pub functions: &'a MergedKeys<'a, ProgramFunctionKey>,
     pub variables: &'a MergedKeys<'a, ProgramVariableKey>,
-    pub layouts: &'a MergedKeys<'a, ProgramLayoutKey>,
     pub definitions: &'a Definitions,
     pub numbering: &'a Numbering,
     pub in_parallel: InParallel<'a>,
@@ -73,16 +70,6 @@ impl RecordInput<'_, '_> {
         match merged.and_then(|merged| self.numbering.variables[merged as usize]) {
             Some(id) => id,
             None => panic!("the variable of an export that is read has no id: {key:?}"),
-        }
-    }
-
-    fn instance_layout_of(&self, project: ProjectId, file: FileId) -> LayoutId {
-        let key = LayoutKey::ModuleInstance(file);
-        let key = key_context(self.projects, project).layout_key(key);
-        let merged = self.layouts.find(&key);
-        match merged.and_then(|merged| self.numbering.layouts[merged as usize]) {
-            Some(id) => id,
-            None => panic!("the instance layout of an export that is read has no id: {key:?}"),
         }
     }
 
@@ -305,7 +292,6 @@ fn build_records_of_modules(
     let functions: Vec<Option<FunctionId>> = list_ids_as_they_are(counts.functions);
     let variables: Vec<Option<VariableId>> = list_ids_as_they_are(counts.variables);
     let data: Vec<Option<DataId>> = list_ids_as_they_are(counts.data);
-    let layouts: Vec<Option<LayoutId>> = list_ids_as_they_are(counts.layouts);
     let mut tasks: Vec<(&mut BuiltRecords, Vec<Option<StringId>>)> =
         built.iter_mut().zip(program_ids).collect();
     for_each_mut(&mut tasks, input.in_parallel, &|(records, strings)| {
@@ -315,7 +301,7 @@ fn build_records_of_modules(
             types: &[],
             type_sites: &[],
             expected_results: &[],
-            layouts: &layouts,
+            layouts: &[],
             variables: &variables,
             modules: &modules,
             module_failures: &[],
@@ -1604,22 +1590,7 @@ impl RecordBuilder<'_, '_, '_> {
             is_from_star_export: export.is_from_star_export,
             ..generated::ModuleExport::default()
         };
-        let graph = input.projects.get(project).graph;
-        let field_of_instance = match binding {
-            ExportBinding::Variable(symbol) => {
-                let fields = graph.instance_layout(symbol.file);
-                let field = fields.and_then(|fields| fields.field_of_export(symbol.id));
-                field.map(|field| (symbol, field))
-            }
-            _ => None,
-        };
         Some(match binding {
-            _ if let Some((symbol, field)) = field_of_instance => generated::ModuleExport {
-                kind: ModuleExportKind::Field,
-                layout: Some(input.instance_layout_of(project, symbol.file)),
-                field: Some(field),
-                ..unbound
-            },
             ExportBinding::Variable(_) | ExportBinding::Synthetic(_) => {
                 let key = exported_variable_key(input.projects.get(project).graph, binding);
                 let key = key.expect("the binding is a variable");

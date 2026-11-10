@@ -75,7 +75,6 @@ pub(in crate::lower) enum Storage {
     Local,
     Field { scope: ScopeId, field: u32 },
     Variable(VariableKey),
-    Instance { field: u32 },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

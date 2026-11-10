@@ -4,7 +4,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { test } from "./supported";
 
-// The build warns of a computed path only where some code of the project isn't in the executable.
 const leftOut = { "left-out.cjs": `module.exports = 1;\n` };
 const path = `process.argv[2]`;
 
@@ -17,7 +16,8 @@ async function build(
   root = ".",
 ) {
   using dir = tempDir("bun-ignore-comments", { ...others, ...files });
-  for (const [at, to] of Object.entries(links)) symlinkSync(to, join(String(dir), at), "dir");
+  for (const [at, to] of Object.entries(links))
+    symlinkSync(to, join(String(dir), at), at.endsWith(".cjs") ? "file" : "dir");
   using out = tempDir("bun-ignore-comments-out", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--aot", ...flags, ...entryPoints, "--outfile", join(String(out), "program")],
@@ -37,8 +37,8 @@ const nothing = { said: [], exitCode: 0 };
 const stale = (reason: string) => `warn: TS100073: This comment silences nothing: ${reason}`;
 
 test("without a comment the build warns", async () => {
-  expect(await build({ "main.cjs": `require(${path});\nBun.resolveSync(${path}, __dirname);\n` })).toEqual({
-    said: ["warn: TS100064", "warn: TS100087"],
+  expect(await build({ "main.cjs": `require(${path});\nBun.resolveSync("./left-out.cjs", __dirname);\n` })).toEqual({
+    said: ["warn: TS100064", "warn: TS100099"],
     exitCode: 0,
   });
 });
@@ -56,20 +56,22 @@ test.each([
 });
 
 test("a comment silences a warning of the front end", async () => {
-  expect(await build({ "main.cjs": `Bun.resolveSync(${path}, __dirname); // bun-ignore TS100087\n` })).toEqual(nothing);
+  expect(await build({ "main.cjs": `Bun.resolveSync("./left-out.cjs", __dirname); // bun-ignore TS100099\n` })).toEqual(
+    nothing,
+  );
 });
 
-test.each([`TS100064, TS100087`, `TS100064 TS100087`, `TS100087,TS100064`])(
+test.each([`TS100064, TS100099`, `TS100064 TS100099`, `TS100099,TS100064`])(
   "one comment names several codes: %s",
   async codes => {
-    const text = `// bun-ignore ${codes}\nrequire(Bun.resolveSync(${path}, __dirname));\n`;
+    const text = `// bun-ignore ${codes}\nrequire(Bun.resolveSync("./left-out.cjs", __dirname));\n`;
     expect(await build({ "main.cjs": text })).toEqual(nothing);
   },
 );
 
 test("a comment silences one line and the codes that it names", async () => {
-  const text = `// bun-ignore TS100064\nrequire(${path});\nrequire(${path});\n// bun-ignore TS100064\nrequire(Bun.resolveSync(${path}, __dirname));\n`;
-  expect(await build({ "main.cjs": text })).toEqual({ said: ["warn: TS100064", "warn: TS100087"], exitCode: 0 });
+  const text = `// bun-ignore TS100064\nrequire(${path});\nrequire(${path});\n// bun-ignore TS100064\nrequire(Bun.resolveSync("./left-out.cjs", __dirname));\n`;
+  expect(await build({ "main.cjs": text })).toEqual({ said: ["warn: TS100064", "warn: TS100099"], exitCode: 0 });
 });
 
 test("a comment at the end of a line doesn't reach the next line", async () => {
@@ -81,9 +83,9 @@ test("a comment at the end of a line doesn't reach the next line", async () => {
 });
 
 test("a comment that silences nothing gets a warning for each code", async () => {
-  const text = `// bun-ignore TS100064, TS100087\nrequire(${path});\n`;
+  const text = `// bun-ignore TS100064, TS100099\nrequire(${path});\n`;
   expect(await build({ "main.cjs": text })).toEqual({
-    said: [stale("the build reports no TS100087 on the line that it applies to")],
+    said: [stale("the build reports no TS100099 on the line that it applies to")],
     exitCode: 0,
   });
 });
@@ -119,7 +121,7 @@ test("a type error is not silenced", async () => {
 test.each([
   ["an engine's warning", `// bun-ignore TS100058\nnew RegExp(${path});\n`],
   ["a computed import", `// bun-ignore TS100064\nrequire(${path});\n`],
-  ["a computed lookup", `// bun-ignore TS100087\nBun.resolveSync(${path}, __dirname);\n`],
+  ["a written lookup", `// bun-ignore TS100099\nBun.resolveSync("./left-out.cjs", __dirname);\n`],
 ])("a build that stops at a type error calls no comment stale: %s", async (_, text) => {
   expect(await build({ "main.cjs": text })).toEqual(nothing);
   const files = { "main.cjs": text, "wrong.ts": `export const count: number = "one";\n` };
@@ -167,10 +169,10 @@ test("the warning of a stale comment can't be silenced", async () => {
 
 test.each(["js", "ts", "jsx", "tsx", "mjs", "cjs"])("in a .%s file", async extension => {
   const entry = `main.${extension}`;
-  const text = `// bun-ignore TS100087\nconsole.log(Bun.resolveSync(${path}, "."));\n`;
+  const text = `// bun-ignore TS100064\nimport(${path}).catch(() => {});\n`;
   expect(await build({ [entry]: text }, [entry])).toEqual(nothing);
-  expect(await build({ [entry]: text.replace("TS100087", "TS100064") }, [entry])).toEqual({
-    said: [stale("the build reports no TS100064 on the line that it applies to"), "warn: TS100087"],
+  expect(await build({ [entry]: text.replace("TS100064", "TS100058") }, [entry])).toEqual({
+    said: [stale("the build reports no TS100058 on the line that it applies to"), "warn: TS100064"],
     exitCode: 0,
   });
 });
@@ -203,7 +205,7 @@ test.each([
   ],
   [
     "a lookup in a function that this program doesn't call",
-    `function find() {\n  // bun-ignore TS100087\n  return Bun.resolveSync(${path}, __dirname);\n}\n`,
+    `function find() {\n  // bun-ignore TS100099\n  return Bun.resolveSync("./left-out.cjs", __dirname);\n}\n`,
   ],
 ])("a comment in %s isn't stale", async (_, text) => {
   expect(await build({ "main.cjs": text + `console.log(1);\n` })).toEqual(nothing);
@@ -227,8 +229,8 @@ test("an export that nobody imports", async () => {
   expect(await build(files, ["main.mjs"])).toEqual(nothing);
 });
 
-test("a comment isn't stale where the whole build has nothing to warn of", async () => {
-  const text = `// bun-ignore TS100064\nrequire(${path});\n// bun-ignore TS100087\nBun.resolveSync(${path}, __dirname);\n`;
+test("a comment in a build where every file is an entry point", async () => {
+  const text = `// bun-ignore TS100064\nrequire(${path});\n`;
   expect(await build({ "main.cjs": text }, ["main.cjs", "./left-out.cjs"])).toEqual(nothing);
 });
 
@@ -261,11 +263,13 @@ test.each([
 test.each([
   `TS100064.`,
   `TS100064: the plugins ship with the program`,
-  `TS100064;TS100087`,
-  `TS100064; TS100087.`,
+  `TS100064;TS100099`,
+  `TS100064; TS100099.`,
   `TS100064 (see the README)`,
 ])("a mark behind a code: %s", async codes => {
-  const call = codes.includes("TS100087") ? `require(Bun.resolveSync(${path}, __dirname))` : `require(${path})`;
+  const call = codes.includes("TS100099")
+    ? `require(Bun.resolveSync("./left-out.cjs", __dirname))`
+    : `require(${path})`;
   expect(await build({ "main.cjs": `// bun-ignore ${codes}\n${call};\n` })).toEqual(nothing);
 });
 
@@ -297,34 +301,67 @@ test("a build that computes no such warning calls no comment stale", async () =>
   expect(await build({ "main.cjs": text }, ["main.cjs"], ["--aot-allow-code-from-disk"])).toEqual(nothing);
 });
 
-test("the warning of a computed import stops once every file of the project is an entry point", async () => {
-  const files = { "main.cjs": `require(${path});\n` };
-  expect((await build(files)).said).toEqual(["warn: TS100064"]);
-  expect(await build(files, ["main.cjs", "./left-out.cjs"])).toEqual(nothing);
-  const more = { ...files, "second.cjs": `module.exports = 2;\n` };
-  expect((await build(more, ["main.cjs", "./left-out.cjs"])).said).toEqual(["warn: TS100064"]);
-});
-
-test.each(["addon.node", "data.json", "notes.txt"])(
-  "a second entry point that a computed import can't name as code doesn't stop the warning: %s",
-  async name => {
-    const files = { "main.cjs": `require(${path});\n`, [name]: name.endsWith(".json") ? "{}\n" : "no code\n" };
-    expect(await build(files, ["main.cjs", `./${name}`], [], {})).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
-  },
-);
-
-test("a dependency keeps the warning: the build doesn't look for what is left out of a package", async () => {
-  const files = {
-    "main.cjs": `require("dep");\nrequire(${path});\n`,
-    "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js" }),
-    "node_modules/dep/index.js": `require(${path});\n`,
-    "node_modules/dep/plugin.js": `module.exports = 1;\n`,
+// A file that is in the executable by one path isn't found by another, so no list of entry points makes the warning needless.
+const main = { "app/main.cjs": `require(${path});\n`, "app/second.cjs": `module.exports = 2;\n` };
+const left = (at: string) => ({ ...main, [at]: `module.exports = 3;\n` });
+const both = ["main.cjs", "./second.cjs"];
+const computed: Record<string, { files: Record<string, string>; entries?: string[]; links?: Record<string, string> }> =
+  {
+    "every code file is an entry point": { files: main },
+    "one file is left out": { files: left("app/third.cjs") },
+    "an addon is the second entry point": {
+      files: { ...main, "app/addon.node": "no code" },
+      entries: ["main.cjs", "./addon.node"],
+    },
+    "a data file is the second entry point": {
+      files: { ...main, "app/data.json": "{}" },
+      entries: ["main.cjs", "./data.json"],
+    },
+    "an entry point that a link to its folder names": {
+      files: left("app/real/plugin.cjs"),
+      entries: [...both, "./real/plugin.cjs"],
+      links: { "app/plugins": "real" },
+    },
+    "an entry point that a link names": {
+      files: left("app/real/plugin.cjs"),
+      entries: [...both, "./real/plugin.cjs"],
+      links: { "app/plugin.cjs": "real/plugin.cjs" },
+    },
+    "code in the project's own node_modules": { files: left("app/node_modules/dep/index.js") },
+    "code behind a link named node_modules": {
+      files: left("outside/dep/index.js"),
+      links: { "app/node_modules": "../outside" },
+    },
+    "code in a folder whose name begins with a dot": { files: left("app/.made/plugin.cjs") },
+    "code behind a link whose name begins with a dot": {
+      files: left("outside/plugin.cjs"),
+      links: { "app/.made": "../outside" },
+    },
+    "code behind a link out of the project": {
+      files: left("outside/plugin.cjs"),
+      links: { "app/plugins": "../outside" },
+    },
+    "links to an ancestor": {
+      files: { ...main, "app/public/page.html": "" },
+      links: { "app/public/one": "..", "app/public/two": "..", "app/public/three": "../..", "app/self": "." },
+    },
   };
-  expect((await build(files)).said).toEqual(["warn: TS100064", "warn: TS100064"]);
-  expect(await build(files, ["main.cjs", "./left-out.cjs"])).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
+test.each(Object.keys(computed))("a computed import is warned of: %s", async name => {
+  const { files, entries = both, links = {} } = computed[name];
+  expect(await build(files, entries, [], {}, links, "app")).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
 });
 
-test("a program that is itself a package keeps the warning: what its user names lies outside", async () => {
+test("a computed import in a dependency is warned of where every file of the program is an entry point", async () => {
+  const files = {
+    ...main,
+    "app/main.cjs": `require("dep");\n`,
+    "app/node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js" }),
+    "app/node_modules/dep/index.js": `require(${path});\n`,
+  };
+  expect(await build(files, both, [], {}, {}, "app")).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
+});
+
+test("a computed import of a program that is itself a package is warned of", async () => {
   const files = {
     "node_modules/tool/package.json": JSON.stringify({ name: "tool", bin: "cli.cjs" }),
     "node_modules/tool/cli.cjs": `require("./extra.cjs");\nrequire(${path});\n`,
@@ -332,53 +369,6 @@ test("a program that is itself a package keeps the warning: what its user names 
   };
   const entryPoints = ["node_modules/tool/cli.cjs", "node_modules/tool/extra.cjs"];
   expect(await build(files, entryPoints, [], {})).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
-});
-
-// Each link to an ancestor multiplies the paths that lead to every folder.
-const toAncestor = { "app/public/one": "../..", "app/public/two": "../..", "app/public/three": "..", "app/self": "." };
-const linked = {
-  "app/main.cjs": `require(${path});\n`,
-  "app/second.cjs": `module.exports = 2;\n`,
-  "app/public/page.html": "",
-};
-
-test("links to an ancestor: the build ends, and the warning stops once every code file is in the executable", async () => {
-  const links = { "app/public/one": "..", "app/public/two": "..", "app/public/three": "../public", "app/self": "." };
-  expect(await build(linked, ["main.cjs", "./second.cjs"], [], {}, links, "app")).toEqual(nothing);
-});
-
-test("links that lead above the project: the build ends and the warning stays", async () => {
-  expect(await build(linked, ["main.cjs", "./second.cjs"], [], {}, toAncestor, "app")).toEqual({
-    said: ["warn: TS100064"],
-    exitCode: 0,
-  });
-});
-
-test("a link to a sibling folder with a code file that is left out", async () => {
-  const files = { ...linked, "app/other/left-out.cjs": `module.exports = 3;\n` };
-  const links = { "app/public/other": "../other" };
-  const told = { said: ["warn: TS100064"], exitCode: 0 };
-  expect(await build(files, ["main.cjs", "./second.cjs"], [], {}, links, "app")).toEqual(told);
-  expect(await build(files, ["main.cjs", "./second.cjs", "./other/left-out.cjs"], [], {}, links, "app")).toEqual(
-    nothing,
-  );
-});
-
-test.each(["outside", "app/node_modules/dep", "app/.made"])(
-  "a link to a folder that the build doesn't look into: %s",
-  async to => {
-    const files = { ...linked, [`${to}/left-out.cjs`]: `module.exports = 3;\n` };
-    const links = { "app/plugins": to.startsWith("app/") ? to.slice("app/".length) : `../${to}` };
-    expect(await build(files, ["main.cjs", "./second.cjs"], [], {}, links, "app")).toEqual({
-      said: ["warn: TS100064"],
-      exitCode: 0,
-    });
-  },
-);
-
-test("a computed lookup beside links to an ancestor", async () => {
-  const lookup = { ...linked, "app/main.cjs": `require("./second.cjs");\nBun.resolveSync(${path}, __dirname);\n` };
-  expect(await build(lookup, ["main.cjs"], [], {}, toAncestor, "app")).toEqual(nothing);
 });
 
 test("a project of one file keeps the warning of a computed import", async () => {

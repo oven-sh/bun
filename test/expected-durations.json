@@ -2420,6 +2420,10 @@
     "default": 2100,
     "asan": 8400
   },
+  "aot/reads-of-removed-built-ins.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/record-retired-mid-load.test.ts": {
     "default": 1100,
     "asan": 4400
@@ -2699,6 +2703,10 @@
   "aot/stage-log-has-no-gaps.test.ts": {
     "default": 1200,
     "asan": 4800
+  },
+  "aot/star-exports-cost-the-same-beside-mocks.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/star-rings.test.ts": {
     "default": 1900,
@@ -3109,6 +3117,10 @@
     "asan": 240000
   },
   "aot/trim-report-features-by-operand.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/trimmed-intl-and-temporal-instances.test.ts": {
     "default": 60000,
     "asan": 240000
   },

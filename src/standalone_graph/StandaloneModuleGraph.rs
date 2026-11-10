@@ -274,6 +274,9 @@ impl StandaloneModuleGraph {
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         let mut buf = bun_paths::path_buffer_pool::get();
         if let Some(key) = self.directory_key(name, &mut buf) {
+            if let Some((shared, _)) = self.find_folders_named_alike(name, key) {
+                return Ok(keep_key_of_directory_with_code_alone(&shared));
+            }
             return Ok(match self.dirs.get_index(key) {
                 Some(index) => &self.dirs.keys()[index],
                 None => keep_key_of_directory_with_code_alone(key),
@@ -290,7 +293,24 @@ impl StandaloneModuleGraph {
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let name = self.directory_key(name, &mut buf)?;
+        let found = self.directory_key(name, &mut buf)?;
+        let mut listed = self.list_folder(found, recursive);
+        let others = self.find_folders_named_alike(name, found);
+        for folder in others.iter().flat_map(|it| &it.1) {
+            let more = self.list_folder(folder, recursive);
+            let is_new = |entry: &(Box<[u8]>, bool)| !listed.iter().any(|it| it.0 == entry.0);
+            let more: Vec<_> = more.into_iter().filter(is_new).collect();
+            listed.extend(more);
+        }
+        for entry in self.list_assets_named_at_root(found, recursive) {
+            if !listed.iter().any(|it| it.0 == entry.0) {
+                listed.push(entry);
+            }
+        }
+        Some(listed)
+    }
+
+    pub(crate) fn list_folder(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
         let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
         prefix.extend_from_slice(name);
         prefix.push(b'/');
@@ -349,7 +369,7 @@ impl StandaloneModuleGraph {
         for (k, v) in seen.iter() {
             out.push((Box::<[u8]>::from(&k[..]), *v));
         }
-        Some(out)
+        out
     }
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
@@ -1667,7 +1687,7 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
     bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
-/// The bunfs key of a file that lay above the root directory of a compiled program: where the modules that lay beside it are mounted.
+/// The bunfs key under which modules beside a file above the root directory are mounted.
 fn key_above_root(
     prefix: &[u8],
     program: Option<&CompiledProgramInput<'_>>,

@@ -411,10 +411,7 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
-        let has_instances = matches!(target, ModuleRef::File(file) if context.modules.may_be_reevaluated(file))
-            && context.modules.interop(target).kind == ModuleKind::SourceText;
-        let may_answer_another_object = has_instances
-            || context.evicted.is_stored_in_cache(target)
+        let may_answer_another_object = context.evicted.is_stored_in_cache(target)
             || (context.order.is_code_of_program(target)
                 && (context.evicted.contains(target)
                     || context.mocked.contains(target)

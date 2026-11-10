@@ -217,13 +217,8 @@ pub(super) fn find_reloadable_files(input: &BindInput<'_, '_>, scans: &Scans) ->
     is_reloadable
 }
 
-pub(super) fn fill_plan_of_reloads(
-    input: &BindInput<'_, '_>,
-    scans: &Scans,
-    is_reloadable: Vec<bool>,
-    plan: &mut Plan,
-) {
-    plan.test_run.is_reloadable = is_reloadable;
+pub(super) fn fill_plan_of_reloads(input: &BindInput<'_, '_>, scans: &Scans, plan: &mut Plan) {
+    plan.test_run.is_reloadable = find_reloadable_files(input, scans);
     let is_reloadable = &plan.test_run.is_reloadable;
     let count_of_kind = |kind: ModuleKind| {
         let files = input.files.compiled_files().iter();

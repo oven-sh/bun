@@ -927,6 +927,7 @@ impl ModuleGraph {
                 || is_marked(&self.plan.test_run.may_be_evicted, module))
     }
 
+    #[cfg(test)]
     pub fn is_reloadable(&self, file: FileId) -> bool {
         is_marked(&self.plan.test_run.is_reloadable, ModuleRef::File(file))
     }
@@ -977,10 +978,6 @@ impl ModuleGraph {
     }
 
     pub fn is_instantiated_ahead(&self, file: FileId) -> bool {
-        self.has_instances(file) || self.is_in_rerun_component(file)
-    }
-
-    pub fn is_in_rerun_component(&self, file: FileId) -> bool {
         let order = &self.plan.order;
         let module = ModuleRef::File(file);
         self.kind(file) == ModuleKind::SourceText

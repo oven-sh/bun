@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# "use strict";
+# function overAListMadeHere(given) { const o = [given, 2, 3]; let sum = 0; for (const k in o) sum = (sum + o[k]) | 0; return sum; }
+# const byName = { overAListMadeHere }, key = JSON.parse('"overAListMadeHere"');
+# print(byName[key](1));
+# -- end of source
+# "The keys are as the enumerator found them" is noted on the enumerator, and a read by the enumerator's index rests on it. A write that touches fresh objects alone ends nothing that is noted of other cells, the enumerator among them:
+# that is right only because no object is fresh behind its own ForInOpen: the open's row says that it runs the object's protocols, and such a use lets a fresh object leave.
+# Whoever keeps an object fresh across its open must end the note in that branch. That is asked wherever the note is laid, in every build, and a no stops the build by name.
+# The lying word passes fresh lists over where operations take them, so that the list is still fresh behind its open: the red control of that question.
+# RUN: walk f1:Body mechanisms=all testing=NothingIsDoneToFreshLists
+# CHECK: the walk of f1:Body failed
+# DIAGNOSTIC: KeysOfFreshObjectNotedOnEnumerator

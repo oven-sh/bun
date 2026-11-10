@@ -220,19 +220,23 @@ pub(super) fn remove_unread_data_exports(rows: &mut [FileRow]) {
         let file = row.file;
         let is_read = &mut is_read[module.marks.clone()];
         let exports = row.exports.iter();
-        let default_exports = exports.filter(|export| export.name == known::default);
-        for variable in default_exports.filter_map(|export| own_variable(file, export)) {
+        let asked_of_every_namespace = [known::default, known::then, known::__esModule];
+        let kept = exports.filter(|export| asked_of_every_namespace.contains(&export.name));
+        for variable in kept.filter_map(|export| own_variable(file, export)) {
             is_read[variable.0 as usize] = true;
         }
         let mut unread_exports = Vec::new();
+        let mut names_left_out = Vec::new();
         row.exports
             .retain(|export| match own_variable(file, export) {
                 Some(variable) if !is_read[variable.0 as usize] => {
                     unread_exports.push(variable);
+                    names_left_out.push(export.name);
                     false
                 }
                 Some(_) | None => true,
             });
+        row.names_left_out = names_left_out;
         unread_exports.sort_unstable();
         unread_exports.dedup();
         row.unread_exports = unread_exports;

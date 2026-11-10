@@ -1,11 +1,54 @@
+use bun_sema::bind::PatParent;
 use bun_sema::check::aot::{ShapeKind, TupleElement, TupleElementKind};
+use bun_sema::hir::{ExprKind, PatId};
 use smallvec::SmallVec;
 
-use crate::ir::ContentsSlot;
+use crate::ir::{ContentsSlot, DeclaredType, PositionFlags, Primitives};
 use crate::lower::types::find_contents_type;
 use crate::lower::{CheckerTypeId, FileLowering};
 
 impl FileLowering<'_, '_, '_, '_> {
+    fn type_read_into_binding(&mut self, pattern: PatId) -> Option<CheckerTypeId> {
+        match self.bound.pat_parent[pattern.idx()] {
+            PatParent::Prop(..) | PatParent::Elem(..) => self.queries.binding_type(pattern).ok(),
+            PatParent::Var(declaration) => {
+                let (written, value) = (self.hir[declaration].ty, self.hir[declaration].init);
+                if written.is_some() {
+                    return None;
+                }
+                if value.is_none() {
+                    return self.queries.binding_type(pattern).ok();
+                }
+                let read = self.skip_type_syntax(value);
+                let is_read = matches!(
+                    self.hir[read].kind,
+                    ExprKind::Dot { .. } | ExprKind::Index { .. }
+                );
+                let is_stated = is_read
+                    && !self.is_statically_resolved(read)
+                    && !self.reads_field_that_may_be_absent(read);
+                match is_stated {
+                    true => self.queries.expression_type(read).ok(),
+                    false => None,
+                }
+            }
+            PatParent::Param(_) | PatParent::None => None,
+        }
+    }
+
+    pub(super) fn position_of_int32_binding(&mut self, pattern: PatId) -> Option<DeclaredType> {
+        let ty = self.type_read_into_binding(pattern)?;
+        let mapped = self.map_type_at(ty);
+        let held = self.fragment.types.get(mapped.ty);
+        let (minimum, maximum) = held.integer_range()?;
+        let int32 = i64::from(i32::MIN)..=i64::from(i32::MAX);
+        (mapped.is_checked
+            && !held.primitives.contains(Primitives::NUMBER)
+            && int32.contains(&minimum)
+            && int32.contains(&maximum))
+        .then(|| DeclaredType::new(mapped, None, PositionFlags::default()))
+    }
+
     pub(super) fn find_element_type(
         &mut self,
         list: CheckerTypeId,

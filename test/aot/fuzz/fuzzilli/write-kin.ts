@@ -26,6 +26,54 @@ const linesOf = (text: string) => text.split("\n");
 const isStatement = (line: string) =>
   /;\s*$/.test(line) && !/^\s*(?:\/\/|\*|import\b|export\b|return\b|break\b|continue\b)/.test(line);
 
+/**
+ * The program without three habits that have a build keep so much of the library that nothing is missing any more. Each has hidden a method that was left out of the executable. `undefined` where the program has none of them.
+ *
+ * A value that nobody knows, a list, a function or a table handed to `console.log()` as it is: the build keeps the printer of values and what the printer may come by. Here every print makes texts of what it is handed.
+ * A list read under a key that nobody knows, the usual way of a scene to lose sight of a value: the key may name any method of a list. Here the value goes through a record under such a key.
+ * In older builds, a read of `.constructor` off a value that nobody knows.
+ */
+export function withoutWhatKeepsTheLibrary(text: string, isTypeScript: boolean): string | undefined {
+  const makes = `(...all${isTypeScript ? ": any[]" : ""}) => console.log(all.map(one => (Object.is(one, -0) ? "-0" : String(one))).join(" "))`;
+  let changed = text.replace(
+    /^((?:const|let|var) [\w$]+)(?:: any)? = console\.log;$/gm,
+    (_, born) => `${born} = ${makes};`,
+  );
+  if (/(?<![\w$.])console\.log\(/.test(changed.replaceAll(makes, "")) && !/\bprintTexts\b/.test(changed)) {
+    const lines = changed.split("\n");
+    let at = 0;
+    while (at < lines.length && /^\s*(?:\/\/.*|#!.*|["']use strict["'];?)?$/.test(lines[at])) at++;
+    changed = [
+      ...lines.slice(0, at),
+      `const printTexts = ${makes};`,
+      ...lines
+        .slice(at)
+        .map(line => (line.includes(makes) ? line : line.replace(/(?<![\w$.])console\.log\(/g, "printTexts("))),
+    ].join("\n");
+  }
+  const names = [...new Set([...changed.matchAll(/\bcatch ?\((\w+)\b/g)].map(found => found[1]))].join("|");
+  if (names)
+    changed = changed.replace(
+      new RegExp(
+        `((?:\\((?:${names})(?: as (?:any|Error))?\\)|(?<![\\w$.])(?:${names}))(?:\\?\\.|\\.))constructor(?:\\?\\.|\\.)(?=name\\b)`,
+        "g",
+      ),
+      "$1",
+    );
+  const under = '][JSON.parse("0")]';
+  for (let end = changed.indexOf(under); end >= 0; end = changed.indexOf(under, end + 1)) {
+    let start = end - 1;
+    for (let depth = 0; start >= 0; start--) {
+      if ("])}".includes(changed[start])) depth++;
+      else if (depth && "[({".includes(changed[start])) depth--;
+      else if (changed[start] === "[" || (changed[start] === "," && !depth)) break;
+    }
+    if (changed[start] !== "[" || /[\w$)\]]/.test(changed.slice(0, start).trimEnd().at(-1) ?? "")) continue;
+    changed = `${changed.slice(0, start)}({ a: ${changed.slice(start + 1, end)} }${isTypeScript ? " as any" : ""})[JSON.parse('"a"')]${changed.slice(end + under.length)}`;
+  }
+  return changed === text ? undefined : changed;
+}
+
 const rewrites: Record<string, Rewrite> = {
   anotherKeyword: (text, pick) =>
     atOne(text, /\b(let|var|const)(?= [\w$[{])/g, pick, ([, word]) => (word === "let" ? "var" : "let")),
@@ -151,6 +199,34 @@ const rewrites: Record<string, Rewrite> = {
     const index = pick(at);
     return [...lines.slice(0, index + 1), lines[index], ...lines.slice(index + 1)].join("\n");
   },
+  // The first turn of a loop is then what first touches whatever the line touches: a module of the library, a file, a variable that is filled late.
+  aLineInALoop: (text, pick) => {
+    const lines = linesOf(text);
+    const at = lines.flatMap((line, index) =>
+      isStatement(line) && /^[\w$.]+\(/.test(line) && !/\bawait\b/.test(line) ? [index] : [],
+    );
+    if (!at.length) return undefined;
+    const index = pick(at);
+    const turns = pick(["1", "2", "3", 'Number("2")', 'Number("0")']);
+    return [
+      ...lines.slice(0, index),
+      `for (let again = 0; again < ${turns}; again++) { ${lines[index]} }`,
+      ...lines.slice(index + 1),
+    ].join("\n");
+  },
+  // A function that the file declares is called at the head of the file too, before anything is filled, with zeros for its numbers: a loop under such a bound runs no turn.
+  aCallBeforeAnythingIsFilled: (text, pick) => {
+    const lines = linesOf(text);
+    const declared = [...text.matchAll(/^function ([\w$]+)\(([^()\n]*)\)/gm)];
+    if (!declared.length) return undefined;
+    const [, name, parameters] = pick(declared);
+    const given = parameters.trim()
+      ? parameters.split(",").map(() => pick(["0", "0", 'Number("0")', "null", "undefined"]))
+      : [];
+    const head = lines.findIndex(line => !/^\s*(?:\/\/|"use strict"|import\b|$)/.test(line));
+    if (head < 0) return undefined;
+    return [...lines.slice(0, head), `try { ${name}(${given.join(", ")}); } catch {}`, ...lines.slice(head)].join("\n");
+  },
   aLineLess: (text, pick) => {
     const lines = linesOf(text);
     const at = lines.flatMap((line, index) =>
@@ -176,6 +252,25 @@ const rewrites: Record<string, Rewrite> = {
     const index = pick(at);
     return [...lines.slice(0, index + 1), "Bun.gc(true);", ...lines.slice(index + 1)].join("\n");
   },
+  // Whoever prints a value uses it, and what is used is compiled otherwise: a print has hidden more than one death of the compiler. Without its prints a program can still stop the build, die or never end.
+  nobodyLooksOn: text => {
+    const lines = linesOf(text);
+    const kept = lines.filter(line => !/^\s*(?:printValue|console\.log)\(.*\);\s*$/.test(line));
+    return kept.length < lines.length ? kept.join("\n") : undefined;
+  },
+  aNumberLooksOn: (text, pick) => {
+    const grows = [...text.matchAll(/\b([A-Za-z_$][\w$]*) \+= [^;\n]*? \+ "[;,|.]";/g)].map(found => found[1]);
+    if (!grows.length) return undefined;
+    const name = pick(grows).replace(/\$/g, "\\$&");
+    const born = new RegExp(`\\b(let|var) ${name}(?:: (?:string|any))? = "";`);
+    if (!born.test(text)) return undefined;
+    return text
+      .replace(born, (_, word) => `${word} ${name.replace(/\\/g, "")} = 0;`)
+      .replace(
+        new RegExp(`\\b${name} \\+= ([^;\\n]*?) \\+ "[;,|.]";`, "g"),
+        (_, value) => `${name.replace(/\\/g, "")} += String(${value}).length;`,
+      );
+  },
   aWiderType: (text, pick) =>
     atOne(text, /: (number|string|boolean|[A-Z]\w*(?:\[\])?)(?=[,)=; ])/g, pick, () =>
       pick([": any", ": unknown", ": any"]),
@@ -199,7 +294,11 @@ function near(text: string, at: number, rewrite: Rewrite, pick: <T>(from: readon
 }
 const whole = new Set([
   "insideAFunction",
+  "nobodyLooksOn",
+  "aNumberLooksOn",
   "aLineTwice",
+  "aLineInALoop",
+  "aCallBeforeAnythingIsFilled",
   "aLineLess",
   "twoLinesTheOtherWayRound",
   "aCollectionBetween",
@@ -211,7 +310,17 @@ export function writeKin(text: string, random: () => number): { text: string; ch
   const changes: string[] = [];
   let at = -1;
   for (let wanted = pick([1, 1, 2, 2, 3]), tries = 0; changes.length < wanted && tries < 24; tries++) {
-    const name = pick(Object.keys(rewrites));
+    const name = pick([
+      ...Object.keys(rewrites),
+      "nobodyLooksOn",
+      "nobodyLooksOn",
+      "aNumberLooksOn",
+      "aNumberLooksOn",
+      "aLineInALoop",
+      "aLineInALoop",
+      "aCallBeforeAnythingIsFilled",
+      "aCallBeforeAnythingIsFilled",
+    ]);
     const changed = at >= 0 && !whole.has(name) ? near(text, at, rewrites[name], pick) : rewrites[name](text, pick);
     if (changed === undefined || changed === text) continue;
     if (at < 0) {

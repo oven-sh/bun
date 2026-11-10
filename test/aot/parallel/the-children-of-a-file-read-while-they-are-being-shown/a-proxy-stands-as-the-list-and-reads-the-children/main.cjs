@@ -1,0 +1,11 @@
+"use strict";
+const names = () => Array.from(module.children, (child) => child.exports).join();
+let inside = false, entered = 0;
+module.children = new Proxy([], { get(held, key, receiver) { if (key === "indexOf" && !inside) { entered++; inside = true; void module.children; inside = false; } return Reflect.get(held, key, receiver); } });
+require("./a.cjs");
+console.log("SAID", "behind a", names());
+require("./b.cjs");
+console.log("SAID", "behind b", names());
+require("./c.cjs");
+console.log("SAID", "behind c", names());
+console.log("NOTE", "entered", entered);

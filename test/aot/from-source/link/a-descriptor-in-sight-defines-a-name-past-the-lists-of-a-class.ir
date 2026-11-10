@@ -1,0 +1,15 @@
+# Object.defineProperty on a class object, under a key that no list of the class names.
+# -- source: main.js
+# class Base {}
+# class Heir extends Base {}
+# class Beside {}
+# class Last {}
+# Object.defineProperty(Base, Symbol.hasInstance, { value: (value) => value === 7 });
+# print(7 instanceof Heir, 7 instanceof Beside, 7 instanceof Last);
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L1 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L2
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L3

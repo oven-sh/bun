@@ -1,0 +1,4 @@
+// The same lines; what holds the rows is a record and no list: the test in front fails and the loop goes on in the copy without that guess.
+class Matrix { constructor(modules) { this.size = modules.length; this.modules = modules; } runs() { const { size, modules } = this; let score = 0; const line = get => { let run = 1; for (let i = 1; i <= size; i++) { if (i < size && get(i) === get(i - 1)) { run++; continue; } if (run >= 3) score += run - 2; run = 1; } }; for (let i = 0; i < size; i++) { line(k => modules[i][k]); line(k => modules[k][i]); } return score; } }
+const rows = JSON.parse("[[1,1,1,1,0,0],[0,1,1,1,1,0],[0,0,0,0,1,1],[1,0,1,0,1,0],[1,1,1,1,1,1],[0,0,0,1,1,1]]");
+const rounds = JSON.parse("2"); for (let t = 0; t < rounds; t++) console.log(new Matrix(Object.assign({ length: rows.length }, rows)).runs());

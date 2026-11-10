@@ -1,0 +1,37 @@
+# -- source: a-value-beside-a-text-that-is-read-as-a-key.mjs
+# const rows = JSON.parse('[{"region": "n", "kind": "alpha"}, {"region": "s", "kind": "beta"}]');
+# function count(list) { const counts = {}; for (const row of list) { const key = row.region + ":" + row.kind; counts[key] ??= 0; counts[key]++; } return counts; }
+# function shown(list) { let text = ""; for (const row of list) { const line = row.region + ":" + row.kind; text = line; } return text; }
+# function sum(table, a, b) { const key = a + b; table[key] = 1; return key; }
+# console.log(JSON.stringify(count(rows)), shown(rows), sum({}, 1, 2), sum({}, "a", 2));
+# -- end of source
+# f1 = count, f2 = shown, f3 = sum
+# A key made by `+` out of fields of rows that nobody has typed stayed `Add form=Generic`: a rope, which every access under it turned into a name anew (about 1,000 instructions a row). Where one addend
+# is a proven text and the other is a number, a text, a boolean, undefined or null, the sum is the text of the other joined to it and runs no code: the other is asked for that and goes into a likely
+# name as it is (a number is not made a string first); whatever else it is takes the sum as it was, on a rare way. A join that nobody reads as a key stays as it was, and so does a sum of two values
+# of which neither is a text: it may be a number.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: PropGet {{*}} key="region"
+# CHECK: TypeTest {{*}} testedType=undefined|null|boolean|number|string
+# CHECK: Strcat {{*}} [isLikelyKey, isLikelyName]
+# CHECK: frequency=Rare
+# CHECK: Add {{*}} form=Generic
+# CHECK: PropGet {{*}} key="kind"
+# CHECK: TypeTest {{*}} testedType=undefined|null|boolean|number|string
+# CHECK: Strcat {{*}} [isLikelyKey, isLikelyName]
+# CHECK: frequency=Rare
+# CHECK: Add {{*}} form=Generic
+# CHECK: ElemGet
+# RUN(NONE): walk f1:Body mechanisms=all
+# NONE-NOT: form=MayBeString
+# RUN(SHOWN): walk f2:Body mechanisms=all
+# SHOWN-LABEL: code f2:Body
+# SHOWN-NOT: isLikelyKey
+# SHOWN: Add {{*}} form=Generic
+# SHOWN-NOT: isLikelyKey
+# RUN(SUM): walk f3:Body mechanisms=all
+# SUM-LABEL: code f3:Body
+# SUM-NOT: Strcat
+# SUM: Add {{*}} form=Generic
+# SUM-NOT: Strcat

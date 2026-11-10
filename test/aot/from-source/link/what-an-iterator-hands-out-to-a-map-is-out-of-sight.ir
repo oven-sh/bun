@@ -21,6 +21,5 @@
 # console.log(new Map(list.values()).size);
 # -- end of source
 # RUN: link functions mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: function f2 cycle=
 # CHECK: function f3 cycle=

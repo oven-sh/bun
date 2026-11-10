@@ -1,0 +1,22 @@
+# -- source: main.ts
+# interface Span { readonly low: number; readonly high: number }
+# function count(items: any, span: Span): number { let n = 0; for (const item of items) if (item >= span.low || span.low < 0 || span.high > 100 || span.low > span.high) n++; return n; }
+# function weigh(items: any, span: Span): number { let n = 0; for (const item of items) if (item >= span.low || span.low < 0 || span.high > 100 || span.low > span.high) n++; return n; }
+# const odd = [5, 6] as any[];
+# const items: number[] = [];
+# function turn(t: number): number { let n = 0; for (let i = 0; i < 100; i++) n += count(items, odd[(i + t) & 1]); return n + (t < 0 ? count(items, { low: 1, high: 2 }) : 0); }
+# (globalThis as any).kept = weigh;
+# console.log(turn(1), weigh(items, { low: 3, high: 4 }));
+# -- end of source
+# f1 = count, f2 = weigh, f3 = turn . L0 = Span
+# `span: Span` is written in a checked file, and the one caller hands `count` numbers out of an `any[]`: the guard at its entry tested for L0, failed at every call, and behind a failing
+# guard stands the whole function written straight (133,518 instructions a turn of a hundred calls against 5,655). Every caller of `count` is known, and Link has PROVEN what arrives:
+# undefined|i32|L0. Where a number, a text or a boolean is proven to arrive beside the objects and the body does not tell them apart, the guard does not test that parameter.
+# `weigh` has left for unseen code: nothing is proven of what arrives, and the written word is tested for as before.
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1 
+# CHECK: parameter 1 expected=undefined|null|L0 declared proven=undefined|i32|L0
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f1:GenericCallEntry -> f1:Body
+# PLAN-NOT: unit f1:ParameterGuard
+# PLAN: unit f2:ParameterGuard (JSValue, JSValue) -> (JSValue) tests (-, L0)

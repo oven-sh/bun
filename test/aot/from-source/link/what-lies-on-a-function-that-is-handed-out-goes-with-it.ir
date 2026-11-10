@@ -1,0 +1,17 @@
+# The control of the-function-that-a-written-descriptor-lays-on-a-function-stays-in-sight.ir: the function that holds it is handed to code that nobody sees: what lies on it goes with it. f2 = init, L1 = the holder.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 callers-known
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: what-lies-on-a-function-that-is-handed-out-goes-with-it.js
+# function make(name) {
+#   function init(inst, by) { inst.total += by.n; return inst.total; }
+#   function made() { return name; }
+#   Object.defineProperty(made, "init", { value: init });
+#   return made;
+# }
+# const one = make("one");
+# globalThis.kept = one;
+# const holder = { total: 1 };
+# console.log(one.init(holder, { n: 2 }), one.init(holder, { n: 3 }), one());
+# -- end of source

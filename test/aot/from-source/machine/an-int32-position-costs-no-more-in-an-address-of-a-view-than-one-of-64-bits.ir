@@ -1,0 +1,49 @@
+# A position that is an int32 was extended by its sign for the test against the length, and that extension was the index of the address: movslq at every access.
+# Against a length that fits 32 bits the word itself is compared, without a sign; behind the test it is not negative, and a word that a 32-bit operation made is extended by zeros already.
+# byte: the length of a view of bytes may be 2 ** 32: there the test stays one of 64 bits.
+# -- source: an-int32-position-costs-no-more-in-an-address-of-a-view-than-one-of-64-bits.ts
+# declare function hidden(): number;
+# declare function say(x: unknown): void;
+# const words = new Int32Array([10, 20, 30, 40]), bytes = new Uint8Array([1, 2, 3]), doubles = new Float64Array([0.5, 1.5]);
+# function word(k: number): number | undefined { return words[k | 0]; }
+# function byte(k: number): number | undefined { return bytes[k | 0]; }
+# function store(k: number, x: number): void { doubles[k | 0] = x; }
+# for (let i = 0; i < 7; i++) { const k = hidden(); say(word(k)); say(byte(k)); store(k, i + 0.25); }
+# say(doubles.join(","));
+# -- end of source
+# RUN: emit f1:Body f2:Body f3:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: JSArrayBufferView_vector
+# CHECK-NEXT: Int32 {{*}} = Trunc(
+# CHECK-NEXT: = Below(
+# CHECK-NEXT: = Branch(
+# CHECK: Int64 {{*}} = ZExt32(
+# CHECK-NEXT: = Shl(
+# CHECK-LABEL: unit f2:Body
+# CHECK: JSArrayBufferView_vector
+# CHECK-NEXT: = Below(
+# CHECK-NEXT: = Branch(
+# CHECK: Int64 {{*}} = ZExt32(
+# CHECK-LABEL: unit f3:Body
+# CHECK: JSArrayBufferView_vector
+# CHECK-NEXT: Int32 {{*}} = Trunc(
+# CHECK-NEXT: = Below(
+# CHECK-NEXT: = Branch(
+# CHECK: Int64 {{*}} = ZExt32(
+# CHECK-NEXT: = Shl(
+# RUN(SHELL): run-in-shell const all = [0, 3, 4, -1, 2147483647, -2147483648, 1]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: 10
+# SHELL-NEXT: 1
+# SHELL-NEXT: 40
+# SHELL-NEXT: undefined
+# SHELL-NEXT: undefined
+# SHELL-NEXT: undefined
+# SHELL-NEXT: undefined
+# SHELL-NEXT: undefined
+# SHELL-NEXT: undefined
+# SHELL-NEXT: undefined
+# SHELL-NEXT: undefined
+# SHELL-NEXT: undefined
+# SHELL-NEXT: 20
+# SHELL-NEXT: 2
+# SHELL-NEXT: 0.25,6.25

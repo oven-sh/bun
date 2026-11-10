@@ -1,0 +1,10 @@
+const log = [];
+const kind = each => each === null ? "null" : each === undefined ? "undefined" : typeof each === "object" ? each.constructor.name : typeof each;
+const first = Bun.spawn({ cmd: ["/bin/sh", "-c", "exit 3"], onExit(child, exitCode, signalCode, error) { log.push("exit " + kind(this) + " " + kind(child) + " " + exitCode + " " + signalCode + " " + kind(error)); } });
+await first.exited;
+const second = Bun.spawn(["/bin/sleep", "20"], { onExit(child, exitCode, signalCode, error) { log.push("killed " + kind(this) + " " + kind(child) + " " + exitCode + " " + signalCode + " " + kind(error)); } });
+second.kill();
+await second.exited;
+await new Promise(done => setTimeout(done, 20));
+const third = Bun.spawnSync({ cmd: ["/bin/sh", "-c", "echo out"], onExit(child, exitCode, signalCode, error) { log.push("sync " + kind(child) + " " + exitCode + " " + signalCode + " " + kind(error)); } });
+console.log(log.join("\n"), String(third.stdout).trim());

@@ -4,7 +4,7 @@ use crate::builtins::table::{self, BuiltinId, MemberLookup};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, StmtId, StmtKind, UnOp};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, NodeData, StmtId, StmtKind, UnOp};
 
 #[derive(Copy, Clone)]
 enum Node {
@@ -21,8 +21,20 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn reads_member(&self, value: ExprId, member: BuiltinId, filled: Option<SymbolId>) -> bool {
+    fn find_variable_named(&self, name: ExprId) -> Option<SymbolId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
+        match (hir[name].kind, bound.binding(name)) {
+            (ExprKind::Ident(_), Binding::Symbol(variable))
+                if bound.dynamic_lookup_scope(NodeData::Expr(name)).is_none() =>
+            {
+                Some(variable)
+            }
+            _ => None,
+        }
+    }
+
+    fn reads_member(&self, value: ExprId, member: BuiltinId, filled: Option<SymbolId>) -> bool {
+        let hir = self.input.hir;
         let mut value = hir.skip_type_assertions(value);
         while let ExprKind::Assign {
             op: None,
@@ -33,7 +45,7 @@ impl Resolver<'_, '_> {
             value = hir.skip_type_assertions(stored);
         }
         if let (ExprKind::Ident(_), Some(filled)) = (hir[value].kind, filled) {
-            return bound.binding(value) == Binding::Symbol(filled);
+            return self.find_variable_named(value) == Some(filled);
         }
         if let Some(exact) = self.value_of(value) {
             return table::canonical_id(exact.path.id) == member;
@@ -56,7 +68,7 @@ impl Resolver<'_, '_> {
         test: ExprId,
         member: BuiltinId,
     ) -> Option<SymbolId> {
-        let (hir, bound) = (self.input.hir, self.input.bound);
+        let hir = self.input.hir;
         let ExprKind::Binary { op, left, right } = hir[hir.skip_type_assertions(test)].kind else {
             return None;
         };
@@ -71,23 +83,18 @@ impl Resolver<'_, '_> {
             else {
                 return None;
             };
-            match (hir[target].kind, bound.binding(target)) {
-                (ExprKind::Ident(_), Binding::Symbol(variable))
-                    if self.reads_member(value, member, None) =>
-                {
-                    Some(variable)
-                }
-                _ => None,
-            }
+            self.find_variable_named(target)
+                .filter(|_| self.reads_member(value, member, None))
         })
     }
 
     fn leaves_variable_filled(&self, test: ExprId, member: BuiltinId, variable: SymbolId) -> bool {
-        let (hir, bound) = (self.input.hir, self.input.bound);
+        let hir = self.input.hir;
         let leaves = |part: ExprId| self.leaves_variable_filled(part, member, variable);
-        match hir[hir.skip_type_assertions(test)].kind {
-            ExprKind::Ident(_)
-            | ExprKind::This
+        let test = hir.skip_type_assertions(test);
+        match hir[test].kind {
+            ExprKind::Ident(_) => self.find_variable_named(test).is_some(),
+            ExprKind::This
             | ExprKind::Null
             | ExprKind::True
             | ExprKind::False
@@ -107,12 +114,10 @@ impl Resolver<'_, '_> {
                 op: None,
                 target,
                 value,
-            } => match (hir[target].kind, bound.binding(target)) {
-                (ExprKind::Ident(_), Binding::Symbol(stored)) if stored == variable => {
-                    self.reads_member(value, member, None)
-                }
-                (ExprKind::Ident(_), Binding::Symbol(_)) => leaves(value),
-                _ => false,
+            } => match self.find_variable_named(target) {
+                Some(stored) if stored == variable => self.reads_member(value, member, None),
+                Some(_) => leaves(value),
+                None => false,
             },
             _ => false,
         }

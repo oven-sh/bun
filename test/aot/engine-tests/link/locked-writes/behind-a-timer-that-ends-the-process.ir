@@ -1,0 +1,25 @@
+# the twin of behind-a-callback-a-loop-and-a-timer.ir: what the timer is handed ends the process. Nobody here says when the host calls it: a warning
+# setTimeout(() => process.exit(1), 0); Array.prototype.push = () => {};
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SetTimeout @1
+    v1 = NewClosure function=f1 @1
+    v2 = Integer @1
+    v3 = Call v0, -, v1, v2 @1
+    v4 = Builtin builtin=ArrayPrototype @2
+    PropSet v4, v1 key="push" @3
+    Return v3 @4
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process @101
+    v1 = PropGet v0 key="exit" @102
+    v2 = Integer integer=1 @103
+    v3 = Call v1, v0, v2 calleeKey="exit" @104
+    Return v3 @105
+}

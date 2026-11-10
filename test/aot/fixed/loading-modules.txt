@@ -262,7 +262,7 @@ there index.js
 there, as a URL index.js
 absent ResolveMessage MODULE_NOT_FOUND
 #### broken-files-behind-computed-name/main.js
-// Plain Bun says what is wrong with a broken file in the words of the loader that reads it at run time ("BuildMessage: Unexpected ;", "JSON Parse error: Unrecognized token '/'"): an earlier compiler embedded the raw text to say the same. An executable has no such loader now: a program that does not parse throws what the build's parser said; a JSON file that does not parse is handed to the engine's parser at run time and fails in its words, as in plain Bun; any other file of data that does not parse is not there.
+// Plain Bun says what is wrong with a broken file in the words of the loader that reads it at run time ("BuildMessage: Unexpected ;", "JSON Parse error: Unrecognized token '/'"): an earlier compiler embedded the raw text to say the same. An executable has no such loader now: a program that does not parse throws what the build's parser said; a file of data that does not parse throws an error of plain Bun's class (SyntaxError for JSON, BuildMessage for the others) with a sentence of the build's own: nothing of the file is in the executable.
 const tried = async (label, load) => {
   try {
     console.log(label, JSON.stringify((await load()).default));
@@ -338,18 +338,18 @@ good.json required "object"
 good.js "good"
 good.js once more "good"
 good.js required "object"
-commented.json threw SyntaxError: JSON Parse error: Unrecognized token '/'
-commented.json once more threw SyntaxError: JSON Parse error: Unrecognized token '/'
-commented.json required threw SyntaxError: JSON Parse error: Unrecognized token '/'
+commented.json threw SyntaxError: "broken-files-behind-computed-name/data/commented.json" could not be parsed as json
+commented.json once more threw SyntaxError: "broken-files-behind-computed-name/data/commented.json" could not be parsed as json
+commented.json required threw SyntaxError: "broken-files-behind-computed-name/data/commented.json" could not be parsed as json
 broken.js threw SyntaxError: Expression expected. (1:11)
 broken.js once more threw SyntaxError: Expression expected. (1:11)
 broken.js required threw SyntaxError: Expression expected. (1:11)
 broken.ts threw SyntaxError: Type expected. (1:10)
 broken.ts once more threw SyntaxError: Type expected. (1:10)
 broken.ts required threw SyntaxError: Type expected. (1:10)
-broken.toml threw ResolveMessage: Cannot find module '/$bunfs/root/broken-files-behind-computed-name/data/broken.toml' imported from /$bunfs/root/broken-files-behind-computed-name/data/broken.toml
-broken.toml once more threw ResolveMessage: Cannot find module '/$bunfs/root/broken-files-behind-computed-name/data/broken.toml' imported from /$bunfs/root/broken-files-behind-computed-name/data/broken.toml
-broken.toml required threw ResolveMessage: Cannot find module '/$bunfs/root/broken-files-behind-computed-name/data/broken.toml' imported from /$bunfs/root/broken-files-behind-computed-name/data/broken.toml
+broken.toml threw BuildMessage: "broken-files-behind-computed-name/data/broken.toml" could not be parsed as toml
+broken.toml once more threw BuildMessage: "broken-files-behind-computed-name/data/broken.toml" could not be parsed as toml
+broken.toml required threw BuildMessage: "broken-files-behind-computed-name/data/broken.toml" could not be parsed as toml
 lacks.js threw SyntaxError: Export named 'nope' not found in module 'good.js'.
 lacks.js once more threw SyntaxError: Export named 'nope' not found in module 'good.js'.
 lacks.js required threw SyntaxError: Export named 'nope' not found in module 'good.js'.
@@ -359,8 +359,8 @@ hands-on.js required threw SyntaxError: export 'nope' not found in 'good.js'
 torn.js threw SyntaxError: Export named 'twice' cannot be resolved due to ambiguous multiple bindings in module 'stars.js'.
 torn.js once more threw SyntaxError: Export named 'twice' cannot be resolved due to ambiguous multiple bindings in module 'stars.js'.
 torn.js required threw SyntaxError: Export named 'twice' cannot be resolved due to ambiguous multiple bindings in module 'stars.js'.
-of a package threw SyntaxError: JSON Parse error: Unrecognized token '/'
-of a package, required threw SyntaxError: JSON Parse error: Unrecognized token '/'
+of a package threw SyntaxError: "broken-files-behind-computed-name/node_modules/pkg/configs/base.json" could not be parsed as json
+of a package, required threw SyntaxError: "broken-files-behind-computed-name/node_modules/pkg/configs/base.json" could not be parsed as json
 #### this-at-the-top-of-a-module/main.mjs
 // The language says `undefined` at the top of a module. `bun run` writes `exports` there in a file without ES module syntax, whatever its name, and `null` in a file with it: an object either way.
 console.log("entry alone", typeof this);

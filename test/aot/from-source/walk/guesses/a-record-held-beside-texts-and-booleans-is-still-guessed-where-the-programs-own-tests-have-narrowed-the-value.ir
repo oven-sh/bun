@@ -1,0 +1,12 @@
+# -- source: main.js
+# const rows = JSON.parse('[{"on":true,"qty":3},{"on":false,"qty":1},{"on":true,"qty":0}]');
+# function words(mix) { let k, text = ''; if (typeof mix === 'string' || typeof mix === 'number') text += mix; else if (typeof mix === 'object') { for (k in mix) if (mix[k]) { text && (text += ' '); text += k; } } return text; }
+# function joined(...args) { let text = ''; for (const a of args) { const x = a && words(a); if (x) { text && (text += ' '); text += x; } } return text; }
+# for (let turn = 0; turn < 2; turn++) for (const r of rows) print(joined('btn', { on: r.on, off: !r.on }, r.qty > 2 && 'many', turn));
+# -- end of source
+# `words(mix)` is handed texts, numbers, booleans and one kind of record. It asks `typeof mix` itself; behind its own tests the value is stepped through by `for (k in mix)` and read under the key: no name is used off it. The program has told the primitives apart already, so what is held of the view is still cut to the record, and the names are stepped through as the record lists them.
+# f1 = words
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: [[record]]: boolean @Boolean = ShapeTest {{*}} layouts=[L0]
+# FORM: = HasKeyOrder {{*}} layout=L0

@@ -571,7 +571,7 @@ pub(crate) fn compiled_entry_point_imports_vitest(path: &[u8]) -> bool {
 }
 
 /// `VirtualMachine::has_globals_of_vitest` for a compiled file that loads now.
-fn loads_compiled_file_below_vitest(vm: &VirtualMachine) -> bool {
+fn is_loading_under_vitest(vm: &VirtualMachine) -> bool {
     thread_local! {
         static LAST_TEST_FILE: core::cell::RefCell<(Vec<u8>, bool)> = const { core::cell::RefCell::new((Vec::new(), false)) };
     }
@@ -588,6 +588,11 @@ fn loads_compiled_file_below_vitest(vm: &VirtualMachine) -> bool {
         }
         *imports_vitest
     })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AOT__isLoadingUnderVitest(vm: &VirtualMachine) -> bool {
+    is_loading_under_vitest(vm)
 }
 
 /// `Bun.jest(path)`
@@ -619,7 +624,7 @@ pub(crate) fn asked_by_compiled_test_file(own_globals: bool) -> u32 {
     let vm = VirtualMachine::get();
     match own_globals {
         true => vm.transpiler.options.own_test_globals,
-        false => u32::from(loads_compiled_file_below_vitest(vm)),
+        false => u32::from(is_loading_under_vitest(vm)),
     }
 }
 

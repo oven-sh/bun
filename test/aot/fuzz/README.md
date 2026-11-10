@@ -34,7 +34,6 @@ One run tests one way to build. Several runs side by side, each with different o
 ```sh
 .. --modes default,separate-entry-points                      # every program is an entry point that a Worker starts: several globals in one executable
 .. --batch 1                                                  # every program gets its own build: a shared build hides false facts, and only here does the compiler prove what it can only prove about a small program
-.. --modes no-flow-results                                    # the compiler goes by no facts: every guard and slow path stays in the code
 .. --gc-stress 1,2,3,5,7,11 --compiled-run-seconds 60         # a collection at every n-th slow-path allocation
 .. --rewritten                                                # also rewrite each program so that it prints the same and the compiler knows less about it
 .. --decoy-shapes 33,65,130,300                               # build beside that many unrelated object shapes that use the same property names
@@ -112,12 +111,14 @@ bun test/aot/fuzz/json-for-generated-types.ts --seconds 3600 --jobs 16 --out /tm
 
 - `reduced.*`, the program reduced as far as the failure allows (a folder if it has several files), and `original.*`;
 - `plain.txt` and `compiled.txt`, the output of the two runs;
-- `finding.json`: seed, source, mode, flags, and whether the failure goes away without the verifiers, the facts or the written types.
+- `driver-errors.txt`, beside `findings/`: faults of the fuzzer itself. Each may have cost a finding, so `run.ts` ends with exit code 1 where there is one.
+- `finding.json`: seed, source, mode, flags, and whether the failure goes away without the verifiers or the written types.
 
 `<out>/as-tests/<name>.<ext>` is the reduced program again in the format of `../parallel`, with its flags, entry points and exit code in its first lines.
 
 Kinds of failure: `different output`, `different exit code`, `crash` and `hang` for the executable; `internal compiler error`, `build crash`, `build hang`, `build error` and `build refused` for the
-build. A signal or a failed assertion is always a bug. A timeout on a busy machine is not.
+build. A signal or a failed assertion is always a bug. A timeout on a busy machine is not. Under `--gc-stress` or `--run-env` a run that does not end is a `hang` only if plain Bun ends under the same
+settings in the same time; otherwise the program counts as skipped.
 
 A difference in output or exit code that an executable built without `--aot` shows too comes from the bundler or the standalone runtime, not from the compiler. It is listed in
 `<out>/same-without-aot.tsv` and is not a finding.

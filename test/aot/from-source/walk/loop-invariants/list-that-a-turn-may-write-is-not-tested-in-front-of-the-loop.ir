@@ -12,13 +12,13 @@
 # function writesThroughAnotherName(list: number[], other: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) other[i + 1] = 0.5; } return s; }
 # function callsACallee(list: number[], change: () => void) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) change(); } return s; }
 # function readsAGetter(list: number[], holder: any) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) s += holder.more; } return s; }
-# function converts(list: number[], more: any) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) s += more * 2; } return s; }
+# function converts(list: number[], more: object) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) s += (more as any) * 2; } return s; }
 # function takesAnotherList(list: number[], other: number[]) { let s = 0; for (let i = 0; i < 3; i++) { s += list[i]; list = other; } return s; }
 # function callsAndNeverAsksTheLength(names: string[], turns: number) { let n = 0; for (let i = 0; i < turns; i++) { n += names[i & 7] ? 1 : 0; sink(i); } return n; }
 # sink(grows, storesBehindTheEnd, setsTheLength, shrinks, changesTheKind, makesAHole, writesThroughAnotherName, callsACallee, readsAGetter, converts, takesAnotherList, callsAndNeverAsksTheLength);
 # -- end of source
 # RUN(GROWS): walk f1 mechanisms=all
-# GROWS-NOT: = HasArrayStorage
+# the kind of the storage is asked in the turn, in front of each read, where the turn may still begin again (aot/tests/walk/loops/an-element-of-a-list-that-the-turns-may-write-is-asked-in-the-turn-and-the-miss-leaves.ir): nothing of the list is taken from in front of the loop
 # GROWS-NOT: = GetArrayStorage
 # three of them are tested all the same: the arm that stores behind the end, stores through the other name or converts stands in the other copy alone. Where the typed copy comes to it the turn begins again there, with nothing of it done.
 # So nothing in the typed copy writes a list or runs other code, and the list is as the row in front has found it
@@ -32,7 +32,6 @@
 # LENGTH-NOT: = HasArrayStorage
 # LENGTH-NOT: = GetArrayStorage
 # RUN(SHRINKS): walk f4 mechanisms=all
-# SHRINKS-NOT: = HasArrayStorage
 # SHRINKS-NOT: = GetArrayStorage
 # RUN(KIND): walk f5 mechanisms=all
 # KIND-NOT: = HasArrayStorage
@@ -49,9 +48,16 @@
 # RUN(CALLEE): walk f8 mechanisms=all
 # CALLEE-NOT: = HasArrayStorage
 # CALLEE-NOT: = GetArrayStorage
+# the read off `holder` asks its site alone in the typed copy: a getter is no hit there and the turn begins again in the other copy, where the general read stands: so this list is tested as well
 # RUN(GETTER): walk f9 mechanisms=all
-# GETTER-NOT: = HasArrayStorage
-# GETTER-NOT: = GetArrayStorage
+# GETTER: = PropGet {{*}}key="more"
+# GETTER: = HasArrayStorage
+# GETTER: = GetArrayStorage
+# GETTER: isLoopHead=true
+# GETTER: = GetValueAtSiteOrAbsent {{*}}key="more"
+# GETTER-NOT: = PropGet
+# `more` is written to be an object, so the product converts it and may run its valueOf. (Of a value from in front of the loop of which nobody knows anything the loop's own text expects a number: it is asked in front,
+# the product of two numbers converts nothing and stands in the typed copy: from-source/walk/guesses/what-a-loop-reckons-with-from-in-front-of-it-and-nobody-knows-is-expected-to-be-a-number.ir.)
 # RUN(CONVERTS): walk f10 mechanisms=all
 # CONVERTS: = Mul
 # CONVERTS: = HasArrayStorage
@@ -63,7 +69,6 @@
 # ASSIGNED-NOT: = GetArrayStorage
 # no guess at a type stands in front of this loop, so it would be built twice for the sake of the list alone
 # RUN(ALONE): walk f12 mechanisms=all
-# ALONE-NOT: = HasArrayStorage
 # ALONE-NOT: = GetArrayStorage
 # each of them still reads the list by the operation that tests for itself
 # RUN(READS): walk f1 mechanisms=all

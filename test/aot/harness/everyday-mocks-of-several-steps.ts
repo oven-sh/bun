@@ -98,6 +98,10 @@ const partsInAChain: [cases: RegExp, what: string][] = [
     "the mock is ended while a file that imports the spring is loaded",
   ],
   [
+    /^(bare|a-spy|a-file-among-the-mocks|a-factory-over-the-original)--imported-at-run-time--one--unmocked-meanwhile$/,
+    "the mock is ended while a file that called import() for the spring is loaded",
+  ],
+  [
     /^(bare|a-spy|a-file-among-the-mocks)--required--one--unmocked-meanwhile$/,
     "the mock is ended while a file that requires the spring is loaded",
   ],

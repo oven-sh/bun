@@ -3723,13 +3723,16 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vecto
 
 static void evictModulesGivenTheOriginal(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock&& stopped)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     // The modules that wait for a load go first, with all that called import() for them: the factory's chain says nothing of those.
-    if (!globalObject->onLoadPlugins.modulesToEvictWithCallers.isEmpty())
+    if (!globalObject->onLoadPlugins.modulesToEvictWithCallers.isEmpty()) {
         Bun::evictModulesThatHaveLoaded(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     ModulesToEvict evict { WTF::move(stopped.givenTheOriginal) };
     // A module that the factory loaded may have called import() for one of them. One that was loaded before, and called import() for the factory, keeps nothing of them.
     evict.onlyCallersIn = &stopped.importChain;
-    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+    RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvictModulesThatHaveLoaded, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))

@@ -1820,6 +1820,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       {
         ...files,
         "helper.cjs": `module.exports = { read: () => require("dual").which, viaModule: () => module.require("dual").which };`,
+        "equals.cts": `import dual = require("dual");\nexport = dual;`,
         "commonjs.test.cjs": `
           const { expect, mock, test } = require("bun:test");
           mock.module("dual", () => ({ which: "mock" }));
@@ -1834,10 +1835,10 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           import Module, { createRequire } from "node:module";
           import { read, viaModule } from "./helper.cjs";
           mock.module("dual", () => ({ which: "mock" }));
-          test("createRequire(), import.meta.require() and module.require()", () => {
+          test("createRequire(), import.meta.require(), module.require() and import = require()", () => {
             expect(createRequire(import.meta.url)("dual").which).toBe("mock");
             expect(import.meta.require("dual").which).toBe("mock");
-            expect([read(), viaModule()]).toEqual(["mock", "mock"]);
+            expect([read(), viaModule(), require("./equals.cts").which]).toEqual(["mock", "mock", "mock"]);
           });
           test("with Module._resolveFilename replaced", () => {
             const resolveFilename = Module._resolveFilename;
@@ -2180,6 +2181,10 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         }),
         "node_modules/wrap/index.cjs": `(globalThis.loaded ??= []).push("cjs"); module.exports = { which: "real", fn: () => "real" };`,
         "node_modules/wrap/wrapper.mjs": `import cjs from "./index.cjs"; (globalThis.loaded ??= []).push("esm"); export const which = cjs.which; export const fn = cjs.fn; export default cjs;`,
+        "node_modules/cjs-lib/package.json": `{ "name": "cjs-lib", "main": "index.js" }`,
+        "node_modules/cjs-lib/index.js": `const wrap = require("wrap"); module.exports = { which: () => wrap.which };`,
+        "node_modules/esm-lib/package.json": `{ "name": "esm-lib", "type": "module", "main": "index.js" }`,
+        "node_modules/esm-lib/index.js": `import { which as of } from "wrap"; export const which = () => of;`,
         "original.test.js": `
           import { expect, mock, test, vi } from "bun:test";
           mock.module("wrap", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
@@ -2193,9 +2198,12 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         "vitest.test.js": `
           import { expect, test, vi } from "vitest";
           import { which, fn } from "wrap";
+          import cjsLib from "cjs-lib";
+          import * as esmLib from "esm-lib";
           vi.mock("wrap", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
-          test("vi.mock() with importOriginal()", () => {
+          test("vi.mock() with importOriginal(), and a library that gets each file as it is", () => {
             expect([which, fn(), require("wrap").which]).toEqual(["mock", "real", "mock"]);
+            expect([cjsLib.which(), esmLib.which()]).toEqual(["real", "real"]);
             expect(globalThis.loaded).toEqual(["cjs", "esm"]);
           });
         `,

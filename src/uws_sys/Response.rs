@@ -644,6 +644,13 @@ pub enum AnyResponse {
     H2(*mut H2Response),
 }
 
+/// Panics in place on null: with the shared cold `null_handle`, LTO inlines the small dispatchers.
+#[inline(always)]
+fn as_handle<'a, T>(ptr: *mut T) -> &'a mut T {
+    assert!(!ptr.is_null(), "AnyResponse: null uWS handle");
+    opaque_deref_mut(ptr)
+}
+
 // Helper: dispatch to the underlying response, calling the same-named method on each
 // variant. The three arms are written out by hand.
 //
@@ -654,19 +661,19 @@ macro_rules! any_dispatch {
     ($self:expr, |$r:ident| $body:expr) => {
         match $self {
             AnyResponse::SSL(ptr) => {
-                let $r = opaque_deref_mut(ptr);
+                let $r = as_handle(ptr);
                 $body
             }
             AnyResponse::TCP(ptr) => {
-                let $r = opaque_deref_mut(ptr);
+                let $r = as_handle(ptr);
                 $body
             }
             AnyResponse::H3(ptr) => {
-                let $r = opaque_deref_mut(ptr);
+                let $r = as_handle(ptr);
                 $body
             }
             AnyResponse::H2(ptr) => {
-                let $r = opaque_deref_mut(ptr);
+                let $r = as_handle(ptr);
                 $body
             }
         }
@@ -725,8 +732,8 @@ impl AnyResponse {
             AnyResponse::H3(_) | AnyResponse::H2(_) => {
                 panic!("socket() is only available for HTTP/1 responses")
             }
-            AnyResponse::SSL(ptr) => opaque_deref_mut(ptr).downcast(),
-            AnyResponse::TCP(ptr) => opaque_deref_mut(ptr).downcast(),
+            AnyResponse::SSL(ptr) => as_handle(ptr).downcast(),
+            AnyResponse::TCP(ptr) => as_handle(ptr).downcast(),
         }
     }
 
@@ -767,10 +774,10 @@ impl AnyResponse {
     /// H2 and H3 have no batch tail.
     pub fn has_fully_drained(self) -> bool {
         match self {
-            AnyResponse::SSL(ptr) => opaque_deref_mut(ptr).has_fully_drained(),
-            AnyResponse::TCP(ptr) => opaque_deref_mut(ptr).has_fully_drained(),
-            AnyResponse::H3(ptr) => opaque_deref_mut(ptr).get_buffered_amount() == 0,
-            AnyResponse::H2(ptr) => opaque_deref_mut(ptr).get_buffered_amount() == 0,
+            AnyResponse::SSL(ptr) => as_handle(ptr).has_fully_drained(),
+            AnyResponse::TCP(ptr) => as_handle(ptr).has_fully_drained(),
+            AnyResponse::H3(ptr) => as_handle(ptr).get_buffered_amount() == 0,
+            AnyResponse::H2(ptr) => as_handle(ptr).get_buffered_amount() == 0,
         }
     }
 
@@ -862,8 +869,8 @@ impl AnyResponse {
     /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
     pub fn clear_handlers_of<U>(self, user_data: *mut U) -> bool {
         match self {
-            AnyResponse::SSL(ptr) => opaque_deref_mut(ptr).clear_handlers_of(user_data.cast()),
-            AnyResponse::TCP(ptr) => opaque_deref_mut(ptr).clear_handlers_of(user_data.cast()),
+            AnyResponse::SSL(ptr) => as_handle(ptr).clear_handlers_of(user_data.cast()),
+            AnyResponse::TCP(ptr) => as_handle(ptr).clear_handlers_of(user_data.cast()),
             AnyResponse::H3(_) | AnyResponse::H2(_) => false,
         }
     }
@@ -871,8 +878,8 @@ impl AnyResponse {
     /// HTTP/1 only: an HTTP/2 or HTTP/3 stream has no socket read to finish.
     pub fn close_after_message_if_parsing(self) -> bool {
         match self {
-            AnyResponse::SSL(ptr) => opaque_deref_mut(ptr).close_after_message_if_parsing(),
-            AnyResponse::TCP(ptr) => opaque_deref_mut(ptr).close_after_message_if_parsing(),
+            AnyResponse::SSL(ptr) => as_handle(ptr).close_after_message_if_parsing(),
+            AnyResponse::TCP(ptr) => as_handle(ptr).close_after_message_if_parsing(),
             AnyResponse::H3(_) | AnyResponse::H2(_) => false,
         }
     }
@@ -881,23 +888,23 @@ impl AnyResponse {
         match self {
             AnyResponse::SSL(ptr) => {
                 // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                us_socket_t::opaque_mut(opaque_deref_mut(ptr).downcast_socket())
+                us_socket_t::opaque_mut(as_handle(ptr).downcast_socket())
                     .close(crate::us_socket::CloseCode::failure);
             }
             AnyResponse::TCP(ptr) => {
-                us_socket_t::opaque_mut(opaque_deref_mut(ptr).downcast_socket())
+                us_socket_t::opaque_mut(as_handle(ptr).downcast_socket())
                     .close(crate::us_socket::CloseCode::failure);
             }
-            AnyResponse::H3(ptr) => opaque_deref_mut(ptr).force_close(),
-            AnyResponse::H2(ptr) => opaque_deref_mut(ptr).force_close(),
+            AnyResponse::H3(ptr) => as_handle(ptr).force_close(),
+            AnyResponse::H2(ptr) => as_handle(ptr).force_close(),
         }
     }
 
     pub fn get_native_handle(self) -> Fd {
         match self {
             AnyResponse::H3(_) | AnyResponse::H2(_) => bun_core::Fd::INVALID,
-            AnyResponse::SSL(ptr) => opaque_deref_mut(ptr).get_native_handle(),
-            AnyResponse::TCP(ptr) => opaque_deref_mut(ptr).get_native_handle(),
+            AnyResponse::SSL(ptr) => as_handle(ptr).get_native_handle(),
+            AnyResponse::TCP(ptr) => as_handle(ptr).get_native_handle(),
         }
     }
 
@@ -1002,8 +1009,8 @@ impl AnyResponse {
     pub fn can_upgrade(self) -> bool {
         match self {
             AnyResponse::H3(_) | AnyResponse::H2(_) => false,
-            AnyResponse::SSL(ptr) => opaque_deref_mut(ptr).can_upgrade(),
-            AnyResponse::TCP(ptr) => opaque_deref_mut(ptr).can_upgrade(),
+            AnyResponse::SSL(ptr) => as_handle(ptr).can_upgrade(),
+            AnyResponse::TCP(ptr) => as_handle(ptr).can_upgrade(),
         }
     }
 
@@ -1022,14 +1029,14 @@ impl AnyResponse {
             // (request_context.get(RequestContext) is null — the H3 ctx is a
             // different type and upgrade_context is never set).
             AnyResponse::H3(_) | AnyResponse::H2(_) => unreachable!(),
-            AnyResponse::SSL(ptr) => opaque_deref_mut(ptr).upgrade(
+            AnyResponse::SSL(ptr) => as_handle(ptr).upgrade(
                 data,
                 sec_web_socket_key,
                 sec_web_socket_protocol,
                 sec_web_socket_extensions,
                 ctx,
             ),
-            AnyResponse::TCP(ptr) => opaque_deref_mut(ptr).upgrade(
+            AnyResponse::TCP(ptr) => as_handle(ptr).upgrade(
                 data,
                 sec_web_socket_key,
                 sec_web_socket_protocol,
@@ -1050,10 +1057,10 @@ impl AnyResponse {
         match self {
             AnyResponse::H3(_) | AnyResponse::H2(_) => core::ptr::null_mut(),
             AnyResponse::SSL(ptr) => {
-                opaque_deref_mut(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
+                as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
             }
             AnyResponse::TCP(ptr) => {
-                opaque_deref_mut(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
+                as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
             }
         }
     }

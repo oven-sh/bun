@@ -1,5 +1,5 @@
 // One of the objects is a Proxy whose trap stores another value, and one whose trap says no.
-// STATISTIC: StoresByNameThatAskTheirSitesInLine >= 1
+// STATISTIC: SiteCachedStoresEmittedInline >= 1
 "use strict";
 function fill(crates, turns, given) { let sum = 0; for (let i = 0; i < turns; i++) { const crate = crates[i % crates.length]; crate.lid = given === undefined ? i : given; sum = (sum + i) | 0; } return sum; }
 function plain(n) { return JSON.parse("[" + Array.from({ length: n }, () => '{"hinge":1,"lid":0}').join(",") + "]"); }

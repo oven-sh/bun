@@ -34,19 +34,9 @@ pub(super) fn is_absent_from_object_prototype(
     !is_inherited && !is_added && name != known::__proto__
 }
 
-pub(super) fn enclosing_statement(bound: &Bound<'_>, mut expression: ExprId) -> Option<StmtId> {
-    loop {
-        match bound.parent_of_expr(expression) {
-            Parent::Expr(parent) => expression = parent,
-            Parent::VarInit(declaration) => return bound.var_stmt[declaration.idx()].some(),
-            Parent::Stmt(statement) => return statement.some(),
-            _ => return None,
-        }
-    }
-}
-
 pub(super) fn is_in_statement_of_file(bound: &Bound<'_>, expression: ExprId) -> bool {
-    enclosing_statement(bound, expression)
+    bound
+        .statement_of_expr(expression)
         .is_some_and(|statement| bound.parent_of_stmt(statement) == Parent::File)
 }
 

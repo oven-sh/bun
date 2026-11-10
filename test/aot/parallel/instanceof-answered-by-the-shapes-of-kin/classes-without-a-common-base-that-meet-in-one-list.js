@@ -1,5 +1,5 @@
 // Three classes that are written without `extends` meet in one list: an object of one is a stranger to the others by its shape.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 const rows = JSON.parse(JSON.stringify(Array.from({ length: 24 }, (_, i) => ({ type: ["Circle", "Rectangle", "Triangle"][i % 3], r: (i % 5) + 1, w: (i % 4) + 1, h: (i % 6) + 2 }))));
 class Circle { constructor(row) { this.r = row.r; } }
 class Rectangle { constructor(row) { this.w = row.w; this.h = row.h; } }

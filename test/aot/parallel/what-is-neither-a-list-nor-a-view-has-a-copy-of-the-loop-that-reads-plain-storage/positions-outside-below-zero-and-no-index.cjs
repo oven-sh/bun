@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 3
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 3
 "use strict";
 // The counter begins below zero, the key lies below the counter, the counter runs past the last place and past the room, and the key passes the greatest index there is: what is no index of a place is read as a name.
 const said = [];

@@ -31,7 +31,7 @@
 # print(ofNothing(30));
 # print(ofACopyThatItsCallbackEmpties(30));
 # -- end of source
-# OPTIONS: check=LastWalksOfLoopsAlone
+# OPTIONS: check=ReplayFinalLoopVisits
 # RUN(ALONE): walk f2 mechanisms=all
 # ALONE: code f2:Body
 # RUN(EMPTIED): walk f3 mechanisms=all

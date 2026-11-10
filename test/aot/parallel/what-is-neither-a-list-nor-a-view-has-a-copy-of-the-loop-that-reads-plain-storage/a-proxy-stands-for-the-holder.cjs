@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 "use strict";
 // The holder is a Proxy: every read of the length and of an element goes through its trap, in order.
 const said = [];

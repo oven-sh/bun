@@ -1,4 +1,4 @@
-// STATISTIC: CopiesThatAreDefinitionsOneByOne >= 3
+// STATISTIC: ObjectSpreadsExpandedToDefines >= 3
 // `{ ...first, ...second }`, `{ ...this.fields, ...fields }` in a loop: the second copy meets an object that is no literal in sight: where the own keys of its source are known it is their definitions one by one.
 // Each kind of source and of target answers as written: the keys, their order, their values, and what runs on the way.
 const log: string[] = [];

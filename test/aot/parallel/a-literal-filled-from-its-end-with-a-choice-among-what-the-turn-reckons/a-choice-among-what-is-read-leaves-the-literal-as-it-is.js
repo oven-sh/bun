@@ -1,5 +1,5 @@
-// STATISTIC: LiteralsOfNumbersBornForWhatLoopStores = 0
-// STATISTIC: StoresThatLengthenTheirListInEveryTurn = 0
+// STATISTIC: ArrayLiteralsAllocatedForLoops = 0
+// STATISTIC: IndexedStoresCompiledAsAppends = 0
 'use strict';
 function pick(first, names) {
   const kept = [first];

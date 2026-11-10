@@ -14,7 +14,7 @@
 #   exports.held = value;
 # };
 # -- end of source
-# STATISTIC: BlocksInFrontOfOpenLoopsEndedByWhatIsNever = 0
+# STATISTIC: PreheadersProvenUnreachable = 0
 # RUN: walk f2 mechanisms=all testing=CheckProofsAtRunTime
 # CHECK: isLoopHead=true
 # CHECK: isLoopHead=true

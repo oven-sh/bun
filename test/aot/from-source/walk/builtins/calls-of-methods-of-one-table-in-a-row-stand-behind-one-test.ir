@@ -29,8 +29,8 @@
 # RUN(ADD): walk f1 mechanisms=all
 # ADD: = IsSlotFilled {{*}}key="name"
 # ADD: inlineBuiltin=MapSet
-# RUN(COUNT): compile RowsOfCallsOfMethodsOfOneTableBehindOneTest StoresIntoTablesDroppedBehindTheSameStore mechanisms=all
-# COUNT: statistic RowsOfCallsOfMethodsOfOneTableBehindOneTest 1
-# COUNT: statistic StoresIntoTablesDroppedBehindTheSameStore 2
+# RUN(COUNT): compile CollectionCallRunsGuardedOnce DuplicateCollectionStoresRemoved mechanisms=all
+# COUNT: statistic CollectionCallRunsGuardedOnce 1
+# COUNT: statistic DuplicateCollectionStoresRemoved 2
 # RUN(ANSWERS): run-in-shell hand = function () { };
 # ANSWERS: 5 a=1 0=2 NaN=4 n2=5 n3=5  3

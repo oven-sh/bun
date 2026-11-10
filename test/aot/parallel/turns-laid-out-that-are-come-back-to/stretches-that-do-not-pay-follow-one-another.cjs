@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsLaidOutThatAreComeBackTo >= 1
+// STATISTIC: UnrolledLoopsWithReentry >= 1
 // Where coming back to the turns laid out was not paid by the stretch that followed, the loop as written runs for as long as what is owed says, and what is owed grows with every stretch that does not pay. The marks stand close, far apart, close and then far apart, right at the end and nowhere; the written loop never runs past the bound and always takes at least one turn.
 const key = JSON.parse('"go"');
 const up = { go(text) { const starts = []; let pos = 0, start = 0; while (pos < text.length) { const ch = text.charCodeAt(pos); pos++; switch (ch) { case 13: if (text.charCodeAt(pos) === 10) pos++; case 10: starts.push(start); start = pos; break; default: if (ch > 127) { starts.push(-start); start = pos; } break; } } starts.push(start); let h = starts.length; for (const s of starts) h = (h * 31 + s) | 0; return h; } };

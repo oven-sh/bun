@@ -1,5 +1,5 @@
 // The prototype object of a class is plain once its members are made; with its own `constructor` deleted it hides nothing of the class above. An object that F has made and that is laid below Sub.prototype is a Sub, though its shape is F's.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 class F { constructor() { this.a = 1; } f() { return 1; } }
 class Sub extends F { constructor() { super(); this.b = 2; } s() { return 2; } }
 class Other { constructor() { this.c = 3; } }

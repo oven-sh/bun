@@ -1,4 +1,4 @@
-// STATISTIC: BasesOfSuperReadOffRecordsOfClasses >= 3
+// STATISTIC: SuperBasesFromClassRecords >= 3
 const rows = JSON.parse('[{"price":3},{"price":5},{"price":8}]');
 class Item { constructor(row) { this.price = row.price; } cost(k) { return this.price + k; } label() { return "item"; } static make(row) { return new this(row); } static kind() { return "I"; } }
 class Taxed extends Item { cost(k) { return super.cost(k) * 2; } label() { return "taxed " + super.label(); } get half() { return super.cost(0) / 2; } static kind() { return "T" + super.kind(); } }

@@ -1,5 +1,5 @@
 // The loop of a generator is walked with the turn of its consumer inside it: two classes told apart in front and values carried round.
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 class Evens { at(i: number): number { return i * 2; } }
 class Odds { at(i: number): number { return i * 2 + 1; } }
 class Walk {

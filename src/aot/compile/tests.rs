@@ -7,7 +7,7 @@ use super::*;
 use crate::builtins::{RuntimeFunction, RuntimeModule, table};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{InternalError, log_diagnostic};
-use crate::engine::LackedModuleRecord;
+use crate::engine::MissingModuleRecord;
 use crate::engine::testing::ResultRecords;
 use crate::ir::generated::{FunctionFlags, ModuleKind};
 use crate::ir::{
@@ -176,7 +176,7 @@ fn constructor_that_is_left_out_takes_the_class_token_as_a_class_token() {
         constructor,
         &mut text,
     );
-    assert!(text.contains("LeftOutOfExecutable"), "{text}");
+    assert!(text.contains("OmittedFromExecutable"), "{text}");
     let captures = constructor.captures.iter();
     let types = captures.map(|capture| program.types.get(capture.ty));
     assert!(types.eq([Type::opaque(OpaqueKind::ClassToken)]), "{text}");
@@ -1484,7 +1484,7 @@ fn module_without_source_file_has_no_text() {
 }
 
 #[test]
-fn function_text_of_a_module_is_its_text_without_the_types() {
+fn function_source_omits_types() {
     let text = "const greeting: string = \"gr\u{fc}\u{df}e\";\n\
         export function double(value: number): number {\n  return value * 2;\n}\n\
         console.log(greeting, double, double(21));";
@@ -1495,20 +1495,21 @@ fn function_text_of_a_module_is_its_text_without_the_types() {
     assert_eq!(source.text().map(BStr::new), Some(BStr::new(text)));
     assert!(texts.size_of_texts() >= text.len());
 
-    let function_text = source.function_text();
-    assert_eq!(function_text.len(), source.function_text_len());
-    assert!(function_text.len() < text.len());
+    let function_source = source.function_source();
+    assert_eq!(function_source.len(), source.function_source_len());
+    assert!(function_source.len() < text.len());
     let of_module = (program.functions.iter()).filter(|function| function.module == module);
     let shown: Vec<&BStr> = of_module
-        .map(|function| (function.text.start as usize, function.text.end as usize))
-        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .map(|function| function.source_range)
+        .map(|range| (range.start as usize, range.end as usize))
+        .map(|(start, end)| BStr::new(&function_source[start..end]))
         .collect();
     let expected = BStr::new("function double(value) {\n  return value * 2;\n}");
     assert!(shown.contains(&expected), "{shown:?}");
 }
 
 #[test]
-fn function_text_holds_the_values_that_bun_build_writes_in_place_of_enum_members() {
+fn function_source_inlines_enums() {
     let colors = "export enum Tone { Low = \"low\" }";
     let text = "import { Tone } from \"./colors\";\n\
         enum Color { Red = -1, Green = 5 }\n\
@@ -1519,11 +1520,12 @@ fn function_text_holds_the_values_that_bun_build_writes_in_place_of_enum_members
     let (program, texts) = (&linked.program, &linked.summary.texts);
     let module = program.entries[0].module;
     let source = texts.get(module).expect("a compiled file has its text");
-    let function_text = source.function_text();
+    let function_source = source.function_source();
     let of_module = (program.functions.iter()).filter(|function| function.module == module);
     let shown: Vec<&BStr> = of_module
-        .map(|function| (function.text.start as usize, function.text.end as usize))
-        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .map(|function| function.source_range)
+        .map(|range| (range.start as usize, range.end as usize))
+        .map(|(start, end)| BStr::new(&function_source[start..end]))
         .collect();
     let expected = BStr::new(
         "function pick(Shadow) {\n  return [5 .toFixed(), 1-(-1), (-1) ** 2, { [(-5)]: \"low\" }, Shadow.Green, Color[5]];\n}",
@@ -1532,7 +1534,7 @@ fn function_text_holds_the_values_that_bun_build_writes_in_place_of_enum_members
 }
 
 #[test]
-fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
+fn function_source_transpiles_declarations() {
     let text = "declare function f(): number;\n\
         namespace Box {\n  export let side = 4;\n  \
         export function area(): unknown {\n    \
@@ -1544,11 +1546,12 @@ fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
     let (program, texts) = (&linked.program, &linked.summary.texts);
     let module = program.entries[0].module;
     let source = texts.get(module).expect("a compiled file has its text");
-    let function_text = source.function_text();
+    let function_source = source.function_source();
     let of_module = (program.functions.iter()).filter(|function| function.module == module);
     let shown: Vec<&BStr> = of_module
-        .map(|function| (function.text.start as usize, function.text.end as usize))
-        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .map(|function| function.source_range)
+        .map(|range| (range.start as usize, range.end as usize))
+        .map(|(start, end)| BStr::new(&function_source[start..end]))
         .collect();
     let expected = BStr::new(
         "function area() {\n    \
@@ -1587,7 +1590,7 @@ fn declared_record_bears_the_position_of_its_function() {
 }
 
 #[test]
-fn function_text_lacks_what_a_bundle_lacks() {
+fn function_source_omits_dead_code() {
     let text = "declare const unbound: unknown;\n\
         export function shown(o: any): unknown {\n  \
         if (false) o.dead();\n  \
@@ -1606,11 +1609,12 @@ fn function_text_lacks_what_a_bundle_lacks() {
     let (program, texts) = (&linked.program, &linked.summary.texts);
     let module = program.entries[0].module;
     let source = texts.get(module).expect("a compiled file has its text");
-    let function_text = source.function_text();
+    let function_source = source.function_source();
     let of_module = (program.functions.iter()).filter(|function| function.module == module);
     let shown: Vec<&BStr> = of_module
-        .map(|function| (function.text.start as usize, function.text.end as usize))
-        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .map(|function| function.source_range)
+        .map(|range| (range.start as usize, range.end as usize))
+        .map(|(start, end)| BStr::new(&function_source[start..end]))
         .collect();
     let expected = BStr::new(
         "function shown(o) {\n  if (false) ;\n  if (false) {} else o.a;\n  if (true) o.b; // @ts-expect-error\n  \
@@ -1622,17 +1626,18 @@ fn function_text_lacks_what_a_bundle_lacks() {
 }
 
 #[test]
-fn function_text_runs_as_the_function_does() {
+fn function_source_preserves_behavior() {
     let texts_of = |path: &str, text: &str| -> Vec<String> {
         let linked = link_successfully(&[(path, text), GLOBALS]);
         let (program, texts) = (&linked.program, &linked.summary.texts);
         let module = program.entries[0].module;
         let source = texts.get(module).expect("a compiled file has its text");
-        let function_text = source.function_text();
+        let function_source = source.function_source();
         let of_module = (program.functions.iter()).filter(|function| function.module == module);
         of_module
-            .map(|function| (function.text.start as usize, function.text.end as usize))
-            .map(|(start, end)| String::from_utf8_lossy(&function_text[start..end]).into_owned())
+            .map(|function| function.source_range)
+            .map(|range| (range.start as usize, range.end as usize))
+            .map(|(start, end)| String::from_utf8_lossy(&function_source[start..end]).into_owned())
             .collect()
     };
     let text = "enum Level { Below = -1, Strict = \"use strict\" }\n\
@@ -1681,7 +1686,7 @@ fn function_text_runs_as_the_function_does() {
 }
 
 #[test]
-fn function_text_shows_one_operand_where_bun_run_prints_one() {
+fn function_source_folds_constants() {
     let operators = "export function shown(o) {\n  \
         return [1 && o.a, \"\" || o.b, void 0 ?? o.c, 0n || o.d, !0 && o.e, -1 && o.f, /x/ && o.g,\n  \
         typeof 1 === \"number\" && o.h, (o.i++, true) ? o.j : o.k, (o.i++, 1) && o.l, [] && o.m];\n}\n\
@@ -1700,11 +1705,12 @@ fn function_text_shows_one_operand_where_bun_run_prints_one() {
         let (program, texts) = (&linked.program, &linked.summary.texts);
         let module = program.entries[0].module;
         let source = texts.get(module).expect("a compiled file has its text");
-        let function_text = source.function_text();
+        let function_source = source.function_source();
         let of_module = (program.functions.iter()).filter(|function| function.module == module);
         of_module
-            .map(|function| (function.text.start as usize, function.text.end as usize))
-            .map(|(start, end)| String::from_utf8_lossy(&function_text[start..end]).into_owned())
+            .map(|function| function.source_range)
+            .map(|range| (range.start as usize, range.end as usize))
+            .map(|(start, end)| String::from_utf8_lossy(&function_source[start..end]).into_owned())
             .collect()
     };
     let expected = "function shown(o) {\n  return [o.a, o.b, o.c, o.d, o.e, o.f, o.g,\n  \
@@ -1736,25 +1742,25 @@ fn library_module_that_is_evaluated_without_code_is_named() {
         panic!("{} modules have the path bun:jsc", native_modules.len());
     };
     let paths = collect_paths_of_modules_without_bodies(&linked.program);
-    let describe = |lacked: &[LackedModuleRecord]| {
+    let describe = |lacked: &[MissingModuleRecord]| {
         let records = ResultRecords {
-            library_modules_lacked: lacked,
+            missing_library_modules: lacked,
             ..ResultRecords::default()
         };
-        records.with_result(|engine| describe_library_modules_lacked(engine, &paths))
+        records.with_result(|engine| describe_missing_library_modules(engine, &paths))
     };
     assert_eq!(describe(&[]), None);
 
     let module = native_module.to_word();
-    let message = describe(&[LackedModuleRecord { module }]);
+    let message = describe(&[MissingModuleRecord { module }]);
     let message = message.expect("a module that the engine lacks stops the build");
     assert!(
-        message.ends_with("that the load has left out: bun:jsc"),
+        message.ends_with("that the load stage removed: bun:jsc"),
         "{message}"
     );
 
     let module = u32::try_from(linked.program.modules.len()).unwrap();
-    let message = describe(&[LackedModuleRecord { module }]);
+    let message = describe(&[MissingModuleRecord { module }]);
     let message = message.expect("so does one that the program does not list");
     assert!(message.ends_with(&format!("number {module}")), "{message}");
 }
@@ -1772,9 +1778,9 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
         panic!("{} modules have the path bun:jsc", native_modules.len());
     };
     let module = native_module.to_word();
-    let lacked = [LackedModuleRecord { module }];
+    let lacked = [MissingModuleRecord { module }];
     let records = ResultRecords {
-        library_modules_lacked: &lacked,
+        missing_library_modules: &lacked,
         ..ResultRecords::default()
     };
 
@@ -1786,7 +1792,7 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
         let mut build = Build::new(&options, &WithoutServices, &caches, LimitValues::for_host());
         build.paths_of_modules_without_bodies =
             collect_paths_of_modules_without_bodies(&linked.program);
-        records.with_result(|engine| build.report_library_modules_lacked(engine));
+        records.with_result(|engine| build.report_missing_library_modules(engine));
         let result = match build.diagnostics.has_errors() {
             true => Err(Stage::Any),
             false => Ok(()),
@@ -1802,7 +1808,7 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
             .expect("the record stops the build")
             .is_internal_error
     );
-    let message = "internal compiler error (Load): the program evaluates modules of Bun's library";
+    let message = "internal compiler error (Load): the program evaluates built-in modules that the load stage removed";
     assert!(has_message(&log, Kind::Err, message));
     assert_eq!(log.msgs.len(), 1);
 

@@ -1,4 +1,4 @@
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the walk and its proofs as users build, every position tested where it is used: a store that is told inside and is not stops by name.
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the walk and its proofs as users build, every position tested where it is used: a store that is told inside and is not stops by name.
 "use strict";
 function fill(v, w) { for (let i = 0; i + 2 < w.length; i += 3) { v[i] = 201; v[i + 1] = 202; v[i + 2] = 203; } }
 function own(v) { for (let i = 0; i + 2 < v.length; i += 3) { v[i] = 101; v[i + 1] = 102; v[i + 2] = 103; v[i + 3] = 104; } }

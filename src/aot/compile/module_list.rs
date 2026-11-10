@@ -248,7 +248,7 @@ impl Collector<'_, '_> {
         let target = match module {
             ModuleRef::File(target)
             | ModuleRef::Inner { file: target, .. }
-            | ModuleRef::Face(target)
+            | ModuleRef::Facade(target)
             | ModuleRef::Check(target) => target,
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => return None,
         };

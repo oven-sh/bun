@@ -1,5 +1,5 @@
 // emit() of node:events in a loop, none to five values, one listener.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const { EventEmitter } = require("node:events");
 const emitter = new EventEmitter();
 let got = "";

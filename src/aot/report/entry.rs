@@ -10,17 +10,11 @@ use crate::diagnostics::new_driver_diagnostic;
 use crate::engine::Position;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct EntryNote {
-    pub text: Vec<u8>,
-    pub position: Option<Position>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ReportEntry {
     pub kind: ExplainSet,
     pub text: Vec<u8>,
     pub position: Option<Position>,
-    pub notes: Vec<EntryNote>,
+    pub notes: Vec<Vec<u8>>,
 }
 
 impl ReportEntry {
@@ -38,10 +32,7 @@ impl ReportEntry {
     }
 
     pub fn add_note(&mut self, text: Vec<u8>) {
-        self.notes.push(EntryNote {
-            text,
-            position: None,
-        });
+        self.notes.push(text);
     }
 }
 
@@ -49,8 +40,7 @@ pub fn to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMe
     let mut parts: Vec<(&[u8], Option<Position>)> = Vec::new();
     for entry in entries {
         parts.push((&entry.text[..], entry.position));
-        let notes = entry.notes.iter();
-        parts.extend(notes.map(|note| (&note.text[..], note.position)));
+        parts.extend(entry.notes.iter().map(|note| (&note[..], None)));
     }
     let mut order: Vec<usize> = (0..parts.len()).collect();
     order.shared_sort_unstable_by_key(|&index| parts[index].1);
@@ -95,7 +85,7 @@ mod tests {
     use super::*;
     use crate::ir::ids::{Id, ModuleId};
 
-    const KINDS: [(ExplainSet, bool, bool, bool); 10] = [
+    const KINDS: [(ExplainSet, bool, bool, bool); 8] = [
         (ExplainSet::TEXT, false, true, false),
         (ExplainSet::JSON, true, false, false),
         (ExplainSet::CHECKS, false, true, false),
@@ -104,8 +94,6 @@ mod tests {
         (ExplainSet::ALLOCATIONS, false, false, true),
         (ExplainSet::FORMS, false, false, true),
         (ExplainSet::STATISTICS, false, false, false),
-        (ExplainSet::ONLY_UNKNOWN_CODE, false, false, true),
-        (ExplainSet::ONLY_UNPROVEN_TYPE, false, false, true),
     ];
 
     fn texts() -> SourceTexts {
@@ -156,15 +144,9 @@ mod tests {
             (ExplainSet::TEXT, "heading"),
             (ExplainSet::JSON, r#"{"rank":1}"#),
             (ExplainSet::CHECKS_JSON, r#"{"aot":"type-check"}"#),
-            (
-                ExplainSet::ONLY_UNPROVEN_TYPE,
-                "unproven-type: untyped-collection",
-            ),
+            (ExplainSet::FORMS, "1 function"),
         ];
-        assert_eq!(
-            lines(&entries, false),
-            "aot: unproven-type: untyped-collection\n"
-        );
+        assert_eq!(lines(&entries, false), "aot: 1 function\n");
         assert_eq!(
             lines(&entries, true),
             "{\"rank\":1}\n{\"aot\":\"type-check\"}\n"

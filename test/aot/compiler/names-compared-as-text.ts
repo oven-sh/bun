@@ -81,7 +81,7 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "a name that begins with % is the build's own: no program can write one",
   },
   {
-    paths: /^src\/aot\/(load\/react_compiler\/module_items|lower\/quoted_text)\.rs$/,
+    paths: /^src\/aot\/(load\/react_compiler\/module_items|lower\/quoted_source)\.rs$/,
     lines: /\.strip_prefix\(NAME_PREFIX\)|\.starts_with\(b"%"\)/,
     reason: "an identifier that begins with % is the build's own too: what is asked is who made the variable",
   },
@@ -188,9 +188,9 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/sema\/import_sites\/changed_files\.rs$/,
     lines:
-      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive|text|json|bytes|arrayBuffer|stream|constants)"|b"O_[A-Z]+"/,
+      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream|exists|stat|lstat|access)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive|text|json|bytes|arrayBuffer|stream|constants)"|b"O_[A-Z]+"|b"[FR]_OK"/,
     reason:
-      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change or read a file, which operand names it, and which flags of `fs.constants` only read. find_function() and find_members_below_holder() find the holder first, by the record of the import or as the free name `Bun`",
+      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change, read or query a file, which operand names it, and which flags and access modes of `fs.constants` only read. find_function() and find_members_below_holder() find the holder first, by the record of the import or as the free name `Bun`",
   },
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,
@@ -310,6 +310,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     lines: /^b"(?:main|dependencies)" \||^b"exports" =>|\.starts_with\(b"[@.]"\)/,
     reason:
       "the keys of a package.json, the scope in the name of a package and the names of folders on the disk: data that a test run reads to find its files, no name of the program",
+  },
+  {
+    paths: /^src\/aot\/test_runs\/files_of_run\.rs$/,
+    lines: /known::(?:require|createRequire|resolve|getBuiltinModule)\b|^let may_load = \[$/,
+    reason:
+      "whether the whole analysis reads a file that the run does not load: a file that spells the name of a loader gets it, whatever the name is bound to, and the analysis asks the binding",
   },
   {
     paths: /^src\/aot\/test_runs\/texts\.rs$/,

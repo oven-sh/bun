@@ -111,28 +111,28 @@ console.log(read());
 
 // GENERATED: xor not right zeros quotient next twice
 // CHECK-LABEL: function {{*}}name="xor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: number, v1: number):
 // CHECK-NEXT: v2 = BitXor v0, v1
 // CHECK-NEXT: v3 = Convert v2 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="not"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: v1 = BitNot v0
 // CHECK-NEXT: v2 = Convert v1 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="right"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: number, v1: number):
 // CHECK-NEXT: v2 = RShift v0, v1
 // CHECK-NEXT: v3 = Convert v2 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="zeros"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: v1 = Builtin builtin=Math
 // CHECK-NEXT: v2 = Builtin builtin=MathClz32
@@ -140,7 +140,7 @@ console.log(read());
 // CHECK-NEXT: ReturnCall v3 casts=[{declared={type=number}}, {declared={type=i32 flags=[IsInt32Promise]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="quotient"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Builtin builtin=Math
 // CHECK-NEXT: v2 = Builtin builtin=MathFloor
@@ -152,7 +152,7 @@ console.log(read());
 // CHECK-NEXT: ReturnCall v7 casts=[{declared={type=number}}, {declared={type=i32 flags=[IsInt32Promise]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Integer integer=100
 // CHECK-NEXT: v2 = Less v0, v1
@@ -166,7 +166,7 @@ console.log(read());
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: [[L_1]]):
 // CHECK-NEXT: v1 = PropGet v0 key="line"
 // CHECK-NEXT: v2 = Convert v1 declared={type=i32}
@@ -176,7 +176,7 @@ console.log(read());
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: env [[L_2]]):
 // CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = Integer integer=1

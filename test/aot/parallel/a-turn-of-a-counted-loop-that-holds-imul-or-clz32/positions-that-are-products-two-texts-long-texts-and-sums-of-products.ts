@@ -1,4 +1,4 @@
-// STATISTIC: LoopsWhoseTurnsAreLaidOut >= 3
+// STATISTIC: UnrolledLoopsEmitted >= 3
 // A position that is itself a product or a count of zeros keeps its own test in the turn; two texts are walked by one counter; a text far longer than eight turns; a sum of products.
 function atProducts(text: string): number {
   let hash = 1;

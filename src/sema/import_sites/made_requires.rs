@@ -698,7 +698,7 @@ pub(super) fn is_only_read_by_member(
     bound: &Bound<'_>,
     object: SymbolId,
     name: Atom,
-    is_read_otherwise: &dyn Fn(ExprId) -> bool,
+    is_other_read: &dyn Fn(ExprId) -> bool,
 ) -> bool {
     let is_callee = |member: ExprId| match bound.parent_of_expr(member) {
         Parent::Expr(user) => match expr_kind(hir, user) {
@@ -717,7 +717,7 @@ pub(super) fn is_only_read_by_member(
                 return true;
             }
             let Parent::Expr(member) = bound.parent_of_expr(written) else {
-                return is_read_otherwise(written);
+                return is_other_read(written);
             };
             hir.member_key(member).is_some_and(|(of, _)| of == written)
                 && !is_callee(member)
@@ -997,9 +997,9 @@ fn find_require_among_all_that_is_stored(
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) enum OtherUse {
-    HandedOn,
-    KeptInSight,
-    OfAnswer,
+    Escaped,
+    Tracked,
+    OfCallResult,
 }
 
 fn list_names_used_otherwise_than_called(
@@ -1020,7 +1020,7 @@ fn list_names_used_otherwise_than_called(
         if !is_called_or_asked_to_resolve(hir, bound, mention)
             && !is_only_tested(hir, bound, written)
         {
-            let is_kept_in_sight = match bound.parent_of_expr(written) {
+            let is_tracked = match bound.parent_of_expr(written) {
                 Parent::Expr(member) => {
                     (hir.member_key(member)).is_some_and(|(object, _)| object == written)
                 }
@@ -1030,15 +1030,15 @@ fn list_names_used_otherwise_than_called(
                 }
                 _ => false,
             };
-            names.push(match is_kept_in_sight {
-                true => (name, OtherUse::KeptInSight),
-                false => (name, OtherUse::HandedOn),
+            names.push(match is_tracked {
+                true => (name, OtherUse::Tracked),
+                false => (name, OtherUse::Escaped),
             });
         } else if let (true, Parent::Expr(answer)) = (is_callee, bound.parent_of_expr(written))
             && !is_called_or_asked_to_resolve(hir, bound, answer)
             && !is_only_tested(hir, bound, outermost_cast(hir, bound, answer))
         {
-            names.push((name, OtherUse::OfAnswer));
+            names.push((name, OtherUse::OfCallResult));
         }
     }
     names.shared_sort_unstable();
@@ -1050,13 +1050,13 @@ fn is_used_otherwise_than_called(hir: &File<'_>, bound: &Bound<'_>, name: Symbol
     let names = &hir.lazy.cells.names_used_otherwise_than_called;
     let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
     let start = names.partition_point(|it| it.0 < name);
-    (names[start..].first()).is_some_and(|it| it.0 == name && it.1 != OtherUse::OfAnswer)
+    (names[start..].first()).is_some_and(|it| it.0 == name && it.1 != OtherUse::OfCallResult)
 }
 
-fn is_handed_on(hir: &File<'_>, bound: &Bound<'_>, name: SymbolId) -> bool {
+fn has_escaping_use(hir: &File<'_>, bound: &Bound<'_>, name: SymbolId) -> bool {
     let names = &hir.lazy.cells.names_used_otherwise_than_called;
     let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
-    names.binary_search(&(name, OtherUse::HandedOn)).is_ok()
+    names.binary_search(&(name, OtherUse::Escaped)).is_ok()
 }
 
 fn is_answer_used_otherwise_than_called(
@@ -1240,7 +1240,7 @@ fn is_followed_to_every_call(text: Text<'_, '_, '_, '_>, made: ExprId) -> bool {
         let is_made_for_choice =
             || find_require_made_for_choice(text, made, Some(holder), StepsLeft::ALL).is_some();
         return (is_base_read || is_made_for_choice())
-            && (is_exported(bound, holder) || !is_handed_on(hir, bound, holder));
+            && (is_exported(bound, holder) || !has_escaping_use(hir, bound, holder));
     }
     if IS_ASKING_WHOLE_FILE.replace(true) {
         return true;

@@ -2,6 +2,7 @@
 
 use core::mem::size_of;
 use core::ptr::read_unaligned;
+use std::borrow::Cow;
 
 use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
@@ -10,6 +11,7 @@ use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
     CompiledProgram, FoundForFileSystemAlone, ImageFile, RefusedData, compare_source_paths,
+    name_in_plain_executable,
 };
 use bun_resolver::package_names::FurtherPackageName;
 use bun_sys::{Fd, Stat};
@@ -818,6 +820,24 @@ fn asks_for_folder(name: &[u8]) -> bool {
     last.is_some_and(|&byte| byte == b'/' || (cfg!(windows) && byte == b'\\'))
 }
 
+/// Writes `path.resolve(base, name)` without a trailing `/` and returns its length. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a name.
+fn join_posix_key(base: &[u8], name: &[u8], buffer: &mut PathBuffer) -> Option<usize> {
+    let mut length = 0;
+    for part in strings::split(base, b"/").chain(strings::split(name, b"/")) {
+        match part {
+            b"" | b"." => {}
+            b".." => length = strings::last_index_of_char(&buffer[..length], b'/').unwrap_or(0),
+            _ => {
+                let end = length + 1 + part.len();
+                buffer.get_mut(length + 1..end)?.copy_from_slice(part);
+                buffer[length] = b'/';
+                length = end;
+            }
+        }
+    }
+    (length < buffer.len()).then_some(length)
+}
+
 /// `name` as a key of `files` and `dirs`: absolute, normalized, posix-separated, without trailing separators.
 fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr> {
     let name = bun_paths::string_paths::without_nt_prefix::<u8>(name);
@@ -839,6 +859,11 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     } else {
         b"/"
     };
+    if cfg!(not(windows)) {
+        let length = join_posix_key(base, name, buffer)?;
+        buffer[length] = 0;
+        return Some(ZStr::from_buf(&buffer[..], length));
+    }
     let joined = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
         base,
         &mut buffer[..],
@@ -1073,7 +1098,7 @@ impl StandaloneModuleGraph {
         }
         let own_root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
         if is_bun_standalone_file_path(key) {
-            return program.join_public_path(own_root, own_root, key);
+            return program.join_public_file_path(own_root, key);
         }
         if cfg!(windows) {
             return program.public_path_of_source(own_root, key);
@@ -1122,8 +1147,9 @@ impl StandaloneModuleGraph {
             // The folders above each file that the graph carries are among `dirs`.
             let path = &spelled[..spelled.len() - 1];
             let folder = strings::last_index_of_char(path, b'/').unwrap_or(0);
-            return self.dirs.contains(&path[..folder])
+            let is_held = self.dirs.contains(&path[..folder])
                 && (self.files.contains(path) || self.dirs.contains(path));
+            return is_held || self.key_of_mounted_asset(path).is_some();
         }
         if root.is_some_and(|root| key.starts_with(root)) {
             return true;
@@ -1291,12 +1317,139 @@ impl StandaloneModuleGraph {
     }
 
     pub(crate) fn key_of_asset_named_at_root(&self, name: &[u8]) -> Option<Vec<u8>> {
+        self.keys_of_assets_named_at_root(name)?.next()
+    }
+
+    fn keys_of_assets_named_at_root<'a>(
+        &'a self,
+        name: &'a [u8],
+    ) -> Option<impl Iterator<Item = Vec<u8>> + 'a> {
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
         let program = self.compiled_program.as_ref()?;
-        let path = program.asset_named_at_root(name.strip_prefix(root)?)?;
+        let below_root = name.strip_prefix(root)?;
+        let end = strings::index_of_char_usize(below_root, b'/').unwrap_or(below_root.len());
+        let (base_name, below_asset) = below_root.split_at(end);
+        let mut paths = program.assets_named_at_root(base_name).peekable();
+        paths.peek()?;
         // The graph has no file for a compiled module that is no entry point.
         let is_taken = program.holds_module_at(name) || program.holds_module_below(name);
-        (!is_taken).then(|| [root, path].concat())
+        if is_taken || self.climbs_out_of_what_is_no_folder(name) {
+            return None;
+        }
+        let may_be_file = !asks_for_folder(name);
+        let keys = paths.filter_map(move |path| match path.starts_with(b"../") {
+            true => program.join_public_asset_path(root, &[path, below_asset].concat()),
+            false => below_asset.is_empty().then(|| [root, path].concat()),
+        });
+        let is_file = move |key: &Vec<u8>| may_be_file && self.files.contains(key);
+        Some(keys.filter(move |key| is_file(key) || self.dirs.contains(key)))
+    }
+
+    /// `pub/a.txt` for the key of `../lib/pub/a.txt`, where `--asset ../lib/pub` is also found by its base name and that name leads to this file.
+    fn find_name_at_root(&self, program: &CompiledProgram, key: &[u8]) -> Option<Vec<u8>> {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let paths = program.paths_named_at_root();
+        paths.filter(|it| it.starts_with(b"../")).find_map(|path| {
+            let asset = program.join_public_asset_path(root, path)?;
+            let below = key.strip_prefix(&asset[..])?;
+            if !matches!(below, [] | [b'/', ..]) {
+                return None;
+            }
+            let name = [bun_paths::basename(path), below].concat();
+            let found = self.key_of_asset_named_at_root(&[root, &name[..]].concat())?;
+            (found == key).then_some(name)
+        })
+    }
+
+    /// What a listing of the root directory holds besides its own files: the assets from outside it that are also found by their base names.
+    pub(crate) fn list_assets_named_at_root(
+        &self,
+        folder: &[u8],
+        recursive: bool,
+    ) -> Vec<(Box<[u8]>, bool)> {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let is_root = root.strip_suffix(b"/") == Some(folder);
+        let Some(program) = self.compiled_program.as_ref().filter(|_| is_root) else {
+            return Vec::new();
+        };
+        let mut listed: Vec<(Box<[u8]>, bool)> = Vec::new();
+        let paths = program.paths_named_at_root();
+        for path in paths.filter(|it| it.starts_with(b"../")) {
+            let Some(key) = program.join_public_asset_path(root, path) else {
+                continue;
+            };
+            let base_name = bun_paths::basename(path);
+            let is_folder = self.dirs.contains(&key);
+            listed.push((base_name.into(), is_folder));
+            if !recursive || !is_folder {
+                continue;
+            }
+            for (below, is_dir) in self.list_folder(&key, true) {
+                listed.push(([base_name, b"/", &below[..]].concat().into(), is_dir));
+            }
+        }
+        listed
+    }
+
+    /// The key that `name` shares with other folders, and those folders, where `found` is what `directory_key` made of it. A folder that is named by its own place stands for itself alone.
+    pub(crate) fn find_folders_named_alike(
+        &self,
+        name: &[u8],
+        found: &[u8],
+    ) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
+        let mut buffer = path_buffer_pool::get();
+        let written = match is_bun_standalone_file_path(name) {
+            true => Some(Self::normalize_dir_path(name, &mut buffer)),
+            false => absolute_key(name, &mut buffer).map(|key| key.as_bytes()),
+        };
+        let program = self.compiled_program.as_ref().zip(written);
+        let as_read = program.and_then(|it| Self::key_under_own_root(it.0, it.1));
+        let as_read = as_read.filter(|it| it != found)?;
+        let is_other_folder = |key: &Vec<u8>| key != found && self.dirs.contains(key);
+        let keys = self.keys_of_assets_named_at_root(&as_read)?;
+        let others: Vec<Vec<u8>> = keys.filter(is_other_folder).collect();
+        (!others.is_empty()).then_some((as_read, others))
+    }
+
+    /// Before it was mounted, the base name of such an asset was its key, so `__dirname` led to it.
+    fn key_of_mounted_asset(&self, name: &[u8]) -> Option<Vec<u8>> {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let key = self.key_of_asset_named_at_root(name)?;
+        let is_mounted = key
+            .strip_prefix(root)
+            .is_none_or(|it| it.starts_with(b"_.._/"));
+        is_mounted.then_some(key)
+    }
+
+    /// `path.join(import.meta.dir, "../a")` is `/$bunfs/a`; `import.meta.dir + "/../a"` is `/$bunfs/root/../a`.
+    pub(crate) fn key_of_file_above_root(&self, name: &[u8]) -> Option<Vec<u8>> {
+        let program = self.compiled_program.as_ref()?;
+        let is_below_root = name.starts_with(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes());
+        if is_below_root && is_normalized_posix_path(name) {
+            return None;
+        }
+        if asks_for_folder(name) || self.climbs_out_of_what_is_no_folder(name) {
+            return None;
+        }
+        let key = Self::key_under_own_root(program, name)?;
+        let named_at_root = || self.key_of_asset_named_at_root(&key);
+        let is_file = self.files.contains(&key);
+        Some((!is_file).then(named_at_root).flatten().unwrap_or(key))
+    }
+
+    /// `File::display_name`, with `_.._` for each folder above the root directory.
+    pub fn display_name_of<'f>(&self, file: &'f File) -> Cow<'f, [u8]> {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let program = self.compiled_program.as_ref();
+        if let Some(name) = program.and_then(|it| self.find_name_at_root(it, file.name)) {
+            return Cow::Owned(name);
+        }
+        let is_mounted = !file.name.starts_with(root) && is_bun_standalone_file_path(file.name);
+        let program = self.compiled_program.as_ref().filter(|_| is_mounted);
+        let name = program.and_then(|program| {
+            name_in_plain_executable(root, program.levels_above_root(), file.name)
+        });
+        name.map_or_else(|| Cow::Borrowed(file.display_name()), Cow::Owned)
     }
 
     /// `sub/../a.json` is `a.json` only where `sub` is a folder: the key of a path is made of its text alone.
@@ -1337,9 +1490,11 @@ impl StandaloneModuleGraph {
         if !program.preserves_source_paths && under_own_root.is_none() {
             return None;
         }
-        let file_index = self
-            .files
-            .get_index(under_own_root.as_deref().unwrap_or(key.as_bytes()))?;
+        let key_in_graph = under_own_root.as_deref().unwrap_or(key.as_bytes());
+        let file_index = self.files.get_index(key_in_graph).or_else(|| {
+            self.files
+                .get_index(&self.key_of_mounted_asset(key_in_graph)?)
+        })?;
         // The file of an entry point is empty: its text is on the disk or nowhere.
         let is_entry_point = program
             .entry_point_by_file_index(u32::try_from(file_index).ok()?)
@@ -1368,6 +1523,10 @@ impl StandaloneModuleGraph {
             }
             let written = Self::normalize_dir_path(name, buffer);
             let as_read = Self::key_under_own_root(program?, written)?;
+            let as_read = match is_directory(&as_read) {
+                true => as_read,
+                false => self.key_of_mounted_asset(&as_read)?,
+            };
             if as_read.len() > buffer.len() || !is_directory(&as_read) {
                 return None;
             }
@@ -1381,8 +1540,13 @@ impl StandaloneModuleGraph {
             let mut on_build_machine = path_buffer_pool::get();
             let key = absolute_key(name, &mut on_build_machine)?;
             let under_own_root = Self::key_under_own_root(program, key.as_bytes())?;
-            let is_directory = self.dirs.contains_key(&under_own_root[..])
-                || program.holds_module_below(&under_own_root);
+            let is_directory =
+                |key: &[u8]| self.dirs.contains_key(key) || program.holds_module_below(key);
+            let under_own_root = match is_directory(&under_own_root) {
+                true => under_own_root,
+                false => self.key_of_mounted_asset(&under_own_root)?,
+            };
+            let is_directory = is_directory(&under_own_root);
             let length = under_own_root.len();
             if !is_directory
                 || length > buffer.len()
@@ -1853,7 +2017,7 @@ pub(crate) mod tests {
         let (bytes, record_at, _) = write(&input, &[Some(0)], 5).unwrap();
         let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
         assert_eq!(record_end, bytes.len());
-        let find = |name: &[u8]| program.asset_named_at_root(name);
+        let find = |name: &[u8]| program.assets_named_at_root(name).next();
         assert_eq!(find(b"config.json"), Some(&b"a/config.json"[..]));
         assert_eq!(find(b"one.txt"), Some(&b"deep/down/one.txt"[..]));
         assert_eq!(find(b"a/config.json"), None);
@@ -1863,6 +2027,104 @@ pub(crate) mod tests {
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)
         );
+    }
+
+    #[test]
+    fn mounts_asset_above_root() {
+        let entry_points = [entry_point(1, b"/$bunfs/root/main.js")];
+        for (levels, key) in [
+            (0, &b"/$bunfs/root/_.._/lib/data.txt"[..]),
+            (2, b"/$bunfs/_.._/_.._/lib/data.txt"),
+        ] {
+            let mut program = program(&IMAGE, ALIGNMENT, &entry_points, false);
+            program.levels_above_root = levels;
+            program.root_folders_spelled = b"app";
+            program.assets_named_at_root = b"../lib/data.txt\0../elsewhere\0../other/elsewhere\0";
+            let graph = read_graph(&GraphRequest {
+                target: &CompileTarget::default(),
+                output_files: &[
+                    entry_point_file(b"main.js", Some(0)),
+                    asset(b"../lib/data.txt", b"the text"),
+                    asset(b"inner/below.txt", b"below the root"),
+                    asset(b"../elsewhere/sub/note.txt", b"a note"),
+                    asset(b"../other/elsewhere/more.txt", b"more"),
+                ],
+                module_prefix: &in_virtual_root(""),
+                output_format: Format::Esm,
+                exec_argv: b"",
+                flags: Flags::default(),
+                runtime_options: RuntimeOptions::default(),
+                compiled_program: Some(program),
+            });
+            for name in [key, b"/$bunfs/lib/data.txt", b"/$bunfs/root/data.txt"] {
+                let file = graph.find_ref(name);
+                let shown = String::from_utf8_lossy(name);
+                assert_eq!(file.map(|file| file.name), Some(key), "{levels} {shown}");
+            }
+            assert!(graph.find_ref(b"/$bunfs/root/lib/data.txt").is_none());
+            assert!(graph.find_ref(b"/$bunfs/root/data.txt/sub").is_none());
+            let note = graph.find_ref(b"/$bunfs/root/elsewhere/sub/note.txt");
+            let mounted = graph.find_ref(b"/$bunfs/elsewhere/sub/note.txt");
+            assert_eq!(note.map(|file| file.name), mounted.map(|file| file.name));
+            assert!(note.is_some(), "{levels}");
+            let more = graph.find_ref(b"/$bunfs/root/elsewhere/more.txt");
+            let mounted = graph.find_ref(b"/$bunfs/other/elsewhere/more.txt");
+            assert_eq!(more.map(|file| file.name), mounted.map(|file| file.name));
+            assert!(more.is_some(), "{levels}");
+            assert!(graph.find_ref(b"/$bunfs/root/elsewhere/none.txt").is_none());
+            let sub = (Box::from(&b"sub"[..]), true);
+            let more = (Box::from(&b"more.txt"[..]), false);
+            let listed = graph.readdir(b"/$bunfs/root/elsewhere", false).unwrap();
+            assert_eq!(listed, [sub.clone(), more.clone()], "{levels}");
+            let listed = graph.readdir(b"/$bunfs/elsewhere", false).unwrap();
+            assert_eq!(listed, [sub], "{levels}");
+            let listed = graph.readdir(b"/$bunfs/other/elsewhere", false).unwrap();
+            assert_eq!(listed, [more], "{levels}");
+            assert!(graph.find_dir(b"/$bunfs/root/elsewhere/sub"));
+            assert!(!graph.find_dir(b"/$bunfs/root/sub"));
+            assert!(graph.find_ref(b"/$bunfs/data.txt").is_none());
+            let below = graph.find_ref(b"/$bunfs/app/inner/below.txt");
+            let name = &b"/$bunfs/root/inner/below.txt"[..];
+            assert_eq!(below.map(|file| file.name), Some(name), "{levels}");
+            assert!(graph.find_dir(b"/$bunfs/app/inner") && graph.find_dir(b"/$bunfs/app"));
+            assert!(graph.find_ref(b"/$bunfs/apps/inner/below.txt").is_none());
+            for untidy in [
+                &b"/$bunfs/root/../lib/data.txt"[..],
+                b"/$bunfs/root/../lib/./data.txt",
+                b"/$bunfs/root/../lib//data.txt",
+                b"/$bunfs/root/../lib/../lib/data.txt",
+            ] {
+                let file = graph.find_ref(untidy);
+                let shown = String::from_utf8_lossy(untidy);
+                assert_eq!(file.map(|file| file.name), Some(key), "{levels} {shown}");
+            }
+            assert!(
+                graph
+                    .find_ref(b"/$bunfs/root/../none/../lib/data.txt")
+                    .is_none()
+            );
+            assert!(graph.find_ref(b"/$bunfs/root/../lib/data.txt/").is_none());
+            let folder = &key[..key.len() - b"/data.txt".len()];
+            let listed = graph.readdir(folder, false).unwrap();
+            assert_eq!(listed, [(Box::from(&b"data.txt"[..]), false)]);
+            let file = graph.find_ref(key).unwrap();
+            assert_eq!(&graph.display_name_of(file)[..], b"data.txt");
+            for untidy in [&b"/$bunfs/root/./data.txt"[..], b"/$bunfs/root//data.txt"] {
+                let file = graph.find_ref(untidy);
+                assert_eq!(file.map(|file| file.name), Some(key), "{levels}");
+            }
+            assert!(graph.find_ref(b"/$bunfs/root/./data.txt/").is_none());
+            assert!(graph.find_ref(b"/$bunfs/root/data.txt/").is_none());
+            let climbs = &b"/$bunfs/root/data.txt/../data.txt"[..];
+            assert!(graph.find_ref(climbs).is_none());
+            #[cfg(not(windows))]
+            assert!(graph.find_ref(b"/$bunfs/root/data.txt\\").is_none());
+            let at_root = graph.readdir(b"/$bunfs/root", false).unwrap();
+            assert!(at_root.contains(&(Box::from(&b"data.txt"[..]), false)));
+            assert!(at_root.contains(&(Box::from(&b"elsewhere"[..]), true)));
+            let lists_mount = at_root.iter().any(|it| &it.0[..] == b"_.._");
+            assert_eq!(lists_mount, levels == 0);
+        }
     }
 
     #[test]

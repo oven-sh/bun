@@ -1,6 +1,6 @@
 // `parts.length === 0`, `=== 1`, `=== 2` stand in three blocks of their own, outside of loops: no block alone has two operations that lean on the list. What stands behind each branch leans on it again,
 // so the list is asked for once, at the first read, and its length is read once.
-// STATISTIC: ListsHandedInAskedOnceForWhatStandsBehindBranch = 1
+// STATISTIC: ArrayParameterChecksSpanningBranches = 1
 type Part = { weight: number };
 function gather(parts: readonly Part[], bonus: number): number {
   if (parts.length === 0) return bonus;

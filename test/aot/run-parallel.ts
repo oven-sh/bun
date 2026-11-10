@@ -34,7 +34,7 @@
 // Every program is built in each way of harness/ways.ts: as written, and with its types erased.
 // Each executable is held to the same run of plain Bun. Only the first build is asked what the program says that a build counts or prints.
 // A program that says `// Under: <flags>: <why>` is built once more with those flags: it is the witness of a fault that showed only there.
-// And every program is built once more with --aot-testing=FailGuesses:<n>: one guess in n fails on purpose though its value would have passed. So each program with a loop or a guess walks the ways
+// And every program is built once more with --aot-testing=FailSpeculations:<n>: one guess in n fails on purpose though its value would have passed. So each program with a loop or a guess walks the ways
 // from its typed copies into the closed ones, which its own values seldom or never take, and must still print what plain Bun prints. n is 3, 2 and 7 in turns, by the number of CI's build, and 3
 // anywhere else; the way in the line of a program names it. With 1 no typed copy is entered at all, and nothing is seen.
 // And once more with --aot-harden=proof-checks: what the compiler has proven is asked again at run time, and a proof that does not hold stops the program by name. A stored program is right, so a stop
@@ -81,9 +81,11 @@
 //   // Prints what goes by the copy that runs: <what>   the same, for what the language leaves open and a typed copy of its code answers otherwise than the closed one: the bytes of a NaN
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable of the first build must have counted when it ends: no clock, and the same on every machine.
-//                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or
+//                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresCreated), or
 //                                      `operations`: all calls into the run time. The run has no collection. What the program starts counts too
-//   // COUNTER: <name> (= | >= | <=) <n>     the same, with the name without its kind (CompiledStructuresMade, operationAOTGetById)
+//   // COUNTER: <name> (= | >= | <=) <n>     the same, with the name without its kind (CompiledStructuresCreated, operationAOTGetById)
+//   // COUNTER in every build: <name> (= | >= | <=) <n>   the same, for a count that depends neither on the build's flags nor on collections (WasmInstancesInterpreted):
+//                                      it is asked of every build's executable, and the run is the ordinary one, with collections
 //                                      Each of the three may end with ` Todo: <why>`: it is not met today. It is asked all the same, and fails once it is met: the words go out.
 //                                      ` Todo on win32: <why>`: the same where process.platform is that, and the bound is held as ever anywhere else.
 //                                      ` Todo on linux x64: <why>`: where process.arch is the second word too: how often the allocator asks for room hangs on it.
@@ -168,6 +170,7 @@ type Program = {
   under: string[][];
   statistics: Bound[];
   counts: Bound[];
+  countsInEveryBuild: Bound[];
   boundsNotRead: string[];
   /** What `// Sizes:` and `// Passes:` say. */
   growth?: { sizes: number[]; passes: number; of: "the run" | "the build"; power: number; roomOfPeakMB?: number };
@@ -267,7 +270,7 @@ const askedOfAll = option("under")?.split(/\s+/).filter(Boolean);
 const isCheck = (flag: string) => flag.startsWith("--aot-check=");
 const oneGuessIn = option("one-guess-in") ?? String([3, 2, 7][Number(process.env.BUILDKITE_BUILD_NUMBER ?? 0) % 3]);
 if (!/^(?:[2-9]|[1-9]\d+)(?::\d+)?$/.test(oneGuessIn)) throw new Error(`--one-guess-in=${oneGuessIn}: <n> or <n>:<seed>, and n over 1`);
-const whereGuessesFail = [`--aot-testing=FailGuesses:${oneGuessIn}`];
+const whereGuessesFail = [`--aot-testing=FailSpeculations:${oneGuessIn}`];
 const whereProofsAreChecked = ["--aot-harden=proof-checks"];
 const waysBehindTheFirst = ways.map(({ flags }) => flags).filter(flags => flags.length > 0);
 const isOneOfTheWays = (flags: readonly string[]) => waysBehindTheFirst.some(way => way.join(" ") === flags.join(" "));
@@ -824,7 +827,9 @@ function fail(
 /** Only a COUNT names what is counted with its kind in front. */
 function readBound(line: string): (Bound & { kind: string }) | undefined {
   const [, kind, name, relation, bound, platform, arch, todo] =
-    /^\/\/ (STATISTIC|COUNT|COUNTER): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(line) ?? [];
+    /^\/\/ (STATISTIC|COUNT|COUNTER|COUNTER in every build): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(
+      line,
+    ) ?? [];
   if (kind === undefined || (kind !== "COUNT" && name.includes(":"))) return undefined;
   const isTodoHere =
     (platform === undefined || platform === process.platform) && (arch === undefined || arch === process.arch);
@@ -854,7 +859,7 @@ function read(file: string): Program {
     : [];
   const texts = [text, ...others.map(other => readFileSync(other, "utf8"))];
   const boundLines = texts.flatMap(text =>
-    Array.from(text.matchAll(/^\/\/ (?:STATISTIC|COUNT|COUNTER):.*$/gm), ([line]) => line),
+    Array.from(text.matchAll(/^\/\/ (?:STATISTIC|COUNT|COUNTER|COUNTER in every build):.*$/gm), ([line]) => line),
   );
   const bounds = boundLines.map(readBound).filter(bound => bound !== undefined);
   const namesModules = someFileOf(path, text => namesMuchOfTheLibrary.test(text));
@@ -922,7 +927,8 @@ function read(file: string): Program {
     isNotBuiltWith: flags => lines(`No build under ${flags.join(" ")}`).length > 0,
     under: lines("Under").map(line => line.split(": ", 1)[0].split(/\s+/).filter(Boolean)),
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
-    counts: bounds.filter(({ kind }) => kind !== "STATISTIC"),
+    counts: bounds.filter(({ kind }) => kind === "COUNT" || kind === "COUNTER"),
+    countsInEveryBuild: bounds.filter(({ kind }) => kind === "COUNTER in every build"),
     boundsNotRead: boundLines.filter(line => !readBound(line)),
     growth: growthIsRead
       ? {
@@ -1196,7 +1202,7 @@ async function run(program: Program): Promise<void> {
     return fail(
       program,
       "read",
-      `not of the form \`// STATISTIC | COUNT | COUNTER: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
+      `not of the form \`// STATISTIC | COUNT | COUNTER | COUNTER in every build: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
     );
   if (program.growthNotRead) return fail(program, "read", program.growthNotRead);
   if (program.marksNotRead.length)
@@ -1223,7 +1229,7 @@ async function run(program: Program): Promise<void> {
     "--aot",
     `--aot-threads=${threads}`,
     ...program.flags,
-    ...(program.flags.includes(whereProofsAreChecked[0]) ? ["--aot-testing=ReadsByKeyOffFilledRecordsAreListed"] : []),
+    ...(program.flags.includes(whereProofsAreChecked[0]) ? ["--aot-testing=CheckDictionaryReadProofs"] : []),
     ...(program.statistics.length || (keepsStatistics && program.way === "compiled") ? ["--explain=statistics"] : []),
     entry,
     ...program.entryPoints,
@@ -1325,14 +1331,14 @@ async function run(program: Program): Promise<void> {
     };
     // One behind the other: what holds much in one holds much in the other.
     // A file for each process: the program may start itself again.
-    const counts =
-      program.way === "compiled" && program.counts.length && !moreFlags.length && runsAreAsUsersRunThem
-        ? `${basename(executable)}.counts-`
-        : undefined;
+    const asksFirstBuild =
+      program.way === "compiled" && program.counts.length > 0 && !moreFlags.length && runsAreAsUsersRunThem;
+    const counts = asksFirstBuild || program.countsInEveryBuild.length ? `${basename(executable)}.counts-` : undefined;
     const compiled = await withSlotOfRun(() =>
       start([executable], cwd, {
         ...envOfRuns,
-        ...(counts && { ...withoutCollections, [runtimeEnvironment.countsPath]: join(folder, `${counts}%p`) }),
+        ...(asksFirstBuild && withoutCollections),
+        ...(counts && { [runtimeEnvironment.countsPath]: join(folder, `${counts}%p`) }),
         ...program.envOfExecutable,
       }),
     );
@@ -1356,7 +1362,7 @@ async function run(program: Program): Promise<void> {
       !moreFlags.length &&
       runsAreAsUsersRunThem &&
       !program.growth &&
-      !counts &&
+      !asksFirstBuild &&
       mostOfPlain &&
       mostOfCompiled > 2 * mostOfPlain + 64
     )
@@ -1367,7 +1373,8 @@ async function run(program: Program): Promise<void> {
         compiled.output,
         plain?.output,
       );
-    const unmetByRun = counts ? unmetBounds(program.file, counted, program.counts, "executable") : [];
+    const askedOfRun = [...(asksFirstBuild ? program.counts : []), ...program.countsInEveryBuild];
+    const unmetByRun = unmetBounds(program.file, counted, askedOfRun, "executable");
     if (unmetByRun.length) return fail(program, "count", unmetByRun.join("; "), compiled.output, plain?.output);
     const grown =
       program.way === "compiled" && program.growth && !moreFlags.length && runsAreAsUsersRunThem && !isASAN

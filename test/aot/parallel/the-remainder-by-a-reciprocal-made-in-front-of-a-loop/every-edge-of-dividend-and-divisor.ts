@@ -1,4 +1,4 @@
-// STATISTIC: RemaindersByReciprocalsMadeInFrontOfLoops >= 6
+// STATISTIC: RemaindersByHoistedReciprocal >= 6
 function sums(d: number, offset: number, turns: number): string {
   let a = 0, b = 0, c = 0;
   for (let j = 0; j < turns; j++) {

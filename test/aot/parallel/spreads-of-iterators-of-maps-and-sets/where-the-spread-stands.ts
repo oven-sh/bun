@@ -1,4 +1,4 @@
-// STATISTIC: SpreadsOfIteratorsThatAreNeverMade >= 8
+// STATISTIC: IteratorAllocationsElidedInSpreads >= 8
 // The spread of keys | values as the arguments of a call, twice in one list, off a receiver that is chosen, under a try, in a generator and an async function, and with a receiver whose method is read by a getter.
 function show(list: any[]): string { return list.length + ":" + list.join(","); }
 function two(a: any, b: any) { return String(a) + "/" + String(b); }

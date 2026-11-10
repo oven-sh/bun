@@ -1,5 +1,5 @@
 // The turns of the outer loop fill the rows that they find, so no row is asked in them: read as raw numbers, whole numbers would be stored back as fractions are.
-// STATISTIC: ListsAskedInTurnsOfTypedCopies = 0
+// STATISTIC: ArraysGuardedInIterations = 0
 class Table {
   private readonly rows: number[][] = [];
   constructor(

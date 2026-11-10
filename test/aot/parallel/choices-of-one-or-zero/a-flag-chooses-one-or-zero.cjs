@@ -1,4 +1,4 @@
-// STATISTIC: ChoicesOfOneOrZeroThatAreTheIntegerTested >= 2
+// STATISTIC: ZeroOrOnePhisFolded >= 2
 "use strict";
 const shelves = [{ marks: 1, books: [1, 2, 3] }, { marks: 0, books: [1, 2] }, { marks: 3, books: [1] }, { marks: 2, books: [] }, { marks: -1, books: [4] }, { marks: 2147483647, books: [4, 5] }, { marks: -2147483648, books: [6] }];
 function hasMark(shelf) { return !!(shelf.marks & 1); }

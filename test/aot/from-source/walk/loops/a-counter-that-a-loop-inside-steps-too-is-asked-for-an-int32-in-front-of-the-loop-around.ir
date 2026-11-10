@@ -44,9 +44,9 @@
 # print(part(a, 0, 9, 4.5), a.join(), part(b, 0.5, 6.5, 4.5), Object.keys(b).length, part(c, NaN, 9, 4.5), part(d, 2147483646, 2147483649, 4.5), bounded(a, 0, 10), bounded(a, 1.5, 4), strays(next, 0, 10), strays(next, 0.5, 3));
 # -- end of source
 # f1 = swap, f2 = part, f3 = bounded, f4 = strays
-# RUN(EVENT): compile CountersThatLoopsInsideStepAskedInFrontOfLoops mechanisms=all
+# RUN(EVENT): compile NestedLoopCounterGuardsHoisted mechanisms=all
 # `i` and `j` of part alone: bounded and strays add nothing.
-# EVENT: statistic CountersThatLoopsInsideStepAskedInFrontOfLoops 2
+# EVENT: statistic NestedLoopCounterGuardsHoisted 2
 # RUN(PART): walk f2 mechanisms=all
 # PART-LABEL: code f2:Body
 # PART: ] @Int64, {{*}}] @Int64) isInLoop=true isLoopHead=true

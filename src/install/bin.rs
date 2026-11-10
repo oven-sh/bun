@@ -2015,8 +2015,23 @@ pub fn find_bin_conflicts(
         ancestors.push(current);
         current = trees[current as usize].parent;
     }
+    let nested_id = nested.map(|tree| tree.id);
     let owners: Vec<StringHashMap<PackageID>> = (ancestors.iter())
-        .map(|&tree_id| bin_owners(lockfile, direct_packages, tree_id))
+        .map(|&tree_id| {
+            let mut owners = bin_owners(lockfile, direct_packages, tree_id);
+            // The package that a tree is nested in may link its conflicts into the tree's `.bin`.
+            if Some(tree_id) != nested_id && !lockfile.is_importer_tree_id(tree_id) {
+                let tree = &trees[tree_id as usize];
+                for conflict in
+                    find_bin_conflicts(lockfile, direct_packages, tree.parent, tree.dependency_id)
+                {
+                    for name in &conflict.names {
+                        bun_core::handle_oom(owners.put(name, conflict.package_id));
+                    }
+                }
+            }
+            owners
+        })
         .collect();
 
     let mut conflicts = Vec::new();
@@ -2153,21 +2168,18 @@ fn for_each_bin_name(
     }
 }
 
-/// Links `conflicts`, except for names in `env_path`, into a directory that only the scripts of the
-/// package at `cwd` search, and returns the directory. The package's `node_modules/.bin` also
-/// belongs to the packages nested in it.
+/// Links `conflicts` into the `node_modules/.bin` of `cwd`, except for names in `env_path`.
 pub(crate) fn link_conflicting_bins(
     lockfile: &Lockfile,
     conflicts: &[BinConflict],
     cwd: &[u8],
     env_path: &[u8],
-) -> Result<Option<Vec<u8>>, Error> {
+) -> Result<(), Error> {
     if conflicts.is_empty() {
-        return Ok(None);
+        return Ok(());
     }
     let mut node_modules_path = AbsPath::from(cwd)?;
     node_modules_path.append(b"node_modules")?;
-    node_modules_path.append(b".scripts")?;
     let bin_dir = [node_modules_path.slice(), &[SEP][..], b".bin"].concat();
     let mut seen: StringHashMap<()> = StringHashMap::default();
     let mut which_buf = path::path_buffer_pool::get();
@@ -2216,5 +2228,5 @@ pub(crate) fn link_conflicting_bins(
             return Err(err);
         }
     }
-    Ok(Some(bin_dir))
+    Ok(())
 }

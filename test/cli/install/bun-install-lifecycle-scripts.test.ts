@@ -2291,6 +2291,30 @@ describe("the trusted set", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("nested packages find their own dependencies", async () => {
+      using ctx = await project("hoisted", {
+        "package.json": {
+          name: "foo",
+          dependencies: { native: "file:./native", "what-bin": "1.0.0", "uses-what-bin": "1.5.0" },
+          trustedDependencies: ["native", "uses-what-bin"],
+        },
+        "native/package.json": {
+          name: "native",
+          version: "1.0.0",
+          dependencies: { tool: "npm:what-bin@1.5.0", "uses-what-bin": "1.0.0" },
+          scripts: { postinstall: "what-bin" },
+        },
+      });
+      const { err, exitCode } = await bun(ctx, ["install"]);
+      expect(err).not.toContain("error:");
+      const native = join(ctx.packageDir, "node_modules", "native");
+      expect(await textOf(native, "what-bin.txt")).toBe("what-bin@1.5.0");
+      const nested = join(native, "node_modules", "uses-what-bin");
+      expect(await textOf(nested, "what-bin.txt")).toBe("what-bin@1.0.0");
+      expect(await exists(join(nested, "node_modules", ".bin"))).toBeTrue();
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("does not run scripts if a bin cannot be linked", async () => {
       using ctx = await project("hoisted", {
         "package.json": {

@@ -1695,8 +1695,8 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
         ),
         (
             &[
-                ("package.json", r#"{"type":"commonjs"}"#),
                 ("main.mjs", r#"await import("./setup.mjs");"#),
+                ("package.json", r#"{"type":"commonjs"}"#),
                 ("setup.mjs", NO_KIND),
             ],
             "setup.mjs",

@@ -197,7 +197,7 @@ extern "C" bool Bun__AOT__useNoImageOnThisThread(BunAOTBytes specifier)
         dataLogLn("crashIfInterpreterIsUsed: Worker ", WTF::String::fromUTF8ReplacingInvalidSequences(std::span { specifier.ptr, specifier.len }));
         CRASH();
     }
-    JSC::AOT::Image::useNoneOnThisThread();
+    JSC::AOT::Image::disableOnThisThread();
     return true;
 }
 
@@ -238,7 +238,7 @@ static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String&
 {
     JSC::CallFrame* callFrame = globalObject->vm().topCallFrame;
     // The loader starts a module from no frame, and what is said of a file that runs names no place.
-    bool namesPlace = !refusal.startsWith("Ran from source "_s);
+    bool namesPlace = !refusal.startsWith("Ran from source "_s) && !refusal.startsWith("Kept the run of "_s);
     if (!callFrame && namesPlace)
         return;
     BunString sourceURL = Bun::BunStringEmpty;
@@ -267,13 +267,13 @@ static bool listsRefusedChanges;
 extern "C" void Bun__AOT__listRefusedChanges()
 {
     listsRefusedChanges = true;
-    JSC::AOT::setRefusedChangeListener(recordRefusedChange);
+    JSC::AOT::setRejectedChangeListener(recordRefusedChange);
     JSC::AOT::setMissingExportListener(recordMissingExport);
 }
 
 extern "C" void Bun__AOT__openNameWithoutImage(uint32_t holder, const uint8_t* name, size_t length)
 {
-    JSC::AOT::openNameWithoutImage(holder, std::span { name, length });
+    JSC::AOT::unlockNameWithoutImage(holder, std::span { name, length });
 }
 
 namespace Bun {
@@ -320,7 +320,7 @@ extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void* returnAddress)
     result |= frame->hasFrameRecord() ? 1 : 0;
     result |= frame->isEmpty() ? 2 : 0;
     result |= frame->liesBelowSpilledArguments() ? 4 : 0;
-    result |= JSC::AOT::isInStubOfImage(returnAddress) ? 8 : 0;
+    result |= JSC::AOT::isInImageStub(returnAddress) ? 8 : 0;
     return result;
 }
 

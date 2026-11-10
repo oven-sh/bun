@@ -18,13 +18,10 @@
 # console.log(below(roots), kept(roots));
 # -- end of source
 # RUN(BELOW): walk f1 mechanisms=all-Inlining
-# REQUIRES(BELOW): entries-of-bun
 # BELOW-LABEL: code f1:Body
 # BELOW: = GetStringCodeUnit
 # RUN(KEPT): walk f2 mechanisms=all-Inlining
-# REQUIRES(KEPT): entries-of-bun
 # KEPT-LABEL: code f2:Body
 # KEPT: string @Cell = Add {{*}}form=Strings
 # RUN(NEVER): walk f2 mechanisms=all-Inlining
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: = GetStringCodeUnit

@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function kind(x: unknown, depth: number): string { if (depth > 0) return kind(x, depth - 1); return typeof x; }
+# function tell(x: unknown): string { const k = kind(x, 1); return k === "number" ? "a number" : k === undefined ? "nothing" : "other:" + k; }
+# print(tell(1), tell("a"), tell(undefined), kind({}, 0).length);
+# print("went on");
+# -- end of source
+# Under the words on proofs a record whose type one of the compiler's own rules has written is asked for that type, where the rule gives a text or an object.
+# f1 = kind
+# RUN(FORM): walk f1:Body mechanisms=all testing=CheckProofsAtRunTime
+# FORM: [[given]]: string @Cell = TypeOf
+# FORM: CheckProof [[given]] checkedType=string
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: a number other:string other:undefined 6
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# PROOFS: a number other:string other:undefined 6
+# PROOFS-NEXT: went on
+# PROOFS-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,RowSaysLess:Operation/TypeOf/KindOfResult
+# LIE: what an operation gives is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# LIE-NOT: went on
+# LIE: crashed with

@@ -49,6 +49,7 @@ struct CandidateSearch<'a, 'h> {
     stays_out_of_other_packages: bool,
     leaves_installed_packages_on_disk: bool,
     start_names_nothing: bool,
+    is_whole_alternative: bool,
     tried: FxHashSet<Vec<u8>>,
     runtime_modules: Vec<ComputedCandidate<'h>>,
     candidates: Vec<ComputedCandidate<'h>>,
@@ -78,6 +79,7 @@ impl<'h> Resolver<'h> {
         let outcome = alternatives.iter().try_for_each(|&(start, end)| {
             search.request.prefix = start;
             search.request.suffix = end.unwrap_or_default();
+            search.is_whole_alternative = end.is_none();
             let tried = match end {
                 Some(_) => search.find_candidates(),
                 None => search.try_specifier(start),
@@ -173,6 +175,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             stays_out_of_other_packages: false,
             leaves_installed_packages_on_disk: false,
             start_names_nothing: false,
+            is_whole_alternative: false,
             tried: FxHashSet::default(),
             runtime_modules: Vec::new(),
             candidates: Vec::new(),
@@ -653,8 +656,11 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         let candidate = match self.resolver.resolve_code(&request) {
             CodeResolution::File(file)
                 if !has_extension(split_after_last_slash(file.path).1)
+                    && !(self.is_whole_alternative
+                        && self.resolver.code_host().is_code(file.path))
                     && !(is_written_out && self.request.site.type_attribute.is_some()) =>
             {
+                self.tried.remove(text);
                 return Ok(());
             }
             CodeResolution::File(file)

@@ -47,6 +47,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    pub(in crate::lower) fn reaches_stored(&self, binding: BindingRef) -> bool {
+        if self.scopes.find_local(binding).is_some()
+            || self.find_captured_value(Capture::Value(binding)).is_some()
+        {
+            return true;
+        }
+        match self.file.scopes.placement(binding).map(|it| it.storage) {
+            Some(Storage::Field { scope, .. }) => {
+                self.scopes.find_environment(scope).is_some()
+                    || self
+                        .find_captured_value(Capture::Environment(scope))
+                        .is_some()
+            }
+            Some(Storage::Variable(_)) => true,
+            Some(Storage::Local) | None => false,
+        }
+    }
+
     pub(in crate::lower) fn get_stored(&mut self, binding: BindingRef) -> ValueId {
         if let Some(local) = self.scopes.find_local(binding) {
             return self.builder.read_variable(local.variable);

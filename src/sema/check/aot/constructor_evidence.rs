@@ -10,7 +10,7 @@ use crate::hir::{
     PropKey, TypeNodeKind, VarKind,
 };
 use crate::program::FileId;
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet};
 
 fn is_member_of_receiver_or_prototype_object(
     hir: &hir::File<'_>,
@@ -40,6 +40,19 @@ impl From<bool> for Standing {
     }
 }
 
+fn is_laid_as_prototype_object(hir: &hir::File<'_>, bound: &Bound<'_>, literal: ExprId) -> bool {
+    let Parent::Expr(parent) = bound.parent_of_expr(literal) else {
+        return false;
+    };
+    let Some(parent) = parent.some() else {
+        return false;
+    };
+    matches!(
+        hir[parent].kind,
+        ExprKind::Assign { op: None, target, value } if value == literal && is_prototype_object(hir, bound, target)
+    )
+}
+
 fn find_standing(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -56,6 +69,11 @@ fn find_standing(
                         && !matches!(
                             hir.runtime_property_key(property),
                             PropKey::Name(name) if name == known::get || name == known::set
+                        )
+                        && !is_laid_as_prototype_object(
+                            hir,
+                            bound,
+                            bound.prop_owner[property.idx()],
                         ),
                 );
             }
@@ -258,22 +276,26 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         handed_on.sort_unstable_by_key(|entry| (entry.0, entry.2));
         handed_on.dedup();
-        loop {
-            let count = used.len();
-            for &(parameter, callee, position) in &handed_on {
-                let is_used = match callee.file == file {
-                    true => used.contains(&(callee.function, position)),
-                    false => self
-                        .parameters_seen_to_be_constructors(callee.file)
-                        .binary_search(&(callee.function, position))
-                        .is_ok(),
-                };
-                if is_used && !used.contains(&parameter) {
+        let mut is_used: FxHashSet<(FnId, u32)> = used.iter().copied().collect();
+        let mut handed_to: FxHashMap<(FnId, u32), Vec<(FnId, u32)>> = FxHashMap::default();
+        for &(parameter, callee, position) in &handed_on {
+            let receiving = (callee.function, position);
+            if callee.file == file {
+                handed_to.entry(receiving).or_default().push(parameter);
+                continue;
+            }
+            let seen_there = self.parameters_seen_to_be_constructors(callee.file);
+            if seen_there.binary_search(&receiving).is_ok() && is_used.insert(parameter) {
+                used.push(parameter);
+            }
+        }
+        let mut followed = 0;
+        while let Some(&receiving) = used.get(followed) {
+            followed += 1;
+            for &parameter in handed_to.get(&receiving).map_or(&[][..], Vec::as_slice) {
+                if is_used.insert(parameter) {
                     used.push(parameter);
                 }
-            }
-            if used.len() == count {
-                break;
             }
         }
         used.sort_unstable();
@@ -408,6 +430,46 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .functions_handing_this_on
             .get_or_init(|| self.compute_functions_handing_this_on(function.file));
         functions.binary_search(&function.function).is_ok()
+    }
+
+    fn compute_declarations_named_by_new(&mut self, file: FileId) -> &'s [SymbolId] {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let expressions = self.c.exprs_by_kind(file);
+        let mut named = Vec::new();
+        for &construction in expressions.of(ExprTag::New) {
+            let ExprKind::New(site) = hir[construction].kind else {
+                continue;
+            };
+            let callee = hir.skip_type_assertions(hir[site].callee);
+            if matches!(hir[callee].kind, ExprKind::Ident(_))
+                && let Binding::Symbol(symbol) = bound.binding(callee)
+            {
+                named.push(symbol);
+            }
+        }
+        named.sort_unstable();
+        named.dedup();
+        list_in(self.c.arena, &named)
+    }
+
+    pub(super) fn is_named_by_new(&mut self, function: FunctionRef) -> bool {
+        let FunctionRef { file, function } = function;
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let symbol = match bound.fns[function.idx()].owner {
+            FnOwner::Expr(_) => {
+                find_constant_holding(hir, bound, function).map(|(symbol, _)| symbol)
+            }
+            FnOwner::Stmt(_) => Some(bound.declared_symbol(Decl::Fn(function))),
+            FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
+        };
+        let Some(symbol) = symbol else {
+            return false;
+        };
+        let of_file = self.prototype_links(file);
+        let named = *of_file
+            .declarations_named_by_new
+            .get_or_init(|| self.compute_declarations_named_by_new(file));
+        named.binary_search(&symbol).is_ok()
     }
 
     pub(super) fn is_held_by_name_or_returned(&self, function: FunctionRef) -> bool {

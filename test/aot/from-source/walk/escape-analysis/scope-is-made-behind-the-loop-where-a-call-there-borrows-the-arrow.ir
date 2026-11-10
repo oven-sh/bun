@@ -3,7 +3,7 @@
 # const list = [];
 # for (let i = 0; i < 12; i++) list.push(i);
 # let out = 0;
-# for (let k = 0; k < 5; k++) out += sum(list);
+# for (let k = 0; k < 9; k++) out += sum(list);
 # print(out);
 # -- end of source
 # `sum`, the fast loops of `forEach` and the arrow are copied into the loop of the module, and `total` comes round the fast loops as a parameter. Behind them stands a call of the rest of `forEach` with the

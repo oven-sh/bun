@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# 'use strict';
+# class Bell {
+#   constructor() { this.ringers = []; }
+#   add(ringer) { this.ringers.push(ringer); }
+#   ring(...notes) { for (const ringer of this.ringers) ringer(...notes); }
+# }
+# const bell = new Bell();
+# let total = 0;
+# bell.add((note, times) => { total = (total + note.pitch * times) | 0; });
+# for (let i = 0; i < 3; i++) bell.ring({ pitch: i }, 2);
+# console.log(total);
+# -- end of source
+# `ringer(...notes)` copies the list and hands the copy over. Nobody else sees the copy, so the call takes the list itself, and where one function is called its parameters are read out of the list.
+# What the list of ringers gives may be undefined, so a test on the callee stands between the copying and the call: the call stands in a block of its own and finds the copying in the block in front.
+# RUN: walk f3 mechanisms=all
+# CHECK: isLoopHead=true
+# CHECK: GetArrayElement {{*}} level=Proven
+# CHECK: GetArrayElement {{*}} level=Proven
+# CHECK: GetArrayElement {{*}} level=Proven
+# CHECK: CallDirect {{*}} function=f4

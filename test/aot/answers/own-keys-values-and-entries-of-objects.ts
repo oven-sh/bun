@@ -3,27 +3,21 @@
 // # each list and each pair is a new one, which the program may write into. The built-in goes by what is called, under another name too, and a local named Object is none
 // # f1 = show, f2 = keysInSight, f3 = valuesInSight, f4 = entriesInSight, f5 = storedLater, f6 = deleted, f7 = changed, f8 = fresh, f9 = pairsAreFresh, f10 = empty, f11 = values, f12 = entries, f13 = keys, f14 = inLoop, f15 = renamed, f16 = shadowed, f17 = noArgument, f18 = twoArguments, f19 = tell
 // # RUN(SIGHT): walk f3 mechanisms=all
-// # REQUIRES(SIGHT): entries-of-bun
 // # SIGHT-NOT: overload=ObjectValues
 // # RUN(FORM): walk f11 mechanisms=all
-// # REQUIRES(FORM): entries-of-bun
 // # FORM-LABEL: code f11:Body
 // # FORM: = HasKeyOrder
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 125 of 125 of 125
 // # CHECK-NEXT: exited with 0
 // # RUN(ALSO1): run-in-shell mechanisms=-Guesses-ParameterGuards $SHELL
-// # REQUIRES(ALSO1): entries-of-bun
 // # ALSO1: 125 of 125 of 125
 // # ALSO1-NEXT: exited with 0
 // # RUN(ALSO2): run-in-shell mechanisms=-EscapeAnalysis $SHELL
-// # REQUIRES(ALSO2): entries-of-bun
 // # ALSO2: 125 of 125 of 125
 // # ALSO2-NEXT: exited with 0
 // # RUN(ALSO3): run-in-shell mechanisms=-BuiltinCalls $SHELL
-// # REQUIRES(ALSO3): entries-of-bun
 // # ALSO3: 125 of 125 of 125
 // # ALSO3-NEXT: exited with 0
 declare function report(value: unknown): void;

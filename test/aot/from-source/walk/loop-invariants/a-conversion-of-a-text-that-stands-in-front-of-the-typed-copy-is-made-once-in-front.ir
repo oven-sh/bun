@@ -1,0 +1,15 @@
+# `q.toLowerCase()` on a text that no turn changes ran in every turn. It runs no code of the program and cannot fail but for lack of memory; the receiver is proven a text in front of the typed copy (it was written one: the
+# test stands in front, and its no leads to the closed copy). It is called once, behind the yes of the head's own question: a loop of no turn pays nothing.
+# The closed copy is printed first, with its own call. The block in front of the typed copy is printed behind its head: the call, its box, and the jump to the head.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: ) isInLoop=true isLoopHead=true:
+# CHECK: inlineBuiltin=StringToLowerCase
+# CHECK-NEXT: = Box
+# CHECK-NEXT: Jump -> next
+# CHECK-NOT: inlineBuiltin=StringToLowerCase
+# -- source: a-conversion-of-a-text-that-stands-in-front-of-the-typed-copy-is-made-once-in-front.ts
+# const list: string[] = []; for (let i = 0; i < 64; i++) list.push("name" + (i % 7));
+# function count(q: string, from: number): number { let n = from; for (let i = 0; i < list.length; i++) if (list[i] === q.toLowerCase()) n++; return n; }
+# (globalThis as any).kept = count;
+# console.log(count("Name3", 0), count("NAME5", 1));
+# -- end of source

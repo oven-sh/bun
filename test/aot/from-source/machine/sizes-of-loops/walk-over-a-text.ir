@@ -1,0 +1,20 @@
+# f1 = commas
+# -- source: walk-over-a-text.ts
+# function commas(text: string): number {
+#   let count = 0;
+#   for (const character of text) if (character === ",") count++;
+#   return count;
+# }
+# declare const input: any;
+# (globalThis as any).answer = commas(input);
+# -- end of source
+# The compiler before this one: 6 instructions, 2 of them patches ; 27 instructions, 16 of them patches.
+# When the bound was taken: loop: operations 53, patches 5, moves 13, unlikely 73: one loop, which asked at every letter whether `text` is a text: 50.8 instructions a letter by run.
+# Since a loop over what is written to be a text is built twice: the text is asked once in front; the first loop takes eight letters a turn (operations 90, patches 8, moves 0, unlikely 6), the second the rest
+# (operations 18, patches 2, moves 2, unlikely 22): 7.4 instructions a letter by run over 66 letters. Since the turns are laid out once for each width there is a second loop of eight letters a turn, for wide texts (operations 98, patches 8, moves 8, unlikely 6). A bound for each.
+# RUN(X64): loops most:90,106,20 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 90
+# X64-NEXT: loop: at most 106
+# X64-NEXT: loop: at most 20

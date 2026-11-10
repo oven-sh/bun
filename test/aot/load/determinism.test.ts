@@ -75,7 +75,7 @@ import limits from "./limits.toml";
 import words from "./words.txt";
 // @ts-ignore
 import logo from "./logo.bin" with { type: "file" };
-import { stamp } from "./stamp.ts" with { type: "macro" };
+import { stamp } from "./stamp.ts";
 declare const Bun: any;
 console.log(total(1), settings.name, limits.max, words.trim(), (await Bun.file(logo).text()).length, JSON.stringify(stamp("a")));
 `,
@@ -120,8 +120,7 @@ const commandLine = (program: string, flags: string[] = []) => [
 ];
 
 describe.concurrent("compile/aot/load/determinism", () => {
-  // TODO: the program calls a macro, and --aot refuses every macro at build time (TS100053: Macros are disabled).
-  test.todo(
+  test(
     "same bytes for any thread count",
     () =>
       slot(async () => {
@@ -138,8 +137,7 @@ describe.concurrent("compile/aot/load/determinism", () => {
     600_000,
   );
 
-  // TODO: the same.
-  test.todo(
+  test(
     "same bytes for any plugin answer order",
     () =>
       slot(async () => {
@@ -156,8 +154,7 @@ describe.concurrent("compile/aot/load/determinism", () => {
     600_000,
   );
 
-  // TODO: the same.
-  test.todo(
+  test(
     "different program, different bytes",
     () =>
       slot(async () => {

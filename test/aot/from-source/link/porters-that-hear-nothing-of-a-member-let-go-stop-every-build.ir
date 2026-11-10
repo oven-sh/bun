@@ -1,0 +1,294 @@
+# -- source: main.js
+# class Base { tag() { return 0; } }
+# class A extends Base { a() { return "a"; } }
+# class B extends Base { b() { return "b"; } }
+# class C extends B { c() { return "c"; } }
+# class D extends Base { d() { return "d"; } }
+# class E extends C { e() { return "e"; } }
+# class F extends D { f() { return "f"; } }
+# const all = [new A(), new B(), new C(), new D(), new E(), new F()];
+# function who(n) { return "late of " + this.constructor.name + n; }
+# function call(x) { return x.late ? x.late(1) : "none"; }
+# function said() { let s = ""; for (let i = 0; i < all.length; i++) s += call(all[i % all.length]) + ","; return s; }
+# print(said());
+# globalThis.kept = all[3];
+# print(said());
+# -- end of source
+# THE RED CONTROL OF THE NET IN EVERY BUILD FOR THE UNKNOWN: members sleep that find the unknown beside their fields, and the call does not enter unseen code: the build stops.
+# DIAGNOSTIC: FlowEndedTooEarly 1
+# RUN: link functions testing=NobodyWakesSleepersOfSharedCalls mechanisms=all
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f4 place=6
+layout L1 kind=Instance name="A" module=m0 position=41 base=L0 constructor=f6 supertypes=[L0] flags=[HasHeritage] place=41
+layout L2 kind=Instance name="B" module=m0 position=86 base=L0 constructor=f8 supertypes=[L0] flags=[HasHeritage] place=86
+layout L3 kind=Instance name="C" module=m0 position=131 base=L2 constructor=f10 supertypes=[L2] flags=[HasHeritage] place=131
+layout L4 kind=Instance name="D" module=m0 position=173 base=L0 constructor=f12 supertypes=[L0] flags=[HasHeritage] place=173
+layout L5 kind=Instance name="E" module=m0 position=218 base=L3 constructor=f14 supertypes=[L3] flags=[HasHeritage] place=218
+layout L6 kind=Instance name="F" module=m0 position=260 base=L4 constructor=f16 supertypes=[L4] flags=[HasHeritage] place=260
+variable g0 name="call" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=2
+variable g1 name="all" module=m0 declared={type=absent|Array flags=[IsExpected]} flags=[IsImmutable] place=25
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=53
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=61
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=69
+variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=77
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=85
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=93
+variable g8 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=101
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = NewClass v4 layout=L0 @0
+    PutModuleVariable v5 variable=g2 @0
+    v7 = NewClosure function=f5 @13
+    DefineMethod v5, v7 layout=L0 key="tag" @13
+    v9 = FinishClass v5 layout=L0 @0
+    v10 = Convert v9 declared={type=f4 flags=[IsFromCompiler]} @0
+    v11 = Convert v9 declared={type=f4 flags=[IsFromCompiler]} @0
+    v12 = ResolveHeritage v11 @51
+    v13 = NewClosure function=f6 @35
+    v14 = NewClass v13, v11, v12 layout=L1 @35
+    PutModuleVariable v14 variable=g3 @35
+    v16 = NewClosure function=f7 @58
+    DefineMethod v14, v16 layout=L1 key="a" @58
+    v18 = FinishClass v14 layout=L1 @35
+    v19 = Convert v18 declared={type=f6 flags=[IsFromCompiler]} @35
+    v20 = Convert v18 declared={type=f6 flags=[IsFromCompiler]} @35
+    v21 = ResolveHeritage v11 @96
+    v22 = NewClosure function=f8 @80
+    v23 = NewClass v22, v11, v21 layout=L2 @80
+    PutModuleVariable v23 variable=g4 @80
+    v25 = NewClosure function=f9 @103
+    DefineMethod v23, v25 layout=L2 key="b" @103
+    v27 = FinishClass v23 layout=L2 @80
+    v28 = Convert v27 declared={type=f8 flags=[IsFromCompiler]} @80
+    v29 = Convert v27 declared={type=f8 flags=[IsFromCompiler]} @80
+    v30 = ResolveHeritage v29 @141
+    v31 = NewClosure function=f10 @125
+    v32 = NewClass v31, v29, v30 layout=L3 @125
+    PutModuleVariable v32 variable=g5 @125
+    v34 = NewClosure function=f11 @145
+    DefineMethod v32, v34 layout=L3 key="c" @145
+    v36 = FinishClass v32 layout=L3 @125
+    v37 = Convert v36 declared={type=f10 flags=[IsFromCompiler]} @125
+    v38 = Convert v36 declared={type=f10 flags=[IsFromCompiler]} @125
+    v39 = ResolveHeritage v11 @183
+    v40 = NewClosure function=f12 @167
+    v41 = NewClass v40, v11, v39 layout=L4 @167
+    PutModuleVariable v41 variable=g6 @167
+    v43 = NewClosure function=f13 @190
+    DefineMethod v41, v43 layout=L4 key="d" @190
+    v45 = FinishClass v41 layout=L4 @167
+    v46 = Convert v45 declared={type=f12 flags=[IsFromCompiler]} @167
+    v47 = Convert v45 declared={type=f12 flags=[IsFromCompiler]} @167
+    v48 = ResolveHeritage v38 @228
+    v49 = NewClosure function=f14 @212
+    v50 = NewClass v49, v38, v48 layout=L5 @212
+    PutModuleVariable v50 variable=g7 @212
+    v52 = NewClosure function=f15 @232
+    DefineMethod v50, v52 layout=L5 key="e" @232
+    v54 = FinishClass v50 layout=L5 @212
+    v55 = Convert v54 declared={type=f14 flags=[IsFromCompiler]} @212
+    v56 = Convert v54 declared={type=f14 flags=[IsFromCompiler]} @212
+    v57 = ResolveHeritage v47 @270
+    v58 = NewClosure function=f16 @254
+    v59 = NewClass v58, v47, v57 layout=L6 @254
+    PutModuleVariable v59 variable=g8 @254
+    v61 = NewClosure function=f17 @274
+    DefineMethod v59, v61 layout=L6 key="f" @274
+    v63 = FinishClass v59 layout=L6 @254
+    v64 = Convert v63 declared={type=f16 flags=[IsFromCompiler]} @254
+    v65 = Convert v63 declared={type=f16 flags=[IsFromCompiler]} @254
+    v66 = Construct v20 calleeName="A" @313
+    v67 = Construct v29 calleeName="B" @322
+    v68 = Construct v38 calleeName="C" @331
+    v69 = Construct v47 calleeName="D" @340
+    v70 = Construct v56 calleeName="E" @349
+    v71 = Construct v65 calleeName="F" @358
+    v72 = NewArray v66, v67, v68, v69, v70, v71 contents=anything @308
+    PutModuleVariable v72 variable=g1 @302
+    v74 = Builtin builtin=GlobalThis @605
+    v75 = PropGet v74 key="print" [isFreeName] @605
+    v76 = Call v3 calleeName="said" @611
+    v77 = Call v75, -, v76 calleeName="print" @605
+    v78 = Builtin builtin=GlobalThis @620
+    v79 = PropGet v78 key="globalThis" [isFreeName] @620
+    v80 = Convert v79 declared={type=builtin(GlobalThis) flags=[IsExpected]} @620
+    v81 = Integer integer=3 @638
+    v82 = ElemGet v72, v81 @638
+    PropSet v80, v82 key="kept" @620
+    v84 = Builtin builtin=GlobalThis @646
+    v85 = PropGet v84 key="print" [isFreeName] @646
+    v86 = Call v3 calleeName="said" @652
+    v87 = Call v85, -, v86 calleeName="print" @646
+    v88 = Undefined @646
+    Return v88 @646
+}
+function f1 name="call" module=m0 position=431 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="late" @457
+    v2 = ToBoolean v1 @457
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @457
+  b1(v3):
+    v4 = PropGet v0 key="late" @466
+    v5 = Integer integer=1 @473
+    v6 = Call v4, v0, v5 calleeKey="late" calleeName="x.late" @468
+    ReturnCall v6 @468
+  b2(v7):
+    v8 = String string="none" @478
+    Return v8 @478
+}
+function f2 name="who" module=m0 position=364 flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="who" @364
+    Throw v2 @364
+}
+function f3 name="said" module=m0 position=488 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="" @514
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]} @514
+    v2 = Integer @531
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @531
+    Jump -> next b1(v1, v3) @527
+  b1(v4, v5):
+    LoopHint @527
+    v7 = GetModuleVariable variable=g1 @538
+    v8 = CheckInitialized v7 name="all" @538
+    v9 = PropGet v8 key="length" @538
+    v10 = Less v5, v9 @538
+    Branch v10 -> taken b2(), notTaken b3() @538
+  b2():
+    v11 = GetModuleVariable variable=g0 @560
+    v12 = GetModuleVariable variable=g1 @565
+    v13 = CheckInitialized v12 name="all" @565
+    v14 = GetModuleVariable variable=g1 @573
+    v15 = CheckInitialized v14 name="all" @573
+    v16 = PropGet v15 key="length" @573
+    v17 = Mod v5, v16 @573
+    v18 = ElemGet v13, v17 @565
+    v19 = Call v11, -, v18 calleeName="call" @560
+    v20 = String string="," @588
+    v21 = Add v19, v20 @588
+    v22 = Add v4, v21 @588
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]} @555
+    v24 = Increment v5 @550
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @550
+    Jump -> next b1(v23, v25) @550
+  b3():
+    Return v4 @600
+}
+function f4 name="Base" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f5 name="tag" module=m0 position=13 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer @28
+    Return v0 @28
+}
+function f6 name="A" module=m0 position=41 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @41
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @41
+    v5 = Convert v4 declared={type=L1} @41
+    Return v5 @41
+}
+function f7 name="a" module=m0 position=58 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="a" @71
+    Return v0 @71
+}
+function f8 name="B" module=m0 position=86 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @86
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @86
+    v5 = Convert v4 declared={type=L2} @86
+    Return v5 @86
+}
+function f9 name="b" module=m0 position=103 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="b" @116
+    Return v0 @116
+}
+function f10 name="C" module=m0 position=131 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @131
+    v4 = SuperConstructList v3, v1, v2 layout=L3 @131
+    v5 = Convert v4 declared={type=L3} @131
+    Return v5 @131
+}
+function f11 name="c" module=m0 position=145 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="c" @158
+    Return v0 @158
+}
+function f12 name="D" module=m0 position=173 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @173
+    v4 = SuperConstructList v3, v1, v2 layout=L4 @173
+    v5 = Convert v4 declared={type=L4} @173
+    Return v5 @173
+}
+function f13 name="d" module=m0 position=190 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="d" @203
+    Return v0 @203
+}
+function f14 name="E" module=m0 position=218 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @218
+    v4 = SuperConstructList v3, v1, v2 layout=L5 @218
+    v5 = Convert v4 declared={type=L5} @218
+    Return v5 @218
+}
+function f15 name="e" module=m0 position=232 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="e" @245
+    Return v0 @245
+}
+function f16 name="F" module=m0 position=260 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L6 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @260
+    v4 = SuperConstructList v3, v1, v2 layout=L6 @260
+    v5 = Convert v4 declared={type=L6} @260
+    Return v5 @260
+}
+function f17 name="f" module=m0 position=274 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="f" @287
+    Return v0 @287
+}
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f20]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f22]
+function f25 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f25 visibility=Private

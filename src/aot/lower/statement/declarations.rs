@@ -194,11 +194,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.leaves_function_unmade(decl.pat) {
             return;
         }
-        if let Some(made) = self
-            .file
-            .find_object_created_for_maker(decl.pat, initializer, behind)
+        if let Some((made, names)) =
+            self.file
+                .find_object_created_for_maker(decl.pat, initializer, behind)
         {
             self.object_created_for_maker = Some(made);
+            self.names_that_maker_stores_under = names;
         }
         let dynamic_scope = bound.dynamic_lookup_scope(NodeData::Pat(decl.pat));
         let target = dynamic_scope.map(|_| self.resolve_pattern_target(decl.pat));

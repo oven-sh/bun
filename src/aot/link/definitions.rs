@@ -543,6 +543,7 @@ pub(super) fn variable_that_holds_mock(module: ModuleId) -> Variable {
         declared,
         initialization: VariableInitialization::Uninitialized,
         flags: VariableFlags::IS_REPLACEABLE | VariableFlags::HOLDS_MOCK,
+        place: Some(0),
         ..Variable::default()
     }
 }

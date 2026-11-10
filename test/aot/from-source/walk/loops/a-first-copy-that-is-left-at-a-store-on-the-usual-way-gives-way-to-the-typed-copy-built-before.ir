@@ -1,0 +1,298 @@
+# -- source: main.js
+# 'use strict';
+# class Ring { constructor(cap) { this.cap = cap; this.buf = new Array(cap).fill(null); this.head = 0; this.tail = 0; this.size = 0; }
+#   push(x) { if (this.size === this.cap) return false; this.buf[this.tail] = x; this.tail = (this.tail + 1) % this.cap; this.size++; return true; }
+#   shift() { if (this.size === 0) return undefined; const x = this.buf[this.head]; this.buf[this.head] = null; this.head = (this.head + 1) % this.cap; this.size--; return x; } }
+# const ring = new Ring(16);
+# function f(t) { let s = 0; for (let i = 0; i < 64; i++) { ring.push(i + t & 7); if (i & 1) s += ring.shift() + ring.shift(); } while (ring.size) ring.shift(); return s; }
+# const n = +globalThis.rounds; let sum = 0; for (let t = 0; t < n; t++) sum = (sum + f(t)) % 1000003;
+# globalThis.kept = sum;
+# -- end of source
+# push() and shift() of a ring are copied into the loop of f; shift() stands behind an `if`. Each stores into the list under a key that is no whole number by its type, and into fields. A first copy of the loop that keeps other code out of its turns is left for the closed copy at the first store, on the usual way: it gives way: the loop is built as it was before there was such a copy: the stores stand in the typed copy.
+# RUN(STORES): walk f1 mechanisms=all
+# STORES-COUNT-4: PutArrayElement
+
+module m0 path="main.js" displayPath="main.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/prelude/written-lists.ts" displayPath="/$bun/js/prelude/written-lists.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Ring" module=m0 position=20 constructor=f2 fields=[{key="cap" declared={type=anything} flags=[IsRequired]}, {key="buf" declared={type=undefined|null|Array flags=[IsFromCompiler, IsExpected]} flags=[IsRequired]}, {key="head" declared={type=anything} flags=[IsRequired]}, {key="tail" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}] place=20 ownFieldCount=5
+layout L1 module=m0 place=0
+layout L2 module=m0 place=0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=16
+variable g1 name="ring" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable] place=12
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=36
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L1 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f2 @14
+    v6 = NewClass v5 layout=L0 @14
+    PutModuleVariable v6 variable=g2 @14
+    v8 = NewClosure function=f3 @149
+    DefineMethod v6, v8 layout=L0 key="push" @149
+    v10 = NewClosure function=f4 @296
+    DefineMethod v6, v10 layout=L0 index=1 key="shift" @296
+    v12 = FinishClass v6 layout=L0 @14
+    v13 = Convert v12 declared={type=f2 flags=[IsFromCompiler]} @14
+    v14 = Convert v12 declared={type=f2 flags=[IsFromCompiler]} @14
+    v15 = Integer integer=16 @493
+    v16 = Construct v14, -, v15 calleeName="Ring" @488
+    PutModuleVariable v16 variable=g1 @477
+    v18 = Builtin builtin=GlobalThis @680
+    v19 = PropGet v18 key="globalThis" [isFreeName] @680
+    v20 = Convert v19 declared={type=builtin(GlobalThis) flags=[IsExpected]} @680
+    v21 = PropGet v20 key="rounds" @680
+    v22 = ToNumber v21 @680
+    v23 = Integer @709
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @709
+    v25 = Integer @725
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @725
+    Jump -> next b1(v24, v26) @721
+  b1(v27, v28):
+    LoopHint @721
+    v30 = Less v28, v22 @732
+    Branch v30 -> taken b2(), notTaken b3() @732
+  b2():
+    v31 = Call v4, -, v28 calleeName="f" @753
+    v32 = Add v27, v31 @753
+    v33 = Integer integer=1000003 @761
+    v34 = Mod v32, v33 @761
+    v35 = Convert v34 declared={type=number flags=[IsExpected]} @740
+    v36 = Increment v28 @735
+    v37 = Convert v36 declared={type=number flags=[IsExpected]} @735
+    Jump -> next b1(v35, v37) @735
+  b3():
+    v38 = Builtin builtin=GlobalThis @770
+    v39 = PropGet v38 key="globalThis" [isFreeName] @770
+    v40 = Convert v39 declared={type=builtin(GlobalThis) flags=[IsExpected]} @770
+    PropSet v40, v27 key="kept" @770
+    v42 = Undefined @770
+    Return v42 @770
+}
+function f1 name="f" module=m0 position=498 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @522
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @522
+    v3 = Integer @538
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @538
+    Jump -> next b1(v2, v4) @534
+  b1(v5, v6):
+    LoopHint @534
+    v8 = Integer integer=64 @545
+    v9 = Less v6, v8 @545
+    Branch v9 -> taken b2(), notTaken b5() @545
+  b2():
+    v10 = GetModuleVariable variable=g1 @556
+    v11 = CheckInitialized v10 name="ring" @556
+    v12 = PropGet v11 key="push" @556
+    v13 = Add v6, v0 @570
+    v14 = Integer integer=7 @574
+    v15 = BitAnd v13, v14 @574
+    v16 = Call v12, v11, v15 calleeKey="push" calleeName="ring.push" @561
+    v17 = Integer integer=1 @586
+    v18 = BitAnd v6, v17 @586
+    v19 = ToBoolean v18 @582
+    Branch v19 -> taken b3(| 0), notTaken b4(v5) @582
+  b3(v20):
+    v21 = GetModuleVariable variable=g1 @594
+    v22 = CheckInitialized v21 name="ring" @594
+    v23 = PropGet v22 key="shift" @594
+    v24 = Call v23, v22 calleeKey="shift" calleeName="ring.shift" @599
+    v25 = GetModuleVariable variable=g1 @609
+    v26 = CheckInitialized v25 name="ring" @609
+    v27 = PropGet v26 key="shift" @609
+    v28 = Call v27, v26 calleeKey="shift" calleeName="ring.shift" @614
+    v29 = Add v24, v28 @609
+    v30 = Add v5, v29 @609
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @589
+    Jump -> next b4(v31) @589
+  b4(v32):
+    v33 = Increment v6 @549
+    v34 = Convert v33 declared={type=i32 flags=[IsExpected]} @549
+    Jump -> next b1(v32, v34) @549
+  b5():
+    Jump -> next b6() @625
+  b6():
+    LoopHint @625
+    v36 = GetModuleVariable variable=g1 @632
+    v37 = CheckInitialized v36 name="ring" @632
+    v38 = PropGet v37 key="size" @632
+    v39 = ToBoolean v38 @632
+    Branch v39 -> taken b7(| 0), notTaken b8(| 0) @632
+  b7(v40):
+    v41 = GetModuleVariable variable=g1 @643
+    v42 = CheckInitialized v41 name="ring" @643
+    v43 = PropGet v42 key="shift" @643
+    v44 = Call v43, v42 calleeKey="shift" calleeName="ring.shift" @648
+    Jump -> next b6() @643
+  b8(v45):
+    Return v5 @664
+}
+function f2 name="Ring" module=m0 position=38 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @38
+    v3 = NewObject v2 layout=L0 @38
+    v4 = Convert v3 declared={type=L0} @38
+    PropSet v4, v1 key="cap" @46
+    v6 = Null @93
+    v7 = Builtin builtin=CompilerHelpersFilledArray [isNotReadFromHolder] @77
+    v8 = Call v7, -, v1, v6 @77
+    PropSet v4, v8 key="buf" @62
+    v10 = Integer @112
+    PropSet v4, v10 key="head" @100
+    v12 = Integer @127
+    PropSet v4, v12 key="tail" @115
+    v14 = Integer @142
+    PropSet v4, v14 key="size" @130
+    v16 = Undefined @130
+    v17 = TypeTest v16 testedType=object @130
+    Branch v17 -> taken b1(| 0), notTaken b2(v4) @130
+  b1(v18):
+    Jump -> next b2(v18) @130
+  b2(v19):
+    Return v19 @130
+}
+function f3 name="push" module=m0 position=149 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="size" @163
+    v3 = PropGet v0 key="cap" @177
+    v4 = StrictEq v2, v3 @177
+    Branch v4 -> taken b1(), notTaken b2() @177
+  b1():
+    v5 = Boolean @194
+    Return v5 @194
+  b2():
+    v6 = PropGet v0 key="buf" @201
+    v7 = PropGet v0 key="tail" @210
+    ElemSet v6, v7, v1 @206
+    v9 = PropGet v0 key="tail" @239
+    v10 = Integer integer=1 @251
+    v11 = Add v9, v10 @251
+    v12 = PropGet v0 key="cap" @256
+    v13 = Mod v11, v12 @256
+    PropSet v0, v13 key="tail" @226
+    v15 = PropGet v0 key="size" @266
+    v16 = Increment v15 @266
+    PropSet v0, v16 key="size" @266
+    v18 = Boolean boolean=true @286
+    Return v18 @286
+}
+function f4 name="shift" module=m0 position=296 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="size" @310
+    v2 = Integer @324
+    v3 = StrictEq v1, v2 @324
+    Branch v3 -> taken b1(), notTaken b2() @324
+  b1():
+    v4 = Undefined @334
+    Return v4 @334
+  b2():
+    v5 = PropGet v0 key="buf" @355
+    v6 = PropGet v0 key="head" @364
+    v7 = ElemGet v5, v6 @360
+    v8 = PropGet v0 key="buf" @376
+    v9 = PropGet v0 key="head" @385
+    v10 = Null @398
+    ElemSet v8, v9, v10 @381
+    v12 = PropGet v0 key="head" @417
+    v13 = Integer integer=1 @429
+    v14 = Add v12, v13 @429
+    v15 = PropGet v0 key="cap" @434
+    v16 = Mod v14, v15 @434
+    PropSet v0, v16 key="head" @404
+    v18 = PropGet v0 key="size" @444
+    v19 = Decrement v18 @444
+    PropSet v0, v19 key="size" @444
+    Return v7 @464
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f6 name="filledArray" module=m2 position=4403 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=WrittenListsFilledArray thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number @4483
+    Branch v2 -> taken b1(| 0), notTaken b12() @4483
+  b1(v3):
+    v4 = NarrowByTest v0, v3 @4483
+    v5 = Integer @4540
+    v6 = BitOr v4, v5 @4540
+    v7 = StrictEq v6, v4 @4561
+    Branch v7 -> taken b2(), notTaken b12() @4561
+  b2():
+    v8 = Integer @4580
+    v9 = GreaterEq v6, v8 @4580
+    Branch v9 -> taken b3(), notTaken b12() @4580
+  b3():
+    v10 = Undefined @4634
+    v11 = Convert v6 declared={type=int flags=[IsFromCompiler, IsClaim]} @4604
+    v12 = NewArrayLike v11, v10 @4604
+    v13 = Convert v12 declared={type=Array flags=[IsFromCompiler, IsClaim]} @4656
+    v14 = TryFillNewArray v13, v1 @4656
+    v15 = ToBoolean v14 @4656
+    Branch v15 -> taken b4(| 0), notTaken b5(| 0) @4656
+  b4(v16):
+    v17 = Convert v12 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @4694
+    Return v17 @4694
+  b5(v18):
+    v19 = Integer @4718
+    v20 = Convert v19 declared={type=number} @4718
+    Jump -> next b6(v20) @4736
+  b6(v21: number):
+    LoopHint @4736
+    Jump -> next b7(v21) @4755
+  b7(v23: number):
+    LoopHint @4755
+    v25 = Less v23, v6 @4770
+    Branch v25 -> taken b8(), notTaken b11() @4770
+  b8():
+    v26 = Convert v12 declared={type=Array flags=[IsFromCompiler, IsClaim]} @4824
+    v27 = Convert v23 declared={type=int flags=[IsFromCompiler, IsClaim]} @4824
+    v28 = TryPutByValDirect v26, v27, v1 @4824
+    v29 = Convert v28 declared={type=boolean} @4824
+    v30 = ToBoolean v29 @4879
+    Branch v30 -> taken b9(| 0), notTaken b10(| 0) @4879
+  b9(v31):
+    v32 = Increment v23 @4777
+    v33 = Convert v32 declared={type=number} @4777
+    Jump -> next b7(v33) @4777
+  b10(v34):
+    ElemSet v12, v23, v1 @4903
+    v36 = Integer integer=1 @4953
+    v37 = Add v23, v36 @4953
+    v38 = Integer @4960
+    v39 = URShift v37, v38 @4960
+    v40 = Convert v39 declared={type=number} @4936
+    Jump -> next b6(v40) @5023
+  b11():
+    v41 = Convert v12 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @5051
+    Return v41 @5051
+  b12():
+    v42 = Builtin builtin=Array [isNotReadFromHolder] @5086
+    v43 = Convert v0 declared={type=number} illTypedCause=Assertion @5101
+    v44 = Construct v42, -, v43 calleeName="Array" @5086
+    v45 = Convert v44 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @5082
+    v46 = PropGet v45 key="fill" @5122
+    v47 = Call v46, v45, v1 calleeKey="fill" calleeName="made.fill" @5127
+    v48 = Convert v47 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @5122
+    Return v45 @5149
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
+runtimefunction id=WrittenListsFilledArray function=f6 visibility=Private

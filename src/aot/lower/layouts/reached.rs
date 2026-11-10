@@ -1,4 +1,5 @@
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 use crate::ir::generated::LimitId;
 use crate::ir::{LayoutId, Reference, TypeId};
@@ -26,7 +27,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     let listed = self.layouts.stored_listed_fields(layout);
                     listed.is_some_and(|listed| listed.count_types() > number)
                 });
-                pending.extend(late.map(|(&layout, _)| Pending::Layout(layout)));
+                let mut late: Vec<LayoutId> = late.map(|(&layout, _)| layout).collect();
+                late.sort_unstable_by_key(|&layout| self.fragment.layout_key(layout));
+                pending.extend(late.into_iter().map(Pending::Layout));
                 if pending.is_empty() {
                     break;
                 }
@@ -35,6 +38,7 @@ impl FileLowering<'_, '_, '_, '_> {
             if layouts.len() as u64 > limit {
                 return None;
             }
+            let mut met: SmallVec<[LayoutId; 8]> = SmallVec::new();
             let mut add = |reference: Reference| match reference {
                 Reference::Type(ty) => {
                     if types.insert(ty) {
@@ -43,7 +47,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 Reference::Layout(layout) => {
                     if layouts.insert(layout) {
-                        pending.push(Pending::Layout(layout));
+                        met.push(layout);
                     }
                 }
                 Reference::String(_)
@@ -77,6 +81,8 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                 },
             }
+            met.sort_unstable_by_key(|&layout| self.fragment.layout_key(layout));
+            pending.extend(met.into_iter().map(Pending::Layout));
         }
         let mut layouts: Vec<LayoutId> = layouts.into_iter().collect();
         layouts.sort_unstable();

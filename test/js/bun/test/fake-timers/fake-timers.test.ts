@@ -3676,23 +3676,32 @@ describe("a spy or stub that is undone under the fake clock", () => {
     });
   });
 
-  test("a stub that was removed keeps nothing of its test alive", () => {
-    const fixtures = () => {
-      Bun.gc(true);
-      return heapStats().objectTypeCounts.Float64Array ?? 0;
-    };
-    const before = fixtures();
-    for (let i = 0; i < 64; i++) {
-      vi.stubGlobal("setTimeout", () => {});
-      vi.stubGlobal("fakeTimersFixture", new Float64Array(1024));
-      vi.useFakeTimers();
-      vi.spyOn(globalThis, "setTimeout");
-      vi.unstubAllGlobals();
-      vi.useRealTimers();
-      vi.restoreAllMocks();
-    }
-    // Each round leaves the uninstalled fake on the global, and the next round stubs over it.
-    expect(fixtures() - before).toBeLessThan(16);
+  // In a process of its own, where a full collection is fast.
+  test.concurrent("a stub that was removed keeps nothing of its test alive", async () => {
+    using dir = tempDir("fake-timers-undone-under", {
+      "rounds.ts": `
+        import { heapStats } from "bun:jsc";
+        import { vi } from "bun:test";
+        const fixtures = () => {
+          Bun.gc(true);
+          return heapStats().objectTypeCounts.Float64Array ?? 0;
+        };
+        const before = fixtures();
+        for (let i = 0; i < 64; i++) {
+          vi.stubGlobal("setTimeout", () => {});
+          vi.stubGlobal("fakeTimersFixture", new Float64Array(1024));
+          vi.useFakeTimers();
+          vi.spyOn(globalThis, "setTimeout");
+          vi.unstubAllGlobals();
+          vi.useRealTimers();
+          // This leaves the uninstalled fake on the global, and the next round stubs over it.
+          vi.restoreAllMocks();
+        }
+        console.log(fixtures() - before < 16 ? "collected" : "kept");
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(["./rounds.ts"], String(dir));
+    expect({ stdout, exitCode }, stderr).toEqual({ stdout: "collected\n", exitCode: 0 });
   });
 
   // In a process of its own: a crash in one order then fails this test only.

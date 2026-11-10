@@ -19,5 +19,5 @@ export async function checkoutVendor(
   }
   await git("init", "--quiet", vendorPath);
   await git("-C", vendorPath, "fetch", "--depth", "1", repository, commit);
-  await git("-C", vendorPath, "checkout", "--detach", commit);
+  await git("-C", vendorPath, "checkout", "--force", "--detach", commit);
 }

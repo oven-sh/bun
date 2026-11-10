@@ -2,7 +2,7 @@
  * scripts/runner.node.ts runs the test suites of the packages in test/vendor.json,
  * each checked out at the commit its entry names.
  */
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { checkoutVendor } from "../../scripts/vendor-checkout.ts";
 import vendors from "../vendor.json";
 
 const config = tempDir("vendor-checkout-config", { gitconfig: "" });
+afterAll(() => config[Symbol.dispose]());
 const env = {
   ...bunEnv,
   GIT_CONFIG_GLOBAL: join(String(config), "gitconfig"),
@@ -42,7 +43,7 @@ async function commits(repository: string, ...texts: string[]): Promise<string[]
   return hashes;
 }
 
-test("checks out the commit it is given", async () => {
+test.concurrent("checks out the commit it is given", async () => {
   using dir = tempDir("vendor-checkout", {});
   const repository = join(String(dir), "repository");
   const vendorPath = join(String(dir), "vendor", "package");
@@ -58,7 +59,7 @@ test("checks out the commit it is given", async () => {
   expect(await git("-C", vendorPath, "rev-parse", "HEAD")).toBe(second!);
 });
 
-test("takes nothing but the full hash of a commit", async () => {
+test.concurrent("takes nothing but the full hash of a commit", async () => {
   using dir = tempDir("vendor-checkout", {});
   const repository = join(String(dir), "repository");
   const vendorPath = join(String(dir), "vendor", "package");

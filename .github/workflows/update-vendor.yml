@@ -67,7 +67,7 @@ jobs:
           echo "latest_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
 
       - name: Update version if needed
-        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        if: success() && steps.check-version.outputs.current_commit != steps.check-version.outputs.latest_commit
         env:
           PACKAGE: ${{ matrix.package }}
           LATEST_TAG: ${{ steps.check-version.outputs.latest }}
@@ -77,7 +77,7 @@ jobs:
           bun -e 'await Bun.write("test/vendor.json", JSON.stringify((await Bun.file("test/vendor.json").json()).map(v=>{if(v.package===process.argv[1]){v.tag=process.argv[2];v.commit=process.argv[3];}return v;}), null, 2) + "\n")' "$PACKAGE" "$LATEST_TAG" "$LATEST_COMMIT"
 
       - name: Create Pull Request
-        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        if: success() && steps.check-version.outputs.current_commit != steps.check-version.outputs.latest_commit
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

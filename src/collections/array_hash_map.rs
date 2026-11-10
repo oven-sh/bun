@@ -867,11 +867,16 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         let Some(index) = self.index.as_deref_mut() else {
             return;
         };
+        // Park `a`'s slot on a sentinel first: with equal tags the probe for `b`'s slot
+        // could otherwise land on a slot that already says `b`.
         if let Some(slot) = index.find_mut(spread_hash(hash_a), |&i| i as usize == a) {
-            *slot = b as u32;
+            *slot = u32::MAX;
         }
         if let Some(slot) = index.find_mut(spread_hash(hash_b), |&i| i as usize == b) {
             *slot = a as u32;
+        }
+        if let Some(slot) = index.find_mut(spread_hash(hash_a), |&i| i == u32::MAX) {
+            *slot = b as u32;
         }
     }
 

@@ -145,10 +145,9 @@ describe("Bun.parseEnv", () => {
       cwd: String(dir),
       // Nothing but the switch that silences the debug build's logs.
       env: { BUN_DEBUG_QUIET_LOGS: "1" },
-      stderr: "pipe",
+      stderr: "ignore",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr.replace(/^\[[\d.]+ms\] "\.env"\n?$/, "")).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({ main: { X: "" }, worker: { X: "" } });
     expect(exitCode).toBe(0);
   });

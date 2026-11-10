@@ -1,6 +1,5 @@
 // Called by VirtualMachine.rs. With `bun test --isolate=modules`, all test files share one global object,
-// so after each file we restore what it changed: globals, builtins, the matchers of `expect`, `process.env` and
-// `process` listeners.
+// so after each file we restore what it changed: globals, builtins, `expect`, `process.env` and `process` listeners.
 
 const isEnvironmentGlobal: (key: PropertyKey) => boolean = require("internal/test/environment").isEnvironmentGlobal;
 const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(

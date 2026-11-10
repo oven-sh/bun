@@ -1522,8 +1522,7 @@ impl Expect {
         ]
     }
 
-    /// `--isolate=modules` keeps the global object, and these objects with it. `internal/test/globals` puts back what a
-    /// test file changed on them, as it does for the objects that `globalThis` reaches.
+    /// For `internal/test/globals`, which restores these objects between the test files of `--isolate=modules`.
     pub(crate) fn matcher_holders_array(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
         JSValue::create_array_from_slice(global_this, &Self::matcher_holders(global_this))

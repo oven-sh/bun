@@ -110,15 +110,11 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original re-exports a module that is not evaluated yet
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that is still evaluating, and the running test file
-# The next four reset while a.ts loads, and await that the next import() reads what a.ts imports again. In a compiled run it gets what was loaded. With --isolate they also ask `isolatedModuleCacheSourceType()` of bun:internal-for-testing for a.ts in the cache of sources that --isolate keeps, and a compiled file never gets there.
+# The next four reset while a.ts loads, and await that the next import() reads what a.ts imports again. In a compiled run it gets what was loaded.
 test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--parallel=2"]
 test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again []
-# The next three cannot pass: they ask `isolatedModuleCacheSourceType()` which sources an earlier test file left in that cache, and a compiled file leaves none.
-test/js/bun/test/mock/mock-module.test.ts: resetModules > vi.resetModules() keeps the sources of the packages that stay loaded ["--isolate"]
-test/js/bun/test/mock/mock-module.test.ts: resetModules > vi.resetModules() keeps the sources of the packages that stay loaded ["--isolate=modules"]
-test/js/bun/test/mock/mock-module.test.ts: resetModules > vi.resetModules() keeps the sources of the packages that stay loaded ["--parallel=2"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

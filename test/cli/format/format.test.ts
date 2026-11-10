@@ -1479,6 +1479,38 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  // Whether a property breaks after the `:` depends on the width of its key. Prettier measures the key as printed:
+  // `\u{61}` is `a`, `[.5]` is `[0.5]`, `[ 5 ]` is `[5]`. A file that `bun fmt` wrote passes `bun fmt --check`.
+  describe("a key that is printed differently than it is written", () => {
+    const value = `"this string is too long to fit on one line, even when it is on a line by itself"`;
+    // A key narrower than the indentation plus 3 columns is short: the value stays on its line.
+    const rows: [key: string, printed: string, tabWidth: number, isShort: boolean][] = [
+      ["\\u{61}", "a", 2, true],
+      ["[.5]", "[0.5]", 2, false],
+      ["[ 5 ]", "[5]", 2, true],
+      ["[\\u{61}]", "[a]", 2, true],
+      ["['\\'']", `["'"]`, 3, true],
+      ["[!'\\'']", `[!"'"]`, 4, true],
+    ];
+    for (const [key, printed, tabWidth, isShort] of rows) {
+      test(`${key} is measured as ${printed}`, async () => {
+        const indent = " ".repeat(tabWidth);
+        const property = isShort
+          ? `${indent}${printed}: ${value},\n`
+          : `${indent}${printed}:\n${indent}${indent}${value},\n`;
+        const expected = `const o = {\n${property}};\n`;
+        const first = await format({ "key.js": `const o = { ${key}: ${value} };\n` }, [`--tab-width=${tabWidth}`], {
+          reads: ["key.js"],
+        });
+        expect(first.files["key.js"]).toBe(expected);
+        expect(first.exitCode).toBe(0);
+        const check = await format({ "key.js": expected }, ["--check", `--tab-width=${tabWidth}`]);
+        expect(check.stdout).toBe("");
+        expect(check.exitCode).toBe(0);
+      });
+    }
+  });
+
   test("copies a comment inside code under `prettier-ignore` once, along with the code", async () => {
     const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
     const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });

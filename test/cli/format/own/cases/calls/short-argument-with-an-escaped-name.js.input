@@ -1,0 +1,5 @@
+const x = f(\u{61}\u{61}\u{61}\u{61}\u{61}).ppppppppppppppppppppppppppppppppppppppppppppppp.qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+const y = \u{66}\u{66}\u{66}\u{66}\u{66}().ppppppppppppppppppppppppppppppppppppppppppppppp.qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+\u{41}bc.ddddddddddddddddddddddd().eeeeeeeeeeeeeeeeeeeeeeee().ffffffffffffffffffffffffff().gggggggggggggggggg();
+\u{61}.ddddddddddddddddddddddd().eeeeeeeeeeeeeeeeeeeeeeee().ffffffffffffffffffffffffff().gggggggggggggggggg();
+a[\u{41}bc].ddddddddddddddddddddddd().eeeeeeeeeeeeeeeeeeeeeeee().ffffffffffffffffffffffffff().gggggggggggggggggg();

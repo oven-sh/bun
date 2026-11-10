@@ -1,0 +1,41 @@
+------------------
+{ printWidth: 80 }
+------------------
+const x =
+  f(aaaaa).ppppppppppppppppppppppppppppppppppppppppppppppp
+    .qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+const y =
+  fffff().ppppppppppppppppppppppppppppppppppppppppppppppp
+    .qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+Abc.ddddddddddddddddddddddd()
+  .eeeeeeeeeeeeeeeeeeeeeeee()
+  .ffffffffffffffffffffffffff()
+  .gggggggggggggggggg();
+a.ddddddddddddddddddddddd()
+  .eeeeeeeeeeeeeeeeeeeeeeee()
+  .ffffffffffffffffffffffffff()
+  .gggggggggggggggggg();
+a[Abc].ddddddddddddddddddddddd()
+  .eeeeeeeeeeeeeeeeeeeeeeee()
+  .ffffffffffffffffffffffffff()
+  .gggggggggggggggggg();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const x = f(aaaaa).ppppppppppppppppppppppppppppppppppppppppppppppp.qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+const y = fffff().ppppppppppppppppppppppppppppppppppppppppppppppp.qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+Abc.ddddddddddddddddddddddd()
+  .eeeeeeeeeeeeeeeeeeeeeeee()
+  .ffffffffffffffffffffffffff()
+  .gggggggggggggggggg();
+a.ddddddddddddddddddddddd()
+  .eeeeeeeeeeeeeeeeeeeeeeee()
+  .ffffffffffffffffffffffffff()
+  .gggggggggggggggggg();
+a[Abc].ddddddddddddddddddddddd()
+  .eeeeeeeeeeeeeeeeeeeeeeee()
+  .ffffffffffffffffffffffffff()
+  .gggggggggggggggggg();
+
+===================== End =====================

@@ -142,9 +142,9 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         let has_computed_property = first_member.is_computed_expression();
 
         if let [ChainMember::Node(node)] = self.head() {
-            match node.tag() {
-                ExprTag::Ident => {
-                    let name = node.text();
+            match node.kind() {
+                ExprKind::Ident(name) => {
+                    let name = name.bytes();
                     has_computed_property
                         || is_factory(name)
                         // A name that's shorter than the indentation: the `.` wouldn't even be to the right of it.
@@ -152,7 +152,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                             && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
                             && !is_whole_expression_in_html(f))
                 }
-                ExprTag::This => true,
+                ExprKind::This => true,
                 _ => false,
             }
         } else {
@@ -168,10 +168,10 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                     name.bytes()
                 }
                 Some((ChainMember::ComputedMember(_), ExprKind::Index { index, .. }))
-                    if matches!(index.kind(), ExprKind::Ident(_))
+                    if let ExprKind::Ident(name) = index.kind()
                         && name_in_brackets_can_be_factory(f) =>
                 {
-                    index.text()
+                    name.bytes()
                 }
                 _ => return false,
             };

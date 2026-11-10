@@ -85,6 +85,9 @@ pub struct Environment {
     // Binding name -> next `_N` to try. Valid because an error in a nested function ends all lowering.
     pub(crate) binding_names: HashMap<StoreStr, u32>,
 
+    /// Not in upstream. The name of the function expression being compiled, if it reads that name. RenameVariables gives it to no local.
+    pub(crate) own_name: Option<StoreStr>,
+
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
     // whose node_id is in this set (type labels like ObjectTypeIndexer params
@@ -203,6 +206,7 @@ impl Environment {
             hook_guard_name: None,
             renames: AstAlloc::vec(),
             binding_names: HashMap::default(),
+            own_name: None,
             reference_node_ids: HashSet::default(),
             hoisted_identifiers: HashSet::default(),
             validate_preserve_existing_memoization_guarantees: config

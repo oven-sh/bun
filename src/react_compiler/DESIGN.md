@@ -137,6 +137,13 @@ lowering, which tells codegen which identifier it became. A nested function
 expression is printed anew, under the text of its name: where it refers to that
 name, lowering stops (see "Bail-out semantics").
 
+The runtime transpiler has no renamer and prints a symbol under the name it
+has. A local with the text of the own name would take the reads of that name
+there, so RenameVariables gives that text to no local, as it does for the name
+of a global (`Environment::own_name`). A store to the own name stops lowering
+with a Todo: the first store to a name becomes its declaration, and the
+function expression has declared this one.
+
 ### The compiler as a linter
 
 `bun lint` has the validations as rules (`react/refs`, `react-hooks/refs`, ...). `lint.rs` is upstream's

@@ -16,13 +16,13 @@
 
 use crate::collections::IndexMap;
 use crate::diagnostics::{
-    CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
+    CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, cold_todo,
 };
 use crate::hir::{
     AstAlloc, BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, IdentifierId,
     InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType,
     ReturnVariant, SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding,
-    environment::Environment,
+    environment::Environment, visitors::value_lvalues,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
@@ -116,7 +116,32 @@ pub(crate) fn lower(
     }
 
     let own_name_identifier = own_name.and_then(|name| bindings.get(&name).copied());
+    if let (Some(name), Some(identifier)) = (own_name, own_name_identifier) {
+        reject_store_to_own_name(&hir_func, env, identifier)?;
+        env.own_name = Some(StoreStr::new(host.ref_name(name)));
+    }
     Ok((hir_func, own_name_identifier))
+}
+
+/// Not in upstream. The first store to a name becomes its declaration, and the function expression has declared this one.
+fn reject_store_to_own_name(
+    func: &HirFunction,
+    env: &Environment,
+    own_name: IdentifierId,
+) -> Result<(), CompilerError> {
+    let declaration = env.identifiers[own_name.0 as usize].declaration_id;
+    let functions = core::iter::once(func).chain(env.functions.iter());
+    for instr in functions.flat_map(|function| function.instructions.iter()) {
+        for place in value_lvalues(&instr.value) {
+            if env.identifiers[place.identifier.0 as usize].declaration_id == declaration {
+                return Err(cold_todo(
+                    "(BuildHIR::lower) Handle a write to the name of a function expression",
+                    instr.loc,
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Port of upstream `lower_inner()` (build_hir.rs:5985).

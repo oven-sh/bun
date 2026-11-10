@@ -321,6 +321,8 @@ fn rename_variables_impl(func: &ReactiveFunction, visitor: &Visitor, scopes: &mu
 fn collect_referenced_globals(block: &ReactiveBlock, env: &Environment) -> HashSet<StoreStr> {
     let mut globals = HashSet::default();
     collect_globals_block(block, &mut globals, env);
+    // Not in upstream: the runtime transpiler has no renamer and prints the function's own name as it is written.
+    globals.extend(env.own_name);
     globals
 }
 

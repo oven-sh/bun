@@ -2286,6 +2286,77 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // No renamer runs here: a symbol is printed under the name it has. A local with the name of the function expression
+  // took the reads of that name: a local of a block, the memo cache `$`, a temporary `t1`. A store to that name was
+  // compiled to a declaration of such a local.
+  test("a function expression reads its own name beside a local with that name", async () => {
+    const result = await compiled(
+      {
+        "node_modules/react/compiler-runtime.js": `
+          export const c = size => {
+            globalThis.caches = (globalThis.caches ?? 0) + 1;
+            return Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          };
+        `,
+        "src/names.jsx": `
+          import { useState } from "react";
+          export const Block = function Self({ items }) {
+            const [name, ...rest] = items;
+            let label;
+            {
+              let Self = name + "!";
+              label = Self + Self;
+            }
+            return <ul title={label}>{rest.map(item => typeof Self + item)}</ul>;
+          };
+          export const Cache = function $({ items }) {
+            const [name, ...rest] = items;
+            const sizes = rest.map($ => String($).length);
+            return <ul title={name + sizes}>{rest.map(item => typeof $ + item)}</ul>;
+          };
+          export const useTemporary = function t1(items) {
+            const [prefix] = useState("p");
+            const [name, ...rest] = items;
+            return [prefix + name, ...rest.map(item => typeof t1 + item)];
+          };
+          export const Store = function Self({ items }) {
+            const [name, ...rest] = items;
+            Self = name;
+            return <ul title={Self}>{rest}</ul>;
+          };
+        `,
+        "compiled.test.tsx": `
+          import { expect, test } from "bun:test";
+          import { Block, Cache, Store, useTemporary } from "./src/names";
+          test("which are compiled", () => {
+            const items = ["a", "b"];
+            const renders = {
+              Block: () => Block({ items }).props,
+              Cache: () => Cache({ items }).props,
+              useTemporary: () => useTemporary(items),
+              Store: () => Store({ items }),
+            };
+            const takesACache = name => {
+              const before = globalThis.caches ?? 0;
+              try {
+                renders[name]();
+              } catch {}
+              return (globalThis.caches ?? 0) > before;
+            };
+            console.log("compiled: " + Object.keys(renders).filter(takesACache).join(" "));
+            expect(renders.Block()).toEqual({ title: "a!a!", children: ["functionb"] });
+            expect(renders.Cache()).toEqual({ title: "a1", children: ["functionb"] });
+            expect(renders.useTemporary()).toEqual(["pa", "functionb"]);
+            expect(renders.Store).toThrow(TypeError);
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("Block Cache useTemporary");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a data: URL that is longer than a path can be is not compiled", async () => {
     const result = await compiled(
       {

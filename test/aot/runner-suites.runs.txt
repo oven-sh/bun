@@ -100,3 +100,20 @@ test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wai
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the cycle is first loaded by vi.importActual() of the mocked module
 # This one: a require() gives up on a mock whose factory has not settled, and the mock is removed or replaced. Every test of the fixture passes. Plain runs what the require() had begun to load once more.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
+# These: one mock stands for a name that import and require() resolve to two files. Compiled, a `require("name")` that the build resolved loads the file that require() resolves the name to, and that file runs. Plain gives it the mock.
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a file of the name that ran before its mock
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a library in node_modules that loads the name > jest.mock() and mock.module() mock it for the library too, as in Jest
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a library in node_modules that loads the name > vi.mock() leaves the library the file that it loads, as in Vitest ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a library in node_modules that loads the name > vi.mock() leaves the library the file that it loads, as in Vitest ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a library in node_modules that loads the name > vi.mock() leaves the library the file that it loads, as in Vitest []
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of one test file is gone in the next one ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of one test file is gone in the next one ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of one test file is gone in the next one []
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock that a preload made
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock that ends, and one that is made again
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > an ES module of a package that wraps the CommonJS file
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > every kind of mock is what require() and import() of the name get ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > every kind of mock is what require() and import() of the name get ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > every kind of mock is what require() and import() of the name get []
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > the original is the file that the kind of the function loads
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > whoever calls require(), and however it is spelled

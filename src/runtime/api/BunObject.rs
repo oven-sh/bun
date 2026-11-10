@@ -841,15 +841,17 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         Err(err) => return Err(ctx.throw_value(err)),
     };
 
-    if !query_string.is_empty() {
-        let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
-        // Vec<u8> writes are infallible.
-        let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
+    Ok(Resolved::Found(with_query(result_value, &query_string)))
+}
 
-        return Ok(Resolved::Found(BunString::clone_utf8(&arraylist)));
+fn with_query(path: BunString, query_string: &BunString) -> BunString {
+    if query_string.is_empty() {
+        return path;
     }
-
-    Ok(Resolved::Found(result_value))
+    let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
+    // Vec<u8> writes are infallible.
+    let _ = write!(&mut arraylist, "{}{}", path, query_string);
+    BunString::clone_utf8(&arraylist)
 }
 
 pub(crate) fn resolve_sync(
@@ -988,30 +990,50 @@ pub(crate) fn bun_resolve_sync_with_paths(
     })
 }
 
-/// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
-/// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
-/// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
-/// that is not a string — is thrown.
-// HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
-pub(crate) fn bun_resolve_sync_with_source_if_exists(
+/// Resolves `specifier` relative to `source` for a module mock, which stands for the file that an `import`
+/// of the name loads and for the file that `require()` of it loads. Returns the path of the first.
+/// `for_require`, where the caller asks for it, gets the path of the second when that is another file,
+/// and is left as it is otherwise.
+/// A specifier the resolver cannot resolve (the `ResolveMessage` case, e.g. "Cannot find module") yields
+/// `undefined` instead of throwing; everything else — an `onResolve` plugin throwing or returning an
+/// invalid result, a specifier that is not a string — is thrown.
+// HOST_EXPORT(Bun__resolveForImportAndRequire, c)
+pub(crate) fn bun_resolve_for_import_and_require(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: &BunString,
-    is_esm: bool,
+    for_require: Option<&mut BunString>,
 ) -> JSValue {
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
     jsc::to_js_host_call(global, || {
-        match resolve_with_args::<true>(
+        let decoded_specifier;
+        let specifier_for_resolve = if specifier_str.starts_with_ascii(b"file://") {
+            decoded_specifier = bun_url::path_from_file_url(&specifier_str);
+            &decoded_specifier
+        } else {
+            &specifier_str
+        };
+        let mut query_string = BunString::EMPTY;
+        let (for_import, other) = match VirtualMachine::resolve_for_import_and_require(
             global,
-            &specifier_str,
+            specifier_for_resolve,
             source,
-            ResolveMode::from_ffi_bools(is_esm, false),
+            &mut query_string,
+            for_require.is_some(),
         )? {
-            Resolved::Found(value) => value.into_js(global),
-            Resolved::NotFound(_) => Ok(JSValue::UNDEFINED),
+            Ok(paths) => paths,
+            Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
+                return Ok(JSValue::UNDEFINED);
+            }
+            // e.g. an onResolve plugin returned an invalid result
+            Err(err) => return Err(global.throw_value(err)),
+        };
+        if let (Some(for_require), Some(path)) = (for_require, other) {
+            *for_require = with_query(path, &query_string);
         }
+        with_query(for_import, &query_string).into_js(global)
     })
 }
 

@@ -276,8 +276,7 @@ std::optional<AOT::ModuleID> moduleThatMockReplaces(const String& path)
 
 static bool replacesNativeModule(JSGlobalObject* globalObject, const String& path)
 {
-    auto& plugins = uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins;
-    return plugins.hasVirtualModules() && plugins.virtualModules->contains(path);
+    return uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins.containsVirtualModule(path);
 }
 
 // As in an executable of `bun build --compile`: a name that the run time resolves is the plugins' first.
@@ -298,24 +297,14 @@ void recordFileRunFromSource(JSGlobalObject*, const String& path, ASCIILiteral w
 // A module that `build.module()` gave for the name, or an onResolve whose filter takes it. The loader calls the callback where it resolves the name. A mock lies in the same table and is no function.
 static bool isGivenByPlugin(Zig::GlobalObject* global, const String& name)
 {
-    auto* modules = global->onLoadPlugins.virtualModules;
-    auto given = modules ? modules->get(name) : JSC::Strong<JSC::JSObject>();
+    JSObject* given = global->onLoadPlugins.virtualModule(name);
     return given && given->isCallable();
 }
 
 static bool hasResolvePlugins(JSGlobalObject* globalObject)
 {
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    if (!global->onResolvePlugins.isEmpty())
-        return true;
-    auto* modules = global->onLoadPlugins.virtualModules;
-    if (!modules)
-        return false;
-    for (auto& given : modules->values()) {
-        if (given && given.get()->isCallable())
-            return true;
-    }
-    return false;
+    return !global->onResolvePlugins.isEmpty() || global->onLoadPlugins.hasVirtualModuleFunction();
 }
 
 struct AnswerOfPlugins {
@@ -789,8 +778,7 @@ static bool isReadAsCodeByRequire(Zig::GlobalObject* globalObject, AOT::ModuleID
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject* globalObject, const String& key)
 {
     auto module = moduleThatAnswersToPath(key);
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
-    if (!module || (virtualModules && virtualModules->contains(key)) || refusesFileToAsker(globalObject, *module, AOT::LoadKind::Require))
+    if (!module || globalObject->onLoadPlugins.containsVirtualModule(key) || refusesFileToAsker(globalObject, *module, AOT::LoadKind::Require))
         return {};
     return AOT::requireModule(globalObject, *module);
 }
@@ -1073,8 +1061,7 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& k
     if (module && ranBesideMockThatWaits(globalObject, *module))
         RELEASE_AND_RETURN(scope, AOT::didDeletePendingMockEntry(globalObject, *module));
     // Under a mock the original lies under a key of its own and outlives the entry; so it does behind an end that brought nothing back. Where the end of the mock has moved it back under this key, it goes with the entry.
-    auto* mocks = globalObject->onLoadPlugins.virtualModules;
-    if (module && AOT::isEvicted(globalObject, *module) && AOT::wasOriginalRestoredToOwnKey(globalObject, *module) && !(mocks && mocks->contains(key)))
+    if (module && AOT::isEvicted(globalObject, *module) && AOT::wasOriginalRestoredToOwnKey(globalObject, *module) && !globalObject->onLoadPlugins.containsVirtualModule(key))
         AOT::clearRetainedOriginalExports(globalObject, *module);
     takeOutOfProgram(globalObject, key, [](JSGlobalObject* realm, AOT::ModuleID module) {
         if (AOT::isLoadInFlight(realm, module))

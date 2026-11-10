@@ -108,6 +108,24 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a file of the name that ran before its mock
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a library in node_modules that loads the name > jest.mock() and mock.module() mock it for the library too, as in Jest
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a library in node_modules that loads the name > vi.mock() leaves the library the file that it loads, as in Vitest ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a library in node_modules that loads the name > vi.mock() leaves the library the file that it loads, as in Vitest ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a library in node_modules that loads the name > vi.mock() leaves the library the file that it loads, as in Vitest []
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of one test file is gone in the next one ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of one test file is gone in the next one ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of one test file is gone in the next one []
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of the name and a mock of the path that require() resolves it to
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock that a preload made
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock that ends, and one that is made again
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > an ES module of a package that wraps the CommonJS file
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > every kind of mock is what require() and import() of the name get ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > every kind of mock is what require() and import() of the name get ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > every kind of mock is what require() and import() of the name get []
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > require() that cannot wait for an async factory gets the file that it loads
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > the original is the file that the kind of the function loads
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > whoever calls require(), and however it is spelled
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept

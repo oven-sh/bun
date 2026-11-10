@@ -104,6 +104,8 @@ only for diagnostic span width).
 | upstream emits                             | Bun port emits                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------------------------- |
 | `Expression::Identifier(Identifier{name})` | `Expr::init_identifier(ref_, loc)` — `ref_` from `Builder.declare_temporary(name)` |
+| `Identifier` named `NaN` or `Infinity`     | `Expr::init(E::Number::new(value), loc)`, like every other number                  |
+| `Identifier` named `undefined`             | `Expr::init(E::Undefined {}, loc)`                                                 |
 | `Statement::VariableDeclaration`           | `Stmt::alloc(S::Local { kind, decls, .. }, loc)`                                   |
 | `Statement::ExpressionStatement`           | `Stmt::alloc(S::SExpr { value, .. }, loc)`                                         |
 | `BlockStatement { body }`                  | `G::FnBody { stmts: StoreSlice<Stmt>, loc }`                                       |
@@ -115,6 +117,16 @@ only for diagnostic span width).
 Node allocation uses the thread-local store (`Expr::init`, `Stmt::alloc`) so
 nodes land in the parser's arena. `Binding` and slice/string copies need an
 explicit `&Arena` (the `Codegen` context carries one).
+
+A value is never a name. Upstream's Rust codegen writes `NaN` and `Infinity` as
+identifiers, because its tree is sent as JSON, which has no token for a number
+that is not finite. Codegen here looks no name up for a value: a name reads
+whatever the file binds under it (`import { Infinity } from "./icons"`). It
+emits `E::Number`, and `E::Undefined` for `undefined`, and the printer spells
+both. Where that spelling is the bare name, a binding that the renamer does not
+rename still reads it, as in code the compiler did not touch. What is not a
+value still resolves in scope: the classic JSX factory
+(`Host::jsx_classic_factory`, see Hook placement).
 
 New symbols (`$`, `t0`, `c`, `_c`) are minted via the `Host` trait
 implemented by the parser's `P`; the import of `react/compiler-runtime` is

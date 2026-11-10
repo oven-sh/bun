@@ -1637,6 +1637,210 @@ describe("bundler", () => {
     },
   });
 
+  // A number that is NaN or +/-Infinity in a compiled function was printed as
+  // the identifier `NaN` or `Infinity`, looked up by name from the function.
+  // Whatever the file binds under that name took the place of the number.
+  const countsMemoCaches = {
+    ...stubReact,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      exports.c = n => {
+        globalThis.memoCaches = (globalThis.memoCaches ?? 0) + 1;
+        return new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+    `,
+  };
+  const nonFiniteNumbers = {
+    "/entry.tsx": /* tsx */ `
+      import { Quota } from "./imported";
+      import { Row } from "./declared";
+      import { Big } from "./spelled";
+      import { Own } from "./own";
+      import { Nested } from "./nested";
+      import { make } from "./enclosed";
+      import { Icons } from "./namespace";
+      import { InCommonJS } from "./commonjs.jsx";
+      const show = (element: any) => element.p.v.map((x: any) => String(x)).join(" ");
+      console.log(show(Quota({ used: 1 })));
+      console.log(show(Row({ a: 2 })));
+      console.log(show(Big({ a: 3 })));
+      console.log(show(Own({ NaN: "prop-nan" })));
+      console.log(show(Nested({ a: 5 })));
+      console.log(show(make("outer-infinity", "outer-nan")({ a: 6 })));
+      console.log(show(Icons.Badge({ count: 7 })));
+      console.log(show(InCommonJS({ a: 8 })));
+      // Each call of a compiled function makes one.
+      console.log("memo caches:", globalThis.memoCaches);
+    `,
+    "/icons.tsx": /* tsx */ `
+      export function Infinity() { return "icon"; }
+      export const NaN = "imported-nan";
+    `,
+    "/imported.tsx": /* tsx */ `
+      import { Infinity, NaN } from "./icons";
+      export function Quota({ used }: { used: number }) {
+        const unlimited = 1 / 0;
+        const zero = 0;
+        const none = zero / 0;
+        const label = used === unlimited ? <Infinity /> : String(used);
+        return <i v={[label, unlimited, -unlimited, none, typeof Infinity, NaN]} />;
+      }
+    `,
+    "/declared.tsx": /* tsx */ `
+      const Infinity = "module-infinity";
+      const NaN = "module-nan";
+      export function Row({ a }: { a: number }) {
+        const max = 1 / 0;
+        const zero = 0;
+        const none = zero / 0;
+        return <i v={[a, max, -max, none, Infinity, NaN]} />;
+      }
+    `,
+    // Nothing to fold: the source spells the number.
+    "/spelled.tsx": /* tsx */ `
+      import { Infinity } from "./icons";
+      export function Big({ a }: { a: number }) {
+        const huge = 1e999;
+        const tiny = -1e999;
+        return <i v={[a, huge, tiny, typeof Infinity]} />;
+      }
+    `,
+    // A prop and a local of the compiled function itself.
+    "/own.tsx": /* tsx */ `
+      export function Own({ NaN }: { NaN: string }) {
+        const Infinity = "local-infinity";
+        const max = 1 / 0;
+        const zero = 0;
+        const none = zero / 0;
+        return <i v={[NaN, Infinity, max, -max, none]} />;
+      }
+    `,
+    "/nested.tsx": /* tsx */ `
+      import { Infinity, NaN } from "./icons";
+      export function Nested({ a }: { a: number }) {
+        const zero = 0;
+        const inner = function () {
+          return [a, 1 / 0, zero / 0];
+        };
+        const outlined = [1, 2].map(() => 1 / 0);
+        return <i v={[...inner(), outlined[0], typeof Infinity, NaN]} />;
+      }
+    `,
+    "/enclosed.tsx": /* tsx */ `
+      export function make(Infinity: string, NaN: string) {
+        const Inner = ({ a }: { a: number }) => {
+          const max = 1 / 0;
+          const zero = 0;
+          const none = zero / 0;
+          return <i v={[a, max, -max, none, Infinity, NaN]} />;
+        };
+        return Inner;
+      }
+    `,
+    "/namespace.tsx": /* tsx */ `
+      export namespace Icons {
+        export function Infinity() { return "icon"; }
+        export const NaN = "namespace-nan";
+        export function Badge({ count }: { count: number }) {
+          const max = 1 / 0;
+          const zero = 0;
+          const none = zero / 0;
+          return <i v={[count, max, -max, none]} />;
+        }
+      }
+    `,
+    "/commonjs.jsx": /* jsx */ `
+      const Infinity = "commonjs-infinity";
+      const NaN = "commonjs-nan";
+      function InCommonJS({ a }) {
+        const max = 1 / 0;
+        const zero = 0;
+        const none = zero / 0;
+        return <i v={[a, max, -max, none, Infinity, NaN]} />;
+      }
+      module.exports = { InCommonJS };
+    `,
+    ...countsMemoCaches,
+  };
+  // What the build without `reactCompiler` prints, with 0 memo caches.
+  const nonFiniteNumbersOutput = [
+    "1 Infinity -Infinity NaN function imported-nan",
+    "2 Infinity -Infinity NaN module-infinity module-nan",
+    "3 Infinity -Infinity function",
+    "prop-nan local-infinity Infinity -Infinity NaN",
+    "5 Infinity NaN Infinity function imported-nan",
+    "6 Infinity -Infinity NaN outer-infinity outer-nan",
+    "7 Infinity -Infinity NaN",
+    "8 Infinity -Infinity NaN commonjs-infinity commonjs-nan",
+    "memo caches: 8",
+  ].join("\n");
+  for (const [name, minify] of [
+    ["", {}],
+    ["MinifyIdentifiers", { minifyIdentifiers: true }],
+    // Prints Infinity as `1 / 0`.
+    ["MinifySyntax", { minifySyntax: true }],
+    ["Minify", { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true }],
+    ["Cjs", { format: "cjs" }],
+  ] as const) {
+    itBundled(`react-compiler/NonFiniteNumberIsNotABindingOfTheFile${name}`, {
+      files: nonFiniteNumbers,
+      reactCompiler: true,
+      target: "browser",
+      ...minify,
+      run: { stdout: nonFiniteNumbersOutput },
+    });
+  }
+
+  // The lookup by name also counted as a use of the binding it found. An import
+  // that is only a type was kept, and the build failed with `No matching export`.
+  itBundled("react-compiler/NonFiniteNumberIsNotAUseOfATypeImport", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { Infinity, NaN } from "./types";
+        function Typed({ a }: { a: Infinity | NaN }) {
+          const max = 1 / 0;
+          const zero = 0;
+          const none = zero / 0;
+          return <i v={[a, max, -max, none]} />;
+        }
+        console.log(Typed({ a: 9 }).p.v.map((x: any) => String(x)).join(" "));
+        console.log("memo caches:", globalThis.memoCaches);
+      `,
+      "/types.ts": /* ts */ `
+        export type Infinity = number;
+        export type NaN = number;
+      `,
+      ...countsMemoCaches,
+    },
+    reactCompiler: true,
+    target: "browser",
+    run: { stdout: "9 Infinity -Infinity NaN\nmemo caches: 1" },
+  });
+
+  // An import from a CommonJS file is a property of what `require()` returns.
+  // The name was printed bare, as `Infinity2`, and nothing declares that name.
+  itBundled("react-compiler/NonFiniteNumberIsNotAnImportFromCommonJS", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { Infinity, NaN } from "./icons.cjs";
+        function FromCommonJS({ a }: { a: number }) {
+          const max = 1 / 0;
+          const zero = 0;
+          const none = zero / 0;
+          return <i v={[a, max, -max, none, typeof Infinity, NaN]} />;
+        }
+        console.log(FromCommonJS({ a: 10 }).p.v.map((x: any) => String(x)).join(" "));
+        console.log("memo caches:", globalThis.memoCaches);
+      `,
+      "/icons.cjs": /* js */ `
+        module.exports = { Infinity: function () { return "icon"; }, NaN: "required-nan" };
+      `,
+      ...countsMemoCaches,
+    },
+    reactCompiler: true,
+    target: "browser",
+    run: { stdout: "10 Infinity -Infinity NaN function required-nan\nmemo caches: 1" },
+  });
+
   // Regression: constant propagation marked the result temporary of a store
   // (`x = 10`) or an update (`x++`) as constant. When a consumer folded that
   // temporary away (`-(x = 10)` -> `-10`), the store lost its lvalue and codegen
@@ -4595,6 +4799,70 @@ describe("bundler", () => {
       });
     },
   });
+});
+
+// `bun test --react-compiler` renames no binding. The compiler printed the name
+// `Infinity` for the number, and the import or the prop of that name was read.
+test("react-compiler does not read a binding named Infinity for a number in bun test", async () => {
+  using dir = tempDir("react-compiler-non-finite", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      exports: {
+        "./compiler-runtime": "./compiler-runtime.js",
+        "./jsx-runtime": "./jsx.js",
+        "./jsx-dev-runtime": "./jsx.js",
+      },
+    }),
+    // Each call of a compiled function asks for one cache.
+    "node_modules/react/compiler-runtime.js": `
+      export const c = size => {
+        globalThis.memoCaches = (globalThis.memoCaches ?? 0) + 1;
+        return Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+    `,
+    "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => ({ type, props }), jsx = jsxDEV, jsxs = jsxDEV;`,
+    "icons.tsx": `export function Infinity() { return "icon"; }`,
+    "Quota.tsx": `
+      import { Infinity } from "./icons";
+      export function Quota({ used }) {
+        const unlimited = 1e999;
+        const label = used === unlimited ? <Infinity /> : String(used);
+        return <i values={[label, unlimited, -1e999, typeof Infinity]} />;
+      }
+    `,
+    "Limit.tsx": `
+      export function Limit({ Infinity }) {
+        const zero = 0;
+        return <i values={[Infinity, 1e999, zero / 0]} />;
+      }
+    `,
+    "values.test.tsx": `
+      import { test } from "bun:test";
+      import { Limit } from "./Limit";
+      import { Quota } from "./Quota";
+      test("values", () => {
+        const values = [...Quota({ used: 1 }).props.values, ...Limit({ Infinity: "prop" }).props.values];
+        console.log("values: " + values.map(String).join(" "));
+        console.log("memo caches: " + globalThis.memoCaches);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./values.test.tsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(" 1 pass");
+  expect(stdout.split("\n").filter(line => /^(values|memo caches): /.test(line))).toEqual([
+    "values: 1 Infinity -Infinity function prop Infinity NaN",
+    "memo caches: 2",
+  ]);
+  expect(exitCode).toBe(0);
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

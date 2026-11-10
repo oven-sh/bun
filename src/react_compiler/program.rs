@@ -145,10 +145,6 @@ pub trait Host {
         unreachable!("runtime_sentinel requires the bun parser host")
     }
 
-    fn global_ref(&mut self, name: &[u8]) -> Ref {
-        self.new_generated(name)
-    }
-
     fn record_usage(&mut self, ref_: Ref);
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }

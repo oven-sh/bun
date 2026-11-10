@@ -91,15 +91,13 @@ pub struct OutlinedFunction {
 #[derive(Clone, Copy)]
 enum WellKnown {
     MemoCache,
-    NaN,
-    Infinity,
     Underscore,
     MemoCacheSentinel,
     EarlyReturnSentinel,
 }
 
 impl WellKnown {
-    const COUNT: usize = 6;
+    const COUNT: usize = 4;
 }
 
 /// Host-side state shared across nested function-expression codegen so the
@@ -170,16 +168,6 @@ impl<'h> Codegen<'h> {
         };
         self.host.record_usage(r);
         Expr::init(E::ImportIdentifier::new(r, false), loc)
-    }
-
-    fn well_known_global(&mut self, w: WellKnown, name: &[u8]) -> Ref {
-        if let Some(r) = self.well_known[w as usize] {
-            self.host.record_usage(r);
-            return r;
-        }
-        let r = self.host.global_ref(name);
-        self.well_known[w as usize] = Some(r);
-        r
     }
 
     fn ident_expr(&mut self, name: StoreStr, loc: Loc) -> Expr {
@@ -1862,7 +1850,7 @@ fn codegen_base_instruction_value(
     let loc = convert_loc(iv.loc().copied());
     match iv {
         InstructionValue::Primitive { value, loc } => {
-            Ok(codegen_primitive_value(cx, value, convert_loc(*loc)))
+            Ok(codegen_primitive_value(value, convert_loc(*loc)))
         }
         InstructionValue::BinaryExpression {
             operator,
@@ -3358,33 +3346,10 @@ fn property_access_expr(
     }
 }
 
-fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -> Expr {
+fn codegen_primitive_value(value: &PrimitiveValue, loc: Loc) -> Expr {
     match value {
-        PrimitiveValue::Number(n) => {
-            let f = n.value();
-            if f.is_nan() {
-                Expr::init_identifier(cx.cg.well_known_global(WellKnown::NaN, b"NaN"), loc)
-            } else if f.is_infinite() {
-                let inf = Expr::init_identifier(
-                    cx.cg.well_known_global(WellKnown::Infinity, b"Infinity"),
-                    loc,
-                );
-                if f > 0.0 {
-                    inf
-                } else {
-                    Expr::init(
-                        E::Unary {
-                            op: OpCode::UnNeg,
-                            value: inf,
-                            flags: E::UnaryFlags::empty(),
-                        },
-                        loc,
-                    )
-                }
-            } else {
-                Expr::init(E::Number::new(f), loc)
-            }
-        }
+        // Not in upstream, which names `NaN` and `Infinity`: a name reads what the file binds under it (DESIGN.md).
+        PrimitiveValue::Number(n) => Expr::init(E::Number::new(n.value()), loc),
         PrimitiveValue::Boolean(b) => Expr::init(E::Boolean { value: *b }, loc),
         PrimitiveValue::String(s) => Expr {
             data: ExprData::EString(s.as_estring()),

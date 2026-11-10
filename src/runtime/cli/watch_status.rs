@@ -49,9 +49,7 @@ fn color(start: &'static str) -> [&'static str; 2] {
     }
 }
 
-/// Quotes `s` as `util.inspect` quotes a string (`strEscape` in node's `lib/internal/util/inspect.js`):
-/// single quotes unless the text has them, then double quotes, then backticks. Escapes the control
-/// characters U+0000 to U+001F and U+007F to U+009F. Bytes that are not UTF-8 pass through.
+/// Quotes `s` as `strEscape` of node's `lib/internal/util/inspect.js` does.
 fn inspect_quote(s: &[u8]) -> Vec<u8> {
     let has_single = bun_core::strings::contains_char(s, b'\'');
     let has_double = bun_core::strings::contains_char(s, b'"');

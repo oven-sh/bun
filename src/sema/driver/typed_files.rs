@@ -1309,6 +1309,8 @@ impl Mappings {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Order {
+    /// Behind the name of a member. Where no `;` follows it, that is where a line for the end of the class goes too.
+    MemberType,
     Line,
     Signature,
     Directive,
@@ -3078,7 +3080,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                 if slot.place == Place::MemberType
                     && let Some(noted) = module.types.and_then(|types| types.member_type(key))
                 {
-                    insertions.add(slot.start, Order::Slot, [&b": "[..], noted].concat());
+                    let annotation = [&b": "[..], noted].concat();
+                    insertions.add(slot.start, Order::MemberType, annotation);
                 }
                 continue;
             };
@@ -3142,6 +3145,10 @@ impl<'a> Transfer<'_, 'a, '_> {
                     (Order::Close(slot.start - slot.key - 1), text)
                 }
                 _ => (Order::Slot, text),
+            };
+            let order = match slot.place {
+                Place::MemberType => Order::MemberType,
+                _ => order,
             };
             insertions.add(slot.start, order, text);
         }
@@ -4284,7 +4291,9 @@ fn text_of_types_that_name_nothing(
         return text_that_names_nothing(services, ty);
     }
     let mut texts: Vec<Box<[u8]>> = Vec::new();
-    for &part in services.constituents(ty) {
+    // The `?` of a member says that it can be absent. Only `exactOptionalPropertyTypes` has a type for that.
+    let parts = services.constituents(ty).iter();
+    for &part in parts.filter(|&&part| part != TypeId::MISSING) {
         let text = text_that_names_nothing(services, part)?;
         if !texts.contains(&text) {
             texts.push(text);

@@ -116,6 +116,28 @@ fn a_member_with_no_annotation_and_no_value_is_noted_with_a_type_that_names_noth
     assert_noted(&[("main.ts", MEMBERS)], &expected);
 }
 
+const OPTIONAL: &str = "export class Box {
+    label?;
+    constructor() {
+        this.label = 'a';
+    }
+}
+";
+
+const WITH_EXACT_OPTIONAL_PROPERTY_TYPES: &str = r#"{
+    "compilerOptions": { "strict": true, "exactOptionalPropertyTypes": true, "noLib": true, "types": [] }
+}"#;
+
+#[test]
+fn the_note_of_an_optional_member_has_undefined_only_where_a_value_can_be_undefined() {
+    assert_noted(&[("main.ts", OPTIONAL)], &[("label", "string | undefined")]);
+    let exact = [
+        ("main.ts", OPTIONAL),
+        ("tsconfig.json", WITH_EXACT_OPTIONAL_PROPERTY_TYPES),
+    ];
+    assert_noted(&exact, &[("label", "string")]);
+}
+
 const WITHOUT_NO_IMPLICIT_ANY: &str = r#"{
     "compilerOptions": { "strict": true, "noImplicitAny": false, "noLib": true, "types": [] }
 }"#;

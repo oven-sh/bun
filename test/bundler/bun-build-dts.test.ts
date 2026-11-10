@@ -173,6 +173,41 @@ export function join(first: string, second: string): string {
   const membersOf = (text: string) =>
     text.match(/^ +(?:static )?#?\w+\??(?:: [^;{]+| = [^;]+)?;$/gm)?.map(it => it.trim());
 
+  // Without a `;` behind the last member, its type and a member that has no JavaScript go to the same place.
+  test("--minify-syntax --minify-whitespace: the type of the last member of a class stands behind its name", async () => {
+    using dir = tempDir(
+      "build-dts-minify-last-member",
+      only(`export abstract class Shape {
+  constructor() {
+    this.kind = "shape";
+  }
+  kind;
+  abstract area(): number;
+}
+export class Sizes {
+  constructor() {
+    this.width = 1;
+  }
+  width: number;
+  [side: string]: number;
+}
+`),
+    );
+    const flags = ["--dts", "--minify-syntax", "--minify-whitespace"];
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(written(dir, "index.aot.ts")).toBe(
+      `abstract class Shape{constructor(){this.kind="shape"}
+kind: string;abstract area(): number;
+}
+class Sizes{constructor(){this.width=1}
+width: number;[side: string]: number;
+}
+export{Shape,Sizes};
+`,
+    );
+  });
+
   test("a class member without an annotation keeps the type of the sources when the build removes what it stores", async () => {
     using dir = tempDir(
       "build-dts-dead-stores",

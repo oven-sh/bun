@@ -1,4 +1,4 @@
-// STATISTIC: ReadsToldApartByShape >= 2
+// STATISTIC: PropertyReadsDispatchedByShape >= 2
 const rows = [];
 for (let at = 0; at < 32; at++) {
   if (at % 4 === 0) rows.push({ id: at, price: at * 1.25, quantity: at + 1 });

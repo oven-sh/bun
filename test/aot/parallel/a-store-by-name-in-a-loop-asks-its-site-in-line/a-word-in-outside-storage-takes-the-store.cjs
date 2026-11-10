@@ -1,5 +1,5 @@
 // The record names a word outside the cell: the words beside it stay as they are, in objects, lists and functions.
-// STATISTIC: StoresByNameThatAskTheirSitesInLine >= 1
+// STATISTIC: SiteCachedStoresEmittedInline >= 1
 "use strict";
 function fill(crates, turns, given) { let sum = 0; for (let i = 0; i < turns; i++) { const crate = crates[i % crates.length]; crate.lid = given === undefined ? i : given; sum = (sum + i) | 0; } return sum; }
 function plain(n) { return JSON.parse("[" + Array.from({ length: n }, () => '{"hinge":1,"lid":0}').join(",") + "]"); }

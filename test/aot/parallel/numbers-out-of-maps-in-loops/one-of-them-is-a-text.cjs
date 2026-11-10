@@ -1,6 +1,6 @@
 "use strict";
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 4
-// STATISTIC: LookupsBuiltInFrontOfLoops >= 4
+// STATISTIC: MapResultsGuardedAsNumbers >= 4
+// STATISTIC: CollectionLookupsHoisted >= 4
 const turns = JSON.parse("8") | 0;
 // One of the four is a text: the sum is a text from there on, in the order in which it is written.
 const settings = new Map(Object.entries(JSON.parse("{\"port\":8080,\"body\":\"b\",\"ttl\":60,\"depth\":3}")));

@@ -1,5 +1,5 @@
 # Off a record that a store in sight fills under keys that are not written, a plain build is told nothing at a read by key: the read is typed anything, no check stands there, and what flows on is held at the
-# next door. Link's flow still says what such a read may find. Under CheckProofsAtRunTime with ReadsByKeyOffFilledRecordsAreListed that is listed and asked at the read: the lane of the stored programs says both
+# next door. Link's flow still says what such a read may find. Under CheckProofsAtRunTime with CheckDictionaryReadProofs that is listed and asked at the read: the lane of the stored programs says both
 # and keeps its eye on it. CheckProofsAtRunTime alone, which --aot-harden=proof-checks is and servers ship under, makes no such proof: there is nothing to check, and nothing is paid.
 # f2 = sumOf
 # RUN(PLAIN): walk f2 mechanisms=all
@@ -10,11 +10,11 @@
 # PROOFS-LABEL: code f2:Body
 # PROOFS: ElemGet
 # PROOFS-NOT: source=Contents
-# RUN(ALONE): walk f2 mechanisms=all testing=ReadsByKeyOffFilledRecordsAreListed
+# RUN(ALONE): walk f2 mechanisms=all testing=CheckDictionaryReadProofs
 # ALONE-LABEL: code f2:Body
 # ALONE: ElemGet
 # ALONE-NOT: source=Contents
-# RUN(LISTED): walk f2 mechanisms=all testing=CheckProofsAtRunTime,ReadsByKeyOffFilledRecordsAreListed
+# RUN(LISTED): walk f2 mechanisms=all testing=CheckProofsAtRunTime,CheckDictionaryReadProofs
 # LISTED-LABEL: code f2:Body
 # LISTED: ElemGet
 # LISTED: CheckProof {{*}}source=Contents

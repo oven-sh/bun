@@ -1,5 +1,5 @@
 // `list.push(a, ...other)`: in a loop, the list made in front of it: between two turns the program lays a push of its own on the list, takes it away again, freezes the list, or links it to another prototype.
-// STATISTIC: CallsOfPushThatAppendListPassed >= 1
+// STATISTIC: SpreadPushesCompiledAsAppends >= 1
 function run(deeds, sources) {
   const out = [];
   const said = [];

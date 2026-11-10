@@ -1,7 +1,7 @@
 // A helper copied in line asks whether its operand is an instance of one class, then of another, and behind both denials reads a field. The three classes are kin: what both questions have left is known by shape,
 // so the read asks no site by name.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
-// STATISTIC: ReadsByNameThatAskTheirSitesAlone = 0
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
+// STATISTIC: SiteCachedReadsEmitted = 0
 "use strict";
 class Circle { constructor(d) { this.r = d.v; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.v; } }

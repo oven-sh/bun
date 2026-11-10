@@ -34,7 +34,7 @@ test("the sorted keys of a record are laid under the list again", async () => {
   const again = Number(
     readFileSync(counts, "utf8")
       .split("\n")
-      .find(line => line.endsWith("counter:SortedStorageLaidUnderListsAgain"))
+      .find(line => line.endsWith("counter:SortedStorageCacheHits"))
       ?.split("\t")[0] ?? -1,
   );
   expect(again).toBe(196);

@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// docs/compiler/compatibility.mdx, "Conversions": compiled code doesn't ask a built-in constructor for its Symbol.hasInstance before an `instanceof`.
+// Compiled code doesn't ask a built-in constructor for its Symbol.hasInstance before an `instanceof`.
 const names = ["Array", "Map", "Set", "WeakMap", "Promise", "Date", "RegExp", "Error", "Object", "Function", "Uint8Array", "ArrayBuffer", "URL", "Buffer", "EventTarget", "Response"]; // prettier-ignore
 const files = {
   "package.json": `{ "name": "p", "type": "module" }`,

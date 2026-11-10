@@ -1,18 +1,19 @@
 // A loop in a closure that reads and stores a number in a variable of the scope around asks in front of its turns whether the slot holds a number. That read is none of the reads of the text: the closure
 // may be called above the `let`, and then the slot is still empty. So the read does not say that it follows its store: the empty slot stays in its type, the test fails, and the turn throws as the text says.
-// `--aot-testing=SlotsReadInFrontOfLoopsAreTakenToFollowTheirStores` leaves that word on the read. Under `--aot-harden=proof-checks` every such claim is asked at run time: with both the program stops by
+// `--aot-testing=AssumeSlotsInitialized` leaves that word on the read. Under `--aot-harden=proof-checks` every such claim is asked at run time: with both the program stops by
 // name. Under `--aot-check=Validate` the build itself is refused: no operation on the slot stands in front of the read.
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
 import { test } from "./harness/default-timeout";
+import { expectFaultyBuild } from "./harness/fault-injection";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const CHECKED = "--aot-harden=proof-checks";
 const VERIFIED = "--aot-check=Validate";
-const WORD = "--aot-testing=SlotsReadInFrontOfLoopsAreTakenToFollowTheirStores";
+const WORD = "--aot-testing=AssumeSlotsInitialized";
 const around = (add: string) => `const n = value => Number(process.argv[8] ?? value);
 function outer(early) {
   ${add}
@@ -75,17 +76,9 @@ describe.skipIf(!!unsupported)("the read of a slot that a loop lays in front of 
         expect(refused.stderr).toContain("says that it follows its store, and nothing vouches for it");
         expect(refused.exitCode).not.toBe(0);
         const built = await build("held", CHECKED, WORD);
-        // A Bun that is built with assertions or a sanitizer verifies the code of every unit: there this build is refused as the one above.
-        if (isASAN || isDebug) {
-          expect(built.stderr).toContain("says that it follows its store, and nothing vouches for it");
-          expect(built.exitCode).not.toBe(0);
-          return;
-        }
-        expect(built.exitCode).toBe(0);
+        if (!expectFaultyBuild(built, "says that it follows its store, and nothing vouches for it")) return;
         const held = await spawned([executable("held")], folder, { ...env, ...withoutCrashReport });
-        expect(held.stderr).toContain(
-          "what a slot of a scope holds is not of the type that the compiler has proven of it. It is: nothing.",
-        );
+        expect(held.stderr).toContain("found an unexpected value in a closure variable");
         expect(held.stdout).not.toContain("SAID");
         expect(held.exitCode).not.toBe(0);
       }));

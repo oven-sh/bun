@@ -6,7 +6,7 @@
 // It takes `count` files out of `programs` for each batch and waits for more. `--batches 0` never ends. `--seconds 3600` starts no batch behind that time. `--keep` copies the files instead.
 // `--count 1,3,12` takes one program for the first batch, three for the second, twelve for the third, one for the fourth. What the compiler proves of a program depends on what else the executable holds.
 // `--group 1` makes each program an entry point.
-// `--hides-function-text` is for a Bun built with --fuzzilli=on: neither run shows the text of a function, which the two spell differently.
+// `--hide-function-source` is for a Bun built with --fuzzilli=on: neither run prints function source, which the two format differently.
 // `--prints-members 60` rewrites 60 programs of 100 so that they print members of their objects in place of the objects (print-members-of-objects.ts).
 // `--one-scene 40` leaves 40 programs of 100 one of their scenes.
 // `--hooks-fail 30` lets functions that built-ins call end in an error of the engine, in 30 programs of 100.
@@ -17,7 +17,7 @@
 // `--unwraps-try-blocks 50` takes `try` blocks out of 50 programs of 100.
 // `--collects 100` runs each executable a second time in an environment in which it collects at every few allocations and overwrites what it frees: a program that prints something else there, or ends by a signal, is kept.
 // `--checks-proofs 100` builds each batch a second time with --aot-testing=CheckProofsAtRunTime: the executable then tests what the compiler has proven and stops where a proof is false, also where the answer happens to be right.
-// `--writes-straight 100` builds each batch a second time with --aot-testing=WritesBodiesStraight: the bodies are then emitted without the walk. The two executables must do the same, whatever `bun run` does: where they differ, one of the two ways to emit a body is at fault.
+// `--writes-straight 100` builds each batch a second time with --aot-testing=ForceStraightCompilation: the bodies are then emitted without the walk. The two executables must do the same, whatever `bun run` does: where they differ, one of the two ways to emit a body is at fault.
 // `--ends-early 100` runs each executable three times more, and the runner ends the Worker of each program at a moment drawn from a few milliseconds. What is printed doesn't count: a process that ends by a signal is kept.
 // `--minifies 25`: one run of this file in four builds everything with --minify-syntax --minify-whitespace, which change the shape of the code and keep its names, so `bun run` stays the yardstick.
 // `--allows-code-from-disk 50`: one run of this file in two builds everything with --aot-allow-code-from-disk, as an application does that imports its users' files: the compiler then counts on code that it hasn't seen, and what a program prints stays the same. Each entry point then starts with an `import()` of a name that only the run knows, which never runs: without one the flag changes nothing in the executable.
@@ -119,7 +119,7 @@ const { values: options } = parseArgs({
     "compares-errors": { type: "boolean", default: false },
     "keeps-what-compile-shares": { type: "boolean", default: false },
     "options-of-the-project": { type: "string", default: "0" },
-    "hides-function-text": { type: "boolean", default: false },
+    "hide-function-source": { type: "boolean", default: false },
     // Kinds of outcomes that are only counted otherwise, separated by commas.
     "also-keep": { type: "string", default: "" },
   },
@@ -149,7 +149,7 @@ const countsOfPrograms = fewToABuild
   ? [fewToABuild]
   : options.count.split(",").map(each => (isEachAProgram ? Math.min(Number(each), 120) : Number(each)));
 let count = countsOfPrograms[0];
-const hidesFunctionText = options["hides-function-text"];
+const hidesFunctionSource = options["hide-function-source"];
 const alsoKept = [
   ...options["also-keep"].split(",").filter(Boolean),
   ...(options["keeps-what-compile-shares"] ? ["as an executable without --aot"] : []),
@@ -157,7 +157,7 @@ const alsoKept = [
 const allowsCodeFromDisk = Math.random() * 100 < Number(options["allows-code-from-disk"]);
 const buildFlags = [
   ...options.flags.split(" ").filter(Boolean),
-  ...(hidesFunctionText ? ["--no-compile-function-source"] : []),
+  ...(hidesFunctionSource ? ["--no-compile-function-source"] : []),
   ...(Math.random() * 100 < Number(options.minifies) ? ["--minify-syntax", "--minify-whitespace"] : []),
   ...(allowsCodeFromDisk ? ["--aot-allow-code-from-disk"] : []),
 ];
@@ -661,7 +661,7 @@ const deletesACharacterOfAString =
   /\bdelete \(?"[^"\n]*"(?: as any)?\)?\[\d+\]|\bconst (t\d+) = "[^"\n]*";\n.*\bdelete \(?\1(?: as any)?\)?\[\d+\]/;
 /**
  * A folder of the program has a tsconfig.json of its own. With `bun run` every file follows the tsconfig.json where Bun is started. In an executable, with --aot or without, each file follows the one nearest
- * to it (docs/compiler/compatibility.mdx, "What differs on purpose"). The two part where either names an option that changes what is written, such as whether fields are assigned or defined, and the one
+ * to it. The two part where either names an option that changes what is written, such as whether fields are assigned or defined, and the one
  * where Bun is started can be drawn (--options-of-the-project). Such a program is held against the executable built without --aot as well.
  */
 const hasATsconfigInAFolderOfItsOwn = /^\/\/ @filename: \.\/[^\n]+\/tsconfig\.json$/m;
@@ -841,7 +841,7 @@ async function differsAmong(
 }
 /** The kernel does that to a process whose group is out of memory, and `spawn` at its bound. */
 const wasKilled = ({ end }: Ended) => end === "the process ended: SIGKILL";
-const plainEnv: Record<string, string> = hidesFunctionText ? { BUN_FUZZILLI_HIDES_FUNCTION_TEXT: "1" } : {};
+const plainEnv: Record<string, string> = hidesFunctionSource ? { BUN_FUZZILLI_HIDE_FUNCTION_SOURCE: "1" } : {};
 
 /**
  * The programs in an executable that is built without --aot. What differs from `bun run` there in the same way belongs to executables as such.
@@ -883,8 +883,8 @@ async function printsTheDepthOfTheStack(folder: string, extension: string) {
   return outputs[0] !== outputs[1];
 }
 
-/** Whether what the executable of the one program in `folder` prints changes when it is built without the text of its functions. */
-async function printsFromTheTextOfFunctions(folder: string, extension: string) {
+/** Whether what the executable of the one program in `folder` prints changes when it is built without function source. */
+async function dependsOnFunctionSource(folder: string, extension: string) {
   const outputs: string[] = [];
   for (const more of [[], ["--no-compile-function-source"]]) {
     await build(folder, 1, extension, 1, ["--aot", ...buildFlags, ...more]);
@@ -1501,7 +1501,7 @@ async function askAmongNeighbors(text: string, extension: string, add: (kind: st
       });
     difference = undefined;
   } else if (difference && withoutLayout(difference.compiled) === withoutLayout(difference.plain)) {
-    add("function text");
+    add("function source");
     difference = undefined;
   } else add(difference ? "among-neighbors" : "prints something else only beside a program that does too");
   if (difference) {
@@ -1728,8 +1728,8 @@ async function judgeUnderCollections(
   }
 }
 
-/** What an executable says when it stops at a proof of the compiler's that does not hold: "AOT: f3 at 823: what a field holds is not of the type that the compiler has proven of it." */
-const stopAtAFalseProof = /^AOT: f\d+ at \d+: .*$/m;
+/** What an executable says when it stops at a proof of the compiler's that does not hold: "bun: internal AOT error: type check failed at main.js:10:22 (tally)" */
+const stopAtAFalseProof = /^bun: internal AOT error: .*$/m;
 
 /**
  * The files in `folder` built once more, with the proofs of the compiler tested at run time. Units, `membersOf`, `hasMarks`, `atDefault` and `judged` are those of judgeUnderCollections().
@@ -1824,7 +1824,7 @@ async function judgeWrittenStraight(
 ) {
   const modes = [
     ["--aot", ...buildFlags],
-    ["--aot", ...buildFlags, "--aot-testing=WritesBodiesStraight"],
+    ["--aot", ...buildFlags, "--aot-testing=ForceStraightCompilation"],
   ];
   const command = `${bun} build --compile ${modes[1].join(" ")}`;
   const { stopped } = await build(
@@ -2164,7 +2164,7 @@ for (
                         : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
                           ? "as an executable without --aot"
                           : agreeButForLayout(second, referenceAgain)
-                            ? "function text"
+                            ? "function source"
                             : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
                               ? "an accessor defined twice"
                               : isLimit(second)
@@ -2189,7 +2189,7 @@ for (
         (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, said)))
       )
         kind = "documented difference";
-      else if (!hidesFunctionText && (await printsFromTheTextOfFunctions(alone, extension))) kind = "function text";
+      else if (!hidesFunctionSource && (await dependsOnFunctionSource(alone, extension))) kind = "function source";
       else if (
         withKeysConvertedBeforeValues(texts[index]) !== texts[index] &&
         (await agreesWithKeysConvertedBeforeValues(alone, extension, texts[index], second))

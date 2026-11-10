@@ -1,5 +1,5 @@
 // The loop around stores integers into a list; the loop inside fills a row with fractions; the list is one of the rows, then a list apart, again and again. What is printed is what plain Bun prints.
-// STATISTIC: ListsConvertedInFrontOfTypedCopies >= 1
+// STATISTIC: ArraysConvertedToDoubleStorage >= 1
 function sweep(rows: number[][], marks: number[], width: number): void {
   for (let row = 0; row < rows.length; row++) {
     const line = rows[row];

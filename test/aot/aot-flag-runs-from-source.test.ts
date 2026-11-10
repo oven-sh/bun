@@ -72,7 +72,7 @@ describe("which code runs", () => {
   });
 });
 
-// A run under --aot generates no code, so the limits on generated code are the build's to find: docs/compiler/debugging.mdx says so.
+// A run under --aot generates no code, so the limits on generated code are the build's to find.
 test("a function whose stack frame is too large stops the build, and --aot runs the program", async () => {
   const held = 132_000;
   const names = Array.from({ length: held }, (_, index) => `v${index}`);

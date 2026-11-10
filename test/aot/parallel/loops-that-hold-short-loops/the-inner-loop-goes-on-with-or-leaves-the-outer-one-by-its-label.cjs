@@ -1,4 +1,4 @@
-// STATISTIC: LoopsThatHoldLoopsWrittenOut >= 2
+// STATISTIC: LoopNestsFullyUnrolled >= 2
 "use strict";
 function skipped(rows, from) {
     let sum = 0;

@@ -7,14 +7,15 @@
 # print(caller([[], 2, 3]));
 # print("went on");
 # -- end of source
-# `greatest` has a rest parameter that is first named behind the call, so its generic entry walks the body itself; its result is a number, so its Body is raw and something is held of its result.
-# THE LIE: the row of Math.hypot writes null alone.
+# `greatest` has a rest parameter that is first mentioned after the call, so its generic entry visits the body itself.
+# Its result is a number, so its Body is unboxed and a type is enforced on its result.
+# Fault injection, testing=UnderstateEffects:Builtin/Math.hypot/KindOfResult: the signature of Math.hypot declares null as its only result.
 # RUN: run-in-shell mechanisms=all
 # CHECK: 0.2379126518699879
 # CHECK-NEXT: 0
 # CHECK-NEXT: went on
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Math.hypot/KindOfResult
-# LIE: Math.hypot (call) is declared as null, and native code answered with something else: number.
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Math.hypot/KindOfResult
+# LIE: expected null, found double in the result of Math.hypot
 # LIE-NOT: went on
 # LIE: crashed

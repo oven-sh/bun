@@ -1,8 +1,8 @@
 // Two rows in an order of their own get a plan. Three hundred other orders come in turn, ten times over, and ten collections pass: the three hundred keep their plans, and the one
 // that nobody asked for is forgotten. Its order comes again: the plan is built again, under the number that the order has had since its first row, and the rows are records that read as before.
-// COUNTER: RecordPlansForgotten >= 1
+// COUNTER: RecordPlansEvicted >= 1
 // COUNTER: RecordPlansTried <= 302
-// COUNTER: MostRecordPlansHeld <= 301
+// COUNTER: PeakRecordPlansCached <= 301
 // COUNTER: ObjectsParsedIntoRecords >= 3004
 // COUNTER: ObjectsParsedIntoOrdinaryObjects <= 0
 interface Wide { a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number; h?: number }

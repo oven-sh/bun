@@ -318,7 +318,7 @@ function unionProvenBy(idlTypes: readonly string[], context: TypeContext): b.Tab
 
 // The C++ proves the result and the test of the receiver. convert<> runs the code of the operands, and the implementation may keep and call them and run listeners that no operand names.
 // An operand of which everything is said takes the result with it: native code of which nothing is known may answer anything. So a result counts only where the bodies show that no operand is changed.
-const usesOfOperands = (changesNone: boolean) => (changesNone ? b.handedOver : [b.everything]);
+const usesOfOperands = (changesNone: boolean) => (changesNone ? b.retainedByNativeCode : [b.everything]);
 
 const answeredBy = (returns: b.TableType, receiver: b.TableType, changesNoOperand: boolean) =>
   ({
@@ -327,7 +327,7 @@ const answeredBy = (returns: b.TableType, receiver: b.TableType, changesNoOperan
     returns,
     capability: "js",
     throws: true,
-    uses: { this: b.handedOver, operands: usesOfOperands(changesNoOperand) },
+    uses: { this: b.retainedByNativeCode, operands: usesOfOperands(changesNoOperand) },
     implementation: b.generic,
   }) satisfies b.FunctionField;
 
@@ -337,7 +337,7 @@ const readBy = (getter: b.TableType, receiver: b.TableType, hasSetter: boolean) 
     getter,
     capability: "js",
     throws: true,
-    uses: { this: b.handedOver },
+    uses: { this: b.retainedByNativeCode },
     implementation: b.generic,
     ...(hasSetter
       ? {
@@ -346,7 +346,7 @@ const readBy = (getter: b.TableType, receiver: b.TableType, hasSetter: boolean) 
             value: b.any,
             capability: "js",
             throws: true,
-            uses: { this: b.handedOver, value: [b.everything] },
+            uses: { this: b.retainedByNativeCode, value: [b.everything] },
             implementation: b.generic,
           },
         }

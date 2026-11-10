@@ -1,5 +1,5 @@
-// STATISTIC: LengthsHeldAgainstBoundInFrontOfTurnsLaidOut >= 1
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
+// STATISTIC: UnrolledLoopLengthChecksHoisted >= 1
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the turns are laid out as users build them, and every raw access asks its position at the run
 // Under: --aot-harden=proof-checks: every position of the turns laid out is held against the length of its list
 "use strict";
 const rounds = +process.argv[2] || 3; const said = [];

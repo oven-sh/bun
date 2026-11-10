@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutOnceAKindThatAreComeBackTo >= 1
+// STATISTIC: UnrolledLoopsWithSharedReentry >= 1
 // The turns of a counted loop that reads the code units of a text are laid out in a row once for narrow texts and once for wide ones: the width is asked in front, not at every unit.
 // Here: a loop that leaves its turns at a line's end and comes back, one that never leaves, one over two texts of either width, one downward; texts of both widths, wide texts that hold
 // narrow units alone, every length round the eight turns of a row, and units that only a wide text can hold.

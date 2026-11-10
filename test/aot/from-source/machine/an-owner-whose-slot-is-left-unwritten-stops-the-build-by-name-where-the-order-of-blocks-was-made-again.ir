@@ -1,5 +1,10 @@
-# Where the order of a procedure's blocks had to be made again, its allocation, references and frame are checked in every build. `total` calls on every way, so it sets up its frame at entry and has no framed part: nothing else asks for a check of it. Its loop keeps a pointer into the storage of `list` across its poll, so `list` is kept for the collector in a slot that no step reads again. THE LIE, testing=ValuesKeptForTheCollectorAreTakenToBeReadByStepsAlone: the allocator takes that slot to be read by nobody and leaves out its store. testing=OrderBlocksAgain orders the blocks as they are ordered the second time.
-# No check is asked for here, as in a build of a user: the build stops by name because the order was made again. The same lie without that word: an-owner-whose-slot-is-left-unwritten-is-not-seen-where-nothing-checks-the-allocation.ir.
+# Where the block order of a procedure had to be computed again, its allocation, references and frame are checked in every build.
+# `total` makes a call on every path, so it sets up its frame at entry and has no framed part. Nothing else requests a check of it.
+# Its loop keeps a pointer into the storage of `list` across its poll, so `list` is kept for the collector in a slot that no step reads again.
+# Fault injection, testing=IgnoreCollectorSpillReads: the allocator assumes that nothing reads that slot and omits its store.
+# The switch testing=ForceFallbackBlockOrder orders the blocks as they are ordered the second time.
+# The test requests no check, as in a user's build. The build fails with a named internal error because the block order was computed again.
+# The same fault without that switch: an-owner-whose-slot-is-left-unwritten-is-not-seen-where-nothing-checks-the-allocation.ir.
 # f1 = total
 # -- source: an-owner-whose-slot-is-left-unwritten-stops-the-build-by-name-where-the-order-of-blocks-was-made-again.ts
 # declare function print(value: unknown): void;
@@ -9,4 +14,4 @@
 # REQUIRES: x86_64
 # AS-USERS-BUILD: the checks of a procedure whose order was made again run in every build, and under the check of the runner they run everywhere
 # DIAGNOSTIC: InnerPointerWithoutOwner f1
-# RUN: emit f1 mechanisms=all testing=OrderBlocksAgain,ValuesKeptForTheCollectorAreTakenToBeReadByStepsAlone
+# RUN: emit f1 mechanisms=all testing=ForceFallbackBlockOrder,IgnoreCollectorSpillReads

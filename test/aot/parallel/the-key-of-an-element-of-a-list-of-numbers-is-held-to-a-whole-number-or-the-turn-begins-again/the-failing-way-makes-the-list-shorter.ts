@@ -1,4 +1,4 @@
-// STATISTIC: KeysHeldToWholeNumbersInTurnsOfTypedCopies >= 1
+// STATISTIC: NumberKeysGuardedInIterations >= 1
 const STEPS = [-33, -31, -18, -14, 0, 14, 18, 31, 33];
 const rounds = +process.argv[2]! || 3;
 class Field {

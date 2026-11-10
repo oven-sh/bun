@@ -1,6 +1,6 @@
 // Behind a yes a function that the build does not see lays the object below another class; then the same question is asked of it again, and its fields are read.
 // The questions stand in an inner loop that takes its value in the turn that asks.
-// STATISTIC: QuestionsOfInstanceOfWhoseArmsEndWithBranch >= 3
+// STATISTIC: InstanceOfTestsJumpThreaded >= 3
 class UiEvent { constructor(x) { this.x = x; } }
 class TouchEvent extends UiEvent { constructor(x) { super(x); this.fingers = 2; } }
 class PenEvent extends TouchEvent { constructor(x) { super(x); this.tilt = 5; } }

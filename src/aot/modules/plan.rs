@@ -41,7 +41,7 @@ pub enum ModuleRef {
         file: FileId,
         callback: FnId,
     },
-    Face(FileId),
+    Facade(FileId),
     Check(FileId),
     Runtime(RuntimeModule),
     External {
@@ -317,7 +317,7 @@ pub(super) struct Plan {
     order: OrderParts,
     inner_callbacks: Vec<FnId>,
     keeps_module_object: Vec<bool>,
-    names_way_to_module_objects: Vec<bool>,
+    reaches_module_objects: Vec<bool>,
     is_found_by_name: Vec<bool>,
     is_every_require_seen: bool,
     is_namespace_seen: Vec<bool>,
@@ -334,12 +334,12 @@ pub(super) struct Plan {
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
     originals_beside_mocks_may_run: bool,
-    runtime_modules_handed_out_by_test_runner: Vec<RuntimeModule>,
-    test_runner_hands_out_every_runtime_module: bool,
+    exposed_runtime_modules: Vec<RuntimeModule>,
+    exposes_all_runtime_modules: bool,
     runs_tests: bool,
-    is_reached_without_extension: Vec<bool>,
-    is_reached_under_another_extension: Vec<bool>,
-    is_reached_as_folder: Vec<bool>,
+    is_imported_without_extension: Vec<bool>,
+    is_imported_with_other_extension: Vec<bool>,
+    is_imported_as_directory: Vec<bool>,
     may_evict_every_module: bool,
     pub(super) named_by_copies: NamedByCopies,
     reaches_entries_of_cache: Option<bool>,
@@ -349,7 +349,7 @@ pub(super) struct Plan {
     computed_names_ask_loader_functions: bool,
     answers_for_names_itself: bool,
     lists_names_of_statements: bool,
-    runs_again: Vec<bool>,
+    may_be_reevaluated: Vec<bool>,
     has_es_module_that_runs_again: Vec<bool>,
     replaced_variables: Vec<Sym>,
     makers_of_imported_requires: Vec<FileId>,
@@ -372,7 +372,7 @@ impl Plan {
         Plan {
             inner_callbacks: inner_modules.map(|inner| inner.1).collect(),
             keeps_module_object: vec![false; order.numbers.len()],
-            names_way_to_module_objects: vec![false; order.numbers.len()],
+            reaches_module_objects: vec![false; order.numbers.len()],
             is_found_by_name: vec![false; order.numbers.len()],
             is_every_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
@@ -389,12 +389,12 @@ impl Plan {
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
             originals_beside_mocks_may_run: false,
-            runtime_modules_handed_out_by_test_runner: Vec::new(),
-            test_runner_hands_out_every_runtime_module: false,
+            exposed_runtime_modules: Vec::new(),
+            exposes_all_runtime_modules: false,
             runs_tests: false,
-            is_reached_without_extension: vec![false; order.numbers.len()],
-            is_reached_under_another_extension: vec![false; order.numbers.len()],
-            is_reached_as_folder: vec![false; order.numbers.len()],
+            is_imported_without_extension: vec![false; order.numbers.len()],
+            is_imported_with_other_extension: vec![false; order.numbers.len()],
+            is_imported_as_directory: vec![false; order.numbers.len()],
             may_evict_every_module: false,
             named_by_copies: NamedByCopies::default(),
             reaches_entries_of_cache: None,
@@ -404,7 +404,7 @@ impl Plan {
             computed_names_ask_loader_functions: false,
             answers_for_names_itself: false,
             lists_names_of_statements: false,
-            runs_again: vec![false; order.numbers.len()],
+            may_be_reevaluated: vec![false; order.numbers.len()],
             has_es_module_that_runs_again: vec![false; order.numbers.len()],
             replaced_variables: Vec::new(),
             makers_of_imported_requires: Vec::new(),
@@ -469,37 +469,34 @@ impl Plan {
         }
     }
 
-    pub(super) fn set_is_handed_out_by_test_runner(&mut self, module: RuntimeModule) {
-        if !self
-            .runtime_modules_handed_out_by_test_runner
-            .contains(&module)
-        {
-            self.runtime_modules_handed_out_by_test_runner.push(module);
+    pub(super) fn expose_runtime_module(&mut self, module: RuntimeModule) {
+        if !self.exposed_runtime_modules.contains(&module) {
+            self.exposed_runtime_modules.push(module);
         }
     }
 
-    pub(super) fn set_test_runner_hands_out_every_runtime_module(&mut self) {
-        self.test_runner_hands_out_every_runtime_module = true;
+    pub(super) fn expose_all_runtime_modules(&mut self) {
+        self.exposes_all_runtime_modules = true;
     }
 
     pub(super) fn set_runs_tests(&mut self) {
         self.runs_tests = true;
     }
 
-    pub(super) fn set_is_reached_by(&mut self, module: ModuleRef, spelling: Spelling) {
+    pub(super) fn set_is_imported_by_alias(&mut self, module: ModuleRef, spelling: Spelling) {
         match spelling {
             Spelling::WithoutExtension => {
-                self.add(|plan| &mut plan.is_reached_without_extension, module);
+                self.add(|plan| &mut plan.is_imported_without_extension, module);
             }
             Spelling::WithOtherExtension => {
-                self.add(|plan| &mut plan.is_reached_under_another_extension, module);
+                self.add(|plan| &mut plan.is_imported_with_other_extension, module);
             }
-            Spelling::AsDirectory => self.add(|plan| &mut plan.is_reached_as_folder, module),
+            Spelling::AsDirectory => self.add(|plan| &mut plan.is_imported_as_directory, module),
         }
     }
 
-    pub(super) fn set_runs_again(&mut self, module: ModuleRef, is_es_module: bool) {
-        self.add(|plan| &mut plan.runs_again, module);
+    pub(super) fn set_may_be_reevaluated(&mut self, module: ModuleRef, is_es_module: bool) {
+        self.add(|plan| &mut plan.may_be_reevaluated, module);
         if is_es_module && let Some(number) = self.order.numbers.number_of(module) {
             let component = self.order.component_of[number];
             self.has_es_module_that_runs_again[component as usize] = true;
@@ -588,7 +585,7 @@ impl ModuleGraph {
                     None => Shape::AsToday,
                 }
             }
-            ModuleRef::Face(_) | ModuleRef::Check(_) => Shape::EsModule,
+            ModuleRef::Facade(_) | ModuleRef::Check(_) => Shape::EsModule,
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => Shape::AsToday,
         }
     }
@@ -788,7 +785,9 @@ impl ModuleGraph {
 
     pub fn runs_body_once(&self, module: ModuleRef) -> bool {
         let begins_once = match module {
-            ModuleRef::File(file) => self.keeps_error(module) && !self.runs_again(file),
+            ModuleRef::File(file) => {
+                self.caches_evaluation_error(module) && !self.may_be_reevaluated(file)
+            }
             ModuleRef::Inner { .. } => true,
             _ => false,
         };
@@ -895,18 +894,18 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_required_during_load, module)
     }
 
-    pub fn may_be_imported_while_it_runs(&self, module: ModuleRef) -> bool {
+    pub fn is_importable_during_evaluation(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self
                 .plan
-                .has(&self.plan.order.may_be_imported_while_it_runs, module)
+                .has(&self.plan.order.is_importable_during_evaluation, module)
     }
 
-    pub fn is_es_module_to_imports(&self, module: ModuleRef) -> bool {
+    pub fn is_imported_as_es_module(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self
                 .plan
-                .has(&self.plan.order.is_es_module_to_imports, module)
+                .has(&self.plan.order.is_imported_as_es_module, module)
     }
 
     pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
@@ -926,6 +925,11 @@ impl ModuleGraph {
         !matches!(module, ModuleRef::Inner { .. })
             && (self.plan.may_evict_every_module
                 || is_marked(&self.plan.test_run.may_be_evicted, module))
+    }
+
+    #[cfg(test)]
+    pub fn is_reloadable(&self, file: FileId) -> bool {
+        is_marked(&self.plan.test_run.is_reloadable, ModuleRef::File(file))
     }
 
     pub fn is_named_by_copies(&self, module: ModuleRef) -> bool {
@@ -950,25 +954,27 @@ impl ModuleGraph {
             && self.is_code_of_program(ModuleRef::File(file))
     }
 
-    pub fn is_held_under_name_without_prefix(&self, module: RuntimeModule) -> bool {
+    pub fn rejects_require_cache_override(&self, module: RuntimeModule) -> bool {
         let stored = &self.plan.library_modules_stored_in_cache;
         module != RuntimeModule::Bun && !stored.contains(&module)
     }
 
-    pub fn is_reached_by(&self, module: ModuleRef, spelling: Spelling) -> bool {
+    pub fn is_imported_by_alias(&self, module: ModuleRef, spelling: Spelling) -> bool {
         let set = match spelling {
-            Spelling::WithoutExtension => &self.plan.is_reached_without_extension,
-            Spelling::WithOtherExtension => &self.plan.is_reached_under_another_extension,
-            Spelling::AsDirectory => &self.plan.is_reached_as_folder,
+            Spelling::WithoutExtension => &self.plan.is_imported_without_extension,
+            Spelling::WithOtherExtension => &self.plan.is_imported_with_other_extension,
+            Spelling::AsDirectory => &self.plan.is_imported_as_directory,
         };
         self.plan.has(set, module)
     }
 
-    pub fn runs_again(&self, file: FileId) -> bool {
+    pub fn may_be_reevaluated(&self, file: FileId) -> bool {
         matches!(
             self.kind(file),
             ModuleKind::SourceText | ModuleKind::CommonJs
-        ) && self.plan.has(&self.plan.runs_again, ModuleRef::File(file))
+        ) && self
+            .plan
+            .has(&self.plan.may_be_reevaluated, ModuleRef::File(file))
     }
 
     pub fn is_instantiated_ahead(&self, file: FileId) -> bool {
@@ -982,7 +988,7 @@ impl ModuleGraph {
     }
 
     pub fn makes_scope_ahead(&self, file: FileId) -> bool {
-        self.is_instantiated_ahead(file) && self.runs_again(file)
+        self.is_instantiated_ahead(file) && self.may_be_reevaluated(file)
     }
 
     pub fn may_be_mocked(&self, module: ModuleRef) -> bool {
@@ -1009,16 +1015,13 @@ impl ModuleGraph {
         self.plan.may_mock_every_module || self.plan.is_any_module_named_by_mock
     }
 
-    pub fn is_handed_out_by_test_runner(&self, module: RuntimeModule) -> bool {
+    pub fn is_exposed_by_test_runner(&self, module: RuntimeModule) -> bool {
         let plan = &self.plan;
-        plan.test_runner_hands_out_every_runtime_module
-            || plan
-                .runtime_modules_handed_out_by_test_runner
-                .contains(&module)
+        plan.exposes_all_runtime_modules || plan.exposed_runtime_modules.contains(&module)
     }
 
     pub fn is_named_to_test_runner(&self, module: RuntimeModule) -> bool {
-        let named = &self.plan.runtime_modules_handed_out_by_test_runner;
+        let named = &self.plan.exposed_runtime_modules;
         named.contains(&module)
     }
 
@@ -1054,13 +1057,13 @@ impl ModuleGraph {
         !replaced.is_empty() && replaced.binary_search(&variable).is_ok()
     }
 
-    pub fn keeps_error(&self, module: ModuleRef) -> bool {
+    pub fn caches_evaluation_error(&self, module: ModuleRef) -> bool {
         match module {
             ModuleRef::File(_) => self.is_code_of_program(module),
-            ModuleRef::Face(_) | ModuleRef::Check(_) => true,
+            ModuleRef::Facade(_) | ModuleRef::Check(_) => true,
             ModuleRef::Inner { file, callback } => {
                 let inner = self.wrapped().of_callback(file, callback);
-                inner.is_some_and(|inner| inner.keeps_error)
+                inner.is_some_and(|inner| inner.caches_evaluation_error)
             }
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
         }
@@ -1079,9 +1082,9 @@ impl ModuleGraph {
         self.plan.has(&self.plan.keeps_module_object, module)
     }
 
-    pub fn names_way_to_module_objects(&self, module: ModuleRef) -> bool {
+    pub fn reaches_module_objects(&self, module: ModuleRef) -> bool {
         let plan = &self.plan;
-        plan.has(&plan.names_way_to_module_objects, module)
+        plan.has(&plan.reaches_module_objects, module)
     }
 
     pub fn originals_beside_mocks_may_run(&self) -> bool {
@@ -1119,14 +1122,14 @@ impl ModuleGraph {
         }
     }
 
-    pub fn face(&self, module: ModuleRef) -> Option<ModuleRef> {
-        self.commonjs().face(module)
+    pub fn facade(&self, module: ModuleRef) -> Option<ModuleRef> {
+        self.commonjs().facade(module)
     }
 
     pub fn exports_of(&self, module: ModuleRef) -> &[ModuleExport] {
         match module {
             ModuleRef::File(file) if self.has_record(file) => self.exports(file),
-            ModuleRef::Face(file) => self.commonjs().exports_of_face(file),
+            ModuleRef::Facade(file) => self.commonjs().facade_exports(file),
             _ => &[],
         }
     }
@@ -1190,9 +1193,9 @@ impl ModuleGraph {
         self.look_at(module);
     }
 
-    pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {
+    pub fn set_reaches_module_objects(&mut self, module: ModuleRef) {
         self.plan
-            .add(|plan| &mut plan.names_way_to_module_objects, module);
+            .add(|plan| &mut plan.reaches_module_objects, module);
     }
 
     pub fn asks_loader_functions(&self) -> bool {
@@ -1280,7 +1283,7 @@ impl ModuleGraph {
         (self.plan.final_requests, self.plan.final_ranges) =
             self.settle_requests(prefixes, &data_files, in_parallel);
         steps.end("plan: requests");
-        self.plan.is_every_require_seen = self.plan.names_way_to_module_objects.contains(&true)
+        self.plan.is_every_require_seen = self.plan.reaches_module_objects.contains(&true)
             || self.plan.may_mock_every_module
             || self.plan.may_be_mocked.contains(&true);
         self.plan.is_finished = true;
@@ -1348,8 +1351,8 @@ impl ModuleGraph {
     ) -> FxHashSet<SyntheticExportId> {
         let mut stored = FxHashSet::default();
         for module in modules {
-            if let ModuleRef::Face(face) = module {
-                stored.extend(self.commonjs().copies(face));
+            if let ModuleRef::Facade(facade) = module {
+                stored.extend(self.commonjs().copies(facade));
             }
         }
         stored
@@ -1403,7 +1406,7 @@ impl ModuleGraph {
         let order = &self.plan.order;
         let is_read_by_require = order.required_prefix_roots.binary_search(&root).is_ok();
         let runs_in_its_turn =
-            |file: FileId| !is_read_by_require && order.is_es_module_to_imports[file.idx()];
+            |file: FileId| !is_read_by_require && order.is_imported_as_es_module[file.idx()];
         steps.begin(linked.by_importer.len());
         steps.take_if_unseen(root);
         let mut meets_ring = linked.is_on_ring[root.idx()];
@@ -1426,8 +1429,10 @@ impl ModuleGraph {
         if prefix.len() > 1 && is_read_by_require && !meets_ring {
             prefix = linked.list_targets_as_require_makes_them(root, prefix.len(), steps);
         }
-        let faces = prefix.into_iter().map(ModuleRef::File);
-        faces.map(|file| self.face(file).unwrap_or(file)).collect()
+        let facades = prefix.into_iter().map(ModuleRef::File);
+        facades
+            .map(|file| self.facade(file).unwrap_or(file))
+            .collect()
     }
 
     fn find_linked_file(&self, request: &ModuleRequest) -> Option<FileId> {
@@ -1514,18 +1519,23 @@ impl ModuleGraph {
             .collect()
     }
 
+    pub(super) fn list_roots_left_to_loader(&self) -> impl Iterator<Item = FileId> + '_ {
+        let roots = self.plan.order.prefix_roots.iter().copied();
+        roots.filter(|&root| self.is_loaded_by_loader(ModuleRef::File(root)))
+    }
+
     #[cfg(test)]
     pub fn prefix_roots(&self) -> &[FileId] {
         &self.plan.order.prefix_roots
     }
 
-    pub fn faces_behind(&self, file: FileId) -> Vec<FileId> {
+    pub fn facade_dependencies(&self, file: FileId) -> Vec<FileId> {
         let mut owners = Vec::new();
         for &copy in self.commonjs().copies(file) {
             if let ModuleRef::File(owner) = self.synthetic_export(copy).module
                 && owner != file
                 && !owners.contains(&owner)
-                && self.face(ModuleRef::File(owner)).is_some()
+                && self.facade(ModuleRef::File(owner)).is_some()
             {
                 owners.push(owner);
             }
@@ -1601,34 +1611,34 @@ impl ModuleGraph {
                 requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));
             }
             let written = self.requests(file);
-            let has_face = |request: &ModuleRequest| {
-                request.kind == ModuleRequestKind::Import && self.face(request.target).is_some()
+            let has_facade = |request: &ModuleRequest| {
+                request.kind == ModuleRequestKind::Import && self.facade(request.target).is_some()
             };
-            if requests.len() == start && !written.iter().any(has_face) {
+            if requests.len() == start && !written.iter().any(has_facade) {
                 continue;
             }
             requests.extend(written.iter().map(|&written| match written.kind {
                 ModuleRequestKind::Import => ModuleRequest {
-                    target: self.face(written.target).unwrap_or(written.target),
+                    target: self.facade(written.target).unwrap_or(written.target),
                     ..written
                 },
                 ModuleRequestKind::Require => written,
             }));
             ranges.insert(module, start as u32..requests.len() as u32);
         }
-        for &face in self.record_files() {
-            let file = ModuleRef::File(face);
-            if self.face(file).is_none() {
+        for &facade in self.record_files() {
+            let file = ModuleRef::File(facade);
+            if self.facade(file).is_none() {
                 continue;
             }
             let start = requests.len() as u32;
             let completes_at = |module: ModuleRef| !self.half(module);
             requests.push(ModuleRequest::require(file, completes_at(file)));
-            for owner in self.faces_behind(face) {
+            for owner in self.facade_dependencies(facade) {
                 let completes = completes_at(ModuleRef::File(owner));
-                requests.push(ModuleRequest::require(ModuleRef::Face(owner), completes));
+                requests.push(ModuleRequest::require(ModuleRef::Facade(owner), completes));
             }
-            ranges.insert(ModuleRef::Face(face), start..requests.len() as u32);
+            ranges.insert(ModuleRef::Facade(facade), start..requests.len() as u32);
         }
         (requests, ranges)
     }

@@ -881,7 +881,7 @@ pub(super) fn emit_behind_stations(
             _ => None,
         };
         if let Some((module, name, is_behind_its_mock, holder_of_star_to_built_in)) = asked_of_run {
-            let module = modules.face(module).unwrap_or(module);
+            let module = modules.facade(module).unwrap_or(module);
             let module = lowering.file.fragment.declare_module(module);
             let phase = ImportPhase::Evaluation;
             let object = match holder_of_star_to_built_in {
@@ -927,7 +927,7 @@ pub(super) fn emit_behind_stations(
                 let is_open = lowering.split_on_truthiness(end);
                 lowering.builder.switch_to(is_open.taken);
                 if let Step::ModuleWithoutTable { module, name, .. } = step {
-                    let module = modules.face(module).unwrap_or(module);
+                    let module = modules.facade(module).unwrap_or(module);
                     let module = lowering.file.fragment.declare_module(module);
                     let phase = ImportPhase::Evaluation;
                     let original = lowering

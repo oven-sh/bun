@@ -1,4 +1,4 @@
-// STATISTIC: LinksHeldToTheirLayoutWhereTheyComeRound = 0
+// STATISTIC: LoopCarriedObjectsShapeChecked = 0
 interface Tie { readonly end: Knot; next: Tie | null }
 class Knot { ties: Tie | null = null; flags = 0; }
 function mark(knot: Knot, bit: number): number {

@@ -4,4 +4,4 @@ const doubles = new Float64Array([0, -0, 0.5, -0.5, 1.5, -1.5, 2.5, NaN, Infinit
 function overDoubles(a) { let s = ""; for (let i = 0; i < a.length; i++) { const x = a[i]; s += say(Math.sign(x)) + " "; } return s; }
 function folded(a) { let s = 0; for (let i = 0; i < a.length; i++) { const x = a[i]; s = s * 3 + Number(Math.sign(x)) % 1000; } return s; }
 console.log(overDoubles(doubles)); console.log(overDoubles(list)); console.log(overDoubles(ints)); console.log(say(folded(doubles)), say(folded(list)), say(folded(ints)), say(folded(new Float64Array(0))), say(folded(new Float64Array(8).fill(-0))), say(folded(new Float64Array(9).fill(2.5))));
-// STATISTIC: LoopsWhoseTurnsAreLaidOut >= 1
+// STATISTIC: UnrolledLoopsEmitted >= 1

@@ -1,5 +1,5 @@
 // this.constructor is the class, not Map: every prototype object is made with the name, and a data property of the built-in is never bound.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { kind() { return this.constructor; } again() { return new this.constructor(); } }
 const one = new H(); let same = 0, heirs = 0;

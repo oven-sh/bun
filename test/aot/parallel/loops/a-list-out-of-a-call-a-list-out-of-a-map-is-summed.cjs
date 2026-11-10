@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const m = new Map(); const made = []; for (let i = 0; i < 40; i++) made.push(i + q + 0.5); m.set('rows', made);

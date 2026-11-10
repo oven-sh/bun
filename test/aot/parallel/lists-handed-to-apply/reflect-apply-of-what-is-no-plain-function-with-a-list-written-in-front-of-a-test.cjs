@@ -1,5 +1,5 @@
 // The rare road takes the list that is made again for it: a proxy's handler shows what it holds, and what is no function throws as ever.
-// STATISTIC: CallsForwardedBehindTestsOfTheirTargets >= 1
+// STATISTIC: CallsForwardedAfterTargetChecks >= 1
 const join = (one, two) => one + two;
 const shown = new Proxy(join, { apply(target, self, list) { return "shown:" + list.length + ":" + list.join("|") + ":" + Array.isArray(list); } });
 const targets = [join, shown, join.bind(null, "bound"), { no: "function" }, undefined];

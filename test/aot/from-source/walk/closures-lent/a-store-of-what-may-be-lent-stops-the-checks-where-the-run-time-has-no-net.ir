@@ -7,8 +7,10 @@
 # print(make(3));
 # print(kept!());
 # -- end of source
-# The lie, testing=NoCalleeKeepsWhatItIsHanded: Link says of keep() that it only calls what arrives, so a caller may make the closure in its own frame. Beside testing=CheckProofsAtRunTime the lie is left for the net of the run time to catch; without it the compiler's own checks stop at the store. The closure has no name of its own: it is one that may be lent.
-# OPTIONS: testing=NoCalleeKeepsWhatItIsHanded
+# Fault injection, testing=AssumeCalleesRetainNothing: Link reports that keep() only calls its arguments, so a caller may allocate the closure in its own frame.
+# Together with testing=CheckProofsAtRunTime, the fault is left for the run-time check to catch. Without that switch, the compiler's own checks fail at the store.
+# The closure has no name of its own, so it is one that may be borrowed.
+# OPTIONS: testing=AssumeCalleesRetainNothing
 # DIAGNOSTIC: OpcodeNotInForm 1
 # RUN: walk f1 mechanisms=all
 # CHECK: the walk of f1:Body failed

@@ -9,5 +9,5 @@
 # function pull(list, t) { let state = slack; knots = 0; for (let i = 0; i < list.length; i++) state = state(list[i] + (t & 1)); return knots + (state === taut ? 1 : 0); }
 # console.log(pull(beads, 0), pull(beads, 1), pull([1, , 3], 0), pull([], 0));
 # -- end of source
-# RUN(COUNT): compile ElementsAskedInTurnsOfTypedCopies mechanisms=all
-# COUNT: statistic ElementsAskedInTurnsOfTypedCopies 0
+# RUN(COUNT): compile ElementsGuardedInIterations mechanisms=all
+# COUNT: statistic ElementsGuardedInIterations 0

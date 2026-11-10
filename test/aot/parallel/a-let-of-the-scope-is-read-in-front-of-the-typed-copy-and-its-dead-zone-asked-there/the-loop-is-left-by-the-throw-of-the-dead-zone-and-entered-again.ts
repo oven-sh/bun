@@ -1,5 +1,5 @@
 // The first entry is thrown out of by the dead zone; it is caught, the variable is filled, the loop is entered again.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 1
+// STATISTIC: CapturedVariableReadsHoisted >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

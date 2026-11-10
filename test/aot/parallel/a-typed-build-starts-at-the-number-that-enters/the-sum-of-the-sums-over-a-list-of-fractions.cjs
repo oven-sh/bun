@@ -1,4 +1,4 @@
-// STATISTIC: SumsThatGoRoundAsNumbersInTypedBuildsAlone >= 1
+// STATISTIC: SumsSpecializedAsNumbers >= 1
 "use strict";
 // The witness: nothing but numbers ever comes round.
 const list = JSON.parse('[0.5,1.25,2,3.75]');

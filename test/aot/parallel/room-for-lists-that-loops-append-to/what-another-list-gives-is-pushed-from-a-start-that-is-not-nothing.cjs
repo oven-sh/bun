@@ -1,4 +1,4 @@
-// STATISTIC: RoomAskedAsFarAsAProfileMayAsk >= 1
+// STATISTIC: ClampedCapacitiesReserved >= 1
 "use strict";
 function take(l, from, to) { const got = [from]; for (let j = from; j < to; j++) got.push(l[j] + 1); return got; }
 const l = []; for (let k = 0; k < 40; k++) l.push(k * k);

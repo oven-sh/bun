@@ -1,5 +1,5 @@
 // answers: without-library
-// # the Straight emitter lets a value wait in the result register for the next operation that gets code. `smaller = null` on a local is a ReleaseHint, which gets none: the answer of the comparison went on waiting, dead, and the read of a module variable and the test for a number wrote the register without storing it; the define behind them then brought the dead 0 | 1 into its boxed form over the new value: 5 read as true, every value was a number, a text's pointer was broken.
+// # the Straight emitter lets a value wait in the result register for the next operation that gets code. `smaller = null` on a local gets none: the answer of the comparison went on waiting, dead, and the read of a module variable and the test for a number wrote the register without storing it; the define behind them then brought the dead 0 | 1 into its boxed form over the new value: 5 read as true, every value was a number, a text's pointer was broken.
 // # variable, kind and texts are handed an object that is not of their parameter's class, so their slow versions run, which are written straight.
 // # x
 // # At the end the shell runs the same text itself: every answer is the same.

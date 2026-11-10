@@ -1,7 +1,7 @@
 // Errors are made and dropped below callbacks that are made anew for each call and handed on. One statement stores a displayName through a value that nobody follows, as react's memo() and forwardRef() do with what they are handed.
 // Any of the callbacks may be the function that was renamed, so a frame of theirs is named by the function object that ran in it.
 // A stack that nobody has read yet is kept as return addresses, with those function objects beside them. Every one of these 24,000 was once walked until the first such frame, given up and listed frame by frame.
-// COUNT: made:StackListingsAfterGivenUpCaptures <= 0
+// COUNT: made:ReturnAddressTraceFallbacks <= 0
 const fs = require("node:fs");
 const never = process.argv.length > 1000 ? "x" : "";
 const handedBack = new Function("f", "return f;" + never);

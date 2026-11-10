@@ -45,7 +45,7 @@ impl FileLowering<'_, '_, '_, '_> {
             ClassOwner::Expr(expression) => hir[expression].end,
             ClassOwner::Stmt(statement) => hir[statement].loc.end,
         };
-        header.text = SourceRange {
+        header.source_range = SourceRange {
             start: node.text_start,
             end,
         };

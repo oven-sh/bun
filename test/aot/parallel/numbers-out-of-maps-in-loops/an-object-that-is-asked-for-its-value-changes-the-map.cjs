@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 2
+// STATISTIC: MapResultsGuardedAsNumbers >= 2
 const turns = JSON.parse("8") | 0;
 // The first answer is an object. Asked for its value it lays another number under the second key, and counts how often it is asked: once a turn.
 const log = []; const table = new Map(); const hide = v => [v][JSON.parse("0")];

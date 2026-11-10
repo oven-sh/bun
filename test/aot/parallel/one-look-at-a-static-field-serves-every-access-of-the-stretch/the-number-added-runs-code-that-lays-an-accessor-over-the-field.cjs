@@ -1,5 +1,5 @@
 // valueOf lays a getter and a setter over the field between the read and the store.
-// STATISTIC: StaticFieldsAccessedOnLookOfTheirArms >= 0
+// STATISTIC: StaticFieldGuardsReused >= 0
 "use strict";
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }

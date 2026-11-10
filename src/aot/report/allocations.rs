@@ -33,12 +33,6 @@ fn write_outcome(out: &mut Vec<u8>, record: &AllocationRemarkRecord, operation: 
         AllocationOutcome::Unknown => out.extend_from_slice(b"unknown"),
         AllocationOutcome::Removed => out.extend_from_slice(b"removed"),
         AllocationOutcome::Heap => write_heap_outcome(out, record, operation),
-        AllocationOutcome::Frame => out.extend_from_slice(b"stack"),
-        AllocationOutcome::FrameUntilMaterialized => {
-            out.extend_from_slice(b"stack, moved to the heap if it escapes");
-        }
-        AllocationOutcome::Slim => out.extend_from_slice(b"closure without a function object"),
-        AllocationOutcome::Deferred => out.extend_from_slice(b"created lazily"),
     }
 }
 
@@ -245,13 +239,6 @@ mod tests {
             (AllocationOutcome::Unknown, "unknown"),
             (AllocationOutcome::Removed, "removed"),
             (AllocationOutcome::Heap, "heap"),
-            (AllocationOutcome::Frame, "stack"),
-            (
-                AllocationOutcome::FrameUntilMaterialized,
-                "stack, moved to the heap if it escapes",
-            ),
-            (AllocationOutcome::Slim, "closure without a function object"),
-            (AllocationOutcome::Deferred, "created lazily"),
         ];
         assert_eq!(expected.map(|(outcome, _)| outcome), AllocationOutcome::ALL);
         for (outcome, text) in expected {
@@ -304,30 +291,26 @@ mod tests {
     #[test]
     fn remark_line_has_every_clause() {
         let record = AllocationRemarkRecord {
-            kind: AllocationKind::IteratorResult,
-            ..remark(
-                AllocationOutcome::Heap,
-                1,
-                AllocationEscapeReason::RETAINED_BY_CALLEE,
-            )
+            kind: AllocationKind::Closure,
+            ..remark(AllocationOutcome::Heap, 1, AllocationEscapeReason::RETURNED)
         };
         assert_eq!(
             remark_line(&record, Some(&shown(3, 5)), Some(&shown(9, 1))),
-            "allocation: iteratorResult at a.ts:3:5: heap: Call (a callee keeps a reference to it), escapes at a.ts:9:1"
+            "allocation: closure at a.ts:3:5: heap: Call (it is returned), escapes at a.ts:9:1"
         );
     }
 
     #[test]
     fn cause_without_reasons_explains_heap() {
         let record = AllocationRemarkRecord {
-            cause: AllocationHeapCause::SeveralLiveInstances,
+            cause: AllocationHeapCause::LiveAcrossSuspension,
             ..remark(AllocationOutcome::Heap, 1, NO_REASON)
         };
         let mut out = Vec::new();
         write_remark_line(&mut out, &record, b"", Some(&shown(3, 5)), None);
         assert_eq!(
             BString::from(out),
-            "allocation: object at a.ts:3:5: heap (more than one object created here can be live at the same time)"
+            "allocation: object at a.ts:3:5: heap (it is live across an await or a yield)"
         );
     }
 
@@ -335,15 +318,11 @@ mod tests {
     fn cause_precedes_reasons() {
         let record = AllocationRemarkRecord {
             cause: AllocationHeapCause::Escapes,
-            ..remark(
-                AllocationOutcome::Heap,
-                1,
-                AllocationEscapeReason::RETAINED_BY_CALLEE,
-            )
+            ..remark(AllocationOutcome::Heap, 1, AllocationEscapeReason::RETURNED)
         };
         assert_eq!(
             remark_line(&record, Some(&shown(3, 5)), None),
-            "allocation: object at a.ts:3:5: heap: Call (it can outlive the call that creates it: a callee keeps a reference to it)"
+            "allocation: object at a.ts:3:5: heap: Call (it can outlive the call that creates it: it is returned)"
         );
     }
 
@@ -358,10 +337,10 @@ mod tests {
 
     #[test]
     fn remark_line_omits_forcing_location_equal_to_allocation() {
-        let record = remark(AllocationOutcome::Frame, 1, NO_REASON);
+        let record = remark(AllocationOutcome::Heap, 1, NO_REASON);
         assert_eq!(
             remark_line(&record, Some(&shown(3, 5)), Some(&shown(3, 5))),
-            "allocation: object at a.ts:3:5: stack"
+            "allocation: object at a.ts:3:5: heap: Call"
         );
     }
 

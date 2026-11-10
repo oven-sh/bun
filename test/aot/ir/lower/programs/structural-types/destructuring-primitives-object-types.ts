@@ -120,7 +120,7 @@ attempt("an empty pattern", () => {
 
 // GENERATED: withRest fromAList computed toFixed
 // CHECK-LABEL: function {{*}}name="withRest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|number|Array<undefined|null|string>> flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|number|Array<undefined|null|string>> flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|string|[[L_1]]):
 // CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
 // CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -139,7 +139,7 @@ attempt("an empty pattern", () => {
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fromAList"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string|[[L_1]]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string|[[L_1]]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|string|[[L_1]]>):
 // CHECK-NEXT: v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
 // CHECK-NEXT: Jump -> next b1()
@@ -164,7 +164,7 @@ attempt("an empty pattern", () => {
 // CHECK-NEXT: Rethrow v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="computed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"length" flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"length" flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|string|[[L_1]], v1: undefined|null|"length"):
 // CHECK-NEXT: v2 = TypeTest v0 testedType=undefined|null
 // CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
@@ -178,7 +178,7 @@ attempt("an empty pattern", () => {
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toFixed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = String string=""
 // CHECK-NEXT: Return v0

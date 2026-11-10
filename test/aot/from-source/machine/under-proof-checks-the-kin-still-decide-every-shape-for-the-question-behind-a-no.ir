@@ -1,11 +1,11 @@
 # Behind a no to Dog the object is known as one of the kin that stands where it was made: the kin decide every shape for the next question, which asks the shape alone.
 # Where proofs are asked again each answer taken from shapes is held to a walk of the chain. A walk that is heard as code that may run ended what the arm had just noted and kept the loop
 # from its copies: the checks never saw this form. The hold walks by the operation that gives way at a trap and leaves the walk's state as it was: what is built under the checks is what ships.
-# RUN(BUILT): compile QuestionsOfInstanceOfThatKinDecideForEveryShape mechanisms=all
+# RUN(BUILT): compile InstanceOfTestsDecidedByHierarchy mechanisms=all
 # Three copies of the loop.
-# BUILT: statistic QuestionsOfInstanceOfThatKinDecideForEveryShape 3
-# RUN(CHECKED): compile QuestionsOfInstanceOfThatKinDecideForEveryShape mechanisms=all testing=CheckProofsAtRunTime
-# CHECKED: statistic QuestionsOfInstanceOfThatKinDecideForEveryShape 3
+# BUILT: statistic InstanceOfTestsDecidedByHierarchy 3
+# RUN(CHECKED): compile InstanceOfTestsDecidedByHierarchy mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic InstanceOfTestsDecidedByHierarchy 3
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: 22 22
 # RIGHT-NEXT: exited with 0

@@ -1,5 +1,5 @@
 // The caller asks the bits and calls on the way of no: the head would ask in vain: it is not copied.
-// STATISTIC: HeadsCopiedWhoseQuestionWasAskedAbove = 0
+// STATISTIC: PartialInlinesAfterDominatingTests = 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

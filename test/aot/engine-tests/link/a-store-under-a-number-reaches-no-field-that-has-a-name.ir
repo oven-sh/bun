@@ -12,7 +12,7 @@ layout L0 module=m0 position=14 fields=[{key="first" declared={type=anything} fl
 # layout L132 kind=Closure
 variable g0 name="read" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="table" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 exports=[{name="read" variable=g0}] positions={lineStarts=[0, 39, 84, 100, 138, 201, 229] quotedTexts=[{position=64 start=103 end=119}, {position=84 end=14}, {position=100 start=14 end=50}, {position=104 start=18 end=26}, {position=109 start=18 end=28}, {position=171 start=77 end=88}, {position=184 start=90 end=102}, {position=201 start=50 end=61}, {position=209 start=50 end=76}, {position=213 start=62 end=68}, {position=218 start=62 end=73}, {position=220 start=62 end=75}] textOfQuotes="lay(0, \x22zero\x22)lay(Date.now() > 0 ? 1 : 2.5, \x22one\x22)console.log(read().join())[table.first, table.second]table[at] = text"} functionText="const table = { first: 1, second: 2 };\x0afunction lay(at, text) { table[at] = text; }\x0alay(0, \x22zero\x22);\x0alay(Date.now() > 0 ? 1 : 2.5, \x22one\x22);\x0aexport function read() { return [table.first, table.second]; }\x0aconsole.log(read().join());\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 exports=[{name="read" variable=g0}] positions={lineStarts=[0, 39, 84, 100, 138, 201, 229] quotedSources=[{position=64 start=103 end=119}, {position=84 end=14}, {position=100 start=14 end=50}, {position=104 start=18 end=26}, {position=109 start=18 end=28}, {position=171 start=77 end=88}, {position=184 start=90 end=102}, {position=201 start=50 end=61}, {position=209 start=50 end=76}, {position=213 start=62 end=68}, {position=218 start=62 end=73}, {position=220 start=62 end=75}] quotedSourceText="lay(0, \x22zero\x22)lay(Date.now() > 0 ? 1 : 2.5, \x22one\x22)console.log(read().join())[table.first, table.second]table[at] = text"} functionSource="const table = { first: 1, second: 2 };\x0afunction lay(at, text) { table[at] = text; }\x0alay(0, \x22zero\x22);\x0alay(Date.now() > 0 ? 1 : 2.5, \x22one\x22);\x0aexport function read() { return [table.first, table.second]; }\x0aconsole.log(read().join());\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f2 @0
@@ -53,7 +53,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v30 = Undefined @201
     Return v30 @201
 }
-function f1 name="read" module=m0 position=138 text={start=145 end=200} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="read" module=m0 position=138 sourceRange={start=145 end=200} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = GetModuleVariable variable=g1 @171
     v1 = CheckInitialized v0 name="table" @171
@@ -64,7 +64,7 @@ function f1 name="read" module=m0 position=138 text={start=145 end=200} flags=[H
     v6 = NewArray v2, v5 contents=anything @170
     Return v6 @170
 }
-function f2 name="lay" module=m0 position=39 text={start=39 end=83} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="lay" module=m0 position=39 sourceRange={start=39 end=83} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: undefined|null|string):
     v2 = GetModuleVariable variable=g1 @64
     v3 = CheckInitialized v2 name="table" @64

@@ -8,8 +8,8 @@
 # LIBRARY: own
 # The cleanup of the inner for-of has the cleanup of the outer one for its handler. Both loops step a list by index alone, so neither cleanup closes anything: a throw in the inner body leaves the function, and the body stands under no handler.
 # While it counted as under a handler no turn of the inner typed copy could begin again: the rare arm under a hole came back, met the usual way, and what was read went round boxed.
-# RUN(COUNT): compile TurnsThatBeginAgain mechanisms=all
-# COUNT: statistic TurnsThatBeginAgain 2
+# RUN(COUNT): compile IterationRestartsEmitted mechanisms=all
+# COUNT: statistic IterationRestartsEmitted 2
 # RUN: run-in-shell mechanisms=all
 # CHECK: 127
 # CHECK-NEXT: exited with 0

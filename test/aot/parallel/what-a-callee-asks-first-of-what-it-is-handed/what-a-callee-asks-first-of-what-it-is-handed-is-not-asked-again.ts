@@ -1,4 +1,4 @@
-// STATISTIC: TestsThatRejoin <= 10
+// STATISTIC: SpeculationsEmitted <= 10
 class Piece {
   kind: number;
   label: Piece | undefined;

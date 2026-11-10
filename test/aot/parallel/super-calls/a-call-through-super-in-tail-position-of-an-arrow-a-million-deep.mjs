@@ -1,4 +1,4 @@
-// STATISTIC: CallsThroughSuperMadeBehindGuards >= 1
+// STATISTIC: SuperCallsDevirtualized >= 1
 // the call through super is the whole body of an arrow that the method calls last
 const words = JSON.parse('{"walk":"walk","none":""}');
 class Path { walk(left, on) { if (!left) return "home"; return on(left - 1, on); } }

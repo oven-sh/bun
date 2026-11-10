@@ -7,6 +7,7 @@
 //
 // A field is laid on the instance, a method and an accessor on the prototype. So a field of the base class hides an accessor of the subclass, and what is stored there afterwards is what is read.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // K is the key as it stands in the body of a class.
 const bases: [string, string][] = [
@@ -121,7 +122,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laidOut < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laidOut++;
   }
   console.log(laidOut);
@@ -131,7 +132,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

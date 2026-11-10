@@ -696,9 +696,7 @@ pub(super) fn program_rules_out_guesses(
 
 fn names_unknown_file_where_nothing_is_written(file: &WalkedFile<'_, '_>) -> bool {
     let analysis = file.parsed.as_ref().map(|it| &it.code.analyzed.analysis);
-    let guessed = analysis
-        .into_iter()
-        .flat_map(|it| it.names_out_of_data_files);
+    let guessed = analysis.into_iter().flat_map(|it| it.names_from_data_files);
     let guessed: FxHashSet<ExprId> = guessed.filter(|it| it.2).map(|it| it.1).collect();
     names_unknown_file_at(file, &|site| !guessed.contains(&site.specifier_node))
 }

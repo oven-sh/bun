@@ -79,7 +79,7 @@ test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds t
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the restore puts back what it can when one variable of process.env can't be put back, and reports that one
-# With --isolate a test file can't require() another test file that imports from "vitest" and from two more files, as docs/compiler/debugging.mdx says.
+# With --isolate a test file can't require() another test file that imports from "vitest" and from two more files.
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --parallel=1: a later test file can require() it

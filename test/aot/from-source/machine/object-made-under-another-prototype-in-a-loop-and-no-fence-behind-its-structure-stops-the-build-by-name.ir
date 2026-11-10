@@ -1,4 +1,7 @@
-# A fence behind late stores of a new object. `fill` makes its objects in a loop under a prototype that is asked for at run time; where it is another one than the layout's, the structure is stored behind the fence of the fields and wants a fence of its own. THE LIE, testing=FencesBehindLateStoresAreLeftOut: the emitters leave that fence out. Every build asks for it, on every processor, so the build stops by name. Without the lie: object-made-under-another-prototype-in-a-loop-has-a-fence-behind-its-structure.ir.
+# This test covers the fence after late stores to a new object. `fill` allocates its objects in a loop, with a prototype that is looked up at run time.
+# Where that prototype is not the layout's, the structure is stored after the fence for the fields and needs a fence of its own.
+# Fault injection, testing=SkipFencesAfterLateStores: the emitters omit that fence. Every build requires it, on every processor, so the build fails with a named internal error.
+# Without the fault: object-made-under-another-prototype-in-a-loop-has-a-fence-behind-its-structure.ir.
 # f3 = fill
 # -- source: object-made-under-another-prototype-in-a-loop-and-no-fence-behind-its-structure-stops-the-build-by-name.ts
 # declare function sink(...values: unknown[]): void;
@@ -15,5 +18,5 @@
 # fill(1);
 # sink(kept[0].who());
 # -- end of source
-# DIAGNOSTIC: NoFenceBehindLateStores
-# RUN: emit f3 mechanisms=all testing=FencesBehindLateStoresAreLeftOut
+# DIAGNOSTIC: MissingFenceAfterLateStores
+# RUN: emit f3 mechanisms=all testing=SkipFencesAfterLateStores

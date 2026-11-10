@@ -201,6 +201,9 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
+    /// JS thread only.
+    pub jobs_scheduled: u64,
+    pub jobs_completed: u64,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -212,6 +215,8 @@ impl Default for RuntimeTranspilerStore {
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
+            jobs_scheduled: 0,
+            jobs_completed: 0,
         }
     }
 }
@@ -291,6 +296,7 @@ impl RuntimeTranspilerStore {
             first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.
             let fulfilled = unsafe { (*job).run_from_js_thread() };
+            self.jobs_completed += 1;
             job = iter.next();
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
@@ -389,6 +395,7 @@ impl RuntimeTranspilerStore {
                 <&'static str>::from(loader)
             );
         }
+        self.jobs_scheduled += 1;
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
         promise.cast::<c_void>()

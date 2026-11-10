@@ -1,5 +1,5 @@
 // `this` is no value that a birth can list: the collection ends at that store without a second key, and `a` of the first call is listed.
-// STATISTIC: FieldsListedAtBirthsByConstructors = 1
+// STATISTIC: ConstructorFieldsFoldedIntoAllocations = 1
 function Top(a) { this.a = a; }
 function Own(a) { Top.call(this, a); Top.call(this, this); this.b = 2; }
 Object.setPrototypeOf(Own.prototype, Top.prototype);

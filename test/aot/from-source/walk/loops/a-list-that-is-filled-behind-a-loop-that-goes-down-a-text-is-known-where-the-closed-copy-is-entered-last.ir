@@ -11,8 +11,8 @@
 # print(walk(JSON.parse('"aabbbc"'), "abc"), walk(JSON.parse('""'), "abc"), walk(JSON.parse('"zz"'), "abc"));
 # -- end of source
 # The list is filled behind the loop and handed on: what is known of it in front of the loop is what the store behind it leans on.
-# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
-# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: [3,[3]] [0,[0]] [1,[1]]
 # SHELL-NEXT: exited with 0

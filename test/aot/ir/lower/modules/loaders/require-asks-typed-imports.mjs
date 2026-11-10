@@ -3,41 +3,41 @@
 // alone, and a member of its value is read off the object: a store through what `require()` answers shows there. What no `require()` names keeps its one answer.
 
 // RUN(SHAPE): lower
-// SHAPE: [[first]] = RequireModule module=[[m1]] referrer=[[main]] specifier="./data.json" [ifHeldForImport]
+// SHAPE: [[first]] = RequireModule module=[[m1]] referrer=[[main]] specifier="./data.json" [onlyIfImported]
 // SHAPE-NEXT: [[isFirst]] = TypeTest [[first]] testedType=object
 // SHAPE-NEXT: Branch [[isFirst]] -> taken [[done]]([[first]]), notTaken [[next]]()
 // SHAPE-NEXT: [[next]]():
-// SHAPE-NEXT: [[second]] = RequireModule module=[[m2]] referrer=[[main]] specifier="./data.json" [ifHeldForImport]
+// SHAPE-NEXT: [[second]] = RequireModule module=[[m2]] referrer=[[main]] specifier="./data.json" [onlyIfImported]
 // SHAPE-NEXT: [[isSecond]] = TypeTest [[second]] testedType=object
 // SHAPE-NEXT: Branch [[isSecond]] -> taken [[done]]([[second]]), notTaken [[last]]()
 // SHAPE-NEXT: [[last]]():
 // SHAPE-NEXT: [[read]] = RequireModule module=[[m3]] referrer=[[main]] specifier="./data.json"
-// SHAPE-NOT: ifHeldForImport
+// SHAPE-NOT: onlyIfImported
 // SHAPE: Jump -> next [[done]]([[read]])
 // SHAPE-NEXT: [[done]]([[answer]]):
 
 // RUN(TEXT): link
 // TEXT: module [[text]] path="{{*}}data.json?text" displayPath={{*}}requireResult=NamespaceIfImported
 // TEXT-NOT: = RequireModule {{*}}specifier="./data.json"
-// TEXT: = RequireModule module=[[text]] {{*}}specifier="./data.json" [ifHeldForImport]
+// TEXT: = RequireModule module=[[text]] {{*}}specifier="./data.json" [onlyIfImported]
 
 // RUN(JSON): link
 // JSON: module [[json]] path="{{*}}data.json?json" displayPath={{*}}requireResult=NamespaceIfImported {{*}}exports=[{name="a"{{*}}{name="default"{{*}}{name="list"
-// JSON: = RequireModule {{*}}specifier="./data.json" [ifHeldForImport]
-// JSON: = RequireModule module=[[json]] {{*}}specifier="./data.json" [ifHeldForImport]
+// JSON: = RequireModule {{*}}specifier="./data.json" [onlyIfImported]
+// JSON: = RequireModule module=[[json]] {{*}}specifier="./data.json" [onlyIfImported]
 
 // RUN(ITSELF): link
-// ITSELF: module [[file]] path="{{*}}data.json" displayPath={{*}}requireResult=DefaultExport {{*}}exports=[{name="a" variable=[[whole]] isLeftOut=true}, {name="default"
-// ITSELF-COUNT-2: specifier="./data.json" [ifHeldForImport]
+// ITSELF: module [[file]] path="{{*}}data.json" displayPath={{*}}requireResult=DefaultExport {{*}}exports=[{name="a" variable=[[whole]] isOmitted=true}, {name="default"
+// ITSELF-COUNT-2: specifier="./data.json" [onlyIfImported]
 // ITSELF: = RequireModule module=[[file]] {{*}}specifier="./data.json"
 
 // RUN(UNTYPED): link
 // UNTYPED: module [[plain]] path="{{*}}plain.json" displayPath={{*}}requireResult=NamespaceIfImported
 // UNTYPED-NOT: = RequireModule {{*}}specifier="./plain.json"
-// UNTYPED: = RequireModule module=[[plain]] {{*}}specifier="./plain.json" [ifHeldForImport]
-// UNTYPED: = RequireModule module=[[typed]] {{*}}specifier="./plain.json" [ifHeldForImport]
+// UNTYPED: = RequireModule module=[[plain]] {{*}}specifier="./plain.json" [onlyIfImported]
+// UNTYPED: = RequireModule module=[[typed]] {{*}}specifier="./plain.json" [onlyIfImported]
 // UNTYPED: = RequireModule module=[[plain]] {{*}}specifier="./plain.json"
-// UNTYPED-NOT: ifHeldForImport
+// UNTYPED-NOT: onlyIfImported
 
 // RUN(ALONE): link
 // ALONE: module {{*}}path="{{*}}alone.json" displayPath={{*}}requireResult=DefaultExport {{*}}exports=[{name="default"

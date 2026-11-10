@@ -1,5 +1,5 @@
 // A dictionary keeps its structure while names come and go: it is never remembered.
-// COUNT: counter:StructuresOfHeirsRefused >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const one = new H(); for (let k = 0; k < 300; k++) one['k' + k] = k; for (let k = 0; k < 100; k++) delete one['k' + (299 - k)]; function make(t) { return one; }

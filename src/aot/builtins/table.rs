@@ -8,7 +8,8 @@ mod syntax;
 mod tests;
 
 pub use by_name::{
-    is_of_expect, is_of_test_runner, is_plugin, is_test_runner, returns_test_runner, test_runner,
+    is_of_expect, is_of_test_runner, is_path_resolver, is_plugin, is_test_runner,
+    returns_test_runner, test_runner,
 };
 pub use entries::{
     BuiltinEntry, BuiltinFlags, BuiltinKind, CallsForTexts, ClassData, HostRead, HostReadContext,

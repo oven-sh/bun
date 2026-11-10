@@ -1,5 +1,5 @@
 // The bits were asked of another item than the one that is handed on: it is not copied.
-// STATISTIC: HeadsCopiedWhoseQuestionWasAskedAbove = 0
+// STATISTIC: PartialInlinesAfterDominatingTests = 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

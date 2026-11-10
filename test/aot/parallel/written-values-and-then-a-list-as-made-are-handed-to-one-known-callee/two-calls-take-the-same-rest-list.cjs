@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList >= 2
+// STATISTIC: SpreadCallsUnpackedToParameters >= 2
 function inner(who, count, first, second) { return [typeof who, count, first === undefined ? "none" : first, second === undefined ? "none" : second].join(":"); }
 
 function other(a, b, c) { return [a, b, c].join("-"); }

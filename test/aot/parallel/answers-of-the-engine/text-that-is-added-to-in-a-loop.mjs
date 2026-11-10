@@ -1,5 +1,5 @@
 // A text that is added to again and again moves into a buffer with room, and what is added is written behind it: AOTGrowingText.h. Each way in which that could show: the lengths around the first buffer, one, two and three pieces at a time, pieces that are long, empty or 16-bit, texts that are kept while the text grows on and are added to later, two texts in turn, a text added to itself, the end of a text, reads in the loop.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function sumOf(text) { let sum = 0; for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) | 0; return sum; }
 function oneCharacter(count) { let text = ""; for (let i = 0; i < count; i++) text += "x"; return text; }

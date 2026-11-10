@@ -203,7 +203,7 @@ console.log(seen, rounds, keys.length, keys[0], keys[7], keys[keys.length - 1], 
 
 // GENERATED: getterFor lazyAccessor has value
 // CHECK-LABEL: function {{*}}name="getterFor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[L_1]], v2: undefined|null|object):
 // CHECK-NEXT: v3 = NewObject layout=[[L_3]]
 // CHECK-NEXT: PutEnvironmentField v3, v2 layout=[[L_3]]
@@ -214,7 +214,7 @@ console.log(seen, rounds, keys.length, keys[0], keys[7], keys[keys.length - 1], 
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="lazyAccessor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsUndefined]}] results=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsUndefined]}] results=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|object):
 // CHECK-NEXT: v2 = NewObject layout=[[L_5]]
 // CHECK-NEXT: v3 = Builtin builtin=Proxy
@@ -238,7 +238,7 @@ console.log(seen, rounds, keys.length, keys[0], keys[7], keys[keys.length - 1], 
 // CHECK-NEXT: Return v19
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="shape"}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="shape"}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: anything, v2: undefined|null|string|symbol):
 // CHECK-NEXT: v3 = GetModuleVariable variable=[[g_11]]
 // CHECK-NEXT: v4 = Call v3, -, v0, v2 calleeName="isShapeKey"
@@ -253,7 +253,7 @@ console.log(seen, rounds, keys.length, keys[0], keys[7], keys[keys.length - 1], 
 // CHECK-NEXT: ReturnCall v10 casts=[{declared={type=boolean}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="value"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|boolean|number|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|boolean|number|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|boolean|number|string):
 // CHECK-NEXT: v2 = Builtin builtin=Process
 // CHECK-NEXT: v3 = PropGet v2 key="env"
@@ -267,7 +267,7 @@ console.log(seen, rounds, keys.length, keys[0], keys[7], keys[keys.length - 1], 
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="value"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Builtin builtin=Process
 // CHECK-NEXT: v2 = PropGet v1 key="env"

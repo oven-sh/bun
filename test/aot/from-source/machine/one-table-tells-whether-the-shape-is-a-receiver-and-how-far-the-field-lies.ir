@@ -32,8 +32,8 @@
 # for (const thing of things) sum += Number(outside[0](new HolderOfV(thing)) ?? 3) + Number(outside[1](new HolderOfW(thing)) ?? 5) + Number(outside[2](new HolderOfX(thing)) ?? 7);
 # print(sum);
 # -- end of source
-# RUN(COUNT): compile ReceiversToldByTablesOfOffsets mechanisms=all
-# COUNT: statistic ReceiversToldByTablesOfOffsets 62
+# RUN(COUNT): compile ReceiversCheckedByOffsetTables mechanisms=all
+# COUNT: statistic ReceiversCheckedByOffsetTables 62
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 316512
 # RIGHT-NEXT: exited with 0

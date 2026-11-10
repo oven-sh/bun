@@ -1,5 +1,5 @@
 // The subject is a piece that was never cut out, a text joined of two, or one of wide units; the RegExp takes its object along (g, y) or not; the result is only taken apart, read behind a meeting of ways, or gets out. What is printed is what plain Bun prints.
-// STATISTIC: MatchesTakenInParts >= 7
+// STATISTIC: RegExpMatchAllocationsElided >= 7
 const unseen = (x: any): any => [x][JSON.parse("0")];
 const told: string[] = [];
 const kept: any[] = [];

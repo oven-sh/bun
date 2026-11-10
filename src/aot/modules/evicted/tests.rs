@@ -4,7 +4,7 @@ fn files_that_run_again<'a>(files: &[(&'a str, &str)]) -> Vec<&'a str> {
     with_graph(files, |graph, input| {
         let names = files.iter().map(|&(name, _)| name);
         names
-            .filter(|name| graph.runs_again(file_named(input, name)))
+            .filter(|name| graph.may_be_reevaluated(file_named(input, name)))
             .collect()
     })
 }

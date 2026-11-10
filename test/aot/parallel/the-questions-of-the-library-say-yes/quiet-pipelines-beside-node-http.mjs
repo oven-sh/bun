@@ -4,8 +4,8 @@
 // on AbortSignal.prototype and AbortController.prototype. It asks them when the program runs. As long as it left two of the questions as written, every pipeline beside
 // node:http made and aborted a controller: right in every answer, 13% of a streamed response, and seen by no test.
 // The first pipeline makes the two classes, and hears no until then.
-// COUNTER: QuestionsOfLibraryThatSaidYes >= 22800
-// STATISTIC: QuestionsByNameLeftAsWritten <= 0
+// COUNTER: LibraryFastPathChecksPassed >= 22800
+// STATISTIC: MemberLookupChecksLeftGeneric <= 0
 import http from "node:http";
 import { pipeline, Readable, Writable } from "node:stream";
 

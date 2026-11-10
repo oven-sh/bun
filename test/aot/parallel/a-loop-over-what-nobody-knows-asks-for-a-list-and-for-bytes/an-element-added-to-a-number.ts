@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 3
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 3
 // `s * x + c[i]`, `s += c[i]`, `1 + c[i] + ..`: the element is added to what an operator on numbers made, to what comes round the loop, to a written number. The `+` may join texts as well: it is a guess, and where texts come the front fails and the loop runs as it ran.
 const key: string = JSON.parse('"go"');
 const horner: Record<string, (c: any, x: number) => unknown> = { go(c: any, x: number): unknown { let s = 0; for (let i = 0; i < c.length; i++) s = s * x + c[i]; return s; } };

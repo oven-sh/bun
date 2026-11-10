@@ -26,5 +26,5 @@
 # A step by whatever is handed over says nothing of the slot: a number is asked for.
 # RUN(NUMBER): walk f2 mechanisms=all
 # NUMBER-NOT: testedType=i32
-# RUN(COUNT): compile LoopsBuiltTwice mechanisms=all
-# COUNT: statistic LoopsBuiltTwice 2
+# RUN(COUNT): compile WalkLoopsVersioned mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 2

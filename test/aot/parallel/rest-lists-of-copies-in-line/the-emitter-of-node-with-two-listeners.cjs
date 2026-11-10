@@ -1,5 +1,5 @@
 // The same with two listeners: the list goes to the loop over them.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const { EventEmitter } = require("node:events");
 const emitter = new EventEmitter();
 let got = "";

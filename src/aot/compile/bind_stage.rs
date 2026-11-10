@@ -9,7 +9,8 @@ use crate::builtins::{
     BuiltinValuePaths, RuntimeModule, builtin_type_paths, is_module_cache, table,
 };
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span};
+use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span, range_of_node};
+use crate::ir::generated::ModuleRequestKind;
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
 use crate::load::contents::worker_entries::source_path_of;
@@ -21,27 +22,28 @@ use crate::load::{PerProject, ProjectId};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, BindInput, BoundModules, DeferredExports, ImportBinding, LinkedProject, ModuleGraph,
-    ModuleKind, ModuleRef, Shape,
+    ModuleKind, ModuleRef, ModuleRequest, Shape,
 };
 use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
+use bun_options_types::aot_options::ExplainSet;
 use bun_paths::is_absolute;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::bind::{
-    Binding, Decl, FunctionFlags, Parent, ReferentCertainty, ResolvedReferent, StaticReferent,
-    static_referent,
+    Binding, Decl, FnOwner, FunctionFlags, Parent, ReferentCertainty, ResolvedReferent,
+    StaticReferent, static_referent,
 };
 use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind};
+use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind, StmtId, StmtKind};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files, Sym};
 use bun_sema::resolve::CodeImportKind;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
-fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
+fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules, left_out_files: &[FileId]) {
     for &module in &reached.looked_at {
         match graph.shape(module) {
             Shape::EsModule => graph.set_namespace_is_seen(module),
@@ -53,7 +55,7 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
         graph.set_keeps_module_object(module);
     }
     for &module in &reached.naming_ways {
-        graph.set_names_way_to_module_objects(module);
+        graph.set_reaches_module_objects(module);
     }
     for &module in reached
         .found_by_name
@@ -63,7 +65,20 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
         graph.set_is_found_by_name(module);
     }
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
-    graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
+    let keeps =
+        |referrer: ModuleRef, request: &ModuleRequest| reached.keeps_request(referrer, request);
+    let needed = match reached.drops_imports() {
+        true => graph.find_imports_of_lookups(left_out_files, &keeps),
+        false => FxHashSet::default(),
+    };
+    graph.limit_requests(|referrer, request| {
+        let is_needed = matches!(
+            (referrer, request.target, request.kind),
+            (ModuleRef::File(importer), ModuleRef::File(target), ModuleRequestKind::Import)
+                if needed.contains(&(importer, target))
+        );
+        is_needed || keeps(referrer, request)
+    });
     graph.add_imports(&reached.readers_of_built_in_modules);
 }
 
@@ -175,6 +190,34 @@ fn hands_module_cache_to_code_out_of_sight(
     })
 }
 
+fn lies_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, span: Span) -> bool {
+    let (file, hir) = (span.file, files.hir(span.file));
+    let is_left_out = |function| left_out.functions.contains(&FunctionRef { file, function });
+    let holds = |node| {
+        let (start, end) = range_of_node(hir, node);
+        (start..end).contains(&span.start)
+    };
+    left_out.files.binary_search(&file).is_ok()
+        || (0..hir.exprs.len() as u32).map(ExprId).any(|it| {
+            matches!(hir[it].kind, ExprKind::Fn(function) if is_left_out(function))
+                && holds(NodeData::Expr(it))
+        })
+        || (0..hir.stmts.len() as u32).map(StmtId).any(|it| {
+            matches!(hir[it].kind, StmtKind::Fn(function) if is_left_out(function))
+                && holds(NodeData::Stmt(it))
+        })
+}
+
+fn lies_in_dead_code(files: &Files<'_>, span: Span) -> bool {
+    let (hir, decisions) = (files.hir(span.file), &files.analysis(span.file).decisions);
+    let holds = |node| {
+        let (start, end) = range_of_node(hir, node);
+        (start..end).contains(&span.start)
+    };
+    decisions.dead_stmts().any(|it| holds(NodeData::Stmt(it)))
+        || decisions.dead_exprs().any(|it| holds(NodeData::Expr(it)))
+}
+
 fn warn_where_modules_are_reset(
     diagnostics: &mut Diagnostics,
     view: ProgramView<'_, '_>,
@@ -208,6 +251,7 @@ fn name_data_files_found_by_patterns(
     left_out: &LeftOutCode,
     loaders: &[(Vec<u8>, Loader)],
     provider: &dyn SourceProvider,
+    lists_files: bool,
 ) -> bool {
     let (files, sources) = (view.files(), view.sources);
     let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
@@ -240,6 +284,9 @@ fn name_data_files_found_by_patterns(
             for &found in data {
                 provider.keep_bytes_of_data_file(to_native(files.module(found).file_name()));
             }
+            if !lists_files {
+                continue;
+            }
             names.shared_sort_unstable();
             let node = NodeData::Expr(site.specifier_node);
             let span = Span::of_node(files.hir(file), file, node);
@@ -251,7 +298,44 @@ fn name_data_files_found_by_patterns(
     has_found_data
 }
 
-fn warn_where_files_read_are_not_embedded(
+fn is_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, file: FileId, e: ExprId) -> bool {
+    let bound = files.bound(file);
+    let mut node = bound.parent_of_expr(e);
+    loop {
+        node = match node {
+            Parent::Expr(above) => bound.parent_of_expr(above),
+            Parent::Stmt(statement) => {
+                if left_out.declarations.is_statement_left_out(file, statement) {
+                    return true;
+                }
+                bound.parent_of_stmt(statement)
+            }
+            Parent::VarInit(declarator) => {
+                if left_out
+                    .declarations
+                    .is_declarator_left_out(file, declarator)
+                {
+                    return true;
+                }
+                Parent::Stmt(bound.var_stmt[declarator.idx()])
+            }
+            Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
+            Parent::FnBody(function) => {
+                if left_out.functions.contains(&FunctionRef { file, function }) {
+                    return true;
+                }
+                match bound.fns[function.idx()].owner {
+                    FnOwner::Expr(written) => bound.parent_of_expr(written),
+                    FnOwner::Stmt(statement) => bound.parent_of_stmt(statement),
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+    }
+}
+
+fn warn_about_unembedded_reads(
     diagnostics: &mut Diagnostics,
     view: ProgramView<'_, '_>,
     graph: &ModuleGraph,
@@ -264,7 +348,7 @@ fn warn_where_files_read_are_not_embedded(
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
         let folder = dirname::<Posix>(files.module(file).file_name());
         let analysis = files.analysis(file);
-        let read_by_functions_called = analysis.own_urls_handed.iter().flat_map(|handed| {
+        let read_by_functions_called = analysis.own_url_arguments.iter().flat_map(|handed| {
             let function = match graph.import_binding(file, handed.function) {
                 ImportBinding::Variable(function) => function,
                 _ => Sym {
@@ -273,32 +357,35 @@ fn warn_where_files_read_are_not_embedded(
                 },
             };
             let read = files.compiled(function.file).into_iter();
-            read.flat_map(|it| it.analysis.files_read_beside_callers)
+            read.flat_map(|it| it.analysis.caller_relative_reads)
                 .filter(move |it| {
                     (it.function, it.place, it.property)
                         == (function.id, handed.place, handed.property)
                 })
                 .map(|it| (handed.argument, it.path))
         });
-        let read = analysis.paths_of_files_read.iter().copied();
+        let read = analysis.module_relative_reads.iter().copied();
         for (operand, path) in read.chain(read_by_functions_called) {
             let path = from_argument(folder, files.atoms.bytes(path));
             let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
-            let is_lacking = !is_code && provider.is_file_that_only_asset_brings(to_native(&path));
-            let may_be_lacking = !is_code
-                && !is_lacking
-                && provider.is_data_file_that_its_folder_may_hide(to_native(&path));
-            if !is_lacking && !may_be_lacking {
+            let is_not_embedded =
+                !is_code && provider.is_embeddable_only_by_asset(to_native(&path));
+            let may_not_be_embedded =
+                !is_code && !is_not_embedded && provider.is_embedding_undecided(to_native(&path));
+            if !is_not_embedded && !may_not_be_embedded {
+                continue;
+            }
+            if is_in_left_out_code(files, left_out, file, operand) {
                 continue;
             }
             let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
             let name = compute_display_path(project_root, to_native(&path));
-            let warning = Diagnostic::new(Code::FileReadIsNotEmbedded, Some(span), &[&name]);
-            match is_lacking {
+            let warning = Diagnostic::new(Code::UnembeddedFileRead, Some(span), &[&name]);
+            match is_not_embedded {
                 true => diagnostics.add(Some(view), warning),
                 false => {
                     if let Some(warning) = Diagnostics::render(view, warning) {
-                        provider.warn_if_file_system_lacks(to_native(&path), warning);
+                        provider.warn_if_not_embedded(to_native(&path), warning);
                     }
                 }
             }
@@ -700,7 +787,7 @@ impl Build<'_> {
                         );
                     }
                 }
-                finish_modules(&mut graph, &reached);
+                finish_modules(&mut graph, &reached, &left_out.files);
                 if reached.stores_loader_function {
                     graph.set_computed_names_ask_loader_functions();
                 }
@@ -758,16 +845,29 @@ impl Build<'_> {
                         self.diagnostics.add(Some(view), warning);
                     }
                 }
-                if !reached.found_by_name.is_empty() {
+                let may_spell_root_folders = !reached.found_by_name.is_empty()
+                    || self.started_workers.levels_above_root > 0
+                    || self.provider.embeds_assets();
+                if may_spell_root_folders {
                     self.started_workers.root_folders_spelled = find_root_folders_spelled(
                         view.files(),
                         view.sources,
-                        &self.options.paths.root_directory,
+                        &from_native(&self.options.paths.root_directory),
                         &in_parallel,
                     );
                 }
                 steps.end_with(|| format!("{project_name}: root folders that paths spell"));
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
+                for warning in std::mem::take(&mut self.resolves_that_miss) {
+                    let is_unreached = |span| lies_in_left_out_code(view.files(), &left_out, span);
+                    if !warning.span.is_some_and(is_unreached) {
+                        self.diagnostics.add(Some(view), warning);
+                    }
+                }
+                self.diagnostics.forgive_unasked_comments(|span| {
+                    lies_in_left_out_code(view.files(), &left_out, span)
+                        || lies_in_dead_code(view.files(), span)
+                });
                 if !self.options.aot.runs_in_place {
                     let loaders = &self.options.load.loaders;
                     let has_found_data = name_data_files_found_by_patterns(
@@ -776,13 +876,14 @@ impl Build<'_> {
                         &left_out,
                         loaders,
                         self.provider,
+                        self.options.aot.explain.contains(ExplainSet::TEXT),
                     );
                     if has_found_data {
                         keep_paths_of_code_that_file_system_sees(view, &left_out, self.provider);
                     }
                     keep_where_parsers_refused_data(view, &left_out, self.provider);
                     if !self.options.load.runs_tests {
-                        warn_where_files_read_are_not_embedded(
+                        warn_about_unembedded_reads(
                             &mut self.diagnostics,
                             view,
                             &graph,
@@ -823,7 +924,7 @@ impl Build<'_> {
                 bstr::BStr::new(view.sources.module_paths(file).display_path)
             };
             let owner = match owner {
-                crate::modules::ModuleRef::File(file) | crate::modules::ModuleRef::Face(file) => {
+                crate::modules::ModuleRef::File(file) | crate::modules::ModuleRef::Facade(file) => {
                     path_of(file)
                 }
                 _ => bstr::BStr::new("a module that is no file"),

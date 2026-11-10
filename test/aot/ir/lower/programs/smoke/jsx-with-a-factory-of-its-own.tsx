@@ -42,7 +42,7 @@ console.log(tree.tag, tree.children.length, JSON.stringify(tree.props));
 
 // GENERATED: h Item
 // CHECK-LABEL: function {{*}}name="h"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|symbol|function flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsUndefined]}, {type=Array<undefined|null|number|string|[[L_1]]|Array<undefined|null|number|string|[[L_1]]|Array>> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|symbol|function flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsUndefined]}, {type=Array<undefined|null|number|string|[[L_1]]|Array<undefined|null|number|string|[[L_1]]|Array>> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|string|symbol|function, v1: undefined|null|object, v2: Array<undefined|null|number|string|[[L_1]]|Array<undefined|null|number|string|[[L_1]]|Array>>):
 // CHECK-NEXT: v3 = Convert v0 declared={type=undefined|null|string|symbol|function flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v4 = Convert v1 declared={type=undefined|null|object flags=[OmitsUndefined]}
@@ -53,7 +53,7 @@ console.log(tree.tag, tree.children.length, JSON.stringify(tree.props));
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Item"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
 // CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)

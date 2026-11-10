@@ -1,5 +1,5 @@
 // The variable is stored in the turn: straight by a helper, through a getter, and through a callback handed to a built-in.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies = 0
+// STATISTIC: CapturedVariableReadsHoisted = 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

@@ -5,8 +5,8 @@
 # function run() { let c = 0; for (let i = 0; i < 100; i++) c += picked(x, y) === x ? 1 : 2; return c; }
 # print(run(), picked(x, y));
 # -- end of source
-# RUN(COUNT): compile LoopsBoughtOnceMoreWithoutQuestionsOfEveryTurn mechanisms=all
-# COUNT: statistic LoopsBoughtOnceMoreWithoutQuestionsOfEveryTurn 1
+# RUN(COUNT): compile LoopsReversionedWithoutHoistedGuards mechanisms=all
+# COUNT: statistic LoopsReversionedWithoutHoistedGuards 1
 # RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # ANSWERS: 200 abcd
 

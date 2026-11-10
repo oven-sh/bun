@@ -3,7 +3,7 @@
 # as likely (a read of a name that a literal of the caller lacks has no typed form: a second turn bought nothing there). f1 = configure.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = ShapeTest {{*}}layouts=[L2] [refusesMarkedObjects]
+# CHECK: = ShapeTest {{*}}layouts=[L2] [rejectsMarkedObjects]
 # CHECK: = GetSlot {{*}}key="encoding" receivers=[L2] level=Proven
 # CHECK-NOT: layouts=[L0]
 # CHECK: = GetSlot {{*}}key="limit" receivers=[L2] level=Proven

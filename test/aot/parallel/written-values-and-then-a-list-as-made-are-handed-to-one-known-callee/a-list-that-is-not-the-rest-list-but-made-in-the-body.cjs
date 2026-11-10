@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList >= 1
+// STATISTIC: SpreadCallsUnpackedToParameters >= 1
 function inner(who, count, first, second) { return [typeof who, count, first === undefined ? "none" : first, second === undefined ? "none" : second].join(":"); }
 
 function outer(a, b) { const list = [a]; if (b !== undefined) list.push(b); return inner(outer, list.length, ...list); }

@@ -11,8 +11,8 @@
 # function touchedInside(data, touch) { const n = data.length; let s = 0; for (let i = 0; i < n; i++) { s = ((s << 5) - s) ^ data[i]; if (i === 1) touch(data); } return s + ":" + n; }
 # publish(bound, touched, touchedInside);
 # -- end of source
-# RUN: compile LengthsReadInFrontOfLoopsAskedWhetherTheyStillHold mechanisms=all
-# CHECK: statistic LengthsReadInFrontOfLoopsAskedWhetherTheyStillHold 3
+# RUN: compile CachedLengthsRevalidatedInPreheaders mechanisms=all
+# CHECK: statistic CachedLengthsRevalidatedInPreheaders 3
 # RUN(FRONT): walk f1 mechanisms=all
 # FRONT: = PropGet v0 key="length"
 # FRONT: = GetArrayLength

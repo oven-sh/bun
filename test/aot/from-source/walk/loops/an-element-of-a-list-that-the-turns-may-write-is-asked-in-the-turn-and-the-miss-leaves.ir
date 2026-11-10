@@ -20,8 +20,8 @@
 # TEXTS: = GetArrayElement {{*}}level=Expected
 # RUN(FRONT): walk f1 f2 mechanisms=all
 # FRONT-NOT: = GetArrayStorage
-# RUN(COUNT): compile ElementsAskedInTurnsOfTypedCopies mechanisms=all
-# COUNT: statistic ElementsAskedInTurnsOfTypedCopies 1
+# RUN(COUNT): compile ElementsGuardedInIterations mechanisms=all
+# COUNT: statistic ElementsGuardedInIterations 1
 # RUN(SHELL): run-in-shell globalThis.sink = (grows, counts) => { print(grows([1, 2, 4]), grows([1.5, 1.5, 4]), grows([1, , 2, 5]), grows([1, "2", 3]), grows([])); const seen = []; const odd = [1, 2, 4]; Object.defineProperty(odd, 1, { get() { seen.push("read"); return 2; } }); print(grows(odd), seen.join()); print(counts(["x", "x", "x"], 12), counts(["x", , "x", 5, "x", "x"], 9), counts([1, 2, 3], 4)); };
 # SHELL: 14 14 NaN 123 0
 # SHELL-NEXT: 14 read

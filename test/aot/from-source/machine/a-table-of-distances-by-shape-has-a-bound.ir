@@ -51,9 +51,9 @@
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 1770 1830
 # RIGHT-NEXT: exited with 0
-# RUN(HIGHEST): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f1/ShapesOfField
-# HIGHEST: AOT: 
+# RUN(HIGHEST): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/ShapesOfField
+# HIGHEST: bun: internal AOT error:
 # HIGHEST-NOT: exited with 0
-# RUN(MIDDLE): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f1/MiddleShapesOfField
-# MIDDLE: AOT: 
+# RUN(MIDDLE): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/MiddleShapesOfField
+# MIDDLE: bun: internal AOT error:
 # MIDDLE-NOT: exited with 0

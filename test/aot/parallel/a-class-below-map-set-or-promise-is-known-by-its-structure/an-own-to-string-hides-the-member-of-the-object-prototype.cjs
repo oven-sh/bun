@@ -1,5 +1,5 @@
 // An own toString and an own hasOwnProperty hide members that stand two objects above the class, on Object.prototype.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { text() { return this.toString(); } has2(k) { return this.hasOwnProperty(k); } tag() { return Object.prototype.toString.call(this); } }
 const one = new H(); const out = [];

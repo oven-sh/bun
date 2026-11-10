@@ -6,8 +6,8 @@
 # function run(count) { for (let i = 0; i < count; i++) kept[i] = blend(first[i], second[i]); return kept.map((one) => typeof one).join(); }
 # publish(run);
 # -- end of source
-# RUN: compile ListsAskedForBesideListsInFrontOfLoops mechanisms=all
-# CHECK: statistic ListsAskedForBesideListsInFrontOfLoops 2
+# RUN: compile ArraysGuardedBesideArrays mechanisms=all
+# CHECK: statistic ArraysGuardedBesideArrays 2
 # RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(2)); print(run(4)); };
 # SHELL: object,object,number,number
 # SHELL-NEXT: object,object,object,object

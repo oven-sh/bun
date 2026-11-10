@@ -8,7 +8,7 @@
 # f1 = drain
 # The parameter is typed by a class of the file; the method that the class writes under Symbol.iterator hands back what `new Steps()` makes; Steps is a class of the file and writes one method under `next`.
 # Objects of both classes are handed out, so nothing is proven of either. In the loop what was read under `next` is tested for that method.
-# STATISTIC: NextMethodsTestedForFunctionWritten >= 1
+# STATISTIC: DeclaredNextMethodsGuarded >= 1
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: [[next]]: {{*}} = PropGet {{*}}key="next"

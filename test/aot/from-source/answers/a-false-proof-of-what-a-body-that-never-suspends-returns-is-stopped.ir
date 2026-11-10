@@ -10,14 +10,18 @@
 # if (which === 2) useLater();
 # print("went on");
 # -- end of source
-# WHAT AN ASYNC FUNCTION HANDS ITS CALLER, AS A USER BUILDS: no word that checks proofs. THE LIE, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, and a number comes.
-# In `give` nothing suspends, so whoever awaits a call of it enters its body and takes what `return` hands over out of the register. That result is held to its type where it goes out, like the result of any function (Plan::typeHeldOfResult() of the unit): the number is stopped there, by name.
-# In `later` something suspends, so the value comes through its promise. What `await` takes out of a promise is believed by nobody: the number comes out as a number.
-# BELIEVED, the first printed "undefined" for a number and went on.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# What an async function returns to its caller, in a user's build: no switch that checks proofs is set.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, but a number arrives.
+# Nothing suspends in `give`, so code that awaits a call of `give` enters its body and takes the returned value straight from the register.
+# That result is checked against its type where it leaves the body, like the result of any function (Plan::typeHeldOfResult() of the unit).
+# The number is caught there, and the process crashes with a named error.
+# Something suspends in `later`, so the value arrives through its promise. Nothing trusts a proof of what `await` takes out of a promise, so the number comes out as a number.
+# When the proof was trusted unchecked, the first run printed "undefined" for a number and continued.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(ATONCE): run-in-shell mechanisms=all globalThis.which = 1;
 # ATONCE: got it
-# ATONCE-NEXT: AOT: f{{*}} at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# ATONCE-NEXT: bun: internal AOT error: type check failed
+# ATONCE-NEXT: found int32 in a call result
 # ATONCE-NOT: went on
 # ATONCE: crashed with
 # RUN(LATER): run-in-shell mechanisms=all globalThis.which = 2;

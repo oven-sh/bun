@@ -1,5 +1,5 @@
-// STATISTIC: LoopsLaidOutWhoseTurnsStoreIntoSlots >= 1
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
+// STATISTIC: UnrolledLoopsWithSlotStores >= 1
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the turns are laid out as users build them, and every raw access asks its position at the run
 "use strict";
 // The same with the count behind the read, with a step of two, and with a sum kept in the field itself.
 const said = [];

@@ -9,6 +9,6 @@
 # sink(new Two(), new Lent(), new Late(), two, lent, late);
 # -- end of source
 # Two returns with two functions . what another object's method hands back . a `next` that is stored later: the text of the method names no one function, and nothing is expected of `next`.
-# STATISTIC: NextMethodsTestedForFunctionWritten = 0
+# STATISTIC: DeclaredNextMethodsGuarded = 0
 # RUN: compile mechanisms=all
 # CHECK: image not empty

@@ -6,18 +6,21 @@
 # function f() { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
 # print(f(), counted);
 # -- end of source
-# `data[w]` stands in the head and in the turn; holder and key are consts of the file of which nobody knows anything. Where the holder is a plain object and the key a text under which an own value lies, the read
-# runs no code and, as the turns write no name of any object, finds the same in every turn: it is made once in front of the typed copy by an operation that runs no code and answers absent for everything else;
-# who gets absent takes the closed copy. A hundred turns: 10,106 > 836 instructions, plain Bun 915.
-# Here an accessor lies under the key: twelve turns are twenty-five calls. The lie, testing=ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad, reads in front by the road that runs code: the calls are fewer, in silence.
-# RUN(EVENT): compile ReadsUnderKeysFromInFrontBuiltInFrontOfLoops mechanisms=all
-# EVENT: statistic ReadsUnderKeysFromInFrontBuiltInFrontOfLoops 2
+# `data[w]` appears in the loop header and in the loop body. The holder and the key are module-level consts that the compiler knows nothing about.
+# If the holder is a plain object and the key is a string that names an own data property, the read runs no code.
+# The iterations write no named property of any object, so the read finds the same value in every iteration.
+# The read is therefore hoisted: it is done once, before the specialized version of the loop, by an operation that runs no code and returns absent in every other case.
+# If the operation returns absent, the generic version of the loop runs. A hundred iterations went from 10,106 instructions to 836. Plain Bun takes 915.
+# Here the key names an accessor, so twelve iterations call the getter twenty-five times.
+# Fault injection, testing=UseGenericOwnKeyReads: the hoisted read takes the generic path, which runs code. The getter is called fewer times, silently.
+# RUN(EVENT): compile InvariantKeyReadsHoisted mechanisms=all
+# EVENT: statistic InvariantKeyReadsHoisted 2
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 84 25
 # RIGHT-NEXT: exited with 0
 # RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # HELD: 84 25
 # HELD-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad
+# RUN(LIE): run-in-shell mechanisms=all testing=UseGenericOwnKeyReads
 # LIE: 84 1
 # LIE-NEXT: exited with 0

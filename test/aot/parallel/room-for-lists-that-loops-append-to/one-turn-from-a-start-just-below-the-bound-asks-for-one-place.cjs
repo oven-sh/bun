@@ -1,4 +1,4 @@
-// STATISTIC: RoomAskedAsFarAsAProfileMayAsk >= 1
+// STATISTIC: ClampedCapacitiesReserved >= 1
 "use strict";
 // What a push needs is the elements that the list has and the turns that are left, not the bound.
 function take(l, from, to) { const got = [from]; for (let j = from; j < to; j++) got.push(l[j] + 1); return got; }

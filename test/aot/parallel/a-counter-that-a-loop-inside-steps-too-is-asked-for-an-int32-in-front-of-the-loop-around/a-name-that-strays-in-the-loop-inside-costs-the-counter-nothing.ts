@@ -1,4 +1,4 @@
-// STATISTIC: CountersThatLoopsInsideStepAskedInFrontOfLoops = 0
+// STATISTIC: NestedLoopCounterGuardsHoisted = 0
 const rounds = +process.argv[2]! || 3;
 const next: number[] = JSON.parse("[3,0,5,1,9,2,4,8,6,7,11,10]");
 function chase(list: number[], from: number, until: number): number {

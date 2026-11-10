@@ -166,7 +166,7 @@ const inSlot = (command: string[], folder: string) => slot(() => run(command, fo
 function build(program: Program, form: Form = "closed") {
   const executable = join(directory, program, "bin", form + (isWindows ? ".exe" : ""));
   const start = async () => {
-    const flags = ["--compile", "--aot", ...forms[form], ...withoutDebugInformation];
+    const flags = ["--compile", "--aot", "--explain", ...forms[form], ...withoutDebugInformation];
     const command = [bunExe(), "build", ...flags, "./main.cjs", "--outfile", executable];
     const { stderr, exitCode } = await inSlot(command, join(directory, program, "tool"));
     expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
@@ -295,6 +295,23 @@ declare.each([
         answers: mapValues(found, file => inEachFolder(finds(file))),
       })),
     );
+  },
+  600_000,
+);
+
+declare(
+  "without --explain the build doesn't list the data files",
+  async () => {
+    const executable = join(directory, "a-folder", "bin", "unexplained" + (isWindows ? ".exe" : ""));
+    const flags = ["--compile", "--aot", ...withoutDebugInformation];
+    const command = [bunExe(), "build", ...flags, "./main.cjs", "--outfile", executable];
+    const [{ stderr, exitCode }, explained] = await Promise.all([
+      inSlot(command, join(directory, "a-folder", "tool")),
+      build("a-folder"),
+    ]);
+    expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(notesOf(stderr)).toEqual([]);
+    expect(await dataHeldBy(executable)).toEqual(await dataHeldBy(explained.executable));
   },
   600_000,
 );

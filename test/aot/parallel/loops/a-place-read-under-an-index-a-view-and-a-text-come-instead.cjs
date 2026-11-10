@@ -1,4 +1,4 @@
-// STATISTIC: ListsExpectedOfPlaces >= 1
+// STATISTIC: ArraysSpeculatedFromLocationUses >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const V = q > 99 ? JSON.parse(process.argv[3]) : Float32Array.from([1.5, 2, q]), T = JSON.parse('"héllo' + q + '"'); let kept = '';

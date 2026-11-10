@@ -1,7 +1,7 @@
 // A helper copied in line into a loop tells three classes apart and multiplies two fields that came out of JSON.parse, so nothing is known of either.
 // Both are asked for numbers in the turn, which begins again where one is none. So no operator that may run other code stands on the usual way, and the questions by instanceof keep their typed form.
-// STATISTIC: OperandsAskedForNumberInQuietTurns >= 1
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: NumberOperandsGuardedInIterations >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 const rows = JSON.parse("[" + Array.from({ length: 64 }, (_, i) => '{"x":' + i + ',"y":' + (i * 7 % 5) + "}").join() + "]");
 class Shape { }

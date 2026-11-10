@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 3
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 3
 // Where a turn calls what is no built-in by the text, the call is the turn's price: the front keeps the list of numbers and the views and has no copy for a list of anything. `Math.max(..)` is no such call.
 const key = JSON.parse('"go"');
 const pushed = { go(d) { const o = []; for (let i = 0; i < d.length; i++) o.push(d[i] & 15); return o.join(); } };

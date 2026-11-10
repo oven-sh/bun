@@ -1,6 +1,6 @@
 // Five calls in a row, each of one of four functions and each handed what the call before gave: the rows of arms stand one behind the other, none inside an arm of another.
-// STATISTIC: CallsToldApartByCallee >= 5
-// STATISTIC: CallsToldApartByCallee <= 10
+// STATISTIC: CallsDispatchedByCallee >= 5
+// STATISTIC: CallsDispatchedByCallee <= 10
 function A(x) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return (x + work + 0) | 0; }
 function B(x) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return (x + work + 1) | 0; }
 function C(x) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return (x + work + 2) | 0; }

@@ -1,5 +1,5 @@
 // A class below Array: the elements change their kind, and the structure with them.
-// COUNT: counter:StructuresOfHeirsRemembered >= 3
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 3
 "use strict";
 class A extends Array { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + this.length; } }
 const one = new A();

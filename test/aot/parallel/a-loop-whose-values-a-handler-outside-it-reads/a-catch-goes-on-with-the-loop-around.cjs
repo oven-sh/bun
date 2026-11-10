@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltTwiceWhoseValuesHandlersOutsideRead >= 1
+// STATISTIC: LoopsVersionedUnderOuterHandlers >= 1
 // The catch leaves the inner loop for the next turn of the loop around: it lies outside the one and inside the other.
 const key = JSON.parse('"go"'), log = [];
 const counted = (values, name) => ({ [Symbol.iterator]() { let at = 0; return { next() { return at < values.length ? { done: false, value: values[at++] } : { done: true, value: undefined }; }, return() { log.push("closed " + name + " at " + at); return {}; } }; } });

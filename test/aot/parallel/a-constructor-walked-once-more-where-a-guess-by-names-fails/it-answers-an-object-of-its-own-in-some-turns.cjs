@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 "use strict";
 // A constructor that returns an object gives that object.
 function Plate(from) { this.wide = from.wide; this.tall = from.tall; return from.instead; }

@@ -10,8 +10,8 @@
 # of its key: it is asked for the key itself, so the loop does not leave its typed copy at the first turn. Until now the store was only expected to take a number and the loop ran closed.
 # f1 = map
 # OPTIONS: check=Validate
-# RUN: compile CountersHeldBelowRoomOfViews mechanisms=all
-# CHECK: statistic CountersHeldBelowRoomOfViews 1
+# RUN: compile LoopBoundsClampedToTypedArrays mechanisms=all
+# CHECK: statistic LoopBoundsClampedToTypedArrays 1
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 3,3,3,3,3,3,3,0
 # SHELL: exited with 0

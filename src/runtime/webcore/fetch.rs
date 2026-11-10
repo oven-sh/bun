@@ -1033,6 +1033,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     //
     // Holds the +1 from `create_from_js` until the headers are applied.
     let mut created_headers: Option<HeadersRef> = None;
+    // A `Headers` object is borrowed, not ref'd. The guard keeps its wrapper
+    // alive until the headers are applied: the body extraction in between
+    // can run user JS.
+    let mut headers_guard: Option<jsc::EnsureStillAlive> = None;
     let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
         let init_headers: Option<JSValue> = 'init: {
             if let Some(options) = options_object {
@@ -1074,6 +1078,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                 break 'brk None;
             }
+            headers_guard = Some(jsc::EnsureStillAlive(headers_value));
             break 'brk Some(headers__.as_ptr());
         }
 
@@ -1190,6 +1195,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
         )?);
     }
+    drop(headers_guard);
     drop(created_headers);
 
     if proxy.is_some() && !unix_socket_path.is_empty() {

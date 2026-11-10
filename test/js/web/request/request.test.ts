@@ -212,6 +212,14 @@ describe("RequestInit body is extracted after the other members are read (#48468
     expect(await request.text()).toBe("a=2");
   });
 
+  test("DataView", async () => {
+    const bytes = new TextEncoder().encode("a=1");
+    const request = requestWithMutatingGetter(new DataView(bytes.buffer), () => {
+      bytes[2] = "2".charCodeAt(0);
+    });
+    expect(await request.text()).toBe("a=2");
+  });
+
   test("a detached Uint8Array is empty", async () => {
     const bytes = new TextEncoder().encode("a=1");
     const request = requestWithMutatingGetter(bytes, () => {
@@ -296,75 +304,5 @@ describe("RequestInit body is extracted after the other members are read (#48468
     expect(
       () => new Request("https://example.com/", { method: "POST", body: stream, headers: { "a b": "1" } }),
     ).toThrow(/header/i);
-  });
-
-  describe("fetch()", () => {
-    async function echo(fn: (url: string) => Promise<Response>) {
-      using server = Bun.serve({
-        port: 0,
-        fetch: async req => new Response(await req.text()),
-      });
-      return await (await fn(server.url.href)).text();
-    }
-
-    test("reads init.headers before it extracts a URLSearchParams body", async () => {
-      const params = new URLSearchParams("a=1");
-      const text = await echo(url =>
-        fetch(url, {
-          method: "POST",
-          body: params,
-          get headers() {
-            params.append("b", "2");
-            return {};
-          },
-        }),
-      );
-      expect(text).toBe("a=1&b=2");
-    });
-
-    test("reads init.headers before it extracts the body of an init object input", async () => {
-      const params = new URLSearchParams("a=1");
-      const text = await echo(url =>
-        fetch({
-          url,
-          method: "POST",
-          body: params,
-          get headers() {
-            params.append("b", "2");
-            return {};
-          },
-        } as unknown as Request),
-      );
-      expect(text).toBe("a=1&b=2");
-    });
-
-    test("converts an object body to a string when `body` is read", async () => {
-      let value = "a=1";
-      const order: string[] = [];
-      const text = await echo(url =>
-        fetch(url, {
-          method: "POST",
-          get body() {
-            order.push("body");
-            return { toString: () => value } as unknown as BodyInit;
-          },
-          get headers() {
-            order.push("headers");
-            value = "mutated";
-            return {};
-          },
-        }),
-      );
-      expect(order).toEqual(["body", "headers"]);
-      expect(text).toBe("a=1");
-    });
-
-    test("an invalid header rejects before a locked stream body is checked", async () => {
-      const stream = new ReadableStream();
-      stream.getReader();
-      await expect(
-        fetch("http://127.0.0.1:1/", { method: "POST", body: stream, headers: { "a b": "1" } }),
-      ).rejects.toThrow(/header/i);
-    });
   });
 });

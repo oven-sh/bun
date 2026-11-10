@@ -921,7 +921,7 @@ impl Value {
             return false;
         }
         let js_type = value.js_type();
-        if js_type.is_typed_array_or_array_buffer()
+        if js_type.is_array_buffer_like()
             || matches!(js_type, jsc::JSType::Array | jsc::JSType::DerivedArray)
         {
             return true;

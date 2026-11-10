@@ -58,6 +58,9 @@ struct Checks<'a, 'c> {
     only_parser: bool,
     /// Set for oxfmt, which tells oxc's parser not to parse regular expressions.
     is_oxfmt: bool,
+    /// The edition of ECMAScript that espree parses the file as, if it's older than the latest. Set by
+    /// [`Checks::editions`].
+    older_edition: Option<u32>,
 }
 
 /// What acorn is doing with a token when it throws an error. acorn reads one token ahead. For the token at an offset,
@@ -145,6 +148,7 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
         is_oxc: false,
         only_parser: false,
         is_oxfmt: false,
+        older_edition: None,
     };
     checks.typescript_syntax(true);
     checks.first.map(|it| SyntaxError {
@@ -280,6 +284,7 @@ pub(super) fn babel_rejection<'a>(
         is_oxc: false,
         only_parser: false,
         is_oxfmt: false,
+        older_edition: None,
     };
     checks.keywords_as_identifiers();
     checks.early_errors();
@@ -484,6 +489,7 @@ pub(super) fn first_error<'a>(
         is_oxc: false,
         only_parser: false,
         is_oxfmt: false,
+        older_edition: None,
     };
     if let Some((diagnostic, at)) = parser_error {
         checks.translate_parser_error(diagnostic, at);
@@ -680,6 +686,7 @@ fn oxc_checks<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) ->
         is_oxc: true,
         only_parser: false,
         is_oxfmt: false,
+        older_edition: None,
     }
 }
 
@@ -1590,11 +1597,34 @@ impl<'a, 'c> Checks<'a, 'c> {
             || !self.is_strict(node)
         {
             return false;
+        } else if !self.is_oxc
+            && !self.is_all_strict()
+            && !Self::is_strict_for_acorn(node.scope(), at)
+        {
+            // Only the function's own `"use strict"` makes it strict. acorn reads the function's name and parameters
+            // before that, and `checkParams` then rejects a binding among them.
+            return self.strict_binding(node, at);
         } else {
             self.reserved(at);
             return true;
         };
         self.after_identifier(at, |checks| checks.fail(at, message));
+        true
+    }
+
+    /// `checkLValSimple` for a function's name or parameter that is a reserved word in strict code: `Binding yield in
+    /// strict mode`. False for a reference, which acorn accepts.
+    fn strict_binding(&mut self, node: Node<'a>, at: u32) -> bool {
+        let checked_at = match node {
+            Node::Pat(pat) => self.binding_checked_at(pat),
+            Node::Func(func) => match self.params_checked_at(func) {
+                Some(at) => at,
+                None => return false,
+            },
+            _ => return false,
+        };
+        let message = [b"Binding ", self.token_at(at), b" in strict mode"].concat();
+        self.when_read_to(checked_at, |checks| checks.fail(at, message));
         true
     }
 

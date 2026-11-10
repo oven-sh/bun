@@ -2176,8 +2176,7 @@ impl<'a> Checks<'a, '_> {
         // `checkKeyName`
         let is_named = |name: &str| matches!(key.kind(), KeyKind::Ident(it) | KeyKind::String(it) if it.is(name));
         // Before ES2022 acorn parses every member as a method, and `newer_classes` expects its parameters.
-        let has_fields =
-            self.is_babel || self.is_oxc || self.older_edition().is_none_or(|it| it >= 13);
+        let has_fields = self.older_edition.is_none_or(|it| it >= 13);
         let is_field = has_fields && member.kind() == MemberKind::Property;
         // oxc checks an `accessor`'s name only if it's private.
         let skips_name_check = self.is_oxc && member.flags().contains(Flags::ACCESSOR);

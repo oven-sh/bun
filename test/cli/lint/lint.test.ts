@@ -1393,6 +1393,15 @@ describe.concurrent("bun lint", () => {
         'function g(a = function h() { "use strict"; return (b = 08) => 1 }) { "use strict" }',
         "1:57: Parsing error: Invalid number",
       ],
+      // A name or parameter that only the function's own directive makes strict is checked with the parameters.
+      ['function f(yield) { "use strict"; }\n08', "1:12: Parsing error: Binding yield in strict mode"],
+      ['function yield(yield) { "use strict" }', "1:16: Parsing error: Binding yield in strict mode"],
+      ['var f = function static() { "use strict" }', "1:18: Parsing error: Binding static in strict mode"],
+      [
+        'function f(a = static) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      ['function f(yield) { return function() { "use strict"; 08 } }', "1:55: Parsing error: Invalid number"],
     ];
     // With an older `ecmaVersion`, newer syntax is a tokenizer error, which comes before a deferred check.
     const editions: [ecmaVersion: number, code: string, error: string][] = [

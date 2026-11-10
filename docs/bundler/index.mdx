@@ -766,6 +766,8 @@ Specifies the type of sourcemap to generate.
 
 The associated `*.js.map` sourcemap is a JSON file containing an equivalent `debugId` property.
 
+When Bun runs a `--target=bun` bundle, it uses a `*.js.map` beside the bundle that has no `sourcesContent` only if the bundle has the `debugId` of that map or names the map in a `//# sourceMappingURL` comment.
+
 ### minify
 
 Whether to enable minification. Default `false`.

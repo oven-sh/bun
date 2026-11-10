@@ -505,6 +505,49 @@ describe("source map remapping of the printed stack", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A map with no `sourcesContent` beside the file is the map of the file only when the file links it. The lookup
+  // for the frames and the later read for the code frame, which does not search the file for a map comment, give
+  // the same answer.
+  test.concurrent.each([
+    ["names the map", "//# sourceMappingURL=main.js.map", {}],
+    [
+      "has the debug id of the map",
+      "//# debugId=0123456789ABCDEF64756E2164756E21",
+      { debugId: "01234567-89ab-cdef-6475-6e2164756e21" },
+    ],
+  ])("two printed errors, when the map has no sourcesContent and the file %s", async (_, link, keys) => {
+    const main = [
+      "// @bun",
+      "const out = [];",
+      'for (let i = 0; i < 2; i++) try { throw new Error("TWICE"); } catch (e) { out.push(Bun.inspect(e)); }',
+      "console.log(JSON.stringify(out));",
+    ];
+    const printed = async end => {
+      const { dir, out, stderr, exitCode } = await run({
+        "main.js": [...main, end].join("\n"),
+        // Line 3 -> orig.ts:1:5.
+        "main.js.map": JSON.stringify({ version: 3, sources: ["orig.ts"], names: [], mappings: ";;AAAI", ...keys }),
+        "orig.ts": "const fromDisk = 1;\n",
+      });
+      return {
+        fromDisk: out.map(text => text.includes("const fromDisk = 1;")),
+        frames: out.map(text => frames(text, dir, ["orig.ts", "main.js"])),
+        warnings: stderr.split("\n").filter(line => line.startsWith("warn:")).length,
+        exitCode,
+      };
+    };
+    const [linked, unlinked] = await Promise.all([printed(link), printed("")]);
+    expect({ linked, unlinked }).toEqual({
+      linked: { fromDisk: [true, true], frames: [["at orig.ts:1:5"], ["at orig.ts:1:5"]], warnings: 0, exitCode: 0 },
+      unlinked: {
+        fromDisk: [false, false],
+        frames: [["at main.js:3:41"], ["at main.js:3:41"]],
+        warnings: 1,
+        exitCode: 0,
+      },
+    });
+  });
+
   // Modules bun transpiled itself. `present.ts` stays on disk; `deleted.ts` is
   // removed after it was loaded, so the code frame can no longer be read back.
   // Reading error.stack first makes the printer start from the already

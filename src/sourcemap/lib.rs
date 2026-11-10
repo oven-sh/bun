@@ -11,6 +11,7 @@ pub use error::{Error, Result};
 
 #[path = "Chunk.rs"]
 pub mod chunk;
+mod debug_id;
 #[path = "InternalSourceMap.rs"]
 pub mod internal_source_map;
 #[path = "LineOffsetTable.rs"]
@@ -429,28 +430,16 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         let mut inline_err: Option<crate::Error> = None;
 
         // try to get an inline source map
-        if load_hint != SourceMapLoadHint::IsExternalMap {
-            'try_inline: {
-                let source = provider.get_source_slice();
-                debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
-
-                let maybe_found_url = if source.is_8bit() {
-                    find_source_mapping_url_u8(source.latin1())
-                } else {
-                    find_source_mapping_url_u16(source.utf16())
-                };
-
-                let Some(found_url) = maybe_found_url else {
-                    break 'try_inline;
-                };
-
-                match parse_url(&arena, found_url.slice(), result) {
-                    Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),
-                    Err(err) => {
-                        inline_err = Some(err);
-                        break 'try_inline;
-                    }
-                }
+        let source =
+            (load_hint != SourceMapLoadHint::IsExternalMap).then(|| provider.get_source_slice());
+        let found_url = source.as_ref().and_then(|source| {
+            debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
+            find_source_mapping_url(source)
+        });
+        if let Some(found_url) = &found_url {
+            match parse_url(&arena, found_url.slice(), result) {
+                Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),
+                Err(err) => inline_err = Some(err),
             }
         }
 
@@ -535,7 +524,12 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     Err(_) => break 'try_external,
                 };
 
-                match parse_json(&data, result) {
+                let sidecar = Sidecar {
+                    source_filename,
+                    url: source.as_ref().map(|_| found_url.as_deref()),
+                    text: &|| provider.get_source_slice(),
+                };
+                match parse_json_impl(&data, result, Some(&sidecar)) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
                     Err(err) => {
                         // Print warning even if this came from non-visible code like
@@ -876,6 +870,51 @@ pub(crate) fn parse_url(
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
 pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
+    parse_json_impl(source, hint, None)
+}
+
+/// The file that a `<file>.map` is read for. That map is found by the name of the file alone.
+struct Sidecar<'a> {
+    source_filename: &'a [u8],
+    /// The `sourceMappingURL` of the file, when the lookup searched for it.
+    url: Option<Option<&'a [u8]>>,
+    text: &'a dyn Fn() -> bun_core::StringView<'a>,
+}
+
+impl Sidecar<'_> {
+    /// Whether the file has the debug id of the map, or names the map.
+    #[cold]
+    #[inline(never)]
+    fn links(&self, map: &bun_ast::Expr) -> bool {
+        let text = (self.text)();
+        if let Some(map_id) = map.get(b"debugId")
+            && let Some(map_id) = map_id.as_utf8_string_literal()
+            && !map_id.is_empty()
+            && let Some(file_id) = debug_id::of_file(&text)
+            && debug_id::is_same(&file_id, map_id)
+        {
+            return true;
+        }
+        let found;
+        let url = match self.url {
+            Some(url) => url,
+            None => {
+                found = find_source_mapping_url(&text);
+                found.as_deref()
+            }
+        };
+        url.is_some_and(|url| {
+            url.strip_prefix(b"./").unwrap_or(url).strip_suffix(b".map")
+                == Some(bun_paths::basename(self.source_filename))
+        })
+    }
+}
+
+fn parse_json_impl(
+    source: &[u8],
+    hint: ParseUrlResultHint,
+    sidecar: Option<&Sidecar<'_>>,
+) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
     use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
@@ -924,12 +963,46 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
+    let sources_content = if sidecar.is_some() || !matches!(hint, ParseUrlResultHint::MappingsOnly)
+    {
+        match json.get(b"sourcesContent").map(|contents| contents.data) {
+            Some(bun_ast::ExprData::EArrayJSON(contents)) => Some(contents),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let sources_content = sources_content.as_ref().map(|contents| contents.get());
+
+    // A `<file>.map` in a shape that Bun refused before `sourcesContent` was optional is the map
+    // of the file only when the file links it. A map that another tool left there has that shape.
+    let mut link: Option<bool> = None;
+    let mut is_linked = |sidecar: &Sidecar<'_>| *link.get_or_insert_with(|| sidecar.links(&json));
+    if let Some(sidecar) = sidecar
+        && sources_content.map(|contents| contents.items().len())
+            != Some(sources_paths.items().len())
+        && !is_linked(sidecar)
+    {
+        return Err(crate::Error::InvalidSourceMap);
+    }
+
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
         let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_paths.items().len());
         for item in sources_paths.items() {
-            // ECMA-426: an entry that is not a string is a source with no name. It is shown as `null`.
-            v.push(Box::<[u8]>::from(item.as_str().unwrap_or(b"null")));
+            let name = match item.as_str() {
+                Some(name) => name,
+                None => {
+                    if let Some(sidecar) = sidecar
+                        && !is_linked(sidecar)
+                    {
+                        return Err(crate::Error::InvalidSourceMap);
+                    }
+                    // ECMA-426: an entry that is not a string is a source with no name. It is shown as `null`.
+                    b"null"
+                }
+            };
+            v.push(Box::<[u8]>::from(name));
         }
         Some(v)
     } else {
@@ -1014,15 +1087,9 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         ParseUrlResultHint::MappingsOnly => (None, None),
     };
 
-    let content_slice: Option<Box<[u8]>> = match source_index {
-        Some(idx) if (idx as usize) < sources_paths.items().len() => 'content: {
-            let Some(bun_ast::ExprData::EArrayJSON(contents)) =
-                json.get(b"sourcesContent").map(|contents| contents.data)
-            else {
-                break 'content None;
-            };
+    let content_slice: Option<Box<[u8]>> = match (source_index, sources_content) {
+        (Some(idx), Some(contents)) if (idx as usize) < sources_paths.items().len() => 'content: {
             let Some(str) = contents
-                .get()
                 .items()
                 .get(idx as usize)
                 .and_then(|item| item.as_str())
@@ -1114,6 +1181,14 @@ pub fn append_source_map_chunk<'a>(
     // Then append everything after that without modification.
     j.push_static(source_map);
     Ok(())
+}
+
+fn find_source_mapping_url(source: &bun_core::String) -> Option<bun_core::Utf8Bytes<'_>> {
+    if source.is_8bit() {
+        find_source_mapping_url_u8(source.latin1())
+    } else {
+        find_source_mapping_url_u16(source.utf16())
+    }
 }
 
 /// Always returns UTF-8.

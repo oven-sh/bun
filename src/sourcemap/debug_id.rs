@@ -1,0 +1,76 @@
+//! The debug id of a bundle: `bun build` writes it into the file (`//# debugId=<id>`) and into its map (`"debugId"`).
+
+use bun_core::Utf8Bytes;
+use bun_core::strings::{self, PathByte};
+
+/// Dashes and the case of letters do not count: a UUID is written with or without them.
+pub(crate) fn is_same(file_id: &[u8], map_id: &[u8]) -> bool {
+    fn digits(id: &[u8]) -> impl Iterator<Item = u8> + '_ {
+        id.iter()
+            .filter(|unit| **unit != b'-')
+            .map(u8::to_ascii_lowercase)
+    }
+    digits(file_id).eq(digits(map_id))
+}
+
+/// The id on the `//# debugId=` line of a `// @bun` file: the last line, or the line above a last `//# sourceMappingURL=` line.
+pub(crate) fn of_file(source: &bun_core::String) -> Option<Utf8Bytes<'_>> {
+    let id = if source.is_8bit() {
+        Utf8Bytes::Borrowed(value_of_id_line(source.latin1())?)
+    } else {
+        Utf8Bytes::Owned(strings::to_utf8_alloc(value_of_id_line(source.utf16())?))
+    };
+    // An id is one run of ASCII with no blank and no quote: V8 reads the value of a magic comment this way.
+    let is_id = !id.is_empty()
+        && id
+            .iter()
+            .all(|unit| unit.is_ascii_graphic() && !matches!(*unit, b'"' | b'\''));
+    is_id.then_some(id)
+}
+
+fn value_of_id_line<T: PathByte>(text: &[T]) -> Option<&[T]> {
+    // Text that does not start as the file does is not the file: for a replaced `Module.wrapper` the loader swaps the first line of a CommonJS file and cuts its end.
+    let first_line = match strip_prefix(text, b"#!") {
+        Some(_) => &text[T::index_of_unit(text, T::from_u8(b'\n'))? + 1..],
+        None => text,
+    };
+    strip_prefix(first_line, b"// @bun")?;
+
+    let (above, last) = split_last_line(text);
+    let line = match strip_prefix(last, b"//# sourceMappingURL=") {
+        Some(_) => split_last_line(above).1,
+        None => last,
+    };
+    let mut value = strip_prefix(line, b"//# debugId=")?;
+    let blank = [T::from_u8(b' '), T::from_u8(b'\t')];
+    while let [first, rest @ ..] = value {
+        if !blank.contains(first) {
+            break;
+        }
+        value = rest;
+    }
+    Some(value)
+}
+
+fn split_last_line<T: PathByte>(mut text: &[T]) -> (&[T], &[T]) {
+    let blank = (*b"\n\r \t").map(T::from_u8);
+    while let [rest @ .., last] = text {
+        if !blank.contains(last) {
+            break;
+        }
+        text = rest;
+    }
+    match strings::last_index_of_char_t(text, T::from_u8(b'\n')) {
+        Some(line_end) => (&text[..line_end], &text[line_end + 1..]),
+        None => (&text[..0], text),
+    }
+}
+
+fn strip_prefix<'a, T: PathByte>(text: &'a [T], prefix: &[u8]) -> Option<&'a [T]> {
+    let (start, rest) = text.split_at_checked(prefix.len())?;
+    start
+        .iter()
+        .zip(prefix)
+        .all(|(unit, byte)| *unit == T::from_u8(*byte))
+        .then_some(rest)
+}

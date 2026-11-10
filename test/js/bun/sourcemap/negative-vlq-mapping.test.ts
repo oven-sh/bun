@@ -188,7 +188,8 @@ describe.concurrent("sourcemap: sourcesContent and nameless sources do not make 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.replaceAll(String(dir) + sep, ""), stderr, exitCode };
+    const relative = (text: string) => text.replaceAll(String(dir) + sep, "");
+    return { stdout: relative(stdout), stderr: relative(stderr), exitCode };
   }
 
   test.each([
@@ -234,5 +235,108 @@ describe.concurrent("sourcemap: sourcesContent and nameless sources do not make 
     const map = { ...base, sources, sourcesContent: sources.map(() => null) };
     const files = { "entry.js": body + `//# sourceMappingURL=entry.js.map\n`, "entry.js.map": JSON.stringify(map) };
     expect(await run(files)).toEqual({ stdout: `at t (${name}:5:3)\n`, stderr: "", exitCode: 0 });
+  });
+
+  // Bun finds `<file>.map` by the name of the file alone, so it also finds a map that another tool left there.
+  // A map in one of the shapes above is the map of the file only when the file links it.
+  const id = "0123456789ABCDEF64756E2164756E21";
+  const refused = {
+    stdout: "at t (entry.js:3:18)\n",
+    stderr: "warn: Could not decode sourcemap in 'entry.js': InvalidSourceMap\n",
+    exitCode: 0,
+  };
+
+  test.each([
+    ["no sourcesContent", base, "orig.ts"],
+    [
+      "fewer sourcesContent entries than sources",
+      { ...base, sources: ["orig.ts", "b.ts"], sourcesContent: ["x"] },
+      "orig.ts",
+    ],
+    ["a source that has no name", { ...base, sources: [null], sourcesContent: [null] }, "null"],
+  ])("external .map with %s is used only when the file links it", async (_, map, name) => {
+    const mapped = { stdout: `at t (${name}:5:3)\n`, stderr: "", exitCode: 0 };
+    // The end of the file, the keys that the map also has, and the result.
+    const links = {
+      "no link": ["", {}, refused],
+      "the name of another map": ["//# sourceMappingURL=other.js.map\n", {}, refused],
+      "a debug id, and the map has none": [`//# debugId=${id}\n`, {}, refused],
+      "the name of the map": ["//# sourceMappingURL=entry.js.map\n", {}, mapped],
+      "the name of the map after ./": ["//# sourceMappingURL=./entry.js.map\n", {}, mapped],
+      // A UUID has the same digits with dashes and in lower case.
+      "the debug id of the map": [`//# debugId=${id}\n`, { debugId: "01234567-89ab-cdef-6475-6e2164756e21" }, mapped],
+    } as const;
+    const results = await Promise.all(
+      Object.values(links).map(([end, keys]) =>
+        run({ "entry.js": body + end, "entry.js.map": JSON.stringify({ ...map, ...keys }) }),
+      ),
+    );
+    expect(Object.fromEntries(Object.keys(links).map((link, i) => [link, results[i]]))).toEqual(
+      Object.fromEntries(Object.entries(links).map(([link, [, , result]]) => [link, result])),
+    );
+  });
+
+  test("a bundle from bun build: its own map without sourcesContent is used, a map that another tool left is not", async () => {
+    using dir = tempDir("sourcemap-leftover", {
+      "src/index.ts":
+        `export function boom(): never {\n` +
+        `  throw new Error("LEFTOVER");\n` +
+        `}\n` +
+        `try {\n` +
+        `  boom();\n` +
+        `} catch (e) {\n` +
+        `  console.log(String((e as Error).stack).split("\\n")[1].trim());\n` +
+        `}\n`,
+    });
+    const bun = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const relative = (text: string) => text.replaceAll(String(dir) + sep, "").replaceAll("\\", "/");
+      return { stdout: relative(stdout), stderr: relative(stderr), exitCode };
+    };
+    const build = async (outdir: string, ...flags: string[]) =>
+      expect((await bun("build", "src/index.ts", "--target=bun", "--outdir", outdir, ...flags)).exitCode).toBe(0);
+    await Promise.all([build("own", "--sourcemap=external"), build("left"), build("left-with-content")]);
+
+    // What is left of the map of `--sourcemap=external` when a deploy step removes the source text. The bundle has
+    // the debug id of the map.
+    const ownMap = join(String(dir), "own", "index.js.map");
+    const { sourcesContent, ...own } = await Bun.file(ownMap).json();
+    await Bun.write(ownMap, JSON.stringify(own));
+    // The map that tsc writes for its own `index.js`. A build with no --sourcemap has no line that links a map.
+    const tsc = {
+      version: 3,
+      file: "index.js",
+      sourceRoot: "",
+      sources: ["../src/index.ts"],
+      names: [],
+      mappings: ";;AAAA,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,OAAO,CAAC,CAAC;AAC3B,CAAC;AACD,IAAI,EAAE,CAAC",
+    };
+    await Promise.all([
+      Bun.write(join(String(dir), "left", "index.js.map"), JSON.stringify(tsc)),
+      Bun.write(join(String(dir), "left-with-content", "index.js.map"), JSON.stringify({ ...tsc, sourcesContent })),
+    ]);
+
+    const [ownResult, left, leftWithContent] = await Promise.all([
+      bun("own/index.js"),
+      bun("left/index.js"),
+      bun("left-with-content/index.js"),
+    ]);
+    expect({ own: ownResult, left, leftWithContent }).toEqual({
+      own: { stdout: "at boom (src/index.ts:2:13)\n", stderr: "", exitCode: 0 },
+      left: {
+        stdout: "at boom (left/index.js:4:18)\n",
+        stderr: "warn: Could not decode sourcemap in 'left/index.js': InvalidSourceMap\n",
+        exitCode: 0,
+      },
+      // A map that has the text of each source is used with no link, as before.
+      leftWithContent: { stdout: "at boom (src/index.ts:2:13)\n", stderr: "", exitCode: 0 },
+    });
   });
 });

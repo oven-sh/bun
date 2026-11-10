@@ -1,13 +1,13 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
-import { slot } from "./harness/commands";
+import { limitOfARun, limitWithASAN, slot } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { withoutDebugInformation } from "./harness/without-debug-information";
-import { test } from "./supported";
+import { test, testOneByOne } from "./supported";
 
 const programOf = (load: string) => `
 const load = async name => {
@@ -158,12 +158,17 @@ type Form = keyof typeof forms;
 const bothForms = ["closed", "withCodeFromDisk"] as const;
 const builds = new Map<string, Promise<{ executable: string; said: string }>>();
 // The tests run beside one another: a build or a start of a program takes a slot, so that no more of them run at once than the machine has processors.
+// A debug build of Bun is 1.3 GB and so is each executable, and a machine of 16 GB reads a dozen of them from disk page by page: there the tests run one by one.
+const declare = isDebug ? testOneByOne : test.concurrent;
+// A build or a start that hangs is killed at its limit, and gives its slot back. On a debug build one build takes minutes.
+const limit = isDebug ? 600_000 : isASAN ? limitWithASAN : limitOfARun;
+const inSlot = (command: string[], folder: string) => slot(() => run(command, folder, bunEnv, limit));
 function build(program: Program, form: Form = "closed") {
   const executable = join(directory, program, "bin", form + (isWindows ? ".exe" : ""));
   const start = async () => {
     const flags = ["--compile", "--aot", ...forms[form], ...withoutDebugInformation];
     const command = [bunExe(), "build", ...flags, "./main.cjs", "--outfile", executable];
-    const { stderr, exitCode } = await slot(() => run(command, join(directory, program, "tool")));
+    const { stderr, exitCode } = await inSlot(command, join(directory, program, "tool"));
     expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return { executable, said: stderr.replaceAll("\\", "/") };
   };
@@ -227,7 +232,7 @@ const atOnce = async <Key extends string, Answer>(keys: readonly Key[], ask: (ke
 
 /** One start of a program for a name: it prints what the load gave it, or the code of what the load threw. */
 const started = (program: Program, folder: string, command: string[]) =>
-  slot(() => run([...command, "and catches"], join(directory, program, folder), bunEnv));
+  inSlot([...command, "and catches"], join(directory, program, folder));
 /** What plain Bun prints for each name, started in the project. */
 const plainAnswers = (program: Program, names: readonly string[]) =>
   atOnce(names, name => started(program, "tool", [bunExe(), join(directory, program, "tool/main.cjs"), name]));
@@ -244,7 +249,7 @@ async function askedOf(program: Program, form: Form, names: readonly string[]) {
 const inEveryWay = (program: Program, names: readonly string[]) =>
   Promise.all([plainAnswers(program, names), ...bothForms.map(form => askedOf(program, form, names))]);
 
-test.concurrent.each([
+declare.each([
   [
     "a-folder",
     { en: "locales/en.json", "en.json": "locales/en.json", "notes.txt": "locales/notes.txt" },
@@ -294,7 +299,7 @@ test.concurrent.each([
   600_000,
 );
 
-test.concurrent.each([
+declare.each([
   ["nothing", "part.cjs"],
   ["nothing-imported", "part.cjs"],
   ["the-folder-above", "part.cjs"],
@@ -311,7 +316,7 @@ test.concurrent.each([
   600_000,
 );
 
-test.concurrent.each([
+declare.each([
   ["nothing", "MODULE_NOT_FOUND"],
   ["nothing-imported", "ERR_MODULE_NOT_FOUND"],
   ["the-folder-above", "MODULE_NOT_FOUND"],
@@ -324,7 +329,7 @@ test.concurrent.each([
   600_000,
 );
 
-test.concurrent(
+declare(
   "a start that names a scope of packages, written in one of them: the data file that is the main file of another",
   async () => {
     const file = "node_modules/@acme/tables/data.json";
@@ -340,7 +345,7 @@ test.concurrent(
   600_000,
 );
 
-test.concurrent(
+declare(
   "a start that names nothing, written in an installed package: the code and the data of that package and of no other",
   async () => {
     const program = "nothing-in-an-installed-package";
@@ -365,7 +370,7 @@ test.concurrent(
   600_000,
 );
 
-test.concurrent(
+declare(
   "a start that names nothing, written in a package of the workspace that is linked into node_modules: no data file",
   async () => {
     const program = "nothing-in-a-package-of-the-workspace";
@@ -381,7 +386,7 @@ test.concurrent(
 );
 
 // Each place that may name what is left out has a warning of its own.
-test.concurrent.each([
+declare.each([
   [
     "nothing-beside-a-file-whose-type-alone-is-imported",
     2,
@@ -419,7 +424,7 @@ test.concurrent.each([
   600_000,
 );
 
-test.concurrent(
+declare(
   "a file whose name begins with a dot is not found, though the written start spells the dot",
   async () => {
     const program = "the-start-of-a-name-with-a-dot";
@@ -430,12 +435,12 @@ test.concurrent(
   600_000,
 );
 
-test.concurrent(
+declare(
   "the refusal says what to write instead",
   async () => {
     const { executable } = await build("nothing");
     const startedIn = join(directory, "nothing", "stranger");
-    const { stdout, stderr, exitCode } = await slot(() => run([executable, "table.json"], startedIn, bunEnv));
+    const { stdout, stderr, exitCode } = await inSlot([executable, "table.json"], startedIn);
     expect(stderr).toContain("Cannot find module './table.json'");
     expect(stderr).toContain("it isn't in this executable");
     expect(stderr).toContain("write its folder or its extension in the path");
@@ -444,7 +449,7 @@ test.concurrent(
   600_000,
 );
 
-test.concurrent(
+declare(
   "where code may come from disk, a data file that the executable lacks is still looked for on disk",
   async () => {
     const { executable } = await build("nothing", "withCodeFromDisk");

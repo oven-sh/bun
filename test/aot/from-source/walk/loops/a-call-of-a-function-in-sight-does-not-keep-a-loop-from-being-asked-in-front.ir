@@ -1,0 +1,15 @@
+# A loop that stores under a counter into a value of which nothing is expected stays one loop where its turns call: behind a call of what nobody knows nothing that was asked in front holds.
+# `twice` comes from in front of the loop and is proven to be one function: it is copied in, and the turn calls nothing: the loop is asked in front like any other.
+# RUN(SEEN): walk f2 mechanisms=all
+# SEEN-LABEL: code f2:Body
+# SEEN: = TypeTest {{*}} testedType=Array #
+# SEEN: = TypeTest {{*}} testedType=Buffer|Uint8Array #
+# RUN(UNSEEN): walk f3 mechanisms=all
+# UNSEEN-LABEL: code f3:Body
+# UNSEEN-NOT: = TypeTest {{*}} testedType=Array #
+# -- source: main.js
+# function twice(value) { return value + value; }
+# function seen(make, from) { const into = make(); for (let i = 0; i < 100; i++) into[i] = twice(i); return into; }
+# function unseen(make, give) { const into = make(); for (let i = 0; i < 100; i++) into[i] = give(i); return into; }
+# globalThis.kept = [seen, unseen];
+# -- end of source

@@ -699,29 +699,3 @@ pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
         result
     }
 }
-
-pub(super) fn leaf_certificate_der(stack: *mut core::ffi::c_void) -> Option<Vec<u8>> {
-    if stack.is_null() {
-        return None;
-    }
-    // SAFETY: lsquic returns a STACK_OF(X509)* the caller must free; the
-    // leaf is at index 0.
-    unsafe {
-        let cert = ssl::sk_X509_value(stack.cast(), 0);
-        let result = if cert.is_null() {
-            None
-        } else {
-            let mut der: *mut u8 = null_mut();
-            let len = ssl::i2d_X509(cert, core::ptr::from_mut(&mut der));
-            if len > 0 && !der.is_null() {
-                let bytes = core::slice::from_raw_parts(der, len as usize).to_vec();
-                ssl::OPENSSL_free(der.cast());
-                Some(bytes)
-            } else {
-                None
-            }
-        };
-        ssl::sk_X509_pop_free(stack.cast());
-        result
-    }
-}

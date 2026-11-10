@@ -9,26 +9,20 @@
 
 // RUN(TARGETS): lower
 // TARGETS-LABEL: function {{*}}name="jumps"
-// TARGETS: Jump -> next
 // TARGETS: Jump -> next [[outerHeader]]()
 // TARGETS-NEXT: [[outerHeader]]():
 // TARGETS-NEXT: LoopHint
-// TARGETS-NEXT: Jump -> next
-// TARGETS: Jump -> next [[innerHeader]]()
+// TARGETS-NEXT: Jump -> next [[innerHeader]]()
 // TARGETS-NEXT: [[innerHeader]]():
 // TARGETS-NEXT: LoopHint
 // TARGETS: Switch {{*}} -> case [[fallThrough]](), case [[breakInner]](), case [[continueInner]](), case [[breakOuter]](), case [[continueOuter]](), otherwise [[rethrow]]()
 // TARGETS: [[breakInner]]():
-// TARGETS-NEXT: Jump -> next [[afterInner]]()
-// TARGETS-NEXT: [[afterInner]]():
 // TARGETS-NEXT: Jump -> next [[outerUpdate]]()
 // TARGETS: [[continueInner]]():
 // TARGETS-NEXT: Jump -> next [[innerUpdate]]()
 // TARGETS-NEXT: [[innerUpdate]]():
 // TARGETS-NEXT: Jump -> next [[innerHeader]]()
 // TARGETS: [[breakOuter]]():
-// TARGETS-NEXT: Jump -> next [[afterOuter]]()
-// TARGETS-NEXT: [[afterOuter]]():
 // TARGETS: Return
 // TARGETS: [[continueOuter]]():
 // TARGETS-NEXT: Jump -> next [[outerUpdate]]()

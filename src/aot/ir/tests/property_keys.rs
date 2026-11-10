@@ -7,7 +7,7 @@ const OWNER: LayoutId = LayoutId::from_word(5);
 const MODULE: ModuleId = ModuleId::from_word(6);
 const CALL_NUMBER: u32 = 120;
 
-fn keys_of_every_kind() -> [PropertyKey; 6] {
+fn keys_of_every_kind() -> [PropertyKey; 7] {
     [
         PropertyKey::from_text(TEXT),
         PropertyKey::from_engine_private_name(TEXT),
@@ -15,6 +15,7 @@ fn keys_of_every_kind() -> [PropertyKey; 6] {
         PropertyKey::from_well_known_symbol(WellKnownSymbol::Iterator),
         PropertyKey::from_created_symbol(MODULE, CALL_NUMBER, Some(TEXT)),
         PropertyKey::from_module_private_name(TEXT),
+        PropertyKey::from_registered_symbol(TEXT),
     ]
 }
 
@@ -41,7 +42,7 @@ fn equal_keys_have_one_id() {
 fn kinds_of_one_text_are_distinct() {
     let mut table = PropertyKeyTable::default();
     let keys = keys_of_every_kind();
-    assert_eq!(intern_all(&mut table, &keys), first_ids(6));
+    assert_eq!(intern_all(&mut table, &keys), first_ids(7));
     let kinds: Vec<PropertyKeyKind> = table.as_slice().iter().map(|key| key.kind).collect();
     assert_eq!(kinds, PropertyKeyKind::ALL);
 }
@@ -139,6 +140,7 @@ fn constructors_leave_other_fields_absent() {
         well_known_symbol,
         created_symbol,
         module_private_name,
+        registered_symbol,
     ] = keys_of_every_kind();
     let expected_text = PropertyKey {
         kind: PropertyKeyKind::Text,
@@ -179,6 +181,11 @@ fn constructors_leave_other_fields_absent() {
         ..expected_text
     };
     assert_eq!(module_private_name, expected_module_private_name);
+    let expected_registered_symbol = PropertyKey {
+        kind: PropertyKeyKind::RegisteredSymbol,
+        ..expected_text
+    };
+    assert_eq!(registered_symbol, expected_registered_symbol);
     let without_description = PropertyKey::from_created_symbol(MODULE, CALL_NUMBER, None);
     assert_eq!(without_description.text, None);
 }
@@ -188,6 +195,14 @@ fn only_names_have_string_name() {
     let names = keys_of_every_kind().map(|key| key.string_name());
     assert_eq!(
         names,
-        [Some(TEXT), Some(TEXT), Some(TEXT), None, None, Some(TEXT)]
+        [
+            Some(TEXT),
+            Some(TEXT),
+            Some(TEXT),
+            None,
+            None,
+            Some(TEXT),
+            None
+        ]
     );
 }

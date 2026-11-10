@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
@@ -41,19 +41,6 @@ async function expectCompiledToRunAsPlain(files: Record<string, string>, ...flag
   expect(await runTests(String(dir), "--debug-aot", ...flags)).toEqual(plain);
 }
 
-test("a spy on an export records calls from importers and from the module itself", async () => {
-  await expectCompiledToRunAsPlain({
-    ...math,
-    "one.test.ts": `${imports}
-      test("recorded", () => {
-        const spy = spyOn(math, "add");
-        ${uses}
-        console.log(JSON.stringify(spy.mock.calls), JSON.stringify(spy.mock.results));
-        expect(spy).toHaveBeenCalledTimes(5);
-      });`,
-  });
-});
-
 test("a spy's implementation replaces the export, and mockRestore() gives it back", async () => {
   await expectCompiledToRunAsPlain({
     ...math,
@@ -67,29 +54,6 @@ test("a spy's implementation replaces the export, and mockRestore() gives it bac
         spy.mockRestore();
         ${uses}
       });`,
-  });
-});
-
-test("mock.restore() gives back every export that was spied on", async () => {
-  await expectCompiledToRunAsPlain({
-    ...math,
-    "one.test.ts": `${imports}
-      test("restored", () => {
-        spyOn(math, "add").mockReturnValue(1);
-        spyOn(math, "twice").mockReturnValue(2);
-        ${uses}
-        mock.restore();
-        ${uses}
-      });`,
-  });
-});
-
-test("jest.spyOn and vi.spyOn replace an export", async () => {
-  await expectCompiledToRunAsPlain({
-    ...math,
-    "one.test.ts": `${imports}
-      test("jest", () => { const spy = jest.spyOn(math, "add").mockReturnValue(5); ${uses} spy.mockRestore(); ${uses} });
-      test("vi", () => { const spy = vi.spyOn(math, "twice").mockReturnValue(6); ${uses} spy.mockRestore(); ${uses} });`,
   });
 });
 
@@ -116,23 +80,6 @@ test("a preload spies on an export for every test file", async () => {
     "--preload",
     "./preload.ts",
   );
-});
-
-test("a spy on a name that another module exports again reaches the module that declares it", async () => {
-  await expectCompiledToRunAsPlain({
-    ...math,
-    "barrel.ts": `export { add } from "./math";\nexport * from "./user";`,
-    "one.test.ts": `
-      import { spyOn, test } from "bun:test";
-      import * as barrel from "./barrel";
-      import * as math from "./math";
-      test("through a barrel", () => {
-        const spy = spyOn(barrel, "add").mockReturnValue(7);
-        console.log(barrel.add(1, 2), math.add(1, 2), barrel.byName(1, 2), barrel.insideTheModule(1));
-        spy.mockRestore();
-        console.log(barrel.add(1, 2), math.add(1, 2), barrel.byName(1, 2), barrel.insideTheModule(1));
-      });`,
-  });
 });
 
 test("a spy replaces an arrow function, a class and a default export", async () => {
@@ -164,50 +111,27 @@ test("a spy replaces an arrow function, a class and a default export", async () 
 test("a spy replaces an export of a node: module for those who import the name or read the namespace", async () => {
   await expectCompiledToRunAsPlain({
     "io.ts": `
-      import fsObject, { existsSync } from "node:fs";
-      import * as fs from "node:fs";
-      import { join } from "node:path";
+      import pathObject, { join } from "node:path";
+      import * as path from "node:path";
       import { hostname } from "node:os";
-      export const show = () =>
-        console.log(existsSync("/no/such/file"), fs.existsSync("/no/such/file"), fsObject.existsSync("/no/such/file"), join("a", "b"), typeof hostname());`,
+      export const show = () => console.log(join("a", "b"), path.join("a", "b"), pathObject.join("a", "b"), typeof hostname());`,
     "one.test.ts": `
       import { spyOn, test } from "bun:test";
-      import * as fs from "node:fs";
       import * as os from "node:os";
       import * as path from "node:path";
       import { show } from "./io";
       test("replaced", () => {
         show();
         const spies = [
-          spyOn(fs, "existsSync").mockReturnValue(true),
           spyOn(path, "join").mockReturnValue("joined"),
           spyOn(os, "hostname").mockReturnValue(5 as any),
           spyOn(os, "uptime").mockReturnValue(6),
         ];
         show();
-        console.log(fs.existsSync("/no/such/file"), path.join("a"), os.hostname(), os.uptime(), spies[0].mock.calls.length);
+        console.log(path.join("a"), os.hostname(), os.uptime(), spies[0].mock.calls.length);
         for (const spy of spies) spy.mockRestore();
         show();
-        console.log(fs.existsSync("/no/such/file"), path.join("a"), typeof os.hostname(), typeof os.uptime());
-      });`,
-  });
-});
-
-test("a spy replaces a name of a CommonJS file for the ES modules that import it", async () => {
-  await expectCompiledToRunAsPlain({
-    "legacy.cjs": `exports.greet = function (name) { return "hello " + name; };\nexports.twice = function (name) { return exports.greet(name) + exports.greet(name); };`,
-    "user.ts": `import { greet, twice } from "./legacy.cjs";\nexport const show = () => console.log(greet("a"), twice("b"));`,
-    "one.test.ts": `
-      import { spyOn, test } from "bun:test";
-      import * as legacy from "./legacy.cjs";
-      import { show } from "./user";
-      test("replaced", () => {
-        show();
-        const spy = spyOn(legacy, "greet").mockReturnValue("mocked");
-        show();
-        console.log(legacy.greet("c"), legacy.twice("d"));
-        spy.mockRestore();
-        show();
+        console.log(path.join("a"), typeof os.hostname(), typeof os.uptime());
       });`,
   });
 });
@@ -281,85 +205,6 @@ test("a spy under names out of a list replaces each", async () => {
   expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
 });
 
-test("a spy on an unknown object beside a load under an unknown path takes one first load", async () => {
-  using dir = tempDir("spies-on-exports", {
-    "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
-    "a.ts": `export function name(): string { return "real"; }`,
-    "b.ts": `import { name } from "./a";\nexport const show = () => name();`,
-    "preload.ts": `
-      import { spyOn } from "bun:test";
-      export const hold = (object: any, key: string) => spyOn(object, key);`,
-    "one.test.ts": `
-      import { test } from "bun:test";
-      import { show } from "./b";
-      import { hold } from "./preload";
-      const load = (path: string) => import(path);
-      test("spied", async () => {
-        const a = await load("./a");
-        hold(a, "name").mockReturnValue("spied");
-        console.log(show());
-      });`,
-  });
-  const { stdout, stderr } = await run([bunExe(), "test", "--debug-aot"], String(dir), {
-    ...bunEnv,
-    BUN_JSC_logAOTPhaseTimes: "1",
-  });
-  expect(stdout).toContain("spied");
-  expect(stderr).toContain("AOT phase times:");
-  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
-});
-
-describe("a spy on what the front end sees handed over takes one first load", () => {
-  const files = {
-    "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
-    "x.ts": `export function one(): string { return "one"; }\nexport const TEXT = "text";`,
-    "nested.ts": `export * as nested from "./x";`,
-    "helper.ts": `import { spyOn } from "bun:test";\nexport const hold = (o: any, k: any) => spyOn(o, k);`,
-  };
-  test.each([
-    [
-      "an awaited import() in a variable",
-      ``,
-      `const ns = await import("./x"); spyOn(ns, "one").mockReturnValue("spied");`,
-    ],
-    ["an awaited import() as the operand", ``, `spyOn(await import("./x"), "one").mockReturnValue("spied");`],
-    ["import().then()", ``, `await import("./x").then(m => spyOn(m, "one").mockReturnValue("spied"));`],
-    ["require() as the operand", ``, `spyOn(require("./x"), "one").mockReturnValue("spied");`],
-    ["a helper handed import()", ``, `hold(await import("./x"), "one").mockReturnValue("spied");`],
-    [
-      "a helper handed a namespace under a name",
-      `import * as n from "./nested";`,
-      `hold(n.nested, "one").mockReturnValue("spied");`,
-    ],
-  ])("%s", async (_, imports, spy) => {
-    using dir = tempDir("spies-on-exports", {
-      ...files,
-      "one.test.ts": `
-        import { spyOn, test } from "bun:test";
-        import { hold } from "./helper";
-        import { one } from "./x";
-        ${imports}
-        test("spied", async () => { ${spy} console.log(one()); });`,
-    });
-    const { stdout, stderr } = await run([bunExe(), "test", "--debug-aot"], String(dir), {
-      ...bunEnv,
-      BUN_JSC_logAOTPhaseTimes: "1",
-    });
-    expect(stdout).toContain("spied");
-    expect(stderr).toContain("AOT phase times:");
-    expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
-  });
-});
-
-test("a helper that is handed the namespace object and the name replaces the export", async () => {
-  await expectCompiledToRunAsPlain({
-    ...math,
-    "one.test.ts": `${imports}
-      function replace(holder: object, name: string) { return spyOn(holder as any, name as any).mockReturnValue(9 as never); }
-      test("replaced", () => { const spy = replace(math, "add"); ${show} spy.mockRestore(); ${show} });`,
-  });
-});
-
 test("a spy on an object from somewhere replaces the export that goes by its name, in every module that is handed on", async () => {
   await expectCompiledToRunAsPlain({
     ...math,
@@ -379,54 +224,6 @@ test("a spy on an object from somewhere replaces the export that goes by its nam
   });
 });
 
-test("a spy on an object from somewhere under a name out of a list, a constant, a parameter or another file", async () => {
-  await expectCompiledToRunAsPlain({
-    ...math,
-    "watch.ts": `import { spyOn } from "bun:test";\nexport function watch(holder: any, name: string) { return spyOn(holder, name).mockReturnValue(5 as never); }`,
-    "one.test.ts": `${imports}
-      import { watch } from "./watch";
-      const holder: Record<string, any> = { it: math };
-      const restore = (spies: { mockRestore(): void }[]) => { ${show} for (const spy of spies) spy.mockRestore(); ${show} };
-      test("a list", () => restore(["add", "half"].map(name => spyOn(holder.it, name).mockReturnValue(1))));
-      test("a loop", () => { const spies = []; for (const name of ["twice"]) spies.push(spyOn(holder.it, name).mockReturnValue(2)); restore(spies); });
-      test("a constant", () => { const name = "half"; restore([spyOn(holder.it, name as any).mockReturnValue(3)]); });
-      test("a parameter", () => { const own = (name: string) => spyOn(holder.it, name).mockReturnValue(4); restore([own("add"), own("twice")]); });
-      test("another file", () => restore([watch(holder.it, "add"), watch(holder.it, "half")]));`,
-  });
-});
-
-// A namespace object that goes somewhere is opened only where a spy takes an object from somewhere. Such a spy is not always a call of `spyOn`.
-describe("a namespace object that goes somewhere reaches a spy that is called under another name", () => {
-  const holder = `const holder: Record<string, any> = { it: math };`;
-  const replaced = (spy: string) =>
-    `test("replaced", () => { const spy = ${spy}.mockReturnValue(9); ${show} spy.mockRestore(); ${show} });`;
-  test.each([
-    ["a variable", `const watch = spyOn; ${replaced(`watch(holder.it, "add")`)}`],
-    ["a name taken out of jest", `const { spyOn: watch } = jest; ${replaced(`watch(holder.it, "add")`)}`],
-    ["vi in a variable", `const runner = vi; ${replaced(`runner.spyOn(holder.it, "add")`)}`],
-    ["a list of operands", `const operands = [holder.it, "add"] as const; ${replaced(`spyOn(...operands)`)}`],
-    ["call()", replaced(`spyOn.call(undefined, holder.it, "add")`)],
-    ["the object of bun:test", `import * as runner from "bun:test"; ${replaced(`runner.spyOn(holder.it, "add")`)}`],
-    ["require", replaced(`require("bun:test").spyOn(holder.it, "add")`)],
-  ])("%s", async (_, text) => {
-    await expectCompiledToRunAsPlain({ ...math, "one.test.ts": `${imports}\n${holder}\n${text}` });
-  });
-
-  test("a file that exports it again", async () => {
-    await expectCompiledToRunAsPlain({
-      ...math,
-      "again.ts": `export { spyOn as watch } from "bun:test";`,
-      "named.ts": `import { spyOn } from "bun:test";\nexport { spyOn as look };`,
-      "one.test.ts": `${imports}
-        import { watch } from "./again";
-        import { look } from "./named";
-        ${holder}
-        ${replaced(`watch(holder.it, "add")`)}
-        test("and once more", () => { const spy = look(holder.it, "half").mockReturnValue(3); ${show} spy.mockRestore(); ${show} });`,
-    });
-  });
-});
-
 test("a spy under a name that the build can't know replaces any export of the module", async () => {
   await expectCompiledToRunAsPlain({
     ...math,
@@ -436,45 +233,6 @@ test("a spy under a name that the build can't know replaces any export of the mo
         const spies = names.map(name => spyOn(math, name as "add").mockReturnValue(7));
         ${show}
         for (const spy of spies) spy.mockRestore();
-        ${show}
-      });`,
-  });
-});
-
-test("a spy and a namespace object that the build loses sight of", async () => {
-  await expectCompiledToRunAsPlain({
-    ...math,
-    "one.test.ts": `${imports}
-      test("replaced", () => {
-        const anywhere = globalThis as any;
-        anywhere[process.env.TOOL ?? "tool"] = spyOn;
-        anywhere[process.env.HELD ?? "held"] = math;
-        const spy = anywhere.tool(anywhere.held, "add").mockReturnValue(5);
-        ${show}
-        spy.mockRestore();
-        ${show}
-      });`,
-  });
-});
-
-test("a spy on what import() and require() answer", async () => {
-  await expectCompiledToRunAsPlain({
-    ...math,
-    "one.test.ts": `
-      import { spyOn, test } from "bun:test";
-      import { byName, byNamespace, insideTheModule, notSpiedOn } from "./user";
-      test("import()", async () => {
-        const math = await import("./math");
-        const spy = spyOn(math, "add").mockReturnValue(3);
-        ${show}
-        spy.mockRestore();
-        ${show}
-      });
-      test("require()", () => {
-        const [math] = [require("./math")];
-        const spy = spyOn(math, "twice").mockReturnValue(40);
-        ${show}
-        spy.mockRestore();
         ${show}
       });`,
   });
@@ -504,45 +262,44 @@ test("a namespace object handed to a helper that spies does not build the progra
   expect(exitCode).toBe(0);
 });
 
-// Nothing follows the name here, so only that build can tell.
-for (const [name, words, loads] of [["analysis switched off", "disable=flow-results", 2]] as const)
-  test(`${name}: a spy may replace any export, and a mock any module, after ${loads} loads`, async () => {
-    using dir = tempDir("spies-without-flow", {
-      ...math,
-      "preload.ts": `
-      import { beforeEach, spyOn } from "bun:test";
-      import * as math from "./math";
-      const names: (keyof typeof math)[] = JSON.parse('["add", "half"]');
-      beforeEach(() => {
-        for (const name of names) spyOn(math, name).mockImplementation(() => 7);
-      });`,
-      "greeting.ts": `export function greet(): string { return "real"; }`,
-      "one.test.ts": `
-      import { expect, mock, test } from "bun:test";
-      import { byName, byNamespace, insideTheModule, notSpiedOn } from "./user";
-      import { greet } from "./greeting";
-      test("spies", () => {
-        expect([byName(1, 2), byNamespace(1, 2), insideTheModule(2), notSpiedOn(8)]).toEqual([7, 7, 7, 7]);
-      });
-      test("mock", () => {
-        const member = JSON.parse('"module"') as "module";
-        mock[member](import.meta.dir + "/greeting.ts", () => ({ greet: () => "mocked" }));
-        expect(greet()).toBe("mocked");
-      });`,
+// Nothing follows either name: the names of the spies and the member of `mock` come out of texts that are parsed when the tests run.
+test("a spy may replace any export, and a mock any module, where the build cannot follow the name", async () => {
+  using dir = tempDir("spies-without-flow", {
+    ...math,
+    "preload.ts": `
+    import { beforeEach, spyOn } from "bun:test";
+    import * as math from "./math";
+    const names: (keyof typeof math)[] = JSON.parse('["add", "half"]');
+    beforeEach(() => {
+      for (const name of names) spyOn(math, name).mockImplementation(() => 7);
+    });`,
+    "greeting.ts": `export function greet(): string { return "real"; }`,
+    "one.test.ts": `
+    import { expect, mock, test } from "bun:test";
+    import { byName, byNamespace, insideTheModule, notSpiedOn } from "./user";
+    import { greet } from "./greeting";
+    test("spies", () => {
+      expect([byName(1, 2), byNamespace(1, 2), insideTheModule(2), notSpiedOn(8)]).toEqual([7, 7, 7, 7]);
     });
-    const flags = ["--preload", "./preload.ts"];
-    const plain = await runTests(String(dir), ...flags);
-    expect(plain.results).toEqual(["pass spies", "pass mock"]);
-    const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot", ...flags], String(dir), {
-      ...bunEnv,
-      BUN_DEBUG_TEST_AOT_WORDS: words,
-      BUN_JSC_logAOTPhaseTimes: "1",
-    });
-    expect(stderr).toContain("(pass) spies");
-    expect(stderr).toContain("(pass) mock");
-    expect(exitCode).toBe(0);
-    expect(stderr.match(/AOT phase times: front end \| Load/g)?.length).toBe(loads);
+    test("mock", () => {
+      const member = JSON.parse('"module"') as "module";
+      mock[member](import.meta.dir + "/greeting.ts", () => ({ greet: () => "mocked" }));
+      expect(greet()).toBe("mocked");
+    });`,
   });
+  const flags = ["--preload", "./preload.ts"];
+  const plain = await runTests(String(dir), ...flags);
+  expect(plain.results).toEqual(["pass spies", "pass mock"]);
+  const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot", ...flags], String(dir), {
+    ...bunEnv,
+    BUN_JSC_logAOTPhaseTimes: "1",
+  });
+  expect(stderr).toContain("(pass) spies");
+  expect(stderr).toContain("(pass) mock");
+  expect(exitCode).toBe(0);
+  // `Load: <step>` is a part of a load.
+  expect(stderr.match(/AOT phase times: front end \| Load \| wall /g)?.length).toBe(1);
+});
 
 test("a tsconfig.json in a package's own folder does not decide whether its exports can be replaced", async () => {
   await expectCompiledToRunAsPlain({

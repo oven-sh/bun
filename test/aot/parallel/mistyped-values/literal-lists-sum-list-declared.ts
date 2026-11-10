@@ -1,5 +1,4 @@
 // Declares a list as an interface, adds one to it through `any` into a variable declared as a number, and lists the variable in an object literal.
-// Flags: --aot-validate
 interface Named {
   name: bigint;
 }

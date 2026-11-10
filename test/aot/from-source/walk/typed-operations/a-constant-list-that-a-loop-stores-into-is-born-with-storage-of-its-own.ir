@@ -1,0 +1,33 @@
+# -- source: a-constant-list-that-a-loop-stores-into-is-born-with-storage-of-its-own.ts
+# declare function sink(...values: unknown[]): void;
+# declare function key(): number;
+# function tallied(k: number): number { const list = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; for (let i = 0; i < k; i++) list[i & 15]!++; return list[3]!; }
+# function onlyRead(k: number): number { const list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]; let sum = 0; for (let i = 0; i < k; i++) sum += list[i & 15]!; return sum; }
+# function bornInTheTurn(k: number): number { let sum = 0; for (let i = 0; i < k; i++) { const list = [0, 0, 0]; list[i & 1]!++; sum += list[1]!; } return sum; }
+# function tableBeside(k: number): number { const table = [3, 1, 2, 0, 3, 1, 2, 0, 3, 1, 2, 0, 3, 1, 2, 0], counts = [0, 0, 0, 0]; for (let i = 0; i < k; i++) counts[table[i & 15]!]!++; return counts[3]!; }
+# function bothShapes(k: number): number { const counts = [0, 0, 0, 0]; let sum = 0; for (let i = 0; i < k; i++) { const pair = [0, 0, 0]; pair[i & 1]!++; counts[i & 3]!++; sum += pair[1]!; } return sum + counts[3]!; }
+# sink(tallied(key()), onlyRead(key()), bornInTheTurn(key()), tableBeside(key()), bothShapes(key()));
+# -- end of source
+# A list of constants shares its storage with every other list made at that place. The front of a typed loop that stores into the list asks for storage that can be written, so such a list was never let in:
+# all turns ran the slow loop. Where a function stores into a constant list in a loop in which the list was not born, the run time is asked to give the constant lists that it stores into storage of their own, in the kind of
+# their constants. A list that is only read shares as before, also where it stands beside one that is stored into, and so does one that is born and stored into in the same turn: there the dearer birth
+# would not be paid back.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Data {{*}}encoding=TreeWithOwnStorage
+# RUN(READ): walk f2 mechanisms=all
+# READ-LABEL: code f2:Body
+# READ: = Data {{*}}encoding=CopyOnWriteArray
+# RUN(TURN): walk f3 mechanisms=all
+# TURN-LABEL: code f3:Body
+# TURN: = Data {{*}}encoding=CopyOnWriteArray
+# RUN(BESIDE): walk f4 mechanisms=all
+# BESIDE-LABEL: code f4:Body
+# BESIDE: = Data {{*}}encoding=CopyOnWriteArray
+# BESIDE: = Data {{*}}encoding=TreeWithOwnStorage
+# RUN(BOTH): walk f5 mechanisms=all
+# BOTH-LABEL: code f5:Body
+# BOTH: = Data {{*}}encoding=TreeWithOwnStorage
+# BOTH-NOT: encoding=TreeWithOwnStorage
+# BOTH: = Data {{*}}encoding=CopyOnWriteArray
+# BOTH-NOT: encoding=TreeWithOwnStorage

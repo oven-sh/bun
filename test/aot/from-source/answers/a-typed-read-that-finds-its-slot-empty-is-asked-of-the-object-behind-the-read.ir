@@ -1,0 +1,37 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { declare fragile?: boolean; weight: number; constructor(weight: number) { this.weight = weight; } }
+# function look(parcel: Parcel) { return parcel.fragile; }
+# function lookAtFresh(weight: number) { const parcel = new Parcel(weight); (globalThis as any).last = parcel; return parcel.fragile; }
+# const parcels: Parcel[] = [];
+# for (let i = 0; i < 4; i++) { const parcel = new Parcel(i); if (i === 3) parcel.fragile = true; parcels.push(parcel); }
+# (globalThis as any).parcels = parcels;
+# const looks = id(look), looksAtFresh = id(lookAtFresh);
+# print(looks(parcels[0]), looksAtFresh(1));
+# (Parcel.prototype as any).fragile = "above";
+# print(looks(parcels[1]), looksAtFresh(2));
+# -- end of source
+# LIBRARY: own
+# A read of a field that the object does not have yet finds its slot empty and returns undefined as long as the class guard for that name holds.
+# A value that the program stores on the prototype must be found.
+# The load itself is not checked when the slot is empty, because it may be placed before the guards that give the empty slot its meaning.
+# With testing=CheckWalkAtRunTime the check is placed after the read, where the program has the read.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: undefined undefined
+# RIGHT-NEXT: above above
+# RIGHT-NEXT: exited with 0
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime
+# ASKED: undefined undefined
+# ASKED-NEXT: above above
+# ASKED-NEXT: exited with 0
+# The injected fault, testing=AssumeGuardsAndFacts, has an effect here: on its own it makes both reads return undefined silently.
+# RUN(BITES): run-in-shell mechanisms=all testing=AssumeGuardsAndFacts
+# BITES: undefined undefined
+# BITES-NEXT: undefined undefined
+# BITES-NEXT: exited with 0
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts
+# ASKEDLIE: undefined undefined
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: a property read that the compiler replaced with a known value found a value for 'fragile', but a full lookup finds another one
+# ASKEDLIE: crashed with

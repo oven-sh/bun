@@ -4,8 +4,8 @@
 // CHECK-NEXT: Branch [[emptyTest]] -> taken {{*}}(| 0), notTaken {{*}}(| 0)
 // CHECK-LABEL: function {{*}}name="properties"
 // CHECK-NEXT: ([[v]]:
-// CHECK: [[source]] = Convert [[v]] declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: [[test]] = TypeTest [[source]] testedType=undefined|null @
+// CHECK-NOT: Convert
+// CHECK: [[test]] = TypeTest [[v]] testedType=undefined|null @
 // CHECK-NEXT: Branch [[test]] -> taken [[nullish]](| 0), notTaken [[present]](| 0)
 // CHECK: [[present]]([[o]]):
 // CHECK: = PropGet [[o]] key="a"
@@ -19,7 +19,8 @@
 
 // RUN(THROW): lower
 // THROW-LABEL: function {{*}}name="properties"
-// THROW: frequency=Unlikely:
+// THROW: Branch {{*}}-> taken [[nullish]](| 0)
+// THROW: [[nullish]]({{*}}):
 // THROW-NEXT: [[error]] = NewRuntimeError runtimeError=NotDestructurable name="a"
 // THROW-NEXT: Throw [[error]]
 

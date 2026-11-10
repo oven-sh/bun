@@ -141,6 +141,26 @@ fn field_initializers_belong_to_initializers() {
 }
 
 #[test]
+fn values_of_fields_with_legacy_decorators_belong_to_who_evaluates_them() {
+    let source = "declare const d: any; \
+        export class C { @d a = 1; @d static b = 2; c = 3; static e = 4; }";
+    let configuration = r#"{"compilerOptions":{"experimentalDecorators":true}}"#;
+    let files = [("main.ts", source), ("tsconfig.json", configuration)];
+    with_walk(&files, |hir, _, walk| {
+        let [a, b, c, e] = members(hir)[..] else {
+            panic!("the class has four members");
+        };
+        let expected = [
+            (a, implicit_constructor(walk)),
+            (b, MODULE_BODY),
+            (c, instance_initializer(walk)),
+            (e, static_initializer(walk)),
+        ];
+        assert_eq!(walk.function_of_field, expected);
+    });
+}
+
+#[test]
 fn initializers_use_class_slots() {
     let source = "export function g(k) { class C { #p = 1; [k] = 2; static s = 3; } return C; }";
     with_walk(&[("main.mjs", source)], |hir, bound, walk| {
@@ -159,6 +179,23 @@ fn initializers_use_class_slots() {
         let object_time = slot_initialized_at(walk, scope, ClassSlot::ClassObject);
         assert!(object_time < slot_initialized_at(walk, scope, key));
     });
+}
+
+#[test]
+fn key_of_decorated_abstract_field_is_used_where_the_field_is_defined() {
+    let source = "export function g(d: any, k: string) { \
+        abstract class C { @d abstract [k]: number; } return C; }";
+    let configuration = r#"{"compilerOptions":{"experimentalDecorators":true}}"#;
+    let objects_use_key = |files: &[(&str, &str)]| {
+        with_walk(files, |hir, bound, walk| {
+            let key = ScopeSlot::Class(ClassSlot::ComputedKey(members(hir)[0]));
+            let slot = (bound.class_scope[CLASS.idx()], key);
+            slots_used_by(walk, instance_initializer(walk)).contains(&slot)
+        })
+    };
+    assert!(objects_use_key(&[("main.ts", source)]));
+    let legacy = [("main.ts", source), ("tsconfig.json", configuration)];
+    assert!(!objects_use_key(&legacy));
 }
 
 #[test]
@@ -325,7 +362,8 @@ fn super_call_in_arrow_references_constructor() {
         let constructor = only_function(hir, FnKind::Constructor);
         let scope = top_scope(bound, constructor);
         let arrow = walked(walk, only_function(hir, FnKind::Arrow));
-        assert_eq!(walk.function_references, [(arrow, constructor)]);
+        let called = (walked(walk, constructor), only_function(hir, FnKind::Arrow));
+        assert_eq!(walk.function_references, [called, (arrow, constructor)]);
         let expected = [
             (scope, ScopeSlot::This),
             (scope, ScopeSlot::NewTarget),

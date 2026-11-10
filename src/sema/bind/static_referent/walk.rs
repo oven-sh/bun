@@ -1,6 +1,7 @@
+use super::stored_by_calls::find_value_stored_in_exports_by_call;
 use super::{
-    LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,
-    ResolvedReferent, StaticReferent, UnknownReferent,
+    LinkedBinding, LoadedValue, MemberAssignment, MemberStores, NamespaceReferent,
+    ReferentCertainty, ReferentContext, ResolvedReferent, StaticReferent, UnknownReferent,
 };
 use crate::atom::{Atom, known};
 use crate::bind::decorator_metadata::has_decorators;
@@ -12,7 +13,10 @@ use crate::check::aot::{ClassRef, FunctionRef};
 use crate::hir::*;
 use crate::import_sites::is_free_common_js;
 use crate::program::{FileId, Sym};
+use bun_sort_by_number::{SortByNumber, number_of_pair};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::hash::Hash;
 use std::marker::PhantomData;
 
 #[derive(Copy, Clone)]
@@ -41,7 +45,11 @@ fn unknown<B, M>(reason: UnknownReferent) -> Step<B, M> {
     Step::Found(StaticReferent::Unknown(reason))
 }
 
-fn find_only_returned_value(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<ExprId> {
+pub(super) fn find_only_returned_value(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+) -> Option<ExprId> {
     if hir[function]
         .flags
         .intersects(Flags::ASYNC | Flags::GENERATOR)
@@ -62,7 +70,49 @@ fn find_only_returned_value(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -
     }
 }
 
-fn find_argument_of_only_call(hir: &File<'_>, bound: &Bound<'_>, id: SymbolId) -> Option<ExprId> {
+fn find_index_of_returned_parameter(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+) -> Option<usize> {
+    let mut returned = hir.skip_type_assertions(find_only_returned_value(hir, bound, function)?);
+    while let ExprKind::Binary {
+        op: BinOp::Comma,
+        right,
+        ..
+    } = hir[returned].kind
+    {
+        returned = hir.skip_type_assertions(right);
+    }
+    let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+        (hir[returned].kind, bound.binding(returned))
+    else {
+        return None;
+    };
+    let &[Decl::Param(pattern)] = bound.symbol(symbol).decls else {
+        return None;
+    };
+    let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let written = &hir[parameter];
+    let is_plain_name = matches!(hir[pattern].kind, PatKind::Ident(_))
+        && written.default.is_none()
+        && !written.flags.contains(Flags::REST);
+    if !is_plain_name
+        || bound.param_fn[parameter.idx()] != function
+        || !bound.is_stable_binding(symbol)
+    {
+        return None;
+    }
+    hir[function].params.iter().position(|it| it == parameter)
+}
+
+pub(super) fn find_place_of_plain_parameter(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    id: SymbolId,
+) -> Option<(FnId, usize)> {
     let &[Decl::Param(pattern)] = bound.symbol(id).decls else {
         return None;
     };
@@ -77,11 +127,53 @@ fn find_argument_of_only_call(hir: &File<'_>, bound: &Bound<'_>, id: SymbolId) -
     if !is_plain_name || function == FnId::NONE {
         return None;
     }
+    let index = hir[function].params.position_of(parameter.idx())?;
+    Some((function, index))
+}
+
+fn find_value_of_only_store(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    id: SymbolId,
+    is_dead_store: &dyn Fn(ExprId) -> bool,
+) -> Option<ExprId> {
+    let &[Decl::Var(pattern)] = bound.symbol(id).decls else {
+        return None;
+    };
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    if hir[declaration].init.is_some() || bound.is_visible_to_eval(id) {
+        return None;
+    }
+    let mut stores = bound.stores_to(id).iter();
+    let mut stores = stores.by_ref().filter(|store| !is_dead_store(store.target));
+    let (Some(store), None) = (stores.next(), stores.next()) else {
+        return None;
+    };
+    let Parent::Expr(around) = bound.parent_of_expr(store.target) else {
+        return None;
+    };
+    match hir.exprs.get(around.idx()).map(|node| node.kind) {
+        Some(ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        }) if target == store.target => Some(value),
+        _ => None,
+    }
+}
+
+fn find_argument_of_only_call(hir: &File<'_>, bound: &Bound<'_>, id: SymbolId) -> Option<ExprId> {
+    let (function, index) = find_place_of_plain_parameter(hir, bound, id)?;
     let call = bound.get_immediately_invoked_function_expression(hir, function)?;
     if bound.finds_itself(hir, function) {
         return None;
     }
-    let index = hir[function].params.iter().position(|it| it == parameter)?;
+    find_argument_at(hir, call, index)
+}
+
+pub(super) fn find_argument_at(hir: &File<'_>, call: CallId, index: usize) -> Option<ExprId> {
     let mut arguments = hir.ids(hir[call].args).take(index + 1);
     if arguments
         .clone()
@@ -102,7 +194,7 @@ fn reads_module_exports(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool
     }
 }
 
-fn reads_exports_object(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
+pub(super) fn reads_exports_object(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
     is_free_common_js(hir, bound, expr, CommonJsVariable::Exports)
         || reads_module_exports(hir, bound, expr)
 }
@@ -186,6 +278,132 @@ fn is_evaluated_by_file_body(hir: &File<'_>, bound: &Bound<'_>, mut expr: ExprId
     })
 }
 
+fn find_value_unless_this_of_file_has_one(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    expr: ExprId,
+) -> Option<ExprId> {
+    let ExprKind::Binary {
+        op: BinOp::Or,
+        left,
+        right: value,
+    } = hir[expr].kind
+    else {
+        return None;
+    };
+    let ExprKind::Binary {
+        op: BinOp::And,
+        left,
+        right,
+    } = hir[hir.skip_type_assertions(left)].kind
+    else {
+        return None;
+    };
+    let is_this = |it: ExprId| matches!(hir[hir.skip_type_assertions(it)].kind, ExprKind::This);
+    let reads_this = matches!(
+        hir.member_key(hir.skip_type_assertions(right)),
+        Some((object, MemberKey::Name(_))) if is_this(object)
+    );
+    (is_this(left) && reads_this && is_evaluated_by_file_body(hir, bound, expr)).then_some(value)
+}
+
+fn find_symbol_named_by(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> Option<SymbolId> {
+    let expr = hir.skip_type_assertions(expr);
+    match (hir[expr].kind, bound.binding(expr)) {
+        (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
+        _ => None,
+    }
+}
+
+pub(super) fn index_member_stores<'s, C: ReferentContext<'s>>(
+    context: &C,
+    file: FileId,
+) -> MemberStores {
+    let (hir, bound) = (context.hir(file), context.bound(file));
+    let mut stores = MemberStores::default();
+    if !bound.runtime.is_computed() {
+        return stores;
+    }
+    stores.holds_long_literals = true;
+    for node in (0..hir.exprs.len() as u32).map(ExprId) {
+        match hir[node].kind {
+            ExprKind::Object(properties) if properties.len() > LONG_LITERAL => {
+                let first = stores.values_in_long_literals.len();
+                for property in properties.iter() {
+                    match hir.runtime_property_key(property) {
+                        PropKey::Private(_) => {}
+                        PropKey::Name(name) => stores.values_in_long_literals.push((
+                            number_of_pair(properties.start, name.0),
+                            holds_value(hir, property).then(|| hir[property].value),
+                        )),
+                        PropKey::None | PropKey::Computed(_) => {
+                            stores.values_in_long_literals.truncate(first);
+                        }
+                    }
+                }
+            }
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } => {
+                if let Some((object, MemberKey::Name(name))) = hir.member_key(target)
+                    && let Some(holder) = find_symbol_named_by(hir, bound, object)
+                    && is_evaluated_by_file_body(hir, bound, node)
+                {
+                    stores.assignments.push(MemberAssignment {
+                        holder,
+                        name,
+                        target,
+                        value,
+                    });
+                }
+            }
+            ExprKind::Call(call) => {
+                let callee = hir.skip_type_assertions(hir[call].callee);
+                let builtin = context.builtin_of_expression(file, callee);
+                let target = builtin.and_then(|it| context.find_target_of_copied_properties(it));
+                if let Some(target) = target
+                    && let Some(argument) = hir.ids(hir[call].args).nth(target as usize)
+                    && let Some(holder) = find_symbol_named_by(hir, bound, argument)
+                    && is_evaluated_by_file_body(hir, bound, node)
+                {
+                    stores.copies.push((holder, call));
+                }
+            }
+            _ => {}
+        }
+    }
+    (stores.assignments).sort_by_u64(|it| number_of_pair(it.holder.0, it.name.0));
+    stores.copies.sort_by_u32(|it| it.0.0);
+    stores.values_in_long_literals.sort_by_u64(|it| it.0);
+    stores
+}
+
+const LONG_LITERAL: usize = 16;
+
+fn holds_value(hir: &File<'_>, property: PropId) -> bool {
+    match hir[property].kind {
+        PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
+        PropKind::Getter | PropKind::Setter | PropKind::Spread => false,
+    }
+}
+
+fn find_value_in_long_literal(
+    stores: &MemberStores,
+    properties: Span<PropId>,
+    name: Atom,
+) -> Option<ExprId> {
+    let key = number_of_pair(properties.start, name.0);
+    let end = stores
+        .values_in_long_literals
+        .partition_point(|it| it.0 <= key);
+    match stores.values_in_long_literals[..end].last() {
+        Some(&(found, value)) if found == key => value,
+        _ => None,
+    }
+}
+
 fn is_in_catch_clause(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
     let mut parent = bound.parent_of_expr(expr);
     while let Parent::Expr(outer) = parent {
@@ -228,12 +446,141 @@ fn find_deciding_store(
     }
 }
 
-pub(super) struct ReferentWalk<'c, 's, C: ReferentContext<'s>> {
-    context: &'c C,
-    visited: SmallVec<[Sym; 8]>,
+struct Trail<T> {
+    items: SmallVec<[T; 8]>,
+    first_seen: usize,
+    places: Option<FxHashMap<T, SmallVec<[u32; 1]>>>,
+}
+
+#[derive(Copy, Clone)]
+struct PlaceInTrail {
+    len: usize,
+    first_seen: usize,
+}
+
+impl<T: Copy + Eq + Hash> Trail<T> {
+    const LONG: usize = 32;
+
+    fn new() -> Self {
+        Trail {
+            items: SmallVec::new(),
+            first_seen: 0,
+            places: None,
+        }
+    }
+
+    #[inline]
+    fn seen(&self) -> &[T] {
+        let items: &[T] = &self.items;
+        &items[self.first_seen..]
+    }
+
+    #[inline]
+    fn last_place_of(&self, item: T) -> Option<usize> {
+        if self.places.is_some() {
+            return self.last_indexed_place_of(item);
+        }
+        let place = self.seen().iter().rposition(|&it| it == item)?;
+        Some(self.first_seen + place)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn last_indexed_place_of(&self, item: T) -> Option<usize> {
+        let place = *self.places.as_ref()?.get(&item)?.last()? as usize;
+        (place >= self.first_seen).then_some(place)
+    }
+
+    #[inline]
+    fn contains(&self, item: T) -> bool {
+        self.last_place_of(item).is_some()
+    }
+
+    #[inline]
+    fn push(&mut self, item: T) {
+        self.items.push(item);
+        if self.places.is_some() || self.items.len() > Self::LONG {
+            self.index_last_item(item);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn index_last_item(&mut self, item: T) {
+        match &mut self.places {
+            Some(places) => {
+                let place = self.items.len() as u32 - 1;
+                places.entry(item).or_default().push(place);
+            }
+            None => {
+                let mut places = FxHashMap::<T, SmallVec<[u32; 1]>>::default();
+                for (place, &item) in self.items.iter().enumerate() {
+                    places.entry(item).or_default().push(place as u32);
+                }
+                self.places = Some(places);
+            }
+        }
+    }
+
+    fn forget(&mut self) {
+        self.first_seen = self.items.len();
+    }
+
+    fn place(&self) -> PlaceInTrail {
+        PlaceInTrail {
+            len: self.items.len(),
+            first_seen: self.first_seen,
+        }
+    }
+
+    #[inline]
+    fn go_back_to(&mut self, place: PlaceInTrail) {
+        while self.items.len() > place.len {
+            let Some(item) = self.items.pop() else { break };
+            if self.places.is_some() {
+                self.forget_last_place_of(item);
+            }
+        }
+        self.first_seen = place.first_seen;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn forget_last_place_of(&mut self, item: T) {
+        let Some(places) = &mut self.places else {
+            return;
+        };
+        if let Some(places_of_item) = places.get_mut(&item) {
+            places_of_item.pop();
+            if places_of_item.is_empty() {
+                places.remove(&item);
+            }
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct PlaceOfWalk {
+    name: Sym,
     pending_members: SmallVec<[Atom; 4]>,
+    entered_calls: SmallVec<[(FileId, CallId); 2]>,
     certainty: ReferentCertainty,
     follows_stored_members: bool,
+}
+
+pub(super) struct ReferentWalk<'c, 's, C: ReferentContext<'s>> {
+    context: &'c C,
+    visited: Trail<Sym>,
+    pending_members: SmallVec<[Atom; 4]>,
+    entered_callees: Trail<FunctionRef>,
+    entered_calls: SmallVec<[(FileId, CallId); 2]>,
+    open_calls: Trail<(FileId, CallId)>,
+    followed_stores: Trail<(FileId, ExprId)>,
+    certainty: ReferentCertainty,
+    follows_stored_members: bool,
+    open_branches: u32,
+    found_from: FxHashMap<PlaceOfWalk, ResolvedReferent<C::Builtin, C::Module>>,
+    answers_of_trails: u32,
     session: PhantomData<&'s ()>,
 }
 
@@ -241,10 +588,17 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     pub(super) fn new(context: &'c C) -> Self {
         ReferentWalk {
             context,
-            visited: SmallVec::new(),
+            visited: Trail::new(),
             pending_members: SmallVec::new(),
+            entered_callees: Trail::new(),
+            entered_calls: SmallVec::new(),
+            open_calls: Trail::new(),
+            followed_stores: Trail::new(),
             certainty: ReferentCertainty::Proven,
             follows_stored_members: false,
+            open_branches: 0,
+            found_from: FxHashMap::default(),
+            answers_of_trails: 0,
             session: PhantomData,
         }
     }
@@ -262,21 +616,50 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     }
 
     pub(super) fn resolve_expression(
-        self,
+        mut self,
         file: FileId,
         expr: ExprId,
     ) -> ResolvedReferent<C::Builtin, C::Module> {
         self.run(Step::Expression(file, expr))
     }
 
-    pub(super) fn resolve_symbol(self, symbol: Sym) -> ResolvedReferent<C::Builtin, C::Module> {
+    pub(super) fn resolve_symbol(mut self, symbol: Sym) -> ResolvedReferent<C::Builtin, C::Module> {
         self.run(Step::Symbol(symbol))
     }
 
-    fn run(mut self, mut step: StepOf<'s, C>) -> ResolvedReferent<C::Builtin, C::Module> {
+    fn run(&mut self, step: StepOf<'s, C>) -> ResolvedReferent<C::Builtin, C::Module> {
+        let answers_of_trails = self.answers_of_trails;
+        let mut places = SmallVec::new();
+        let found = self.run_from(step, &mut places);
+        if !places.is_empty() && self.answers_of_trails == answers_of_trails {
+            self.found_from
+                .extend(places.into_iter().map(|place| (place, found)));
+        }
+        found
+    }
+
+    fn run_from(
+        &mut self,
+        mut step: StepOf<'s, C>,
+        places: &mut SmallVec<[PlaceOfWalk; 2]>,
+    ) -> ResolvedReferent<C::Builtin, C::Module> {
         loop {
             step = match step {
                 Step::Expression(file, expr) => self.step_expression(file, expr),
+                Step::Symbol(name) if self.open_branches != 0 => {
+                    let place = PlaceOfWalk {
+                        name,
+                        pending_members: SmallVec::from_slice(&self.pending_members),
+                        entered_calls: SmallVec::from_slice(&self.entered_calls),
+                        certainty: self.certainty,
+                        follows_stored_members: self.follows_stored_members,
+                    };
+                    if let Some(&found) = self.found_from.get(&place) {
+                        return found;
+                    }
+                    places.push(place);
+                    self.step_symbol(name)
+                }
                 Step::Symbol(symbol) => self.step_symbol(symbol),
                 Step::Linked(LinkedBinding::Binding(symbol)) => Step::Symbol(symbol),
                 Step::Linked(LinkedBinding::Namespace(module)) => {
@@ -284,6 +667,9 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 }
                 Step::Linked(LinkedBinding::Builtin(builtin)) => {
                     Step::Found(StaticReferent::Builtin(builtin))
+                }
+                Step::Linked(LinkedBinding::ExportOfCommonJs { file, name }) => {
+                    self.step_export_of_common_js(file, name)
                 }
                 Step::Linked(LinkedBinding::Unknown) => unknown(UnknownReferent::UnlinkedImport),
                 Step::Found(referent) => match self.pending_members.pop() {
@@ -299,8 +685,106 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
+    fn branch_off<R>(&mut self, walk_on: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            self.answers_of_trails += 1;
+            return None;
+        }
+        let visited = self.visited.place();
+        let entered_callees = self.entered_callees.place();
+        let open_calls = self.open_calls.place();
+        let followed_stores = self.followed_stores.place();
+        let pending_members = SmallVec::<[Atom; 4]>::from_slice(&self.pending_members);
+        let (certainty, follows_stored_members) = (self.certainty, self.follows_stored_members);
+        self.open_branches += 1;
+        let result = walk_on(self);
+        self.open_branches -= 1;
+        self.visited.go_back_to(visited);
+        self.entered_callees.go_back_to(entered_callees);
+        self.entered_calls.truncate(entered_callees.len);
+        self.open_calls.go_back_to(open_calls);
+        self.followed_stores.go_back_to(followed_stores);
+        self.pending_members = pending_members;
+        (self.certainty, self.follows_stored_members) = (certainty, follows_stored_members);
+        Some(result)
+    }
+
+    fn resolve_from_here(
+        &mut self,
+        file: FileId,
+        expr: ExprId,
+    ) -> ResolvedReferent<C::Builtin, C::Module> {
+        let found = self.branch_off(|walk| walk.run(Step::Expression(file, expr)));
+        found.unwrap_or(ResolvedReferent {
+            referent: StaticReferent::Unknown(UnknownReferent::Cycle),
+            certainty: self.certainty,
+        })
+    }
+
+    fn step_export_of_common_js(&mut self, file: FileId, name: Option<Atom>) -> StepOf<'s, C> {
+        self.certainty = ReferentCertainty::Expected;
+        match name {
+            Some(known::default) => {
+                let marked = self.branch_off(|marked| {
+                    marked.pending_members.push(known::default);
+                    let step = marked.step_module_exports(file);
+                    marked.run(step).referent
+                });
+                match marked {
+                    None | Some(StaticReferent::Unknown(_)) => self.step_module_exports(file),
+                    Some(found) => {
+                        self.pending_members.clear();
+                        Step::Found(found)
+                    }
+                }
+            }
+            Some(name) => {
+                self.pending_members.push(name);
+                self.step_module_exports(file)
+            }
+            None => self.step_module_exports(file),
+        }
+    }
+
+    fn step_into_call(&mut self, callee: FunctionRef, file: FileId, call: CallId) -> StepOf<'s, C> {
+        let context = self.context;
+        if self.entered_callees.contains(callee) {
+            return self.end_walk_that_came_round();
+        }
+        let (hir, bound) = (context.hir(callee.file), context.bound(callee.file));
+        match find_only_returned_value(hir, bound, callee.function) {
+            Some(value) => {
+                self.certainty = ReferentCertainty::Expected;
+                self.entered_callees.push(callee);
+                self.entered_calls.push((file, call));
+                Step::Expression(callee.file, value)
+            }
+            None => unknown(UnknownReferent::NotAReference),
+        }
+    }
+
+    fn find_argument_of_entered_call(&self, parameter: Sym) -> Option<(FileId, ExprId)> {
+        let (hir, bound) = (
+            self.context.hir(parameter.file),
+            self.context.bound(parameter.file),
+        );
+        let (function, index) = find_place_of_plain_parameter(hir, bound, parameter.id)?;
+        let callee = FunctionRef {
+            file: parameter.file,
+            function,
+        };
+        let (file, call) = self.entered_calls[self.entered_callees.last_place_of(callee)?];
+        let argument = find_argument_at(self.context.hir(file), call, index)?;
+        Some((file, argument))
+    }
+
+    fn end_walk_that_came_round(&mut self) -> StepOf<'s, C> {
+        self.answers_of_trails += 1;
+        unknown(UnknownReferent::Cycle)
+    }
+
     fn visit(&mut self, symbol: Sym) -> bool {
-        let is_first_visit = !self.visited.contains(&symbol);
+        let is_first_visit = !self.visited.contains(symbol);
         if is_first_visit {
             self.visited.push(symbol);
         }
@@ -309,13 +793,57 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
 
     fn step_expression(&mut self, file: FileId, expr: ExprId) -> StepOf<'s, C> {
         let context = self.context;
-        let hir = context.hir(file);
+        let (hir, bound) = (context.hir(file), context.bound(file));
         let expr = hir.skip_type_assertions(expr);
+        let member = match hir[expr].kind {
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => hir.member_key(expr),
+            _ => None,
+        };
+        if let Some((object, MemberKey::Name(known::exports))) = member
+            && is_free_common_js(hir, bound, object, CommonJsVariable::Module)
+        {
+            return self.step_module_exports(file);
+        }
         if let Some(builtin) = context.builtin_of_expression(file, expr) {
             return Step::Found(StaticReferent::Builtin(builtin));
         }
         match hir[expr].kind {
-            ExprKind::Ident(_) => self.step_identifier(file, expr),
+            ExprKind::Ident(_) => self.step_identifier(file, bound, expr),
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => Step::Expression(file, right),
+            ExprKind::Cond { branches, .. } => {
+                let branches = hir.branches(branches);
+                let yes = self.resolve_from_here(file, branches.yes).referent;
+                if !matches!(yes, StaticReferent::Function(_) | StaticReferent::Class(_)) {
+                    return unknown(UnknownReferent::NotAReference);
+                }
+                let symbol_named_by = |arm: ExprId| {
+                    let arm = hir.skip_type_assertions(arm);
+                    match (hir[arm].kind, bound.binding(arm)) {
+                        (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
+                        _ => None,
+                    }
+                };
+                let no = match symbol_named_by(branches.yes) {
+                    Some(symbol) if symbol_named_by(branches.no) == Some(symbol) => yes,
+                    Some(_) | None => self.resolve_from_here(file, branches.no).referent,
+                };
+                let name_one_thing = match (&yes, &no) {
+                    (StaticReferent::Function(yes), StaticReferent::Function(no)) => yes == no,
+                    (StaticReferent::Class(yes), StaticReferent::Class(no)) => yes == no,
+                    _ => false,
+                };
+                if name_one_thing {
+                    self.certainty = ReferentCertainty::Expected;
+                    self.pending_members.clear();
+                    Step::Found(yes)
+                } else {
+                    unknown(UnknownReferent::NotAReference)
+                }
+            }
             ExprKind::Class(class) => self.class_step(file, class),
             ExprKind::Fn(function) => {
                 Step::Found(StaticReferent::Function(FunctionRef { file, function }))
@@ -325,7 +853,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             }
             | ExprKind::Index {
                 chain: Chain::No, ..
-            } => match hir.member_key(expr) {
+            } => match member {
                 Some((object, MemberKey::Name(name))) => {
                     self.pending_members.push(name);
                     Step::Expression(file, object)
@@ -338,24 +866,70 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 op: None, value, ..
             } => Step::Expression(file, value),
             ExprKind::Object(properties) => self.step_object_literal(file, properties),
+            ExprKind::Binary { op: BinOp::Or, .. } => {
+                match find_value_unless_this_of_file_has_one(hir, bound, expr) {
+                    Some(value) => {
+                        self.certainty = ReferentCertainty::Expected;
+                        Step::Expression(file, value)
+                    }
+                    None => unknown(UnknownReferent::NotAReference),
+                }
+            }
             ExprKind::Call(site) => match context.loaded_value(file, expr) {
                 Some(loaded) => self.step_loaded_value(loaded),
                 None => match hir[hir.skip_type_assertions(hir[site].callee)].kind {
                     ExprKind::Fn(function) => {
-                        match find_only_returned_value(hir, context.bound(file), function) {
+                        match find_only_returned_value(hir, bound, function) {
                             Some(value) => Step::Expression(file, value),
                             None => unknown(UnknownReferent::NotAReference),
                         }
                     }
-                    _ => unknown(UnknownReferent::NotAReference),
+                    _ => self.step_call_that_returns_its_argument(file, site),
                 },
             },
             _ => unknown(UnknownReferent::NotAReference),
         }
     }
 
-    fn step_identifier(&self, file: FileId, ident: ExprId) -> StepOf<'s, C> {
-        let bound = self.context.bound(file);
+    fn step_call_that_returns_its_argument(&mut self, file: FileId, site: CallId) -> StepOf<'s, C> {
+        let context = self.context;
+        let hir = context.hir(file);
+        if self.open_calls.contains((file, site)) {
+            return self.end_walk_that_came_round();
+        }
+        self.open_calls.push((file, site));
+        let callee = self.branch_off(|walk_to_callee| {
+            walk_to_callee.pending_members.clear();
+            walk_to_callee.certainty = ReferentCertainty::Proven;
+            walk_to_callee.run(Step::Expression(file, hir[site].callee))
+        });
+        let Some(StaticReferent::Function(callee)) = callee.map(|callee| callee.referent) else {
+            return unknown(UnknownReferent::NotAReference);
+        };
+        let (hir_of_callee, bound_of_callee) =
+            (context.hir(callee.file), context.bound(callee.file));
+        let index =
+            find_index_of_returned_parameter(hir_of_callee, bound_of_callee, callee.function);
+        let Some(index) = index else {
+            return self.step_into_call(callee, file, site);
+        };
+        let mut arguments = hir.ids(hir[site].args).take(index + 1);
+        if arguments
+            .clone()
+            .any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
+        {
+            return unknown(UnknownReferent::NotAReference);
+        }
+        match arguments.nth(index) {
+            Some(argument) => {
+                self.certainty = ReferentCertainty::Expected;
+                Step::Expression(file, argument)
+            }
+            None => unknown(UnknownReferent::NotAReference),
+        }
+    }
+
+    fn step_identifier(&self, file: FileId, bound: &Bound<'s>, ident: ExprId) -> StepOf<'s, C> {
         if !bound.runtime.is_computed() {
             return unknown(UnknownReferent::NotCompiled);
         }
@@ -391,21 +965,29 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let context = self.context;
         let hir = context.hir(file);
         let mut value = None;
-        for property in properties.iter() {
-            let holds_value = match hir[property].kind {
-                PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
-                PropKind::Getter | PropKind::Setter | PropKind::Spread => false,
-            };
-            match hir.runtime_property_key(property) {
-                PropKey::Name(key) if key != name => {}
-                PropKey::Private(_) => {}
-                PropKey::Name(_) if holds_value => value = Some(hir[property].value),
-                PropKey::Name(_) | PropKey::None | PropKey::Computed(_) => value = None,
+        if properties.len() > LONG_LITERAL
+            && let Some(stores) = context.member_stores(file)
+            && stores.holds_long_literals
+        {
+            value = find_value_in_long_literal(stores, properties, name);
+        } else {
+            for property in properties.iter() {
+                match hir.runtime_property_key(property) {
+                    PropKey::Name(key) if key != name => {}
+                    PropKey::Private(_) => {}
+                    PropKey::Name(_) if holds_value(hir, property) => {
+                        value = Some(hir[property].value);
+                    }
+                    PropKey::Name(_) | PropKey::None | PropKey::Computed(_) => value = None,
+                }
             }
         }
         self.certainty = ReferentCertainty::Expected;
         match value {
             Some(value) => Step::Expression(file, value),
+            None if self.follows_stored_members || context.member_stores(file).is_some() => {
+                self.step_stored_member(name)
+            }
             None => unknown(UnknownReferent::MissingMember),
         }
     }
@@ -480,34 +1062,55 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 return self.step_export_stores(property, &stores);
             }
         }
-        match bound.lookup(exports, known::export_equals) {
-            Some(id) => {
-                let whole = Sym { file, id };
-                let stores = self.live_export_stores(whole, find_store_of_whole);
-                self.step_export_stores(whole, &stores)
+        let whole = bound.lookup(exports, known::export_equals);
+        let whole = whole.map(|id| Sym { file, id });
+        let stores = whole.map(|whole| self.live_export_stores(whole, find_store_of_whole));
+        if let (Some(whole), Some(stores)) = (whole, &stores)
+            && !stores.is_empty()
+        {
+            return self.step_export_stores(whole, stores);
+        }
+        let stored_by_call = next_member
+            .and_then(|name| find_value_stored_in_exports_by_call(context.hir(file), bound, name));
+        match (stored_by_call, whole, next_member) {
+            (Some(value), ..) => {
+                self.pending_members.pop();
+                Step::Expression(file, value)
             }
-            None if next_member.is_none() => unknown(UnknownReferent::NotAReference),
-            None => unknown(UnknownReferent::MissingMember),
+            (None, Some(whole), _) => self.step_export_stores(whole, &[]),
+            (None, None, None) => unknown(UnknownReferent::NotAReference),
+            (None, None, Some(_)) => unknown(UnknownReferent::MissingMember),
         }
     }
 
     fn step_export_stores(&mut self, exported: Sym, stores: &[ExportStore]) -> StepOf<'s, C> {
         if !self.visit(exported) {
-            return unknown(UnknownReferent::Cycle);
+            return self.end_walk_that_came_round();
         }
         let file = exported.file;
         let context = self.context;
         let (hir, bound) = (context.hir(file), context.bound(file));
-        match find_deciding_store(hir, bound, stores).map(|store| store.value) {
-            Ok(Some(value)) => Step::Expression(file, value),
-            Ok(None) => unknown(UnknownReferent::OpaqueInitializer),
-            Err(reason) => unknown(reason),
+        let store = match find_deciding_store(hir, bound, stores) {
+            Ok(store) => store,
+            Err(reason) => return unknown(reason),
+        };
+        if let Parent::VarInit(declaration) = bound.parent_of_expr(store.node)
+            && matches!(hir[hir[declaration].pat].kind, PatKind::Ident(_))
+        {
+            let id = bound.pat_symbol[hir[declaration].pat.idx()];
+            if bound.is_stable_binding(id) {
+                self.visit(Sym { file, id });
+            }
+        }
+        match store.value {
+            Some(value) => Step::Expression(file, value),
+            None => unknown(UnknownReferent::OpaqueInitializer),
         }
     }
 
     fn step_symbol(&mut self, symbol: Sym) -> StepOf<'s, C> {
         if !self.visit(symbol) {
-            return unknown(UnknownReferent::Cycle);
+            return self.end_walk_that_came_round();
         }
         let Sym { file, id } = symbol;
         let context = self.context;
@@ -525,7 +1128,13 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             | BindingStability::VisibleToEval
             | BindingStability::MappedArgument
             | BindingStability::ContainerMember) => {
-                return unknown(UnknownReferent::UnstableBinding(unstable));
+                return match find_value_of_only_store(hir, bound, id, &is_dead_store) {
+                    Some(value) => {
+                        self.certainty = ReferentCertainty::Expected;
+                        Step::Expression(file, value)
+                    }
+                    None => unknown(UnknownReferent::UnstableBinding(unstable)),
+                };
             }
         }
         if bound.initial_state(id) == InitialState::Undefined {
@@ -549,8 +1158,10 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             BindingInitializer::EntityName(import) => self.step_entity_name(file, import),
             BindingInitializer::Import => Step::Linked(context.linked_binding(file, id)),
             BindingInitializer::Opaque if bound.binding_kind(id) == BindingKind::Parameter => {
-                match find_argument_of_only_call(hir, bound, id) {
-                    Some(argument) => Step::Expression(file, argument),
+                let passed = self.find_argument_of_entered_call(symbol);
+                let only = || Some((file, find_argument_of_only_call(hir, bound, id)?));
+                match passed.or_else(only) {
+                    Some((file, argument)) => Step::Expression(file, argument),
                     None => unknown(UnknownReferent::OpaqueInitializer),
                 }
             }
@@ -598,8 +1209,9 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     }
 
     fn step_stored_member(&mut self, name: Atom) -> StepOf<'s, C> {
+        self.answers_of_trails += 1;
         let mut stored = None;
-        for &holder in &self.visited {
+        for &holder in self.visited.seen() {
             for value in self.values_stored_in_member(holder, name) {
                 if stored.replace((holder.file, value)).is_some() {
                     let unstable = BindingStability::NotInitializedOnce;
@@ -608,9 +1220,13 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             }
         }
         self.certainty = ReferentCertainty::Expected;
-        self.visited.clear();
+        self.visited.forget();
         match stored {
-            Some((file, value)) => Step::Expression(file, value),
+            Some(store) if self.followed_stores.contains(store) => unknown(UnknownReferent::Cycle),
+            Some((file, value)) => {
+                self.followed_stores.push((file, value));
+                Step::Expression(file, value)
+            }
             None => unknown(UnknownReferent::MissingMember),
         }
     }
@@ -625,6 +1241,27 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 && bound.binding(expr) == Binding::Symbol(holder.id)
         };
         let mut values = SmallVec::new();
+        if let Some(stores) = context.member_stores(file) {
+            let key = (holder.id.idx(), name.0);
+            let assignments = &stores.assignments;
+            let start = assignments.partition_point(|it| (it.holder.idx(), it.name.0) < key);
+            let stored = assignments[start..]
+                .iter()
+                .take_while(|it| (it.holder.idx(), it.name.0) == key);
+            values.extend(
+                stored
+                    .filter(|it| !context.is_dead_store(file, it.target))
+                    .map(|it| it.value),
+            );
+            let start = (stores.copies).partition_point(|it| it.0.idx() < holder.id.idx());
+            let copies = stores.copies[start..]
+                .iter()
+                .take_while(|it| it.0 == holder.id);
+            values.extend(
+                copies.filter_map(|it| self.find_copied_property(file, it.1, name, &names_holder)),
+            );
+            return values;
+        }
         for node in (0..hir.exprs.len() as u32).map(ExprId) {
             let value = match hir[node].kind {
                 ExprKind::Assign {

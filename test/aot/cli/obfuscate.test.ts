@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
 import { buildFlags } from "../harness/flags";
@@ -182,13 +183,13 @@ describe.concurrent("--obfuscate", () => {
   );
 
   test(
-    "--sourcemap=external builds what --obfuscate builds",
+    "--obfuscate --sourcemap=external builds what --obfuscate builds",
     () =>
       slot(async () => {
         using dir = tempDir("aot-obfuscate-sourcemap-external", program);
         const folder = String(dir);
         const obfuscated = await compile(folder, "first/app", buildFlags.obfuscate);
-        const withMap = await compile(folder, "second/app", "--sourcemap=external");
+        const withMap = await compile(folder, "second/app", buildFlags.obfuscate, "--sourcemap=external");
         expect(readFileSync(withMap + ".map", "utf8")).toBe(readFileSync(obfuscated + ".map", "utf8"));
         expect(readFileSync(withMap).equals(readFileSync(obfuscated))).toBe(true);
       }),
@@ -252,7 +253,7 @@ console.log(new Function("a", "b", "return a " + (process.argv.length > 90 ? "-"
         expect(["readFolder", "readsItsOwnPath", "isResolved"].filter(held)).toHaveLength(3);
         // The map is where the names are.
         expect(readMap(executable).sources.map(source => basename(source))).toEqual(
-          expect.arrayContaining(["unreadPlain.ts", "unreadLazy.ts"]),
+          expect.arrayContaining(["unreadWhole.ts", "unreadLazy.ts"]),
         );
         expect(unread.filter(name => readFileSync(join(folder, executableName("plain"))).includes(name))).toEqual(
           unread,
@@ -343,6 +344,49 @@ outermostCaller(process.argv.length);
     buildLimit,
   );
 
+  test.skipIf(isWindows)(
+    "a file edited while the build runs ends the build: the map would show code that the executable does not run",
+    () =>
+      slot(async () => {
+        const whatAPipeHolds = 65_536;
+        using dir = tempDir("aot-obfuscate-edited", {
+          ...program,
+          "app.ts": `import "./ballast";\n${program["app.ts"]}`,
+          "ballast.ts": `console.log(${JSON.stringify(Buffer.alloc(4 * whatAPipeHolds, "ballast ").toString())}.length);\n`,
+        });
+        const folder = String(dir);
+        const pipe = join(folder, "pipe");
+        expect(Bun.spawnSync(["mkfifo", pipe]).exitCode).toBe(0);
+        // The front end is through with the files when it writes the program. That is more than a pipe holds, so it waits there until somebody reads.
+        const opened = open(pipe, "r");
+        const build = spawned(
+          [bunExe(), "compile", "app.ts", "--outfile", "app", buildFlags.obfuscate, "--aot-out=pipe"],
+          folder,
+          env,
+        );
+        const waitsAtThePipe = await Promise.race([opened.then(() => true), build.then(() => false)]);
+        if (!waitsAtThePipe) closeSync(openSync(pipe, "r+"));
+        const written = await opened;
+        try {
+          expect(waitsAtThePipe).toBe(true);
+          const edited = program["concealed-module.ts"].replace("too deep", "too high");
+          expect(edited.length).toBe(program["concealed-module.ts"].length);
+          writeFileSync(join(folder, "concealed-module.ts"), edited);
+          expect((await written.readFile()).length).toBeGreaterThan(whatAPipeHolds);
+        } finally {
+          await written.close();
+        }
+        const { stderr, exitCode } = await build;
+        expect({ stderr, exitCode }).toEqual({
+          stderr:
+            "error: concealed-module.ts changed while the build was running, so a source map would show code that the executable doesn't run\nnote: run the build again\n",
+          exitCode: 1,
+        });
+        expect(existsSync(join(folder, "app.map"))).toBe(false);
+      }),
+    buildLimit,
+  );
+
   test("--obfuscate requires --aot", async () => {
     using dir = tempDir("aot-obfuscate-without-aot", program);
     const { stdout, stderr, exitCode } = await spawned(
@@ -367,7 +411,7 @@ outermostCaller(process.argv.length);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
       stderr:
-        "error: --aot-symbols: cannot be used with --obfuscate or --sourcemap=external, which keep function names out of the executable\n",
+        "error: --aot-symbols: cannot be used with --obfuscate or --sourcemap=external, which keep the names of stack frames out of the executable\n",
       exitCode: 1,
     });
   });

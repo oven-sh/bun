@@ -1,11 +1,12 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, PatParent};
-use bun_sema::hir::{ExprId, ExprKind, NameKind, PatId, PatKind, PropKey, PropKind};
+use bun_sema::hir::{ExprId, ExprKind, NameKind, PatKind, PropKey, PropKind};
 use smallvec::SmallVec;
 
-use super::PatternNode;
+use super::{DefaultHolder, PatternNode};
 use crate::lower::FileLowering;
 use crate::lower::expression::AssignmentTarget;
+use crate::lower::scope::BindingForm;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum NodeShape {
@@ -52,35 +53,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // A property is printed as its key, its target and its default.
-    pub(super) fn last_mapped_key_position(&self, property: &PatternProperty) -> u32 {
-        match property.key {
-            PropKey::Computed(key) => self.last_mapped_position(key),
-            PropKey::None | PropKey::Name(_) | PropKey::Private(_) => property.position,
-        }
-    }
-
-    // JSC reports the store to a member of an object pattern at the end of the member.
-    pub(super) fn last_mapped_target_position(&self, target: PatternNode) -> u32 {
-        match target {
-            PatternNode::Binding(pattern) => self.hir[pattern].pos,
-            PatternNode::Assignment(target) => self.last_mapped_position(target),
-        }
-    }
-
-    pub(super) fn last_mapped_element_position(&self, element: &PatternElement) -> Option<u32> {
-        if let Some(default) = element.default.some() {
-            return Some(self.last_mapped_position(default));
-        }
-        match element.target {
-            PatternNode::Binding(pattern) => self.last_mapped_pattern_position(pattern),
-            PatternNode::Assignment(target) => match self.node_shape(element.target) {
-                NodeShape::Hole => None,
-                _ => Some(self.last_mapped_position(target)),
-            },
-        }
-    }
-
     pub(super) fn has_annotated_root(&self, node: PatternNode) -> bool {
         let PatternNode::Binding(mut pattern) = node else {
             return false;
@@ -92,15 +64,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 PatParent::Param(parameter) => return self.hir[parameter].ty.is_some(),
                 PatParent::None => return false,
             }
-        }
-    }
-
-    // JSC records the store to a name that is declared where the name ends, which the source map takes back to where it starts.
-    pub(in crate::lower) fn recorded_binding_position(&self, name: PatId) -> u32 {
-        let name = self.hir[name];
-        match self.runs_as_written() {
-            true => name.end,
-            false => name.pos,
         }
     }
 
@@ -217,17 +180,37 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn default_function_name(&self, node: PatternNode) -> Option<(Binding, Atom, u32)> {
+    pub(super) fn default_function_name(
+        &mut self,
+        node: PatternNode,
+        default: ExprId,
+        holder: DefaultHolder,
+    ) -> Option<(Binding, Atom, u32)> {
         match node {
             PatternNode::Binding(pattern) => {
                 let name = self.written_leaf_name(node)?;
                 let binding = self.bound.initialized_binding(pattern);
-                Some((binding, name, self.hir[pattern].pos))
+                let is_container_member = match binding {
+                    Binding::Symbol(symbol) => {
+                        matches!(
+                            self.scopes.form(symbol),
+                            BindingForm::ContainerMember { .. }
+                        )
+                    }
+                    Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+                };
+                (!is_container_member || self.is_class_named_by_its_declaration(default))
+                    .then_some((binding, name, self.hir[pattern].pos))
             }
             PatternNode::Assignment(target) => {
                 let (identifier, name) = self.identifier_target(target)?;
                 let binding = self.bound.binding(identifier);
-                Some((binding, name, self.hir[identifier].pos))
+                let position = self.hir[identifier].pos;
+                let is_named = self.names_assigned_function(target)
+                    || (holder == DefaultHolder::ArrayPattern
+                        && !self.is_parenthesized_for_the_engine(target)
+                        && self.is_class_named_by_its_declaration(default));
+                is_named.then_some((binding, name, position))
             }
         }
     }

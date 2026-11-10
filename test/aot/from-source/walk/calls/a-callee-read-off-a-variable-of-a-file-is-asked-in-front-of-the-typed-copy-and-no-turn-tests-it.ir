@@ -1,0 +1,25 @@
+# -- source: main.ts
+# declare function sink(value: unknown): void;
+# var $add = function (a: number, b: number): number { return a + b | 0; };
+# var $low = (a: number): number => a & 15;
+# function f(t: number): number { let s = t & 1; for (let i = 0; i < 100; i++) s = s + ($add(i, t) + $low(i)) | 0; return s >>> 0; }
+# sink(f);
+# -- end of source
+# `$add` is born undefined: proven undefined|f2. The loop is built twice: the variable is read and tested in front of the typed copy, and no turn of that copy tests it. That copy is bought where the turns
+# are heard to run other code, so the call as written, in the arm where the variable is undefined, keeps the effects of a call here. With the effects of a throw alone the loop was built once,
+# and every turn branched on the two tests: 1,115 > 1,629 instructions a call of f on three everyday lines.
+# f1 = f
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: Call {{*}}calleeName="$add"
+# CHECK: [[inFront]]: undefined|f2 @JSValue = GetModuleVariable variable=g0
+# CHECK: [[test]]: boolean @Boolean = TypeTest [[inFront]] testedType=f2
+# CHECK: Branch [[test]]
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK-NOT: testedType=f2
+# CHECK: testedType=f3
+# RUN(ANSWERS): run-in-shell globalThis.sink = f => { print(f(1)); print(f(2)); };
+# ANSWERS: 5777
+# ANSWERS-NEXT: 5876
+# ANSWERS-NEXT: exited with 0

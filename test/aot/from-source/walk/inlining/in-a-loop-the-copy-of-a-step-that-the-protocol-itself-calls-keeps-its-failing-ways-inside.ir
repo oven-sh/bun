@@ -1,0 +1,24 @@
+# -- source: in-a-loop-the-copy-of-a-step-that-the-protocol-itself-calls-keeps-its-failing-ways-inside.cjs
+# "use strict";
+# class Range { constructor(from, to) { this.from = from; this.to = to; } [Symbol.iterator]() { let at = this.from; const to = this.to; return { next() { return at < to ? { value: at++, done: false } : { value: undefined, done: true }; } }; } }
+# function byProtocol(from, to) { let total = 0; for (const i of new Range(from, to)) total += i; return total; }
+# function byHand(from, to) { let total = 0; const steps = new Range(from, to)[Symbol.iterator](); for (let step = steps.next(); !step.done; step = steps.next()) total += step.value; return total; }
+# function outsideLoops(from, to) { const step = new Range(from, to)[Symbol.iterator]().next(); return step.done ? -1 : step.value; }
+# globalThis.sink(byProtocol, byHand, outsideLoops);
+# -- end of source
+# f1 = byProtocol, f2 = byHand, f3 = outsideLoops
+# next() is copied into the loop. Inside the copy `at` is guessed to be a number. Where that fails and nothing has been done yet, the way leaves the copy and calls next() as written: the call hands back a real object, which meets the two literals of the copy, so both are made in every turn and `done` and `value` are read off an object.
+# The protocol of an iteration reads `done` and `value` off the step at once and the step goes nowhere else. In a loop the copy of a method that the protocol itself calls, and that gives birth, keeps its failing ways inside: no call is left,
+# RUN(CALL): walk f1 mechanisms=all
+# CALL: code f1:Body
+# CALL-NOT: isNeverInlined
+# and the two literals meet as one: nobody reads `done` or `value` off an object.
+# RUN(READS): walk f1 mechanisms=all
+# READS: code f1:Body
+# READS-NOT: key="done"
+# A step that the program asks for by hand is carried round the loop and is an object in any case. There the failing way leaves as before: behind it every guess in the copy is a proof for the rest of the copy.
+# RUN(HAND): walk f2 mechanisms=all
+# HAND: isNeverInlined
+# Outside loops nothing changes: no byte is spent there.
+# RUN(OUTSIDE): walk f3 mechanisms=all
+# OUTSIDE: = GetSlot {{*}}key="done"

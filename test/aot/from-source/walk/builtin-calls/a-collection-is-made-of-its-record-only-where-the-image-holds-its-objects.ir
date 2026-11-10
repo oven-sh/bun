@@ -1,0 +1,32 @@
+# `new Map(..)` | `new Set(..)` over a written list of constants is made of the record of the list, which goes into the image: a table where the entries are primitives, else a tree.
+# The table of the image holds an object whose names are texts other than __proto__: behind the first name outside its fields it defines every member by name, in the order written.
+# Where it does not hold one, the construction as written runs on the list that code builds
+# f3 = oddKeyOneListDeeper: no record. f1 = oddKeyInMap, f2 = oddKeyInSet, f4 = namesInMap, f5 = indexInFrontOfName, f6 = primitivesInSet: the record
+# -- source: a-collection-is-made-of-its-record-only-where-the-image-holds-its-objects.ts
+# declare function sink(...values: unknown[]): void;
+# function oddKeyInMap() { return new Map([["k", { "-1": "unknown", name: "x" }]]); }
+# function oddKeyInSet() { return new Set([{ 1.5: "half", name: "x" }]); }
+# function oddKeyOneListDeeper() { return new Map([["k", [{ ["__proto__"]: 1, name: "x" }]]]); }
+# function namesInMap() { return new Map([["k", { name: "x", size: 2 }]]); }
+# function indexInFrontOfName() { return new Map([["k", { 200: "OK", name: "x" }]]); }
+# function primitivesInSet() { return new Set(["a", "b"]); }
+# sink(oddKeyInMap, oddKeyInSet, oddKeyOneListDeeper, namesInMap, indexInFrontOfName, primitivesInSet);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewMapFromData
+# RUN(SET): walk f2 mechanisms=all
+# SET-LABEL: code f2:Body
+# SET: = NewSetFromData
+# RUN(DEEPER): walk f3 mechanisms=all
+# DEEPER-LABEL: code f3:Body
+# DEEPER-NOT: FromData
+# RUN(NAMES): walk f4 mechanisms=all
+# NAMES-LABEL: code f4:Body
+# NAMES: = NewMapFromData
+# RUN(INDEX): walk f5 mechanisms=all
+# INDEX-LABEL: code f5:Body
+# INDEX: = NewMapFromData
+# RUN(PRIMITIVES): walk f6 mechanisms=all
+# PRIMITIVES-LABEL: code f6:Body
+# PRIMITIVES: = NewSetFromData

@@ -1,0 +1,1 @@
+require("./lamp.mjs");

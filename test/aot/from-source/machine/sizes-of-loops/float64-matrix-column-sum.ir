@@ -1,0 +1,17 @@
+# f1 = sumOfColumn
+# -- source: float64-matrix-column-sum.ts
+# function sumOfColumn(grid: Float64Array, width: number, height: number, column: number): number {
+#   let sum = 0;
+#   for (let row = 0; row < height; row++) sum += grid[row * width + column]!;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = sumOfColumn(new Float64Array(input), input | 0, input | 0, input | 0);
+# -- end of source
+# The compiler before this one: 18 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 109, patches 0, moves 1, unlikely 7 ; loop: operations 17, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:110,17 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 110
+# X64-NEXT: loop: at most 17

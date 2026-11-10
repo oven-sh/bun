@@ -1,0 +1,26 @@
+# const options = { port: 0 }; hidden(options); Bun.serve(options); Date.now();
+# A control of options-written-for-the-call-without-the-option-that-runs-code-leave-the-locks.ir: whoever held the options may have filled what their layout lists.
+# RUN: locks open
+# CHECK-NOT: locked
+# CHECK: open DateNow no-lock-is-laid
+
+layout L0 module=m0 fields=[{key="app" declared={type=anything} flags=[IsNeverWritten]}, {key="port" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Bun
+    v2 = PropGet v1 key="serve"
+    v3 = NewObject layout=L0
+    v4 = Integer
+    PropDefine v3, v4 key="port"
+    v6 = FinishObject v3
+    v7 = PropGet v0 key="hidden" [isFreeName]
+    v8 = Call v7, -, v6
+    v9 = Call v2, v1, v6 calleeKey="serve"
+    v10 = PropGet v0 key="Date" [isFreeName]
+    v11 = PropGet v10 key="now"
+    v12 = Call v11, v10 calleeKey="now"
+    Return v12
+}

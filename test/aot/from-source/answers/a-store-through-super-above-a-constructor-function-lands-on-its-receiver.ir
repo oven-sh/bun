@@ -1,0 +1,31 @@
+# -- source: main.js
+# function Above(v) { this.a = v; }
+# function told(n) { return n + 1; }
+# class Box { constructor(n) { this.x = n | 0; } }
+# let put;
+# class Below extends Above {
+#     static #store(v) { super.x = v; }
+#     static { put = (receiver, v) => { Below.#store.call(receiver, v); }; }
+# }
+# function sum(box) { let s = 0; for (let i = 0; i < 3; i++) s += box.x; return s; }
+# function read() { return told.x; }
+# const box = new Box(5);
+# print(new Above(1).a, sum(box), String(read()), told(1));
+# put(box, 7);
+# put(told, 41);
+# print(sum(box), String(read()), told(2));
+# put(box, "p");
+# put(told, "q");
+# print(sum(box), String(read()), typeof box.x, typeof told.x);
+# -- end of source
+# `super.x = v` looks for a setter from the object above the home object on, here the function `Above`, and where none answers it lays the name on `this`: a Box and the function `told`, never on `Above`.
+# RUN: run-in-shell
+# CHECK: 1 15 undefined 2
+# CHECK-NEXT: 21 41 3
+# CHECK-NEXT: 0ppp q string string
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 1 15 undefined 2
+# CHECKED-NEXT: 21 41 3
+# CHECKED-NEXT: 0ppp q string string
+# CHECKED-NEXT: exited with 0

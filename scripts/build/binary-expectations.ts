@@ -358,15 +358,13 @@ const PREBUILT_BMALLOC_DLLEXPORTS = {
 };
 
 /**
- * The Windows `.bin/` shim (src/install/windows-shim): `bun install` writes a copy of it next to every package
- * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
- * raw NT calls. Everything here is that property stated as a check.
+ * Code that only the AoT compiler's tests use. Bun hands the engine the program as bytes, so nothing in Bun reads or
+ * writes IR text: in WebKit the lexer, parser and printer of IR text are sources of testaot alone, and in bun_aot the
+ * printer is behind the `ir_text` feature. The rest is declared in the engine's own headers but defined under WebKit's
+ * aot/tests/, which only testaot links: the printer and parser of the walk's Code, the parser of summaries, and the
+ * procedures that the back end's tests build and run.
  */
-/**
- * The AoT compiler's IR as text: Bun hands the engine the program as bytes, so the engine's lexer and parser and the
- * printers of both sides serve tests alone (sources of testaot in WebKit, the feature `ir_text` of bun_aot).
- */
-function symbolsOfIRText(cfg: Config): string[] | undefined {
+function testOnlySymbols(cfg: Config): string[] | undefined {
   if (cfg.assertions) return undefined;
   return [
     "*3JSC3AOT5Typed5Lexer*",
@@ -376,15 +374,23 @@ function symbolsOfIRText(cfg: Config): string[] | undefined {
     "*3JSC3AOT5Typed12parseVariant*",
     "*3JSC3AOT5Typed18WireProgramBuilder*",
     "*3JSC3AOT5Typed9IRPrinter*",
-    "*3JSC3AOT5Typed*14SolvesCompared*",
     "*3JSC3AOT5Typed11printFields*",
     "*3JSC3AOT5Typed12printVariant*",
     "*3JSC3AOT5Typed12printProgram*",
     "*3JSC3AOT5Typed13printFunction*",
+    "*3JSC3AOT5Typed9printBody*",
     "*3JSC3AOT5Typed10printValue*",
-    "*3JSC3AOT5Typed9printType*",
+    "*3JSC3AOT5Typed15printTerminator*",
+    // Only the overload that takes a Program: the one that takes a TypeReader (ir/AOTTypeText.h) is the library's.
+    "*3JSC3AOT5Typed9printTypeERN3WTF11PrintStreamERKNS1_7ProgramE*",
     "*3JSC3AOT5Typed11printString*",
     "*3JSC3AOT5Typed16printPropertyKey*",
+    "*3JSC3AOT5Typed9printCode*",
+    "*3JSC3AOT5Typed9parseCode*",
+    "*3JSC3AOT5Typed10walkToText*",
+    "*3JSC3AOT5Typed14parseSummaries*",
+    "*3JSC3AOT7Machine13TestProcedure*",
+    "*3JSC3AOT7Machine20buildRandomProcedure*",
     "*builtinTableRuntimeFunctionTokens*",
     "*7bun_aot2ir5print*",
     "*7bun_aot2ir10print_body*",
@@ -395,6 +401,11 @@ function symbolsOfIRText(cfg: Config): string[] | undefined {
   ];
 }
 
+/**
+ * The Windows `.bin/` shim (src/install/windows-shim): `bun install` writes a copy of it next to every package
+ * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
+ * raw NT calls. Everything here is that property stated as a check.
+ */
 export function shimExpectations(): BinaryExpectations {
   return {
     format: "pe",
@@ -472,7 +483,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     ...(cfg.abi === "android" ? ["liblog.so"] : []),
   ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
-  const forbiddenSymbols = symbolsOfIRText(cfg);
+  const forbiddenSymbols = testOnlySymbols(cfg);
 
   switch (format) {
     case "elf": {

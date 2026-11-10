@@ -1,0 +1,34 @@
+# -- source: main.js
+# const n = (value) => Number(globalThis.nothingOfThisName ?? value);
+# function values(start, from) { let count = start; const made = { up: () => ++count, down: () => --count, same: () => count }; const got = Object.values(made); return (got[from] === made.up) + "," + got.length; }
+# function entries(start) { let count = start; const made = { left: () => ++count, right: () => --count, middle: () => count }; const got = Object.entries(made); return (got[got.length - 3][1] === made.left) + "," + got.length; }
+# function apart(start) { let count = start; const made = { first: () => ++count, second: () => --count, third: () => count }; let all = ""; for (const [key, value] of Object.entries(made)) all += key + typeof value; return all + (made.first === made.first); }
+# function enumerable(start) { let count = start; const made = { open: () => ++count, shut: () => --count, ajar: () => count }; return Object.prototype.propertyIsEnumerable.call(made, "open") + "," + (made.open === made.open); }
+# for (const start of [n(1), n(5)]) {
+#   print(values(start, n(0)));
+#   print(entries(start));
+#   print(apart(start));
+#   print(enumerable(start));
+# }
+# -- end of source
+# The closures of a literal are left unmade until somebody asks for them. Who asks from the run time makes them and stores them in the fields: a write of ObjectFields, which each of the four rows declares:
+# the net under effects stopped each of the four functions by name while the rows said nothing.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: true,3
+# CHECK-NEXT: true,3
+# CHECK-NEXT: firstfunctionsecondfunctionthirdfunctiontrue
+# CHECK-NEXT: true,true
+# CHECK-NEXT: true,3
+# CHECK-NEXT: true,3
+# CHECK-NEXT: firstfunctionsecondfunctionthirdfunctiontrue
+# CHECK-NEXT: true,true
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1:Body f2:Body f3:Body f4:Body mechanisms=all
+# WALK: closureForm=Deferred
+# WALK: = CallInline {{*}}inlineBuiltin=ObjectValues {{*}}mayWriteObservableState
+# WALK: closureForm=Deferred
+# WALK: = CallInline {{*}}inlineBuiltin=ObjectEntries {{*}}mayWriteObservableState
+# WALK: closureForm=Deferred
+# WALK: = CallBuiltin {{*}}overload=CompilerHelpersOwnEntriesFlat{{*}}mayWriteObservableState
+# WALK: closureForm=Deferred
+# WALK: = CallInline {{*}}inlineBuiltin=ObjectPropertyIsEnumerable {{*}}mayWriteObservableState

@@ -1,0 +1,15 @@
+# f1 = isLetter, f2 = first
+# -- source: leaf-of-three-operations-is-copied-wherever-it-is-called.js
+# function isLetter(ch) { return ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122; }
+# function first(text) { return isLetter(text.charCodeAt(0)) ? 1 : 0; }
+# print(first("a"), first("1"));
+# -- end of source
+# A callee without loops that calls nobody, and whose copy pays for no more than 3 operations and its operands, is copied wherever it is called: the copy is about as large as the call.
+# RUN: walk f2 mechanisms=all
+# CHECK: frame 1 callee=f1
+# RUN(CALLS): walk f2 mechanisms=all
+# CALLS-NOT: CallDirect {{*}} function=f1
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}} leaf=4
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

@@ -1,0 +1,26 @@
+# -- source: main.cjs
+# "use strict";
+# function describe(value) { return { value, writable: true, configurable: true, enumerable: true }; }
+# class Task { constructor(run) { Object.defineProperty(this, "go", describe(run)); } async go() { return 1; } }
+# const kept = (async () => 5)();
+# kept.constructor = function Other() {};
+# kept.then = function (resolve) { resolve("text" + suffix); };
+# const task = new Task(() => kept);
+# let seen = 0;
+# function report() { print(seen + 1, typeof seen); }
+# async function main() { seen = await task.go(); report(); }
+# main();
+# -- end of source
+# f1 = describe, f2 = report, f3 = main, f4 = Task
+# Where some promise of the program bears names of its own, what an await gives is anything, unless the promise HAS JUST BEEN MADE: `await x.go()`, x of one layout, one async method under the name.
+# That question asked the fields that the class LISTS for a value of the object's own under the name, and then the class's member. A store by name over the method arrives at the member's node too, so the last clause says no.
+# Object.defineProperty(this, "go", d), d not written at the site, lays the value in the appended field ALONE: the question said yes: `seen` was PROVEN a whole number, and the `then` of the kept promise, which nobody was seen to call, was not compiled:
+# a right program stopped with "This function was not compiled into this executable". The question asks the appended field and what lies beside the fields for an object.
+# RUN(PROOF): link variables mechanisms=all
+# PROOF-NOT: proven=int[0, 2147483647] writers-known filled
+# RUN(ANSWER): run-in-shell suffix = 7;
+# ANSWER: text71 string
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime suffix = 7;
+# CHECKED: text71 string
+# CHECKED-NEXT: exited with 0

@@ -1,0 +1,23 @@
+# What a number does name: a getter under an index gets the object as `this`, whichever of the strangers has it, and one under `NaN` too.
+# RUN: link fields functions mechanisms=all
+# CHECK: field L0.0 "x" proven=i32 writers-known written-at-construction-alone
+# CHECK: field L1.0 "y" proven=i32|string writers-known
+# CHECK: field L2.0 "z" proven=i32|string writers-known
+# RUN(REACHED): link functions mechanisms=all
+# REACHED-NOT: unreached
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: undefined 7 undefined
+# ALL-NEXT: undefined undefined 8
+# ALL-NEXT: number string string
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# class A { x = 1; }
+# class B { y = 1; get 0() { this.y = "text"; return 7; } }
+# class C { z = 1; get NaN() { this.z = "text"; return 8; } }
+# function at(holder, i) { return holder[i]; }
+# function zero(list) { return list.length; }
+# const a = new A, b = new B, c = new C;
+# print(at(a, zero([])) + " " + at(b, zero([])) + " " + at(c, zero([])));
+# print(at(a, zero([]) / zero([])) + " " + at(b, zero([]) / zero([])) + " " + at(c, zero([]) / zero([])));
+# print(typeof a.x + " " + typeof b.y + " " + typeof c.z);
+# -- end of source

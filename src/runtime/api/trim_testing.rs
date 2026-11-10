@@ -37,6 +37,7 @@ pub(crate) fn trim_executable(
         UsedFeatures::default()
     } else {
         UsedFeatures {
+            names_bun_build: used_features.contains(&Feature::Bundler),
             features: used_features.into_iter().map(named_use_of).collect(),
             causes: Vec::new(),
             locales: UsedLocales::Unknown(None),

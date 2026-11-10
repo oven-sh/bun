@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# "use strict";
+# class Plate { constructor(from) { this.wide = from.wide; this.tall = from.tall; } }
+# function first(i) { const plate = Object.create(Plate.prototype); plate.wide = i; plate.tall = i / 2; return plate; }
+# const held = JSON.parse("{}"); held.list = []; for (let i = 0; i < 8; i++) held.list.push(new Plate(first(i)));
+# function run(turn) { let sum = turn & 1; for (let i = 0; i < 8; i++) { const plate = new Plate(held.list[i]); sum += plate.wide + plate.tall; } return sum; }
+# console.log(run(0), run(1));
+# -- end of source
+# A copying constructor is handed its own instances through a list that Link has lost: none is seen to arrive, and not every caller of a constructor that instances name is known. In a loop the guess
+# stands all the same: it holds here at every turn, and where it fails the constructor is walked in line once more. Outside loops, where a failing guess leaves the copy for the slow version, it is dropped.
+# RUN: walk f2 mechanisms=all
+# CHECK: GetSlot {{*}} key="wide" receivers=[L0] level=Expected
+# CHECK: GetSlot {{*}} key="tall" receivers=[L0] level=Expected

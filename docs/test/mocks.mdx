@@ -377,7 +377,7 @@ export const foo = "bar";
 
 `./module` is an ES module here, so `require()` returns its namespace object, the one that `import * as` gives. That object reads the current value of each export, so `cjs.foo` changes together with `foo`.
 
-With a CommonJS module or a builtin such as `node:fs`, an object that `require()` returned before the `mock.module()` call stays as it is. If `./module` has `module.exports = { foo: "bar" }` instead, then `foo` and the next `require("./module")` give `"baz"`, but `cjs.foo` is still `"bar"`. Bun gives the module a new `module.exports`, and `cjs` is the old one.
+With a CommonJS module or a builtin such as `node:fs`, an object that `require()` returned before the `mock.module()` call stays as it is. If `./module` has `module.exports = { foo: "bar" }` instead, `foo` is `"baz"` after the call, and the next `require("./module")` returns the mock. `cjs.foo` is still `"bar"`, because Bun gives the module a new `module.exports` and `cjs` is the old one.
 
 When the factory returns a promise that is still pending, Bun updates the already-imported module once the promise settles. In that case `mock.module()` returns a promise that resolves after the update, and otherwise it returns `undefined`. `await mock.module(...)` inside a test or hook covers both. At the top level of a test file, Bun waits for pending module mocks before it runs the file's tests.
 

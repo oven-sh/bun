@@ -695,7 +695,7 @@ declare module "bun" {
      * @param key The hash key
      * @param count The number of fields to return
      * @param withValues Literal "WITHVALUES" to include values
-     * @returns Promise that resolves with an array of alternating field names and values
+     * @returns Promise that resolves with an array of [field, value] pairs
      */
     hrandfield(key: RedisClient.KeyLike, count: number, withValues: "WITHVALUES"): Promise<[string, string][]>;
 
@@ -1629,12 +1629,12 @@ declare module "bun" {
      * @param start The starting index
      * @param stop The stopping index
      * @param withscores Return members with their scores
-     * @returns Promise that resolves with an array of [member, score, member, score, ...]
+     * @returns Promise that resolves with an array of [member, score] pairs
      *
      * @example
      * ```ts
      * const results = await redis.zrange("myzset", 0, -1, "WITHSCORES");
-     * // Returns ["member1", "1.5", "member2", "2.5", ...]
+     * // Returns [["member1", 1.5], ["member2", 2.5], ...]
      * ```
      */
     zrange(
@@ -1761,12 +1761,12 @@ declare module "bun" {
      * @param start The starting index
      * @param stop The stopping index
      * @param withscores Return members with their scores
-     * @returns Promise that resolves with an array of [member, score, member, score, ...] in reverse order
+     * @returns Promise that resolves with an array of [member, score] pairs in reverse order
      *
      * @example
      * ```ts
      * const results = await redis.zrevrange("myzset", 0, -1, "WITHSCORES");
-     * // Returns ["member3", "3.5", "member2", "2.5", "member1", "1.5", ...]
+     * // Returns [["member3", 3.5], ["member2", 2.5], ["member1", 1.5], ...]
      * ```
      */
     zrevrange(
@@ -2208,13 +2208,13 @@ declare module "bun" {
      * @param min Minimum score
      * @param max Maximum score
      * @param withscores The "WITHSCORES" keyword to return scores along with members
-     * @returns Promise that resolves with array of [member, score, member, score, ...]
+     * @returns Promise that resolves with array of [member, score] pairs
      *
      * @example
      * ```ts
      * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three"]);
      * const result = await redis.zrangebyscore("myzset", 1, 2, "WITHSCORES");
-     * // Returns: ["one", "1", "two", "2"]
+     * // Returns: [["one", 1], ["two", 2]]
      * ```
      */
     zrangebyscore(
@@ -2258,7 +2258,7 @@ declare module "bun" {
      * @param min Minimum score
      * @param max Maximum score
      * @param options Additional options (WITHSCORES, LIMIT offset count)
-     * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
+     * @returns Promise that resolves with array of [member, score] pairs
      */
     zrangebyscore(
       key: RedisClient.KeyLike,
@@ -2275,7 +2275,7 @@ declare module "bun" {
      * @param min Minimum score
      * @param max Maximum score
      * @param options Additional options (WITHSCORES, LIMIT offset count)
-     * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
+     * @returns Promise that resolves with array of [member, score] pairs
      */
     zrangebyscore(
       key: RedisClient.KeyLike,
@@ -2336,13 +2336,13 @@ declare module "bun" {
      * @param max Maximum score
      * @param min Minimum score
      * @param withscores The "WITHSCORES" keyword to return scores along with members
-     * @returns Promise that resolves with array of [member, score, member, score, ...]
+     * @returns Promise that resolves with array of [member, score] pairs
      *
      * @example
      * ```ts
      * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three"]);
      * const result = await redis.zrevrangebyscore("myzset", 2, 1, "WITHSCORES");
-     * // Returns: ["two", "2", "one", "1"]
+     * // Returns: [["two", 2], ["one", 1]]
      * ```
      */
     zrevrangebyscore(
@@ -2445,7 +2445,7 @@ declare module "bun" {
      * console.log(count2); // 2
      *
      * // Store in reverse order with limit
-     * const count3 = await redis.zrangestore("dest3", "source", "0", "-1", "REV", "LIMIT", "0", "2");
+     * const count3 = await redis.zrangestore("dest3", "source", "3", "1", "BYSCORE", "REV", "LIMIT", "0", "2");
      * console.log(count3); // 2
      * ```
      */
@@ -2944,7 +2944,7 @@ declare module "bun" {
      * await redis.send("ZADD", ["zset1", "1", "one", "2", "two", "3", "three"]);
      * await redis.send("ZADD", ["zset2", "1", "one", "2", "two"]);
      * const diff = await redis.zdiff(2, "zset1", "zset2", "WITHSCORES");
-     * console.log(diff); // ["three", "3"]
+     * console.log(diff); // [["three", 3]]
      * ```
      */
     zdiff(
@@ -3024,15 +3024,15 @@ declare module "bun" {
      *
      * // With scores (sum by default)
      * const result2 = await redis.zinter(2, "zset1", "zset2", "WITHSCORES");
-     * // Returns: ["b", "3", "c", "5"] (b: 2+1=3, c: 3+2=5)
+     * // Returns: [["b", 3], ["c", 5]] (b: 2+1=3, c: 3+2=5)
      *
      * // With weights
      * const result3 = await redis.zinter(2, "zset1", "zset2", "WEIGHTS", "2", "3", "WITHSCORES");
-     * // Returns: ["b", "7", "c", "12"] (b: 2*2+1*3=7, c: 3*2+2*3=12)
+     * // Returns: [["b", 7], ["c", 12]] (b: 2*2+1*3=7, c: 3*2+2*3=12)
      *
      * // With MIN aggregation
      * const result4 = await redis.zinter(2, "zset1", "zset2", "AGGREGATE", "MIN", "WITHSCORES");
-     * // Returns: ["b", "1", "c", "2"] (minimum scores)
+     * // Returns: [["b", 1], ["c", 2]] (minimum scores)
      * ```
      */
     zinter(
@@ -3069,15 +3069,15 @@ declare module "bun" {
      *
      * // With scores (sum by default)
      * const result2 = await redis.zinter(2, "zset1", "zset2", "WITHSCORES");
-     * // Returns: ["b", "3", "c", "5"] (b: 2+1=3, c: 3+2=5)
+     * // Returns: [["b", 3], ["c", 5]] (b: 2+1=3, c: 3+2=5)
      *
      * // With weights
      * const result3 = await redis.zinter(2, "zset1", "zset2", "WEIGHTS", "2", "3", "WITHSCORES");
-     * // Returns: ["b", "7", "c", "12"] (b: 2*2+1*3=7, c: 3*2+2*3=12)
+     * // Returns: [["b", 7], ["c", 12]] (b: 2*2+1*3=7, c: 3*2+2*3=12)
      *
      * // With MIN aggregation
      * const result4 = await redis.zinter(2, "zset1", "zset2", "AGGREGATE", "MIN", "WITHSCORES");
-     * // Returns: ["b", "1", "c", "2"] (minimum scores)
+     * // Returns: [["b", 1], ["c", 2]] (minimum scores)
      * ```
      */
     zinter(numkeys: number, ...args: (string | number)[]): Promise<string[]>;
@@ -3181,11 +3181,11 @@ declare module "bun" {
      *
      * // Basic union
      * const members1 = await redis.zunion(2, "zset1", "zset2");
-     * // Returns: ["a", "b", "c", "d"]
+     * // Returns: ["a", "b", "d", "c"]
      *
      * // With weights
      * const members2 = await redis.zunion(2, "zset1", "zset2", "WEIGHTS", "2", "3");
-     * // Returns: ["a", "b", "c", "d"] with calculated scores
+     * // Returns: ["a", "b", "d", "c"] with calculated scores
      *
      * // With MIN aggregation
      * const members3 = await redis.zunion(2, "zset1", "zset2", "AGGREGATE", "MIN");
@@ -3193,7 +3193,7 @@ declare module "bun" {
      *
      * // With scores
      * const withScores = await redis.zunion(2, "zset1", "zset2", "WITHSCORES");
-     * // Returns: ["a", "1", "b", "2", "c", "3", "d", "6"] (alternating member and score)
+     * // Returns: [["a", 1], ["b", 6], ["d", 6], ["c", 8]]
      * ```
      */
     zunion(
@@ -3223,11 +3223,11 @@ declare module "bun" {
      *
      * // Basic union
      * const members1 = await redis.zunion(2, "zset1", "zset2");
-     * // Returns: ["a", "b", "c", "d"]
+     * // Returns: ["a", "b", "d", "c"]
      *
      * // With weights
      * const members2 = await redis.zunion(2, "zset1", "zset2", "WEIGHTS", "2", "3");
-     * // Returns: ["a", "b", "c", "d"] with calculated scores
+     * // Returns: ["a", "b", "d", "c"] with calculated scores
      *
      * // With MIN aggregation
      * const members3 = await redis.zunion(2, "zset1", "zset2", "AGGREGATE", "MIN");
@@ -3235,7 +3235,7 @@ declare module "bun" {
      *
      * // With scores
      * const withScores = await redis.zunion(2, "zset1", "zset2", "WITHSCORES");
-     * // Returns: ["a", "1", "b", "2", "c", "3", "d", "6"] (alternating member and score)
+     * // Returns: [["a", 1], ["b", 6], ["d", 6], ["c", 8]]
      * ```
      */
     zunion(numkeys: number, ...args: (string | number)[]): Promise<string[]>;

@@ -3,8 +3,9 @@ import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
 // `bun test --isolate=modules` takes a snapshot of the globals before the first file. In a debug build that is
-// over a second of CPU time, whatever the files hold.
-const optionsFor = (flags: string[]) => (isDebug && flags.includes("--isolate=modules") ? { timeout: 30_000 } : {});
+// over a second of CPU time, whatever the files hold. These tests get longer than run() lets a child live, so no
+// --timeout gives them more.
+const optionsFor = (flags: string[]) => (isDebug && flags.includes("--isolate=modules") ? { timeout: 90_000 } : {});
 
 const prelude = `
   import { afterAll, afterEach, beforeAll, describe, expect, jest, test } from "bun:test";

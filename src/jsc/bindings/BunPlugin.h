@@ -77,6 +77,11 @@ public:
     };
 
     class OnLoad final : public Base {
+        // The functions of build.module() by name, and the module mocks by path. A mock is under each path that its name resolves to:
+        // addModuleMock() and removeModuleMock() keep the two entries of one mock in step.
+        VirtualModuleMap* _Nullable virtualModules = nullptr;
+        // The mocks that have an entry under two paths.
+        unsigned moduleMocksWithTwoPaths = 0;
 
     public:
         OnLoad()
@@ -84,7 +89,6 @@ public:
         {
         }
 
-        VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         // Set right before requestImportModule(), to tell moduleLoaderResolve() it's a script's import(), which can't use NUL-prefixed keys.
         bool isResolvingImportCall = false;
@@ -160,8 +164,27 @@ public:
         static JSC::JSValue ask(JSC::JSGlobalObject* globalObject, Matches& matches, JSC::JSValue answer);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
+        // The function that build.module() was given for `key`, or the module mock that answers for it.
+        JSC::JSObject* virtualModule(const String& key) const
+        {
+            if (!virtualModules)
+                return nullptr;
+            auto entry = virtualModules->find(key);
+            return entry == virtualModules->end() ? nullptr : entry->value.get();
+        }
+        bool containsVirtualModule(const String& key) const { return virtualModules && virtualModules->contains(key); }
+        bool hasVirtualModuleFunction() const;
+        void setVirtualModuleFunction(JSC::VM&, const String& name, JSC::JSObject* function);
 
-        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        // A mock answers for the path that an import of its name resolves to. Where require() resolves the name to another file, it answers for that path too.
+        // The first path is its own: a mock that takes it replaces the mock that had it. The second one is only a claim, which the own path of another mock goes before.
+        void addModuleMock(JSC::VM&, JSC::JSObject* mock);
+        void removeModuleMock(JSC::VM&, JSC::JSObject* mock);
+        // `with` answers wherever `mock` did. It has the same paths.
+        void replaceModuleMock(JSC::VM&, JSC::JSObject* mock, JSC::JSObject* with);
+        bool hasModuleMockWithTwoPaths() const { return moduleMocksWithTwoPaths; }
+        // Each registered mock once. The caller may add and remove mocks while it goes through `mocks`.
+        void listModuleMocks(JSC::MarkedArgumentBuffer& mocks) const;
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
@@ -170,6 +193,7 @@ public:
             Base::clear();
             delete virtualModules;
             virtualModules = nullptr;
+            moduleMocksWithTwoPaths = 0;
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
             runningModuleMocks.clear();
@@ -286,6 +310,8 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 // Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
+// The key that `importer` gets where a module mock answers for `key`: keyOfImportByPackage(), and what a mock with two paths gives.
+String keyOfImportOfModuleMock(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)

@@ -249,8 +249,7 @@ std::optional<AOT::ModuleID> moduleThatMockReplaces(const String& path)
 
 static bool replacesNativeModule(JSGlobalObject* globalObject, const String& path)
 {
-    auto& plugins = uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins;
-    return plugins.hasVirtualModules() && plugins.virtualModules->contains(path);
+    return uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins.containsVirtualModule(path);
 }
 
 // As in an executable of `bun build --compile`: a name that the run time resolves is the plugins' first.
@@ -271,24 +270,14 @@ void recordFileRunFromSource(JSGlobalObject*, const String& path, ASCIILiteral w
 // A module that `build.module()` gave for the name, or an onResolve whose filter takes it. The loader calls the callback where it resolves the name. A mock lies in the same table and is no function.
 static bool isGivenByPlugin(Zig::GlobalObject* global, const String& name)
 {
-    auto* modules = global->onLoadPlugins.virtualModules;
-    auto given = modules ? modules->get(name) : JSC::Strong<JSC::JSObject>();
+    JSObject* given = global->onLoadPlugins.virtualModule(name);
     return given && given->isCallable();
 }
 
 static bool hasPluginsThatAnswerForNames(JSGlobalObject* globalObject)
 {
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    if (!global->onResolvePlugins.isEmpty())
-        return true;
-    auto* modules = global->onLoadPlugins.virtualModules;
-    if (!modules)
-        return false;
-    for (auto& given : modules->values()) {
-        if (given && given.get()->isCallable())
-            return true;
-    }
-    return false;
+    return !global->onResolvePlugins.isEmpty() || global->onLoadPlugins.hasVirtualModuleFunction();
 }
 
 struct AnswerOfPlugins {
@@ -686,8 +675,7 @@ static bool isReadAsCodeByRequire(Zig::GlobalObject* globalObject, AOT::ModuleID
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject* globalObject, const String& key)
 {
     auto module = moduleThatAnswersToPath(key);
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
-    if (!module || (virtualModules && virtualModules->contains(key)) || refusesFileToAsker(globalObject, *module, AOT::LoadByName::Require))
+    if (!module || globalObject->onLoadPlugins.containsVirtualModule(key) || refusesFileToAsker(globalObject, *module, AOT::LoadByName::Require))
         return {};
     return AOT::requireModule(globalObject, *module);
 }

@@ -5751,6 +5751,56 @@ impl VirtualMachine {
         )
     }
 
+    /// Resolves `specifier` as an `import` does, and with `also_for_require` then as `require()` does: the `exports`
+    /// and `imports` conditions of a package and the order of extensions depend on which of the two asks.
+    /// The second path is `None` when it is the first one, when `require()` resolves to nothing, and when
+    /// an `onResolve` plugin answers: it is asked once and is not told who asks.
+    pub fn resolve_for_import_and_require(
+        global: &JSGlobalObject,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        query_string: &mut bun_core::String,
+        also_for_require: bool,
+    ) -> JsResult<Result<(bun_core::String, Option<bun_core::String>), JSValue>> {
+        if let Some(resolved) = Self::resolve_with_on_resolve::<true>(
+            global,
+            specifier,
+            source,
+            Some(&mut *query_string),
+            ResolveMode::Esm,
+            false,
+        )? {
+            return Ok(resolved.map(|path| (path, None)));
+        }
+        let global_cache = global.bun_vm().transpiler.resolver.opts.global_cache;
+        let for_import = match Self::resolve_without_on_resolve::<true>(
+            global,
+            specifier,
+            source,
+            Some(query_string),
+            ResolveMode::Esm,
+            global_cache,
+        )? {
+            Ok(path) => path,
+            Err(error) => return Ok(Err(error)),
+        };
+        if !also_for_require {
+            return Ok(Ok((for_import, None)));
+        }
+        let for_require = match Self::resolve_without_on_resolve::<true>(
+            global,
+            specifier,
+            source,
+            None,
+            ResolveMode::Require,
+            global_cache,
+        )? {
+            Ok(path) if !path.eql(&for_import) => Some(path),
+            _ => None,
+        };
+        Ok(Ok((for_import, for_require)))
+    }
+
     /// `None` when no `onResolve` claims `specifier`, or `same_is_no_answer` is set and it returns `specifier` unchanged.
     pub(crate) fn resolve_with_on_resolve<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,

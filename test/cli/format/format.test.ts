@@ -1672,11 +1672,19 @@ describe.concurrent("bun fmt", () => {
       expect(result).toMatchObject({ stderr: "", files: { "a.js": printed }, exitCode: 0 });
     });
 
-    test("a getter and a method keep the comma", async () => {
-      const text = `class Settings {\n  get timeout() {}\n  timeout2(milliseconds = ${value}) {}\n}\n`;
-      const printed = `class Settings {\n  get timeout() {}\n  timeout2(\n    milliseconds = ${value},\n  ) {}\n}\n`;
-      const result = await formatChecked({ "a.js": text }, [], { reads: ["a.js"] });
-      expect(result).toMatchObject({ stderr: "", files: { "a.js": printed }, exitCode: 0 });
+    // A method, and a setter whose list is not the one parameter of the grammar (an error with or without the comma).
+    test.each([
+      ["js", `class Settings {\n  timeout(milliseconds = ${value}AndThenSomeMore) {}\n}\n`],
+      ["ts", `class Settings {\n  set timeout(milliseconds: ${value}, b: ${value}) {}\n}\n`],
+      [
+        "ts",
+        `class Settings {\n  set timeout(this: Settings, milliseconds: ${value}AndThenSomeMoreCharacters) {}\n}\n`,
+      ],
+    ])("keeps the comma where the list is not one setter parameter: %s %j", async (extension, text) => {
+      const name = `a.${extension}`;
+      const result = await formatChecked({ [name]: text }, [], { reads: [name] });
+      expect(result.files[name]).toEndWith(",\n  ) {}\n}\n");
+      expect(result).toMatchObject({ stderr: "", exitCode: 0 });
     });
   });
 

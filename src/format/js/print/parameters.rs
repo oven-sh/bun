@@ -378,9 +378,12 @@ impl<'a> Format<'a> for ParameterList<'a> {
         match self.layout {
             ParameterLayout::Default => {
                 // Nothing can follow a rest parameter, not even a comma. A setter takes one `FormalParameter`, with
-                // no trailing comma form: JavaScriptCore rejects `set a(b,) {}`. Prettier prints the comma.
+                // no trailing comma form: JavaScriptCore rejects `set a(b,) {}`. Prettier prints the comma. A setter
+                // with another list is an error with or without it, and is printed as Prettier prints it.
                 let trailing_separator = match self.func.params().last().is_some_and(Param::is_rest)
                     || self.func.kind() == FnKind::Setter
+                        && self.func.params().len() == 1
+                        && self.func.this_param().is_none()
                 {
                     true => TrailingSeparator::Disallowed,
                     false => FormatTrailingCommas::Arguments.trailing_separator(f.options()),

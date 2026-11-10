@@ -488,6 +488,11 @@ fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from() {
             let expected = found.iter().map(|name| format!("{name} StartsWorker"));
             assert_eq!(names, expected.collect::<Vec<String>>(), "{text}");
             assert_found_follow_written(loaded, 1);
+            let files = files_of(loaded);
+            let at = contents_of(files, file).worker_starts[0].at;
+            for found in &loaded.contents.found_entry_points {
+                assert_eq!(found.starts, [(file_named(files, file), at.0)], "{text}");
+            }
         });
     }
 }
@@ -839,6 +844,88 @@ fn place_where_the_load_loses_sight_of_a_worker_of_node_is_noted() {
             let places = contents.node_workers_out_of_sight.iter();
             let noted: Vec<bool> = places.map(|place| place.is_told_to_evaluate).collect();
             assert_eq!(noted, expected, "{text}");
+        });
+    }
+}
+
+#[test]
+fn url_that_a_web_worker_out_of_sight_starts_from_is_noted_beside_its_start() {
+    const NODE: &str = r#"import { Worker as Thread } from "node:worker_threads";"#;
+    let rows: [(&str, bool); 16] = [
+        (r#"new Worker(new URL("./w.ts", base));"#, true),
+        (
+            r#"namespace Jobs { const url = new URL("./w.ts", base); new Worker(url); }"#,
+            true,
+        ),
+        (
+            "new Worker(new URL(process.argv[3], import.meta.url));",
+            true,
+        ),
+        ("new Worker(new URL(process.argv[3]));", true),
+        (r#"new Worker(new URL("./w.ts", base).href);"#, true),
+        (
+            r#"const url = new URL("./w.ts", base); new Worker(url);"#,
+            true,
+        ),
+        (
+            r#"const url = new URL("./w.ts", base); const text = url.href; new Worker(text);"#,
+            true,
+        ),
+        (
+            r#"export const start = () => { const url = new URL("./w.ts", base); return new Worker(url); };"#,
+            true,
+        ),
+        (
+            r#"const url = new URL("./w.ts", base); const a = url; const b = a; new Worker(b);"#,
+            false,
+        ),
+        (
+            r#"let url = new URL("./w.ts", base); url = new URL("./x.ts", base); new Worker(url);"#,
+            false,
+        ),
+        (
+            r#"const url = new URL("./w.ts", base); export const start = () => new Worker(url);"#,
+            false,
+        ),
+        (r#"new Worker(new URL("./w.ts", import.meta.url));"#, false),
+        ("new Worker(process.argv[3]);", false),
+        (
+            r#"new Worker(new URL("data:text/javascript,postMessage(1)"));"#,
+            false,
+        ),
+        (
+            r#"class Address { constructor(text: string, base: string) {} } new Worker(new Address("./w.ts", base) as any);"#,
+            false,
+        ),
+        (r#"new Thread(new URL("./w.ts", base));"#, false),
+    ];
+    for (text, is_noted) in rows {
+        let main = format!("{NODE} const base = process.argv[2]!; {text}");
+        let project = executable(&[("main.ts", &main), ("w.ts", WORKER)]);
+        let offset_of = |written: &str| strings::index_of(main.as_bytes(), written.as_bytes());
+        let expected = is_noted.then(|| {
+            let offsets = ["new Worker(", "new URL("].map(|written| offset_of(written).unwrap());
+            offsets.map(|offset| offset as u32)
+        });
+        load(&project, |loaded| {
+            let files = files_of(loaded);
+            let hir = files.hir(file_named(files, "main.ts"));
+            let contents = contents_of(files, "main.ts");
+            let noted = contents.urls_of_web_workers_out_of_sight.iter();
+            let noted: Vec<[u32; 2]> = noted
+                .map(|given| [hir[given.start].pos, hir[given.url].pos])
+                .collect();
+            assert_eq!(noted, expected.into_iter().collect::<Vec<_>>(), "{text}");
+            let room = contents.urls_of_web_workers_out_of_sight.capacity();
+            assert!(is_noted || room == 0, "{text}");
+            let starts = contents.worker_starts.iter();
+            let mut given_to_constructor =
+                starts.filter(|start| start.place == PlaceOfName::Constructor);
+            let is_of_web = !text.contains("new Thread(");
+            assert!(
+                given_to_constructor.all(|start| start.is_of_web == is_of_web),
+                "{text}"
+            );
         });
     }
 }

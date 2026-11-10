@@ -43,7 +43,7 @@ use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, P
 use crate::emit::{
     FunctionsWithoutCode, ProgramBytes, emit_with_bodies_in_bytes, emit_with_external_bodies,
 };
-use crate::engine::{self, EngineOptions, EngineRequest, EngineResult, position_of};
+use crate::engine::{self, EngineOptions, EngineRequest, EngineResult, Position, position_of};
 use crate::ir::generated::{UnseenCodeCause, Witness};
 use crate::ir::{Id, ModuleId, Program};
 use crate::known_helpers::KnownHelpers;
@@ -119,8 +119,16 @@ pub(crate) struct StartedWorkers {
     pub code: CodeOfWorkers,
     pub names: Vec<EntryPointPaths>,
     pub named_at: Vec<(Vec<u8>, u32)>,
+    pub urls_not_followed: Vec<UrlNotFollowed>,
     pub names_followed: Vec<FollowedName>,
     pub names_plugin: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct UrlNotFollowed {
+    pub path: Vec<u8>,
+    pub url: u32,
+    pub start: u32,
 }
 
 pub struct BuildFailed {
@@ -404,7 +412,7 @@ pub fn compile(
         return Err(build.finish::<()>(Err(stage), log).unwrap_err());
     }
     let engine = build.run_engine(bytes, &engine_options, &output);
-    build.finish_started_workers(&engine, &output);
+    build.finish_started_workers(&engine, &output.texts, &output.entry_points);
     let has_errors = build.diagnostics.has_errors();
     let is_internal_error = build.diagnostics.has_internal_errors();
     #[cfg(not(test))]
@@ -732,7 +740,41 @@ impl<'a> Build<'a> {
         named_at.any(|place| place.0 == path && place.1 == position.offset)
     }
 
-    fn finish_started_workers(&mut self, engine: &EngineResult, output: &FrontEndOutput) {
+    fn warn_of_urls_not_followed(&mut self, engine: &EngineResult, texts: &SourceTexts) {
+        let not_followed = &self.started_workers.urls_not_followed;
+        if not_followed.is_empty() {
+            return;
+        }
+        let find_at = |witness: &Witness, path: &[u8], offset: u32| {
+            let position = position_of(witness.location)?;
+            (position.offset == offset && texts.path(position.module) == path).then_some(position)
+        };
+        for given in not_followed {
+            let mut urls = engine.worker_urls().iter();
+            let url = urls.find_map(|record| find_at(&record.witness, &given.path, given.url));
+            let Some(url) = url else {
+                continue;
+            };
+            let mut starts_without_name = engine.worker_starts_without_name().iter();
+            let is_said_already = starts_without_name
+                .any(|record| find_at(&record.witness, &given.path, given.start).is_some());
+            if !is_said_already {
+                let start = Position {
+                    offset: given.start,
+                    ..url
+                };
+                self.diagnostics
+                    .add_worker_start_from_url_not_followed(start, texts);
+            }
+        }
+    }
+
+    fn finish_started_workers(
+        &mut self,
+        engine: &EngineResult,
+        texts: &SourceTexts,
+        entry_points: &[EntryPointPaths],
+    ) {
         let options = self.options;
         if options.load.runs_tests {
             return;
@@ -741,22 +783,20 @@ impl<'a> Build<'a> {
             self.started_workers.code = CodeOfWorkers::Unseen;
         }
         for record in engine.worker_starts_without_name() {
-            if self.is_start_followed_by_load(&record.witness, &output.texts) {
+            if self.is_start_followed_by_load(&record.witness, texts) {
                 continue;
             }
             self.started_workers.code = CodeOfWorkers::Unseen;
             self.diagnostics
-                .add_worker_start_without_name(&record.witness, &output.texts);
+                .add_worker_start_without_name(&record.witness, texts);
         }
+        self.warn_of_urls_not_followed(engine, texts);
         if options.aot.checks_only {
             return;
         }
         for record in engine.worker_entries() {
             let name = engine.text(record.path);
-            let compiled = output
-                .entry_points
-                .iter()
-                .chain(&self.started_workers.names);
+            let compiled = entry_points.iter().chain(&self.started_workers.names);
             let levels = self.started_workers.levels_above_root;
             if names_one_of(name, compiled, &options.paths, levels) {
                 continue;
@@ -767,7 +807,7 @@ impl<'a> Build<'a> {
                 false => (Code::WorkerFileNotCompiled, &[name]),
             };
             self.diagnostics
-                .add_at_witness(code, arguments, &record.witness, &output.texts);
+                .add_at_witness(code, arguments, &record.witness, texts);
         }
     }
 

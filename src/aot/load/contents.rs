@@ -11,12 +11,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::Loader;
 use bun_sema::atom::Atom;
+use bun_sema::hir::ExprId;
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::node::NodeData;
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 
-pub(crate) use self::entry_points::{EntryPointFinder, FinderInput, FoundBecause, FoundEntryPoint};
+pub(crate) use self::entry_points::{
+    EntryPointFinder, FinderInput, FoundBecause, FoundEntryPoint, StartWithoutFile,
+};
 pub(crate) use self::load_names::NamedLoads;
 use self::load_names::resolve_loads_through_imported_loaders;
 pub(crate) use self::scan::{ScanInput, scan_file};
@@ -49,11 +52,18 @@ pub(crate) struct FileContents {
     pub hands_worker_constructor_on: bool,
     pub starts_worker_out_of_sight: bool,
     pub node_workers_out_of_sight: Vec<NodeWorkerOutOfSight>,
+    pub urls_of_web_workers_out_of_sight: Vec<UrlThatStartsWorker>,
 }
 
 pub(crate) struct NodeWorkerOutOfSight {
     pub at: NodeData,
     pub is_told_to_evaluate: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) struct UrlThatStartsWorker {
+    pub url: ExprId,
+    pub start: ExprId,
 }
 
 pub struct FixedBuiltins {

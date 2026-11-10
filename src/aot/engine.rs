@@ -474,7 +474,7 @@ macro_rules! result_records {
         })*
 
         impl EngineResult {
-            $(pub fn $name(&self) -> &[$record] {
+            $(pub(crate) fn $name(&self) -> &[$record] {
                 self.elements($record::SECTION)
             })*
         }

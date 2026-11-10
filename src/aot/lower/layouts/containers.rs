@@ -315,8 +315,7 @@ struct Creation {
     start: u32,
 }
 
-fn find_code_unit(text: &ModuleText<'_, '_>, expression: ExprId) -> Option<CodeUnit> {
-    let bound = text.bound;
+pub(crate) fn find_code_unit(bound: &Bound<'_>, expression: ExprId) -> Option<CodeUnit> {
     let mut child = expression;
     loop {
         let statement = match bound.parent_of_expr(child) {
@@ -361,7 +360,7 @@ fn is_in_body_through(
     expression: ExprId,
     mut passes: impl FnMut(FnId) -> bool,
 ) -> bool {
-    let Some(mut unit) = find_code_unit(text, expression) else {
+    let Some(mut unit) = find_code_unit(text.bound, expression) else {
         return false;
     };
     while let CodeUnit::Function(function) = unit {

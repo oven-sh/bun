@@ -74,9 +74,19 @@ impl Diagnostics {
         witness: &Witness,
         texts: &SourceTexts,
     ) {
+        self.add_at_position(code, arguments, position_of(witness.location), texts);
+    }
+
+    fn add_at_position(
+        &mut self,
+        code: Code,
+        arguments: &[&[u8]],
+        position: Option<Position>,
+        texts: &SourceTexts,
+    ) {
         let diagnostic = Diagnostic::new(code, None, arguments);
         let reported = to_driver_diagnostic(None, &diagnostic);
-        let reported = match position_of(witness.location) {
+        let reported = match position {
             Some(position) => ModuleLocator::new(texts).locate(position, reported),
             None => reported,
         };
@@ -90,6 +100,14 @@ impl Diagnostics {
         if witness.function_id().is_some() {
             self.add_at_witness(Code::WorkerStartedFromUnknownValue, &[], witness, texts);
         }
+    }
+
+    pub(crate) fn add_worker_start_from_url_not_followed(
+        &mut self,
+        start: Position,
+        texts: &SourceTexts,
+    ) {
+        self.add_at_position(Code::WorkerStartedFromUnknownValue, &[], Some(start), texts);
     }
 
     pub(super) fn add_internal_error_record(

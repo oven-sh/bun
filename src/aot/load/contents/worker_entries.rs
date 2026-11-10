@@ -7,7 +7,9 @@ use bun_ast::Loader;
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, Bound, CommonJsVariable, Decl, Parent, SymbolId,
+};
 use bun_sema::fold::{Constant, FoldedValue, ends_in_name_with_extension};
 use bun_sema::hir::{
     BinOp, CallId, ExportSpecId, ExprId, ExprKind, File, MemberKey, NodeData, PatId, PatKind,
@@ -24,14 +26,15 @@ use bun_sema::resolve::{
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 
-use super::NodeWorkerOutOfSight;
 use super::entry_points::is_relative_path;
 use super::load_names::{is_made_of_texts, is_part_of_longer_text, is_written_as_value};
 use super::scan::ContentsScan;
+use super::{NodeWorkerOutOfSight, UrlThatStartsWorker};
 use crate::builtins::table::{self, BuiltinFlags, Origin};
 use crate::builtins::{BuiltinId, BuiltinName, Intrinsic, Resolved, RuntimeModule};
 use crate::load::is_in_node_modules;
 use crate::load::module_paths::{read_path_above_root, with_separators_of_host};
+use crate::lower::find_code_unit;
 use crate::module_keys::is_name_of_text;
 use crate::options::PathOptions;
 
@@ -51,7 +54,10 @@ pub(crate) struct WorkerStart {
     pub name: ImportSpecifier,
     pub form: WorkerNameForm,
     pub place: PlaceOfName,
+    pub is_of_web: bool,
 }
+
+const _: () = assert!(size_of::<WorkerStart>() == 32);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum PlaceOfName {
@@ -218,6 +224,44 @@ pub(super) fn is_url_with_code(text: &[u8]) -> bool {
         || media_type.ends_with(b"tsx")
 }
 
+const NAMES_BETWEEN_WORKER_AND_URL: usize = 2;
+
+pub(crate) fn find_construction_given_to_worker(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    start: ExprId,
+    argument: ExprId,
+) -> Option<ExprId> {
+    let mut value = hir.skip_type_assertions(argument);
+    let mut names_left = NAMES_BETWEEN_WORKER_AND_URL;
+    loop {
+        let next = match hir[value].kind {
+            ExprKind::New(_) => {
+                let is_made_beside_start = names_left == NAMES_BETWEEN_WORKER_AND_URL
+                    || find_code_unit(bound, value)
+                        .is_some_and(|unit| find_code_unit(bound, start) == Some(unit));
+                return is_made_beside_start.then_some(value);
+            }
+            ExprKind::Ident(_) => {
+                names_left = names_left.checked_sub(1)?;
+                let symbol = match bound.binding(value) {
+                    Binding::Symbol(symbol) if bound.is_evaluated_ident(value) => symbol,
+                    _ => return None,
+                };
+                match bound.binding_initializer(hir, symbol) {
+                    BindingInitializer::Expression(held) if bound.is_stable_binding(symbol) => held,
+                    _ => return None,
+                }
+            }
+            _ => match hir.member_key(value) {
+                Some((url, MemberKey::Name(known::href))) => url,
+                _ => return None,
+            },
+        };
+        value = hir.skip_type_assertions(next);
+    }
+}
+
 impl ContentsScan<'_, '_> {
     pub(super) fn look_at_construction(&mut self, expression: ExprId) {
         let &FinishedFile { hir, bound, .. } = self.request;
@@ -262,6 +306,7 @@ impl ContentsScan<'_, '_> {
             name,
             form,
             place: PlaceOfName::Elsewhere,
+            is_of_web: false,
         });
     }
 
@@ -761,6 +806,15 @@ impl ContentsScan<'_, '_> {
                     is_told_to_evaluate,
                 });
         }
+        if is_of_web
+            && may_be_out_of_sight
+            && !is_text_put_together
+            && let Some(url) = self.find_url_given_to_worker(construction, argument)
+        {
+            let start = construction;
+            let urls = &mut self.found.urls_of_web_workers_out_of_sight;
+            urls.push(UrlThatStartsWorker { url, start });
+        }
         if self.is_inline_worker_source(&name) {
             self.found.starts_worker_out_of_sight = true;
             return;
@@ -772,7 +826,17 @@ impl ContentsScan<'_, '_> {
             name,
             form,
             place: PlaceOfName::Constructor,
+            is_of_web,
         });
+    }
+
+    fn find_url_given_to_worker(&self, start: ExprId, argument: ExprId) -> Option<ExprId> {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let url = find_construction_given_to_worker(hir, bound, start, argument)?;
+        let ExprKind::New(call) = hir[url].kind else {
+            return None;
+        };
+        (self.find_constructor_called(call) == Some(Constructor::Url)).then_some(url)
     }
 
     fn add_preloads(&mut self, construction: ExprId, options: ExprId) {
@@ -818,6 +882,7 @@ impl ContentsScan<'_, '_> {
                     name: ImportSpecifier::Constant(text),
                     form: WorkerNameForm::AsWritten,
                     place: PlaceOfName::Preload,
+                    is_of_web: false,
                 });
             }
         }

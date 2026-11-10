@@ -1821,6 +1821,7 @@
     "aot/test-run-class-source-parameter-properties.test.ts",
     "aot/test-run-function-source-enum-namespace.test.ts",
     "aot/test-run-function-source-enum-read.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts",
+    "aot/a-worker-that-starts-from-a-url-the-build-did-not-follow.test.ts"
   ]
 }

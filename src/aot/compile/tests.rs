@@ -7,8 +7,8 @@ use super::*;
 use crate::builtins::{RuntimeFunction, RuntimeModule, table};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{InternalError, log_diagnostic};
-use crate::engine::MissingModuleRecord;
 use crate::engine::testing::ResultRecords;
+use crate::engine::{MissingModuleRecord, SourceLocation, WorkerStartRecord, WorkerURLRecord};
 use crate::ir::generated::{FunctionFlags, ModuleKind};
 use crate::ir::{
     FunctionId, Id, ModuleId, OpaqueKind, Program, Type, print_function, print_program,
@@ -1815,4 +1815,82 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
     let (failed, log) = finish_build(true);
     assert!(failed.is_none());
     assert!(log.msgs.is_empty());
+}
+
+#[test]
+fn url_that_starts_a_worker_warns_once_at_the_start_that_the_load_has_not_followed() {
+    const GLOBALS: (&str, &str) = (
+        "globals.d.ts",
+        "declare var Worker: any;\ndeclare var URL: any;\ndeclare var process: any;",
+    );
+    let text =
+        "import \"./b\";\nconst base = process.argv[2];\nnew Worker(new URL(\"./w.ts\", base));\n";
+    let other = "const base = process.argv[2];\nexport default new URL(\"./w.ts\", base);\n";
+    let linked = link_successfully(&[("a.ts", text), ("b.ts", other), GLOBALS]);
+    let texts = &linked.summary.texts;
+    let module = linked.program.entries[0].module;
+    let modules = (0..linked.program.modules.len()).map(ModuleId::new);
+    let mut others = modules.filter(|&other| texts.path(other).ends_with(b"b.ts"));
+    let other_module = others.next().expect("the program holds the imported file");
+    let offset_of = |written: &str| {
+        let offset = bun_core::strings::index_of(text.as_bytes(), written.as_bytes());
+        offset.expect("the text has it") as u32
+    };
+    let (url, start) = (offset_of("URL("), offset_of("Worker("));
+    let witness = |module: ModuleId, position: u32| Witness {
+        function: 0,
+        value: position,
+        location: SourceLocation {
+            module: module.to_word(),
+            position,
+        },
+    };
+    let url_at = |module, position| WorkerURLRecord {
+        witness: witness(module, position),
+    };
+    let not_followed = || UrlNotFollowed {
+        path: texts.path(module).to_vec(),
+        url,
+        start,
+    };
+    let said_of = |urls: &[WorkerURLRecord], nameless: &[u32], table: Vec<UrlNotFollowed>| {
+        let nameless: Vec<WorkerStartRecord> = nameless
+            .iter()
+            .map(|&position| WorkerStartRecord {
+                witness: witness(module, position),
+            })
+            .collect();
+        let records = ResultRecords {
+            worker_urls: urls,
+            worker_starts_without_name: &nameless,
+            ..ResultRecords::default()
+        };
+        let project = TestProject::new(&[("a.ts", "")], &default_settings());
+        let options = project.options(BUNDLED_LIBS);
+        let caches = ThreadCaches::default();
+        let mut build = Build::new(&options, &WithoutServices, &caches, LimitValues::for_host());
+        build.started_workers.urls_not_followed = table;
+        records.with_result(|engine| build.finish_started_workers(engine, texts, &[]));
+        let mut log = Log::init();
+        assert!(build.finish(Ok(()), &mut log).is_ok());
+        describe_messages(&log)
+    };
+    let warning = "/project/a.ts:3:5: TS100082: The build can't tell which file this Worker starts from. If that file isn't an entry point, the Worker fails to load\n";
+
+    assert_eq!(
+        said_of(&[url_at(module, url)], &[], vec![not_followed()]),
+        warning
+    );
+    let copies = [url_at(module, url), url_at(module, url)];
+    assert_eq!(said_of(&copies, &[], vec![not_followed()]), warning);
+    assert_eq!(said_of(&copies, &[start], vec![not_followed()]), warning);
+
+    assert_eq!(said_of(&[url_at(module, url)], &[], Vec::new()), "");
+    assert_eq!(said_of(&[], &[], vec![not_followed()]), "");
+    assert_eq!(
+        said_of(&[url_at(module, start)], &[], vec![not_followed()]),
+        ""
+    );
+    let in_other_file = [url_at(other_module, url)];
+    assert_eq!(said_of(&in_other_file, &[], vec![not_followed()]), "");
 }

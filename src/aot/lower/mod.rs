@@ -65,7 +65,9 @@ pub(crate) use self::context::{FileLowering, FunctionLowering};
 pub(crate) use self::convert::FamilyFacts;
 #[cfg(test)]
 pub(crate) use self::fragment::FragmentBuilder;
+pub(crate) use self::layouts::find_code_unit;
 pub(crate) use self::module::{KeptBetweenWays, find_file_that_asks_mock};
+pub(crate) use self::positions::construct_position;
 pub(crate) use self::tables::TaskState;
 pub(crate) use bun_sema::types::TypeId as CheckerTypeId;
 

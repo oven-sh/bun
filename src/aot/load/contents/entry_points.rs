@@ -8,7 +8,7 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::join_spill;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CodeUnit};
-use bun_sema::hir::{ExprKind, Flags, StmtKind};
+use bun_sema::hir::{ExprId, ExprKind, Flags, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedForm};
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files, NamingLoad};
 use bun_sema::resolve::{CodeHost, CodeOptions, Host, is_declaration_file_name, to_path};
@@ -62,6 +62,13 @@ pub(crate) struct FoundEntryPoint {
     pub because: FoundBecause,
     pub started_at: Option<(Vec<u8>, u32)>,
     pub starts: Vec<(FileId, u32)>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) struct StartWithoutFile {
+    pub file: FileId,
+    pub at: ExprId,
+    pub name_node: ExprId,
 }
 
 pub(crate) struct FinderInput<'a, 'h> {
@@ -1353,7 +1360,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         mut self,
         files: &Files<'_>,
         written_count: usize,
-    ) -> Vec<FoundEntryPoint> {
+    ) -> (Vec<FoundEntryPoint>, Vec<StartWithoutFile>) {
         let found = take(self.found.get_mut());
         let told = found.entry_points.iter();
         let told: FxHashMap<&[u8], &FoundEntryPoint> = told
@@ -1373,13 +1380,17 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     .clone()
             })
             .collect();
-        self.list_starts(files, &found, &keys, &mut entry_points);
+        let without_file = self.list_starts(files, &found, &keys, &mut entry_points);
+        let without_file = without_file.unwrap_or_else(|| {
+            entry_points.iter_mut().for_each(|it| it.starts.clear());
+            Vec::new()
+        });
         if crate::statistics::logs_stages() {
             let of_workers = entry_points.iter();
             let of_workers = of_workers.filter(|it| it.because.is_for_worker());
             crate::test_run_report::say_load_goes_on(of_workers.count());
         }
-        entry_points
+        (entry_points, without_file)
     }
 
     fn list_starts(
@@ -1388,7 +1399,8 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         found: &FoundSoFar,
         keys: &[Vec<u8>],
         entry_points: &mut [FoundEntryPoint],
-    ) {
+    ) -> Option<Vec<StartWithoutFile>> {
+        let mut without_file = Vec::new();
         let places: FxHashMap<&[u8], usize> = (keys.iter().map(|key| &key[..]).zip(0..)).collect();
         let mut compiled = files.compiled_files().iter();
         let starts_out_of_sight = compiled.any(|&file| {
@@ -1398,9 +1410,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             })
         });
         for &file in files.compiled_files() {
-            let Some(source) = parsed_source_in(files, file) else {
-                return entry_points.iter_mut().for_each(|it| it.starts.clear());
-            };
+            let source = parsed_source_in(files, file)?;
             let starts = source.contents.worker_starts.iter();
             let is_asked = |start: &&WorkerStart| match start.place {
                 PlaceOfName::Constructor => true,
@@ -1411,10 +1421,17 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 let own_key;
                 let named = Mention::of_start(files, file, start).map(|mention| mention.named);
                 let answer: &[Vec<u8>] = match &named {
-                    Some(Named::ByName(question)) => match found.asked.get(question) {
-                        Some(answer) => answer,
-                        None => return entry_points.iter_mut().for_each(|it| it.starts.clear()),
-                    },
+                    Some(Named::ByName(question)) => {
+                        let answer = found.asked.get(question)?;
+                        if answer.is_empty() && start.is_of_web {
+                            without_file.push(StartWithoutFile {
+                                file,
+                                at: start.at,
+                                name_node: start.name_node,
+                            });
+                        }
+                        answer
+                    }
                     Some(Named::File { path, .. }) => {
                         own_key = [self.key_of(path)];
                         &own_key
@@ -1442,6 +1459,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 entry_point.starts.clear();
             }
         }
+        Some(without_file)
     }
 }
 

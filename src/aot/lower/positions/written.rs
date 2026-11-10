@@ -1,27 +1,40 @@
-use bun_sema::hir::{Call, ExprId, ExprKind};
+use bun_sema::hir::{Call, ExprId, ExprKind, File};
 
 use crate::lower::FileLowering;
 
+fn last_token_position_of(hir: &File<'_>, expression: ExprId) -> u32 {
+    let mut last = hir.skip_type_assertions(expression);
+    loop {
+        let next = match hir[last].kind {
+            ExprKind::Dot { .. } => return hir.name_pos(last),
+            ExprKind::Index { index, .. } => index,
+            ExprKind::Call(site) | ExprKind::New(site) => match hir[site].close_pos {
+                u32::MAX => hir[site].callee,
+                close => return close,
+            },
+            ExprKind::Binary { right, .. } => right,
+            ExprKind::Cond { branches, .. } => hir.branches(branches).no,
+            ExprKind::Assign { value, .. } => value,
+            ExprKind::Await(operand) | ExprKind::Unary { operand, .. } => operand,
+            _ => return hir[last].pos,
+        };
+        last = hir.skip_type_assertions(next);
+    }
+}
+
+pub(crate) fn construct_position(hir: &File<'_>, expression: ExprId) -> u32 {
+    let ExprKind::New(site) = hir[expression].kind else {
+        return hir[expression].pos;
+    };
+    match hir[site].close_pos {
+        u32::MAX => hir[expression].pos,
+        _ => last_token_position_of(hir, hir[site].callee),
+    }
+}
+
 impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn last_token_position_of(&self, expression: ExprId) -> u32 {
-        let hir = self.hir;
-        let mut last = self.skip_type_syntax(expression);
-        loop {
-            let next = match hir[last].kind {
-                ExprKind::Dot { .. } => return hir.name_pos(last),
-                ExprKind::Index { index, .. } => index,
-                ExprKind::Call(site) | ExprKind::New(site) => match hir[site].close_pos {
-                    u32::MAX => hir[site].callee,
-                    close => return close,
-                },
-                ExprKind::Binary { right, .. } => right,
-                ExprKind::Cond { branches, .. } => hir.branches(branches).no,
-                ExprKind::Assign { value, .. } => value,
-                ExprKind::Await(operand) | ExprKind::Unary { operand, .. } => operand,
-                _ => return hir[last].pos,
-            };
-            last = self.skip_type_syntax(next);
-        }
+        last_token_position_of(self.hir, expression)
     }
 
     pub(in crate::lower) fn call_position(&self, site: Call) -> u32 {
@@ -29,14 +42,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn construct_position(&self, expression: ExprId) -> u32 {
-        let hir = self.hir;
-        let ExprKind::New(site) = hir[expression].kind else {
-            return hir[expression].pos;
-        };
-        match hir[site].close_pos {
-            u32::MAX => hir[expression].pos,
-            _ => self.call_position(hir[site]),
-        }
+        construct_position(self.hir, expression)
     }
 
     pub(in crate::lower) fn load_position(&self, call: ExprId) -> u32 {

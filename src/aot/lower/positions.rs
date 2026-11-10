@@ -10,6 +10,7 @@ use bun_sema::hir::{FnId, TypeNodeId};
 use bun_sema::program::Sym;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+pub(crate) use self::written::construct_position;
 use super::{CheckerTypeId, FileLowering, types};
 use crate::ir::{
     DeclaredType, LayoutKey, Mapped, PositionFlags, Primitives, Type, TypeId, TypeTable,

@@ -1,5 +1,7 @@
 use super::runtime_reach::ReachWhileLoading;
-use super::{Build, CodeOfWorkers, EntryPointPaths, LoadedBuild, LoadedProject, Options};
+use super::{
+    Build, CodeOfWorkers, EntryPointPaths, LoadedBuild, LoadedProject, Options, UrlNotFollowed,
+};
 use crate::builtins::table::{self, BuiltinId};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostic_codes::Code;
@@ -7,10 +9,10 @@ use crate::diagnostics::{
     Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
 };
 use crate::link::run_beside;
-use crate::load::contents::worker_entries::source_path_of;
+use crate::load::contents::worker_entries::{find_construction_given_to_worker, source_path_of};
 use crate::load::contents::{
     ContentsInput, EntryPointFinder, FinderInput, FoundEntryPoint, ProgramContents,
-    collect_program_contents,
+    StartWithoutFile, collect_program_contents,
 };
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
@@ -26,6 +28,7 @@ use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
 use crate::load::{PerProject, ProjectId, Sources};
+use crate::lower::construct_position;
 use crate::modules::asks_for_original_beside_mock;
 use crate::statistics::{Stage, StepClock};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
@@ -372,31 +375,51 @@ fn find_starts_that_led_to_files(
     let starts = contents.found_entry_points.iter();
     for &(file, start) in starts.flat_map(|found| &found.starts) {
         let hir = &files.module(file).hir;
-        let ExprKind::New(call) = hir[ExprId(start)].kind else {
-            continue;
-        };
-        let callee = hir.skip_type_assertions(hir[call].callee);
-        for expression in [ExprId(start), callee] {
-            places.push((sources.diagnostic_path(file).to_vec(), hir[expression].pos));
+        if matches!(hir[ExprId(start)].kind, ExprKind::New(_)) {
+            let position = construct_position(hir, ExprId(start));
+            places.push((sources.diagnostic_path(file).to_vec(), position));
         }
     }
     places
 }
 
-fn find_node_workers_that_led_to_no_file(
+#[derive(Default)]
+struct WorkersThatLedToNoFile {
+    said_of_node: Vec<Diagnostic>,
+    urls_not_followed: Vec<UrlNotFollowed>,
+}
+
+impl WorkersThatLedToNoFile {
+    fn add_url(&mut self, files: &Files<'_>, sources: &Sources, file: FileId, given: [ExprId; 2]) {
+        let hir = files.hir(file);
+        let [url, start] = given.map(|construction| construct_position(hir, construction));
+        let path = sources.diagnostic_path(file);
+        let mut listed = self.urls_not_followed.iter();
+        if !listed.any(|it| it.url == url && it.start == start && it.path == path) {
+            let path = path.to_vec();
+            self.urls_not_followed
+                .push(UrlNotFollowed { path, url, start });
+        }
+    }
+}
+
+fn find_workers_that_led_to_no_file(
     files: &Files<'_>,
+    sources: &Sources,
     contents: &ProgramContents,
-) -> Vec<Diagnostic> {
-    let mut said = Vec::new();
+    starts_without_file: &[StartWithoutFile],
+) -> WorkersThatLedToNoFile {
+    let mut led_nowhere = WorkersThatLedToNoFile::default();
+    let led_to_file = |file: FileId, start: ExprId| {
+        let mut found = contents.found_entry_points.iter();
+        found.any(|found| found.starts.contains(&(file, start.0)))
+    };
     for &file in files.compiled_files() {
         let Some(source) = parsed_source(files, file) else {
             continue;
         };
         for start in &source.contents.node_workers_out_of_sight {
-            let mut found = contents.found_entry_points.iter();
-            let led_to_file = matches!(start.at, NodeData::Expr(at)
-                if found.any(|found| found.starts.contains(&(file, at.0))));
-            if led_to_file {
+            if matches!(start.at, NodeData::Expr(at) if led_to_file(file, at)) {
                 continue;
             }
             let code = match start.is_told_to_evaluate {
@@ -404,10 +427,23 @@ fn find_node_workers_that_led_to_no_file(
                 false => Code::WorkerStartedFromUnknownValue,
             };
             let span = Span::of_node(&files.module(file).hir, file, start.at);
-            said.push(Diagnostic::new(code, Some(span), &[]));
+            let said = Diagnostic::new(code, Some(span), &[]);
+            led_nowhere.said_of_node.push(said);
+        }
+        for given in &source.contents.urls_of_web_workers_out_of_sight {
+            if !led_to_file(file, given.start) {
+                led_nowhere.add_url(files, sources, file, [given.url, given.start]);
+            }
         }
     }
-    said
+    for start in starts_without_file {
+        let (hir, bound) = (files.hir(start.file), files.bound(start.file));
+        let url = find_construction_given_to_worker(hir, bound, start.at, start.name_node);
+        if let Some(url) = url {
+            led_nowhere.add_url(files, sources, start.file, [url, start.at]);
+        }
+    }
+    led_nowhere
 }
 
 fn code_of_workers(contents: &ProgramContents) -> CodeOfWorkers {
@@ -523,6 +559,7 @@ fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
 #[derive(Default)]
 struct FoundByLoad {
     entry_points: Vec<FoundEntryPoint>,
+    starts_without_file: Vec<StartWithoutFile>,
     names_written: Vec<EntryPointPaths>,
 }
 
@@ -738,8 +775,11 @@ impl<'a> Build<'a> {
                 };
                 let application = self.load_application(shared, project, &request_that_finds)?;
                 let names_written = finder.take_names_written();
+                let (entry_points, starts_without_file) =
+                    finder.finish(application.files(), options.entry_points.len());
                 let found = FoundByLoad {
-                    entry_points: finder.finish(application.files(), options.entry_points.len()),
+                    entry_points,
+                    starts_without_file,
                     names_written,
                 };
                 (application, found)
@@ -845,9 +885,16 @@ impl<'a> Build<'a> {
             sources: &sources.application,
         };
         if !options.load.runs_tests {
-            for diagnostic in find_node_workers_that_led_to_no_file(files, &contents) {
+            let led_nowhere = find_workers_that_led_to_no_file(
+                files,
+                &sources.application,
+                &contents,
+                &found.starts_without_file,
+            );
+            for diagnostic in led_nowhere.said_of_node {
                 self.diagnostics.add(Some(view), diagnostic);
             }
+            self.started_workers.urls_not_followed = led_nowhere.urls_not_followed;
         }
         if !options.aot.checks_only && !options.aot.runs_in_place {
             warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
@@ -1551,6 +1598,81 @@ mod tests {
         assert!(said.contains(sentence), "{said}");
         let said = with_loaded_test_run(&files, &default_settings(), describe);
         assert!(!said.contains(sentence), "{said}");
+    }
+
+    #[test]
+    fn url_of_a_web_worker_that_led_to_no_file_is_listed_where_the_engine_says_both_stand() {
+        const HEAD: &str = r#"import { Worker as Thread } from "node:worker_threads"; import { join } from "node:path"; const base = process.argv[2]!;"#;
+        let rows = [
+            (r#"new Worker(new URL("./w.ts", base));"#, true),
+            (
+                r#"new globalThis.Worker(new globalThis.URL("./w.ts", base));"#,
+                true,
+            ),
+            (
+                r#"const url = new URL("./w.ts", base); new Worker(url.href);"#,
+                true,
+            ),
+            (
+                r#"new Worker(new URL(process.argv[3] ?? "./w.ts", import.meta.url));"#,
+                true,
+            ),
+            (
+                r#"new Worker(new URL("./no-such.ts", import.meta.url));"#,
+                true,
+            ),
+            (
+                r#"const url = new URL(process.argv[3] ? "./no-such.ts" : process.argv[4], import.meta.url); new Worker(url);"#,
+                true,
+            ),
+            (r#"new Worker(new URL("./w.ts", import.meta.url));"#, false),
+            (r#"new Worker(join(import.meta.dir, "no-such.ts"));"#, false),
+            (r#"new Worker("./no-such.ts");"#, false),
+            (
+                r#"new Thread(new URL("./no-such.ts", import.meta.url));"#,
+                false,
+            ),
+        ];
+        for (text, is_listed) in rows {
+            let main = format!("{HEAD} {text}");
+            let files = [("main.ts", &main[..]), ("w.ts", "export {};")];
+            let offset_of = |written: &str| {
+                let offset = bun_core::strings::index_of(main.as_bytes(), written.as_bytes());
+                offset.expect("the text has it") as u32
+            };
+            let (listed, room) = with_loaded_build(&files, &default_settings(), |build, _| {
+                let listed = &build.started_workers.urls_not_followed;
+                let places = listed.iter().map(|it| (it.url, it.start));
+                (places.collect::<Vec<_>>(), listed.capacity())
+            });
+            let expected = is_listed.then(|| (offset_of("URL("), offset_of("Worker(")));
+            assert_eq!(listed, expected.into_iter().collect::<Vec<_>>(), "{text}");
+            assert!(is_listed || room == 0, "{text}");
+            let listed = with_loaded_test_run(&files, &default_settings(), |build, _| {
+                build.started_workers.urls_not_followed.len()
+            });
+            assert_eq!(listed, 0, "{text}");
+        }
+    }
+
+    #[test]
+    fn start_that_led_to_a_file_is_named_at_the_one_place_where_the_engine_says_it_stands() {
+        const HEAD: &str = r#"import { join } from "node:path";"#;
+        let rows = [
+            r#"new Worker(join(import.meta.dir, "w.ts"));"#,
+            r#"new globalThis.Worker(join(import.meta.dir, "w.ts"));"#,
+            r#"new (Worker as any)(join(import.meta.dir, "w.ts"));"#,
+        ];
+        for text in rows {
+            let main = format!("{HEAD} {text}");
+            let files = [("main.ts", &main[..]), ("w.ts", "export {};")];
+            let named_at = with_loaded_build(&files, &default_settings(), |build, _| {
+                let named_at = build.started_workers.named_at.iter();
+                named_at.map(|place| place.1).collect::<Vec<_>>()
+            });
+            let start = bun_core::strings::index_of(main.as_bytes(), b"Worker");
+            assert_eq!(named_at, [start.unwrap() as u32], "{text}");
+        }
     }
 
     #[test]

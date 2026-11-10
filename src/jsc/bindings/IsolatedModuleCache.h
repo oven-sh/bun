@@ -82,6 +82,12 @@ public:
     // For resetModules(): evicts every entry that `keeps` doesn't claim. What a transpile that is out brings back is not cached either.
     static void dropForReset(JSC::VM&, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps);
 
+    // For resetModules(): drops nothing. From here on, lookup() checks each entry against its file before it returns it again.
+    static void didReset(JSC::VM&);
+
+    // Between two test files. If the finished one called didReset(), it may have written a module since, so the next file's lookups check each entry once more.
+    static void didFinishFile(JSC::VM&);
+
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);
 };

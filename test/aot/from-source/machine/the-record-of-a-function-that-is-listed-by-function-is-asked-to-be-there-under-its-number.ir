@@ -1,0 +1,19 @@
+# The image keeps the 255 most frequent records of functions in a table of their own; a function with another record is marked, and the run time looks its record up by the function's number: here for the frames of an error's stack.
+# THE LIE, testing=RecordsOfFunctionsAreListedUnderOtherNumbers: all records but the most frequent one are listed by function, each under the number behind its own.
+# In every build the row found is asked to be there and to bear the number asked for, or the process ends.
+# AS-USERS-BUILD: the run time asks the row in every build.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: has frames string
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=RecordsOfFunctionsAreListedUnderOtherNumbers
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function fails(depth: number): number { if (depth === 0) throw new Error("down"); return fails(depth - 1) + 1; }
+# class Thing { get answer(): number { return fails(id(1)); } static make(): Thing { return new Thing(); } }
+# async function later(): Promise<number> { return Thing.make().answer; }
+# let told = "";
+# try { told = String(Thing.make().answer); } catch (error) { told = String((error as Error).stack).split("\n").length > 1 ? "has frames" : "has none"; }
+# later().catch((error: Error) => print(told, typeof error.stack));
+# -- end of source

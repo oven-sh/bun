@@ -1,0 +1,10 @@
+# a chunk that native code makes is a Uint8Array
+# -- source: the-body-of-a-request-that-a-loop-reads-brings-no-other-feature.ts
+# Bun.serve({ port: 0, async fetch(request) { let length = 0; for await (const chunk of request.body!) length += chunk.length; return new Response(String(length)); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by ReadableStreamPrototype
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

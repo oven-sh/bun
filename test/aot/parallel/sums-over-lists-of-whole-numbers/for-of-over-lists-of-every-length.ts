@@ -1,0 +1,30 @@
+// STATISTIC: SumsOfElementsAddedAsIntegers >= 1
+function sum(list: number[], from: number): number { let s = from; for (const v of list) s += v; return s; }
+const make = (n: number) => { const list: number[] = []; for (let j = 0; j < n; j++) list.push(j * 3 - 7); return list; };
+console.log(sum(make(0), 1));
+console.log(sum(make(1), 1));
+console.log(sum(make(2), 1));
+console.log(sum(make(3), 1));
+console.log(sum(make(4), 1));
+console.log(sum(make(5), 1));
+console.log(sum(make(6), 1));
+console.log(sum(make(7), 1));
+console.log(sum(make(8), 1));
+console.log(sum(make(9), 1));
+console.log(sum(make(10), 1));
+console.log(sum(make(11), 1));
+console.log(sum(make(12), 1));
+console.log(sum(make(13), 1));
+console.log(sum(make(14), 1));
+console.log(sum(make(15), 1));
+console.log(sum(make(16), 1));
+console.log(sum(make(17), 1));
+console.log(sum(make(18), 1));
+console.log(sum(make(19), 1));
+console.log(sum(make(20), 1));
+console.log(sum(make(21), 1));
+console.log(sum(make(22), 1));
+console.log(sum(make(23), 1));
+console.log(sum(make(24), 1));
+console.log(sum(make(25), 1));
+console.log(sum(make(26), 1));

@@ -106,18 +106,14 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     "call filled, listening": { stdout: "started\n", saysRemoved: true, exits70: true },
   };
   const found: Record<string, unknown> = {};
-  // What fails today fails on macOS alone. It is declared on every platform, so that a list of what is declared `todo` has it wherever the list is written.
-  const knownFailures: Record<string, { here: boolean; today: string }> = {
-    "call mapped data": {
-      here: isMacOS,
-      today: `on macOS a crash is called "a removed feature" where none was called: a call into a mapped page that cannot be run`,
-    },
-    "call filled, listening": {
-      here: isMacOS && process.arch === "x64",
-      today: "on macOS x64 removed code is still filled with breakpoints",
-    },
+  // What fails today fails on macOS alone.
+  const knownFailures: Record<string, boolean> = {
+    // A crash is called "a removed feature" where none was called: a call into a mapped page that cannot be run.
+    "call mapped data": isMacOS,
+    // Removed code is still filled with breakpoints.
+    "call filled, listening": isMacOS && process.arch === "x64",
   };
-  const failsToday = Object.keys(knownFailures).filter(how => knownFailures[how].here);
+  const failsToday = Object.keys(knownFailures).filter(how => knownFailures[how]);
   const withoutKnownFailures = (cases: Record<string, unknown>) =>
     Object.fromEntries(Object.entries(cases).filter(([how]) => !failsToday.includes(how)));
 
@@ -175,9 +171,4 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     if (said.length > 6 || !Bun.deepEquals(seen, expected)) console.error(said.join("\n"));
     expect(seen).toEqual(expected);
   }, 240_000);
-
-  for (const [how, { here, today }] of Object.entries(knownFailures)) {
-    const name = `is called a removed feature only where removed code was called: ${how}: ${today}`;
-    test.todo(name, here ? () => expect(found[how]).toEqual(wanted[how]) : undefined);
-  }
 });

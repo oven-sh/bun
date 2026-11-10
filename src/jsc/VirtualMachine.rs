@@ -4269,20 +4269,37 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
+    /// `import.meta.resolve()`, `Bun.resolveSync()`: ESM resolution that loads nothing.
+    EsmResolve,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::EsmResolve)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::EsmResolve => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
+        }
+    }
+
+    /// The caller only wants the path; nothing is loaded.
+    #[inline]
+    pub fn only_resolves(self) -> bool {
+        matches!(self, Self::RequireResolve | Self::EsmResolve)
+    }
+
+    /// For functions that load nothing when they resolve as ESM (`import.meta.resolveSync()`).
+    #[inline]
+    pub fn loading_nothing_if_esm(self) -> Self {
+        match self {
+            Self::Esm => Self::EsmResolve,
+            mode => mode,
         }
     }
 
@@ -5771,7 +5788,7 @@ impl VirtualMachine {
         mode: ResolveMode,
         same_is_no_answer: bool,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-        let answer = match run_on_resolve(global, specifier, source)? {
+        let answer = match run_on_resolve(global, specifier, source, IS_A_FILE_PATH, mode)? {
             None => return Ok(None),
             Some(Err(error)) => return Ok(Some(Err(error))),
             Some(Ok(answer)) => answer,
@@ -5791,7 +5808,7 @@ impl VirtualMachine {
         drop(answer_utf8);
         let is_own = is_bare
             && (answer.eql(specifier)
-                || match run_on_resolve(global, &answer, source)? {
+                || match run_on_resolve(global, &answer, source, IS_A_FILE_PATH, mode)? {
                     None => false,
                     Some(Ok(_)) => true,
                     Some(Err(error)) => return Ok(Some(Err(error))),
@@ -5809,9 +5826,12 @@ impl VirtualMachine {
             mode,
             global_cache,
         )?;
-        // Not on disk, for an `onLoad` to serve.
-        if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
-            return Ok(Some(Ok(answer)));
+        // Not on disk: either an `onLoad` serves it, or nothing is loaded and the callback's absolute path stands, like the answer of a resolve hook in Node.js.
+        if resolved.is_err() {
+            let stands = mode.only_resolves() && bun_paths::is_absolute(&answer.to_utf8());
+            if stands || global.has_on_load(&answer.to_utf8())? {
+                return Ok(Some(Ok(answer)));
+            }
         }
         Ok(Some(resolved))
     }
@@ -8345,6 +8365,8 @@ fn run_on_resolve(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     importer: &bun_core::String,
+    importer_is_a_file: bool,
+    mode: ResolveMode,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let (in_file_namespace, in_another_namespace) = global.has_on_resolve();
     if !in_file_namespace && !in_another_namespace {
@@ -8367,11 +8389,38 @@ fn run_on_resolve(
         return Ok(None);
     }
     // The importer's key ends in the query it was imported with.
-    let importer = importer.to_utf8();
-    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
-        Some(query) => &importer[..query],
-        None => &importer[..],
+    let importer_with_query = importer.to_utf8();
+    let importer = match bun_core::strings::index_of_char_usize(&importer_with_query, b'?') {
+        Some(query) => &importer_with_query[..query],
+        None => &importer_with_query[..],
     };
+    // import(), require() and import.meta name a module whose key isn't a path (`namespace:path`) as `/namespace:path`. An importer is a loaded module, so the loader knows whether that key or a file is meant; a file is never split at a colon.
+    let is_loaded =
+        |key: &[u8]| global.is_key_of_loaded_module(&bun_core::StringView::borrow_utf8(key));
+    let importer_key = match (
+        importer.strip_prefix(b"/"),
+        importer_with_query.strip_prefix(b"/"),
+    ) {
+        (Some(key), Some(key_with_query))
+            if !ModuleLoader::namespace_and_path(key).0.is_empty()
+                && (is_loaded(key_with_query)? || is_loaded(key)?) =>
+        {
+            key
+        }
+        _ => importer,
+    };
+    let importer_namespace = match ModuleLoader::namespace_and_path(importer_key).0 {
+        _ if bun_paths::is_absolute(importer_key) => &b"file"[..],
+        b"" => &b"file"[..],
+        namespace => namespace,
+    };
+    let resolve_dir = match importer_namespace {
+        b"file" if importer_is_a_file => bun_paths::dirname(importer).unwrap_or(importer),
+        b"file" => importer,
+        _ => b"",
+    };
+    let importer_namespace = bun_core::StringView::borrow_utf8(importer_namespace);
+    let resolve_dir = bun_core::StringView::borrow_utf8(resolve_dir);
     let importer = bun_core::StringView::borrow_utf8(importer);
     let _scope = OnResolveScope::enter(vm);
     let mut answer = None;
@@ -8380,6 +8429,9 @@ fn run_on_resolve(
             &bun_core::StringView::from_bytes(namespace),
             &bun_core::StringView::borrow_utf8(path),
             &importer,
+            &importer_namespace,
+            &resolve_dir,
+            mode,
         )?;
     }
     if answer.is_none() && asks_file_namespace {
@@ -8391,6 +8443,9 @@ fn run_on_resolve(
                 &specifier
             }),
             &importer,
+            &importer_namespace,
+            &resolve_dir,
+            mode,
         )?;
     }
     let Some(on_resolve_plugin) = answer else {

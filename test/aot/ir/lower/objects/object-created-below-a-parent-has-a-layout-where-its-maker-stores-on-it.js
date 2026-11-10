@@ -1,20 +1,40 @@
 // `Object.create(parent)` is an allocation of a layout of the call's own only where the body that makes the object stores on it under a written name. Every other call stays a call and makes a plain object.
+// Below a written null the object is a record. It stays a plain one where the file stores on it under a computed key, hands it to Object.create as the parent or defines on it by a descriptor that lays more than a value or a getter, in a nested function too.
 // RUN: lower
+// CHECK-LABEL: function {{*}}kind=Module
+// CHECK: builtin=ObjectCreate
+// CHECK: [[below]] = NewObject layout=
+// CHECK-NEXT: SetLiteralPrototype [[below]], {{*}} [refusesOtherValues]
+// CHECK-NEXT: [[namespace]] = FinishObject [[below]]
+// CHECK: PropSet [[namespace]], {{*}}key="name"
+// CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
+// CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
+// CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
+// CHECK: builtin=ObjectCreate
+// CHECK: SetLiteralPrototype {{*}} [refusesOtherValues]
+// CHECK-NOT: SetLiteralPrototype
 // CHECK-LABEL: function {{*}}name="anotherNameIsStoredOn"
-// CHECK-NOT: = NewObject
 // CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
 // CHECK-LABEL: function {{*}}name="belowNull"
-// CHECK-NOT: = NewObject
 // CHECK: builtin=ObjectCreate
+// CHECK: [[bare]] = NewObject layout=
+// CHECK-NEXT: SetLiteralPrototype [[bare]], {{*}} [refusesOtherValues]
+// CHECK-LABEL: function {{*}}name="belowNullAndATable"
+// CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
 // CHECK-LABEL: function {{*}}name="belowThePrototypeOfAFunction"
-// CHECK-NOT: = NewObject
 // CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
 // CHECK-LABEL: function {{*}}name="handedOn"
-// CHECK-NOT: = NewObject
 // CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
 // CHECK-LABEL: function {{*}}name="holderOfGetters"
-// CHECK-NOT: = NewObject
 // CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
 // CHECK-LABEL: function {{*}}name="maker"
 // CHECK: builtin=ObjectCreate
 // CHECK: [[head]] = NewObject layout=
@@ -29,11 +49,11 @@
 // CHECK: = NewObject layout=
 // CHECK: = NewObject layout=
 // CHECK-LABEL: function {{*}}name="storedOnByAnotherBody"
-// CHECK-NOT: = NewObject
 // CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
 // CHECK-LABEL: function {{*}}name="tableOfNames"
-// CHECK-NOT: = NewObject
 // CHECK: builtin=ObjectCreate
+// CHECK-NOT: SetLiteralPrototype
 
 export function maker(parent, value) {
   const made = Object.create(parent);
@@ -97,3 +117,28 @@ export function belowNull() {
   made.name = 1;
   return made;
 }
+
+export function belowNullAndATable(keys) {
+  const counts = Object.create(null);
+  counts.total = 0;
+  for (const key of keys) counts[key] = (counts[key] || 0) + 1;
+  return counts;
+}
+
+const namespaceBelowNull = Object.create(null);
+namespaceBelowNull.name = 1;
+const definedOnBelowNull = Object.create(null);
+definedOnBelowNull.name = 1;
+Object.defineProperty(definedOnBelowNull, "got", { get() { return 1; }, set(given) {} });
+const parentBelowNull = Object.create(null);
+parentBelowNull.name = 1;
+export const belowTheParent = () => Object.create(parentBelowNull);
+const tableBelowNull = Object.create(null);
+for (const name of ["a", "b"]) tableBelowNull[name] = true;
+const madeInALoop = [];
+for (let turn = 0; turn < 2; turn++) {
+  const made = Object.create(null);
+  made.name = turn;
+  madeInALoop.push(made);
+}
+export { definedOnBelowNull, madeInALoop, namespaceBelowNull, parentBelowNull, tableBelowNull };

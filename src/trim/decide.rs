@@ -25,6 +25,10 @@ const KEPT_ONLY_WHEN_NAMED: [TrimFeature; 3] = [
     TrimFeature::Webassembly,
 ];
 
+// A megabyte too. Nobody comes by the test runner without naming `Bun.jest`, "bun:test", "bun:test/vitest" or "node:test": its classes hang under no name.
+// The name `test` of `allow` and `remove` also covers `bun test`, which no program enters.
+const TEST_RUNNER_KEPT_ONLY_WHEN_NAMED: Feature = Feature::Test;
+
 // A path that is computed at run time may name a data file on disk: JSON, TOML, text.
 const LOADS_FILES_FROM_DISK: Feature = Feature::DataFileLoaders;
 
@@ -85,7 +89,7 @@ pub fn decide(input: &TrimInput<'_>, edges: &FeatureEdges) -> Decision {
     let mut retained = compute_seed(input, &requirements);
     retain_what_allowed_builtins_need(&mut retained, edges);
     if !request.removes_unused {
-        retain_all_a_program_can_enter(&mut retained, request.is_template);
+        retain_all_a_program_can_enter(&mut retained, input);
     }
     close(&mut retained, edges);
 
@@ -179,8 +183,18 @@ fn retain_what_allowed_builtins_need(retained: &mut RetainedFeatures, edges: &Fe
     }
 }
 
-fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, is_template: bool) {
-    if retained.set.contains(Feature::Bundler) {
+// Evaluated text, a name from run time and code from outside find `Bun.build`, and it bundles for them. `Bun.serve` bundles for its `app`.
+// What else it enters stays for a program whose code names it and may ask it for more than a bundle (`UsedFeatures::names_bun_build`).
+fn may_enter_all_of_bundler(input: &TrimInput<'_>) -> bool {
+    let allows_bundler = |name: &TrimFeature| name.features().contains(Feature::Bundler);
+    input.used.names_bun_build
+        || input.used.has_cause(UnseenCodeCause::ReportMissing)
+        || input.used.has_cause(UnseenCodeCause::FlowResultDisabled)
+        || input.request.allow.iter().any(allows_bundler)
+}
+
+fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, input: &TrimInput<'_>) {
+    if retained.set.contains(Feature::Bundler) && may_enter_all_of_bundler(input) {
         let reason = RetainReason::NeededBy {
             feature: Feature::Bundler,
             strength: EdgeStrength::RecoverableGuard,
@@ -192,7 +206,7 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, is_template: 
     let mut features = FeatureSet::all();
     features.subtract(&Feature::all_outside_compiled_programs());
     // The image lists all of it that the program can enter, and those uses are kept already. A template gets its program later.
-    if !is_template {
+    if !input.request.is_template {
         features.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
     }
     retained.insert_set(&features, RetainReason::NotRequested);
@@ -203,6 +217,7 @@ pub fn features_kept_only_when_named() -> FeatureSet {
     for name in KEPT_ONLY_WHEN_NAMED {
         features.union_with(&name.features());
     }
+    features.insert(TEST_RUNNER_KEPT_ONLY_WHEN_NAMED);
     features
 }
 
@@ -526,6 +541,7 @@ mod tests {
             Feature::IntlLocale,
             Feature::Temporal,
             Feature::WebAssembly,
+            Feature::Test,
         ] {
             assert!(only_when_named.contains(feature), "{feature:?}");
         }
@@ -746,7 +762,10 @@ mod tests {
         for cause in UnseenCodeCause::ALL {
             let used = UsedFeatures::with_cause(cause);
             let decision = decide_request(&used, &TrimRequest::default());
-            let opens_whole_runtime = CAUSES_OPENING_WHOLE_RUNTIME.contains(&cause);
+            let keeps_compilers = matches!(
+                cause,
+                UnseenCodeCause::ReportMissing | UnseenCodeCause::FlowResultDisabled
+            );
             for &feature in Feature::ALL {
                 let is_expected = match cause {
                     UnseenCodeCause::ProgramNotCompiled => false,
@@ -755,7 +774,7 @@ mod tests {
                     }
                     _ => {
                         outside.contains(feature)
-                            && !(opens_whole_runtime && ENTERED_BY_BUNDLER.contains(&feature))
+                            && !(keeps_compilers && ENTERED_BY_BUNDLER.contains(&feature))
                     }
                 };
                 assert_eq!(
@@ -809,6 +828,46 @@ mod tests {
 
         let trimmed = decide_request(&used, &removing_unused());
         assert!(FeatureSet::from_features(&ENTERED_BY_BUNDLER).is_subset_of(&trimmed.unused));
+    }
+
+    #[test]
+    fn program_that_does_not_name_the_bundler_keeps_no_compiler() {
+        let compilers = FeatureSet::from_features(&ENTERED_BY_BUNDLER);
+        let mut reached = using(&[Feature::Bundler]);
+        reached.features[0].is_named = false;
+        reached.names_bun_build = false;
+        let mut serving = using(&[Feature::Serve, Feature::Bundler]);
+        serving.names_bun_build = false;
+        let outside = UsedFeatures::with_cause(UnseenCodeCause::ImportsUncompiledCode);
+        let admitted = UsedFeatures::with_cause(UnseenCodeCause::OptionAdmitsCode);
+        for used in [&reached, &serving, &outside, &admitted] {
+            let decision = decide_request(used, &TrimRequest::default());
+            assert!(!decision.unused.contains(Feature::Bundler));
+            assert!(compilers.is_subset_of(&decision.unused));
+        }
+
+        let mut unsure = reached.clone();
+        unsure.causes.push(UnseenCode {
+            cause: UnseenCodeCause::ReportMissing,
+            witness: None,
+        });
+        let decision = decide_request(&unsure, &TrimRequest::default());
+        assert!(
+            !compilers
+                .iter()
+                .any(|feature| decision.unused.contains(feature))
+        );
+
+        let allowing = TrimRequest {
+            allow: vec![TrimFeature::Bundler],
+            ..TrimRequest::default()
+        };
+        let decision = decide_request(&reached, &allowing);
+        assert!(
+            !compilers
+                .iter()
+                .any(|feature| decision.unused.contains(feature))
+        );
     }
 
     #[test]

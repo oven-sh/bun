@@ -12,12 +12,18 @@ export function idToEnumName(id: string) {
 }
 
 export function createInternalModuleRegistry(basedir: string) {
-  const moduleList = ["bun", "node", "thirdparty", "internal"]
-    .flatMap(dir => readdirRecursive(path.join(basedir, dir)))
-    .filter(file => file.endsWith(".js") || (file.endsWith(".ts") && !file.endsWith(".d.ts")))
-    .map(file => file.slice(basedir.length + 1))
-    .map(x => x.replaceAll("\\", "/"))
-    .sort();
+  const listModules = (root: string) =>
+    ["bun", "node", "thirdparty", "internal"]
+      .map(dir => path.join(root, dir))
+      .filter(dir => fs.existsSync(dir))
+      .flatMap(dir => readdirRecursive(dir))
+      .filter(file => file.endsWith(".js") || (file.endsWith(".ts") && !file.endsWith(".d.ts")))
+      .map(file => file.slice(root.length + 1))
+      .map(x => x.replaceAll("\\", "/"));
+  // A module of compiled programs alone has a text in ahead-of-time and none beside that folder. It is numbered like every other.
+  const moduleList = [
+    ...new Set([...listModules(basedir), ...listModules(path.join(basedir, "ahead-of-time"))]),
+  ].sort();
 
   // Create the Internal Module Registry
   const internalRegistry = new Map();

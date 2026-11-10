@@ -1,0 +1,23 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function* count(to: number): Generator<number, string, unknown> { for (let i = 0; i < to; i++) yield i; return "done"; }
+# function drain(to: number): string { let said = ""; for (const n of count(to)) said += n; return said; }
+# function leaveAtOnce(): string { const made = count(3); const step = made.return("left"); return step.value + " " + step.done + " " + made.next().done; }
+# function throwAtOnce(): string { const made = count(3); try { made.throw(new Error("thrown")); return "no"; } catch (error) { return (error as Error).message + " " + made.next().done; } }
+# print(drain(JSON.parse("3")), leaveAtOnce(), throwAtOnce());
+# -- end of source
+# Behind its first yield a generator asks how it was resumed: to throw, to return, or to go on. The mode is an integer from 0 to 2 in a register. The walk boxed it and compared it twice with boxed constants by the generic form:
+# two entries of the stub Equal.StrictInFlags at the first step of every generator (TypeScript 6: 650,936 in one function).
+# f1 = count
+# RUN: walk f1:CoroutineBody mechanisms=all
+# CHECK: int[0, 2] @Int32 = ResultAt {{*}} index=1
+# CHECK-NOT: = Box
+# CHECK: boolean @Boolean = StrictEq {{*}} form=Integers
+# CHECK-NOT: = Box
+# CHECK: boolean @Boolean = StrictEq {{*}} form=Integers
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 012 left true true thrown true
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 012 left true true thrown true
+# NONE-NEXT: exited with 0

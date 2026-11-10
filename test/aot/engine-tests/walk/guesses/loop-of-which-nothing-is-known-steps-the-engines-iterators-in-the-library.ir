@@ -1,0 +1,205 @@
+# a loop of which nothing is known goes by the protocol: it reads `next` once and calls it for each step. Where that is the engine's own of a generator or of a Map's, a Set's or a list's iterator,
+# the call would enter native code and make an object of what it hands out, which this code alone would get. A function of the library steps such an iterator without either.
+# the test asks the function itself, once: in front of the loop where `next` lies in a parameter, and at the open, which lays its answer down as a fourth word, where the state lies in memory.
+# whatever else `next` is, the step is written out as ever: a call of the library for each step would cost a loop over an iterator of the program's own.
+# over an object of the program's own nothing is laid and nothing is asked but what was always asked.
+# function each(things) { for (const thing of things) { if (keep(thing)) break; } }
+# function eachOfOwn() { for (const thing of { v: 1 }) { if (keep(thing)) break; } }
+# function eachOfDeclared(things: { v: number }) { for (const thing of things) { if (keep(thing)) break; } }     declared, and proven by nobody: no list is expected, so the protocol alone opens the iteration
+# no step of such a loop follows the last one, and no close finds it done: so the iterator and `next` are values, and no cell is made for them.
+# eachClosedBehind: the same, closed once more behind the loop: that close may find the iteration done, so the state lies in memory.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[next]]: {{*}} = PropGet {{*}}key="next"
+# CHECK: = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)|builtin(CompilerHelpersNextOfStepsOverText)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
+# CHECK: [[handedOut]]: {{*}} = CallDirect {{*}}function=f3
+# CHECK: = IsCollectionIteratorClosedMark [[handedOut]]
+# RUN(WRITTEN): walk f1 mechanisms=all
+# WRITTEN: key="done"
+# WRITTEN: key="value"
+# the protocol alone, in values
+# RUN(VALUES): walk f7 mechanisms=all
+# VALUES: = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)
+# VALUES: = CallDirect {{*}}function=f3
+# RUN(NOCELL): walk f7 mechanisms=all
+# NOCELL-NOT: NewHeapWords
+# the state in memory
+# RUN(MEMORY): walk f8 mechanisms=all
+# MEMORY: [[state]]: {{*}} = NewHeapWords numberOfWords=4
+# MEMORY: [[verdict]]: {{*}} = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)|builtin(CompilerHelpersNextOfStepsOverText)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
+# MEMORY: = PutHeapFrameWord [[state]], {{*}}index=3
+# MEMORY: = GetHeapFrameWord [[state]] index=3
+# MEMORY: = CallDirect {{*}}function=f3
+# RUN(ONCE): walk f8 mechanisms=all
+# ONCE-COUNT-1: testedType=builtin(ArrayIteratorPrototypeNext)
+# ONCE-NOT: testedType=builtin(ArrayIteratorPrototypeNext)
+# an object of the program's own
+# RUN(OWN): walk f6 mechanisms=all
+# OWN: [[next]]: {{*}} = PropGet [[iterator]] key="next"
+# OWN: = Call [[next]], [[iterator]]
+# RUN(NOTHING): walk f6 mechanisms=all
+# NOTHING-NOT: NewHeapWords
+# NOTHING-NOT: function=f3
+# NOTHING-NOT: builtin(MapIteratorPrototypeNext)
+# RUN(WITHHELD): walk f1 mechanisms=none+DirectCalls
+# WITHHELD-NOT: function=f3
+# WITHHELD-NOT: numberOfWords=4
+
+layout L0 module=m0 fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=IteratorConsumersCloseIterator function=f4
+runtimefunction id=IteratorConsumersCloseIteratorAfterThrow function=f5
+runtimefunction id=IteratorConsumersOpenIterator function=f2
+runtimefunction id=IteratorConsumersStepIterator function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f6
+    v4 = NewClosure function=f7
+    v5 = NewClosure function=f8
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b5():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    v10 = ToBoolean v9
+    Branch v10 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v1
+    v12 = Undefined
+    Return v12
+  b5() role=IterationCleanup subject=v1:
+    v13 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v13
+}
+function f2 name="openIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersOpenIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="stepIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersStepIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, v0
+    Return v2
+}
+function f4 name="closeIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0
+    v3 = Undefined
+    Return v3
+}
+function f5 name="closeIteratorAfterThrow" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIteratorAfterThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0
+    v3 = Undefined
+    Return v3
+}
+function f6 name="eachOfOwn" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3() handler=b5():
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="keep" [isFreeName]
+    v11 = Call v10, -, v7
+    v12 = ToBoolean v11
+    Branch v12 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v3
+    v14 = Undefined
+    Return v14
+  b5() role=IterationCleanup subject=v3:
+    v15 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v15
+}
+function f7 name="eachOfDeclared" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b5():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    v10 = ToBoolean v9
+    Branch v10 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v1
+    v12 = Undefined
+    Return v12
+  b5() role=IterationCleanup subject=v1:
+    v13 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v13
+}
+function f8 name="eachClosedBehind" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    IteratorClose v1
+    v7 = Undefined
+    Return v7
+  b3() handler=b5():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="keep" [isFreeName]
+    v10 = Call v9, -, v5
+    v11 = ToBoolean v10
+    Branch v11 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v1
+    v13 = Undefined
+    Return v13
+  b5() role=IterationCleanup subject=v1:
+    v14 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v14
+}

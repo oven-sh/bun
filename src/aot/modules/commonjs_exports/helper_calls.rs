@@ -93,7 +93,8 @@ impl<'a> CallReader<'a, '_> {
             Helper::ReExport => self.read_re_export(&arguments),
             Helper::CreateBinding => self.read_create_binding(known, &arguments),
             Helper::MarkAsModule => self.read_mark_as_module(&arguments),
-            Helper::ClassPrivateFieldGet
+            Helper::ExportStarInLine
+            | Helper::ClassPrivateFieldGet
             | Helper::ClassPrivateFieldSet
             | Helper::ClassPrivateFieldIn
             | Helper::ExportSetter
@@ -106,6 +107,8 @@ impl<'a> CallReader<'a, '_> {
             | Helper::ToPropertyKey
             | Helper::ToPrimitive
             | Helper::Typeof
+            | Helper::DefineNormalProperty
+            | Helper::PublicField
             | Helper::CopyProperties
             | Helper::ToCommonJs
             | Helper::ToEsModule

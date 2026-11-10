@@ -1,6 +1,6 @@
 // Where there is such a file the warnings are appended to it, so they are printed here. Elsewhere it cannot be opened and they go to the standard error.
 // Env: NODE_REDIRECT_WARNINGS=/dev/stdout
-// STATISTIC: ImageFunctionsEmitted <= 70 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
+// STATISTIC: ImageFunctionsEmitted <= 70
 Object.defineProperty(process, "pid", { value: 1 });
 process.argv0 = "/somewhere/else//a tool//";
 process.emitWarning("first");

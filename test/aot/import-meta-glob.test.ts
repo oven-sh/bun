@@ -158,15 +158,6 @@ describe.concurrent.each(modes)("%s", mode => {
     ]);
   });
 
-  // TODO: --aot refuses every macro at build time (TS100053: Macros are disabled).
-  test.todo("beside a macro", async () => {
-    const files = { "proj/src/macro.ts": `export const made = () => "made at the build";` };
-    const code = `console.log("SAID", made(), Object.keys(import.meta.glob("./dir/[ab].ts")).join());`;
-    const head = `import { made } from "./macro.ts" with { type: "macro" };\n`;
-    const { said } = await runEntry("entry.test.ts", head + inTest(mode, code), mode, files);
-    expect(said).toEqual(["SAID made at the build ./dir/a.ts,./dir/b.ts"]);
-  });
-
   test("a file that assigns its own function calls that", async () => {
     const code = `
       (import.meta as any).glob = (pattern: string) => ({ ["own " + pattern]: 1 });

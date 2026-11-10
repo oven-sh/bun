@@ -16,7 +16,7 @@
 # CHECK: field L2.0 "first"
 # CHECK-NEXT: field L2.1 "plain" appended
 # CHECK-NEXT: field L3.0 "only"
-# CHECK-NEXT: field L3.1 "fixed" appended form=read-only.not-configurable.
+# CHECK-NEXT: field L3.1 "fixed" appended proven=i32 writers-known form=read-only.not-configurable.
 # CHECK: layout L0 {{*}} filled-under-computed-keys
 # CHECK: layout L2 {{*}} filled-under-computed-keys
 # RUN(PLAN): plan layouts mechanisms=all

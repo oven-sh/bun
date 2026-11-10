@@ -82,6 +82,8 @@ pub struct UsedFeatures {
     pub locales: UsedLocales,
     /// False: the build has compiled the code that every Worker of the program starts from, or the program starts none.
     pub starts_workers_from_unseen_code: bool,
+    /// The program's code names `Bun.build` and may ask it for more than a bundle: by `check`, `dts`, `compile`, `plugins` or a `target` that starts with "bun-". `Bun.serve` brings the bundler too, for its `app`, and only bundles with it.
+    pub names_bun_build: bool,
 }
 
 impl UsedFeatures {
@@ -94,6 +96,7 @@ impl UsedFeatures {
             }],
             locales: UsedLocales::Unknown(None),
             starts_workers_from_unseen_code: true,
+            names_bun_build: false,
         }
     }
 
@@ -109,6 +112,7 @@ impl UsedFeatures {
             causes: Vec::new(),
             locales: UsedLocales::Unknown(None),
             starts_workers_from_unseen_code: true,
+            names_bun_build: features.contains(&Feature::Bundler),
         }
     }
 

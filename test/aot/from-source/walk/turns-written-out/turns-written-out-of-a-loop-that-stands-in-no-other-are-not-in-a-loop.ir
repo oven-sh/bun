@@ -1,0 +1,21 @@
+# Three turns in a function of its own are written out, so the code has no loop: no block bears the mark of a loop, and the forms that only loops may take stay away.
+# The same three turns inside another loop are written out as well and stand in the loop around them: they keep the mark.
+# -- source: main.js
+# function alone(list) { let total = 0; for (let i = 0; i < 3; i++) total += list[i]; return total; }
+# function around(list, turns) { let total = 0; for (let k = 0; k < turns; k++) { for (let i = 0; i < 3; i++) total += list[i]; } return total; }
+# print(alone([1, 2, 3]) + " " + around([1, 2, 3], 2));
+# -- end of source
+# f1 = alone, f2 = around
+# RUN(ALONE): walk f1 mechanisms=all-Inlining
+# ALONE-LABEL: code f1:Body
+# ALONE-NOT: isInLoop=true
+# RUN(AROUND): walk f2 mechanisms=all-Inlining
+# AROUND-LABEL: code f2:Body
+# AROUND-NOT: int[0, 3] @Int32) isInLoop=true isLoopHead=true
+# AROUND: isInLoop=true isLoopHead=true
+# AROUND: = GetArrayElement
+# RUN(COUNT): compile LoopsWrittenOutInNoLoop mechanisms=all-Inlining
+# COUNT: statistic LoopsWrittenOutInNoLoop 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 6 12
+# ANSWERS-NEXT: exited with 0

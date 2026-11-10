@@ -1,4 +1,5 @@
 import * as b from "bun-builtins-table";
+import { prototypeBehindGlobalListsAllMembers } from "../collect-webcore-tables.ts";
 import { methodsOfSubtleCrypto } from "./methods-of-subtle-crypto.ts";
 import { cookiesOfRequestsCell, parametersOfRequestsCell, parametersOfRoutesWithoutAnyCell } from "./native-cells.ts";
 import { answering, constructing, promiseOf } from "./native-code.ts";
@@ -25,6 +26,10 @@ const lockedNativeValue = (structureSlot: string): b.ClassOptions => ({
 const constructorOnly = (path: b.BuiltinPath, options: b.ClassOptions = {}) =>
   b.class(path, { hasPrototype: false, ...options });
 
+// WorkerMessagingProxy.cpp :334 :339 :464-562 :619, Worker.cpp :217: what native code makes for the listeners of a started Worker and of the worker's own global object. The row of addEventListener says that an Event is made.
+const eventsOfWorker = ["MessageEvent", "ErrorEvent", "CloseEvent"].map(name =>
+  b.createdIn(b.instance(name), b.nativeMemory),
+);
 const startedWorker = {
   returns: b.instance("Worker").fresh,
   capability: "js",
@@ -34,6 +39,7 @@ const startedWorker = {
 
 const codecStream = (name: string) =>
   webCoreClass(name, b.cppClass(`JS${name}`, `streams/JS${name}.h`), {
+    prototypeListsAllMembers: prototypeBehindGlobalListsAllMembers(name),
     construct: [
       {
         args: { format: b.string, options: b.any.optional },
@@ -44,7 +50,19 @@ const codecStream = (name: string) =>
         uses: { options: [b.runsTransitively(b.named("highWaterMark", "size", "level"), "ToPrimitive")] },
         implementation: b.hostCall,
       },
-      b.otherwise,
+      // JSCompressionStreamShared.cpp :31-47: what is no text is made one of; where that text names no format, the refusal prints the value as it was handed in.
+      {
+        args: { format: b.any.optional, options: b.any.optional },
+        returns: b.instance(name).fresh,
+        capability: "js",
+        throws: true,
+        runsOnlyOperandCode: true,
+        uses: {
+          format: [b.runs("ToPrimitive"), b.printedByFormatter()],
+          options: [b.runsTransitively(b.named("highWaterMark", "size", "level"), "ToPrimitive")],
+        },
+        implementation: b.hostCall,
+      },
     ],
   });
 
@@ -175,7 +193,25 @@ export default b.declarations(
     },
   }),
   webCoreClass("AbortSignal", b.cppClass("JSAbortSignal"), { extends: "EventTarget" }),
-  webCoreClass("ReadableStream", b.cppClass("JSReadableStream", "streams/JSReadableStream.h")),
+  // JSReadableStreamPrototype::finishCreation(): the rows of its C++ table, the tag and the method for util.inspect, which are collected, and what stands here. It also lays
+  // an accessor under a private name of Bun's, which no text can spell.
+  webCoreClass("ReadableStream", b.cppClass("JSReadableStream", "streams/JSReadableStream.h"), {
+    prototypeListsAllMembers: true,
+    proto: Object.fromEntries(
+      ["readable", "errored", "disturbed"].map(state => [
+        `@@@nodejs.stream.${state}`,
+        {
+          getter: b.bool,
+          capability: "heap",
+          throws: true,
+          uses: { this: b.inspected },
+          reads: externalState,
+          implementation: b.generic,
+        } satisfies b.GetterField,
+      ]),
+    ),
+  }),
+  b.same("ReadableStream.prototype.@@asyncIterator", "ReadableStream.prototype.values"),
   codecStream("CompressionStream"),
   codecStream("DecompressionStream"),
 
@@ -184,11 +220,15 @@ export default b.declarations(
     extends: "EventTarget",
     construct: [
       // What the URL and `preload` name is loaded into the global of the Worker, which begins a program of its own.
-      { ...startedWorker, args: { url: b.string, options: b.undefined }, uses: { url: [b.workerEntryPath] } },
+      {
+        ...startedWorker,
+        args: { url: b.string, options: b.undefined },
+        uses: { url: [b.workerEntryPath, ...eventsOfWorker] },
+      },
       {
         ...startedWorker,
         args: { url: b.any.optional, options: b.any.optional },
-        uses: { url: [b.everything, b.workerEntryPath], options: [b.everything] },
+        uses: { url: [b.everything, b.workerEntryPath, ...eventsOfWorker], options: [b.everything] },
       },
     ],
   }),

@@ -2,11 +2,14 @@
 # function run(sources: Array<{ x: number; y: number }>): string { const said: Array<number | boolean> = []; for (let i = 0; i < sources.length; i++) { said.push(i); let kept: (() => number) | undefined; const made = { tag: i, ...sources[i], read: (kept = () => i) }; said.push(made.read === kept, made.read() === i); } return said.join(" "); }
 # console.log(run([{ x: 1, y: 2 }, { x: 3, y: 4 }, JSON.parse('{"y":7,"q":8}')]));
 # -- end of source
-# The red control of the judge of cells. A literal with a spread is filled in sight: what stands between the copy and the definitions is walked in front of the tests of the form and again in its closed arm.
-# A closure that somebody else holds too may not stand there: it would be made twice on the way through the closed arm, and `made.read === kept` would be false, in silence: plain Bun prints true.
-# THE LIE is the command walk-where-every-closure-stands-behind-copies, which no build can say: every closure may stand there.
-# Where code is verified, Walker::build() notes an operation of the body that is given a second cell in one walk of its block. Behind the sweep the build stops by name where both cells are needed, no way reaches
-# the second but through the block of the first, and the first is used behind the second before its own block is passed again: two cells stand for one operation at one time.
-# DIAGNOSTIC: OperationMakesTwoCells
+# This is the failing control of the duplicate-cell check. The walk tracks the properties of an object literal with a spread while the literal is filled.
+# The operations between the copy and the definitions are visited before the guards of that form and again in its generic branch.
+# A closure that something else also holds must not be among them. It would be allocated twice on the path through the generic branch, and `made.read === kept` would silently be false.
+# Plain Bun prints true.
+# The injected fault is the command walk-where-every-closure-stands-behind-copies, which no build can request: it allows every closure there.
+# Where code is verified, Walker::build() records an operation of the body that is given a second cell in one visit of its block.
+# After the sweep, the build fails with a named internal error if both cells are needed, no path reaches the second except through the block of the first,
+# and the first is used after the second before its own block is passed again. In that case two cells represent one operation at one time.
+# DIAGNOSTIC: DuplicateCellAllocation
 # RUN: walk-where-every-closure-stands-behind-copies f1 mechanisms=all
 # CHECK: the walk of f1:Body failed

@@ -13,6 +13,6 @@
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 3,4,5,6,7,8,9,10,11,12,13,14,15,16
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime
 # HELD: 3,4,5,6,7,8,9,10,11,12,13,14,15,16
 # HELD-NEXT: exited with 0

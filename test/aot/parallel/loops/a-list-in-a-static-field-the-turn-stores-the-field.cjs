@@ -1,4 +1,4 @@
-// STATISTIC: StaticFieldsAskedInFrontOfLoops >= 0
+// STATISTIC: StaticFieldGuardsHoisted >= 0
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 class Store { static rows = [1.5, 2.5, 3.5, 4.5]; static other = [10.5, 20.5, 30.5, 40.5, q]; }

@@ -1,4 +1,4 @@
-// STATISTIC: QuietLoopsBoughtForListsFoundFromInFront >= 1
+// STATISTIC: InvariantArrayLoopsVersioned >= 1
 const rounds = Number(process.argv[2] ?? 3);
 function grid(height, width, step) {
   const rows = [];

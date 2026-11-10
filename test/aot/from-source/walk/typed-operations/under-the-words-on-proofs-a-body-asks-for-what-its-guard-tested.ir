@@ -8,9 +8,10 @@
 # print(byValue(JSON.parse("0"), JSON.parse('"ab"'), JSON.parse('"cd"')));
 # print("went on");
 # -- end of source
-# The Body behind a ParameterGuard believes what the guard tested. Only the build's verifier held a call of the Body to that; under the words on proofs the Body took `tested` as told, and under CheckProofsAtEntries
-# it was not asked at all, since the fused entry lies in front of the guard.
-# THE LIE: testing=RowSaysLess:Callee/f1/TestsOfGuard: the emitter lets every test of the guard of f1 pass; the walk, the judge of calls and Validate see a right guard. Two texts in boxes of `undefined|number` compare equal.
+# The Body after a ParameterGuard relies on what the guard tested. Only the build's verifier checked a call of the Body against that.
+# With the proof-checking switches the Body took `tested` as proven, and with CheckProofsAtEntries it was not checked at all, because the fused entry comes before the guard.
+# Fault injection, testing=UnderstateEffects:Callee/f1/TestsOfGuard: the emitter lets every test of the guard of f1 pass. The walk, the verifier of calls and Validate see a correct guard.
+# Two strings in boxes of `undefined|number` compare equal.
 # f1 = same
 # RUN: plan units mechanisms=all
 # CHECK: unit f1:ParameterGuard (JSValue, JSValue) -> (JSValue) tests (undefined|number, undefined|number)
@@ -19,17 +20,17 @@
 # RIGHT-NEXT: 0
 # RIGHT-NEXT: went on
 # RIGHT-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f1/TestsOfGuard
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/TestsOfGuard
 # LIE: 3 -1
 # LIE-NEXT: 3
 # LIE-NEXT: went on
-# RUN(ENTRIES): run-in-shell mechanisms=all testing=CheckProofsAtEntries,RowSaysLess:Callee/f1/TestsOfGuard
+# RUN(ENTRIES): run-in-shell mechanisms=all testing=CheckProofsAtEntries,UnderstateEffects:Callee/f1/TestsOfGuard
 # ENTRIES: 3 -1
-# ENTRIES: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ENTRIES: found string in an argument
 # ENTRIES-NOT: went on
 # ENTRIES: crashed
-# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,RowSaysLess:Callee/f1/TestsOfGuard
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Callee/f1/TestsOfGuard
 # PROOFS: 3 -1
-# PROOFS: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# PROOFS: found string in an argument
 # PROOFS-NOT: went on
 # PROOFS: crashed

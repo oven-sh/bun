@@ -1,5 +1,12 @@
 // What a compiled module of WebAssembly and its exports say about themselves.
 // STATISTIC: WasmFunctionsCompiled >= 22
+// STATISTIC: WasmOptimizedCopies = 22
+// STATISTIC: WasmBaselineCopies = 22
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 22
+// COUNTER in every build: WasmInstancesUsingImageCode = 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 2
 import path from "../module-facts/m.wasm";
 import fs from "node:fs";
 const tried = f => { try { const r = f(); return typeof r === "bigint" ? r + "n" : Array.isArray(r) ? "[" + r + "]" : String(r); } catch (e) { return e instanceof WebAssembly.RuntimeError ? "RuntimeError" : e instanceof WebAssembly.LinkError ? "LinkError" : e instanceof WebAssembly.CompileError ? "CompileError" : e instanceof RangeError ? "RangeError" : e instanceof TypeError ? "TypeError" : "thrown " + String(e); } };

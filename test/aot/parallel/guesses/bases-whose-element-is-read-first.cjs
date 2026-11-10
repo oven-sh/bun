@@ -1,5 +1,5 @@
 // A local whose first use is its element: texts, lists, views, objects, getters and nothing. The values come out of a field, so no function has a parameter that its uses could tell.
-// STATISTIC: BasesAskedThatAnElementReadsFirst >= 1
+// STATISTIC: ArraysSpeculatedFromIndexedReads >= 1
 "use strict";
 const out = [], box = JSON.parse("{}"), values = [JSON.parse('[1,[2],{"v":3},"(",null]'), "((a b", "", [], new Uint8Array([40, 1]), { length: 2, 0: "(", 1: "x" }, { get length() { out.push("l"); return 1; }, get 0() { out.push("0"); return "("; } }, null, 7, ["(", "(", "x"], (function () { return arguments; })("(", { v: 1 }), new Proxy(["("], {}), "\u4e2d(", new String("(s")];
 function first() { const s = box.v; let c = 0, i = 0; while (s[i] === "(") i++; for (; i < s.length; i++) if (s[i] === " ") c++; return c * 10 + i; }

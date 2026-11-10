@@ -1,4 +1,4 @@
-// STATISTIC: RowsOfCallsOfMethodsOfOneTableBehindOneTest >= 1
+// STATISTIC: CollectionCallRunsGuardedOnce >= 1
 const OUT: unknown[] = [];
 class Sym { name: unknown; decl: Sym | undefined; flags: number; constructor(name: unknown, flags: number) { this.flags = flags; this.name = name; this.decl = undefined; } }
 function add(table: Map<unknown, Sym>, bases: Sym[]): void {

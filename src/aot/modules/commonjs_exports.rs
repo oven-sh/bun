@@ -1,12 +1,12 @@
-mod faces;
+mod facades;
 mod helper_calls;
 mod inline_star;
 mod summary;
 #[cfg(test)]
 mod tests;
 
-use self::faces::Faces;
-pub(super) use self::faces::collect_seen_namespaces;
+use self::facades::Facades;
+pub(super) use self::facades::collect_seen_namespaces;
 use self::inline_star::{InlineStar, InlineStarInput, find_inline_stars};
 use self::summary::{ExportsSummary, StoredName, summarize_file, summarize_inner_modules};
 use super::bindings::SyntheticExportId;
@@ -771,7 +771,7 @@ struct TakenObjects {
     imported: Vec<ModuleRef>,
     defaults: Vec<ModuleRef>,
     called: Vec<(ModuleRef, Atom)>,
-    names_way_to_module_objects: bool,
+    reaches_module_objects: bool,
 }
 
 impl Held {
@@ -872,7 +872,7 @@ fn find_taken_objects(
     let mut taken = TakenObjects::default();
     let mentions = text.builtins.module_object_mentions().iter();
     let mut mentions = mentions.map(|mention| (mention.owner, mention.object_use));
-    taken.names_way_to_module_objects = mentions.any(|mention| match mention {
+    taken.reaches_module_objects = mentions.any(|mention| match mention {
         (ModuleObjectOwner::EntryPoint, _) if !commonjs_file_may_be_main => false,
         (_, ModuleObjectUse::Tested) => false,
         (ModuleObjectOwner::EntryPoint, _) => true,
@@ -880,12 +880,11 @@ fn find_taken_objects(
             object_use,
             ModuleObjectUse::Parent
                 | ModuleObjectUse::Children
-                | ModuleObjectUse::HandedOn
-                | ModuleObjectUse::HolderHandedOn
+                | ModuleObjectUse::Escaped
+                | ModuleObjectUse::HolderEscaped
         ),
     });
-    taken.names_way_to_module_objects |=
-        text.bind.runs_tests && text.builtins.reaches_module_cache();
+    taken.reaches_module_objects |= text.bind.runs_tests && text.builtins.reaches_module_cache();
     let mut holders = Vec::new();
     let mut distinct_candidates: Option<Vec<ModuleRef>> = None;
     for (site, answer) in text.analysis.import_sites.iter().zip(&scan.sites) {
@@ -2270,12 +2269,12 @@ fn scan_own_text(
     certain_helper: &dyn Fn(ExprId) -> Option<HelperShape>,
     is_half: bool,
     is_entry_point: bool,
-    runs_again: bool,
+    may_be_reevaluated: bool,
 ) -> ModuleText {
     let (hir, bound, decisions) = (text.hir, text.bound, text.decisions);
     let needs_wrapped_body = needs_wrapped_body(text);
     let mut scan = begin_scan(text, sites, summary, certain_helper, None, is_half);
-    scan.found.has_names &= !needs_wrapped_body && !is_entry_point && !runs_again;
+    scan.found.has_names &= !needs_wrapped_body && !is_entry_point && !may_be_reevaluated;
     scan.found.needs_wrapped_body = needs_wrapped_body;
     for &(name, binding) in bound.ident_bindings() {
         if decisions.is_dead_expr(name) {
@@ -2417,7 +2416,7 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
             &certain_helper,
             is_half,
             is_entry_point[file.idx()],
-            modules.runs_again(file),
+            modules.may_be_reevaluated(file),
         );
         found.push(ModuleText {
             is_marker_ignored_by_imports: interop.export_rule
@@ -2479,7 +2478,7 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         all_taken.imported.append(&mut taken.imported);
         all_taken.defaults.append(&mut taken.defaults);
         all_taken.called.append(&mut taken.called);
-        all_taken.names_way_to_module_objects |= taken.names_way_to_module_objects;
+        all_taken.reaches_module_objects |= taken.reaches_module_objects;
     }
     texts.forget_markers_that_may_change(modules, &all_taken);
     texts
@@ -2699,7 +2698,7 @@ impl CommonJsTexts {
                 }
             }
         }
-        if taken.names_way_to_module_objects {
+        if taken.reaches_module_objects {
             for text in self.modules.iter_mut().filter(|text| !text.is_marker_fixed) {
                 text.marker = None;
             }
@@ -2803,7 +2802,7 @@ pub struct CommonJsExports {
     copied_names: FxHashMap<(ModuleRef, Atom), bool>,
     stored_by_other_files: FxHashMap<(ModuleRef, Atom), bool>,
     exported_bindings: Vec<Sym>,
-    faces: Faces,
+    facades: Facades,
 }
 
 impl CommonJsExports {
@@ -2864,9 +2863,9 @@ impl CommonJsExports {
         exports.look_at_modules_whose_getters_read_copies();
         exports.look_at_modules_that_call_through_their_object();
         exports.look_at_modules_whose_object_importers_see(input, tables, imports);
-        let mut faces = Faces::new(input, tables, imports);
-        faces.decide(&exports);
-        exports.faces = faces;
+        let mut facades = Facades::new(input, tables, imports);
+        facades.decide(&exports);
+        exports.facades = facades;
         exports
     }
 
@@ -3117,11 +3116,11 @@ impl CommonJsExports {
         if fallen.is_empty() {
             return;
         }
-        let mut faces = core::mem::take(&mut self.faces);
+        let mut facades = core::mem::take(&mut self.facades);
         for module in fallen {
-            faces.decide_behind(self, module);
+            facades.decide_behind(self, module);
         }
-        self.faces = faces;
+        self.facades = facades;
     }
 
     pub(super) fn call_through_namespace(&mut self, module: ModuleRef, name: Atom) {
@@ -3140,9 +3139,9 @@ impl CommonJsExports {
             return;
         }
         self.look_at(module);
-        let mut faces = core::mem::take(&mut self.faces);
-        faces.see_namespace(self, file);
-        self.faces = faces;
+        let mut facades = core::mem::take(&mut self.facades);
+        facades.see_namespace(self, file);
+        self.facades = facades;
     }
 
     pub fn shape(&self, module: ModuleRef) -> Shape {

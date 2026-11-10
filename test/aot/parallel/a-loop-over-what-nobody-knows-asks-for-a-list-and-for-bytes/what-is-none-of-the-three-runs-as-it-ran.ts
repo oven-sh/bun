@@ -1,5 +1,5 @@
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 1
-// STATISTIC: TurnsThatBeginAgain >= 7
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 1
+// STATISTIC: IterationRestartsEmitted >= 7
 // The table is a Uint32Array in a static field that may as well hold a value from elsewhere: nothing is expected of it, and it is none of the three that the front asks for. It gets a copy of its own, walked as the loop was walked before there was a front: the bytes are still read out of a view tested in front, eight turns at a time.
 class Crc32 {
   private static readonly table: Uint32Array = (globalThis as any).tableMadeElsewhere ?? Crc32.build();

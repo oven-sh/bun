@@ -4,7 +4,7 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: layouts=[L3]
-# CHECK: = ShapeTest {{*}}layouts=[L0] [refusesMarkedObjects]
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
 # CHECK-NOT: layouts=[L3]
 # CHECK: Return
 # -- source: a-layout-that-only-names-guess-at-is-not-asked-in-front-of-the-own-literal.cjs

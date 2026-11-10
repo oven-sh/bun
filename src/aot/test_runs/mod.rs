@@ -180,7 +180,7 @@ pub(crate) enum WhoseFile {
 #[derive(Default)]
 pub(crate) struct RunContents {
     pub whose: Vec<WhoseFile>,
-    pub loads_compiled_files_alone: Vec<bool>,
+    pub rejects_uncompiled_code: Vec<bool>,
     pub spies_under_any_name: bool,
     pub names_spied: Vec<Atom>,
     pub modules_replaced_in_text: Vec<Atom>,
@@ -229,8 +229,8 @@ impl RunContents {
     pub(crate) fn plan_of_files(&self) -> TestRunPlan {
         let whose = self.whose.iter();
         TestRunPlan {
-            finds_builtins_read_only: whose.map(|&it| it == WhoseFile::OfProduct).collect(),
-            loads_compiled_files_alone: self.loads_compiled_files_alone.clone(),
+            has_read_only_builtins: whose.map(|&it| it == WhoseFile::OfProduct).collect(),
+            rejects_uncompiled_code: self.rejects_uncompiled_code.clone(),
             ..TestRunPlan::default()
         }
     }
@@ -455,14 +455,14 @@ pub(crate) fn list_names_that_tests_may_add(
 
 pub(crate) fn collect_run_contents(
     input: RunInput<'_, '_>,
-    (whose, loads_compiled_files_alone): (Vec<WhoseFile>, Vec<bool>),
+    (whose, rejects_uncompiled_code): (Vec<WhoseFile>, Vec<bool>),
 ) -> RunContents {
     let started = Instant::now();
     let (files, atoms) = (input.files, &input.files.atoms);
     let texts_written = settle_texts_written(&input, &whose);
     let mut run = RunContents {
         whose,
-        loads_compiled_files_alone,
+        rejects_uncompiled_code,
         members_written_as_reads: list_members_written_as_reads(input.replaced_builtins),
         loads: collect_loads_of_run(files, input.options),
         ..RunContents::default()
@@ -579,10 +579,11 @@ pub(crate) fn collect_run_contents(
 
 #[derive(Default)]
 pub(crate) struct TestRunPlan {
-    pub finds_builtins_read_only: Vec<bool>,
-    pub loads_compiled_files_alone: Vec<bool>,
+    pub has_read_only_builtins: Vec<bool>,
+    pub rejects_uncompiled_code: Vec<bool>,
     pub is_changed_on_disk_by_run: Vec<bool>,
     pub may_be_evicted: Vec<bool>,
+    pub is_reloadable: Vec<bool>,
 }
 
 impl TestRunPlan {
@@ -590,7 +591,7 @@ impl TestRunPlan {
         match module {
             ModuleRef::File(file)
             | ModuleRef::Inner { file, .. }
-            | ModuleRef::Face(file)
+            | ModuleRef::Facade(file)
             | ModuleRef::Check(file) => set.get(file.idx()).copied().unwrap_or(false),
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
         }
@@ -600,11 +601,11 @@ impl TestRunPlan {
 pub(crate) fn flags_of_module(graph: &ModuleGraph, module: ModuleRef) -> ModuleFlags {
     let plan = graph.test_run();
     let mut flags = ModuleFlags::default();
-    if TestRunPlan::has(&plan.finds_builtins_read_only, module) {
-        flags |= ModuleFlags::FINDS_BUILTINS_READ_ONLY;
+    if TestRunPlan::has(&plan.has_read_only_builtins, module) {
+        flags |= ModuleFlags::HAS_READ_ONLY_BUILTINS;
     }
-    if TestRunPlan::has(&plan.loads_compiled_files_alone, module) {
-        flags |= ModuleFlags::LOADS_COMPILED_FILES_ALONE;
+    if TestRunPlan::has(&plan.rejects_uncompiled_code, module) {
+        flags |= ModuleFlags::REJECTS_UNCOMPILED_CODE;
     }
     if TestRunPlan::has(&plan.is_changed_on_disk_by_run, module) && graph.is_code_of_program(module)
     {

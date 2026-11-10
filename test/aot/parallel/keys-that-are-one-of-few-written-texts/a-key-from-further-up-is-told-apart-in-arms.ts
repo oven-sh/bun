@@ -1,4 +1,4 @@
-// STATISTIC: AccessesToldApartByTextsOfKey >= 3
+// STATISTIC: AccessesDispatchedByKeyString >= 3
 const said: unknown[] = [];
 class Point { x = 1; y = 2; z = 3; }
 function read(p: Point, k: "x" | "y") { return p[k]; }

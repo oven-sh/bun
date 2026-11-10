@@ -5,7 +5,7 @@
 # function sum(start) { let total = start; for (let place = 0; place < box.page.rows.length; place++) total = total + box.page.rows[place]; return total; }
 # print(sum([].length + 1));
 # -- end of source
-# RUN(COUNT): compile LoopsBuiltForListsAndForBytes mechanisms=all
-# COUNT: statistic LoopsBuiltForListsAndForBytes 1
+# RUN(COUNT): compile ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# COUNT: statistic ArrayOrUint8ArrayLoopsVersioned 1
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 11.5

@@ -1,8 +1,8 @@
-// STATISTIC: RoomsGivenByListsReadUnderCounters >= 1
-// STATISTIC: StoresThatLengthenTheirListInEveryTurn >= 1
+// STATISTIC: CapacitiesReservedFromSourceArrays >= 1
+// STATISTIC: IndexedStoresCompiledAsAppends >= 1
 // Under: --aot-check=Validate: the storage that the literal is born with is what every access names
 // Under: --aot-harden=proof-checks: the raise asks at the run what the walk has shown: the position is the length and lies below the room
-// Under: --aot-testing=FailGuesses: every guess of the typed copy fails once and the turn begins again as it is written
+// Under: --aot-testing=FailSpeculations: every guess of the typed copy fails once and the turn begins again as it is written
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: what the walk has proven of the list is asked of memory behind the second reservation
 'use strict';
 const sum = (list) => { let text = list.length + ":", all = 0; for (let i = 0; i < list.length; i++) { if (!(i in list)) text += "_" + i; else if (typeof list[i] !== "number") text += typeof list[i] + i; else if (list[i] !== list[i]) text += "n" + i + ","; else all += list[i] * (i + 1); } return text + all; };

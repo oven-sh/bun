@@ -1,5 +1,5 @@
 // f() stands between: what it stores is lost, as the language says.
-// STATISTIC: StaticFieldsAccessedOnLookOfTheirArms >= 1
+// STATISTIC: StaticFieldGuardsReused >= 1
 "use strict";
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }

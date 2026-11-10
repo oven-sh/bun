@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// docs/compiler/compatibility.mdx, behind the table of what a test can't replace.
+// docs/compiler/debugging.mdx, "What a test can't replace".
 const works = {
   "a written name": `Object.prototype.alpha = 1; return {}.alpha;`,
   "a constant": `const name = "bravo"; Object.prototype[name] = 1; return {}.bravo;`,

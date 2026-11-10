@@ -22,8 +22,8 @@ static constexpr ModuleID publicFileThatRequiresInternalFile { 2u };
 
 static constexpr ASCIILiteral textWithInternalFile = R"IR(layout L0 module=m1 fields=[{key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Require completes=true}]
-module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
-module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f2
+module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
+module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f2
 entry module=m0
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
@@ -45,8 +45,8 @@ function f2 module=m2 kind=Module role=Library results=[{type=anything}] {
 
 static constexpr ASCIILiteral textWithInternalFileThatIsStoredInto = R"IR(layout L0 module=m1 fields=[{key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Require completes=true}]
-module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
-module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f2
+module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
+module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f2
 entry module=m0
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
@@ -73,9 +73,9 @@ static JSObject* recordHandedToWhoeverAsksRegistry(LoadedProgram& program)
     std::optional<uint32_t> registryID = modulesOf(program.instance()).data(internalFile).registryID();
     AOT_TEST_CHECK(registryID);
     AOT_TEST_CHECK(hasBuiltinModule(program.realm(), *registryID));
-    JSValue handedOut = evaluateBuiltinModule(program.realm(), *registryID);
-    AOT_TEST_CHECK(handedOut.isObject());
-    return asObject(handedOut);
+    JSValue moduleValue = evaluateBuiltinModule(program.realm(), *registryID);
+    AOT_TEST_CHECK(moduleValue.isObject());
+    return asObject(moduleValue);
 }
 
 static bool isFrozenForTest(LoadedProgram& program, JSObject* record)

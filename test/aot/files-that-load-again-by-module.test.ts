@@ -75,7 +75,7 @@ test("beside a file that the build sees taken out, the others still load once", 
   });
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
   expect({ stdout: stdout.split("\n").slice(1), stderr: exitCode ? stderr : "", exitCode }).toEqual({
-    stdout: ["Cannot take '/beside.ts' out of require.cache", "0 1", ""],
+    stdout: ["Cannot delete '/beside.ts' from require.cache", "0 1", ""],
     stderr: "",
     exitCode: 0,
   });

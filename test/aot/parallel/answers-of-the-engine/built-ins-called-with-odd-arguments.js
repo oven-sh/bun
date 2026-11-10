@@ -1,5 +1,5 @@
 // A call of a known built-in is typed by its rows whatever it is handed: objects whose valueOf throws, symbols, big integers, nothing at all. What is computed from the answer goes by that type, so each answer must be of it.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function attempt(way) { try { return way(); } catch (error) { return error.name; } }
 function tell(value) { return typeof value === "symbol" ? "a symbol" : typeof value === "bigint" ? value.toString() + "n" : typeof value === "object" && value !== null ? "an object" : typeof value === "function" ? "a function" : value; }

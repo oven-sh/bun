@@ -34,35 +34,30 @@ bun compile ./main.ts --explain
 ```txt
 11 | for (const item of items) total += item.price;
                                         ^
-note: 1. unknown-object: An object from untyped code is used as this type here, so it can have any shape.
+note: 1. unknown-object: The compiler doesn't know the shape of this object, so the access is a lookup or needs a shape check.
    at main.ts:11:36
 
 note: 1 of 1 untyped access
 note: 1 of these runs in a loop
-note: why (loose-type): The value comes from 'any', 'unknown', 'object', '{}', 'Function' or a bare type parameter.
-note: fix: build a new object of this type from it where it enters typed code.
+note: fix: that depends on where the object comes from. See the table at the link below.
 note: https://bun.com/docs/compiler/explain#unknown-object
 ```
 
-| Line                        | What it tells you                       |
-| --------------------------- | --------------------------------------- |
-| `1. unknown-object`         | The rank and the [cause](#causes)       |
-| `at`                        | The line that runs slower               |
-| `1 of 1 untyped access`     | How many accesses the fix speeds up     |
-| `1 untyped operator`        | Operators on a value of unknown type    |
-| `3 indirect calls`          | Calls where the callee isn't known      |
-| `1 of these runs in a loop` | How many are in loops, which rank first |
-| `types:`                    | The types that the cause slows down     |
-| `why`                       | How the value got past TypeScript       |
-| `fix:`                      | What to change                          |
+| Line                        | What it tells you                          |
+| --------------------------- | ------------------------------------------ |
+| `1. unknown-object`         | The rank and the [cause](#causes)          |
+| `at`                        | The line that runs slower                  |
+| `1 of 1 untyped access`     | The entry's share of your untyped accesses |
+| `1 untyped operator`        | Operators on a value of unknown type       |
+| `1 indirect call`           | Calls where the callee isn't known         |
+| `1 of these runs in a loop` | How many are in loops                      |
+| `fix:`                      | What to change                             |
 
 The location is the line that uses the untyped value, not the line where the value starts. Here that's the read of `item.price`, and the value comes from the `JSON.parse` four lines above it.
 
-Entries whose operations are in loops come first, so five accesses in a loop rank above a hundred at startup. After that, entries are sorted by how many instructions types would save. Nothing is measured. A loop counts if the operation is inside it after inlining, and the count is `inLoops` in JSON.
+Entries in loops come first, then the ones where types would save the most instructions. That's an estimate. Nothing is measured.
 
-An access can have more than one cause, so a fix can uncover the next one.
-
-The report shows the first 20 entries, and `--explain=json` prints all of them.
+The report shows the first 20 entries. `--explain=json` prints all of them.
 
 ## What is counted
 
@@ -81,196 +76,59 @@ Dependencies: 3.1% of property accesses are one load: 210 free, 1,320 tested, 5,
 
 Only `free` counts as typed. An access is `free` when the compiler knows every shape the object can have at that point, from your types or by tracking the object from where it's created. An `any` or a `.js` file doesn't break that by itself.
 
-A property access is a read, a write, an `in` test or a `delete`. Method calls, array and `Map` operations, and calls like `console.log()` aren't counted. Properties of objects that Bun gives you, such as `req.params.id` or `process.env.PORT`, are counted and are always lookups. So a small server has a low percentage, which doesn't matter outside of hot code.
+A property access is a read, a write, an `in` test or a `delete`. Array elements and `Map` operations aren't counted. Properties of objects that Bun gives you, such as `req.params.id` or `process.env.PORT`, are always lookups. So a small server has a low percentage, which doesn't matter outside of hot code.
 
-Bun counts after optimization, so the total moves when you change code nearby. Watch the percentage.
+Bun counts after optimization, so the total moves when you change code nearby.
 
 ## Other reports
 
-| Flag                    | Lists                                                                      |
-| ----------------------- | -------------------------------------------------------------------------- |
-| `--explain=json`        | Every entry, one JSON object per line                                      |
-| `--explain=guards`      | [Type guards that can fail](/compiler/debugging#find-the-guards-that-fail) |
-| `--explain=trim`        | [What `--trim` kept, and why](/compiler/size#see-what-the-compiler-found)  |
-| `--explain=allocations` | Where each object is allocated                                             |
+| Flag                    | Lists                                                        |
+| ----------------------- | ------------------------------------------------------------ |
+| `--explain=json`        | Every entry, one JSON object per line                        |
+| `--explain=guards`      | [Type guards that can fail at run time](/compiler/debugging) |
+| `--explain=guards-json` | The same guards, one JSON object per line                    |
+| `--explain=trim`        | [What `--trim` kept, and why](/compiler/size)                |
+| `--explain=allocations` | Where objects are allocated                                  |
 
 You can pass `--explain` more than once. In `Bun.build`, `compile: { aotExplain: ["guards"] }` adds the lines to `result.logs`.
 
 ## Causes
 
-The first line of an entry has one of these codes. The `why` line, if there is one, has one too.
-
-In the messages, untyped code is code that the compiler can't see: a [module loaded at run time](/compiler/compatibility#dynamic-imports), [code from a string](/compiler/compatibility#code-from-strings), or a native function that Bun has no description of. A `.js` file that's compiled with your program isn't untyped code.
-
-## Values from outside
+The first line of an entry has one of these codes.
 
 ### unknown-object
 
-An object that the compiler didn't see being created is used as one of your types. Every access it can reach then needs a shape check. Take the value as `unknown`, check it, and build a new object from it.
+The compiler doesn't know the shape of the object on this line, so the access is a lookup or needs a shape check.
+
+| The object                                                                                                   | What to do                                                              |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Comes from `JSON.parse`, `response.json()`, `eval` or a module loaded at run time                            | Check its fields and build a new object from them                       |
+| Comes from Bun or Node.js, like `process.env` or `fs.statSync()`                                             | Read what you need outside your loops                                   |
+| Is an instance of a class that extends `Array`, `Error` or another built-in                                  | Fine for errors. Otherwise hold the built-in object in a field          |
+| It or another instance of its class is passed to `Object.assign`, `Object.defineProperty` or `Object.create` | Assign the fields yourself, declare them in the class, or use `extends` |
+| Is an array, a string or a function that's used as an object type, like `{ length: number }`                 | Pass an object literal or a class instance                              |
+
+To build a new object, take the value as `unknown` and check each field.
 
 ```ts
-function readConfig(value: unknown): Config {
-  if (typeof value !== "object" || value === null) throw new Error("config: not an object");
-  const { host, port } = value as Record<string, unknown>;
-  if (typeof host !== "string") throw new Error("config: host must be a string");
-  if (typeof port !== "number") throw new Error("config: port must be a number");
-  return { host, port };
+function readItem(value: unknown): Item {
+  if (typeof value !== "object" || value === null) throw new Error("item: not an object");
+  const { sku, price } = value as Record<string, unknown>;
+  if (typeof sku !== "string") throw new Error("item: sku must be a string");
+  if (typeof price !== "number") throw new Error("item: price must be a number");
+  return { sku, price };
 }
 
-const config: Config = JSON.parse(text); // [!code --]
-const config = readConfig(JSON.parse(text)); // [!code ++]
+items.push(saved); // [!code --]
+items.push(readItem(saved)); // [!code ++]
 ```
 
-The reads inside `readConfig` are still lookups, but they run once, at the edge of your program. The entries below call a function like this one `readItem` or `readOrder`.
-
-### external-data
-
-The value comes from outside the program, through `JSON.parse`, `response.json()`, `structuredClone`, a message or a file loaded at run time. Check its fields and build a new object from them, as in [unknown-object](#unknown-object).
-
-### runtime-code
-
-The value comes from `eval`'d code or from a module loaded at run time. Keep that code away from the value, or build a new object from what it returns.
-
-### builtin-result
-
-The value is the result of a built-in function whose result type the compiler doesn't know. Narrow the result before you use it.
+The reads inside `readItem` are still lookups, but they run once per item and not in your loops.
 
 ### unknown-callee
 
-The compiler can't tell which function a call reaches, as in `handlers[name](request)`, so the result has no type. Call the function directly, or narrow the result.
-
-### unknown-callee-result
-
-The value was returned by a call like the one in [unknown-callee](#unknown-callee). Give the callee a function type, or narrow the result.
-
-### declaration-only
-
-The type comes from a `declare` or a `.d.ts` file, and nothing checks that against the code. Narrow the value, or compile the package from [its typed source](/compiler/libraries).
-
-### caught-value
-
-Anything can be thrown, so a caught value has no type. Narrow it first, with `if (error instanceof Error)`.
-
-### untyped-collection
-
-Something untyped adds to this array, `Map` or `Set`, so its elements can be anything. Write `items.push(readItem(JSON.parse(line)))`, not `items.push(JSON.parse(line))`.
-
-## Objects you hand to other code
-
-The location is the statement that passes the object out. Everything the object leads to goes with it: the objects in its fields, their classes, and the methods of those classes. So one `console.log(state)` in a debug logger can be the location for accesses in many files. Print the fields you need, or a string.
-
-### passed-to-untyped-code
-
-You pass an object to code that the compiler can't see, which could add, delete or redefine its properties. One such call slows down every access to the type, so pass the fields instead: `plugin.publish(box.width, box.height)`.
-
-`Object.defineProperty(box, ...)` and `Object.create(box)` get this code too. Declare the property in the class, or use `extends`.
-
-### written-by-untyped-code
-
-Code that the compiler can't see can write to a field of this type, so the field may hold anything. Keep the object out of that code, or pass only the fields it needs.
-
-### written-by-runtime-code
-
-The same as [written-by-untyped-code](#written-by-untyped-code), on a `why` line.
-
-### read-from-shared-object
-
-You hand an object to code that the compiler can't see, so whatever you read from it afterwards has no type. Hand over a copy, or only the fields that code needs.
-
-### passed-to-builtin
-
-You pass the object to a built-in that may change its properties, such as `Object.assign(box, overrides)`. Assign the fields yourself, or pass a copy.
-
-### called-by-unknown-code
-
-You hand a function to code that the compiler can't see, which can call it with anything. Hand over a small wrapper that checks its arguments: `plugin.onOrder((body: unknown) => handleOrder(readOrder(body)))`.
-
-### called-by-runtime-code
-
-The same as [called-by-unknown-code](#called-by-unknown-code), on a `why` line.
-
-### called-by-builtin
-
-A built-in calls your function, the way `sort` calls its callback, so the arguments aren't proven. There's nothing to fix if the guard passes. It costs a few instructions.
-
-## Classes
-
-### builtin-base
-
-The class extends a built-in such as `Array` or `Error`. The built-in constructor allocates the instances, so their fields can't sit at fixed offsets. That's fine for error classes. For a class with many instances, hold the built-in object in a field instead.
-
-### untyped-base
-
-The class extends a class from code that the compiler can't see. Extend one of your own classes, or keep the other object in a field.
-
-### class-not-top-level
-
-The class is declared in a function or a loop, so every run creates a new class. Move it to the top level of the module.
-
-### other-new-target
-
-The class is constructed with a different `new.target`, through `Reflect.construct` or a subclass from untyped code. Construct it with `new`.
-
-### other-this
-
-The method can run with a different `this`, because it's read off its object and called later, or called with `call`, `apply` or `bind`. Pass `() => counter.reset()` instead of `counter.reset`.
-
-### read-before-init
-
-A field or variable can be read before it's initialized, for example by a method that the constructor calls too early. Initialize it in the declaration, or first in the constructor.
-
-## Loose types and casts
-
-### loose-type
-
-The value comes from `any`, `unknown`, `object`, `{}`, `Function` or a bare type parameter. Narrow it, or give the source a precise type.
-
-### unsound-cast
-
-An `as` cast changes the type and nothing checks it. Remove the cast, or narrow the value first. A cast to a wider type, such as `circle as Shape`, costs nothing.
-
-### suppressed-error
-
-A `@ts-ignore`, `@ts-expect-error` or `@ts-nocheck` hides a type error. Fix the error.
-
-### unchecked-value
-
-A value that nothing checked against its declared type reaches the access. The code on the `why` line says where it got past TypeScript.
-
-### unexpected-shape
-
-An object arrives with a shape that its declared type doesn't include, usually through a cast like `{ side: 2 } as unknown as Circle`. Trace it back from the entry's location.
-
-### not-a-plain-object
-
-An array, a function, a primitive or a built-in object is used as an object type. TypeScript allows that where the properties match, but the value keeps its own shape. Pass an object literal or a class instance.
-
-### no-fixed-layout
-
-The object is built by a function that the compiler found no fixed layout for. Create it with a class or an object literal.
-
-### element-may-be-missing
-
-The index may be out of bounds, or the array may have holes, so the read can give `undefined`. Check the index, or loop with `for...of`.
-
-### direct-eval
-
-A direct `eval()` in this scope can reassign the variable. Use `(0, eval)(code)`, or move the `eval` into another function.
-
-## Limits of the compiler
+The compiler can't tell which function a call reaches, as in `handlers[name](request)` or a method of an [unknown object](#unknown-object). The call is indirect and its result has no type. Call the function directly. If you can't, narrow the result so that the code after it is typed.
 
 ### lost-track
 
-The compiler stopped tracking the objects that reach this access. Give the value a declared type, or split the function.
-
-### analysis-disabled
-
-Part of the analysis was left out of the build. No `bun compile` option does that, only tools for working on the compiler. Please [report it](https://github.com/oven-sh/bun/issues) and include the entry.
-
-### unknown
-
-The compiler recorded no reason for the slow path. Please [report it](https://github.com/oven-sh/bun/issues) and include the entry.
-
-### unclassified
-
-The same as [unknown](#unknown), on a `why` line.
+An operator such as `+`, `<` or `===` runs on a value whose type the compiler doesn't know. The entry usually has the same location as an `unknown-object` or `unknown-callee` entry, and goes away with it.

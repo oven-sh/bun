@@ -10,6 +10,7 @@
 // A build that leaves out what nobody reads has to know what reads. `kit.size` reads one name. `Object.keys(kit)` lists them all, and so do `for (const k in kit)`, a spread, `JSON.stringify(kit)` and
 // `Object.entries(kit)`, some of which read the values too and some of which do not. A name that reaches the namespace through a star and comes out of a CommonJS file is found only when that file has run.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 const askeds: [string, string][] = [
   [
@@ -123,7 +124,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laid < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laid++;
   }
   console.log(laid);
@@ -133,7 +134,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

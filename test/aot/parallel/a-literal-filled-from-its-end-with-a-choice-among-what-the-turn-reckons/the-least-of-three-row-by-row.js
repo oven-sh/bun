@@ -1,8 +1,8 @@
-// STATISTIC: StoresThatLengthenTheirListInEveryTurn >= 1
-// STATISTIC: LiteralsOfNumbersBornForWhatLoopStores >= 1
+// STATISTIC: IndexedStoresCompiledAsAppends >= 1
+// STATISTIC: ArrayLiteralsAllocatedForLoops >= 1
 // Under: --aot-check=Validate: the storage that the literal is born with is what every access names
 // Under: --aot-harden=proof-checks: the raise asks at the run what the walk has shown: the position is the length and lies below the room
-// Under: --aot-testing=FailGuesses: every guess of the typed copy fails once and the turn begins again as it is written
+// Under: --aot-testing=FailSpeculations: every guess of the typed copy fails once and the turn begins again as it is written
 // Under: --aot-testing=CheckProofsAtRunTime: what the walk has proven of the row is asked of memory
 'use strict';
 function steps(left, right) {

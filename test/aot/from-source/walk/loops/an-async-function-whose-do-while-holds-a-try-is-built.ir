@@ -20,8 +20,8 @@
 # run1(0, 9).then(said => print("SAID " + said));
 # -- end of source
 # A guard. For two hours the records of pending blocks outlived the block of the text in which they were made while a loop was being built twice. A snapshot that is put back lays them back whole while edges stay in kept code, so a record counted no arrival at a block that edges led to: the start of the copy for the rest was called unreachable, never begun, and the build stopped: the walk is over and an edge leads to a block that has no end.
-# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
-# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: SAID NaN|caught2
 # SHELL-NEXT: exited with 0

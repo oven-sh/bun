@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 "use strict";
 // A place of the holder is empty: what lies under that index on an object above it answers: a number, a getter, nothing; the object above is changed between the calls.
 const said = [];

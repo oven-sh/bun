@@ -5,21 +5,25 @@
 # function f() { let s = 0, n = 0; for (let i = 0; i < data[w].length; i++) { s = s + data[w][i]; cursorKey = otherKey; const secondKey = cursorKey; cursorKey = w; n = n + data[secondKey].length; } return s * 1000 + n; }
 # print(f(), f());
 # -- end of source
-# The row under a key is remembered under two VALUES: the holder and the key as they were read in front of the loop. A read that is walked asks for it by what its own operands were bound to when they were read.
-# A first form of this named the operand by what its VARIABLE held when the read was walked: `const second = cursor` read while `cursor` held another record, `cursor = data` behind it,
-# and `second[w]` took the row of `data`: 78144 for 78072, in silence, and no check of ours saw it. The lie names operands so again. Where proofs are checked, a row taken from what is remembered is held against the
-# operation that runs no code, asked of the operands themselves in the turn: under the lie that check stops at the read.
-# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
-# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# The row found under a key is remembered under two values: the holder and the key as they were read in the preheader.
+# When the walk visits a read, it looks the row up by the values that the read's own operands were bound to when they were read.
+# The first version of this optimization identified an operand by what its variable held when the read was visited.
+# `const second = cursor` was read while `cursor` held another value, `cursor = data` followed, and `second[w]` took the row of `data`.
+# The program silently printed 78144 instead of 78072, and none of our checks caught it. The injected fault, testing=MisidentifyHoistedReadOperands, identifies operands that way again.
+# Where proofs are checked, a row that is taken from the remembered one is checked against the operation that runs no code, applied to the operands themselves inside the iteration.
+# With the fault injected, that check crashes the process at the read.
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 78036 78036
 # RIGHT-NEXT: exited with 0
 # RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # HELD: 78036 78036
 # HELD-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow
+# RUN(LIE): run-in-shell mechanisms=all testing=MisidentifyHoistedReadOperands
 # LIE: 78144 78144
 # LIE-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow
-# STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,MisidentifyHoistedReadOperands
+# STOPPED: bun: internal AOT error: redundancy elimination check failed
+# STOPPED-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # STOPPED: crashed with

@@ -24,6 +24,7 @@
 # CHECK-NEXT: base 1 base 2 {{*}}
 # CHECK-NEXT: exited with 0
 # RUN(OTHER): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0).run.other = 1; print("went on"); };
-# OTHER: AOT: AddName of a closure of the function f{{*}} (target)
+# OTHER: bun: internal AOT error: object mutation check failed
+# OTHER-NEXT: AddProperty on a closure of 'target'
 # OTHER-NOT: went on
 # OTHER: crashed with

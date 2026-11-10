@@ -1,5 +1,5 @@
 // A class below Error: the read of the stack runs the program's own function, which stores the field.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class E extends Error { constructor(message) { super(message); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 Error.prepareStackTrace = function (error, sites) { error.n = 50; return "made"; };

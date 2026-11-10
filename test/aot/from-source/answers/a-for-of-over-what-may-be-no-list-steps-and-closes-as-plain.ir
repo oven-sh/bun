@@ -96,7 +96,7 @@
 # -- end of source
 # What is stepped is held to be a list by its type alone: each call goes through a name that anybody may write. The lines below are what plain Bun prints.
 # RUN: run-in-shell mechanisms=all
-# RUN: run-in-shell mechanisms=all testing=FailGuesses
+# RUN: run-in-shell mechanisms=all testing=FailSpeculations
 # RUN: run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # RUN: run-in-shell mechanisms=all testing=IgnoreExpectedTypes
 # CHECK: 0 [1,2,3] ends | [] ends | [1,undefined,3] ends | [1.5,2.5] ends | [a,null,undefined,[object Object]] ends |

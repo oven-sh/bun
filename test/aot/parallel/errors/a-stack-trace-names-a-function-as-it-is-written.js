@@ -1,4 +1,4 @@
-// A DECLARED DIFFERENCE. docs/compiler/compatibility.mdx, Smaller differences: `error.stack` after `fn.displayName = "x"` or `defineProperty(fn, "name", ..)`: "The name that you wrote". A call site's getFunctionName() gives the same.
+// Differs from `bun run` by design: `error.stack` after `fn.displayName = "x"` or `defineProperty(fn, "name", ..)` has the name that you wrote. A call site's getFunctionName() gives the same.
 // Under `bun run` the four lines in the middle end in shown, defined, definedArrow and shownMethod, and the last in shownToo. The expected output is written down, so that a change of the answer is seen.
 const top = stack => /at (\S+)/.exec(stack.split("\n")[1])[1];
 function written() { return top(new Error("x").stack); }

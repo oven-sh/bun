@@ -9,7 +9,10 @@ const UINT32_MAX = 2 ** 32 - 1;
 
 const js = { capability: "js", throws: true } as const;
 /** The bytes of the view are written once the operation has ended, and then the callback is called. */
-const fillsLater = { buf: [...table.handedOver, table.writesContents()], callback: table.handedOver };
+const fillsLater = {
+  buf: [...table.retainedByNativeCode, table.writesContents()],
+  callback: table.retainedByNativeCode,
+};
 /** The callback goes to `process.nextTick` with `undefined` and the number, and nowhere else. */
 const queuesCallback = {
   callback: [

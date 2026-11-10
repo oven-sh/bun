@@ -1,5 +1,5 @@
-// STATISTIC: RowsAskedOnceWhereStretchesStoreIntoThem >= 1
-// STATISTIC: RowsAskedOnceWhereStretchesStoreIntoThem >= 1
+// STATISTIC: RowStoreRegionsGuarded >= 1
+// STATISTIC: RowStoreRegionsGuarded >= 1
 "use strict";
 function pushed(...values) { const row = []; for (const value of values) row.push(value); return row; }
 function rows() { return pushed(pushed(0.5, 1.5, 2.5, 3.5, 4.5, 5.5), pushed(6.5, 7.5, 8.5, 9.5, 10.5, 11.5), pushed(12.5, 13.5, 14.5, 15.5, 16.5, 17.5)); }

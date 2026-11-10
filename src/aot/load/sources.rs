@@ -7,6 +7,7 @@ use std::sync::{Arc, OnceLock};
 
 use bun_ast::{Loader, Location};
 use bun_builtin_sources::{Manifest, VIRTUAL_ROOT};
+use bun_paths::string_paths::NodeModulesScope;
 use bun_sema::program::{CodeView, FileId, Files};
 use bun_sema::resolve::HostPayload;
 
@@ -247,11 +248,12 @@ impl Sources {
         &self.entries[file.idx()].diagnostic_path
     }
 
+    /// By the rule of the gate of `bun test --coverage`, not by `is_in_node_modules`: the project may be a package folder itself.
     pub fn is_in_coverage_report(&self, file: FileId) -> bool {
         let path = self.diagnostic_path(file);
-        self.kind(file) == SourceKind::Program
-            && !bun_core::strings::contains(path, b"/node_modules/")
-            && !bun_core::strings::contains(path, b"\\node_modules\\")
+        let is_package_file = bun_core::strings::contains(path, b"node_modules")
+            && NodeModulesScope::below_root(&self.project_root).file_is_inside_node_modules(path);
+        self.kind(file) == SourceKind::Program && !is_package_file
     }
 
     fn find_source_path(&self, file: FileId) -> Option<Vec<u8>> {

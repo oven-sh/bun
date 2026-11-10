@@ -5801,6 +5801,39 @@ describe.concurrent("toThrow() with a value that is not a string, a RegExp, a cl
     );
   });
 
+  test('a hook from "bun:test" compares the message, also for a test from "vitest"', async () => {
+    // toEqual() follows Jest in that hook too.
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { beforeEach } from "bun:test";
+        import { test, expect } from "vitest";
+        const outcome = fn => {
+          try {
+            fn();
+            return "passes";
+          } catch {
+            return "fails";
+          }
+        };
+        const thrower = () => {
+          throw new Error("m", { cause: 1 });
+        };
+        const outcomes = () =>
+          [
+            outcome(() => expect(thrower).toThrow(new Error("m"))),
+            outcome(() => expect(thrower).toThrow(new TypeError("m"))),
+            outcome(() => expect(new Error("m", { cause: 1 })).toEqual(new Error("m"))),
+          ].join(" ");
+        beforeEach(() => console.log("hook:", outcomes()));
+        test("vitest", () => console.log("test:", outcomes()));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["hook: passes passes fails", "test: passes fails passes"],
+      exitCode: 0,
+    });
+  });
+
   test("vitest asks the equality testers first, and compares as without them if none decides", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

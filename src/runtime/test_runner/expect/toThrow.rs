@@ -55,11 +55,16 @@ impl Thrown {
 
 /// The `message` to compare before deep equality, which calls no `message` getter: a DOMException's, a ResolveMessage's, an error class's.
 fn message_checked_first(global: &JSGlobalObject, expected: JSValue) -> JsResult<Option<JSValue>> {
-    // Deep equality compares the properties of a plain object.
-    if !expected.is_object() || expected.js_type() == JSType::FinalObject {
+    // Deep equality compares the properties of a plain object, which is a `CompiledObject` under `--aot`.
+    if !expected.is_object() || matches!(expected.js_type(), JSType::FinalObject | JSType::CompiledObject) {
         return Ok(None);
     }
     expected.fast_get(global, BuiltinName::Message)
+}
+
+/// Whether to compare a value as Vitest does. Deep equality follows the entry that runs, and a hook from "bun:test" runs for tests from "vitest" too.
+fn compares_like_vitest(expect: &Expect, global: &JSGlobalObject) -> bool {
+    global.bun_vm().is_running_vitest_entry && expect.is_vitest()
 }
 
 fn is_dom_exception(value: JSValue) -> bool {
@@ -112,13 +117,16 @@ impl Comparison {
             return Ok(Comparison::Pattern(expected));
         }
 
+        // `to_throw` lets a number, boolean, bigint or symbol through only for Vitest's rule.
+        if !expected.is_object() {
+            return Ok(Comparison::Value(expected));
+        }
         // Vitest compares any other value like toEqual() does.
-        if expect.is_vitest() {
+        if compares_like_vitest(expect, global) {
             // A callable Proxy is a class to Vitest: `typeof expected === "function"`.
             let is_class = is_function || expected.is_callable();
             return Ok(if is_class { Comparison::Class(expected) } else { Comparison::Value(expected) });
         }
-        debug_assert!(expected.is_object());
         // Jest 30 also compares the cause and the class: https://github.com/oven-sh/bun/issues/8479
         Ok(match expected.fast_get(global, BuiltinName::Message)? {
             Some(message) => Comparison::Message(message),
@@ -207,7 +215,7 @@ impl Expect {
                     if s.length() == 0 {
                         break 'brk JSValue::ZERO;
                     }
-                } else if value.is_null() || !this.is_vitest() {
+                } else if value.is_null() || !compares_like_vitest(&this, global) {
                     // Vitest also takes a number, boolean, bigint or symbol.
                     let mut fmt = Formatter::new(global).with_quote_strings(true);
                     return Err(global.throw(format_args!(

@@ -2586,6 +2586,17 @@ describe.concurrent("bun fmt", () => {
       ],
       ["  a: |1\n    x\n   y\n", "a: |1\n  x\n y\n", "a: |1\n    x\n   y\n"],
       ["-   - |1\n       x\n      y\n", "- - |1\n     x\n    y\n", "- - |1\n       x\n      y\n"],
+      // A `,` in a flow collection is only allowed after an entry. Prettier prints one in an empty collection that breaks.
+      [
+        `a:   &${"x".repeat(80)} {}\n`,
+        `a:\n  &${"x".repeat(80)} {\n\n  }\n`,
+        `a:\n  &${"x".repeat(80)} {\n    ,\n  }\n`,
+      ],
+      [
+        `a:   &${"x".repeat(80)} []\n`,
+        `a:\n  &${"x".repeat(80)} [\n\n  ]\n`,
+        `a:\n  &${"x".repeat(80)} [\n    ,\n  ]\n`,
+      ],
     ])("%j", async (before, after, byPrettier) => {
       expect(after).not.toBe(byPrettier);
       expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
@@ -2593,6 +2604,24 @@ describe.concurrent("bun fmt", () => {
       expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
       expect(result.exitCode).toBe(0);
       const checked = await format({ "a.yaml": before }, ["--debug-check"]);
+      expect(checked.stderr).toBe("");
+      expect(checked.exitCode).toBe(0);
+    });
+
+    test.each([
+      // Prettier 3.9.9 prints `a:\n  {\n    ,\n  }\n` and `- [\n    ,\n  ]\n`, which do not parse.
+      ["a:   {}\n", "a:\n  {\n\n  }\n"],
+      ["-   []\n", "- [\n\n  ]\n"],
+      // The `,` after an entry stays.
+      ["a: {b: 1}\n", "a:\n  {\n    b: 1,\n  }\n"],
+    ])("a flow collection that breaks at --print-width=1: %j", async (before, after) => {
+      expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
+      const result = await format({ "a.yaml": before, "b.yaml": after }, ["--print-width=1"], {
+        reads: ["a.yaml", "b.yaml"],
+      });
+      expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
+      expect(result.exitCode).toBe(0);
+      const checked = await format({ "a.yaml": before }, ["--debug-check", "--print-width=1"]);
       expect(checked.stderr).toBe("");
       expect(checked.exitCode).toBe(0);
     });

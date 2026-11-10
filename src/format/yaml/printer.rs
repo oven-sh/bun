@@ -1096,7 +1096,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.line(Line::Soft);
             }
         }
-        if self.trailing_comma {
+        // A `,` in a flow collection is only allowed after an entry. Prettier prints `{⏎,⏎}` for an
+        // empty `{}` that breaks, which does not parse.
+        if self.trailing_comma && !node.children.is_empty() {
             self.out.start_if_break(0);
             self.out.token(",");
             self.out.otherwise();

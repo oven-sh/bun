@@ -482,10 +482,10 @@ export {
     expect(stderr).toBe("");
     const { logs, typed } = JSON.parse(stdout);
     // On Windows the comment above a module of `files` is its path from the drive, behind `../` for each directory.
-    const withoutModulePathsOnWindows = isWindows ? withoutModulePaths : (text: string) => text;
-    expect({ logs, typed: withoutModulePathsOnWindows(typed) }).toEqual({
+    const byFileName = isWindows ? typed.replace(/^\/\/ .*\//m, "// ") : typed;
+    expect({ logs, typed: byFileName }).toEqual({
       logs: [],
-      typed: withoutModulePathsOnWindows(`// index.ts
+      typed: `// index.ts
 interface Options {
   n: number;
 }
@@ -496,7 +496,7 @@ function util(options: Options): string {
 export {
   util
 };
-`),
+`,
     });
     expect(exitCode).toBe(0);
   });

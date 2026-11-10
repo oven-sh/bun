@@ -1011,10 +1011,8 @@ fn warn_expansion_limit(file_path: &[u8], key: &[u8]) {
     Output::flush();
 }
 
-/// Total bytes one file's `$NAME` references may substitute in. Every value is expanded
-/// against the already expanded values above it, so without a bound a few hundred bytes of
-/// `A1=${A0}${A0}...` grow tenfold per line. Only substituted bytes count: a value's own text
-/// is bounded by the file size.
+/// Total bytes one file's `$NAME` references may substitute in. Without a bound, a few hundred
+/// bytes of `A1=${A0}${A0}...` grow tenfold per line.
 pub const MAX_EXPANSION_BYTES: usize = 4 * 1024 * 1024;
 
 /// A value's references would substitute in more bytes than the file's remaining budget.
@@ -1273,8 +1271,7 @@ impl<'a, F: EnvFallback> Parser<'a, F> {
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
     /// `\x` skipped); malformed forms fall through as literal text. The `:-`
-    /// default clause is expanded recursively. Every referenced value that is substituted in
-    /// is charged to `budget`.
+    /// default clause is expanded recursively. Each substituted value is charged to `budget`.
     fn expand_into(
         fallback: &F,
         map: &Map,

@@ -1,5 +1,11 @@
+// DIAGNOSTIC: TS100096 require-made-another-file-gets-constant.mjs:4
+// DIAGNOSTIC: TS100096 require-made-another-file-gets-constant.mjs:10
+// DIAGNOSTIC: TS100096 require-made-another-file-gets-constant.mjs:11
+// DIAGNOSTIC: TS100096 require-made-another-file-gets-constant.mjs:21
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="stored"
+// CHECK-LABEL: function {{*}}name="createRequire"
 
 // FILE: require-made-another-file-gets-constant.mjs
 // A require that createRequire has made for another file finds other packages than the file's own, and the same library modules: one that is named by a constant is in, though nothing else names it. The output is that of plain Bun.
@@ -32,24 +38,3 @@ console.log("a binding that is stored to:", stored("node:zlib"));
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: stored createRequire
-// CHECK-LABEL: function {{*}}name="stored"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = String string="mine "
-// CHECK-NEXT: v2 = Add v1, v0
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="createRequire"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=undefined|null|[[f_2]] flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

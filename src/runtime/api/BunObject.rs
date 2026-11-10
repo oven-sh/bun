@@ -782,9 +782,32 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     mode: ResolveMode,
 ) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
+        Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
+            Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
+        }
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
     }
+}
+
+/// `require.resolve` in a program compiled ahead of time answers where the file lay when the program was built, under a computed name as under one that the build has read.
+/// A path in the executable is its own answer.
+fn find_source_path_of_compiled_file(
+    specifier: &BunString,
+    resolved: &BunString,
+) -> Option<BunString> {
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    let program = graph.compiled_program.as_ref()?;
+    program.root_on_build_machine()?;
+    if bun_standalone_graph::is_bun_standalone_file_path(specifier.to_utf8().slice()) {
+        return None;
+    }
+    let path = resolved.to_utf8();
+    let public_root =
+        bun_standalone_graph::StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX
+            .as_bytes();
+    let source_path = program.source_path_of_public(public_root, path.slice())?;
+    Some(BunString::clone_utf8(&source_path))
 }
 
 fn resolve_with_args<const IS_FILE_PATH: bool>(
@@ -843,7 +866,7 @@ pub(crate) fn resolve_sync(
         return Err(global_this.throw_invalid_arguments(format_args!("parent must be a string")));
     };
     let mode = if esm {
-        ResolveMode::Esm
+        ResolveMode::EsmResolve
     } else {
         ResolveMode::Require
     };
@@ -895,7 +918,7 @@ pub(crate) fn bun_resolve_sync(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -959,33 +982,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
-        )?
-        .into_js(global)
-    })
-}
-
-bun_output::declare_scope!(importMetaResolve, visible);
-
-// HOST_EXPORT(Bun__resolveSyncWithStrings, c)
-pub(crate) fn bun_resolve_sync_with_strings(
-    global: &JSGlobalObject,
-    specifier: &BunString,
-    source: &BunString,
-    is_esm: bool,
-) -> JSValue {
-    bun_output::scoped_log!(
-        importMetaResolve,
-        "source: {}, specifier: {}",
-        source,
-        specifier
-    );
-    jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
-            global,
-            specifier,
-            source,
-            ResolveMode::from_ffi_bools(is_esm, false),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -1454,11 +1451,15 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
+    // `bun run --aot` and `bun test --aot` hold a compiled program and are no executable that was shipped.
+    JSValue::js_boolean(
+        global_this.bun_vm().standalone_module_graph.is_some()
+            && !crate::cli::run_compiled::runs_compiled_code(),
+    )
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    use crate::webcore::blob::{Blob, BlobExt as _};
+    use crate::webcore::blob::BlobExt as _;
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
     let Some(graph) =
         StandaloneModuleGraph::get_ref().filter(|_| !bun_jsc::compiled_program::runs_in_place())
@@ -1473,7 +1474,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // We don't really do that right now, but exposing the output source
         // code here as an easily accessible Blob is even worse for them.
         // So let's omit any source code files from the list.
-        if !file.appears_in_embedded_files_array() {
+        if !file.appears_in_embedded_files_array() || graph.is_file_for_file_system_alone(file) {
             continue;
         }
         sort_indices.push(index as u32);
@@ -1493,12 +1494,8 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         let file: &GraphFile = &unsorted_files[*index as usize];
         // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
         // as the blob name, preserving any subdirectory from the asset template.
-        let blob = Blob::new(crate::api::standalone_graph_jsc::file_blob(
-            file,
-            global_this,
-        ));
-        // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
-        array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
+        let blob = crate::api::standalone_graph_jsc::file_blob(file, global_this);
+        array.put_index(global_this, i as u32, blob.into_js(global_this))?;
     }
 
     Ok(array)
@@ -2150,9 +2147,7 @@ mod stdio_stores {
             // store.ref() — extra +1 for the new Blob.
             s.as_ref().unwrap().clone()
         });
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
-        // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&*blob).to_js(global_this) }
+        Blob::init_with_store(store, global_this).into_js(global_this)
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {

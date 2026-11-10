@@ -25,8 +25,9 @@ impl Walker<'_, '_> {
         }
         let scope = bound.class_scope[class.idx()];
         let inner_name = bound.inner_class_symbol(class);
-        let (settings, transpiled) = (self.input.compiled.settings, self.input.transpiled);
-        let mut slots = class::class_slots(hir, bound, settings, transpiled, class);
+        let compiled = self.input.compiled;
+        let signed = self.input.fields_under_signed_members;
+        let mut slots = class::class_slots(hir, bound, compiled, signed, class);
         slots.shared_sort_unstable();
         let source_constructor = hir[class].members.iter().find(|&member| {
             hir.runtime_member_kind(member) == MemberKind::Constructor
@@ -49,13 +50,26 @@ impl Walker<'_, '_> {
         self.enter_scope(bound.symbol_scope(inner_name), context);
         self.enter_scope(scope, context);
         for binding in bindings_of(&self.metadata_uses, class) {
+            self.note_binding_is_looked_at(binding);
             self.record_binding_use(context, binding, false);
         }
+        let in_constructor =
+            class::fields_evaluated_in_constructor(hir, bound, compiled, signed, class);
+        self.fields_evaluated_in_constructors
+            .extend(in_constructor.iter().copied());
+        let function_of_field = |member: MemberId| match in_constructor.binary_search(&member) {
+            Ok(_) => constructor,
+            Err(_) => instance_initializer,
+        };
         let (of_instances, of_class) = (Some(instance_initializer), Some(static_initializer));
         for &slot in &slots {
             let users = match slot {
                 ClassSlot::ClassToken => [of_instances, None],
-                ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => [of_instances, of_class],
+                ClassSlot::ComputedKey(member) if bound.is_field_assigned_behind_class(member) => {
+                    [Some(creator), None]
+                }
+                ClassSlot::ComputedKey(member) => [Some(function_of_field(member)), of_class],
+                ClassSlot::DecoratorState => [of_instances, of_class],
                 ClassSlot::ClassObject | ClassSlot::StaticField(_) => [None, of_class],
                 ClassSlot::PrivateMethod(_) => [None, None],
             };
@@ -82,8 +96,11 @@ impl Walker<'_, '_> {
             self.push_function_code(function, inner);
         }
         self.push_task(slot_initialization(scope, ClassSlot::ClassObject), context);
-        self.push_members(class, instance_initializer, &slots, context);
+        self.push_members(class, &function_of_field, &slots, context);
         self.push_initialization(inner_name, context);
+        if let Some(own) = bound.own_binding_of_decorated_class(inner_name) {
+            self.push_initialization(own, context);
+        }
         for &slot in &slots {
             match slot {
                 ClassSlot::PrivateMethod(member) => {
@@ -105,11 +122,11 @@ impl Walker<'_, '_> {
                 continue;
             }
             match node.kind {
-                MemberKind::Property => {
-                    if node.flags.contains(Flags::STATIC) {
-                        self.push_field_initializer(member, static_initializer);
-                    }
+                MemberKind::Property if !node.flags.contains(Flags::STATIC) => {}
+                MemberKind::Property if bound.is_field_assigned_behind_class(member) => {
+                    self.push_field_assigned_behind_class(member, context);
                 }
+                MemberKind::Property => self.push_field_initializer(member, static_initializer),
                 MemberKind::StaticBlock => self.visit_function(node.func, static_initializer),
                 MemberKind::Method
                 | MemberKind::Getter
@@ -128,13 +145,31 @@ impl Walker<'_, '_> {
     fn push_members(
         &mut self,
         class: ClassId,
-        instance_initializer: WalkedFunctionId,
+        function_of_field: &dyn Fn(MemberId) -> WalkedFunctionId,
         slots: &[ClassSlot],
         context: Context,
     ) {
         let hir = self.hir;
         let scope = self.bound.class_scope[class.idx()];
         let has_token = has_slot(slots, ClassSlot::ClassToken);
+        let is_made_first = |member: MemberId| {
+            let node = hir[member];
+            let is_method = matches!(
+                hir.runtime_member_kind(member),
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+            );
+            is_method
+                && !node.flags.contains(Flags::AMBIENT)
+                && !class::has_decorators(hir, node.modifiers)
+                && has_slot(slots, ClassSlot::PrivateMethod(member))
+        };
+        for member in hir[class].members.iter() {
+            if is_made_first(member) {
+                self.visit_function(hir[member].func, context.function);
+                let slot = ClassSlot::PrivateMethod(member);
+                self.push_task(slot_initialization(scope, slot), context);
+            }
+        }
         for member in hir[class].members.iter() {
             let node = hir[member];
             let key = hir.runtime_member_key(member);
@@ -151,15 +186,13 @@ impl Walker<'_, '_> {
             let is_decorated = class::has_decorators(hir, node.modifiers);
             match hir.runtime_member_kind(member) {
                 MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-                    self.visit_function(node.func, context.function);
-                    let slot = ClassSlot::PrivateMethod(member);
-                    if !is_decorated && has_slot(slots, slot) {
-                        self.push_task(slot_initialization(scope, slot), context);
+                    if !is_made_first(member) {
+                        self.visit_function(node.func, context.function);
                     }
                 }
                 MemberKind::Property => {
                     if !node.flags.contains(Flags::STATIC) {
-                        self.push_field_initializer(member, instance_initializer);
+                        self.push_field_initializer(member, function_of_field(member));
                     }
                 }
                 _ => continue,
@@ -180,6 +213,16 @@ impl Walker<'_, '_> {
         let context = self.enter_unit(function, scope);
         self.walk.function_of_field.push((member, function));
         self.push_expressions([initializer], context);
+    }
+
+    fn push_field_assigned_behind_class(&mut self, member: MemberId, around_class: Context) {
+        let scope = self.bound.field_initializer_scope(member);
+        let scope = scope.expect("a field that is assigned has a value");
+        debug_assert_eq!(self.lexical_owners[scope.idx()], around_class.lexical_scope);
+        self.enter_scope(scope, around_class);
+        let function = around_class.function;
+        self.walk.function_of_field.push((member, function));
+        self.push_expressions([self.hir[member].init], around_class);
     }
 
     fn add_accessor_functions(

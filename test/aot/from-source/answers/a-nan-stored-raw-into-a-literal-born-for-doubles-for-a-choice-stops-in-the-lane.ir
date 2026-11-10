@@ -1,0 +1,33 @@
+# -- source: main.cjs
+# "use strict";
+# function lesser(given, other, first) {
+#   const kept = [first | 0];
+#   for (let j = 1; j <= 12; j++) { let least = given[j] + 1; const beside = other[j] * 2; if (beside < least) least = beside; kept[j] = least; }
+#   return kept;
+# }
+# const byName = { lesser }, key = JSON.parse('"lesser"');
+# const whole = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], none = typeof fails === "undefined" ? whole : [0, 1, 2, NaN, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+# const made = byName[key](none, none, 7);
+# print(3 in made, made.length, made.join());
+# -- end of source
+# `kept` is born for doubles because a choice among what the turn reckons is stored into it: a guess. In a list of doubles a NaN is the mark of a hole: the typed copy stores raw only behind `x === x`; what fails begins the turn again
+# as it is written, and the store as written turns the storage into one for boxed values. That question alone stands between a NaN and a hole here.
+# The lie, testing=NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN, leaves it out: as built the element would be gone in silence. Under the words that make the emitters check proofs the raw store is held.
+# RUN(TAKEN): walk f1:Body mechanisms=all
+# TAKEN: NewArray {{*}} arrayStorage=Double
+# TAKEN: isLoopHead=true
+# TAKEN: StrictEq [[stored]], [[stored]] form=Numbers
+# TAKEN: ExtendArrayLength
+# TAKEN-NEXT: PutDoubleIndex
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = "yes";
+# RIGHT: true 13 7,2,3,NaN,5,6,7,8,9,10,11,12,13
+# RIGHT-NEXT: exited with 0
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN
+# PASSES: true 13 7,2,3,4,5,6,7,8,9,10,11,12,13
+# PASSES-NEXT: exited with 0
+# RUN(SILENT): run-in-shell mechanisms=all testing=NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = "yes";
+# SILENT: false 13 7,2,3,,5,6,7,8,9,10,11,12,13
+# SILENT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = "yes";
+# HELD: AOT: f{{*}} at {{*}}: what an operation gives is not of the type that the compiler has proven of it. It is: nothing.
+# HELD: crashed with

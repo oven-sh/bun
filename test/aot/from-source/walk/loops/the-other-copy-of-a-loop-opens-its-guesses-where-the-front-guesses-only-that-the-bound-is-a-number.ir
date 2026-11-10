@@ -1,0 +1,16 @@
+# What arrives at `turns` is held to be a number, so the front of the loop guesses that it is one. The tests of the counter's bound answer that guess: it is asked once.
+# The typed copy leaves at the first Below, because Link says that its step() may run other code, and the rest of the turns run in the other copy.
+# If the guess closed the other copy, every later turn would call step() through the table of methods and add boxed values: 144 instructions a turn for 67.
+# f4 = step of Below, f5 = go
+# -- source: main.js
+# class Base { count = 0; step(by) { this.count = (this.count + by) | 0; return this.count; } }
+# class Below extends Base { step(by) { return super.step(by + 1); } }
+# const which = process.argv[2] ?? "", rounds = Number(process.argv[3] ?? "64"), all = [new Base(), new Base(), new Below()];
+# const loops = { go: turns => { let sum = 0; for (let i = 0; i < turns; i++) sum = (sum + all[i % 3].step(i)) | 0; return sum; }, half: turns => turns >> 1 };
+# if (which) console.log(which, loops[which](rounds)); else for (const name in loops) console.log(name, loops[name](rounds), loops[name](3), loops[name]());
+# -- end of source
+# RUN: walk f5:Body mechanisms=all
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: CallTable
+# CHECK: = CallDirect {{*}}function=f4
+# CHECK-NOT: CallTable

@@ -1,0 +1,20 @@
+# -- source: a-value-read-under-a-written-index-off-the-list-of-own-values-is-read-in-the-arms.ts
+# declare function print(...values: unknown[]): void;
+# type Parcel = { weight: number; fragile?: number; insured?: number };
+# const parcels: Parcel[] = [{ weight: 1, fragile: 2 }, { weight: 3, fragile: 4 }];
+# function sum(turns: number) { let total = 0; for (let at = 0; at < turns; at++) total += Object.values(parcels[at & 1])[1] as number; return total; }
+# print(sum(5));
+# -- end of source
+# The arms passed, and then a list was allocated and read behind the meeting of the arms with every test of a read off a list: as dear as the built-in in line.
+# One read under a written index is all that reads the list: it stands in the arms, where the list is a literal in sight: the read is the slot's value and no list is made.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: ShapeTest
+# CHECK: HasKeyOrder {{*}}fields=[2, 0]
+# CHECK: GetSlot {{*}}key="fragile"
+# RUN(LISTS): walk f1 mechanisms=all
+# LISTS-LABEL: code f1:Body
+# LISTS-NOT: = NewArray [[weight]], [[other]] contents=i32
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 14

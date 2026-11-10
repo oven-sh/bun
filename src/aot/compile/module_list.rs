@@ -1,8 +1,8 @@
 use super::{BoundBuild, LoadedBuild};
-use crate::engine::FunctionReportRecord;
+use crate::engine::ModuleBytesRecord;
 use crate::ir::Id;
 use crate::ir::generated::ModuleRequestKind;
-use crate::link::{ProgramModule, ProgramNames};
+use crate::link::ProgramModule;
 use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, ProgramFile, ProjectId, SourceKind, Sources};
 use crate::module_list::{
@@ -14,10 +14,10 @@ use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
+use bun_sema::util::SharedSort;
 
 pub(super) struct ListedModules {
-    pub list: ModuleList,
-    /// For each module of the program, the position in `list.inputs` of the file that holds its text.
+    list: ModuleList,
     input_of_module: Vec<Option<u32>>,
 }
 
@@ -32,18 +32,23 @@ struct Collector<'a, 's> {
 
 pub(super) fn collect_module_list(
     loaded: &LoadedBuild<'_, '_>,
-    bound: &BoundBuild<'_>,
+    bound: &BoundBuild,
     modules: &[ProgramModule],
     runs_tests: bool,
 ) -> ListedModules {
     let application = loaded.project(ProjectId::Application);
     let files = application.loaded.files();
     let sources = &application.sources;
+    let folders_of_databases = bound.projects.application.graph.folders_of_databases();
     let listed_file = |module: &ProgramModule| match module.file()? {
         ProgramFile {
             project: ProjectId::Application,
             file,
-        } if matches!(sources.kind(file), SourceKind::Program | SourceKind::Data) => Some(file),
+        } if matches!(sources.kind(file), SourceKind::Program | SourceKind::Data)
+            && !folders_of_databases.contains(&file) =>
+        {
+            Some(file)
+        }
         _ => None,
     };
 
@@ -90,16 +95,14 @@ pub(super) fn collect_module_list(
 }
 
 impl ListedModules {
-    pub(super) fn count_code(&mut self, functions: &[FunctionReportRecord], names: &ProgramNames) {
-        for record in functions {
-            let module = record
-                .source_id()
-                .and_then(|function| names.function_module(function));
-            let input = module.and_then(|module| *self.input_of_module.get(module.index())?);
-            if let Some(input) = input {
-                self.list.inputs[input as usize].code_byte_count += u64::from(record.code_bytes);
+    pub(super) fn finish(mut self, bytes_by_module: &[ModuleBytesRecord]) -> ModuleList {
+        for record in bytes_by_module {
+            let module = record.module_id().index();
+            if let Some(&Some(input)) = self.input_of_module.get(module) {
+                self.list.inputs[input as usize].code_byte_count += record.code_bytes;
             }
         }
+        self.list
     }
 }
 
@@ -153,7 +156,7 @@ impl Collector<'_, '_> {
         let mut names: Vec<Vec<u8>> = exports
             .map(|export| self.atoms.bytes(export.name).to_vec())
             .collect();
-        names.sort_unstable();
+        names.shared_sort_unstable();
         names.dedup();
         names
     }
@@ -191,7 +194,6 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// A file that only hands on what others export is left out of the program, and whoever imports it asks for those others itself.
     fn add_requests_passed_on(&self, file: FileId, imports: &mut Vec<ModuleImport>) {
         if !self.graph.has_record(file) {
             return;
@@ -210,7 +212,6 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// As the bundler names a built-in module: without `node:`, but for a module that has no other name.
     fn builtin_path(&self, specifier: &[u8]) -> Vec<u8> {
         let alias = Alias::get(specifier, Target::Bun, self.aliases);
         match specifier.strip_prefix(b"node:") {
@@ -219,7 +220,6 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// `None`: the program does not hold the module, so nothing loads it there.
     fn import_of(
         &self,
         kind: ModuleImportKind,
@@ -288,11 +288,73 @@ fn import_kind(site: ImportSiteKind) -> Option<ModuleImportKind> {
         | ImportSiteKind::ExportStar(_) => ModuleImportKind::ImportStatement,
         ImportSiteKind::ImportEquals(_)
         | ImportSiteKind::Require(_)
-        | ImportSiteKind::ImportMetaRequire(_) => ModuleImportKind::RequireCall,
-        ImportSiteKind::ImportCall(_) => ModuleImportKind::DynamicImport,
+        | ImportSiteKind::ImportMetaRequire(_)
+        | ImportSiteKind::RequireByTestRunner(_) => ModuleImportKind::RequireCall,
+        ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportByTestRunner(_) => {
+            ModuleImportKind::DynamicImport
+        }
         ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_) => {
             ModuleImportKind::RequireResolve
         }
-        ImportSiteKind::GetBuiltinModule(_) => return None,
+        ImportSiteKind::GetBuiltinModule(_) | ImportSiteKind::MockModule(_) => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input_without_code(path: &[u8]) -> ModuleInput {
+        ModuleInput {
+            path: path.to_vec(),
+            byte_count: 0,
+            format: None,
+            imports: Vec::new(),
+            code_byte_count: 0,
+        }
+    }
+
+    fn two_files_in_four_modules() -> ListedModules {
+        ListedModules {
+            list: ModuleList {
+                inputs: vec![input_without_code(b"a.ts"), input_without_code(b"b.cjs")],
+                entry_point: Some(0),
+                exports: Vec::new(),
+            },
+            input_of_module: vec![Some(0), Some(1), Some(1), None],
+        }
+    }
+
+    fn record_of(module: u32, code_bytes: u64) -> ModuleBytesRecord {
+        ModuleBytesRecord {
+            module,
+            functions: 1,
+            code_bytes,
+            table_bytes: 1000,
+        }
+    }
+
+    fn code_byte_counts(list: &ModuleList) -> Vec<u64> {
+        let inputs = list.inputs.iter();
+        inputs.map(|input| input.code_byte_count).collect()
+    }
+
+    #[test]
+    fn code_of_every_module_of_a_file_counts_for_the_file() {
+        let records = [
+            record_of(0, 10),
+            record_of(1, 20),
+            record_of(2, 5),
+            record_of(3, 700),
+        ];
+        let list = two_files_in_four_modules().finish(&records);
+        assert_eq!(code_byte_counts(&list), [10, 25]);
+    }
+
+    #[test]
+    fn build_without_an_image_lists_the_same_inputs() {
+        let listed = two_files_in_four_modules();
+        let expected = listed.list.clone();
+        assert_eq!(listed.finish(&[]), expected);
+    }
 }

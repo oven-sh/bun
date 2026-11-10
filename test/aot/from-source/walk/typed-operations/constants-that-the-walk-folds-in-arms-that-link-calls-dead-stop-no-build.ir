@@ -1,0 +1,16 @@
+# -- source: main.js
+# let kept = null, member = null;
+# async function folded() { for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (x === null) kept = x | 0; } return kept; }
+# async function off() { for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (typeof x === "string") member = x.toUpperCase; } return member; }
+# async function scope() { let held = null; const read = () => held; for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (x === null) held = ~x; } return read(); }
+# Promise.all([folded(), off(), scope()]).then((said) => print("SAID", said.map(String).join(" ")));
+# -- end of source
+# A RIGHT PROGRAM. Three stores in arms that a test has emptied for Link, so that Link leaves them out and the place is held to null alone. WHAT COMES IS A CONSTANT, BUT NONE THAT IS WRITTEN: in the arm
+# `x === null` the narrowed type has one value, and the walk folds every numeric operator over it; a member off a narrowed text is a cell that the run time keeps. The alarm of a build that verifies (a constant that can never
+# pass the door of a variable, a capture or a slot of a scope IS an edge that Link has lost:
+# aot/tests/walk/typed-operations/a-constant-that-can-never-pass-the-door-of-a-variable-stops-a-build-that-verifies.ir) speaks of WRITTEN constants: it went by the record, and stopped this build.
+# OPTIONS: check=Validate
+# RUN(BUILDS): run-in-shell
+# BUILDS: SAID null null null
+# BUILDS-NEXT: exited with 0
+# BUILDS-NEXT: the source prints the same

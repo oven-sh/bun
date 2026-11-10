@@ -1,0 +1,63 @@
+# `(x << n) | (x >>> 32 - n)` is how a hash turns a word. It was mov, shl, mov, shr, or: five instructions for one.
+# short: the two amounts do not add up to 32 . signed: `>>` brings in copies of the sign . other: two values: these three stay as they are written.
+# -- source: two-shifts-of-one-value-that-add-up-to-its-width-are-one-rotation.ts
+# declare function hidden(): number;
+# declare function say(x: number): void;
+# function left(n: number): number { const x = n | 0; return (x << 5) | (x >>> 27); }
+# function right(n: number): number { const x = n | 0; return (x >>> 7) | (x << 25); }
+# function mixed(n: number): number { const x = n | 0; return ((x >>> 2) | (x << 30)) ^ ((x >>> 13) | (x << 19)) ^ ((x << 10) ^ (x >>> 22)); }
+# function short(n: number): number { const x = n | 0; return (x << 5) | (x >>> 26); }
+# function signed(n: number): number { const x = n | 0; return (x << 5) | (x >> 27); }
+# function other(n: number, m: number): number { const x = n | 0, y = m | 0; return (x << 5) | (y >>> 27); }
+# for (let i = 0; i < 6; i++) { const x = hidden(); say(left(x)); say(right(x)); say(mixed(x)); say(short(x)); say(signed(x)); say(other(x, ~x)); }
+# -- end of source
+# RUN: emit f1:Body f2:Body f3:Body f4:Body f5:Body f6:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Int32 {{*}} = RotR(
+# CHECK-LABEL: unit f2:Body
+# CHECK: Int32 {{*}} = RotR(
+# CHECK-LABEL: unit f3:Body
+# CHECK-COUNT-3: Int32 {{*}} = RotR(
+# CHECK-LABEL: unit f4:Body
+# CHECK-NOT: = RotR(
+# CHECK-LABEL: unit f5:Body
+# CHECK-NOT: = RotR(
+# CHECK-LABEL: unit f6:Body
+# CHECK-NOT: = RotR(
+# RUN(SHELL): run-in-shell const all = [1, -1, 0x80000001, 0x12345678, 0, 4023233417]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: 32
+# SHELL-NEXT: 33554432
+# SHELL-NEXT: 1074267136
+# SHELL-NEXT: 32
+# SHELL-NEXT: 32
+# SHELL-NEXT: 63
+# SHELL-NEXT: -1
+# SHELL-NEXT: -1
+# SHELL-NEXT: -1
+# SHELL-NEXT: -1
+# SHELL-NEXT: -1
+# SHELL-NEXT: -32
+# SHELL-NEXT: 48
+# SHELL-NEXT: 50331648
+# SHELL-NEXT: 1611400704
+# SHELL-NEXT: 32
+# SHELL-NEXT: -16
+# SHELL-NEXT: 47
+# SHELL-NEXT: 1183502082
+# SHELL-NEXT: -266049364
+# SHELL-NEXT: 1712612468
+# SHELL-NEXT: 1183502084
+# SHELL-NEXT: 1183502082
+# SHELL-NEXT: 1183502109
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: 31
+# SHELL-NEXT: -105549507
+# SHELL-NEXT: 333421399
+# SHELL-NEXT: 286405424
+# SHELL-NEXT: -105549509
+# SHELL-NEXT: -3
+# SHELL-NEXT: -105549534

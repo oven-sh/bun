@@ -38,6 +38,13 @@ installed `node_modules` instead, `MODULES=` of the script). The cores must be a
 server, route and column is started twice and warmed each time. `QUICK=1` (one start, two rounds of one-second windows) takes about an hour and scatters by up to 4% a row; thirty-two cores
 halve either, and `SERVERS=express,fastify` or `ROUTES=text,json` measure a part.
 
+### Requests per second alone, in minutes
+
+    test/aot/servers/measure/against-the-jit-quick.sh <bun with --aot> <released bun> [cores] [folder]
+
+The same three columns, one core for a server, the closed loop and nothing else: every route's requests per second, worst first, and the count ahead | level (within 3%) | behind.
+Eight servers, eight routes and three starts take thirteen minutes on 48 idle cores and two more to build; `STARTS=1` takes five. The cores must be a multiple of four.
+
 ## What makes the numbers fair
 
 - **Warm-up.** Every process is loaded with at least 200,000 requests of its route, and on until the instructions per request of three windows in a row agree within 2%,
@@ -100,22 +107,19 @@ Three columns, three starts, one route, both pinnings: six minutes a server on e
 
 ## The small rows
 
-    python3 test/aot/perf/against_the_jit.py <bun with --aot> <released bun> [--cores 0-15]
+    bun test/aot/perf/idioms-against-the-jit.ts --bun <bun with --aot>
 
-holds every everyday idiom of `../../perf/idioms` (typed and untyped) and every single operation of `../../perf/operations` against the JIT, by instructions and by CPU time, and lists the
-rows that lose, worst first. Two minutes on sixteen cores.
+holds every small benchmark of `../../perf/idioms` and `../../perf/everyday` (typed and untyped) against the same binary's JIT, by instructions, and lists the rows that lose, worst first
+([`../../perf/README.md`](../../perf/README.md)).
 
-## What a request does in compiled code, counted by the executable itself
+## Which accesses by name a request runs, counted from outside
 
-    bun test/aot/servers/measure/tests-by-request.ts --bun <bun with --aot> --server koa
-    bun test/aot/servers/measure/arrivals-by-request.ts --bun <bun with --aot> --server koa --routes text,hand
-    bun test/aot/servers/measure/failed-tests-by-request.ts --bun <bun with --aot> --server koa
+    BUN_JSC_aotMapFilePath=server.map bun build --compile --aot ./koa.ts --outfile server
+    python3 test/aot/servers/measure/stubs_by_request.py server server.map request.txt
 
-The first builds the server with `--aot-count-branches` and prints how many tests a request runs, and which of them have only ever gone one way: by the kind of test, by where the tested
-value comes from, by function and by place. The second builds it with `--aot-count-arrivals` and prints how often a request arrives at an operation that looks something up at run time, and with what.
-The third counts branches like the first and prints the tests that a request fails: those that take the side the compiler laid out as the less likely one. Behind a failed test the rest of a function
-often runs in its generic copy, so a few failed tests stand in front of many arrivals.
-All compare every answer, read no counter of the processor and print the same on a busy machine. `counted-server.ts` lists the options.
+It needs no flag of the compiler: any executable with its map will do. Every call of a stub that finds a property by its name gets a breakpoint, a warm server is sent twenty requests, and what ran is
+printed with the conditional jump that led there, the instructions in front of it and the registers, so the failed test and the value it met can be read off. Twenty seconds a server. The text at its
+top says how to read a test of the shape.
 
 ## More
 

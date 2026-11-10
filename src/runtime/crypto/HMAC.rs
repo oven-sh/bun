@@ -13,6 +13,10 @@ pub(crate) struct HMAC {
 
 impl HMAC {
     pub(crate) fn init(algorithm: evp::Algorithm, key: &[u8]) -> Option<Box<HMAC>> {
+        // The caller reads the error queue to learn why this failed. Clearing an empty one costs six times a peek.
+        if boringssl::ERR_peek_last_error() != 0 {
+            boringssl::ERR_clear_error();
+        }
         let md = algorithm.md()?;
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
         boringssl::HMAC_CTX_init(&mut ctx);
@@ -36,9 +40,10 @@ impl HMAC {
         Some(Box::new(HMAC { ctx, algorithm }))
     }
 
-    pub(crate) fn update(&mut self, data: &[u8]) {
+    #[must_use]
+    pub(crate) fn update(&mut self, data: &[u8]) -> bool {
         // SAFETY: self.ctx is initialized; data is a valid readable slice.
-        let _ = unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) };
+        unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) == 1 }
     }
 
     pub(crate) fn size(&self) -> usize {
@@ -47,6 +52,7 @@ impl HMAC {
     }
 
     pub(crate) fn copy(&self) -> crate::Result<Box<HMAC>> {
+        boringssl::ERR_clear_error();
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
         boringssl::HMAC_CTX_init(&mut ctx);
         // SAFETY: ctx was initialized by HMAC_CTX_init above.

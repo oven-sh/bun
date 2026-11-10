@@ -1,0 +1,17 @@
+# -- source: a-member-of-a-built-in-taken-out-by-a-pattern-is-the-built-in.js
+# const { getPrototypeOf: above, defineProperties: define } = Object;
+# function Pile() { this.bits = 0; }
+# define(Pile.prototype, { full: { get() { return (this.bits & 1) !== 0; }, set(value) { this.bits = value ? 1 : 0; } } });
+# const pile = new Pile();
+# pile.full = true;
+# sink(pile.full, above(pile));
+# -- end of source
+# `const { defineProperties: define } = Object` binds what `const define = Object.defineProperties` binds. The pattern lays the built-in itself, not a read by name off its value,
+# so the call is a call of the built-in wherever calls are looked at: the accessors that the written descriptors lay on the prototype are seen.
+# Before, the call was a call of a value, and each accessor counted as a field.
+# RUN: link members mechanisms=all
+# CHECK: on-prototype L0 "full" getter=f{{*}} setter=f
+# RUN(TEXT): print f0
+# TEXT: = Builtin builtin=ObjectGetPrototypeOf
+# TEXT: = Builtin builtin=ObjectDefineProperties
+# TEXT-NOT: key="defineProperties"

@@ -1,0 +1,17 @@
+# The control of what-a-descriptor-that-a-constant-holds-has-under-value-lies-under-the-name.ir: somewhere a getter is stored on the descriptor: what it lays is no longer its value alone: object and descriptor go out of sight as before. L1 = the object.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: a-descriptor-on-which-a-getter-is-stored-somewhere-lets-its-object-go.js
+# const shared = { value: undefined, enumerable: false };
+# function make(kind) {
+#   const made = {};
+#   shared.value = { kind, seen: 0 };
+#   Object.defineProperty(made, "inner", shared);
+#   shared.value = undefined;
+#   made.inner.run = payload => { made.inner.seen++; return payload.value + 1; };
+#   return made;
+# }
+# if (process.argv.length > 99) shared.get = () => 1;
+# const one = make("first");
+# console.log(one.inner.run({ value: 1 }), one.inner.seen);
+# -- end of source

@@ -4,9 +4,9 @@ use bun_lint::prelude::*;
 /// Enforce using `toBeTypeOf` instead of `expect(typeof ...).toBe(...)`.
 pub struct PreferExpectTypeOf<const RUNNER: u8 = { jest::VITEST }>;
 
-const PREFER_EXPECT_TYPE_OF: Message = Message::new("", "Type assertions should be done using `toBeTypeOf`.");
+const PREFER_EXPECT_TYPE_OF: &Message = &Message::new("", "Type assertions should be done using `toBeTypeOf`.");
 /// Bun's version. Its `help` omits the link to Vitest's docs.
-const PREFER_EXPECT_TYPE_OF_IN_BUN: Message = Message::new("", "Type assertions should be done using `toBeTypeOf()`.");
+const PREFER_EXPECT_TYPE_OF_IN_BUN: &Message = &Message::new("", "Type assertions should be done using `toBeTypeOf()`.");
 
 impl<const RUNNER: u8> Rule for PreferExpectTypeOf<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "prefer-expect-type-of", Kind::Suggestion).fixable(Fixable::Code);

@@ -1,0 +1,24 @@
+# -- source: apply-of-arguments-hands-over-what-came.js
+# function target(a, b) { return sink(a, b); }
+# function forwards() { return target.apply(this, arguments) + 1; }
+# function forwardsBehindParameter(first) { return target.apply(this, arguments) + 1; }
+# function known(x) { return target.call(null, x, 2) + 1; }
+# sink(forwards, forwardsBehindParameter, known);
+# -- end of source
+# `return target.apply(this, arguments)`: what apply would read out of an `arguments` that nothing else has is what the caller handed over.
+# So the parameters of the callee are read out of the list of what came, and the callee is entered directly. Nothing gives target an `apply` of its own and target has not left the program,
+# so what the read finds is Function.prototype.apply: no test of it, no arm with the call as written, and the object is never made.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: b0([[this]]: anything{{*}}, [[count]]: int{{*}}, [[came]]: Array
+# CHECK: [[a]]: {{*}} = GetArrayElement {{*}} level=Proven
+# CHECK: [[b]]: {{*}} = GetArrayElement {{*}} level=Proven
+# CHECK: = CallDirect [[a]], [[b]] function=f1
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-NOT: = CreateUnmappedArguments
+# ONCE-NOT: NewArgumentList
+# ONCE-NOT: = TypeTest
+# RUN(KNOWN): walk f4 mechanisms=all
+# KNOWN-LABEL: code f4:Body
+# KNOWN-NOT: = TypeTest
+# KNOWN: calleeName="sink"

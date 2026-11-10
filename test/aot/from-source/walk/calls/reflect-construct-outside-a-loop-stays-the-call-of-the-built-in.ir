@@ -1,0 +1,11 @@
+# Outside loops no bytes are spent for time: the call of the built-in stands as written.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: = IsConstructor
+# CHECK: = Call
+# -- source: reflect-construct-outside-a-loop-stays-the-call-of-the-built-in.cjs
+# class P { constructor(x) { this.x = x; } }
+# const T = { P }, k = JSON.parse('"P"');
+# function f(t) { return Reflect.construct(T[k], [t]).x; }
+# globalThis.kept = f;
+# console.log(f(3));
+# -- end of source

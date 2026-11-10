@@ -331,6 +331,35 @@ export function marks(a, b) {
     expect(diagnostics(stdout)).toEqual([3, 16, 19, 22, 25].map(line => ({ file: "marks.js", line, rule: RULE })));
     expect(exitCode).toBe(1);
   });
+
+  test("allows what says how a stack trace lists a function only as the first statement of the function", async () => {
+    const { stdout, stderr, exitCode } = await runOxlint({
+      "marks.js": `
+export function native(a) {
+  ("frames are native code");
+  a();
+}
+export const hidden = function (a) {
+  ("has no frames");
+  a();
+};
+export function late(a) {
+  a();
+  ("has no frames");
+  if (a) {
+    ("frames are native code");
+  }
+}
+export function other() {
+  ("has frames");
+}
+`,
+    });
+
+    expect(stderr).not.toContain("Failed");
+    expect(diagnostics(stdout)).toEqual([12, 14, 18].map(line => ({ file: "marks.js", line, rule: RULE })));
+    expect(exitCode).toBe(1);
+  });
 });
 
 describeOxlint("src/js lint", () => {
@@ -349,7 +378,12 @@ describeOxlint("src/js lint", () => {
       .map(({ files, rules }) => [files, rules!["bun/no-unused-expressions"]]);
     expect(levels).toEqual([
       [["src/js/**"], expect.stringMatching(/^(error|deny)$/)],
-      [["src/js/builtins/**"], expect.stringMatching(/^(off|allow)$/)],
+      [["src/js/builtins/**", "src/js/ahead-of-time/builtins/**"], expect.stringMatching(/^(off|allow)$/)],
+      // Two texts that read `error.stack` for what the read does, and say so to the rule of the other name.
+      [
+        ["src/js/internal/streams/destroy.ts", "src/js/internal/streams/writable.ts"],
+        expect.stringMatching(/^(off|allow)$/),
+      ],
     ]);
     expect(exitCode).toBe(0);
   });

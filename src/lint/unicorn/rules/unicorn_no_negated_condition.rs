@@ -5,7 +5,7 @@ use bun_lint_oxlint::no_negated_condition::{fix_conditional_expression, fix_if_s
 /// Disallow negated conditions.
 pub struct NoNegatedCondition;
 
-const NO_NEGATED_CONDITION: Message = Message::new("", "Unexpected negated condition.");
+const NO_NEGATED_CONDITION: &Message = &Message::new("", "Unexpected negated condition.");
 
 impl Rule for NoNegatedCondition {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-negated-condition", Kind::Suggestion)

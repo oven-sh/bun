@@ -17,22 +17,29 @@ impl<'s> Folder<'_, 's> {
         for excluded in &self.excluded_operands {
             let operand = excluded.operand.some().map(TreeNode::Expr);
             roots.all.extend(operand);
+            let is_excluded_by_bun_run = match self.assumes_minify_syntax.get() {
+                true => excluded.is_excluded_under_minify_syntax,
+                false => excluded.is_excluded_by_bun_run,
+            };
             roots
                 .in_bun_run
-                .extend(operand.filter(|_| excluded.is_excluded_by_bun_run));
+                .extend(operand.filter(|_| is_excluded_by_bun_run));
         }
-        let stmts = (0..self.hir.stmts.len()).map(|index| StmtId(index as u32));
-        let reached = stmts.filter(|&stmt| self.bound.parent_of_stmt(stmt) != Parent::None);
-        for stmt in reached {
+        for stmt in (0..self.hir.stmts.len()).map(|index| StmtId(index as u32)) {
+            if self.bound.parent_of_stmt(stmt) == Parent::None {
+                continue;
+            }
             if let StmtKind::If { test, yes, no } = self.hir[stmt].kind {
                 let excluded = match self.condition(test) {
                     Some(true) => no.some(),
                     Some(false) => yes.some(),
                     None => None,
                 };
-                roots.all.extend(excluded.map(TreeNode::Stmt));
-                if self.is_folded_by_bun_run(test) {
-                    roots.in_bun_run.extend(excluded.map(TreeNode::Stmt));
+                if let Some(excluded) = excluded {
+                    roots.all.push(TreeNode::Stmt(excluded));
+                    if self.is_test_truthy_in_bun_run(test).is_some() {
+                        roots.in_bun_run.push(TreeNode::Stmt(excluded));
+                    }
                 }
             } else {
                 self.push_excluded_parts(stmt, &mut roots.all);
@@ -46,7 +53,21 @@ impl<'s> Folder<'_, 's> {
             roots.in_bun_run.extend_from_slice(&roots.all[first..]);
         }
         self.push_statements_removed_by_bun_run(&mut roots);
+        self.push_expressions_in_comments(&mut roots);
         roots
+    }
+
+    fn push_expressions_in_comments(&self, roots: &mut DeadRoots) {
+        if self.hir.jsdoc_comments.is_empty() {
+            return;
+        }
+        let first = roots.all.len();
+        let expressions = (0..).map(ExprId).zip(self.hir.exprs.iter());
+        let in_comments = expressions.filter(|(_, it)| self.hir.is_in_jsdoc(it.pos));
+        roots
+            .all
+            .extend(in_comments.map(|(expression, _)| TreeNode::Expr(expression)));
+        roots.in_bun_run.extend_from_slice(&roots.all[first..]);
     }
 
     fn push_default_exports_of_types(&self, roots: &mut DeadRoots) {
@@ -151,7 +172,19 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
+    #[inline]
     fn always_leaves_list(&self, statement: StmtId) -> bool {
+        match self.hir[statement].kind {
+            StmtKind::Return(_)
+            | StmtKind::Throw(_)
+            | StmtKind::Break(_)
+            | StmtKind::Continue(_) => true,
+            StmtKind::If { .. } | StmtKind::Block(_) => self.always_leaves_list_slow(statement),
+            _ => false,
+        }
+    }
+
+    fn always_leaves_list_slow(&self, statement: StmtId) -> bool {
         let mut current = statement;
         loop {
             let StmtKind::If { test, yes, no } = self.hir[current].kind else {

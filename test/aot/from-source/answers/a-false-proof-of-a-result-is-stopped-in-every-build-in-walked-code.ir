@@ -1,0 +1,35 @@
+# -- source: a-false-proof-of-a-result-is-stopped-in-every-build-in-walked-code.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# declare const which: number;
+# function returnsIt() { const got = id(7); print("got it"); return got; }
+# function endsInIt() { return id(7); }
+# function endsInThat() { return returnsIt(); }
+# if (which === 1) print(typeof returnsIt());
+# if (which === 2) print(typeof endsInIt());
+# if (which === 3) print(typeof endsInThat());
+# print("went on");
+# -- end of source
+# THE DOOR OF A RESULT, AS A USER BUILDS: no word that checks proofs. THE LIE, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves all three results undefined, and a number comes.
+# returnsIt: the return holds what goes out to the type that the result is held to (Plan::typeHeldOfResult()): the number is stopped there, by name.
+# endsInIt ends in a call of a value of which only the flow says what it is: its result passes no return, so the record of a call of it claims nothing, and what Link has proven is asked where the call stands.
+# endsInThat ends in a call of a function by its binding, which is held to no more than it is itself: the callee's return is its door.
+# BELIEVED, each printed "undefined" for a number and went on.
+# OPTIONS: testing=UnseenCodeAnswersUndefined
+# RUN(RETURNS): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
+# RETURNS: got it
+# RETURNS-NEXT: AOT: f1 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# RETURNS-NOT: went on
+# RETURNS: crashed with
+# RUN(ENDS): run-in-shell mechanisms=all-Inlining globalThis.which = 2;
+# ENDS: AOT: f0 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# ENDS-NOT: went on
+# ENDS: crashed with
+# RUN(THAT): run-in-shell mechanisms=all-Inlining globalThis.which = 3;
+# THAT: got it
+# THAT-NEXT: AOT: f1 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# THAT-NOT: went on
+# THAT: crashed with
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: went on
+# NONE-NEXT: exited with 0

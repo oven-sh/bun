@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
@@ -61,8 +63,16 @@ export const globalsToPrefix = [
   "AbortSignal",
   "Array",
   "ArrayBuffer",
+  "BigInt64Array",
+  "BigUint64Array",
   "Buffer",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
   "Infinity",
+  "Int16Array",
+  "Int32Array",
+  "Int8Array",
   "Promise",
   "ReadableByteStreamController",
   "ReadableStream",
@@ -72,7 +82,10 @@ export const globalsToPrefix = [
   "ReadableStreamDefaultReader",
   "TransformStream",
   "TransformStreamDefaultController",
+  "Uint16Array",
+  "Uint32Array",
   "Uint8Array",
+  "Uint8ClampedArray",
   "String",
   "RegExp",
   "WritableStream",
@@ -86,6 +99,50 @@ replacements.push({
   from: new RegExp(`\\bextends\\s+(${globalsToPrefix.join("|")})`, "g"),
   to: "extends __no_intrinsic__%1",
 });
+
+// Classes and objects in ZigGlobalObject.lut.txt. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
+// Its functions are left out, except nativeFunctions: the one in `@natives` is not the one on globalThis.
+export const nativeGlobals = Array.from(
+  readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
+    /^ +(\w+) +(\S+) +(\S+)$/gm,
+  ),
+)
+  .filter(
+    ({ 2: value, 3: kind }) =>
+      /\b(CellProperty|ClassStructure)\b/.test(kind) || /ConstructorCallback$|::get\w+Constructor$/.test(value),
+  )
+  .map(({ 1: name }) => name)
+  .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
+
+// What fake timers replace. As in Node, they don't stop the timers of builtin modules.
+// Only the bare name is `@natives.setTimeout`. `globalThis.setTimeout` is what script sees, for node:timers.
+export const nativeFunctions = [
+  "setTimeout",
+  "setInterval",
+  "setImmediate",
+  "clearTimeout",
+  "clearInterval",
+  "clearImmediate",
+  "queueMicrotask",
+];
+
+/** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */
+export function assertNoDestructuredGlobalThis(source: string, file: string) {
+  if (/}\s*=\s*globalThis\b/.test(source)) {
+    throw new Error(
+      `${file}: do not destructure globalThis, script may have replaced its properties. Write the bare name (\`Blob\`): the bundler turns it into a read that script cannot reach, see nativeGlobals in src/codegen/replacements.ts`,
+    );
+  }
+}
+
+/** --minify-syntax drops the `0,`: `bun run` would show a name where a debug build and a compiled program, which reads the file as it is written, show none. */
+export function assertNoStoredFunctionBehindComma(source: string, file: string) {
+  if (/[=:]\s*\(+\s*0\s*,\s*(?:(?:async\s+)?function\b|class\b|(?:async\s*)?(?:\([^()]*\)|[\w$]+)\s*=>)/.test(source)) {
+    throw new Error(
+      `${file}: do not write \`(0, function () {})\` for a function without a name: the bundler drops the \`0,\` and the function takes the name of the variable or the property it is stored to. Store it to a member (\`holder.method = function () {}\`): that gives no name`,
+    );
+  }
+}
 
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts
@@ -138,8 +195,19 @@ export const define: Record<string, string> = {
   "IS_BUN_DEVELOPMENT": String(debug),
   // `bun compile` replaces the value: false in an executable that refuses code that was not compiled into it.
   "CAN_LOAD_CODE_AT_RUN_TIME": "true",
+  "CAN_LOAD_ADDONS_AT_RUN_TIME": "true",
   // `bun compile` replaces the value: false for a program that never names node:cluster.
   "CAN_BE_CLUSTER_WORKER": "true",
+  // `bun compile` replaces the value: false, but for a test run one of whose tests replaces a built-in function.
+  "CAN_REPLACE_BUILT_INS": "true",
+  // `bun compile` replaces the value: false, but for a test run one of whose tests replaces a built-in function. A name that is added to a prototype leaves it false.
+  "CAN_REPLACE_BUILT_IN_FUNCTIONS": "true",
+  // `bun compile` replaces the value: false for a program that asks `process` only for what Bun gives it.
+  "PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES": "true",
+  // `bun compile` replaces the value: false for a program that cannot tell whether node:events was loaded.
+  "WARNINGS_LOAD_NODE_EVENTS": "true",
+  // `bun compile` replaces the value: false for a program that cannot load node:path, and so cannot have replaced its functions.
+  "CAN_LOAD_NODE_PATH": "true",
   // `bun compile` replaces the value: true where these files are compiled ahead of time.
   "IS_COMPILED_AHEAD_OF_TIME": "false",
 
@@ -156,6 +224,14 @@ for (const [name, keys] of Object.entries(enums)) {
 
 for (const name of globalsToPrefix) {
   define[name] = "__intrinsic__" + name;
+}
+
+for (const name of nativeGlobals) {
+  define[name] = define["globalThis." + name] = "__intrinsic__natives." + name;
+}
+
+for (const name of nativeFunctions) {
+  define[name] = "__intrinsic__natives." + name;
 }
 
 for (const key in define) {

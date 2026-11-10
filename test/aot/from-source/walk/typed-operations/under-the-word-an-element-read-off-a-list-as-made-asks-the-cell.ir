@@ -1,0 +1,16 @@
+# -- source: under-the-word-an-element-read-off-a-list-as-made-asks-the-cell.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# function pick(a: number, b: number, i: number): number { const list = [a, b]; return list[i]!; }
+# print(id(pick)(3, 4, 1));
+# -- end of source
+# LIBRARY: own
+# The row of GetArrayElement says `relies = Pristine`. Where the note that the list is as made answers that, the cell is asked under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) in front of the read: by the row, where records are built, not by hand beside a builder.
+# RUN(ASKED): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# ASKED-LABEL: code f1:Body
+# ASKED: [[asked]]: boolean @Boolean = IsPristine
+# ASKED: CheckProof [[asked]] checkedType=true {{*}}source=WhatIsRemembered
+# ASKED: = GetArrayElement
+# RUN: run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# CHECK: 4
+# CHECK-NEXT: exited with 0

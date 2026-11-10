@@ -1,5 +1,6 @@
 use bun_sema::bind::{ScopeId, SymbolId};
 use bun_sema::hir::FnId;
+use bun_sema::util::SharedSort;
 
 use super::sharing::is_immutable;
 use super::{BindingSharing, Context, Placements};
@@ -15,11 +16,20 @@ pub(super) fn place_bindings(
     captures: &CapturePlan,
 ) -> Placements {
     let bindings = captures.fields.iter().chain(&sharing.fields_for_eval);
-    let bindings = bindings.chain(&sharing.fields_for_handlers);
+    let mut fields_of_others: Vec<BindingRef> = bindings.clone().copied().collect();
+    sort_unique(&mut fields_of_others);
+    let for_handlers = sharing.fields_for_handlers.iter();
+    let has_variable = |binding: &&BindingRef| find_by_key(&sharing.variables, **binding).is_some();
+    let bindings = bindings.chain(for_handlers.filter(|binding| !has_variable(binding)));
     let fields = bindings.map(|&binding| (context.scope_of(binding), binding));
     let mut fields: Vec<(ScopeId, BindingRef)> = fields.collect();
     sort_unique(&mut fields);
     let initial_functions = find_initial_functions(context, &sharing.variables, captures);
+    let makes_scope_ahead = context.input.modules.makes_scope_ahead(context.input.file);
+    let hoisted = context.walk.hoisted_functions.iter();
+    let hoisted = hoisted.filter(|hoisted| makes_scope_ahead && hoisted.0 == context.file_scope);
+    let mut made_ahead: Vec<SymbolId> = hoisted.map(|hoisted| hoisted.1).collect();
+    made_ahead.sort_unstable();
     let place = |binding: BindingRef| {
         let scope = context.scope_of(binding);
         let storage = if let Some(key) = find_by_key(&sharing.variables, binding) {
@@ -35,10 +45,14 @@ pub(super) fn place_bindings(
             BindingRef::Symbol(symbol) => find_by_key(&initial_functions, symbol).is_some(),
             BindingRef::Slot(..) => false,
         };
+        let is_made_ahead = binding.is_listed_in(&made_ahead);
         let is_immutable = is_immutable(context, binding);
         let has_local = match storage {
             Storage::Local => true,
-            Storage::Field { .. } | Storage::Variable(_) => is_immutable && !starts_as_function,
+            Storage::Field { .. } if fields_of_others.binary_search(&binding).is_err() => true,
+            Storage::Field { .. } | Storage::Variable(_) => {
+                is_immutable && !starts_as_function && !is_made_ahead
+            }
         };
         Placement {
             storage,
@@ -61,7 +75,7 @@ pub(super) fn place_bindings(
         BindingRef::Slot(scope, slot) => Some(((scope, slot), place(binding))),
     });
     let mut slots: Vec<(SlotKey, Placement)> = slots.collect();
-    slots.sort_unstable_by_key(|slot| slot.0);
+    slots.shared_sort_unstable_by_key(|slot| slot.0);
     Placements {
         symbols,
         slots,
@@ -77,6 +91,9 @@ pub(super) fn find_initial_functions(
 ) -> Vec<(SymbolId, FnId)> {
     let walk = context.walk;
     let mut functions = Vec::new();
+    if context.input.modules.runs_again(context.input.file) {
+        return functions;
+    }
     for &(scope, symbol, function) in &walk.hoisted_functions {
         let walked = walk.function_of_fn[function.idx()];
         if scope == context.file_scope

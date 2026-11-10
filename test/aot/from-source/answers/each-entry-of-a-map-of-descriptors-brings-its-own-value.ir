@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# "use strict";
+# const names = {};
+# Object.defineProperties(names, { text: { value: "a", enumerable: true }, size: { value: 7, enumerable: true }, flag: { value: true } });
+# function read(t) { let s = ""; for (let i = 0; i < t; i++) s += names.text + names.size + names.flag; return s; }
+# print(read(2), Object.keys(names).join());
+# -- end of source
+# Three entries of one map, three kinds of values: the access of each entry finds ITS change (by the key), not the first change at the site: with the site alone every name would be held to be a text.
+# RUN(ANSWER): run-in-shell
+# ANSWER: a7truea7true text,size
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: a7truea7true text,size
+# CHECKED-NEXT: exited with 0

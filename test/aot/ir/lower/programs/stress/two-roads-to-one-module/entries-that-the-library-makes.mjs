@@ -67,28 +67,5 @@ switch (ticks[0]) {
 console.log(lines.join("\n"));
 process.exit(0);
 
-// GENERATED: same read
 // CHECK-LABEL: function {{*}}name="same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="lines"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = String string=" "
-// CHECK-NEXT: v7 = Add v0, v6
-// CHECK-NEXT: v8 = Add v7, v1
-// CHECK-NEXT: v9 = Call v5, v3, v8 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

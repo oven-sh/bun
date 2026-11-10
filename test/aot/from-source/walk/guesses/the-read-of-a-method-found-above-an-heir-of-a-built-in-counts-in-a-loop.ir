@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# "use strict";
+# const D = JSON.parse('["a","b","c","a"]');
+# class Counter extends Map { inc(k) { this.set(k, (this.get(k) || 0) + 1); return this; } }
+# const c = new Counter();
+# function f(t) { c.clear(); for (let i = 0; i < 64; i++) c.inc(D[i & 3]); return c.size + c.get("a") + t; }
+# print(f(1), f(2));
+# -- end of source
+# f1 = f
+# `c` is proven to be a Counter. `this.set` is read for its call, behind a look at the structure of the heir, and what is found there is the built-in's member; of the key nothing is known. In a loop that read counts
+# in the stretch of its guess: the receiver is an instance of a class of the program and the form stands behind a look at the cell, whatever is found. Where it counted only if nothing was found, `set` and `get`
+# were read and called by name: 265 instructions a turn | 164 on an everyday line.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: HasStructureOfClass
+# CHECK-NOT: calleeKey="set"
+# CHECK: inlineBuiltin=MapSet
+# RUN(ANSWER): run-in-shell
+# ANSWER: 36 37
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 36 37
+# CHECKED-NEXT: exited with 0

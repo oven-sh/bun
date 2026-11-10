@@ -818,7 +818,6 @@ const ruleLane: Record<RuleName, Lane> = {
   dep_host_cc: "dependencies",
   dep_subst: "dependencies",
   bun_install: "codegen",
-  aot_check: "codegen",
   codegen: "codegen",
   codegen_bun: "codegen",
   esbuild: "codegen",

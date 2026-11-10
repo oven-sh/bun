@@ -1,7 +1,7 @@
 // RUN: lower
 // DIAGNOSTIC: UnprovenInt32
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: [[converted]] = Convert {{*}}declared={type=i32 site=w{{*}} flags=[IsInt32Promise]}
+// CHECK: [[converted]] = Convert {{*}}declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: = Call {{*}}, [[converted]] calleeName="g"
 
 /// <reference path="../types/imports/bun-declarations.d.ts" />

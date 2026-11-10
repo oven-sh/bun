@@ -20,7 +20,7 @@ const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByPar
   );
 
 // A list that the program makes by its length. The length is converted where it is no number, and the mapper gets what lies at each index and the index.
-const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh.dense;
+const newArrayOf = (elements: b.TableType) => b.instance("Array").exactly.holding({ element: elements }).fresh.dense;
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
   b.called({
@@ -44,13 +44,47 @@ const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =
     implementation: b.compiled("prelude/written-lists", name),
   }) satisfies b.FunctionField;
 
+// Math.max(...list) and Math.min(...list) of a list of numbers. Undefined of anything else, which the call as written gets.
+const extremumOfList = (name: string) =>
+  ({
+    args: { list: b.any },
+    returns: b.union(b.f64, b.undefined),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: { list: [b.readsContents()] },
+    implementation: b.compiled("prelude/written-lists", name),
+  }) satisfies b.FunctionField;
+
+// What Array.prototype.sort does with a list and a comparator.
+const sortInPlace = (name: string) =>
+  ({
+    args: { array: b.instance("Array"), comparator: b.callable },
+    returns: b.operand("array"),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: {
+      array: [b.returned, b.readsContents(), b.movesElements],
+      comparator: [
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Repeatedly",
+          this: b.undefined,
+          args: [b.slot("array", "element"), b.slot("array", "element")],
+          result: "Escapes",
+        }),
+      ],
+    },
+    implementation: b.compiled("prelude/array-sort", name),
+  }) satisfies b.FunctionField;
+
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
 const kept = [b.retained];
-const keptWithContents = [b.retained, b.contentsStoredIn(b.nativeMemory)];
 const usedAsKey = [b.retained, b.runs("ToPrimitive")];
-// The compiler writes a number here. Anything else would be compared with one.
-const comparedWithNumbers = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))];
 
 const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
   ({
@@ -60,9 +94,12 @@ const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
     throws: true,
     runsOnlyOperandCode: true,
     runsUnseenCode: false,
-    uses: { value: uses },
+    uses: { value: [...uses, b.runs("PrototypeChain")] },
     implementation: b.compiled("DisposableStackPrototype", name),
   }) satisfies b.FunctionField;
+
+const value = { value: "Value", cppType: "JSC::EncodedJSValue" } as const;
+const realm = { value: "Realm", cppType: "JSC::JSGlobalObject*" } as const;
 
 const ownProperties = [
   "ObjectFields",
@@ -72,39 +109,6 @@ const ownProperties = [
   "Elements",
   "ArrayStorage",
 ] as const;
-
-// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood: an error comes from where it came from. describeUnlessOrdinary converts and refuses the source, and does what somebody may see of its description. definePropertiesFrom takes what that answers, refuses what is no target, and defines each own property of an ordinary source on the target as it stands: no object describes it on the way.
-const definitionFrom = {
-  args: { target: b.any, described: b.object, source: b.any },
-  returns: b.operand("target"),
-  capability: "js",
-  throws: true,
-  runsOnlyOperandCode: true,
-  runsUnseenCode: false,
-  uses: {
-    target: [b.returned, b.definedFrom("source"), ...b.ownPropertyTraps],
-    described: b.inspected,
-    source: b.inspected,
-  },
-  reads: ownProperties,
-  writes: ["MemberGuards"],
-  implementation: b.hostCall,
-  directEntry: {
-    symbol: "AOT__definePropertiesFrom",
-    declaration:
-      'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__definePropertiesFrom(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);',
-    headers: [],
-    parameters: [
-      { value: "Realm", cppType: "JSC::JSGlobalObject*" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-    ],
-  },
-} satisfies b.FunctionField;
-
-const value = { value: "Value", cppType: "JSC::EncodedJSValue" } as const;
-const realm = { value: "Realm", cppType: "JSC::JSGlobalObject*" } as const;
 
 const scanOfText = (
   symbol: string,
@@ -168,6 +172,7 @@ export default b.declarations(
       runsOnlyOperandCode: true,
       runsUnseenCode: false,
       uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.resultSlot("element"))] },
+      writes: ["ShapeWords", "NamedProperties", "MemberGuards", "ObjectFields"],
       implementation: b.hostCall,
       directEntry: {
         symbol: "AOT__ownEntriesFlat",
@@ -180,6 +185,8 @@ export default b.declarations(
         ],
       },
     },
+    // Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood: an error comes from where it came from.
+    // describeUnlessOrdinary converts and refuses the source, and does what somebody may see of its description.
     describeUnlessOrdinary: {
       args: { source: b.any },
       returns: b.object,
@@ -195,13 +202,98 @@ export default b.declarations(
         declaration:
           'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__describeUnlessOrdinary(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
         headers: [],
-        parameters: [
-          { value: "Realm", cppType: "JSC::JSGlobalObject*" },
-          { value: "Value", cppType: "JSC::EncodedJSValue" },
-        ],
+        parameters: [realm, value],
       },
     },
-    definePropertiesFrom: definitionFrom,
+    // definePropertiesFrom takes what that answers, refuses what is no target, and defines each own property of an ordinary source on the target as it stands: no object describes it on the way.
+    definePropertiesFrom: {
+      args: { target: b.any, described: b.object, source: b.any },
+      returns: b.operand("target"),
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      uses: {
+        target: [b.returned, b.definedFrom("source"), ...b.ownPropertyTraps],
+        described: b.inspected,
+        source: b.inspected,
+      },
+      reads: ownProperties,
+      writes: ["MemberGuards"],
+      implementation: b.hostCall,
+      directEntry: {
+        symbol: "AOT__definePropertiesFrom",
+        declaration:
+          'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__definePropertiesFrom(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);',
+        headers: [],
+        parameters: [realm, value, value, value],
+      },
+    },
+    // `[...items]`, `f(...items)`: what the iteration hands out goes behind the elements of the list that the spread fills.
+    appendIterable: {
+      args: { target: b.instance("Array"), items: b.any },
+      returns: b.undefined,
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      uses: {
+        target: [b.readsContents(), b.writesContents()],
+        items: [b.runs("Iterate"), b.iteratedValuesStoredIn(b.slot("target", "element"))],
+      },
+      implementation: b.compiled("prelude/iterator-consumers", "appendIterable"),
+    },
+    appendGenerator: {
+      args: { target: b.instance("Array"), items: b.any },
+      returns: b.undefined,
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      uses: {
+        target: [b.readsContents(), b.writesContents()],
+        items: [b.runs("Iterate"), b.iteratedValuesStoredIn(b.slot("target", "element"))],
+      },
+      implementation: b.compiled("prelude/iterator-consumers", "appendGenerator"),
+    },
+    takeFromIterable: {
+      args: { items: b.any, count: b.any },
+      returns: b.instance("Array").holding({ element: b.iterated("items") }).fresh,
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      uses: { items: [b.runs("Iterate"), b.iteratedValuesStoredIn(b.resultSlot("element"))], count: b.inspected },
+      implementation: b.compiled("prelude/iterator-consumers", "takeFromIterable"),
+    },
+    nextOfStepsOverText: {
+      args: {},
+      returns: b.any,
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: false,
+      runsUnseenCode: false,
+      uses: { this: calledOrChanged },
+      implementation: b.compiled("prelude/iterator-consumers", "nextOfStepsOverText"),
+    },
+    importRejectedByLoader: {
+      args: { reason: b.any },
+      returns: b.instance("Promise").holding({ value: b.never }).fresh,
+      capability: "js",
+      throws: false,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      // As the reason of Promise.reject: the host hands it to the listeners for unhandled rejections.
+      uses: { reason: [b.storedIn(b.resultSlot("reason")), b.retained] },
+      implementation: b.compiled("prelude/rejected-imports", "importRejectedByLoader"),
+    },
+    askRunOfTestFile: {
+      args: { ownGlobals: b.bool },
+      returns: b.f64,
+      capability: "none",
+      uses: { ownGlobals: b.inspected },
+      implementation: b.compiled("prelude/test-files", "askRunOfTestFile"),
+    },
     ...helpersIn("prelude/decorators", {
       decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
@@ -281,11 +373,18 @@ export default b.declarations(
       runInitializers: { initializers: calledOrChanged, receiver: calledOrChanged },
       runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
     }),
+    maxOfList: extremumOfList("maxOfList"),
+    minOfList: extremumOfList("minOfList"),
     checkedArrayLength: arrayMaker("checkedArrayLength", b.operand("length"), { length: [b.returned] }),
     // The front end writes arrayOfUndefined where the mapper is undefined, so this one never gets that.
     arrayFromLength: arrayMaker("arrayFromLength", newArrayOf(b.callbackResult("mapper")), {
       length: lengthOfNewArray,
       mapper: calledForEachIndex(b.undefined),
+    }),
+    // What is no list after all goes to Array.from, so the row says of both operands what that of Array.from says.
+    arrayFromList: arrayMaker("arrayFromList", newArrayOf(b.callbackResult("mapper")), {
+      list: [b.runs("Iterate", "OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))],
+      mapper: [...calledForEachIndex(b.iterated("list")), ...calledForEachIndex(b.ownValues("list"))],
     }),
     arrayOfUndefined: arrayMaker("arrayOfUndefined", newArrayOf(b.undefined), { length: lengthOfNewArray }),
     filledArray: arrayMaker("filledArray", newArrayOf(b.operand("value")), {
@@ -298,15 +397,17 @@ export default b.declarations(
       // Where the length is no small number the list is filled and mapped as the program wrote it, and the mapper gets that list too.
       mapper: calledForEachIndex(b.operand("value"), b.instance("Array")),
     }),
-    ...helpersIn("prelude/array-traversal", {
-      traverseArray: {
-        array: keptWithContents,
-        start: comparedWithNumbers,
-        end: comparedWithNumbers,
-        shape: comparedWithNumbers,
-        operands: keptWithContents,
-        operand: [b.retained, b.returned],
-      },
+    sortByDifference: sortInPlace("sortByDifference"),
+    sortByReversedDifference: sortInPlace("sortByReversedDifference"),
+    // The protocol of iteration, for a loop over a value of which the engine knows nothing. The engine calls the functions directly, and goes by what their code does.
+    ...helpersIn("prelude/iterator-consumers", {
+      openIterator: { iterable: calledOrChanged },
+      openWrappedIterator: { iterable: calledOrChanged },
+      stepIterator: { iterator: calledOrChanged, next: calledOrChanged },
+      wayToStepIterator: { iterator: calledOrChanged, next: calledOrChanged },
+      stepIteratorInWay: { iterator: calledOrChanged, way: calledOrChanged },
+      closeIterator: { iterator: calledOrChanged },
+      closeIteratorAfterThrow: { iterator: calledOrChanged },
     }),
     getDisposeMethod: disposeMethodLookup("getDisposeMethod", [b.readByKey(b.keysNamed("@@dispose"))]),
     getAsyncDisposeMethod: disposeMethodLookup("getAsyncDisposeMethod", [

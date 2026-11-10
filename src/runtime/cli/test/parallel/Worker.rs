@@ -16,6 +16,7 @@ use bun_core::{self, Output};
 #[cfg(windows)]
 use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_spawn::RusageFields as _;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
@@ -76,6 +77,10 @@ pub(crate) struct Worker {
     /// Consecutive (re)spawns of this slot that exited before `.ready`;
     /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.
     pub(crate) startup_failures: u8,
+    /// Only files that take over a gigabyte are left, and one of them runs.
+    pub(crate) waits_for_heavy_file_to_end: bool,
+    /// `runner::first_loads` as of the last file that ran in this slot. The next process of the slot starts from there, as one process that ran all of them would.
+    pub(crate) first_loads: Vec<u8>,
 }
 
 /// What `Worker::start` borrows from the `Coordinator`.
@@ -84,11 +89,45 @@ pub(crate) struct SpawnContext<'a> {
     pub(crate) cwd: &'a [u8],
     pub(crate) argv: &'a [bun_spawn::CStrPtr],
     pub(crate) envps: &'a [bun_dotenv::NullDelimitedEnvMap],
+    /// Windows hands it over as an inherited handle, which the worker's arguments name.
+    #[cfg_attr(windows, expect(dead_code))]
+    pub(crate) compiled_program: Option<bun_sys::Fd>,
     #[cfg(windows)]
     pub(crate) windows_job: Option<*mut c_void>,
 }
 
 impl Worker {
+    /// Takes in what the worker has written to its output so far, without waiting for the event loop to find it. What a worker
+    /// reports and what it prints come by different pipes, so a report can be read before the text that was written ahead of it,
+    /// and the text would then be printed under no file, or under the next one.
+    pub(crate) fn read_output_written_so_far(&mut self) {
+        #[cfg(unix)]
+        for descriptor in [&self.out, &self.err]
+            .map(|pipe| (!pipe.done).then(|| pipe.reader.get_fd()))
+            .into_iter()
+            .flatten()
+            .filter(|descriptor| descriptor.is_valid())
+        {
+            let mut chunk = [0u8; 16 * 1024];
+            loop {
+                let mut asked = [bun_sys::posix::PollFd {
+                    fd: descriptor.native(),
+                    events: bun_sys::posix::POLL_IN,
+                    revents: 0,
+                }];
+                let is_readable = bun_sys::posix::poll(&mut asked, 0).is_ok_and(|count| count > 0)
+                    && asked[0].revents & bun_sys::posix::POLL_IN != 0;
+                if !is_readable {
+                    break;
+                }
+                match bun_sys::read(descriptor, &mut chunk) {
+                    Ok(count) if count > 0 => self.captured.extend_from_slice(&chunk[..count]),
+                    _ => break,
+                }
+            }
+        }
+    }
+
     /// The caller counts the worker in `live_workers` on `Ok`.
     pub(crate) fn start(&mut self, coord: &SpawnContext<'_>) -> crate::Result<()> {
         debug_assert!(!self.alive);
@@ -124,11 +163,14 @@ impl Worker {
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
+            let compiled_program = coord.compiled_program.map(Stdio::Pipe);
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer,
                 stderr: Stdio::Buffer,
-                extra_fds: vec![Stdio::Buffer].into_boxed_slice(),
+                extra_fds: core::iter::once(Stdio::Buffer)
+                    .chain(compiled_program)
+                    .collect(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 stream: true,
                 // Own pgrp so abortAll can kill(-pid, SIGTERM) the worker and
@@ -327,16 +369,25 @@ impl Worker {
         Ok(())
     }
 
-    pub(crate) fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, _: &Process, status: Status, rusage: &Rusage) {
         self.alive = false;
+        let peak_rss_mb = (rusage.maxrss() / (1024.0 * 1024.0)) as u32;
         // SAFETY: coord backref valid for worker lifetime; mutation — see `coord` field doc (provenance caveats).
-        unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
+        unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status, peak_rss_mb) };
     }
 
-    pub(crate) fn dispatch(&mut self, f: &mut Frame, file_idx: u32, file: &[u8]) {
+    pub(crate) fn dispatch(
+        &mut self,
+        f: &mut Frame,
+        file_idx: u32,
+        file: &[u8],
+        is_growth_written: bool,
+    ) {
         f.begin(frame::Kind::Run);
         f.u32(file_idx);
         f.str(file);
+        f.str(&self.first_loads);
+        f.u32(u32::from(is_growth_written));
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
         self.dispatched_at = bun_core::time::milli_timestamp();
@@ -360,6 +411,11 @@ bun_spawn::link_impl_ProcessExit! {
 
 bun_core::intrusive_field!(Worker, ipc: Channel<Worker>);
 impl ChannelOwner for Worker {
+    fn on_channel_data(&mut self) {
+        // Once per read of the channel is enough: the frames of one read are all of one file.
+        self.read_output_written_so_far();
+    }
+
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };

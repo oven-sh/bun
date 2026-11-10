@@ -1387,10 +1387,6 @@ block${n + 7}();`,
 export {};
 `,
     ),
-    "reflect-set-gives-the-members-of-a-prototype-other-values.json": text(
-      `{ "skipInVariant": { "validate-collecting": "it allocates so much that it runs for minutes where every allocation collects, and a run is killed after 90 seconds" } }
-`,
-    ),
     "reflect-set-gives-the-members-of-a-prototype-other-values.ts": text(
       `class Gauge {
   level = 1;

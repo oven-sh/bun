@@ -1,14 +1,19 @@
-use super::*;
-use crate::ir::body::{BlockView, ValueView};
-use crate::ir::builder::Edge;
-use crate::ir::generated::{
-    BlockFrequency, BlockRole, FunctionFlags, TemplateString, TerminatorKind,
+use crate::ir::body::{BlockView, Body, ValueView};
+use crate::ir::builder::{
+    BuilderScratch, Edge, FunctionBuilder, MAX_SPARE_BLOCKS, MAX_SPARE_VALUES,
 };
-use crate::ir::ids::{ABSENT_WORD, ExpectedResultId, LayoutId, PropertyKeyId, StringId};
+use crate::ir::generated::{
+    BlockRole, FunctionFlags, Opcode, STANDS_IN_TAIL_POSITION, TemplateString, TerminatorKind,
+    ValueHead,
+};
+use crate::ir::ids::{
+    ABSENT_WORD, BlockId, ExpectedResultId, Id, LayoutId, PropertyKeyId, StringId, TypeId, ValueId,
+};
 use crate::ir::testing::{build_function, create_blocks, function_with_parameters};
 use crate::ir::types::TypeTable;
 
 const DROPPED_VALUE_COUNT: usize = 3;
+const LONG_LIST_LENGTH: u32 = 300;
 
 type Target = (usize, Vec<ValueId>, Vec<u32>);
 
@@ -41,9 +46,16 @@ fn entry_of(body: &Body) -> BlockView<'_> {
     body.blocks().next().expect("the body has an entry block")
 }
 
+fn last_value_in<'a>(block: &BlockView<'a>) -> ValueView<'a> {
+    block.values().last().expect("the block lists a value")
+}
+
 fn last_value_of(body: &Body) -> ValueView<'_> {
-    let values = entry_of(body).values();
-    values.last().expect("the entry block lists a value")
+    last_value_in(&entry_of(body))
+}
+
+fn opcodes_of(block: &BlockView<'_>) -> Vec<Opcode> {
+    block.values().map(|value| value.opcode).collect()
 }
 
 fn integer_constants(block: &BlockView<'_>) -> Vec<i64> {
@@ -95,22 +107,9 @@ fn call_round_trip() {
             None,
             true,
             false,
-            false,
         );
         builder.set_position(None);
-        builder.call(
-            callee,
-            None,
-            &[],
-            None,
-            None,
-            None,
-            None,
-            None,
-            false,
-            true,
-            false,
-        );
+        builder.call(callee, None, &[], None, None, None, None, None, false, true);
         builder.return_value(None);
     });
     let values: Vec<ValueView<'_>> = entry_of(&body).values().collect();
@@ -140,46 +139,35 @@ fn call_round_trip() {
 }
 
 #[test]
-fn written_position_round_trip() {
-    let build_reads = |written: [u32; 2]| {
-        build(&[TypeTable::ANYTHING], |builder| {
-            let object = builder.parameter(0);
-            emit_dropped_values(builder);
-            let key = PropertyKeyId::new(3);
-            builder.set_position(Some(17));
-            builder.set_written_position(written[0]);
-            builder.prop_get(object, key, false, false);
-            builder.set_written_position(17);
-            builder.prop_get(object, key, false, false);
-            builder.set_written_position(written[1]);
-            builder.set_position(Some(21));
-            let last = builder.prop_get(object, key, false, false);
-            builder.return_value(Some(last));
-        })
+fn value_in_tail_position_keeps_its_mark() {
+    let body = build(&[TypeTable::ANYTHING], |builder| {
+        let passed = builder.parameter(0);
+        emit_dropped_values(builder);
+        let listed = builder.undefined();
+        let outer = builder.set_tail_position(true);
+        builder.strcat(&[listed, passed]);
+        builder.set_tail_position(outer);
+        builder.strcat(&[passed, listed]);
+        builder.return_value(None);
+    });
+    let values: Vec<ValueView<'_>> = entry_of(&body).values().collect();
+    let [_, marked, plain] = values[..] else {
+        panic!("{} values", values.len());
     };
-    let places_of = |body: &Body| -> Vec<(Option<u32>, Option<u32>)> {
-        let values = entry_of(body).values();
-        values
-            .map(|value| (value.position, value.written_position))
-            .collect()
-    };
-    let count_references = |body: &Body| {
-        let mut count = 0;
-        body.for_each_reference(&mut |_| count += 1);
-        count
-    };
-    let (marked, plain) = (build_reads([5, 9]), build_reads([17, 21]));
     assert_eq!(
-        places_of(&marked),
-        [(Some(17), Some(5)), (Some(17), None), (Some(21), None)]
+        (marked.opcode, plain.opcode),
+        (Opcode::Strcat, Opcode::Strcat)
     );
-    assert_eq!(
-        places_of(&plain),
-        [(Some(17), None), (Some(17), None), (Some(21), None)]
-    );
-    assert_eq!(marked.code.len(), plain.code.len() + 1);
-    assert!(marked.check_stream().is_ok());
-    assert_eq!(count_references(&marked), count_references(&plain));
+    assert_eq!(marked.fields, [2, 1, 0]);
+    assert_eq!(plain.fields, [2, 0, 1]);
+
+    let marked_head = Opcode::Strcat.to_wire() | STANDS_IN_TAIL_POSITION;
+    let is_marked_head = |at: &usize| body.code[*at] == marked_head;
+    let marked_heads: Vec<usize> = (0..body.code.len()).filter(is_marked_head).collect();
+    let [at] = marked_heads[..] else {
+        panic!("{} marked values", marked_heads.len());
+    };
+    assert_eq!(body.code[at + ValueHead::WORDS..][..3], [2, 1, 0]);
 }
 
 #[test]
@@ -247,6 +235,24 @@ fn template_object_round_trip() {
     let template = last_value_of(&body);
     assert_eq!(template.opcode, Opcode::NewTemplateObject);
     assert_eq!(template.fields, [2, 4, 5, ABSENT_WORD, 6]);
+}
+
+#[test]
+fn long_operand_list_survives() {
+    let body = build(&[], |builder| {
+        emit_dropped_values(builder);
+        let constants = (0..LONG_LIST_LENGTH).map(|constant| builder.integer(i64::from(constant)));
+        let mut parts: Vec<ValueId> = constants.collect();
+        parts.reverse();
+        builder.strcat(&parts);
+        builder.return_value(None);
+    });
+    assert_eq!(body.value_count, LONG_LIST_LENGTH + 1);
+    let strcat = last_value_of(&body);
+    assert_eq!(strcat.opcode, Opcode::Strcat);
+    let numbers = (0..LONG_LIST_LENGTH).rev();
+    let expected: Vec<u32> = core::iter::once(LONG_LIST_LENGTH).chain(numbers).collect();
+    assert_eq!(strcat.fields, expected);
 }
 
 #[test]
@@ -324,10 +330,9 @@ fn open_block_ends_unreachable() {
         builder.integer(1);
     });
     let blocks: Vec<BlockView<'_>> = body.blocks().collect();
-    let [entry, open] = blocks[..] else {
+    let [open] = blocks[..] else {
         panic!("{} blocks", blocks.len());
     };
-    assert_eq!(entry.terminator().kind, TerminatorKind::Jump);
     let terminator = open.terminator();
     assert_eq!(terminator.kind, TerminatorKind::Unreachable);
     assert_eq!(terminator.position, None);
@@ -399,6 +404,31 @@ fn loop_header_precedes_loop_body() {
 }
 
 #[test]
+fn blocks_emitted_in_alternation_come_out_block_by_block() {
+    let body = build(&[], |builder| {
+        let first = builder.current_block();
+        let second = builder.create_block(None);
+        let emit_in_turn = |constant: i64| {
+            builder.switch_to(if constant % 2 == 0 { first } else { second });
+            builder.integer(constant)
+        };
+        let constants: Vec<ValueId> = (0..6).map(emit_in_turn).collect();
+        builder.switch_to(first);
+        builder.jump(Edge::to(second));
+        builder.seal(second);
+        builder.switch_to(second);
+        builder.strcat(&constants);
+        builder.return_value(None);
+    });
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    let [joined] = blocks[..] else {
+        panic!("{} blocks", blocks.len());
+    };
+    assert_eq!(integer_constants(&joined), [0, 2, 4, 1, 3, 5]);
+    assert_eq!(last_value_in(&joined).fields, [6, 0, 3, 1, 4, 2, 5]);
+}
+
+#[test]
 fn block_without_predecessors_is_dropped() {
     let body = build(&[], |builder| {
         let entry = builder.current_block();
@@ -439,40 +469,30 @@ fn use_of_dropped_value_is_out_of_range() {
 }
 
 #[test]
-fn listed_value_is_renumbered() {
-    let numbers = [Some(value(3)), None, Some(value(0))];
-    assert_eq!(number_of(&numbers, 9, value(0)), 3);
-    assert_eq!(number_of(&numbers, 9, value(2)), 0);
-}
-
-#[test]
 fn handler_is_a_successor() {
-    let mut builder = create_builder(&[TypeTable::BOOLEAN], BuilderScratch::default());
-    let condition = builder.parameter(0);
-    let entry = builder.current_block();
-    let handler = builder.create_handler(BlockRole::CatchHandler, None, None);
-    let [branching, returning] = [(); 2].map(|()| builder.create_block(Some(handler)));
-    let uncovered = builder.create_block(None);
-    builder.jump(Edge::to(branching));
-    builder.switch_to(branching);
-    builder.branch(condition, Edge::to(returning), Edge::to(uncovered));
-    for block in [returning, uncovered] {
-        builder.switch_to(block);
-        builder.return_value(None);
-    }
-
-    let successors_of = |block: BlockId| -> Vec<BlockId> {
-        let block = &builder.blocks[block.index()];
-        let indices = 0..successor_count(block);
-        indices.map(|index| successor(block, index)).collect()
-    };
-    assert_eq!(successors_of(entry), [branching]);
-    assert_eq!(
-        successors_of(branching),
-        [returning, uncovered, handler.block()]
-    );
-    assert_eq!(successors_of(returning), [handler.block()]);
-    assert!(successors_of(uncovered).is_empty());
+    let body = build(&[TypeTable::BOOLEAN], |builder| {
+        let condition = builder.parameter(0);
+        let handler = builder.create_handler(BlockRole::CatchHandler, None, None);
+        let [branching, returning] = [(); 2].map(|()| builder.create_block(Some(handler)));
+        let uncovered = builder.create_block(None);
+        builder.jump(Edge::to(branching));
+        builder.switch_to(branching);
+        builder.branch(condition, Edge::to(returning), Edge::to(uncovered));
+        for block in [branching, returning, uncovered, handler.block()] {
+            builder.seal(block);
+        }
+        for block in [returning, uncovered, handler.block()] {
+            builder.switch_to(block);
+            builder.return_value(None);
+        }
+    });
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    let handler_of = |block: &BlockView<'_>| block.handler().map(|handler| handler.block);
+    let handlers: Vec<Option<BlockId>> = blocks.iter().map(handler_of).collect();
+    let landing = Some(BlockId::new(4));
+    assert_eq!(handlers, [None, landing, landing, None, None]);
+    assert_eq!(targets_of(&blocks[1]), [2, 3].map(target_to));
+    assert_eq!(blocks[4].role, BlockRole::CatchHandler);
 }
 
 #[test]
@@ -501,31 +521,293 @@ fn landing_block_follows_covered_blocks() {
         .blocks()
         .map(|block| integer_constants(&block))
         .collect();
-    assert_eq!(constants, [vec![], vec![1], vec![2], vec![3], vec![4]]);
-    let landing = body.blocks().nth(3).expect("the body has five blocks");
+    assert_eq!(constants, [vec![], vec![1, 2], vec![3], vec![4]]);
+    let landing = body.blocks().nth(2).expect("the body has four blocks");
     assert_eq!(landing.role, BlockRole::CatchHandler);
 }
 
 #[test]
-fn unreached_blocks_have_no_number() {
-    let mut builder = create_builder(&[], BuilderScratch::default());
-    let handler = builder.create_handler(BlockRole::CatchHandler, None, None);
-    let dead = builder.create_block(Some(handler));
-    let next = builder.create_block(None);
-    builder.jump(Edge::to(next));
-    let FunctionBuilder { mut blocks, .. } = builder;
-    close_open_blocks(&mut blocks);
+fn block_that_only_a_jump_leads_to_is_joined() {
+    let body = build(&[TypeTable::BOOLEAN], |builder| {
+        let condition = builder.parameter(0);
+        let [last, second, first, other] = create_blocks(builder);
+        builder.branch(condition, Edge::to(first), Edge::to(other));
+        for (constant, block, next) in [(1, first, second), (2, second, last)] {
+            builder.seal(block);
+            builder.switch_to(block);
+            builder.integer(constant);
+            builder.jump(Edge::to(next));
+        }
+        for (constant, block) in [(3, last), (4, other)] {
+            builder.seal(block);
+            builder.switch_to(block);
+            builder.integer(constant);
+            builder.return_value(None);
+        }
+    });
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    let constants: Vec<Vec<i64>> = blocks.iter().map(integer_constants).collect();
+    assert_eq!(constants, [vec![], vec![1, 2, 3], vec![4]]);
+    assert_eq!(targets_of(&blocks[0]), [1, 2].map(target_to));
+    assert_eq!(blocks[1].terminator().kind, TerminatorKind::Return);
+    assert_eq!(body.value_count, 5);
+}
 
-    let mut scratch = FinishScratch::default();
-    scratch.order_blocks(&blocks);
-    assert_eq!(scratch.order, [ENTRY_BLOCK, next]);
-    let mut expected_numbers = [None; 4];
-    expected_numbers[ENTRY_BLOCK.index()] = Some(BlockId::new(0));
-    expected_numbers[next.index()] = Some(BlockId::new(1));
-    assert_eq!(scratch.block_numbers, expected_numbers);
-    assert!(!scratch.is_reached[dead.index()]);
-    assert!(!scratch.is_reached[handler.block().index()]);
-    assert!(scratch.stack.is_empty());
+#[test]
+fn entry_block_is_joined_too() {
+    let body = build(&[], |builder| {
+        let next = builder.create_block(None);
+        builder.integer(1);
+        builder.jump(Edge::to(next));
+        builder.seal(next);
+        builder.switch_to(next);
+        builder.integer(2);
+        builder.return_value(None);
+    });
+    let constants: Vec<Vec<i64>> = body
+        .blocks()
+        .map(|block| integer_constants(&block))
+        .collect();
+    assert_eq!(constants, [vec![1, 2]]);
+}
+
+#[test]
+fn parameter_of_joined_block_is_the_argument() {
+    let body = build(&[], |builder| {
+        let [second, first] = create_blocks(builder);
+        let passed = builder.add_parameter(second, None);
+        builder.jump(Edge::to(first));
+        builder.seal(first);
+        builder.switch_to(first);
+        let constant = builder.integer(1);
+        builder.jump(Edge::with_arguments(second, &[constant]));
+        builder.seal(second);
+        builder.switch_to(second);
+        builder.return_value(Some(passed));
+    });
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(body.value_count, 1);
+    assert_eq!(blocks[0].parameter_types().count(), 0);
+    assert_eq!(blocks[0].terminator().fields, [0]);
+}
+
+#[test]
+fn block_with_a_declared_parameter_is_not_joined() {
+    let body = build(&[], |builder| {
+        let [second, first] = create_blocks(builder);
+        let passed = builder.add_parameter(second, Some(TypeTable::NUMBER));
+        builder.jump(Edge::to(first));
+        builder.seal(first);
+        builder.switch_to(first);
+        let constant = builder.integer(1);
+        builder.jump(Edge::with_arguments(second, &[constant]));
+        builder.seal(second);
+        builder.switch_to(second);
+        builder.return_value(Some(passed));
+    });
+    assert_eq!(body.blocks().count(), 2);
+}
+
+#[test]
+fn block_under_another_handler_is_not_joined() {
+    let body = build(&[], |builder| {
+        let handler = builder.create_handler(BlockRole::CatchHandler, None, None);
+        let first = builder.create_block(None);
+        let covered = builder.create_block(Some(handler));
+        for block in [first, covered] {
+            builder.jump(Edge::to(block));
+            builder.seal(block);
+            builder.switch_to(block);
+        }
+        builder.return_value(None);
+        builder.seal(handler.block());
+        builder.switch_to(handler.block());
+        builder.return_value(None);
+    });
+    let handlers: Vec<bool> = body
+        .blocks()
+        .map(|block| block.handler().is_some())
+        .collect();
+    assert_eq!(handlers, [false, true, false]);
+}
+
+fn build_test_with_one_arm(
+    has_results: bool,
+    choose_argument: impl FnOnce(ValueId, Option<ValueId>) -> Option<ValueId>,
+) -> Body {
+    build(&[TypeTable::BOOLEAN], |builder| {
+        let condition = builder.parameter(0);
+        let [join, unwritten, written] = create_blocks(builder);
+        let result = has_results.then(|| {
+            builder.add_edge_result(written);
+            builder.add_edge_result(unwritten)
+        });
+        let proofs: &[u32] = if has_results { &[0] } else { &[] };
+        builder.branch(
+            condition,
+            Edge::with_proofs(written, proofs),
+            Edge::with_proofs(unwritten, proofs),
+        );
+        let argument = choose_argument(condition, result);
+        if argument.is_some() {
+            builder.add_parameter(join, None);
+        }
+        builder.seal(unwritten);
+        builder.switch_to(unwritten);
+        builder.jump(Edge::with_arguments(join, argument.as_slice()));
+        builder.seal(written);
+        builder.switch_to(written);
+        let constant = builder.integer(1);
+        let argument = argument.map(|_| constant);
+        builder.jump(Edge::with_arguments(join, argument.as_slice()));
+        builder.seal(join);
+        builder.switch_to(join);
+        builder.integer(2);
+        builder.return_value(None);
+    })
+}
+
+#[test]
+fn edge_passes_by_block_that_only_jumps() {
+    let body = build_test_with_one_arm(false, |_, _| None);
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    let constants: Vec<Vec<i64>> = blocks.iter().map(integer_constants).collect();
+    assert_eq!(constants, [vec![], vec![1], vec![2]]);
+    assert_eq!(targets_of(&blocks[0]), [1, 2].map(target_to));
+}
+
+#[test]
+fn result_of_edge_that_nobody_reads_goes_with_the_block() {
+    let body = build_test_with_one_arm(true, |_, _| None);
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    assert_eq!(blocks.len(), 3);
+    let with_proof = (1, Vec::new(), vec![0]);
+    assert_eq!(targets_of(&blocks[0]), [with_proof, target_to(2)]);
+    assert_eq!(body.value_count, 4);
+}
+
+#[test]
+fn block_that_hands_on_result_of_its_edge_stays() {
+    let body = build_test_with_one_arm(true, |_, result| result);
+    assert_eq!(body.blocks().count(), 4);
+}
+
+#[test]
+fn edge_that_passes_by_takes_arguments_of_the_jump() {
+    let body = build_test_with_one_arm(false, |condition, _| Some(condition));
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    assert_eq!(blocks.len(), 3);
+    let with_argument = (2, vec![value(0)], Vec::new());
+    assert_eq!(targets_of(&blocks[0]), [target_to(1), with_argument]);
+}
+
+#[test]
+fn edge_passes_by_a_row_of_blocks_that_only_jump() {
+    let body = build(&[TypeTable::BOOLEAN], |builder| {
+        let condition = builder.parameter(0);
+        let [join, second, first, written] = create_blocks(builder);
+        builder.add_edge_result(first);
+        builder.branch(condition, Edge::to(written), Edge::with_proofs(first, &[0]));
+        for (block, next) in [(first, second), (second, join)] {
+            builder.seal(block);
+            builder.switch_to(block);
+            builder.jump(Edge::to(next));
+        }
+        builder.seal(written);
+        builder.switch_to(written);
+        builder.integer(1);
+        builder.jump(Edge::to(join));
+        builder.seal(join);
+        builder.switch_to(join);
+        builder.return_value(None);
+    });
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(targets_of(&blocks[0]), [1, 2].map(target_to));
+}
+
+#[test]
+fn two_arms_of_one_test_that_meet_at_once_stay() {
+    let body = build(&[TypeTable::BOOLEAN], |builder| {
+        let condition = builder.parameter(0);
+        let [join, second, first] = create_blocks(builder);
+        builder.branch(condition, Edge::to(first), Edge::to(second));
+        for arm in [first, second] {
+            builder.seal(arm);
+            builder.switch_to(arm);
+            builder.jump(Edge::to(join));
+        }
+        builder.seal(join);
+        builder.switch_to(join);
+        builder.return_value(None);
+    });
+    assert_eq!(body.blocks().count(), 4);
+}
+
+#[test]
+fn block_that_jumps_into_region_of_handler_stays() {
+    let body = build(&[TypeTable::BOOLEAN], |builder| {
+        let condition = builder.parameter(0);
+        let handler = builder.create_handler(BlockRole::CatchHandler, None, None);
+        let [out, front] = create_blocks(builder);
+        let covered = builder.create_block(Some(handler));
+        builder.branch(condition, Edge::to(front), Edge::to(out));
+        builder.seal(front);
+        builder.switch_to(front);
+        builder.jump(Edge::to(covered));
+        builder.seal(covered);
+        builder.switch_to(covered);
+        builder.integer(1);
+        builder.jump(Edge::to(out));
+        builder.seal(handler.block());
+        builder.switch_to(handler.block());
+        builder.jump(Edge::to(out));
+        builder.seal(out);
+        builder.switch_to(out);
+        builder.return_value(None);
+    });
+    let handlers: Vec<bool> = body
+        .blocks()
+        .map(|block| block.handler().is_some())
+        .collect();
+    assert_eq!(handlers, [false, false, true, false, false]);
+}
+
+#[test]
+fn block_in_front_of_loop_stays() {
+    let body = build(&[TypeTable::BOOLEAN], |builder| {
+        let condition = builder.parameter(0);
+        let [out, head, front] = create_blocks(builder);
+        builder.branch(condition, Edge::to(front), Edge::to(out));
+        builder.seal(front);
+        builder.switch_to(front);
+        builder.jump(Edge::to(head));
+        builder.switch_to(head);
+        builder.integer(1);
+        builder.branch(condition, Edge::to(head), Edge::to(out));
+        builder.seal(head);
+        builder.seal(out);
+        builder.switch_to(out);
+        builder.return_value(None);
+    });
+    assert_eq!(body.blocks().count(), 4);
+}
+
+#[test]
+fn unreached_blocks_have_no_number() {
+    let body = build(&[], |builder| {
+        let handler = builder.create_handler(BlockRole::CatchHandler, None, None);
+        let dead = builder.create_block(Some(handler));
+        let next = builder.create_block(None);
+        builder.jump(Edge::to(next));
+        for block in [handler.block(), dead, next] {
+            builder.seal(block);
+        }
+    });
+    let roles: Vec<BlockRole> = body.blocks().map(|block| block.role).collect();
+    assert_eq!(roles, [BlockRole::Ordinary]);
+    assert_eq!(entry_of(&body).terminator().target_count(), 0);
 }
 
 fn fill_join_with_every_kind_of_parameter(builder: &mut FunctionBuilder) {
@@ -594,6 +876,57 @@ fn arguments_are_ordered_like_parameters() {
 }
 
 #[test]
+fn undefined_made_by_ssa_stands_first_in_its_block() {
+    let body = build(&[], |builder| {
+        let [earlier, later] = [(); 2].map(|()| builder.create_variable(None));
+        builder.set_position(Some(7));
+        let constants = [1, 2].map(|constant| builder.integer(constant));
+        builder.strcat(&constants);
+        let next = builder.create_block(None);
+        builder.jump(Edge::to(next));
+        builder.seal(next);
+        builder.switch_to(next);
+        let reads = [earlier, later].map(|variable| builder.read_variable(variable));
+        builder.strcat(&reads);
+        builder.return_value(None);
+    });
+    let blocks: Vec<BlockView<'_>> = body.blocks().collect();
+    let [entry] = blocks[..] else {
+        panic!("{} blocks", blocks.len());
+    };
+    let values = entry.values().map(|value| (value.opcode, value.position));
+    let values: Vec<(Opcode, Option<u32>)> = values.collect();
+    let expected = [
+        (Opcode::Undefined, None),
+        (Opcode::Undefined, None),
+        (Opcode::Integer, Some(7)),
+        (Opcode::Integer, Some(7)),
+        (Opcode::Strcat, Some(7)),
+        (Opcode::Strcat, Some(7)),
+    ];
+    assert_eq!(values, expected);
+    let joined = entry
+        .values()
+        .filter(|value| value.opcode == Opcode::Strcat);
+    let joined: Vec<&[u32]> = joined.map(|value| value.fields).collect();
+    assert_eq!(joined, [[2, 2, 3], [2, 1, 0]]);
+}
+
+#[test]
+fn value_follows_undefined_made_by_ssa_in_empty_block() {
+    let body = build(&[], |builder| {
+        let variable = builder.create_variable(None);
+        let read = builder.read_variable(variable);
+        let constant = builder.integer(1);
+        builder.strcat(&[constant, read]);
+        builder.return_value(None);
+    });
+    let expected = [Opcode::Undefined, Opcode::Integer, Opcode::Strcat];
+    assert_eq!(opcodes_of(&entry_of(&body)), expected);
+    assert_eq!(last_value_of(&body).fields, [2, 1, 0]);
+}
+
+#[test]
 fn subject_is_renumbered() {
     let body = build(&[TypeTable::ANYTHING], |builder| {
         emit_dropped_values(builder);
@@ -624,7 +957,6 @@ fn fill_function_with_every_kind_of_word(builder: &mut FunctionBuilder) {
     let [case, otherwise] = create_blocks(builder);
     let narrowed = builder.add_edge_result(case);
     let passed = builder.add_parameter(otherwise, Some(TypeTable::NUMBER));
-    builder.set_frequency(otherwise, BlockFrequency::Unlikely);
     builder.jump(Edge::to(covered));
     builder.seal(covered);
     builder.switch_to(covered);
@@ -655,23 +987,20 @@ fn fill_function_with_every_kind_of_word(builder: &mut FunctionBuilder) {
 
 #[test]
 fn measured_size_is_exact() {
-    let parameters = [TypeTable::ANYTHING];
-    let body = build(&parameters, fill_function_with_every_kind_of_word);
-    let mut builder = create_builder(&parameters, BuilderScratch::default());
+    let mut builder = create_builder(&[TypeTable::ANYTHING], BuilderScratch::default());
     fill_function_with_every_kind_of_word(&mut builder);
-    let FunctionBuilder {
-        mut blocks, values, ..
-    } = builder;
-    close_open_blocks(&mut blocks);
-    let mut scratch = FinishScratch::default();
-    scratch.order_blocks(&blocks);
-    let size = scratch.number_values(&blocks, &values);
+    let pending_value_count = builder.values.len();
+    let (function, _) = builder.finish();
+    let body = function.body;
 
-    assert_eq!(size, (body.value_count, body.code.len()));
-    assert_eq!(scratch.order.len(), body.block_count as usize);
-    let numbered_value_count = scratch.value_numbers.iter().flatten().count();
-    assert_eq!(numbered_value_count, body.value_count as usize);
-    assert_eq!(values.len(), numbered_value_count + DROPPED_VALUE_COUNT);
+    assert_eq!(body.check_stream(), Ok(()));
+    assert_eq!(body.code.capacity(), body.code.len());
+    assert_eq!(body.block_count, 6);
+    let numbered_value_count = body.value_count as usize;
+    assert_eq!(
+        pending_value_count,
+        numbered_value_count + DROPPED_VALUE_COUNT
+    );
 }
 
 #[test]
@@ -690,32 +1019,30 @@ fn scratch_of_larger_function_encodes_same_body() {
 
 #[test]
 fn recycle_keeps_cleared_lists() {
-    let mut scratch = FinishScratch::default();
-    scratch.is_reached.push(true);
-    scratch.block_numbers.push(Some(ENTRY_BLOCK));
-    scratch.value_numbers.push(None);
-    scratch.order.push(ENTRY_BLOCK);
-    scratch.stack.push((ENTRY_BLOCK, 1));
-    let scratch = scratch.recycle();
+    let mut builder = create_builder(&[TypeTable::ANYTHING], BuilderScratch::default());
+    fill_function_with_every_kind_of_word(&mut builder);
+    let (_, scratch) = builder.finish();
+    let scratch = scratch.finish;
     assert!(scratch.is_reached.is_empty() && scratch.is_reached.capacity() > 0);
     assert!(scratch.block_numbers.is_empty() && scratch.block_numbers.capacity() > 0);
-    assert!(scratch.value_numbers.is_empty() && scratch.value_numbers.capacity() > 0);
+    assert!(scratch.numbers.is_empty() && scratch.numbers.capacity() > 0);
     assert!(scratch.order.is_empty() && scratch.order.capacity() > 0);
     assert!(scratch.stack.is_empty() && scratch.stack.capacity() > 0);
 }
 
 #[test]
 fn recycle_drops_oversized_lists() {
-    let mut scratch = FinishScratch::default();
-    scratch.is_reached.reserve(MAX_SPARE_BLOCKS + 1);
-    scratch.block_numbers.reserve(MAX_SPARE_BLOCKS + 1);
-    scratch.value_numbers.reserve(MAX_SPARE_VALUES + 1);
-    scratch.order.reserve(MAX_SPARE_BLOCKS + 1);
-    scratch.stack.reserve(MAX_SPARE_BLOCKS + 1);
-    let scratch = scratch.recycle();
+    let mut scratch = BuilderScratch::default();
+    scratch.finish.is_reached.reserve(MAX_SPARE_BLOCKS + 1);
+    scratch.finish.block_numbers.reserve(MAX_SPARE_BLOCKS + 1);
+    scratch.finish.numbers.reserve(MAX_SPARE_VALUES + 1);
+    scratch.finish.order.reserve(MAX_SPARE_BLOCKS + 1);
+    scratch.finish.stack.reserve(MAX_SPARE_BLOCKS + 1);
+    let (_, scratch) = create_builder(&[], scratch).finish();
+    let scratch = scratch.finish;
     assert_eq!(scratch.is_reached.capacity(), 0);
     assert_eq!(scratch.block_numbers.capacity(), 0);
-    assert_eq!(scratch.value_numbers.capacity(), 0);
+    assert_eq!(scratch.numbers.capacity(), 0);
     assert_eq!(scratch.order.capacity(), 0);
     assert_eq!(scratch.stack.capacity(), 0);
 }

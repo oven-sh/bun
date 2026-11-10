@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="pendingAwait"
 // CHECK: builtin=CompilerHelpersGetDisposeMethod
 // CHECK-NEXT: = Call {{*}}, -, [[first]]
@@ -17,8 +18,10 @@
 // AWAITS-NOT: = Await
 
 declare function resource(): Disposable;
+declare function use(value: unknown): void;
 
 export async function pendingAwait() {
   using a = resource();
   await using b = null;
+  use(0);
 }

@@ -1,0 +1,19 @@
+# -- source: a-row-with-an-iterator-of-its-own-among-rows-of-numbers-is-taken-apart-by-that-iterator.cjs
+# "use strict";
+# const rows = [[0.5, 2, 1], [1.5, 4, 3], Object.assign([2.5, 6, 1], { *[Symbol.iterator]() { yield 10; yield 20; yield 3; } }), [3.5, 8, 3]];
+# function total(list, t) { let s = t & 1; for (let i = 0; i < list.length; i++) { const [x, y, z] = list[i]; s += x * 2 + y - z; } return s; }
+# print(total(rows, 3));
+# -- end of source
+# In a turn of a typed copy what a pattern takes apart is held to a list as made, or the turn begins again in the closed copy. The third row has an iterator of its own laid on it: the pattern takes what that iterator yields
+# (10, 20, 3: 37), not the elements of the row (2.5, 6, 1: 10).
+# THE LIE, testing=ValuesThatPatternsTakeApartInTurnsAreTakenForListsAsMade: the hold asks the type alone and takes the list for one as made. The elements are read in place of what the iterator yields, and nothing stops it:
+# the test in the turn is all that stands between.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 56
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=ValuesThatPatternsTakeApartInTurnsAreTakenForListsAsMade
+# LIE: 29
+# LIE-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=ValuesThatPatternsTakeApartInTurnsAreTakenForListsAsMade,CheckProofsAtRunTime
+# HELD: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it
+# HELD: crashed with

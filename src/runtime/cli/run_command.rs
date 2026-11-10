@@ -1039,6 +1039,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             entry_points.extend(ctx.preloads.iter().cloned());
             crate::cli::run_compiled::start(ctx, entry_points, 0);
         }
+        crate::cli::run_compiled::read_no_environment_file_again(ctx);
 
         // `bun_jsc::initialize`
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
@@ -1238,8 +1239,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
-        let runs_compiled_code =
-            bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some();
+        let program = bun_resolver::StandaloneModuleGraph::compiled_program(graph);
+        let runs_compiled_code = program.is_some();
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             runs_compiled_code,
@@ -1260,7 +1261,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
-            crate::cli::startup_options::reject_unusable_bunfig_settings(ctx);
+            crate::cli::startup_options::reject_unusable_bunfig_settings(ctx, None);
         }
 
         let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
@@ -1353,6 +1354,36 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 // without a crate-cycle; `crate::run_main` re-exports it.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `--cpu-prof` and `--heap-prof`. `VirtualMachine::on_exit` writes the profiles.
+pub(crate) fn start_profilers(vm: &mut VirtualMachine, ctx: &ContextData) {
+    // ── CPU profiler ────────────────────────────────────────────────────
+    if ctx.runtime_options.cpu_prof.enabled {
+        let opts = &ctx.runtime_options.cpu_prof;
+        vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+            name: opts.name,
+            dir: opts.dir,
+            md_format: opts.md_format,
+            json_format: opts.json_format,
+            interval: opts.interval,
+        });
+        bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
+        // SAFETY: `vm.jsc_vm` set in `init`.
+        bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
+        bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // ── Heap profiler ───────────────────────────────────────────────────
+    if ctx.runtime_options.heap_prof.enabled {
+        let opts = &ctx.runtime_options.heap_prof;
+        vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
+            name: opts.name,
+            dir: opts.dir,
+            text_format: opts.text_format,
+        });
+        bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Everything [`Run::start`] needs; built on the stack at the end of
 /// `RunCommand::boot` / `boot_standalone`.
 pub(crate) struct Run<'a> {
@@ -1400,12 +1431,16 @@ impl Run<'_> {
     /// Wire `--eval`/`--print`
     /// node-module globals and `--expose-gc` into the JSC global object.
     fn add_conditional_globals(global: &JSGlobalObject, ctx: &ContextData) {
+        unsafe extern "C" {
+            safe fn Bun__NodeVM__setNewContextsHaveGC(value: bool);
+        }
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
             bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
         }
         if ro.expose_gc {
             bun_jsc::cpp::JSC__JSGlobalObject__addGc(global);
+            Bun__NodeVM__setNewContextsHaveGC(true);
         }
     }
 
@@ -1425,32 +1460,7 @@ impl Run<'_> {
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // ── CPU profiler ────────────────────────────────────────────────────
-        if ctx.runtime_options.cpu_prof.enabled {
-            let opts = &ctx.runtime_options.cpu_prof;
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name: opts.name,
-                dir: opts.dir,
-                md_format: opts.md_format,
-                json_format: opts.json_format,
-                interval: opts.interval,
-            });
-            bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-            // SAFETY: `vm.jsc_vm` set in `init`.
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
-            bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
-        }
-
-        // ── Heap profiler ───────────────────────────────────────────────────
-        if ctx.runtime_options.heap_prof.enabled {
-            let opts = &ctx.runtime_options.heap_prof;
-            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name: opts.name,
-                dir: opts.dir,
-                text_format: opts.text_format,
-            });
-            bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
-        }
+        start_profilers(vm, ctx);
 
         Self::add_conditional_globals(global, ctx);
 
@@ -1489,6 +1499,12 @@ impl Run<'_> {
         'do_postgres_preconnect: {
             if !ctx.runtime_options.sql_preconnect {
                 break 'do_postgres_preconnect;
+            }
+            unsafe extern "C" {
+                safe fn Bun__canReadSqlAtStart(global: &JSGlobalObject) -> bool;
+            }
+            if !Bun__canReadSqlAtStart(global) {
+                crate::cli::startup_options::exit_for_sql_preconnect_without_sql();
             }
             let preconnect = || -> bun_jsc::JsResult<()> {
                 let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
@@ -1689,18 +1705,12 @@ impl Run<'_> {
                     }
                     result
                 };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
-                        global,
-                        &raw const to_print,
-                        1,
-                    );
-                }
+                bun_jsc::ConsoleObject::message_with_type_and_level(
+                    bun_jsc::ConsoleObject::MessageType::Log,
+                    bun_jsc::ConsoleObject::MessageLevel::Log,
+                    global,
+                    &[to_print],
+                );
             }
 
             vm.on_before_exit();
@@ -2196,6 +2206,21 @@ impl RunCommand {
     ) -> crate::Result<::core::convert::Infallible> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
 
+        if cfg!(windows)
+            && bun_which::is_batch_file(executable)
+            && let Some(arg) =
+                (passthrough.iter()).find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
+        {
+            if !ctx.debug.silent {
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
+                    bstr::BStr::new(Self::basename_or_bun(executable)),
+                    bun_core::fmt::quote(&arg[..]),
+                );
+            }
+            Global::exit(1);
+        }
+
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
         argv.push(executable.to_vec().into_boxed_slice());
         for p in passthrough {
@@ -2402,6 +2427,7 @@ impl RunCommand {
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
     pub(crate) fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
+        crate::cli::run_compiled::read_no_environment_file_again(ctx);
         let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
 

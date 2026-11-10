@@ -1,0 +1,19 @@
+# `isLoud(kind)` is sixteen `kind === written number` joined by `||`. The walk makes ONE Switch of three and more such equalities of one value, and a written switch weighs half its targets; the scan weighed each equality as an operation: sixteen: over the limit of leaves copied in loops (twelve and the operands), so the helper stayed a call in every turn. In a loop the chain now weighs what its Switch weighs (eight) and the helper is copied: countLoud() holds the Switch and no call. Outside loops nothing changes: once() calls it (no bytes for time outside loops).
+# f1 = isLoud, f2 = countLoud, f3 = once
+# -- source: a-chain-of-equalities-called-in-a-loop-is-copied-as-the-switch-that-it-becomes.js
+# function isLoud(kind) { return kind === 3 || kind === 5 || kind === 8 || kind === 11 || kind === 12 || kind === 17 || kind === 19 || kind === 21 || kind === 23 || kind === 26 || kind === 28 || kind === 31 || kind === 33 || kind === 36 || kind === 38 || kind === 41; }
+# function countLoud(list) { let n = 0; for (let i = 0; i < list.length; i++) if (isLoud(list[i])) n++; return n; }
+# function once(kind) { return isLoud(kind) ? 1 : 0; }
+# const list = []; for (let i = 0; i < 48; i++) list.push(i * 7 % 43);
+# print(countLoud(list) * 100 + once(5) * 10 + once(6));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1810
+# RUN(LOOP): walk f2 mechanisms=all
+# LOOP-LABEL: code f2:Body
+# LOOP-NOT: function=f1
+# LOOP: Switch {{*}} cases=[3, 5, 8, 11, 12, 17, 19, 21, 23, 26, 28, 31, 33, 36, 38, 41]
+# LOOP-NOT: function=f1
+# RUN(OUTSIDE): walk f3 mechanisms=all
+# OUTSIDE-LABEL: code f3:Body
+# OUTSIDE: = CallDirect {{*}} function=f1

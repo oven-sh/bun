@@ -50,28 +50,26 @@ export * from "./index.cjs";
 
 // GENERATED: show
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v2 = PropGet v1 key="console" [isFreeName]
 // CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
 // CHECK-NEXT: v4 = PropGet v3 key="log"
 // CHECK-NEXT: v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v7 = CheckInitialized v6 name="early"
 // CHECK-NEXT: v8 = TypeOf v7
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v10 = CheckInitialized v9 name="fixed"
 // CHECK-NEXT: v11 = TypeOf v10
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_3]]
 // CHECK-NEXT: v13 = CheckInitialized v12 name="loose"
 // CHECK-NEXT: v14 = TypeOf v13
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v16 = CheckInitialized v15 name="hoisted"
 // CHECK-NEXT: v17 = TypeOf v16
-// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_6]]
+// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_5]]
 // CHECK-NEXT: v19 = CheckInitialized v18 name="made"
 // CHECK-NEXT: v20 = TypeOf v19
 // CHECK-NEXT: v21 = Call v5, v3, v0, v8, v11, v14, v17, v20 calleeKey="log" calleeName="console.log"
@@ -82,62 +80,50 @@ export * from "./index.cjs";
 // CHECK-NEXT: v26 = Convert v25 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
 // CHECK-NEXT: v27 = Builtin builtin=Object
 // CHECK-NEXT: v28 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v29 = ModuleNamespace module=[[m_7]]
-// CHECK-NEXT: v30 = Convert v29 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v31 = Call v28, v27, v30 calleeName="Object.keys"
-// CHECK-NEXT: v32 = Convert v31 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v33 = PropGet v32 key="join"
-// CHECK-NEXT: v34 = Convert v33 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: v35 = Call v34, v32 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v36 = Convert v35 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v37 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v38 = CheckInitialized v37 name="early"
-// CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v40 = TypeOf v39
-// CHECK-NEXT: v41 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v42 = TypeTest v41 testedType=absent
-// CHECK-NEXT: Branch v42 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v43) frequency=Unlikely:
-// CHECK-NEXT: v44 = ModuleNamespace module=[[m_7]]
-// CHECK-NEXT: v45 = Convert v44 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v46 = PropGet v45 key="fixed"
-// CHECK-NEXT: Jump -> next b4(v46)
-// CHECK-NEXT: b3(v47):
-// CHECK-NEXT: Jump -> next b4(v47)
-// CHECK-NEXT: b4(v48):
-// CHECK-NEXT: v49 = Convert v48 declared={type=undefined|null|[[L_9]] flags=[IsExpected]}
-// CHECK-NEXT: v50 = TypeOf v49
-// CHECK-NEXT: v51 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v52 = TypeTest v51 testedType=absent
-// CHECK-NEXT: Branch v52 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v53) frequency=Unlikely:
-// CHECK-NEXT: v54 = ModuleNamespace module=[[m_7]]
-// CHECK-NEXT: v55 = Convert v54 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v56 = PropGet v55 key="loose"
-// CHECK-NEXT: Jump -> next b7(v56)
-// CHECK-NEXT: b6(v57):
-// CHECK-NEXT: Jump -> next b7(v57)
-// CHECK-NEXT: b7(v58):
-// CHECK-NEXT: v59 = Convert v58 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v60 = TypeOf v59
-// CHECK-NEXT: v61 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v62 = TypeTest v61 testedType=absent
-// CHECK-NEXT: Branch v62 -> taken b8(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b8(v63) frequency=Unlikely:
-// CHECK-NEXT: v64 = ModuleNamespace module=[[m_7]]
-// CHECK-NEXT: v65 = Convert v64 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v66 = PropGet v65 key="hoisted"
-// CHECK-NEXT: Jump -> next b10(v66)
-// CHECK-NEXT: b9(v67):
-// CHECK-NEXT: Jump -> next b10(v67)
-// CHECK-NEXT: b10(v68):
-// CHECK-NEXT: v69 = Convert v68 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v70 = TypeOf v69
-// CHECK-NEXT: v71 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v72 = CheckInitialized v71 name="made"
-// CHECK-NEXT: v73 = Convert v72 declared={type=undefined|null|[[f_10]] flags=[IsExpected]}
-// CHECK-NEXT: v74 = TypeOf v73
-// CHECK-NEXT: v75 = Call v26, v24, v0, v36, v40, v50, v60, v70, v74 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v76 = Undefined
-// CHECK-NEXT: Return v76
+// CHECK-NEXT: v29 = ModuleNamespace module=[[m_6]]
+// CHECK-NEXT: v30 = Call v28, v27, v29 calleeName="Object.keys"
+// CHECK-NEXT: v31 = PropGet v30 key="join"
+// CHECK-NEXT: v32 = Call v31, v30 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v33 = GetModuleVariable variable=[[g_1]]
+// CHECK-NEXT: v34 = CheckInitialized v33 name="early"
+// CHECK-NEXT: v35 = TypeOf v34
+// CHECK-NEXT: v36 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v37 = TypeTest v36 testedType=absent
+// CHECK-NEXT: Branch v37 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v38):
+// CHECK-NEXT: v39 = ModuleNamespace module=[[m_6]]
+// CHECK-NEXT: v40 = PropGet v39 key="fixed"
+// CHECK-NEXT: Jump -> next b3(v40)
+// CHECK-NEXT: b2(v41):
+// CHECK-NEXT: Jump -> next b3(v41)
+// CHECK-NEXT: b3(v42):
+// CHECK-NEXT: v43 = TypeOf v42
+// CHECK-NEXT: v44 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v45 = TypeTest v44 testedType=absent
+// CHECK-NEXT: Branch v45 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v46):
+// CHECK-NEXT: v47 = ModuleNamespace module=[[m_6]]
+// CHECK-NEXT: v48 = PropGet v47 key="loose"
+// CHECK-NEXT: Jump -> next b6(v48)
+// CHECK-NEXT: b5(v49):
+// CHECK-NEXT: Jump -> next b6(v49)
+// CHECK-NEXT: b6(v50):
+// CHECK-NEXT: v51 = TypeOf v50
+// CHECK-NEXT: v52 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v53 = TypeTest v52 testedType=absent
+// CHECK-NEXT: Branch v53 -> taken b7(| 0), notTaken b8(| 0)
+// CHECK-NEXT: b7(v54):
+// CHECK-NEXT: v55 = ModuleNamespace module=[[m_6]]
+// CHECK-NEXT: v56 = PropGet v55 key="hoisted"
+// CHECK-NEXT: Jump -> next b9(v56)
+// CHECK-NEXT: b8(v57):
+// CHECK-NEXT: Jump -> next b9(v57)
+// CHECK-NEXT: b9(v58):
+// CHECK-NEXT: v59 = TypeOf v58
+// CHECK-NEXT: v60 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v61 = CheckInitialized v60 name="made"
+// CHECK-NEXT: v62 = TypeOf v61
+// CHECK-NEXT: v63 = Call v26, v24, v0, v32, v35, v43, v51, v59, v62 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v64 = Undefined
+// CHECK-NEXT: Return v64
 // CHECK-NEXT: }

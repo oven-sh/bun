@@ -12,6 +12,7 @@ use crate::bind::{FnOwner, MemberOwner};
 use crate::resolve::{ModuleKind, ScriptTarget};
 use crate::util::number_repeated;
 use smallvec::SmallVec;
+use std::collections::hash_map::Entry;
 
 // `DeclarationMeaning`
 const GET_ACCESSOR: u8 = 1;
@@ -95,13 +96,16 @@ impl Checker<'_, '_> {
     }
 
     /// Both checks for an object literal member: 1162 and 1255. `start` is `Prop::postfix_token`.
+    #[inline]
     fn check_grammar_for_invalid_postfix_token_in_object_literal(
         &mut self,
         file: FileId,
         start: u32,
     ) -> bool {
+        if start == 0 {
+            return false;
+        }
         let code = match self.hir(file).text.get(start as usize) {
-            _ if start == 0 => return false,
             Some(b'!') => 1255,
             _ => 1162,
         };
@@ -115,6 +119,9 @@ impl Checker<'_, '_> {
         s: StmtId,
     ) -> bool {
         let hir = self.hir(file);
+        if hir.rare_syntax & rare::ODD_JUMP == 0 {
+            return false;
+        }
         let (target_label, is_break) = match hir[s].kind {
             StmtKind::Break(label) => (label, true),
             StmtKind::Continue(label) => (label, false),
@@ -183,25 +190,29 @@ impl Checker<'_, '_> {
         file: FileId,
         func: FnId,
     ) -> bool {
+        let hir = self.hir(file);
         self.check_grammar_modifiers(file, func)
-            || self.check_grammar_type_parameter_list(file, func)
-            || self.check_grammar_parameter_list(file, func)
-            || self.check_grammar_arrow_function(file, func)
-            || self.check_grammar_for_use_strict_simple_parameter_list(file, func)
+            || self.check_grammar_type_parameter_list(hir, file, func)
+            || self.check_grammar_parameter_list(hir, file, func)
+            || self.check_grammar_arrow_function(hir, file, func)
+            || self.check_grammar_for_use_strict_simple_parameter_list(hir, file, func)
     }
 
     /// `checkGrammarTypeParameterList`: `<>`. Before an arrow function the parser rejects it. The
     /// list isn't stored. It's whatever precedes `anchor`, the token where `parseParameters`
     /// starts, whether or not that's a `(`. A signature that the reparser builds from JSDoc tags
     /// has no list.
-    fn check_grammar_type_parameter_list(&mut self, file: FileId, func: FnId) -> bool {
-        let hir = self.hir(file);
+    fn check_grammar_type_parameter_list(&mut self, hir: &File, file: FileId, func: FnId) -> bool {
         let (text, f) = (&hir.text[..], &hir[func]);
         if !f.type_params.is_empty() || f.kind == FnKind::Arrow || f.flags.contains(Flags::REPARSED)
         {
             return false;
         }
-        let close = skip_trivia_back(text, hir.skip_trivia_of_node_at(f.anchor) as usize);
+        let parameters = hir.skip_trivia_of_node_at(f.anchor) as usize;
+        if last_byte_of_token_before(text, parameters).is_some_and(|last| last != b'>') {
+            return false;
+        }
+        let close = skip_trivia_back(text, parameters);
         if !text[..close].ends_with(b">") {
             return false;
         }
@@ -214,8 +225,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkGrammarParameterList`
-    fn check_grammar_parameter_list(&mut self, file: FileId, func: FnId) -> bool {
-        let hir = self.hir(file);
+    fn check_grammar_parameter_list(&mut self, hir: &File, file: FileId, func: FnId) -> bool {
         let f = &hir[func];
         // `is_erased_syntax`, for the errors on a token.
         let is_erased = !has_body_node(f);
@@ -265,8 +275,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkGrammarArrowFunction`
-    fn check_grammar_arrow_function(&mut self, file: FileId, func: FnId) -> bool {
-        let hir = self.hir(file);
+    fn check_grammar_arrow_function(&mut self, hir: &File, file: FileId, func: FnId) -> bool {
         let (text, f) = (&hir.text[..], &hir[func]);
         if f.kind != FnKind::Arrow {
             return false;
@@ -284,8 +293,17 @@ impl Checker<'_, '_> {
         }
         // `GetECMALineOfPosition` of `equalsGreaterThanToken.Pos()` and of its `End()`.
         let arrow = f.anchor as usize;
-        text[arrow.min(text.len())..].starts_with(b"=>")
-            && (skip_trivia_back(text, arrow)..arrow).any(|at| line_break_len(text, at) != 0)
+        if !text[arrow.min(text.len())..].starts_with(b"=>") {
+            return false;
+        }
+        let mut blanks = arrow;
+        while blanks > 0 && matches!(text[blanks - 1], b' ' | b'\t') {
+            blanks -= 1;
+        }
+        if last_byte_of_token_before(text, blanks).is_some() && text.first() != Some(&b'#') {
+            return false;
+        }
+        (skip_trivia_back(text, arrow)..arrow).any(|at| line_break_len(text, at) != 0)
             && self.early_grammar_error_at((file, f.anchor, f.anchor + 2), 1200, &[])
     }
 
@@ -293,10 +311,10 @@ impl Checker<'_, '_> {
     /// `IsFunctionLikeDeclaration`.
     fn check_grammar_for_use_strict_simple_parameter_list(
         &mut self,
+        hir: &File,
         file: FileId,
         func: FnId,
     ) -> bool {
-        let hir = self.hir(file);
         let f = &hir[func];
         let FnBody::Block(statements) = f.body else {
             return false;
@@ -345,10 +363,10 @@ impl Checker<'_, '_> {
         file: FileId,
         name: PropKey,
     ) -> bool {
-        let hir = self.hir(file);
         let PropKey::Computed(expression) = name else {
             return false;
         };
+        let hir = self.hir(file);
         matches!(
             hir[expression].kind,
             ExprKind::Binary {
@@ -665,7 +683,12 @@ impl Checker<'_, '_> {
 
     /// `GetErrorRangeForNode` for an initializer. `name` is the position of the name of the
     /// variable it initializes, if that's a plain identifier (`getAssignedName`).
-    fn span_of_initializer(&self, file: FileId, e: ExprId, name: Option<u32>) -> FileSpan {
+    pub(super) fn span_of_initializer(
+        &self,
+        file: FileId,
+        e: ExprId,
+        name: Option<u32>,
+    ) -> FileSpan {
         let hir = self.hir(file);
         match (hir[e].kind, name) {
             (ExprKind::Fn(f), Some(name))
@@ -747,7 +770,8 @@ impl Checker<'_, '_> {
             self.check_grammar_for_es_module_marker_in_binding_name(file, node.pat);
         }
         node.kind != VarKind::Var
-            && self.check_grammar_name_in_let_or_const_declarations(file, node.pat)
+            && !matches!(hir[node.pat].kind, PatKind::Ident(name) if name != known::let_)
+            && self.check_grammar_names_in_let_or_const_declarations(hir, file, node.pat)
     }
 
     /// `checkGrammarForEsModuleMarkerInBindingName`
@@ -778,18 +802,27 @@ impl Checker<'_, '_> {
         name: PatId,
     ) -> bool {
         let hir = self.hir(file);
+        self.check_grammar_names_in_let_or_const_declarations(hir, file, name)
+    }
+
+    fn check_grammar_names_in_let_or_const_declarations(
+        &mut self,
+        hir: &File,
+        file: FileId,
+        name: PatId,
+    ) -> bool {
         match hir[name].kind {
             PatKind::Ident(known::let_) => {
                 return self.early_grammar_error_on_node(file, name, 2480, &[]);
             }
             PatKind::Object(properties) => {
                 for p in properties.iter() {
-                    self.check_grammar_name_in_let_or_const_declarations(file, hir[p].value);
+                    self.check_grammar_names_in_let_or_const_declarations(hir, file, hir[p].value);
                 }
             }
             PatKind::Array(elements) => {
                 for e in elements.iter() {
-                    self.check_grammar_name_in_let_or_const_declarations(file, hir[e].pat);
+                    self.check_grammar_names_in_let_or_const_declarations(hir, file, hir[e].pat);
                 }
             }
             _ => {}
@@ -871,7 +904,7 @@ impl Checker<'_, '_> {
         {
             return false;
         }
-        let in_destructuring = self.bound(file).get_assignment_target(hir, node).is_some();
+        let in_destructuring = self.is_assignment_target(file, node);
         // If every name is a literal name and all are distinct, there is nothing to report.
         let mut literal_names: SmallVec<[Atom; 16]> = SmallVec::new();
         let mut has_only_literal_names = true;
@@ -885,10 +918,11 @@ impl Checker<'_, '_> {
                 PropKey::Private(_) | PropKey::None => has_other_text = true,
             }
         }
+        let names: &[Atom] = &literal_names;
         let has_repeated = has_other_text
-            || match literal_names.len() {
-                n @ 0..=8 => (1..n).any(|i| literal_names[..i].contains(&literal_names[i])),
-                _ => !number_repeated(&literal_names).is_empty(),
+            || match names.len() {
+                n @ 0..=8 => (1..n).any(|i| names[..i].contains(&names[i])),
+                _ => !number_repeated(names).is_empty(),
             };
         // A computed name is evaluated (`getTypeOfExpression`) even if it's the only name.
         let may_repeat =
@@ -905,7 +939,8 @@ impl Checker<'_, '_> {
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
         let mut has_proto_setter = false;
-        let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
+        let mut seen = crate::util::FxHashMap::<Atom, u8>::default();
+        let text = &hir.text[..];
         for p in properties.iter() {
             let prop = &hir[p];
             let current_kind = match prop.kind {
@@ -932,18 +967,20 @@ impl Checker<'_, '_> {
                 PropKind::Getter => GET_ACCESSOR,
                 PropKind::Setter => SET_ACCESSOR,
             };
-            self.check_grammar_computed_property_name(file, prop.key);
+            if matches!(prop.key, PropKey::Computed(_)) {
+                self.check_grammar_computed_property_name(file, prop.key);
+            }
             // The `=` of `{ a = 1 }`, which only a destructuring assignment can have.
             if !in_destructuring
                 && prop.kind == PropKind::Shorthand
                 && prop.value.is_some()
                 && matches!(hir[prop.value].kind, ExprKind::Assign { op: None, .. })
-                && let Some(start) = equals_token_after_name(&hir.text, prop.pos)
+                && let Some(start) = equals_token_after_name(text, prop.pos)
             {
                 self.early_grammar_error_at((file, start, start + 1), 1312, &[]);
             }
             // Outside a class the key of `#a` is `PropKey::None`.
-            if hir.text.get(prop.pos as usize) == Some(&b'#') {
+            if text.get(prop.pos as usize) == Some(&b'#') {
                 self.early_grammar_error_at(self.span_of_token(file, prop.pos), 18016, &[]);
             }
             // "Modifiers are never allowed on properties except for 'async' on a method
@@ -986,28 +1023,31 @@ impl Checker<'_, '_> {
             else {
                 continue;
             };
-            let Some(existing) = seen.iter_mut().find(|seen| seen.0 == effective_name) else {
-                seen.push((effective_name, current_kind));
-                continue;
+            let existing = match seen.entry(effective_name) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(current_kind);
+                    continue;
+                }
+                Entry::Occupied(occupied) => occupied.into_mut(),
             };
             let name = hir.name(hir.node(p));
-            if current_kind & existing.1 & METHOD != 0 {
+            if current_kind & *existing & METHOD != 0 {
                 let (start, end) = self.get_error_range_for_node(file, name);
                 let text = self.source_text(file, start, end);
                 self.grammar_error_at((file, start, end), 2300, &[Arg::Bytes(&text)]);
-            } else if current_kind & existing.1 & PROPERTY_ASSIGNMENT != 0 {
+            } else if current_kind & *existing & PROPERTY_ASSIGNMENT != 0 {
                 if repeats_proto_setter {
                     self.early_grammar_error_on_node(file, name, 1117, &[]);
                 } else {
                     self.grammar_error_on_node(file, name, 1117, &[]);
                 }
             } else if current_kind & GET_OR_SET_ACCESSOR != 0
-                && existing.1 & GET_OR_SET_ACCESSOR != 0
+                && *existing & GET_OR_SET_ACCESSOR != 0
             {
-                if existing.1 == GET_OR_SET_ACCESSOR || current_kind == existing.1 {
+                if *existing == GET_OR_SET_ACCESSOR || current_kind == *existing {
                     return self.grammar_error_on_node(file, name, 1118, &[]);
                 }
-                existing.1 |= current_kind;
+                *existing |= current_kind;
             } else {
                 return self.grammar_error_on_node(file, name, 1119, &[]);
             }
@@ -1019,6 +1059,7 @@ impl Checker<'_, '_> {
 // ───────────────────────────── the syntax tree ─────────────────────────────
 
 /// `NodeFlagsAmbient` for a declaration with `flags`. Every node in a declaration file has it.
+#[inline]
 fn is_ambient(hir: &File, flags: Flags) -> bool {
     flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration
 }
@@ -1074,6 +1115,12 @@ fn is_enum_like(c: &mut Checker<'_, '_>, ty: TypeId) -> bool {
 }
 
 // ───────────────────────────── the text ─────────────────────────────
+
+#[inline]
+fn last_byte_of_token_before(text: &[u8], end: usize) -> Option<u8> {
+    let last = *text.get(end.checked_sub(1)?)?;
+    (last.is_ascii_graphic() && last != b'/').then_some(last)
+}
 
 /// `BodyData().AsteriskToken` of the generator `f`. It precedes a method's name, and follows the
 /// `function` keyword, which only modifiers precede.

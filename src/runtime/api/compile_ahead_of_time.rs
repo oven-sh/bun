@@ -75,12 +75,16 @@ fn add_compile_logs(
     log: &mut Log,
     report_messages: Vec<ReportMessage>,
     trim_log_lines: Vec<Vec<u8>>,
+    developer_options: &[u8],
 ) {
     for ReportMessage { mut message, .. } in report_messages {
         message.kind = Kind::Verbose;
         log.add_msg(message);
     }
     add_notes(log, trim_log_lines);
+    if let Some(line) = developer_options.strip_suffix(b"\n") {
+        add_notes(log, vec![line.to_vec()]);
+    }
 }
 
 impl JSBundleCompletionTask {
@@ -99,15 +103,13 @@ impl JSBundleCompletionTask {
         let full_path = executable_path(&self.config, compile_options);
 
         let dirname: &[u8] = paths::dirname(&full_path).unwrap_or(b".");
-        let basename: &[u8] = paths::basename(&full_path);
 
         #[cfg(not(windows))]
         let mut root_dir = Dir::cwd();
         #[cfg(windows)]
         let root_dir = Dir::cwd();
 
-        // Windows keeps the working directory and takes the full path.
-        let outfile: Box<[u8]> = Box::from(if cfg!(windows) { &*full_path } else { basename });
+        let outfile: Box<[u8]> = Box::from(&*full_path);
 
         if !(dirname.is_empty() || dirname == b".") {
             #[cfg(not(windows))]
@@ -218,6 +220,16 @@ impl JSBundleCompletionTask {
             .map(|b| &**b)
             .collect();
 
+        // Without an output directory a metafile is handed to the caller and not written.
+        let outdir = &self.config.outdir.list[..];
+        let in_output_directory = |path: &[u8]| match path.is_empty() || outdir.is_empty() {
+            true => Vec::new(),
+            false => [outdir, b"/", path].concat(),
+        };
+        let metafiles = [
+            in_output_directory(&self.config.metafile_json_path.list),
+            in_output_directory(&self.config.metafile_markdown_path.list),
+        ];
         let mut request = CompileRequest {
             origin: RequestOrigin::BuildApi,
             product: CompileProduct::Executable {
@@ -241,7 +253,7 @@ impl JSBundleCompletionTask {
                     Some(compile.executable_path.list.as_slice())
                 },
                 root_dir: destination.root_dir.fd,
-                env: &mut self.env,
+                env: &raw mut *self.env,
                 windows: &destination.windows,
                 exec_argv: &compile.exec_argv.list,
                 flags: destination.flags,
@@ -249,9 +261,10 @@ impl JSBundleCompletionTask {
                     jit_policy: compile.jit_policy,
                 },
                 assets: &compile.assets,
+                metafiles: [&metafiles[0], &metafiles[1]],
                 embeds_source_maps: self.config.source_map != options::SourceMapOption::None,
             },
-            log: &mut self.log,
+            log: &raw mut self.log,
         };
 
         let compiled = bun_removable_features::call_removable_or!(
@@ -297,11 +310,17 @@ impl JSBundleCompletionTask {
         let CompileOutcome {
             output_files,
             metafile,
+            developer_options,
             report_messages,
             trim_log_lines,
             ..
         } = outcome;
-        add_compile_logs(&mut self.log, report_messages, trim_log_lines);
+        add_compile_logs(
+            &mut self.log,
+            report_messages,
+            trim_log_lines,
+            &developer_options,
+        );
 
         let Some(mut entry) = output_files.into_iter().next() else {
             return self.fail_compilation(&CompileResult::fail(CompileErrorReason::NoEntryPoint));

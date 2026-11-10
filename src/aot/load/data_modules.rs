@@ -1,12 +1,13 @@
 use crate::diagnostics::LoadMessages;
-use crate::load::source_provider::{SourceFile, SourceProvider};
-use bun_ast::Loader;
+use crate::load::source_provider::{DataFailure, SourceFile, SourceProvider};
+use bun_ast::{Kind, Loader, Location};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::hir::{ExprId, ExprKind, File, IdList, PropId, PropKind, Span, StmtKind, UnOp};
 use bun_sema::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, module_from_data};
 use bun_sema::session::Arena;
 use bun_sema::util::FxHashMap;
+use bun_sema_driver::host::to_native;
 use bun_sema_parser::summarize;
 use std::collections::hash_map::Entry;
 
@@ -14,7 +15,8 @@ pub(crate) struct ParsedDataModule<'s> {
     pub hir: File<'s>,
     pub host_values: &'s [(ExprId, HostValue<'s>)],
     pub web_assembly: Option<Vec<u8>>,
-    pub is_page: bool,
+    pub failure: Option<Vec<u8>>,
+    pub failed_at: Option<Location>,
 }
 
 pub(crate) fn parse_data_module<'s>(
@@ -24,19 +26,45 @@ pub(crate) fn parse_data_module<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> ParsedDataModule<'s> {
-    let module = messages.with_log(|log| provider.parse_data(source, arena, atoms, log));
+    let (mut failure, mut failed_at) = (None, None);
+    let module = messages.with_log(|log| {
+        let module = provider.parse_data(source, arena, atoms, log);
+        if matches!(module, Err(DataFailure::InvalidText))
+            && let Some(first) = log.msgs.iter().position(|it| it.kind == Kind::Err)
+        {
+            failure = Some(log.msgs[first].data.text.to_vec());
+            failed_at.clone_from(&log.msgs[first].data.location);
+            for message in log.msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
+                message.kind = Kind::Warn;
+            }
+            log.warnings += core::mem::take(&mut log.errors);
+        }
+        for message in log.msgs.iter_mut().filter(|it| it.data.location.is_none()) {
+            message.data.location = Some(Location {
+                file: Box::from(to_native(source.path)),
+                ..Default::default()
+            });
+        }
+        module
+    });
     let in_place_of_failed = DataModule::Value {
         default: &DataValue::Undefined,
         exports_keys: false,
     };
     let DataModuleTree { file, host_values } =
         module_from_data(module.as_ref().unwrap_or(&in_place_of_failed), atoms, arena);
-    let is_web_assembly = module.is_ok() && source.loader == Loader::Wasm;
+    let is_web_assembly = module.is_ok()
+        && match source.loader {
+            Loader::Wasm => true,
+            Loader::File => source.contents.starts_with(b"\0asm\x01\0\0\0"),
+            _ => false,
+        };
     ParsedDataModule {
         hir: file,
         host_values,
         web_assembly: is_web_assembly.then(|| source.contents.to_vec()),
-        is_page: matches!(module, Ok(DataModule::Page)),
+        failure,
+        failed_at,
     }
 }
 
@@ -48,7 +76,16 @@ pub(crate) fn parse_json<'s>(
     if skip_trivia(text, 0) == text.len() {
         return None;
     }
-    let hir = summarize(arena, b"/value.json", None, text, atoms, false, false);
+    let hir = summarize(
+        arena,
+        b"/value.json",
+        None,
+        text,
+        atoms,
+        false,
+        false,
+        false,
+    );
     if hir.has_errors || hir.has_parse_diagnostics {
         return None;
     }
@@ -223,7 +260,7 @@ mod tests {
             arena: &'s Arena,
             atoms: &Interner<'s>,
             log: &mut Log,
-        ) -> Result<DataModule<'s>, Failed> {
+        ) -> Result<DataModule<'s>, DataFailure> {
             let embedded_path = atoms.intern(file.path);
             match file.loader {
                 Loader::Wasm => Ok(DataModule::RuntimeRequire {
@@ -235,7 +272,6 @@ mod tests {
                     default: arena.alloc(DataValue::String(embedded_path)),
                     exports_keys: false,
                 }),
-                Loader::Html => Ok(DataModule::Page),
                 _ => WithoutServices.parse_data(file, arena, atoms, log),
             }
         }
@@ -412,8 +448,25 @@ mod tests {
         let undefined = [(default, HostValue::Data(&DataValue::Undefined))];
         assert_eq!(parsed.host_values, undefined);
         assert!(parsed.web_assembly.is_none());
-        assert!(!parsed.is_page);
+        assert_eq!(parsed.failure, None);
         assert_eq!(written_log(&messages).errors, 1);
+    }
+
+    #[test]
+    fn invalid_text_fails_where_loaded() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let messages = LoadMessages::default();
+        let source = SourceFile {
+            path: b"/project/a.json",
+            contents: b"{",
+            loader: Loader::Json,
+        };
+        let parsed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
+        let said = &b"\"/project/a.json\" is not valid JSON"[..];
+        assert_eq!(parsed.failure.as_deref(), Some(said));
+        let log = written_log(&messages);
+        assert_eq!((log.errors, log.warnings), (0, 1));
     }
 
     #[test]
@@ -449,41 +502,55 @@ mod tests {
         assert_eq!(wasm.web_assembly.as_deref(), Some(b"\0asm".as_slice()));
         assert!(wasm.hir.text.is_empty());
         assert!(wasm.host_values.is_empty());
-        assert!(!wasm.is_page);
 
         let file = parse(Loader::File);
         assert!(file.web_assembly.is_none());
         assert!(file.hir.text.is_empty());
         let default = default_export(&file.hir);
         assert!(matches!(file.hir[default].kind, ExprKind::String(_)));
-        assert!(!file.is_page);
 
         assert!(written_log(&messages).msgs.is_empty());
     }
 
     #[test]
-    fn page_module_has_a_deferred_default() {
+    fn file_that_holds_web_assembly_returns_bytes_and_stays_a_path() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let messages = LoadMessages::default();
+        let parse = |loader| {
+            let source = SourceFile {
+                path: b"/project/a.bin",
+                contents: b"\0asm\x01\0\0\0",
+                loader,
+            };
+            parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms)
+        };
+
+        let file = parse(Loader::File);
+        assert_eq!(
+            file.web_assembly.as_deref(),
+            Some(b"\0asm\x01\0\0\0".as_slice())
+        );
+        let default = default_export(&file.hir);
+        assert!(matches!(file.hir[default].kind, ExprKind::String(_)));
+
+        assert!(written_log(&messages).msgs.is_empty());
+        assert!(parse(Loader::Base64).web_assembly.is_none());
+    }
+
+    #[test]
+    fn file_that_only_begins_like_web_assembly_returns_no_bytes() {
         let session = Session::new();
         let (arena, atoms) = (session.arena(), Interner::new_in(&session));
         let messages = LoadMessages::default();
         let source = SourceFile {
-            path: b"/project/index.html",
-            contents: b"<html></html>",
-            loader: Loader::Html,
+            path: b"/project/a.wasm",
+            contents: b"\0asm\x02\0\0\0",
+            loader: Loader::File,
         };
-        let page = parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms);
-        assert!(page.is_page);
-        let default = default_export(&page.hir);
-        assert_eq!(page.host_values, [(default, HostValue::Deferred)]);
-        assert!(page.web_assembly.is_none());
+        let file = parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms);
+        assert!(file.web_assembly.is_none());
         assert!(written_log(&messages).msgs.is_empty());
-
-        let failed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
-        assert!(!failed.is_page);
-        let default = default_export(&failed.hir);
-        let expected = [(default, HostValue::Data(&DataValue::Undefined))];
-        assert_eq!(failed.host_values, expected);
-        assert_eq!(written_log(&messages).errors, 1);
     }
 
     #[test]
@@ -503,7 +570,6 @@ mod tests {
         assert!(matches!(parsed.hir[root].kind, ExprKind::Object(_)));
         let entries = [(atoms.intern(b"a"), DataValue::Number(1.0))];
         assert_eq!(*value, DataValue::Object(&entries));
-        assert!(!parsed.is_page);
         assert!(written_log(&messages).msgs.is_empty());
     }
 }

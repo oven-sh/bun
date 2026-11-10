@@ -83,21 +83,22 @@ pub(crate) struct Program<'a> {
     pub(crate) limits: &'a Limits,
 }
 
-/// What a compiled program says when it does something that docs/compiler/compatibility.mdx lists.
-const DOCUMENTED_MESSAGES: [&[u8]; 4] = [
-    b"read-only in a compiled executable",
-    b"Attempted to assign to readonly property",
-    b"this executable was compiled assuming",
-    b"Maximum call stack size exceeded",
-];
+/// What a compiled program says when it refuses a change of a built-in object. test/aot/fuzz/fuzzilli/what-the-page-declares.ts also holds the member that the refusal names against the page's list.
+const REFUSAL_OF_A_CHANGE_TO_A_BUILT_IN: &[u8] =
+    b"because built-in objects are read-only in a compiled executable";
+
+/// How deep the stack goes is nobody's promise where `bun run` itself comes to its end. An executable that alone comes to it has lost a right program.
+const END_OF_THE_STACK: &[u8] = b"Maximum call stack size exceeded";
+
+/// What only a program that runs code from a string may hear.
+const DOCUMENTED_MESSAGES_OF_CODE_FROM_STRINGS: [&[u8]; 2] =
+    [b"was not compiled into this executable", b"Cannot load"];
+const RUNS_CODE_FROM_STRINGS: [&[u8]; 3] = [b"eval(", b"Function(", b"node:vm"];
 
 /// What a program names when its output depends on something that docs/compiler/compatibility.mdx lists, or on the collector.
-const DOCUMENTED_NAMES: [&[u8]; 12] = [
-    b"eval(",
-    b"Function(",
+const DOCUMENTED_NAMES: [&[u8]; 9] = [
     b".caller",
     b".stack",
-    b".message",
     b"WeakRef",
     b"FinalizationRegistry",
     b"import.meta",
@@ -139,7 +140,9 @@ impl Program<'_> {
         if plain.end == End::HitALimit {
             return Verdict::NeitherFinished as u8;
         }
-        if !matches!(compiled.end, End::Signaled(_)) && self.differs_as_documented(&compiled) {
+        if !matches!(compiled.end, End::Signaled(_))
+            && self.differs_as_documented(&compiled, &plain)
+        {
             return Verdict::DocumentedDifference as u8;
         }
         if plain.stdout.is_empty()
@@ -200,12 +203,18 @@ impl Program<'_> {
         );
     }
 
-    fn differs_as_documented(&self, compiled: &Run) -> bool {
-        let says = |message: &&[u8]| {
-            strings::contains(&compiled.stderr, message)
-                || strings::contains(&compiled.stdout, message)
+    fn differs_as_documented(&self, compiled: &Run, plain: &Run) -> bool {
+        let says = |run: &Run, message: &[u8]| {
+            strings::contains(&run.stderr, message) || strings::contains(&run.stdout, message)
         };
-        DOCUMENTED_MESSAGES.iter().any(says)
+        says(compiled, REFUSAL_OF_A_CHANGE_TO_A_BUILT_IN)
+            || says(plain, END_OF_THE_STACK)
+            || (RUNS_CODE_FROM_STRINGS
+                .iter()
+                .any(|name| strings::contains(self.text, name))
+                && DOCUMENTED_MESSAGES_OF_CODE_FROM_STRINGS
+                    .iter()
+                    .any(|message| says(compiled, message)))
             || DOCUMENTED_NAMES
                 .iter()
                 .any(|name| strings::contains(self.text, name))
@@ -415,14 +424,12 @@ fn run(
             && (Instant::now() > deadline || resident_bytes_of(child) > limits.memory_bytes)
         {
             hit_a_limit = true;
-            // SAFETY: takes integers.
-            unsafe { libc::kill(-child, libc::SIGKILL) };
+            bun_spawn::ffi::kill(-child, libc::SIGKILL);
         }
     }
     if child > 0 {
         // What the program started and left behind.
-        // SAFETY: takes integers.
-        unsafe { libc::kill(-child, libc::SIGKILL) };
+        bun_spawn::ffi::kill(-child, libc::SIGKILL);
     }
     let end = match libc::WIFSIGNALED(status) {
         _ if hit_a_limit => End::HitALimit,

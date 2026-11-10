@@ -2,14 +2,16 @@
 // it under any extension of JavaScript or TypeScript. Programs start workers and import modules by those names, and tools read
 // them from the executable. With --aot the same names find the same modules. What a module shows as its own path is another
 // matter: that is the path of its source below the virtual root.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
-import { test } from "./supported";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const virtualRoot = isWindows ? "B:/~BUN/root/" : "/$bunfs/root/";
 const stems = { typed: "ts", module: "mjs", plain: "js", common: "cjs" };

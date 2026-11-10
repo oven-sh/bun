@@ -1,0 +1,1 @@
+exports.square = 5;

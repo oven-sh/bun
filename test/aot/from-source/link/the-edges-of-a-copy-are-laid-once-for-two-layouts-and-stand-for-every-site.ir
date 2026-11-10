@@ -1,0 +1,22 @@
+# Three places copy a Source into a Copy. The edges "what lies under each name of the copy is what lay under it in the source" are laid at the first place that is
+# observed, for the two layouts; the other places lay none. They stand for all three: the text that `late` stores into a Source behind every copy in the program's text
+# is found under `x` of the Copy, and what lies under `own`, which each place writes itself, is what the places write. A copy of a layout onto itself lays no edge.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "x" proven=i32|string writers-known
+# CHECK: field L1.0 "own" proven=true|i32 writers-known
+# CHECK: field L1.1 "x" proven=i32|string writers-known
+# CHECK: field L1.2 "y" proven=i32 writers-known
+# -- source: main.ts
+# export {};
+# interface Source { x: number | string; y: number }
+# interface Copy extends Source { own: number | boolean }
+# function first(a: Source): Copy { return { ...a, own: 1 }; }
+# function second(a: Source): Copy { return { ...a, own: true }; }
+# function third(a: Source): Copy { return { own: 3, ...a }; }
+# function same(a: Source): Source { return { ...a, y: 2 }; }
+# function late(a: Source): void { a.x = "text"; }
+# const source: Source = { x: 1, y: 2 };
+# console.log(first(source).x, second(source).x, third(source).x, same(source).x, first(source).own, second(source).own);
+# late(source);
+# console.log(first(source).x, second(source).x, third(source).x, same(source).x);
+# -- end of source

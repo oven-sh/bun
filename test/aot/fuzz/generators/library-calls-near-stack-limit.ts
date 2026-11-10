@@ -581,7 +581,7 @@ const forms: Record<string, string[]> = {
     "(() => { const g = both(); g.next(); return g.next(5).value; })()",
     "(() => { const g = both(); g.next(); g.next(5); g.next(); return g.next().value; })()",
     "(() => { const g = counts(3); g.next(); return g.return(9).value; })()",
-    '(() => { const g = counts(3); g.next(); try { g.throw(new Oops("o")); } catch (error) { return error.message; } })()',
+    '(() => { const g = counts(3); g.next(); try { g.throw(new Oops("o")); } catch (error) { if (error instanceof RangeError) throw error; return error.message; } })()',
     "(() => { const g = (function* () { try { yield 1; } finally { yield 2; } })(); g.next(); return g.return(9).value; })()",
     "(() => { const g = (function* () { try { yield 1; } catch (error) { yield error; } })(); g.next(); return g.throw(7).value; })()",
     "(() => { const g = (function* () { yield* custom; })(); return g.next().value + g.next().value; })()",

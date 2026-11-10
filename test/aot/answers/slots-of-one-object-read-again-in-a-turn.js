@@ -2,16 +2,13 @@
 // # each mention of a slot in a turn is a read of its own, and what a test shows of the first holds of the later ones only while nothing was written: an accessor that counts its reads, a store through another name of the same object, a store and a call between two reads, the text swapped in a turn, a frozen object, a slot that was deleted, a text that is no text, a position that is a fraction, negative, NaN, a text, a bigint, or at the end of int32
 // # f2 = count
 // # RUN(FORM): walk f2 mechanisms=all
-// # REQUIRES(FORM): entries-of-bun
 // # FORM-LABEL: code f2:Body
 // # FORM: isLoopHead=true
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 53 of 53 of 53
 // # CHECK-NEXT: exited with 0
 // # RUN(ALSO1): run-in-shell mechanisms=-LoopInvariants $SHELL
-// # REQUIRES(ALSO1): entries-of-bun
 // # ALSO1: 53 of 53 of 53
 // # ALSO1-NEXT: exited with 0
 function make(text) { return { text, position: 0 }; }

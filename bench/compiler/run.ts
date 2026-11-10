@@ -35,9 +35,11 @@ const perf = process.platform === "linux" ? which("perf") : null;
 interface Scenario {
   name: string;
   dress: string;
-  /** What has to be on the machine. */
-  needs?: string;
-  /** Run once before the timed command of every run, untimed. */
+  /** What has to be on the machine, the formatter of the language too: a scenario that lacks one is left out, and a line says so. */
+  needs?: string[];
+  /** Below the folder of the scenario: removed before the timed command of every run, untimed. */
+  removes?: string;
+  /** Run behind the removal, before the timed command of every run, untimed. */
   prepare?: (folder: string) => string[][];
   command: (folder: string) => string[];
   environment?: (folder: string) => Record<string, string>;
@@ -118,8 +120,8 @@ const scenarios: Scenario[] = [
   {
     name: "go-cold",
     dress: "go",
-    needs: "go",
-    prepare: folder => [["rm", "-rf", join(folder, ".cache")]],
+    needs: ["go", "gofmt"],
+    removes: ".cache",
     command: () => ["go", "build", "-o", onThisSystem("app"), "."],
     environment: folder => ({ GOCACHE: join(folder, ".cache"), GOFLAGS: "-mod=mod", GOTOOLCHAIN: "local" }),
     executable: "app",
@@ -127,11 +129,9 @@ const scenarios: Scenario[] = [
   {
     name: "go-std-warm",
     dress: "go",
-    needs: "go",
-    prepare: folder => [
-      ["rm", "-rf", join(folder, ".cache")],
-      ["go", "build", "std"],
-    ],
+    needs: ["go", "gofmt"],
+    removes: ".cache",
+    prepare: () => [["go", "build", "std"]],
     command: () => ["go", "build", "-o", onThisSystem("app"), "."],
     environment: folder => ({ GOCACHE: join(folder, ".cache"), GOFLAGS: "-mod=mod", GOTOOLCHAIN: "local" }),
     executable: "app",
@@ -139,16 +139,16 @@ const scenarios: Scenario[] = [
   {
     name: "cargo build",
     dress: "rust",
-    needs: "cargo",
-    prepare: folder => [["rm", "-rf", join(folder, "target")]],
+    needs: ["cargo", "rustfmt"],
+    removes: "target",
     command: () => ["cargo", "build", "--offline", "--quiet"],
     executable: "target/debug/application",
   },
   {
     name: "cargo build --release",
     dress: "rust",
-    needs: "cargo",
-    prepare: folder => [["rm", "-rf", join(folder, "target")]],
+    needs: ["cargo", "rustfmt"],
+    removes: "target",
     command: () => ["cargo", "build", "--offline", "--quiet", "--release"],
     executable: "target/release/application",
   },
@@ -167,7 +167,8 @@ const shown = (command: string[]) => command.map(word => (word === bun ? "bun" :
 function printCommandsOf(chosen: Scenario[]) {
   const widest = Math.max(...chosen.map(scenario => scenario.name.length), "scenario".length);
   for (const scenario of chosen) {
-    const before = (scenario.prepare?.(".") ?? []).map(shown).join(" && ");
+    const removal = scenario.removes ? [["rm", "-rf", scenario.removes]] : [];
+    const before = [...removal, ...(scenario.prepare?.(".") ?? [])].map(shown).join(" && ");
     console.log(
       `${scenario.name.padEnd(widest)}  ${shown(scenario.command("."))}${before ? `   (before it, not timed: ${before})` : ""}`,
     );
@@ -265,8 +266,9 @@ try {
     const features = Math.max(2, Math.round(size / linesOfFeature));
     for (const scenario of scenarios) {
       if (wanted && !wanted.split(",").includes(scenario.name)) continue;
-      if (scenario.needs && !which(scenario.needs)) {
-        console.error(`${scenario.name}: no ${scenario.needs} on this machine: left out`);
+      const missing = scenario.needs?.find(tool => !which(tool));
+      if (missing) {
+        console.error(`${scenario.name}: no ${missing} on this machine: left out`);
         continue;
       }
       const folder = join(root, `${size}-${scenario.name.replace(/[^a-z0-9]+/gi, "-")}`);
@@ -281,21 +283,24 @@ try {
       // A compiler that fails or takes over an hour at some size has a row that says so. Nothing is left out in silence.
       let failure: string | undefined;
       for (let run = 0; !failure && run < (has("check") ? 1 : runs); run++) {
-        for (const command of scenario.prepare?.(folder) ?? []) {
-          const prepared = spawnSync({
-            cmd: command,
-            cwd: folder,
-            env: { ...process.env, ...env },
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          if (prepared.exitCode !== 0)
-            throw new Error(`${command.join(" ")}: exit ${prepared.exitCode}\n${prepared.stderr}`);
-        }
         try {
+          if (scenario.removes) rmSync(join(folder, scenario.removes), { recursive: true, force: true });
+          for (const command of scenario.prepare?.(folder) ?? []) {
+            const prepared = spawnSync({
+              cmd: command,
+              cwd: folder,
+              env: { ...process.env, ...env },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            if (prepared.exitCode !== 0)
+              throw new Error(`${command.join(" ")}: exit ${prepared.exitCode}\n${prepared.stderr}`);
+          }
           measured.push(time(scenario.command(folder), folder, env));
         } catch (error) {
-          failure = String(error).split("\n").slice(1, 4).join(" ").slice(0, 300);
+          // The first line names the command. A command that printed nothing has that line alone.
+          const [first, ...printed] = String(error).trim().split("\n");
+          failure = (printed.slice(0, 3).join(" ") || first).slice(0, 300);
         }
       }
       if (failure) {
@@ -388,7 +393,7 @@ console.log(
 );
 console.log(`bun    ${version([bun, "--revision"])}`);
 if (which("go")) console.log(`go     ${version(["go", "version"]).replace("go version ", "")}`);
-if (which("cargo")) console.log(`rustc  ${version(["rustc", "--version"]).replace("rustc ", "")}`);
+if (which("rustc")) console.log(`rustc  ${version(["rustc", "--version"]).replace("rustc ", "")}`);
 console.log("");
 const widest = printCommandsOf(ran);
 const columns: [string, number, (row: any) => string][] = [

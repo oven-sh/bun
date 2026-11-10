@@ -1,0 +1,33 @@
+# -- source: the-first-of-two-elements-that-are-multiplied-reads-nan-for-a-hole.ts
+# declare function sink(value: unknown): void;
+# function dot(a: number[], b: number[]): number { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+# sink(dot);
+# -- end of source
+# Both lists are asked for numbers in front of the loop. The second read took NaN for a hole because the first stood beside it as a number or nothing; the first had only Link's word on the second,
+# and where Link has none (lists out of JSON.parse, parameters of a function that escapes) it stayed `undefined|number`: its hole was asked in every turn and the product asked for NaN again,
+# 4 of the 17 instructions a turn. `undefined * x` and `NaN * x` are one answer for every x: the rule says where the form pays, not where it is right.
+# f1 = dot
+# RUN: walk f1 mechanisms=all
+# REQUIRES: as-written
+# CHECK-LABEL: code f1:Body
+# CHECK: number @Double = GetArrayElement {{*}}[keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]
+# CHECK-NEXT: number @Double = GetArrayElement {{*}}[keyIsIntegral, readsHoleAsNaN, admitsInt32Storage]
+# RUN(SHELL): run-in-shell globalThis.sink = dot => { const halves = Array.from({ length: 40 }, (_, i) => i + 0.5), wholes = Array.from({ length: 40 }, (_, i) => i), holed = halves.slice(), holedWholes = wholes.slice(); delete holed[21]; delete holedWholes[21]; for (const [a, b] of [[halves, halves], [halves, wholes], [wholes, halves], [wholes, wholes], [holed, halves], [halves, holed], [holedWholes, wholes], [wholes, holedWholes], [halves, halves.slice(0, 19)], [halves.slice(0, 19), halves], [wholes, [1.5]], [[], halves], [[1.5, , 3], [1, 1, 1]], [[1.5, 2.5], ["2", "3"]], [["2", "3"], [1.5, 2.5]], [[, 1.5], [{ valueOf() { print("asked"); return 2; } }, 2]]]) print(String(dot(a, b))); try { dot([, 1.5], [1n, 2]); } catch (error) { print(error.constructor.name); } };
+# SHELL: 21330
+# SHELL: 20930
+# SHELL: 20930
+# SHELL: 20540
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: 2284.75
+# SHELL: NaN
+# SHELL: 0
+# SHELL: NaN
+# SHELL: 10.5
+# SHELL: 10.5
+# SHELL: asked
+# SHELL: NaN
+# SHELL: TypeError

@@ -1,0 +1,16 @@
+# The twin of a-list-read-under-a-key-that-may-be-undefined-stays-in-sight. A bigint spells digits, and 123456789012345678901234567890 is no number's name: Array.prototype takes it, and a getter there gets the list as `this`.
+# A text may spell any name: the list goes. A store under a key that may be `undefined` lays what it stores among the elements or under one of four texts, and nobody gets the list: L2 stays. L0 = under a bigint, L1 = under a text, L2 = stored.
+# RUN: link layouts mechanisms=all
+# CHECK-NOT: layout L0 changes=[]
+# CHECK-NOT: layout L1 changes=[]
+# RUN(STORED): link layouts mechanisms=all
+# STORED: layout L2 changes=[] stays-with-compiled-code
+# -- source: a-list-read-under-a-key-that-may-spell-another-name-is-let-out.ts
+# class UnderBigInt { n = 1; }
+# class UnderText { n = 2; }
+# class Stored { n = 3; }
+# const big: bigint[] = [0n], texts: string[] = ["0"], stack: number[] = [0];
+# const a = [new UnderBigInt()], b = [new UnderText()], c = [new Stored()];
+# c[stack.pop()!] = new Stored();
+# console.log(a[big.pop() as unknown as number]!.n + b[texts.pop() as unknown as number]!.n + c[0]!.n);
+# -- end of source

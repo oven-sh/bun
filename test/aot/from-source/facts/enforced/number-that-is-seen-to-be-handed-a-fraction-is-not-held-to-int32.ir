@@ -1,0 +1,16 @@
+# a field that checked code writes `number`, and that the program's own text reads as only an integer is read (an operand of a bit operator), is held to every int32 by a guess (`whole`). The guess gives way to what is SEEN to arrive
+# in the field: quotients (`part`), or whole numbers on one way and fractions on the other (`both`). Held to an int32 all the same, most of such a field's values lay outside their slot, and every read of them went by name.
+# -- source: number-that-is-seen-to-be-handed-a-fraction-is-not-held-to-int32.ts
+# declare function sink(...values: unknown[]): void;
+# class Mark { constructor(public whole: number, public part: number, public both: number) {} mask() { return (this.whole & 7) + (this.part & 7) + (this.both & 7); } }
+# const marks: Mark[] = [];
+# for (let i = 0; i < 8; i++) marks.push(new Mark(i, i / 4, i & 1 ? i : i * 0.5));
+# sink(Mark, marks);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "whole" source=written type=i32{{*}} int32-by-guess
+# CHECK: | int32 by guess 1 |
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: "part" source=written type=i32
+# NEVER-NOT: "both" source=written type=i32
+# NEVER-NOT: differs-from-table

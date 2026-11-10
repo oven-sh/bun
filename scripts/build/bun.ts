@@ -376,6 +376,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     cxxObjects.push(object);
     if (codegen.builtinTableSources.includes(src)) builtinTableObjects.push(object);
   }
+  const aotNativeTestObjects = sources.aotNativeTests.map(src =>
+    cxx(n, cfg, src, { flags: cxxFlagsFull, pch: pchOut.pch, pchHeader: pchOut.wrapperHeader }),
+  );
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
@@ -458,7 +461,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects);
+  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects, aotNativeTestObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -475,10 +478,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * and how JSC compiles them): their sources, or with the prebuilt WebKit their
  * objects out of the tarball, linked with the WebKit and mimalloc bun links and
  * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
- * it. On request (`--target=jsc`). `engine-test-programs` is what bun's tests
- * run, `jsc`, `testaot` and `testFFI`: a default target in CI, which packs them
- * beside bun. A tarball has `testFFI` linked; with one that has only the linked
- * programs the target is the fetch.
+ * it; `testaot` also with the native tests that ask that table
+ * (test/aot/native). On request (`--target=jsc`). `engine-test-programs` is
+ * what bun's tests run, `jsc`, `testaot` and `testFFI`: a default target in CI,
+ * which packs them beside bun. A tarball has `testFFI` linked; with one that has
+ * only the linked programs the target is the fetch.
  */
 function emitJscPrograms(
   n: Ninja,
@@ -486,6 +490,7 @@ function emitJscPrograms(
   deps: ReadonlyMap<DepName, ResolvedDep>,
   headersReady: string,
   builtinTableObjects: readonly string[],
+  aotNativeTestObjects: readonly string[],
 ): void {
   const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
@@ -517,6 +522,7 @@ function emitJscPrograms(
       cfg,
       from.flatMap(d => d.objects),
     );
+    if (program.name === "testaot") objects.push(...aotNativeTestObjects);
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
       libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],

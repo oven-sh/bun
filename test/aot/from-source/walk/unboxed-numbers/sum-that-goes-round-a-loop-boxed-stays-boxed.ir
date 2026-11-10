@@ -33,21 +33,16 @@
 # -- end of source
 # LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw
 # RUN(TOTAL): walk f1 mechanisms=all-Inlining-LoopInvariants
-# REQUIRES(TOTAL): entries-of-bun
 # TOTAL-LABEL: code f1:Body
 # TOTAL: number @JSValue = Add {{*}}form=Numbers
 # RUN(NEVER): walk f1 mechanisms=all-Inlining-LoopInvariants
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: @Double = Add
 # RUN(INNER): walk f3 mechanisms=all-Inlining-LoopInvariants
-# REQUIRES(INNER): entries-of-bun
 # INNER-LABEL: code f3:Body
 # INNER: number @JSValue = Add {{*}}form=Numbers
 # RUN(LESS): walk f2 mechanisms=all-Inlining
-# REQUIRES(LESS): entries-of-bun
 # LESS-LABEL: code f2:Body
 # LESS: number @Double = Sub {{*}}form=Numbers
 # RUN(HALVES): walk f4 mechanisms=all-Inlining
-# REQUIRES(HALVES): entries-of-bun
 # HALVES-LABEL: code f4:Body
 # HALVES: number @Double = Add {{*}}form=Numbers

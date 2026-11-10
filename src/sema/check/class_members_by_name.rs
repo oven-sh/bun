@@ -1,5 +1,5 @@
 use super::super::*;
-use super::{Builder, Resolved};
+use super::{Builder, MemberBinding, MembersInPlace, Resolved};
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone)]
@@ -17,7 +17,11 @@ pub(in super::super) struct ClassMembersByName<'p> {
     depths: FxHashMap<Sym, u32>,
     least_depth_of_name: FxHashMap<Atom, u32>,
     pub(super) with_stored_ancestry: crate::util::FxHashSet<Sym>,
+    pub(super) rows_known: crate::util::FxHashSet<(Sym, Sym)>,
     with_only_this_all_the_way_up: crate::util::FxHashSet<Sym>,
+    without_properties_all_the_way_up: crate::util::FxHashSet<Sym>,
+    first_unit_properties: FxHashMap<Sym, Option<(Atom, TypeId)>>,
+    static_sides: FxHashMap<Sym, Option<(&'p Resolved<'p>, TypeId)>>,
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -28,8 +32,14 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         skip_object_function_property_augment: bool,
     ) -> Option<Option<(&'p Prop<'p>, MapperId)>> {
-        let &TypeData::Ref { target, .. } = self.data(apparent) else {
-            return None;
+        let skips = skip_object_function_property_augment;
+        let target = match *self.data(apparent) {
+            TypeData::Ref { target, .. } => target,
+            TypeData::Anon {
+                origin: Origin::ClassStatic(class),
+                mapper: MapperId::IDENTITY,
+            } => return self.property_of_unlisted_static_side(apparent, class, name, skips),
+            _ => return None,
         };
         if self.resolved_members(apparent).is_some() || !self.resolves_no_members() {
             return None;
@@ -39,11 +49,55 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(prop) = self.member_of_plain_class(target, name)? {
             return Some(Some((prop, mapper)));
         }
-        if skip_object_function_property_augment {
+        if skips {
             return Some(None);
         }
         let resolved = self.plain_class(target)?.declared;
         Some(self.property_in_type(apparent, &Members { resolved, mapper }, name))
+    }
+
+    fn property_of_unlisted_static_side(
+        &mut self,
+        apparent: TypeId,
+        class: Sym,
+        name: Atom,
+        skip_object_function_property_augment: bool,
+    ) -> Option<Option<(&'p Prop<'p>, MapperId)>> {
+        if self.resolved_members(apparent).is_some() || !self.resolves_no_members() {
+            return None;
+        }
+        let (exports, base) = self.exports_of_class(class)?;
+        if let Some(prop) = exports.prop(name) {
+            return Some(Some((prop, MapperId::IDENTITY)));
+        }
+        let inherited = match self.flags(base) & tf::OBJECT != 0 {
+            true => self.prop_ref(base, name),
+            false if base == TypeId::UNDEFINED => None,
+            false => return None,
+        };
+        match inherited.filter(|found| !self.is_static_private_name(found.0)) {
+            Some((prop, MapperId::IDENTITY)) => Some(Some((prop, MapperId::IDENTITY))),
+            Some(_) => None,
+            None => skip_object_function_property_augment.then_some(None),
+        }
+    }
+
+    fn exports_of_class(&mut self, class: Sym) -> Option<(&'p Resolved<'p>, TypeId)> {
+        if let Some(&known) = self.class_members_by_name.static_sides.get(&class) {
+            return known;
+        }
+        let scope = self.begin_scope();
+        let counters = self.non_cacheable_mark();
+        let (binding, until) = (MemberBinding::Late, MembersInPlace::Exports);
+        let shape = self.build_origin_shape(Origin::ClassStatic(class), binding, until);
+        let base = self.base_constructor_type_of_class(class);
+        if self.end_scope(scope).is_err() || self.non_cacheable_mark() != counters {
+            return None;
+        }
+        let exports: &'p Resolved<'p> = self.arena.alloc(Resolved::new(shape));
+        let known = exports.has_distinct_names().then_some((exports, base));
+        self.class_members_by_name.static_sides.insert(class, known);
+        known
     }
 
     pub(in super::super) fn declared_by_unlisted_class(
@@ -102,6 +156,91 @@ impl<'p, 's> Checker<'p, 's> {
                 None => return Some(true),
             }
         }
+    }
+
+    fn unlisted_class_of(&mut self, ty: TypeId) -> Option<Sym> {
+        let &TypeData::Ref { target, .. } = self.data(ty) else {
+            return None;
+        };
+        let is_unlisted = self.class_members_by_name.is_on
+            && self.resolved_members(ty).is_none()
+            && self.resolves_no_members()
+            && self.has_only_this_all_the_way_up(target);
+        is_unlisted.then_some(target)
+    }
+
+    pub(in super::super) fn is_empty_unlisted_class(&mut self, ty: TypeId) -> Option<bool> {
+        let mut at = self.unlisted_class_of(ty)?;
+        let mut heirs: SmallVec<[Sym; 8]> = SmallVec::new();
+        while !(self.class_members_by_name.without_properties_all_the_way_up).contains(&at) {
+            let plain = self.plain_class(at)?;
+            if !plain.declared.shape.props.is_empty() {
+                return Some(false);
+            }
+            heirs.push(at);
+            let Some((base, _)) = plain.base else {
+                break;
+            };
+            at = base;
+        }
+        (self.class_members_by_name.without_properties_all_the_way_up).extend(heirs);
+        Some(true)
+    }
+
+    pub(in super::super) fn first_unit_property_of_unlisted_class(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<Option<(Atom, TypeId)>> {
+        let mut at = self.unlisted_class_of(ty)?;
+        if !self.instantiated_symbol_links.is_empty() {
+            return None;
+        }
+        let before = self.non_cacheable_mark();
+        let is_changed =
+            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_OTHER_INSTANTIATION;
+        let mut heirs: SmallVec<[Sym; 8]> = SmallVec::new();
+        let found = 'row: loop {
+            if let Some(&known) = self.class_members_by_name.first_unit_properties.get(&at) {
+                break known;
+            }
+            let plain = self.plain_class(at)?;
+            if let Some((base, _)) = plain.base {
+                for prop in &plain.declared.shape.props {
+                    if self.member_of_plain_class(base, prop.name)?.is_some() {
+                        return None;
+                    }
+                }
+            }
+            heirs.push(at);
+            for prop in &plain.declared.shape.props {
+                let PropSource::Symbol(symbol) = prop.source else {
+                    return None;
+                };
+                let declared = self.type_of_symbol(symbol);
+                if before != self.non_cacheable_mark() {
+                    return None;
+                }
+                if self.flags(declared) & tf::OBJECT != 0 {
+                    continue;
+                }
+                let is_adjusted = PropFlags::OPTIONAL | PropFlags::WIDEN | PropFlags::REGULAR;
+                if prop.flags.intersects(is_adjusted)
+                    || self.types().object_flags(declared).intersects(is_changed)
+                {
+                    return None;
+                }
+                if self.is_unit(declared) {
+                    break 'row Some((prop.name, self.with_freshness(declared, false)));
+                }
+            }
+            let Some((base, _)) = plain.base else {
+                break None;
+            };
+            at = base;
+        };
+        let known = &mut self.class_members_by_name.first_unit_properties;
+        known.extend(heirs.into_iter().map(|heir| (heir, found)));
+        Some(found)
     }
 
     pub(super) fn resolves_no_members(&self) -> bool {

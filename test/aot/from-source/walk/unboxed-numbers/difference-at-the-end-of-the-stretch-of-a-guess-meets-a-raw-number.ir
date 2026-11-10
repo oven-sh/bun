@@ -14,9 +14,7 @@
 # console.log(spans(list));
 # -- end of source
 # RUN(RAW): walk f1 mechanisms=all-Inlining
-# REQUIRES(RAW): entries-of-bun
 # RAW-LABEL: code f1:Body
 # RAW: number @Double = Sub {{*}}form=Numbers
 # RUN(NEVER): walk f1 mechanisms=all-Inlining
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: @JSValue = Sub {{*}}form=Numbers

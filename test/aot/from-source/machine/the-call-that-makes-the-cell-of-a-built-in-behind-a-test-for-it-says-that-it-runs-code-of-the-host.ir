@@ -1,0 +1,10 @@
+# -- source: the-call-that-makes-the-cell-of-a-built-in-behind-a-test-for-it-says-that-it-runs-code-of-the-host.js
+# function byCall(f, t, x) { return f.call(t, x, 1) + 1; }
+# sink(byCall);
+# -- end of source
+# f1 = byCall. What the read of `call` finds is held against the cell of Function.prototype.call. Where the table has no cell yet, a rare arm makes it: BuiltinCells::cell() looks the member up in its holder,
+# and a static member is made at its first read: the holder takes another structure and may take another butterfly. The other door to that operation, ConstantEmitter::builtinCell(), says so (runsCodeOfHost);
+# this one said nothing, so a load of the holder's header or butterfly numbered in front of the test stayed good behind the arm.
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Patch({{*}}Writes:{{*}}JSCell_header, JSObject_butterfly{{*}}pureFunction =

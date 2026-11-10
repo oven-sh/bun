@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# "use strict";
+# const text = sink(), box = { src: sink() };
+# function ofFile() { let s = 0; for (let i = 0; i < text.length; i++) s += text.charCodeAt(i); return s; }
+# function ofField() { let s = 0; for (let i = 0; i < box.src.length; i++) s += box.src.charCodeAt(i); return s; }
+# class Queue { constructor() { this.length = 0; this.head = null; } }
+# sink(ofFile, ofField, Queue);
+# -- end of source
+# A reader of characters and the length off one place are two reads: both say a text: the length is read as a text's, though a class of the file has a `length`
+# f1 = ofFile, f2 = ofField
+# RUN(COUNT): compile TextsExpectedByNamesOfPlaces mechanisms=all
+# COUNT-NOT: statistic TextsExpectedByNamesOfPlaces 0
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetStringLength

@@ -3,7 +3,7 @@
  * of the prebuilt tarballs. Override via `--webkit-version=<hash>` to test a
  * branch: any commit pushed to https://github.com/oven-sh/WebKit.
  */
-export const WEBKIT_VERSION = "5a61071f79134bf41844e7ea31a8449147d85dd4";
+export const WEBKIT_VERSION = "ee59053d32ace3b79efd73f5e46a8576ca52f53c";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -788,6 +788,8 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
   const aotGenerated = [
     ...aotRuntimeFactsStep(wk, lists.jsc),
     ...aotReadsThatAssumeStep(wk),
+    ...aotLateStoresStep(wk),
+    ...aotForcedJumpsStep(wk),
     ...aotGeneratedFiles(lists.jsc, "SCHEMA"),
     ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE"),
   ];
@@ -1507,6 +1509,49 @@ function aotReadsThatAssumeStep(wk: WebKitBuild): string[] {
     cmd: [wk.cfg.bun, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
     inputs: [script, join(wk.JSC, "aot", "codegen", "AOTReadsThatAssume.txt"), ...handwrittenAotFiles(wk.JSC)],
     desc: "AOTReadsThatAssumeChecked.h",
+  });
+  return outputs;
+}
+
+/** AOT_CHECK_LATE_STORES of aot/AOT.cmake, with Bun's own files of the compiler beside the engine's. */
+function aotLateStoresStep(wk: WebKitBuild): string[] {
+  const script = join(wk.JSC, "aot", "runtime", "generator", "late-stores.ts");
+  const bindings = join(wk.cfg.cwd, "src", "jsc", "bindings");
+  const outputs = [join(aotGeneratedDirectory(wk), "AOTLateStoresChecked.h")];
+  gen(wk, {
+    outputs,
+    cmd: [wk.cfg.bun, script, "--javascriptcore", wk.JSC, "--bindings", bindings, "--out", aotGeneratedDirectory(wk)],
+    inputs: [
+      script,
+      join(wk.JSC, "aot", "runtime", "AOTLateStores.txt"),
+      ...handwrittenAotFiles(wk.JSC),
+      ...readdirSync(bindings)
+        .filter(name => /^Bun(?:AOT|Compiled|WithoutAOT)\w*\.(?:cpp|h)$/.test(name))
+        .sort()
+        .map(name => join(bindings, name)),
+    ],
+    desc: "AOTLateStoresChecked.h",
+  });
+  return outputs;
+}
+
+/** AOT_CHECK_FORCED_JUMPS of aot/AOT.cmake. What it writes says only that the sources have passed. */
+function aotForcedJumpsStep(wk: WebKitBuild): string[] {
+  const script = join(wk.JSC, "aot", "runtime", "generator", "forced-jumps.py");
+  const fixtures = join(wk.JSC, "aot", "runtime", "generator", "forced-jumps-fixtures");
+  const outputs = [join(aotGeneratedDirectory(wk), "AOTForcedJumpsChecked.h")];
+  gen(wk, {
+    outputs,
+    cmd: [wk.python, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
+    inputs: [
+      script,
+      join(wk.JSC, "aot", "runtime", "AOTForcedJumps.txt"),
+      ...readdirSync(fixtures)
+        .sort()
+        .map(name => join(fixtures, name)),
+      ...handwrittenAotFiles(wk.JSC),
+    ],
+    desc: "AOTForcedJumpsChecked.h",
   });
   return outputs;
 }

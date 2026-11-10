@@ -1,7 +1,9 @@
 mod support;
 use support::*;
 
-use bun_sema::erasure::{ReplacedText, find_type_ranges_beside, keep_only_comments_beside_types};
+use bun_sema::erasure::{
+    ReplacedText, find_type_ranges_beside, keep_only_comments_beside_types_and,
+};
 use std::borrow::Cow;
 use std::sync::Mutex;
 
@@ -383,7 +385,7 @@ fn syntax_that_emits_code_is_kept_without_its_types() {
             let mut unpacked = vec![0; packed.kept_len(text.len())];
             packed.remove_from(text.as_bytes(), &mut unpacked);
             assert_eq!(unpacked, kept, "{text}");
-            keep_only_comments_beside_types(&mut typed, w.arena);
+            keep_only_comments_beside_types_and(&mut typed, w.arena, |_| false);
             assert_eq!(remove_types(&typed), kept, "{text}");
         }
     });
@@ -395,9 +397,10 @@ fn comments_away_from_types_are_dropped() {
     with_workspace(|w| {
         let mut typed = parse_typescript(w, "a.ts", text.as_bytes());
         assert_eq!(typed.comments.len(), 3);
-        keep_only_comments_beside_types(&mut typed, w.arena);
+        keep_only_comments_beside_types_and(&mut typed, w.arena, |comment| comment == b"/* c */");
         let kept: Vec<u32> = typed.comments.iter().map(|comment| comment.pos).collect();
-        assert_eq!(kept, [text.find("// b").unwrap() as u32]);
+        let places = ["// b", "/* c */"].map(|comment| text.find(comment).unwrap() as u32);
+        assert_eq!(kept, places);
     });
 }
 

@@ -1,0 +1,37 @@
+# -- source: a-counter-that-enters-as-a-fraction-fails-both-fronts-of-a-loop-and-runs-its-closed-copy.js
+# const rows = JSON.parse("[" + Array.from({ length: 41 }, (_, i) => (i * 7) % 11).join() + "]");
+# function work(rows, least, count) {
+#   const front = { n: least };
+#   for (let i = count - 1; i >= 0; i--) {
+#     if (!(rows[i] >= least)) { rows[i] = rows[i] + 1; front.n += i; }
+#   }
+#   front.n += rows.length;
+#   return JSON.stringify(front);
+# }
+# print(work(rows, 6, JSON.parse("41")) + " " + rows.slice(0, 8).join());
+# print(work(rows, 6, JSON.parse("41.5")) + " " + rows.slice(0, 8).join());
+# print(work(rows, 6, JSON.parse("null")) + " " + rows.slice(0, 8).join());
+# print(work(rows, 6, JSON.parse("41")) + " " + rows.slice(0, 8).join());
+# -- end of source
+# The loop is bought with two fronts: the first asks for an int32 counter and a list of numbers, the second, which is also entered out of turns, for the counter alone; where that fails too the way leads from the start of the closed
+# copy to its shared entry. A whole count runs the typed copy; a count that is a fraction or null fails both fronts on entry and runs that way, and the turns behind it write the record made in front of the loop.
+# Out of a turn the counter arrives as an int32 by the typed turn's own proof, so that the second front cannot fail there.
+# RUN: run-in-shell mechanisms=all
+# CHECK: {"n":487} 1,7,4,10,6,3,9,6
+# CHECK-NEXT: {"n":887.5} 1,7,4,10,6,3,9,6
+# CHECK-NEXT: {"n":47} 1,7,4,10,6,3,9,6
+# CHECK-NEXT: {"n":393} 2,7,5,10,6,4,9,6
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# FAILING: {"n":487} 1,7,4,10,6,3,9,6
+# FAILING-NEXT: {"n":887.5} 1,7,4,10,6,3,9,6
+# FAILING-NEXT: {"n":47} 1,7,4,10,6,3,9,6
+# FAILING-NEXT: {"n":393} 2,7,5,10,6,4,9,6
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: {"n":487} 1,7,4,10,6,3,9,6
+# HELD-NEXT: {"n":887.5} 1,7,4,10,6,3,9,6
+# HELD-NEXT: {"n":47} 1,7,4,10,6,3,9,6
+# HELD-NEXT: {"n":393} 2,7,5,10,6,4,9,6
+# HELD-NEXT: exited with 0

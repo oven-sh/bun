@@ -107,10 +107,10 @@ Three columns, three starts, one route, both pinnings: six minutes a server on e
 
 ## The small rows
 
-    python3 test/aot/perf/against_the_jit.py <bun with --aot> <released bun> [--cores 0-15]
+    bun test/aot/perf/idioms-against-the-jit.ts --bun <bun with --aot>
 
-holds every everyday idiom of `../../perf/idioms` (typed and untyped) and every single operation of `../../perf/operations` against the JIT, by instructions and by CPU time, and lists the
-rows that lose, worst first. Two minutes on sixteen cores.
+holds every small benchmark of `../../perf/idioms` and `../../perf/everyday` (typed and untyped) against the same binary's JIT, by instructions, and lists the rows that lose, worst first
+([`../../perf/README.md`](../../perf/README.md)).
 
 ## Which accesses by name a request runs, counted from outside
 

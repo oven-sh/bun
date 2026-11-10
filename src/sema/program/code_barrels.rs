@@ -660,7 +660,13 @@ pub(super) fn summarize_requests<'s>(
         }));
         let count = files_of(*resolution).count();
         if count > 0 {
-            asked.extend(std::iter::repeat_n(summary.asked_by(index), count));
+            let resolver = context.resolver;
+            let mut files = files_of(*resolution);
+            let asked_by_site = match files.any(|it| resolver.is_found_with_side_effects(it.path)) {
+                true => Asked::All,
+                false => summary.asked_by(index),
+            };
+            asked.extend(std::iter::repeat_n(asked_by_site, count));
         }
     }
     debug_assert!(asked.len() <= target_count);

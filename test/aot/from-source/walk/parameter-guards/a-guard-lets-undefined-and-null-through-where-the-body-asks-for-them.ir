@@ -1,0 +1,18 @@
+# Whether the guard at the entry of a function lets undefined and null pass beside the class that it tests for hangs on the text of the function, and on no caller.
+# `asked` asks `x` for its truth: it takes them, though nobody in sight hands it either. `unasked` reads off `x` at once: its guard tests for the class alone, though a caller was seen to hand it undefined.
+# It used to go by what was held to arrive: a caller in another file changed the guard and the fast body.
+# -- source: a-guard-lets-undefined-and-null-through-where-the-body-asks-for-them.mjs
+# function Box(v) { this.v = v; }
+# function asked(x, k) { let s = 0; for (let i = 0; i < k; i++) s += x ? x.v : 1; return s; }
+# function unasked(x, k) { let s = 0; for (let i = 0; i < k; i++) s += x.v; return s; }
+# globalThis.keep = [asked, unasked];
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += asked(new Box(i), 2) + unasked(new Box(i), 3);
+# try { unasked(undefined, 1); } catch (error) { sum += 100; }
+# print(sum);
+# -- end of source
+# RUN: plan units mechanisms=all
+# CHECK: unit f2:ParameterGuard {{*}} tests (undefined|null|L0, i32)
+# CHECK: unit f3:ParameterGuard {{*}} tests (L0, i32)
+# RUN(SHELL): run-in-shell
+# SHELL: 130

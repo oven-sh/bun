@@ -10,10 +10,12 @@ mod walker;
 use bun_sema::bind::{Binding, Bound, ScopeId, SymbolId};
 use bun_sema::fold::{Decisions, TreeNode};
 use bun_sema::hir::{self, ClassId, ExprId, FnId, MemberId, StmtId};
+use bun_sema::util::FxHashSet;
 
 pub(super) use self::walker::walk_file;
 use super::{BindingRef, ScopeInput, ScopeSlot};
 use crate::ir::FunctionKey;
+use crate::lower::commonjs::WrapperSlots;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(in crate::lower) struct WalkedFunctionId(pub(in crate::lower) u32);
@@ -138,7 +140,9 @@ pub(super) struct ScopeWalk {
     pub(super) eval_variable_scopes: Vec<ScopeId>,
     pub(super) parameter_eval_variable_scopes: Vec<ScopeId>,
     pub(super) has_wrapper_parameters: bool,
+    pub(super) wrapper_slots: WrapperSlots,
     pub(super) has_values_of_each_run: bool,
+    pub(super) keeps_first_exports: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -196,7 +200,8 @@ struct Walker<'x, 's> {
     class_decorators: Vec<(ClassId, ExprId)>,
     last_users: Vec<Option<WalkedFunctionId>>,
     pending_stores: Vec<SymbolId>,
-    unconditional_statements: Vec<ExprId>,
+    unconditional_calls_of_super: FxHashSet<ExprId>,
+    fields_evaluated_in_constructors: FxHashSet<MemberId>,
     clock: u32,
     number_walked: u32,
     is_only_called_or_tested: Vec<bool>,

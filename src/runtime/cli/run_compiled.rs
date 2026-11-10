@@ -19,6 +19,7 @@ use super::compile_command::{
     print_failure, print_log,
 };
 use crate::cli::command::{Context, ContextData};
+use crate::cli::watch_status::WatchStatus;
 
 static IS_FROM_DESCRIPTOR: AtomicBool = AtomicBool::new(false);
 static GRAPH_DESCRIPTOR: OnceLock<Fd> = OnceLock::new();
@@ -143,7 +144,12 @@ pub(crate) fn files_in_memory() -> Option<&'static FileMap> {
 
 #[cold]
 #[inline(never)]
-pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_count: usize) -> ! {
+pub(crate) fn start(
+    ctx: Context<'_>,
+    entry_points: Vec<Box<[u8]>>,
+    test_file_count: usize,
+    watch_status: Option<&WatchStatus>,
+) -> ! {
     let typed: Vec<&'static [u8]> = bun_core::argv()
         .into_iter()
         .skip(1 + bun_core::bun_options_argc())
@@ -201,7 +207,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
             print_log(&said_before_the_build);
             print_log(ctx.log_ref());
             Output::err_generic("{}", (BStr::new(error.name()),));
-            exit_or_wait_for_change(watched)
+            exit_or_wait_for_change(watched, watch_status)
         }
         Ok(Err(failure)) => {
             // SAFETY: nothing else borrows the log behind a build.
@@ -212,7 +218,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
             let target = &ctx.bundler_options.compile_target;
             print_log(&said_before_the_build);
             print_failure(ctx.log_ref(), RequestOrigin::BuildFlag, target, &failure);
-            exit_or_wait_for_change(watched)
+            exit_or_wait_for_change(watched, watch_status)
         }
         Ok(Ok(outcome)) => outcome,
     };
@@ -435,7 +441,7 @@ impl WatcherContext for RestartOnChange {
         }
         Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
-            bun_core::reload_process(CLEARS_TERMINAL.load(Ordering::Relaxed), false);
+            bun_core::reload_process(CLEARS_TERMINAL.load(Ordering::Relaxed), false, true);
         });
     }
 
@@ -514,11 +520,18 @@ fn decide_whether_to_clear_terminal() {
     CLEARS_TERMINAL.store(!keeps, Ordering::Relaxed);
 }
 
-fn exit_or_wait_for_change(watched: Option<&'static WatchedFiles>) -> ! {
+/// `watch_status`: the run's `Failed running` line, for `bun <file> --watch`.
+fn exit_or_wait_for_change(
+    watched: Option<&'static WatchedFiles>,
+    watch_status: Option<&WatchStatus>,
+) -> ! {
     if watched.is_none() {
         Global::exit(1)
     }
     decide_whether_to_clear_terminal();
+    if let Some(status) = watch_status {
+        status.print_idle(true);
+    }
     Output::flush();
     loop {
         std::thread::park();

@@ -4205,10 +4205,21 @@ pub fn replace_restart_arguments(replace: impl Fn(&[u8]) -> Option<&'static [u8]
     });
 }
 
+static WATCH_RESTART_BANNER: Once<Box<[u8]>> = Once::new();
+
+/// The line `reload_process` writes to stdout after it clears the terminal, when its caller
+/// announces the restart. `bun <file> --watch` sets it once at start. While it is not set, a
+/// restart prints nothing.
+pub fn set_watch_restart_banner(line: Box<[u8]>) {
+    WATCH_RESTART_BANNER.get_or_init(|| line);
+}
+
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
+/// `announce_restart` prints the banner of `set_watch_restart_banner`: a restart on a file change
+/// does, a restart after a crash does not.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
-pub fn reload_process(clear_terminal: bool, may_return: bool) {
+pub fn reload_process(clear_terminal: bool, may_return: bool, announce_restart: bool) {
     // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
     // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
     // winner; a loser parks or returns. A thread that already owns the reload may re-enter.
@@ -4230,6 +4241,12 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         crate::output::flush();
         crate::output::disable_buffering();
         crate::output::reset_terminal_all();
+    }
+    // Only the elected thread gets here, so the banner prints once per restart. It follows the
+    // clear, which would erase it, and precedes the exec, which would drop a buffered write.
+    if announce_restart && let Some(line) = WATCH_RESTART_BANNER.get() {
+        crate::output::print_bytes(line);
+        crate::output::flush();
     }
     crate::output::stdio::restore();
 

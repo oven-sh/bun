@@ -1027,6 +1027,26 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
+        // Before `run_compiled::start`: under `--check` or `--aot` the compile stage restarts the
+        // process itself on a change, and it prints the `Restarting` line too.
+        let watch_status = match &main {
+            BootMain::File { .. } if ctx.debug.hot_reload == cli::command::HotReload::Watch => {
+                let mut positionals: &[Box<[u8]>] = &ctx.positionals;
+                if positionals
+                    .first()
+                    .is_some_and(|first| &first[..] == b"run")
+                {
+                    positionals = &positionals[1..];
+                }
+                let script = positionals.first().map_or(&[][..], |script| &script[..]);
+                Some(crate::cli::watch_status::WatchStatus::install(
+                    script,
+                    &ctx.passthrough,
+                ))
+            }
+            _ => None,
+        };
+
         if crate::cli::run_compiled::is_requested(ctx) {
             let BootMain::File { path, .. } = main else {
                 Output::err_generic(
@@ -1037,7 +1057,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             };
             let mut entry_points = vec![path];
             entry_points.extend(ctx.preloads.iter().cloned());
-            crate::cli::run_compiled::start(ctx, entry_points, 0);
+            crate::cli::run_compiled::start(ctx, entry_points, 0, watch_status.as_ref());
         }
         crate::cli::run_compiled::read_no_environment_file_again(ctx);
 
@@ -1209,6 +1229,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Some(_) => Unchecked::Main(loader),
                 None => Unchecked::Project,
             }),
+            watch_status,
         }
         .start()
     }
@@ -1343,6 +1364,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             vm,
             entry_path: Some(entry),
             unchecked: None,
+            watch_status: None,
         }
         .start()
     }
@@ -1396,6 +1418,9 @@ pub(crate) struct Run<'a> {
     /// `--check` under `--watch`: what to type check before the program runs. With errors the
     /// program is not run, and the process waits for a change.
     unchecked: Option<Unchecked>,
+    /// The status lines of `bun <file> --watch`. `None` for `--hot`, `bun bake` and a standalone
+    /// executable.
+    watch_status: Option<crate::cli::watch_status::WatchStatus>,
 }
 
 /// What `Run::start` type checks under `--check --watch`.
@@ -1453,6 +1478,7 @@ impl Run<'_> {
             vm,
             entry_path: mut entry,
             unchecked,
+            mut watch_status,
         } = self;
         let global = vm.global();
         let _api_lock = global.vm().get_api_lock();
@@ -1665,6 +1691,25 @@ impl Run<'_> {
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
+                // Node's watcher reports the child's exit. The run ends here once nothing is left
+                // that can run JS: after an uncaught error `is_event_loop_alive` is false while a
+                // server can still answer, and that run has not ended. Once per process: a
+                // restart is a new process.
+                if let Some(status) = &watch_status
+                    && !vm.is_event_loop_alive_despite_errors()
+                {
+                    // A rejection of the last turn is reported now, as the non-watch path does
+                    // before it exits. Its listener can queue more work.
+                    let _ = global.handle_rejected_promises();
+                    if !vm.is_event_loop_alive_despite_errors() {
+                        status.print_idle(
+                            has_type_errors
+                                || vm.unhandled_error_counter > 0
+                                || vm.exit_handler.exit_code != 0,
+                        );
+                        watch_status = None;
+                    }
+                }
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
                 // reloads.

@@ -22,7 +22,13 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
       });
       const { stdout } = process;
 
-      const iter = forEachLine(stdout);
+      // `--watch` reports the end of each run and each restart on stdout; the
+      // assertions are about the script's own lines.
+      const iter = (async function* () {
+        for await (const line of forEachLine(stdout)) {
+          if (!/^(Restarting|Completed running|Failed running) /.test(line)) yield line;
+        }
+      })();
       let { value: line, done } = await iter.next();
       expect(done).toBe(false);
       expect(line).toBe("hello #1");

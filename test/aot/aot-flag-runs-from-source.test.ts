@@ -478,14 +478,18 @@ describe.concurrent("--watch", () => {
   };
   // A run under --watch starts again in a second or two, ten times that under a sanitizer.
   const secondsToSayIt = isASAN ? 90 : 30;
+  // The lines `--watch` prints between the runs: the tests are about what the program says.
+  const statusLines = /^(Restarting|Completed running|Failed running) .*\n/gm;
   // What a stream has said so far. `until` returns when that holds, and throws if the stream ends first: then it says how the process ended.
   function listen(stream: ReadableStream<Uint8Array>, getEnd: () => Promise<string>) {
     const heard = { text: "", ended: false };
     let wake = () => {};
     (async () => {
       const decoder = new TextDecoder();
+      let raw = "";
       for await (const chunk of stream) {
-        heard.text += decoder.decode(chunk, { stream: true });
+        raw += decoder.decode(chunk, { stream: true });
+        heard.text = raw.replace(statusLines, "");
         wake();
       }
       heard.ended = true;

@@ -3269,7 +3269,7 @@ impl TestCommand {
                 aot.replaced_by_tests.preloads =
                     preloads.iter().map(|path| path.to_vec()).collect();
             }
-            run_compiled::start(ctx, entry_points, file_count);
+            run_compiled::start(ctx, entry_points, file_count, None);
         }
 
         // After the file watcher is enabled: see `watching`.

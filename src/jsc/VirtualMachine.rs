@@ -1857,8 +1857,9 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates() || self.has_immediates()
     }
 
-    /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error.
-    pub(crate) fn is_event_loop_alive_despite_errors(&self) -> bool {
+    /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error, and for
+    /// the end of a `--watch` run.
+    pub fn is_event_loop_alive_despite_errors(&self) -> bool {
         self.is_platform_loop_active()
             || self.has_queued_work_excluding_immediates()
             || self.has_immediates()
@@ -4986,8 +4987,9 @@ impl VirtualMachine {
     /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
     /// `--watch-kill-signal` JS handlers first, like node. On Windows, this needs the watcher-manager
     /// parent (`bun_sys::windows::become_watcher_manager`). Returns only when the restart failed and
-    /// `may_return` is true; the error is printed.
-    pub fn restart_process(&mut self, may_return: bool) {
+    /// `may_return` is true; the error is printed. `announce_restart` is passed to
+    /// `bun_core::reload_process`: whether `bun <file> --watch` prints its `Restarting` line.
+    pub fn restart_process(&mut self, may_return: bool, announce_restart: bool) {
         crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
         let should_clear_terminal = !self
             .env_loader()
@@ -4997,7 +4999,7 @@ impl VirtualMachine {
         crate::node_compile_cache::persist_now();
         bun_core::Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
-            bun_core::reload_process(should_clear_terminal, may_return);
+            bun_core::reload_process(should_clear_terminal, may_return, announce_restart);
         });
     }
 
@@ -5006,7 +5008,7 @@ impl VirtualMachine {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state).
-            self.restart_process(false);
+            self.restart_process(false, true);
             unreachable!("reload_process returns only when may_return is true");
         }
 

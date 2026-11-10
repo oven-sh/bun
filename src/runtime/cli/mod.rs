@@ -146,6 +146,8 @@ pub(crate) mod run_compiled;
 pub(crate) mod startup_options;
 #[path = "upgrade_command.rs"]
 pub(crate) mod upgrade_command;
+#[path = "watch_status.rs"]
+pub(crate) mod watch_status;
 // MOVE_UP: `--analyze` branch + `Cli.log_` access of
 // `bun_install::update_package_json_and_install{,_catch_error}` — see file header.
 #[path = "add_command.rs"]

@@ -558,6 +558,7 @@ where
                 bun_core::reload_process(
                     CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
                     false,
+                    true,
                 );
             });
             unreachable!();
@@ -625,6 +626,7 @@ fn arm_watch_reload_grace_timer() {
             bun_core::reload_process(
                 CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
                 false,
+                true,
             );
         });
         unreachable!();

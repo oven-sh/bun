@@ -384,7 +384,8 @@ impl SourceValidator {
 
     /// For `contents` as the reader returned them for `fd` (for `path`, if `fd` is not valid); `input_hash` is their `runtime_transpiler_cache::hash`, if known. Any thread may call it.
     pub fn of_file(fd: bun_sys::Fd, path: &[u8], contents: &[u8], input_hash: Option<u64>) -> Self {
-        let stat = if fd.is_valid() {
+        // On Windows, `fstat` of a handle and the `stat` of a path that checks the stamp later are different system calls, so the path is used for both.
+        let stat = if fd.is_valid() && !cfg!(windows) {
             bun_sys::fstat(fd)
                 .ok()
                 .map(|stat| bun_sys::PosixStat::init(&stat))

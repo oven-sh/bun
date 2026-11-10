@@ -1570,16 +1570,83 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
   }
 });
 
-// child.stdout and child.stderr read ahead: `_read()` pushes each native pull
-// result synchronously, so while the stream flows Readable holds the next chunk
-// in its buffer when a 'data' listener runs. destroy() left that chunk there and
-// flow() emitted it after destroy() returned, with `destroyed === true`. Node's
-// child stdio is a net.Socket that pushes asynchronously, so no 'data' follows
-// destroy() there.
+// A 'readable' listener that reads exactly what is buffered, so read() never
+// returns null, stopped getting 'readable' events (#48514). `_read()` pushed the
+// native pull result synchronously, while `needReadable` was false, so that push
+// emitted no 'readable'. When it left more than highWaterMark buffered, nothing
+// read again. Node's child stdio pushes from a later turn and never stalls.
+it("child.stdout keeps emitting 'readable' when read(n) drains the buffer exactly", async () => {
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  // The child fills the pipe, then says so on stderr. Every write after that
+  // blocks until the parent reads.
+  const writer = `const c=Buffer.alloc(1<<16,120);for(let i=0;i<160;i++)process.stdout.write(c);process.stderr.write("filled")`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const c = spawn(bunExe(), ["-e", writer], { stdio: ["ignore", "pipe", "pipe"], env: bunEnv });
+    try {
+      await once(c.stderr!, "data");
+      const stdout = c.stdout!;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let missing = 300_000;
+      stdout.on("readable", function onReadable() {
+        if (stdout.readableLength === 0) return;
+        // Let the child refill the pipe first, so the pull that read() starts
+        // finds more than one chunk ready, as it does for a slow consumer.
+        Atomics.wait(wait, 0, 0, 100);
+        missing -= stdout.read(Math.min(missing, stdout.readableLength)).length;
+        if (missing === 0) {
+          stdout.off("readable", onReadable);
+          resolve();
+        }
+      });
+      await promise;
+      expect(missing).toBe(0);
+    } finally {
+      c.kill();
+    }
+  }
+});
+
+// A 'data' listener that throws leaves push() before Readable asks for the
+// next pull. Node's child stdio keeps reading (libuv calls back again), the
+// throw is an uncaughtException, and every byte still arrives before 'end'.
+// The first pull is synchronous when the child wrote before the parent
+// listened, and a promise when it did not: both paths must recover.
+it.concurrent.each(["before", "after"])(
+  "child.stdout delivers every byte and 'end' after a 'data' listener throws (listener attached %s the child wrote)",
+  async when => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      const c = spawn(process.execPath, ["-e", "const b=Buffer.alloc(65536,97);for(let i=0;i<4;i++)process.stdout.write(b);process.stderr.write('filled')"], { stdio: ["ignore", "pipe", "pipe"] });
+      let bytes = 0, calls = 0, uncaught = 0, ends = 0;
+      process.on("uncaughtException", e => { if (e.message === "boom") uncaught++; else throw e; });
+      function listen() {
+        c.stdout.on("data", d => { bytes += d.length; if (calls++ === 0) throw new Error("boom"); });
+        c.stdout.on("end", () => ends++);
+      }
+      if (${JSON.stringify(when)} === "after") c.stderr.once("data", () => setTimeout(listen, 50));
+      else listen();
+      c.on("close", () => console.log(JSON.stringify({ bytes, uncaught, ends })));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ bytes: 4 * 65536, uncaught: 1, ends: 1 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// child.stdout and child.stderr used to read ahead: `_read()` pushed each native
+// pull result synchronously, so while the stream flowed Readable held the next
+// chunk in its buffer when a 'data' listener ran. destroy() left that chunk there
+// and flow() emitted it after destroy() returned, with `destroyed === true`.
+// Node's child stdio is a net.Socket that pushes asynchronously, so no 'data'
+// follows destroy() there.
 it.concurrent.each(["stdout", "stderr"] as const)(
   "child.%s.destroy() inside a 'data' listener stops 'data' and 'end'",
   async name => {
-    const SIZE = 8 * 1024 * 1024;
+    const SIZE = 1024 * 1024;
     const writer = `const s=process.${name};s.on('error',()=>process.exit(0));const c=Buffer.alloc(1<<16,97);let w=0;(function f(){while(w<${SIZE}){w+=c.length;if(!s.write(c)){s.once('drain',f);return}}})()`;
     const c = spawn(bunExe(), ["-e", writer], {
       stdio: ["ignore", name === "stdout" ? "pipe" : "ignore", name === "stderr" ? "pipe" : "ignore"],
@@ -1597,8 +1664,8 @@ it.concurrent.each(["stdout", "stderr"] as const)(
         }
         bytes += d.length;
         // Destroy as soon as another chunk is already buffered behind this
-        // one: that is the chunk that used to follow destroy(). If the reader
-        // never gets ahead of this listener, destroy half way instead.
+        // one: that is the chunk that used to follow destroy(). The reader no
+        // longer gets ahead of this listener, so destroy half way instead.
         if (stream.readableLength > 0 || bytes >= SIZE / 2) {
           destroyed = true;
           stream.destroy();

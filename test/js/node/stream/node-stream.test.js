@@ -651,8 +651,60 @@ it.each(["before the first read", "after a chunk"])(
   },
 );
 
-// A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
-// buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
+// Reads exactly `size` bytes with the 'readable' + read(n) pattern, where n never exceeds what is buffered, so read()
+// never returns null. A native source used to push its pull result synchronously from inside `_read()`. A read(n) that
+// drains the buffer calls `_read()` while `needReadable` is false, so that push emitted no 'readable', and when it left
+// more than highWaterMark buffered nothing ever read again (#48514). Node's native sources push from a later turn.
+function readExactly(stream, size) {
+  const { promise, resolve } = Promise.withResolvers();
+  let missing = size;
+  stream.on("readable", function onReadable() {
+    if (stream.readableLength === 0) return;
+    missing -= stream.read(Math.min(missing, stream.readableLength)).length;
+    if (missing === 0) {
+      stream.off("readable", onReadable);
+      resolve();
+    }
+  });
+  return promise;
+}
+
+// Bun.file() is the pipe reader's source (FileReader): a pull can return a
+// number of bytes read into the view, or a chunk larger than the view.
+const readExactlyDir = tempDir("fromweb-readable-exact", { "big.bin": Buffer.alloc(1024 * 1024, "x") });
+describe.each([
+  ["Blob.stream()", size => new Blob([Buffer.alloc(size, "x")]).stream()],
+  ["Response.body", size => new Response(Buffer.alloc(size, "x")).body],
+  ["Bun.file().stream()", () => Bun.file(join(String(readExactlyDir), "big.bin")).stream()],
+])("Readable.fromWeb(%s): 'readable' keeps firing when read(n) drains the buffer", (_, makeWeb) => {
+  it.each([
+    [100_000, undefined],
+    [300_000, undefined],
+    [300_000, 16384],
+  ])("reads %d bytes of a 1 MiB body (highWaterMark %s)", async (size, highWaterMark) => {
+    const r = Readable.fromWeb(makeWeb(1024 * 1024), { highWaterMark });
+    await readExactly(r, size);
+    expect(r.readableLength).toBeGreaterThan(0);
+  });
+
+  it("reads the whole body and gets one 'end'", async () => {
+    const r = Readable.fromWeb(makeWeb(1024 * 1024));
+    let bytes = 0;
+    let ends = 0;
+    r.on("end", () => ends++);
+    const ended = new Promise(resolve => r.on("close", resolve));
+    r.on("readable", () => {
+      // At EOF the buffer is empty and read() returns null, which ends the stream.
+      const chunk = r.read(r.readableLength || undefined);
+      if (chunk !== null) bytes += chunk.length;
+    });
+    await ended;
+    expect({ bytes, ends }).toEqual({ bytes: 1024 * 1024, ends: 1 });
+  });
+});
+
+// A native-backed Readable pushed its pull results synchronously, so while it flowed Readable had the next chunk
+// buffered when a 'data' listener ran, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
 // emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so
 // nothing is buffered or due at that point, and it emits only 'close'.
 describe.each([

@@ -132,7 +132,7 @@ unsafe extern "C" {
         ptr: *const c_void,
         len: usize,
     ) -> JSValue;
-    fn JSC__ArrayBuffer__asBunArrayBuffer(self_: *mut JSCArrayBuffer, out: *mut ArrayBuffer);
+    fn JSC__ArrayBuffer__asBunArrayBuffer(self_: &JSCArrayBuffer, out: *mut ArrayBuffer);
     // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle (`!Freeze` via
     // `UnsafeCell`); `&` is ABI-identical to a non-null `*mut` and the C++
     // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
@@ -544,8 +544,7 @@ impl ArrayBuffer {
         // probe always returns false and we'd drop the deallocator for buffers we own.
         if self.len > 0
             && bun_alloc::USE_MIMALLOC
-            // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
-            && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) }
+            && !mimalloc::mi_is_in_heap_region(self.ptr.cast())
         {
             bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
 
@@ -1084,23 +1083,18 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
-        // pointer because the buffer is later freed via the default allocator
-        // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
-        let buf: Box<[u8]> = Box::from(str);
-        let len = buf.len();
-        let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
-        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
-        Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
+        Ok(MarkedArrayBuffer::from_bytes(
+            Box::from(str),
+            JSType::Uint8Array,
+        ))
     }
 
-    pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
+    pub fn from_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
-            buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
             // An empty boxed slice has no backing allocation (dangling ptr):
             // nothing to own, so `destroy()` must not free it.
             owns_buffer: !bytes.is_empty(),
+            buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
         }
     }
 
@@ -1239,7 +1233,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
 }
 
 impl JSCArrayBuffer {
-    pub fn as_array_buffer(&mut self) -> ArrayBuffer {
+    pub fn as_array_buffer(&self) -> ArrayBuffer {
         let mut out = core::mem::MaybeUninit::<ArrayBuffer>::uninit();
         // SAFETY: C++ fully initializes `out`.
         unsafe {

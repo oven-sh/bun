@@ -641,6 +641,8 @@ static bool isCompiledObject(JSC::JSObject* object)
 static bool tryMaterializeAsFinalObject(JSC::VM& vm, JSC::JSObject* object)
 {
 #if ENABLE(AOT)
+    if (!vm.hasCompiledCode()) [[likely]]
+        return false;
     JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
     return object->classInfo() == JSC::JSFinalObject::info();
 #else
@@ -5337,7 +5339,7 @@ NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalG
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return result.first;
+    return result.first ? result.first : jsNull();
 }
 
 } // namespace WebCore

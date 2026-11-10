@@ -63,6 +63,24 @@ const GLOBAL_PATH: Fold<'static> = Fold {
     defines: &[(Path::Global(&["ALIAS"]), Defined::GlobalPath(&["a", "b"]))],
     ..Fold::NONE
 };
+const NAME_IN_PLACE: Fold<'static> = Fold {
+    defines: &[(Path::Global(&["MODE"]), Defined::GlobalPath(&["mode"]))],
+    ..Fold::NONE
+};
+const NAME_IN_PLACE_OF_PATH: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["config", "mode"]),
+            Defined::GlobalPath(&["mode"]),
+        ),
+        (
+            Path::Global(&["LEVEL"]),
+            Defined::GlobalPath(&["settings", "level"]),
+        ),
+        (Path::Global(&["LOADER"]), Defined::GlobalPath(&["require"])),
+    ],
+    ..Fold::NONE
+};
 const CONFIG: Fold<'static> = Fold {
     defines: &[(
         Path::Global(&["CONFIG"]),
@@ -452,8 +470,8 @@ const CONSTANT_TESTS: &[DeadCalls] = &[
     (
         "a.mjs",
         "var C = false; function f() { if (C) a(); } f();",
-        &["a"],
         &[],
+        &["a"],
     ),
     (
         "a.mjs",
@@ -672,6 +690,23 @@ const UNDECIDED_LOADER_VALUES: &[DeadCalls] = &[
         &["a", "b"],
     ),
     ("a.cjs", "module.exports ? a() : b();", &[], &["a", "b"]),
+];
+
+const STATEMENTS_REMOVED_WITH_LOADER_VALUES: &[DeadCalls] = &[
+    ("a.js", "{ /* @__PURE__ */ a(typeof module); }", &["a"], &[]),
+    ("a.js", "/* @__PURE__ */ a(this);", &["a"], &[]),
+    (
+        "a.js",
+        r#"if (typeof exports === "object") /* @__PURE__ */ a();"#,
+        &["a"],
+        &[],
+    ),
+    (
+        "a.js",
+        "{ /* @__PURE__ */ a(typeof require); }",
+        &[],
+        &["a"],
+    ),
 ];
 
 const RUNTIME_VALUES: Fold<'static> = Fold {
@@ -1336,7 +1371,7 @@ fn constant_expressions() {
         text.push_str(row.expression);
         text.push_str(");\n");
     }
-    analyzed("a.mjs", &text, |s| {
+    folded("a.mjs", &text, Fold::MINIFIED, |s| {
         let calls = calls_of(s, "m");
         assert_eq!(calls.len(), rows.len());
         assert_eq!(s.analysis.pending_macro_calls, calls);
@@ -1484,6 +1519,90 @@ fn kinds_of_define_values() {
     });
     folded("a.mjs", "import.meta.env.MODE;", IMPORT_META, |s| {
         assert_eq!(decision(s, last_member(s)), string(s, "test"));
+    });
+}
+
+#[test]
+fn name_in_place_of_a_free_name_is_bound_where_it_stands() {
+    let text = "const mode = 1; MODE; function pick() { const mode = 2; return () => MODE; } \
+        function own() { const MODE = 3; return MODE; } MODE = 4;";
+    folded("a.mjs", text, NAME_IN_PLACE, |s| {
+        let of_file = Binding::Symbol(s.variable("mode", 0));
+        assert_eq!(s.binding("MODE", 0), of_file);
+        assert_eq!(s.binding("MODE", 1), Binding::Symbol(s.variable("mode", 1)));
+        assert_eq!(s.binding("MODE", 2), Binding::Symbol(s.variable("MODE", 0)));
+        assert_eq!(s.binding("MODE", 3), of_file);
+        for nth in 0..4 {
+            let found = decision(s, s.ident("MODE", nth));
+            assert!(
+                !matches!(found, Decision::GlobalPath(_)),
+                "{nth}: {found:?}"
+            );
+        }
+    });
+    folded("a.mjs", "function pick() { MODE; }", NAME_IN_PLACE, |s| {
+        assert_eq!(s.binding("MODE", 0), Binding::Free);
+        let mode = [s.workspace.atom("mode")];
+        assert_eq!(decision(s, s.ident("MODE", 0)), Decision::GlobalPath(&mode));
+    });
+}
+
+#[test]
+fn name_in_place_of_a_path_is_bound_where_it_stands() {
+    let text = "const mode = 1; config.mode; function pick(mode) { return config.mode; } \
+        function own(config) { return config.mode; }";
+    folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
+        let paths: Vec<ExprId> = (0..s.hir.exprs.len() as u32)
+            .map(ExprId)
+            .filter(|&e| matches!(s.hir[e].kind, ExprKind::Dot { .. }))
+            .collect();
+        let bindings = paths
+            .iter()
+            .map(|&e| s.bound.runtime.binding_of_defined_path(e));
+        let bindings: Vec<Binding> = bindings.collect();
+        let of_file = Binding::Symbol(s.variable("mode", 0));
+        assert_eq!(bindings[0], of_file);
+        assert!(
+            matches!(bindings[1], Binding::Symbol(symbol) if Binding::Symbol(symbol) != of_file)
+        );
+        assert_eq!(bindings[2], Binding::Free);
+    });
+}
+
+#[test]
+fn first_name_of_a_path_in_place_of_a_name_is_bound_where_it_stands() {
+    let text = "const settings = { level: 1 }; LEVEL; function pick(settings) { return LEVEL; }";
+    folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
+        let path = [s.workspace.atom("settings"), s.workspace.atom("level")];
+        for nth in 0..2 {
+            assert_eq!(
+                decision(s, s.ident("LEVEL", nth)),
+                Decision::GlobalPath(&path)
+            );
+        }
+        assert_eq!(s.binding("LEVEL", 0), Binding::Free);
+        assert!(matches!(s.binding("LEVEL", 1), Binding::Symbol(_)));
+    });
+}
+
+#[test]
+fn store_through_a_path_in_place_is_no_store_to_its_first_name() {
+    let text = "function put() { const settings = { level: 1 }; LEVEL = 2; }";
+    folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
+        let target = s.ident("LEVEL", 0);
+        assert!(matches!(s.bound.binding(target), Binding::Symbol(_)));
+        assert!(!s.bound.is_store_target(target));
+        let mut stores = s.bound.runtime.stores().iter();
+        assert!(stores.all(|store| store.target != target));
+    });
+}
+
+#[test]
+fn require_in_place_of_a_name_is_the_variable_at_hand_and_not_that_of_the_file() {
+    let text = "LOADER; function pick(require) { return LOADER; }";
+    folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
+        assert_eq!(s.binding("LOADER", 0), Binding::Free);
+        assert!(matches!(s.binding("LOADER", 1), Binding::Symbol(_)));
     });
 }
 
@@ -1650,7 +1769,7 @@ fn everything_below_is_marked() {
 #[test]
 fn constants() {
     check_dead_calls(CONSTANT_TESTS);
-    analyzed("a.mjs", "const A = false; if (A) a();", |s| {
+    analyzed("a.mjs", "f(); const A = false; if (A) a();", |s| {
         let read = s.ident("A", 0);
         let expected = FoldedValue::ConstantOutsideDeadZone(Constant::Boolean(false));
         assert_eq!(decision(s, read), Decision::Unknown);
@@ -1691,6 +1810,11 @@ fn tests_of_loader_values() {
 }
 
 #[test]
+fn statements_removed_with_loader_values_are_dead_for_the_build() {
+    check_dead_calls(STATEMENTS_REMOVED_WITH_LOADER_VALUES);
+}
+
+#[test]
 fn tests_of_runtime_values() {
     for rows in [TESTS_OF_RUNTIME_VALUES, UNDECIDED_TESTS_OF_RUNTIME_VALUES] {
         for &(path, text, dead, alive) in rows {
@@ -1722,6 +1846,23 @@ fn import_meta_main() {
     check_import_meta_main(text, None, Decision::Unknown);
     for text in UNMATCHED_IMPORT_META_MAIN {
         check_import_meta_main(text, Some(true), Decision::Unknown);
+    }
+    for text in [
+        "import.meta.main = 1; import.meta.main;",
+        "import.meta.main &&= 1; import.meta.main;",
+        "delete import.meta.main; import.meta.main;",
+        "import.meta[key] = 1; import.meta.main;",
+        "const meta = import.meta; import.meta.main;",
+        "Reflect.set(import.meta, key, 1); import.meta.main;",
+        "function write() { import.meta.main = 1; } import.meta.main;",
+    ] {
+        check_import_meta_main(text, Some(true), Decision::Unknown);
+    }
+    for text in [
+        "import.meta.url = 1; import.meta.main;",
+        "import.meta.resolve(name); import.meta[key]; import.meta.env.A = 1; import.meta.main;",
+    ] {
+        check_import_meta_main(text, Some(true), boolean(true));
     }
 }
 

@@ -401,6 +401,15 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
         }
     }
 
+    // A DER signature is often shorter than pkey.size(). The result's ArrayBuffer is as long as the signature, like Node's.
+    if (finalSignatureLength != sigBuffer->byteLength()) {
+        sigBuffer = JSC::ArrayBuffer::tryCreate(sigBuffer->span().first(finalSignatureLength));
+        if (!sigBuffer) {
+            throwTypeError(lexicalGlobalObject, scope, "Failed to allocate signature buffer"_s);
+            return nullptr;
+        }
+    }
+
     // Create and return JSUint8Array
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuffer), 0, finalSignatureLength));

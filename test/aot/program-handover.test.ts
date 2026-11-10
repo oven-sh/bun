@@ -2,7 +2,8 @@
 // file: a memfd, else shared memory, else a deleted file of the temporary directory. Only Linux has all three.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
@@ -26,6 +27,7 @@ const files = {
       }
       const path = / r-xp .* (\\S+) \\(deleted\\)$/m.exec(readFileSync("/proc/self/maps", "utf8"))?.[1] ?? "none";
       if (path.startsWith("/memfd:")) return "memfd";
+      if (path.startsWith(process.env.BUN_TMPDIR + "/")) return "deleted";
       if (path.startsWith("/dev/shm/")) return "shared-memory";
       return path.endsWith(".bun-program") ? "deleted" : path;
     }
@@ -57,17 +59,15 @@ const sharedMemoryHoldsCode =
 // macOS has the last one alone: it maps shared memory neither executable nor private.
 const kinds = isLinux ? ["memfd", ...(sharedMemoryHoldsCode ? ["shared-memory"] : []), "deleted"] : ["deleted"];
 // A build costs over a second of CPU however small the program. With three kinds, Linux runs each under --parallel, which hands the
-// program on twice, and kills a run of one. The runs with /dev/shm mounted anew are without --parallel, and those of
-// test-run-in-parts.test.ts are in parts.
+// program on twice, and kills a run of one. The runs with /dev/shm mounted anew are without --parallel.
 const kindThatIsKilled = kinds.includes("shared-memory") ? "shared-memory" : "deleted";
 
 describe.skipIf(isWindows).each(kinds)("in %s", kind => {
-  const envOf = (dir: string, words?: string) => ({
+  const envOf = (dir: string) => ({
     ...bunEnv,
     BUN_TMPDIR: join(dir, "tmp"),
     // Elsewhere the test says which kind Bun takes by itself.
     BUN_DEBUG_TEST_AOT_PROGRAM_FILE: isLinux ? kind : undefined,
-    BUN_DEBUG_TEST_AOT_WORDS: words,
   });
   // Under --parallel what a test prints comes out on stderr.
   const whatEachTestSees = (output: string) =>
@@ -93,19 +93,6 @@ describe.skipIf(isWindows).each(kinds)("in %s", kind => {
       expect(exitCode).toBe(0);
     },
   );
-
-  test.concurrent.skipIf(isLinux)("bun test --aot in parts", async () => {
-    using dir = tempDir("aot-program-handover", files);
-    const env = envOf(String(dir), "TestRunPartFiles:1");
-    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), env);
-    expect(whatEachTestSees(stdout + stderr).map(line => line.replace(/,.*/, ""))).toEqual([
-      `a: code in ${kind}`,
-      `b: code in ${kind}`,
-    ]);
-    expect(stderr).toMatch(/^ *2 pass$/m);
-    expect(readdirSync(join(String(dir), "tmp"))).toEqual([".keep"]);
-    expect(exitCode).toBe(0);
-  });
 
   test.concurrent.skipIf(kind !== kindThatIsKilled)("a run that is killed leaves nothing", async () => {
     using dir = tempDir("aot-program-handover", files);
@@ -133,9 +120,13 @@ describe.skipIf(isWindows).each(kinds)("in %s", kind => {
 });
 
 const inOwnMounts = ["unshare", "-Urm"];
+// The mount hides whatever lay in shared memory: a Bun that is run from there, or a temporary folder there, is gone behind it, and the run prints nothing.
+const liesInSharedMemory = (path: string) => realpathSync(path).startsWith("/dev/shm/");
 const canMount =
   isLinux &&
   !!Bun.which("unshare") &&
+  !liesInSharedMemory(bunExe()) &&
+  !liesInSharedMemory(tmpdir()) &&
   Bun.spawnSync({ cmd: [...inOwnMounts, "mount", "-t", "tmpfs", "tmpfs", "/dev/shm"] }).exitCode === 0;
 
 test.concurrent.skipIf(!canMount).each(["noexec", "size=64k"])(
@@ -161,50 +152,3 @@ test.concurrent.skipIf(!canMount).each(["noexec", "size=64k"])(
     expect(exitCode).toBe(0);
   },
 );
-
-// What the test files import waits in deleted files, which every process of the run maps: ./test-run-in-parts.test.ts. What a build
-// prints goes to a file of the same directory.
-describe.skipIf(!canMount)("a temporary directory without room for what the test files import", () => {
-  const runTests = (dir: string, kind?: string) =>
-    run(
-      [
-        ...inOwnMounts,
-        "sh",
-        "-c",
-        `mount -t tmpfs -o size=1m tmpfs "$BUN_TMPDIR" && exec "$@"`,
-        "sh",
-        bunExe(),
-        "test",
-        "--aot",
-      ],
-      dir,
-      {
-        ...bunEnv,
-        BUN_TMPDIR: join(dir, "tmp"),
-        BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1",
-        BUN_DEBUG_TEST_AOT_PROGRAM_FILE: kind,
-      },
-    );
-  const about = (stderr: string, word: string) => stderr.split("\n").filter(line => line.includes(word));
-
-  test.concurrent("it is compiled again and waits in memory", async () => {
-    using dir = tempDir("aot-program-handover", files);
-    const { stdout, stderr, exitCode } = await runTests(String(dir));
-    expect(about(stderr, "no room")).toEqual([
-      `warn: the temporary directory ${join(String(dir), "tmp")} has no room for what the test files import, compiled. It is compiled again and kept in memory`,
-    ]);
-    expect(about(stderr, "could not")).toEqual([]);
-    expect(stdout).toContain("a: code in memfd, temporary files: \n");
-    expect(stderr).toMatch(/^ *2 pass$/m);
-    expect(exitCode).toBe(0);
-  });
-
-  test.concurrent("where memory has none either, that is what is said", async () => {
-    using dir = tempDir("aot-program-handover", files);
-    const { stderr, exitCode } = await runTests(String(dir), "deleted");
-    expect(about(stderr, "could not")).toEqual([
-      "error: what the test files import could not be compiled: neither memory nor the temporary directory has room for the program, in the build of the packages. None of the 2 test files ran",
-    ]);
-    expect(exitCode).toBe(1);
-  });
-});

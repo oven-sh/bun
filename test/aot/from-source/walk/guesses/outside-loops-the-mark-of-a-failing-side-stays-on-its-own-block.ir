@@ -1,0 +1,15 @@
+# f1 = shape
+# -- source: outside-loops-the-mark-of-a-failing-side-stays-on-its-own-block.cjs
+# "use strict";
+# function shape(width, options = {}) { const label = options.label === undefined ? "" : options.label; return width + label.length + (options.edge === undefined ? 1 : 0) + (options.depth | 0) + (options.tint ? 1 : 0); }
+# const table = { count(s) { return s.length + 1; }, text(s) { return String(s); }, wrap(s) { return [s]; }, kind(s) { return typeof s; }, none(s) { return s === null; }, shape }, key = JSON.parse('"shape"');
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += table[key](i, { label: "q", depth: i }) + table[key](i);
+# console.log(sum);
+# -- end of source
+# Outside loops the side behind the second failed test of layouts keeps its sites (the text before it had them). The block that is walked apart behind its branch is built for size and takes none: bytes outside loops.
+# RUN(OWN): walk f1 mechanisms=all
+# OWN: frequency=Rare keepsSitesThoughRare=true:
+# OWN-NEXT: = PropGet {{*}}key="label"
+# OWN: () frequency=Rare:
+# OWN-NEXT: = PropGet {{*}}key="label"

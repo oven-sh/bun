@@ -1,1 +1,0 @@
-exports.parent = module.parent;

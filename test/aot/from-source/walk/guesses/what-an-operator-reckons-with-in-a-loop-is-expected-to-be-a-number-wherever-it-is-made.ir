@@ -1,0 +1,25 @@
+# `const r = readings[i]; sum = sum + r * r` in a file without types; the list comes out of a text at run time: nothing is known of its elements. The product asks for numbers, so the element is
+# asked once whether it is one; behind "yes" the product and the sum are reckoned on numbers as they lie; the operator on values stays for the rest.
+# f1 = energy
+# -- source: main.js
+# const readings = JSON.parse("[1.5,2.25,3,4.75]");
+# function energy(turn) { let sum = turn & 1; for (let i = 0; i < readings.length; i++) { const r = readings[i]; sum = sum + r * r; } return sum; }
+# let all = 0;
+# for (let turn = 0; turn < 6; turn++) all += energy(turn);
+# readings[1] = "3";
+# all += energy(0);
+# readings[2] = { valueOf() { return 2; } };
+# all += energy(0);
+# readings[3] = undefined;
+# print(all, energy(1));
+# readings[3] = 2n;
+# try { energy(0); } catch (error) { print(error.constructor.name); }
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: TypeTest {{*}} testedType=number
+# WALK: Mul {{*}} form=Numbers
+# WALK: Add {{*}} form=Numbers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 316.875 NaN
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: exited with 0

@@ -21,7 +21,7 @@ use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::package::Package;
 use crate::lockfile::reachable;
 use crate::lockfile_real as Lockfile;
-use crate::network_task::{Authorization, ForTarballError, add_error_or_warning, stored_string};
+use crate::network_task::{ForTarballError, add_error_or_warning, stored_string};
 use crate::package_manager_real::directories::{
     try_get_cache_directory, try_get_temporary_directory, try_global_link_dir,
 };
@@ -280,7 +280,6 @@ pub fn enqueue_tarball_for_download(
         package_id,
         url,
         task_context,
-        Authorization::NoAuthorization,
     )
 }
 
@@ -301,7 +300,6 @@ pub fn enqueue_package_for_download(
         package_id,
         url,
         task_context,
-        Authorization::AllowAuthorization,
     )
 }
 
@@ -313,7 +311,6 @@ fn enqueue_download(
     package_id: PackageID,
     url: &[u8],
     task_context: TaskCallbackContext,
-    authorization: Authorization,
 ) -> Result<(), ForTarballError> {
     if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
         return Err(ForTarballError::AlreadyFailed);
@@ -337,7 +334,6 @@ fn enqueue_download(
         is_required,
         dependency_id,
         &package,
-        authorization,
     )? {
         // reshaped for borrowck — `task: &mut NetworkTask` borrows
         // `*this` (pool slot); reborrow as raw so `this.network_tarball_batch`
@@ -1344,18 +1340,22 @@ fn request_remote_package_ahead(
     install_peer: bool,
 ) {
     let resolution = this.lockfile.buffers.resolutions[id as usize];
-    let is_local_tarball = asked.version.tag == dependency::version::Tag::Tarball
-        && matches!(
-            asked.version.tarball().uri,
-            dependency::tarball::Uri::Local(_)
-        );
     if !this.lockfile.awaits_resolve(id)
         || this.options.runtime_auto_install
         // A deferred peer doesn't request anything, because the tree may provide it.
         || (dependency.behavior.is_peer() && !install_peer)
-        // Whether another package may refer to a tarball in the project is decided and reported
-        // when the dependency is resolved.
-        || (is_local_tarball && !this.lockfile.is_dependency_of_local_package(id))
+        || (asked.version.tag == dependency::version::Tag::Tarball
+            && match &asked.version.tarball().uri {
+                // Whether another package may name a tarball in the project is decided at its turn.
+                dependency::tarball::Uri::Local(_) => {
+                    !this.lockfile.is_dependency_of_local_package(id)
+                }
+                // A local package that is resolved before this dependency may still name the URL.
+                dependency::tarball::Uri::Remote(url) => {
+                    this.options.has_tarball_url_credentials()
+                        && !(this.lockfile).is_tarball_url_of_project(this.lockfile.str(url))
+                }
+            })
     {
         return;
     }
@@ -2508,7 +2508,6 @@ fn bind_row_without_manifest(
                         resolution: res,
                         ..Package::default()
                     },
-                    Authorization::NoAuthorization,
                 ) {
                     // An `--offline` miss. It was already reported if required, or skipped if
                     // optional.
@@ -3270,7 +3269,6 @@ fn tarball_task(
         behavior.is_required(),
         dependency_id,
         package,
-        Authorization::AllowAuthorization,
     )?;
     Ok(Some(ResolvedPackageTask::NetworkTask(
         task.expect("unreachable"),

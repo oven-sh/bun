@@ -1,0 +1,15 @@
+# `slice.call(arguments, 1)` in a copy: the state holds every element of the object, so the slice is a list of them, which the reads behind it are answered out of. Nothing is made and no built-in is called.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK-NOT: CreateMappedArguments
+# CHECK-NOT: NewArray
+# RUN(WITHHELD): walk f2 mechanisms=-EscapeAnalysis
+# WITHHELD: CallBuiltin {{*}}ArrayPrototypeSlice
+# -- source: a-slice-of-arguments-in-sight-is-never-made-from-source.js
+# var slice = Array.prototype.slice;
+# function tail() { var args = slice.call(arguments, 1); return args.length ? args[0] : 0; }
+# function run(n) { var total = 0; for (var i = 0; i < n; i++) total += tail(9, i & 3); return total; }
+# globalThis.run = run;
+# -- end of source

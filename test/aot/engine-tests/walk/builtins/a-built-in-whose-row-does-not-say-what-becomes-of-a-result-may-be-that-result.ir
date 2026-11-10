@@ -1,0 +1,38 @@
+# the library:  function shell() {}  const kept = shell;  function isTheBuiltIn() { return Bun.$ === kept }
+# Native code makes Bun.$ at its first read by calling a function of the library, and what that function returns is a function of the library. The row names the function that is called and says nothing of
+# what becomes of its result. Silence was read as "it is not the value of the entry": the built-in and the closure had nothing in common.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=builtin(BunDollar)
+
+variable g0 name="kept" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="bun:sql" displayPath="bun:sql" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSql body=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="bun:sql"
+    v1 = Call v0, -
+    Return v1
+}
+function f1 name="isTheBuiltIn" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunDollar
+    v1 = GetModuleVariable variable=g0
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f2 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    Return v2
+}
+function f3 name="sql" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -1,0 +1,11 @@
+# THE LYING CONTROL of bound-of-a-loop-made-of-a-read-less-one.ir: `+ 1` in place of `- 1`: the bound may pass the end of the range, the step has no room: IT IS REPORTED.
+# f1 = andOne
+# -- source: bound-of-a-loop-made-of-a-read-and-one-is-reported.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x: Bun.int32 = 7; y: Bun.int32 = 12; }
+# function andOne(point: Point, key: "x" | "y"): Bun.int32 { let last: Bun.int32 = 0; for (let i: Bun.int32 = 0; i <= point[key] + 1; i++) last = i; return last; }
+# sink(andOne);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f1 mechanisms=all
+# CHECK: the walk of f1:Body failed

@@ -1,13 +1,15 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: [[enum]] = FinishObject
+// CHECK: PutModuleVariable
+// CHECK: [[name]] = Convert [[enum]]
 // CHECK: [[small]] = Pow
 // CHECK: PropSet [[enum]], [[small]] key="Small"
 // CHECK: ElemSet [[enum]], [[small]],
 // CHECK: [[next]] = Increment [[small]]
 // CHECK: PropSet [[enum]], [[next]] key="Next"
 // CHECK: ElemSet [[enum]], [[next]],
-// CHECK: = PropGet [[enum]] key="Small"
+// CHECK: = PropGet [[name]] key="Small"
 // CHECK: [[twice]] = Mul
 // CHECK: PropSet [[enum]], [[twice]] key="Twice"
 // CHECK: ElemSet [[enum]], [[twice]],

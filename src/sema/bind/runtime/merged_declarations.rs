@@ -1,5 +1,5 @@
 use super::binding_kinds::variable_binding_kind;
-use super::bits::insert_bit;
+use super::bits::{has_bit, insert_bit};
 use super::declaration_kinds::{
     Declaration, DeclarationKind, declaration_kind, declaration_symbol, is_block_level,
     needs_unique_parameters, pattern_scope,
@@ -99,9 +99,50 @@ impl Declarations<'_, '_> {
         if let Some(taker) = names.taker {
             self.give_name_of_imports(scope, symbol, taker);
         }
+        self.merge_exports_under_two_names(scope, symbol);
     }
 
-    // Bun's transpiler drops an import of a TypeScript file whose name is declared again further down. It declares `* as a` ahead of the default of the same statement.
+    fn merge_exports_under_two_names(&mut self, scope: ScopeId, local: SymbolId) {
+        let (hir, bound) = (self.hir, &*self.bound);
+        let found = bound.export_symbol_of_value_symbol_if_exported(local);
+        if found == local || bound.scopes[scope.idx()].kind != ScopeKind::File {
+            return;
+        }
+        let mut values: SmallVec<[(Declaration, SymbolId); 4]> = SmallVec::new();
+        for &decl in bound.symbols[local.idx()].decls.iter() {
+            let declaration = Declaration::new(hir, bound, decl);
+            let own = declaration_symbol(bound, decl);
+            if declaration.kind.binds_in_table_scope() && own.is_some() {
+                values.push((declaration, own));
+            }
+        }
+        let exported = values.iter().find(|value| value.1 != local);
+        let valueless = &bound.runtime.declarations.valueless_symbols;
+        let Some(&(first, variable)) = (match has_bit(valueless, found.idx()) {
+            true => exported,
+            false => values.iter().find(|value| value.1 == found),
+        }) else {
+            return;
+        };
+        let name = bound.symbols[local.idx()].name;
+        let declarations = &mut self.bound.runtime.declarations;
+        for (declaration, own) in values {
+            let key = match declaration.decl {
+                Decl::Var(pat) | Decl::Require(pat) => Decl::Var(pat),
+                other => other,
+            };
+            if own != variable && (own != local || variable != found) {
+                declarations.declared_symbols.push((key, variable));
+            }
+        }
+        if variable != found {
+            declarations.symbol_scopes[variable.idx()] = scope;
+            insert_bit(&mut self.scopes.hidden_symbols, local.idx());
+            let key = (scope, name);
+            self.scopes.appended_bindings.insert(key, (variable, first));
+        }
+    }
+
     fn takes_name_of_imports(&self, names: &NameDeclarations, later: Declaration) -> bool {
         let holder = names.taker.or_else(|| names.first_by_kind.first().copied());
         let is_behind_its_default = matches!(
@@ -373,10 +414,7 @@ impl Declarations<'_, '_> {
         let ScopeKind::Fn(f) = self.bound.scopes[scope.idx()].kind else {
             return Conflict::No;
         };
-        if needs_unique_parameters(self.hir, f)
-            || !self.is_sloppy(scope)
-            || self.hir.has_parameters_read_as_strict(f)
-        {
+        if needs_unique_parameters(self.hir, f) || !self.is_sloppy(scope) {
             Conflict::Always
         } else {
             Conflict::No

@@ -1,7 +1,7 @@
 // Alone: which file is the main module goes by the entry points of the executable
 // A plugin of Bun.build is code that the build does not see, and it may store into whatever it gets at. No statement of the program stores into Bun.main,
-// so the entry point stays the main module, `require.main === module` stays folded in the other file, and the program is compiled once.
-// STATISTIC: EngineRuns = 1
+// so the entry point stays the main module, and `require.main === module` stays folded in the other file.
+// An earlier compiler ran the engine again where a first run showed that the load had missed or taken too much, and counted the runs: EngineRuns = 1. A build runs the engine once now.
 const other = require("./other.cjs");
 if (process.argv.length > 5) {
   Bun.build({ entrypoints: [process.argv[5]] }).then(built => console.log(built.success));

@@ -1,0 +1,17 @@
+# -- source: main.ts
+# type Row = { id: number; price: number; name: string };
+# const rows: Row[] = JSON.parse('[{"id":1,"price":10,"name":"a"},{"id":2,"price":20,"name":"b"},{"id":3,"price":30,"name":"c"}]');
+# const log: string[] = []; let count = 0;
+# function read(rows: Row[], key: "price" | "id", sink: number[]): string { let s = ""; for (let i = 0; i < rows.length; i++) { count++; sink.push(i); s += String(rows[i]![key]) + ","; } return s; }
+# (globalThis as any).kept = read;
+# const all: any[] = ["price", "id", "name", "none", 0, null, undefined, Symbol.iterator, { toString() { log.push("key"); return "price"; } }, "pri" + JSON.parse('"ce"'), new String("id")];
+# const out = all.map((k) => { const sink: number[] = []; return read(rows, k, sink) + sink.join(""); });
+# try { read([null as any], "price", []); } catch (e: any) { out.push(e.constructor.name); }
+# try { read([null as any], { toString() { log.push("late"); return "id"; } } as any, []); } catch (e: any) { out.push(e.constructor.name); }
+# print(out.join("|"), count, log.join());
+# -- end of source
+# A written type is a guess. Whatever comes for the key is answered as plain answers it: a third name, no name, a number, null, a symbol, an object whose toString is counted (once a turn), a rope, a String object; and what the
+# turn did before the key failed (a count, a push) is done once.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 10,20,30,012|1,2,3,012|a,b,c,012|undefined,undefined,undefined,012|undefined,undefined,undefined,012|undefined,undefined,undefined,012|undefined,undefined,undefined,012|undefined,undefined,undefined,012|10,20,30,012|10,20,30,012|1,2,3,012|TypeError|TypeError 35 key,key,key
+# CHECK-NEXT: exited with 0

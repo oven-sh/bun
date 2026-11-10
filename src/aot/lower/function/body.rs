@@ -2,7 +2,7 @@ use bun_sema::hir::{FnBody, FnId};
 
 use crate::builtins::SourceDialect;
 use crate::ir::FunctionId;
-use crate::ir::generated::{FunctionFlags, RuntimeErrorKind};
+use crate::ir::generated::RuntimeErrorKind;
 use crate::lower::module::{self, LibraryFunctionForm};
 use crate::lower::{FileLowering, FunctionLowering};
 
@@ -30,11 +30,10 @@ impl FileLowering<'_, '_, '_, '_> {
         lowering.finish();
     }
 
-    // Nothing that the build sees names the function.
     pub(crate) fn lower_left_out_function(&mut self, function: FunctionId) {
         let name = self.function_header(function).name;
         let kind = match self.source.dialect() {
-            SourceDialect::Program => RuntimeErrorKind::LeftOutOfExecutable,
+            SourceDialect::Program => RuntimeErrorKind::OmittedFromExecutable,
             SourceDialect::Runtime => RuntimeErrorKind::FunctionNotCompiled,
         };
         let mut lowering = FunctionLowering::begin(self, function);
@@ -48,6 +47,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_function_body(&mut self, source: FnId) {
         match self.file.hir[source].body {
             FnBody::Block(statements) => {
+                self.give_list_to_scope(self.file.bound.fns[source.idx()].scope, statements);
                 self.lower_statements(statements);
                 self.emit_empty_return();
             }
@@ -56,14 +56,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_return(value, Some(expression));
             }
             FnBody::None => {}
-        }
-        // JSC records the call that makes the promise of an async function behind the body, which the source map takes back to the last token of the function.
-        let flags = self.builder.function().flags;
-        if flags.contains(FunctionFlags::IS_ASYNC)
-            && !flags.contains(FunctionFlags::IS_GENERATOR)
-            && let Some(position) = self.file.last_mapped_function_position(source)
-        {
-            self.builder.record_position(position);
         }
     }
 }

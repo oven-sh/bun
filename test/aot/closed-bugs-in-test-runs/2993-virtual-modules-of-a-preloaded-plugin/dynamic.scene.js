@@ -1,0 +1,10 @@
+import { expect, test } from "bun:test";
+import { plugin } from "bun";
+const tried = (label, act) => test(label, async () => { let said; try { said = await act(); said = typeof said === "string" ? said : JSON.stringify(said); } catch (error) { said = error.name + ": " + String(error.message).slice(0, 70); } console.error("SEEN " + label + " | " + said); expect(1).toBe(1); });
+tried("01 registered in the test, import() written out", async () => { plugin({ name: "a", setup(build) { build.module("virtual:one", () => ({ exports: { default: 1 }, loader: "object" })); } }); return (await import("virtual:one")).default; });
+tried("02 registered in the test, import() of a computed name", async () => { plugin({ name: "b", setup(build) { build.module("virtual:two", () => ({ exports: { default: 2 }, loader: "object" })); } }); return (await import(["virtual", "two"].join(":"))).default; });
+tried("03 registered in the test, require()", () => { plugin({ name: "c", setup(build) { build.module("virtual:three", () => ({ exports: { default: 3 }, loader: "object" })); } }); return require("virtual:three").default; });
+tried("04 registered in the preload, import() written out", async () => (await import("virtual:preloaded")).default);
+tried("06 registered in the preload, source text", async () => (await import("virtual:source")).default);
+tried("07 onResolve and onLoad in a namespace, written out", async () => (await import("resolved:thing")).default);
+tried("08 onResolve and onLoad in a namespace, computed", async () => (await import("resolved:" + ["o", "ther"].join(""))).default);

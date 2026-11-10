@@ -219,6 +219,8 @@ fn project_for_build(
     root_files: RootFiles,
 ) -> Project {
     let base = dirname::<Posix>(path);
+    let keeps_type_errors_to_itself = (raw.compiler.iter())
+        .any(|option| option.0 == b"noCheck" && matches!(option.1, Json::Bool(true)));
     merge_compiler_options(&mut raw.compiler, compile_build_overrides(), &[]);
     exclude_output_directories(&mut raw, base);
     raw.compiler
@@ -245,6 +247,7 @@ fn project_for_build(
     project.options.imports_need_no_extension = true;
     project.options.use_define_for_class_fields = !assigns_class_fields;
     project.options.emit_standard_class_fields = !assigns_class_fields;
+    project.options.keeps_type_errors_to_itself = keeps_type_errors_to_itself;
     project.options.referenced_outputs = find_outputs_of_referenced_projects(host, &project);
     if let Some(base_url) = base_url {
         project.options.paths_base_dir.clone_from(&base_url);
@@ -267,7 +270,6 @@ pub fn default_options_of_aot_package() -> Vec<(Vec<u8>, Json)> {
     options.map(|(name, value)| (name.to_vec(), value)).into()
 }
 
-/// The nearest `package.json` that states `compilerOptions`, up to `node_modules`.
 pub fn find_package_with_compiler_options(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     for dir in ancestors(dir) {
         let path = join(dir, b"package.json");
@@ -310,23 +312,6 @@ pub fn load_for_aot_package(host: &dyn Host, session: &Session, manifest_path: &
         options.types = Some(vec![b"bun".to_vec()]);
     }
     project
-}
-
-impl Project {
-    pub fn key_of_compiler_options(&self) -> Vec<u8> {
-        let mut options: Vec<&(Vec<u8>, Json)> = self.raw_compiler_options.iter().collect();
-        options.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        let mut key = self.options.base_url.clone();
-        for (name, value) in options {
-            key.push(b'\n');
-            key.extend_from_slice(name);
-            value.stringify(&mut key);
-            if name == b"types" {
-                key.extend_from_slice(&self.config_path);
-            }
-        }
-        key
-    }
 }
 
 fn exclude_output_directories(raw: &mut Raw, base: &[u8]) {

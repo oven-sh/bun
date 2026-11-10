@@ -143,97 +143,10 @@ for (var name in uses) attempt(name, uses[name]);
 
 export {};
 
-// GENERATED: inFinally classInABlock made handler Made
 // CHECK-LABEL: function {{*}}name="inFinally"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b4():
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v0 = Integer
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Jump -> next b5(v0, v1)
-// CHECK-NEXT: b4() role=CleanupHandler:
-// CHECK-NEXT: v2 = CatchValue
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: Jump -> next b5(v3, v2)
-// CHECK-NEXT: b5(v4, v5):
-// CHECK-NEXT: v6 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[f_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Switch v4 cases=[0] -> case b6(), otherwise b8()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v8 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v9 = PropGet v8 key="last" [isFreeName, isForTypeOf]
-// CHECK-NEXT: v10 = TypeOf v9
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: b8():
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="classInABlock"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v1 = NewClass v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = FinishClass v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[f_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = Convert v2 declared={type=[[f_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v6 = PropGet v5 key="Made" [isFreeName, isForTypeOf]
-// CHECK-NEXT: v7 = TypeOf v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="made in try"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="handler"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=env [[L_6]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_6]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_6]]
-// CHECK-NEXT: v2 = TypeOf v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<never> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

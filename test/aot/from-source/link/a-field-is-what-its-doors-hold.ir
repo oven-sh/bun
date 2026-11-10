@@ -1,0 +1,29 @@
+# The plan holds the stores into a raw number slot to the word of the slot's form and no more (`OptionalDouble .. doors=number`), and a read out of it gives `number`. Link says the same of the field, so that nothing downstream is told more than the doors of the field hold: the function that returns the field gives `number`, and no question stands in front of its return.
+# An int32 stays an int32: its slot's doors hold that.
+# f3 = read
+# -- source: a-field-is-what-its-doors-hold.ts
+# declare function print(value: unknown): void;
+# class Meter {
+#   small = 0;
+#   count = 0;
+#   total = 0;
+#   step(by: number): void { this.small = (this.small + by) | 0; this.count = this.small * 2; this.total = this.total + this.count; }
+#   read(): number { return this.total; }
+# }
+# const meter = new Meter();
+# for (let i = 0; i < 4; i++) meter.step(i & 3);
+# print(meter.read()); print(meter.small); print(meter.count);
+# -- end of source
+# RUN(LINK): link fields functions mechanisms=all
+# LINK: field L0.0 "small" proven=i32 writers-known
+# LINK-NEXT: field L0.1 "count" proven=number writers-known
+# LINK-NEXT: field L0.2 "total" proven=number writers-known
+# LINK: function f3 {{*}}result=number
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: slot 0 "small" OptionalInt64 {{*}}doors=i32
+# PLAN-NEXT: slot 1 "count" OptionalDouble {{*}}doors=number
+# PLAN-NEXT: slot 2 "total" OptionalDouble {{*}}doors=number
+# RUN(FORM): walk f3 mechanisms=all-Inlining
+# FORM-LABEL: code f3:Body
+# FORM: [[read]]: number @Double = GetSlot {{*}}key="total"
+# FORM-NEXT: Return [[read]]

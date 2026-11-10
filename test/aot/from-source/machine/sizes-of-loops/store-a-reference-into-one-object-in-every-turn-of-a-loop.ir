@@ -1,0 +1,22 @@
+# f1 = pointAtLast
+# -- source: store-a-reference-into-one-object-in-every-turn-of-a-loop.ts
+# type Entry = { follower: Entry | null; weight: number };
+# function pointAtLast(owner: Entry, entry: Entry | null): void {
+#   while (entry !== null) {
+#     owner.follower = entry;
+#     entry = entry.follower;
+#   }
+# }
+# declare const input: any;
+# const owner: Entry = { follower: null, weight: 0.5 };
+# const last: Entry = { follower: null, weight: +input };
+# pointAtLast(owner, { follower: last, weight: 1.5 });
+# pointAtLast(owner, input ? last : null);
+# (globalThis as any).answer = owner.follower!.weight;
+# -- end of source
+# The compiler before this one: 5 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 10, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:10 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 10

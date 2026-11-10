@@ -27,42 +27,32 @@ module.exports = {
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = NewObject layout=[[L_1]]
 // CHECK-NEXT: v1 = FinishObject v0
 // CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
 // CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]] [isBare, isCallOfRequire]
 // CHECK-NEXT: v4 = Boolean boolean=true
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_4]] flags=[IsExpected]}
 // CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v7 = Boolean boolean=true
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_4]] flags=[IsExpected]}
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v12 = PropGet v11 key="console" [isFreeName]
-// CHECK-NEXT: v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v14 = PropGet v13 key="log"
-// CHECK-NEXT: v15 = Convert v14 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v16 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v18 = Integer integer=21
-// CHECK-NEXT: v19 = Call v10, -, v18 calleeName="twice"
-// CHECK-NEXT: v20 = Convert v19 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v21 = String string="."
-// CHECK-NEXT: v22 = String string="."
-// CHECK-NEXT: v23 = StrictEq v21, v22
-// CHECK-NEXT: v24 = String string="string"
-// CHECK-NEXT: v25 = Boolean boolean=true
-// CHECK-NEXT: v26 = Call v15, v13, v17, v20, v23, v24, v25 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v27 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v28 = Convert v27 declared={type=[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: v29 = Boolean boolean=true
-// CHECK-NEXT: v30 = Convert v29 declared={type=true flags=[IsExpected]}
-// CHECK-NEXT: PropSet v28, v30 key="done" mode=Sloppy
-// CHECK-NEXT: v32 = Undefined
-// CHECK-NEXT: Return v32
+// CHECK-NEXT: v6 = Boolean boolean=true
+// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v8 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v9 = PropGet v8 key="console" [isFreeName]
+// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v11 = PropGet v10 key="log"
+// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v14 = Integer integer=21
+// CHECK-NEXT: v15 = Call v7, -, v14 calleeName="twice"
+// CHECK-NEXT: v16 = String string="."
+// CHECK-NEXT: v17 = String string="."
+// CHECK-NEXT: v18 = StrictEq v16, v17
+// CHECK-NEXT: v19 = String string="string"
+// CHECK-NEXT: v20 = Boolean boolean=true
+// CHECK-NEXT: v21 = Call v12, v10, v13, v15, v18, v19, v20 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v22 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v23 = Convert v22 declared={type=[[L_1]] flags=[IsExpected]}
+// CHECK-NEXT: v24 = Boolean boolean=true
+// CHECK-NEXT: PropSet v23, v24 key="done" mode=Sloppy
+// CHECK-NEXT: v26 = Undefined
+// CHECK-NEXT: Return v26
 // CHECK-NEXT: }
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] role=Signature thisType={type=anything} results=[{type=anything}]

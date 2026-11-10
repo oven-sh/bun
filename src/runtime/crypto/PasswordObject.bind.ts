@@ -20,6 +20,8 @@ export const PasswordHashAlgorithm = b.union({
 });
 
 const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
+/** The fields of a hash are parsed more than once. */
+const parsed = b.bytes({ from: ["string", "buffer"], shared: "copied" });
 /** For a job to own, and to zero when it is done. */
 const copied = b.bytes({ from: ["string", "buffer"], held: "copied" });
 
@@ -43,7 +45,7 @@ export const password = b.namespace({
     throws: true,
   },
   verifySync: {
-    args: { password: stringOrBuffer, hash: stringOrBuffer, algorithm: b.string.utf8.nullable },
+    args: { password: stringOrBuffer, hash: parsed, algorithm: b.string.utf8.nullable },
     returns: b.bool,
     capability: "heap",
     throws: true,

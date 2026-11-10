@@ -1,0 +1,20 @@
+# an int32 is held to its written type whatever the form of its slot. `kind` lies raw in four bytes; `marks`, which lies under a symbol, stays boxed: the doors hold a boxed slot to its type as they hold a raw one,
+# and whoever looks at the slot asks for the number, so that the two markers reach no operator. `pos`, any number, with which nothing reckons, is left boxed by choice and is held to nothing: its stores would pay a test for no reader.
+# -- source: a-number-left-in-a-boxed-slot-is-held-to-its-written-type.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Kind { Leaf, Branch }
+# const marks = Symbol("marks");
+# class Item { kind: Kind; pos: number; [marks]: Kind; open: boolean; text: string; constructor(kind: Kind, pos: number, text: string) { this.kind = kind; this.pos = pos; this[marks] = kind; this.open = true; this.text = text; } }
+# sink(Item, new Item(Kind.Leaf, 1, "a"));
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "kind" source=written type=i32 markers spares-test slot=OptionalInt32 held=
+# CHECK-NEXT: field {{*}} "pos" source=written type=number markers spares-test slot=JSValue
+# CHECK-NEXT: field {{*}} symbol("marks"){{*}} source=written type=i32 markers spares-test slot=JSValue held=undefined|null|i32
+# CHECK-NEXT: field {{*}} "open" source=written type=boolean markers spares-test {{*}}held=undefined|null|boolean
+# CHECK-NEXT: field {{*}} "text" source=written type=undefined|null|string {{*}}held=undefined|null|string
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: slot=JSValue held=undefined|null|number
+# NEVER-NOT: differs-from-table
+# RUN(WITHHELD): facts enforced mechanisms=all-TypedSlots
+# WITHHELD-NOT: held=

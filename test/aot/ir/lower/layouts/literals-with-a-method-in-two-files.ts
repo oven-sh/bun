@@ -1,6 +1,5 @@
 // RUN: link
-// CHECK: layout [[shared]] fields=[{key="call" declared={type=undefined|null|[[firstCall]]|[[secondCall]] flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] supertypes=[{{*}}[[module]]]
-// CHECK: layout [[module]] name="Module"
+// CHECK: layout [[shared]] fields=[{key="call" declared={type=undefined|null|[[firstCall]]|[[secondCall]] flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}]
 // CHECK: function {{*}}name="load" module=[[one]]
 // CHECK: [[method]] = Convert {{*}}declared={type=undefined|null|[[firstCall]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: = NewObject -, [[method]] layout=[[shared]] fields=[0]

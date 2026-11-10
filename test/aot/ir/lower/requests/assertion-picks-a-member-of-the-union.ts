@@ -1,10 +1,19 @@
 // RUN: link
-// CHECK: layout {{*}}name="Alone" {{*}}supertypes=[
+// CHECK: layout {{*}}fields=[{key="sign"{{*}}supertypes=[
 
 // RUN(PICKED): link
-// PICKED-NOT: layout {{*}}name="Opaque"{{*}}supertypes=
-// PICKED-NOT: layout {{*}}name="Leaf"{{*}}supertypes=
-// PICKED-NOT: layout {{*}}name="Root"{{*}}supertypes=
+// PICKED-NOT: layout {{*}}fields=[{key="mark"{{*}}supertypes=
+// PICKED-NOT: layout {{*}}fields=[{key="size"{{*}}supertypes=
+// PICKED-NOT: layout {{*}}fields=[{key="name"{{*}}supertypes=
+
+// RUN(OPAQUE): link
+// OPAQUE: layout {{*}}fields=[{key="mark"
+
+// RUN(LEAF): link
+// LEAF: layout {{*}}fields=[{key="size"
+
+// RUN(ROOT): link
+// ROOT: layout {{*}}fields=[{key="name"
 
 // `value as Leaf` with `value: Leaf | Opaque` picks the Leaf among the objects that the union names, and says nothing of an Opaque. A type whose members are all
 // optional can be cast to any object type, and any object type to it: if each member of the union counted that could be cast alone, one such type in the unions of a

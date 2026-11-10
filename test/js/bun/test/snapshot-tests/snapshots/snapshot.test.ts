@@ -2418,8 +2418,8 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
   });
 
-  // Bun 1.4.4 wrote formats/bun-1.4.4/print-throws*.fixture.js. It ran no getter and no `toJSON` to print a value.
-  // The format of the test does, and throws. To add a case, run it under that version.
+  // Bun 1.4.4 wrote formats/bun-1.4.4/print-throws*.fixture.js. It ran no getter at a key and no `toJSON` to print
+  // a value. The format of the test does, and throws. To add a case, run it under that version.
   describe("inline, of a value that the format of its test cannot print", () => {
     const fixtures = [
       ["print-throws.fixture.js", 15, 19],

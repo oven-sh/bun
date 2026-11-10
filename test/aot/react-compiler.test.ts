@@ -24,6 +24,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     "outside-variables-that-a-component-only-assigns",
     "list-of-two-spreads-in-a-component",
     "import-meta-glob",
+    "type-guard-on-a-parameter-with-a-default",
   ])(
     "%s",
     name =>

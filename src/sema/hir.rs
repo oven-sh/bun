@@ -1047,6 +1047,7 @@ bitflags::bitflags! {
         /// (`parseListIndex`). Here it's a statement before the class.
         const CLASS_ELEMENT = 1 << 27;
         /// A function whose parameters and body a build has written in place of the program's: the output of the React Compiler.
+        /// Its type predicate names the written parameter.
         const REPLACED_BODY = 1 << 28;
     }
 }
@@ -3274,6 +3275,22 @@ impl<S: Storage> FileIn<S> {
             .modifiers_of_props
             .binary_search_by_key(&p.0, |of| of.0.0);
         found.map_or(Span::EMPTY, |at| self.modifiers_of_props[at].1)
+    }
+    /// The position in `params` of the parameter whose name is the identifier `name`.
+    #[inline]
+    pub fn parameter_named(&self, params: Span<ParamId>, name: Atom) -> Option<usize> {
+        params
+            .iter()
+            .position(|p| matches!(self[self[p].pat].kind, PatKind::Ident(it) if it == name))
+    }
+    /// The parameter that the type predicate of `function` names. `None` for `this is T`.
+    pub fn predicate_parameter(&self, function: FnId) -> Option<ParamId> {
+        let function = &self[function];
+        let TypeNodeKind::Predicate { param, .. } = self[function.ret.some()?].kind else {
+            return None;
+        };
+        let index = self.parameter_named(function.params, param)?;
+        Some(function.params.at(index))
     }
     /// The texts of the template whose substitutions are `exprs`.
     #[inline]

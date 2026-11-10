@@ -3,7 +3,7 @@ use bun_ast::binding::Data as BindingData;
 use bun_ast::{B, Binding, G, flags};
 use bun_sema::hir::{
     ExprId, Flags, NameKind, Param, ParamId, PatElem, PatElemId, PatId, PatKind, PatProp,
-    PatPropId, PropKey, Span, TextRange, TypeNodeId,
+    PatPropId, PropKey, Span, TextRange, TypeNodeId, TypeNodeKind,
 };
 
 const PRESERVED_PARAMETER_FLAGS: Flags = Flags::OPTIONAL
@@ -36,6 +36,29 @@ impl TreeWriter<'_, '_> {
             written.push(self.write_parameter(parameter, is_rest, replaced)?);
         }
         Ok(self.file.add_params(&written))
+    }
+
+    pub(super) fn rebind_type_predicate(
+        &mut self,
+        ret: TypeNodeId,
+        original: Span<ParamId>,
+        compiled: Span<ParamId>,
+    ) {
+        let Some(ret) = ret.some() else {
+            return;
+        };
+        let TypeNodeKind::Predicate { param, ty, asserts } = self.file[ret].kind else {
+            return;
+        };
+        let Some(index) = self.file.parameter_named(original, param) else {
+            return;
+        };
+        let paired = compiled.iter().nth(index);
+        let paired = paired.map(|id| self.file[self.file[id].pat].kind);
+        debug_assert!(matches!(paired, Some(PatKind::Ident(_))));
+        if let Some(PatKind::Ident(param)) = paired {
+            self.file[ret].kind = TypeNodeKind::Predicate { param, ty, asserts };
+        }
     }
 
     pub(super) fn write_binding(&mut self, binding: &Binding) -> Written<PatId> {

@@ -230,8 +230,7 @@ function overflowWarning(emitter, type, handlers) {
   console.warn(warn);
 }
 
-// once(), removeListener(), removeAllListeners() and listenerCount() follow src/js/node/events.ts.
-// "browser/NodeEventsRemoveListener" in test/bundler/bundler_browser.test.ts runs one script against both files.
+// From once() to listenerCount(), the code follows src/js/node/events.ts. browser/NodeEventsRemoveListener tests both.
 
 // The wrapper removes itself, and not `listener`: the same function can also be attached with on().
 function onceWrap(target, type, listener) {
@@ -283,9 +282,7 @@ EventEmitterPrototype.removeListener = function removeListener(type, fn) {
     delete events[type];
     this._eventsCount--;
   }
-  // The only emit of "removeListener". When nothing listens for it, removeAllListeners() drops the lists and does not
-  // come here. `fn` can be a once() wrapper: the event carries the function it wraps, where Node passes the wrapper
-  // unless it was the only listener of `type`.
+  // The only emit of "removeListener". A once() wrapper is reported as the function it wraps.
   if (events.removeListener !== undefined) this.emit("removeListener", type, fn.listener ?? fn);
   return this;
 };
@@ -317,8 +314,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   }
   var handlers = events[type];
   if (handlers !== undefined) {
-    // The last listener goes first. The loop reads a copy, because a "removeListener" listener can remove more entries
-    // of the list (Node reads the list itself, and then passes `undefined` to removeListener()).
+    // The last listener goes first, from a copy: a "removeListener" listener can remove other entries of the list.
     handlers = handlers.slice();
     for (let i = handlers.length - 1; i >= 0; i--) this.removeListener(type, handlers[i]);
   }

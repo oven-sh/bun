@@ -1011,6 +1011,21 @@ strspn
 
 
 # ----------------------------------------------------------------------------
+# MSVC CRT powf special-case handler. Data-in-.text false positive, NOT a gate.
+#
+# _powf_special is SSE2-only. Its `switch (code)` lowers to an indirect
+# `jmp *table[r9*4]`, and MSVC stores the table as nine 4-byte image-relative
+# RVAs in .text right after the function's `ret`, like the strspn tables
+# above. A case label whose address ends in C4 gives an entry that starts
+# with a VEX prefix: the RVA 0x0701C2C4 is the bytes `C4 C2 01 07`, which
+# also encode VPHSUBSW. Blanket-pass for the same reason as strspn. Of the
+# twelve `_*_special` handlers in the binary, only this one has a jump table.
+# (1 symbol)
+# ----------------------------------------------------------------------------
+_powf_special
+
+
+# ----------------------------------------------------------------------------
 # JSC LLInt. Data-in-.text false positive, NOT a gate.
 #
 # ENABLE(LLINT_EMBEDDED_OPCODE_ID) is on for x86_64 (WTF/wtf/PlatformEnable.h),

@@ -90,8 +90,14 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // Node's is a TTY, a Pipe or a TCP. Command-line tools call setBlocking(true) before native code writes to the descriptor.
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+    const setStdioBlocking = $bindgen("node_process.bind.ts", "setStdioBlocking");
+    stream._handle = { fd, setBlocking: (blocking: boolean) => setStdioBlocking(fd, !!blocking) };
+  }
+
+  // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 
@@ -178,6 +184,13 @@ export function getStdinStream(
   };
 
   stream.fd = fd;
+
+  // The descriptor belongs to the process: reading resumes after 'end' (see the
+  // 'resume' handler) and children inherit it. Destroying stdin, which the
+  // 'end' handler below does, must not close it.
+  stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
+    cb(err);
+  };
 
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
@@ -320,115 +333,143 @@ export function getStdinStream(
 
   return stream;
 }
-export function initializeNextTickQueue(process: typeof globalThis.process, nextTickQueue, drainMicrotasksFn) {
-  var queue;
-  var tickInitHooks;
-  var process: typeof globalThis.process;
-  var nextTickQueue = nextTickQueue;
-  var drainMicrotasks = drainMicrotasksFn;
+// JSNextTickQueue: whether ticks are queued, the queue, the function that runs it.
+type NextTickQueue = InternalFieldObject<[number, unknown, (() => void) | undefined]>;
+type DrainMicrotasks = () => void;
+type Tick = import("../internal/process/tick_ring").Tick;
+type TickCallback = import("../internal/process/tick_ring").TickCallback;
+type TickFrame = import("../internal/process/tick_ring").Frame;
 
-  const { validateFunction } = require("internal/validators");
-
-  var setup;
-  setup = () => {
-    const { FixedQueue } = require("internal/fixed_queue");
-    queue = new FixedQueue();
-    tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
-
+// A stack trace shows where in this function processTicksAndRejections and nextTick begin: native:7:39 and native:40:20.
+// test/js/node/process/process-nexttick-is-native-code.test.ts holds their frames, without the line and column.
+export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTickQueue, drain: DrainMicrotasks) {
+  const { ring, takeTick, setUp, asyncContext, install } = require("internal/process/next_tick_queue");
+  $putInternalField(marker, 0, 0);
+  function startRing() {
+    const tickRing = require("internal/process/tick_ring");
+    tickRing.start(process, marker, processTicksAndRejections);
     function processTicksAndRejections() {
-      var tock;
+      const context = asyncContext;
       do {
-        while ((tock = queue.shift()) !== null) {
-          var callback = tock.callback;
-          var args = tock.args;
-          var frame = tock.frame;
-          var restore = $getInternalField($asyncContext, 0);
-          $putInternalField($asyncContext, 0, frame);
-          // No catch and no finally: what a tick throws leaves this function as it was thrown, with
-          // the tick's frame still current. JSNextTickQueue::drain reports it there (so an
-          // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
-          // async context back, and calls in again for the ticks after it.
-          if (args === undefined) {
+        for (let tick: Tick; (tick = ring.read!) !== ring.write;) {
+          const callback = tick.callback!;
+          const count = tick.count;
+          const frame = tick.frame;
+          tick.callback = undefined;
+          tick.frame = undefined;
+          ring.read = tick.next;
+          var restore = $getInternalField(context, 0);
+          $putInternalField(context, 0, frame);
+          if (count === 0) {
             callback();
-          } else {
-            switch (args.length) {
-              case 1:
-                callback(args[0]);
-                break;
-              case 2:
-                callback(args[0], args[1]);
-                break;
-              case 3:
-                callback(args[0], args[1], args[2]);
-                break;
-              case 4:
-                callback(args[0], args[1], args[2], args[3]);
-                break;
-              default:
-                callback(...args);
-                break;
+          } else if (count === 1) {
+            const first = tick.first;
+            tick.first = undefined;
+            callback(first);
+          } else if (count === -1) {
+            // The TickObject is read in the async context that is current between ticks.
+            $putInternalField(context, 0, restore);
+            const { callback, args, frame } = tickRing.takeTickObject(tick);
+            restore = $getInternalField(context, 0);
+            $putInternalField(context, 0, frame);
+            if (args === undefined) {
+              callback();
+            } else {
+              switch (args.length) {
+                case 1:
+                  callback(args[0]);
+                  break;
+                case 2:
+                  callback(args[0], args[1]);
+                  break;
+                case 3:
+                  callback(args[0], args[1], args[2]);
+                  break;
+                case 4:
+                  callback(args[0], args[1], args[2], args[3]);
+                  break;
+                default:
+                  callback(...args);
+                  break;
+              }
             }
+          } else if (count === 2) {
+            const first = tick.first;
+            const second = tick.second;
+            tick.first = undefined;
+            tick.second = undefined;
+            callback(first, second);
+          } else {
+            const first = tick.first;
+            const second = tick.second;
+            const third = tick.third;
+            tick.first = undefined;
+            tick.second = undefined;
+            tick.third = undefined;
+            callback(first, second, third);
           }
-          $putInternalField($asyncContext, 0, restore);
+          $putInternalField(context, 0, restore);
         }
 
-        drainMicrotasks();
-      } while (!queue.isEmpty());
-      // Without this, every checkpoint after the first tick calls this function to find an empty queue.
-      $putInternalField(nextTickQueue, 0, 0);
+        drain();
+      } while (ring.read !== ring.write);
+      $putInternalField(marker, 0, 0);
     }
-
-    $putInternalField(nextTickQueue, 0, 0);
-    $putInternalField(nextTickQueue, 1, queue);
-    $putInternalField(nextTickQueue, 2, processTicksAndRejections);
-    setup = undefined;
-  };
-
-  function nextTick(cb, ...args) {
-    validateFunction(cb, "callback");
-    if (setup) {
-      setup();
-      process = globalThis.process;
-    }
+  }
+  // process.nextTick of a program that is not compiled ahead of time.
+  function nextTick(cb: TickCallback, ...args: unknown[]) {
+    if (typeof cb !== "function") require("internal/validators").validateFunction(cb, "callback");
+    if (ring.write === undefined) setUp();
     if (process._exiting) return;
-
-    const tock = {
-      callback: cb,
-      // We want to avoid materializing the args if there are none because it's
-      // a waste of memory and Array.prototype.slice shows up in profiling.
-      args: $argumentCount() > 1 ? args : undefined,
-      frame: $getInternalField($asyncContext, 0),
-    };
-    if (tickInitHooks.length !== 0) {
-      // node fires one TickObject init per process.nextTick() call, at
-      // construction time (before the callback runs).
-      const asyncHooksTick = require("internal/async_hooks_tick");
-      const asyncId = asyncHooksTick.newAsyncId();
-      // Snapshot: enable()/disable() from inside a hook must not affect the
-      // in-flight dispatch (node stages such mutations in tmp_array until
-      // the emit completes).
-      const hooks = tickInitHooks.slice();
-      for (let i = 0; i < hooks.length; i++) {
-        try {
-          hooks[i](asyncId, "TickObject", 0, tock);
-        } catch (err) {
-          // node: a throwing init hook is fatal (fatalError: print + exit 1),
-          // never surfaced to the process.nextTick() caller. console is a
-          // user-mutable global, so shield the print; exit regardless.
+    const hooked = tickInitHooks.length !== 0;
+    const count = args.length | 0;
+    const frame: TickFrame = $getInternalField(asyncContext, 0);
+    if (count > 3 || hooked) {
+      const tock = { callback: cb, args: count !== 0 ? args : undefined, frame };
+      if (hooked) {
+        // node fires one TickObject init per process.nextTick() call, at
+        // construction time (before the callback runs).
+        const asyncId = asyncHooksTick.newAsyncId();
+        // Snapshot: enable()/disable() from inside a hook must not affect the
+        // in-flight dispatch (node stages such mutations in tmp_array until
+        // the emit completes).
+        const hooks = tickInitHooks.slice();
+        for (let i = 0; i < hooks.length; i++) {
           try {
-            console.error(
-              typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
-            );
-          } catch {}
-          process.exit(1);
+            hooks[i](asyncId, "TickObject", 0, tock);
+          } catch (err) {
+            // node: a throwing init hook is fatal (fatalError: print + exit 1),
+            // never surfaced to the process.nextTick() caller. console is a
+            // user-mutable global, so shield the print; exit regardless.
+            try {
+              console.error(
+                typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
+              );
+            } catch {}
+            process.exit(1);
+          }
+        }
+      }
+      require("internal/process/tick_ring").pushTickObject(tock);
+    } else {
+      const tick = takeTick(cb, frame);
+      tick.count = count;
+      if (count !== 0) {
+        tick.first = args[0];
+        if (count !== 1) {
+          tick.second = args[1];
+          if (count !== 2) tick.third = args[2];
         }
       }
     }
-    queue.push(tock);
-    $putInternalField(nextTickQueue, 0, 1);
+    $putInternalField(marker, 0, 1);
   }
-
-  return nextTick;
+  // Object lists a member from when it is first read. internal/validators, which is loaded for a callback that is no function, reads these
+  // three when it loads: whoever has read process.nextTick finds them read, in this order.
+  const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
+  const asyncHooksTick = require("internal/async_hooks_tick");
+  const tickInitHooks = asyncHooksTick.tickInitHooks;
+  return install(process, marker, startRing, nextTick);
 }
 
 type InternalEnvMap = Record<string, string>;
@@ -440,8 +481,9 @@ export function windowsEnv(
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite,
   resetForDelete,
+  customInspect,
 ) {
-  (internalEnv as any)[Bun.inspect.custom] = () => {
+  (internalEnv as any)[customInspect] = () => {
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];
@@ -592,6 +634,11 @@ export function windowsEnv(
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
       return envMapList.slice();
     },
+    preventExtensions() {
+      // As in Node: Object.preventExtensions(), Object.seal() and Object.freeze() throw a TypeError. Of a target that
+      // cannot be extended ownKeys() would have to answer the target's own keys, which are in upper case.
+      return false;
+    },
   });
   return envProxy;
 }
@@ -631,28 +678,30 @@ export function rawDebug() {
 // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
-export function createOnWarning(process, redirectPath, disabledArr) {
-  const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
+export function createOnWarning(
+  // Not `process`: the platform below is the one that this text was built for.
+  processObject,
+  redirectPath,
+  disabledArr,
+  writeWarning,
+) {
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
   const disabled = disabledArr && disabledArr.length ? new Set(disabledArr) : null;
   let traceWarningHelperShown = false;
 
   function writeOut(message) {
-    if (appendFileSync) {
-      try {
-        appendFileSync(redirectPath, message + "\n");
-        return;
-      } catch {
-        // Simplification vs Node's writeToFile (single fd, async): open per-write and
-        // fall back to stderr per-warning; open failures retry on the next warning.
-      }
+    if (redirectPath) {
+      // Simplification vs Node's writeToFile (single fd, async): open per-write and
+      // fall back to stderr per-warning; open failures retry on the next warning.
+      writeWarning(message + "\n", redirectPath);
+      return;
     }
     // process.stderr.write, not console.error: under an inspector Session console.* emits
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
     // a reassigned process.stderr is honored and stderr is not materialized when redirected.
-    process.stderr.write(message + "\n");
+    processObject.stderr.write(message + "\n");
   }
 
   interface ProcessWarning extends Error {
@@ -662,13 +711,13 @@ export function createOnWarning(process, redirectPath, disabledArr) {
     if (!(warning instanceof Error)) return;
     const name = warning.name || "Warning";
     const isDeprecation = name === "DeprecationWarning";
-    if (isDeprecation && process.noDeprecation) return;
+    if (isDeprecation && processObject.noDeprecation) return;
     const code = warning.code;
     // --disable-warning filters the *print*, not the emit — user listeners
     // still receive the event (Node keeps this check inside onWarning).
     if (disabled && (disabled.has(name) || (code && disabled.has(code)))) return;
-    const trace = process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
-    let msg = `(node:${process.pid}) `;
+    const trace = processObject.traceProcessWarnings || (isDeprecation && processObject.traceDeprecation);
+    let msg = `(node:${processObject.pid}) `;
     if (code) msg += `[${code}] `;
     // Only touch `.stack` when tracing: it materializes the lazy trace and may run
     // a user Error.prepareStackTrace (Node short-circuits `trace && warning.stack`).
@@ -684,10 +733,16 @@ export function createOnWarning(process, redirectPath, disabledArr) {
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
-      const { basename } = require("node:path");
-      writeOut(
-        `(Use \`${basename(process.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
-      );
+      const argv0 = processObject.argv0 || "node";
+      // A string goes to the native path.basename(), so a path.basename() that the program replaced is not called.
+      // Anything else goes to node:path, which throws unless the program replaced basename().
+      const program =
+        typeof argv0 !== "string"
+          ? require("node:path").basename(argv0)
+          : (process.platform === "win32"
+              ? $bindgen("node_path.bind.ts", "basenameWin32")
+              : $bindgen("node_path.bind.ts", "basenamePosix"))(argv0);
+      writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
     }
   };
 }

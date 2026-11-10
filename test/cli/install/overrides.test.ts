@@ -1,9 +1,10 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
-import { TestRegistry } from "registry";
+import { parsePackageName, TestRegistry } from "registry";
+import { pathToFileURL } from "url";
 
 // Fixtures from ./registry/packages used below:
 //   no-deps        1.0.0, 1.0.1, 1.1.0 and 2.0.0 (latest), the package the overrides target
@@ -20,8 +21,8 @@ afterAll(() => {
   registry.stop();
 });
 
-async function project(packageJson: Record<string, unknown>, files: Record<string, string> = {}) {
-  const { packageDir } = await registry.createTestDir({
+async function project(packageJson: Record<string, unknown>, files: Record<string, string> = {}, from = registry) {
+  const { packageDir } = await from.createTestDir({
     bunfigOpts: { linker: "hoisted" },
     files: { "package.json": JSON.stringify(packageJson), ...files },
   });
@@ -36,7 +37,8 @@ async function bun(dir: string, ...args: string[]) {
     cmd: [bunExe(), ...args],
     cwd: dir,
     // CI exports BUN_INSTALL_CACHE_DIR, which overrides the bunfig's per-test `cache`; concurrent tests sharing one cache race on Windows.
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+    // BUN_FEATURE_FLAG_NO_ORPHANS: see `runBun` in bun-install-git-deps.test.ts.
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"), BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -332,7 +334,7 @@ describe("a bun.lock written by Bun 1.4", () => {
       overridden: false,
     },
   ])("$title", ({ rules, overridden = true }) => {
-    test.concurrent.each([...frozen, "install"])("bun %s says nothing", async command => {
+    test.concurrent.each([...frozen, "install"])("bun %s prints nothing", async command => {
       const { dir, lock } = await upgraded(rules, overridden);
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
       expect(stderr).toBe("");
@@ -361,7 +363,7 @@ describe("a bun.lock written by Bun 1.4", () => {
     }
   });
 
-  test.concurrent("a rule that bun.lock has from resolutions goes with the next install", async () => {
+  test.concurrent("a rule that bun.lock has from resolutions is removed by the next install", async () => {
     const dir = await project({ name: "foo", dependencies, overrides: { ...both.overrides, ...both.resolutions } });
     expect((await bun(dir, "install")).exitCode).toBe(0);
     expect(await lockfile(dir)).toContain('"a-dep": "1.0.2"');
@@ -379,7 +381,7 @@ describe("a bun.lock written by Bun 1.4", () => {
     await expectLockfileStable(dir, saved);
   });
 
-  // What the registry's packages declare, as bun.lock prints it.
+  // What the registry's packages declare, the way bun.lock prints it.
   const declares: Record<string, string> = {
     "bundled-1@1.0.0": `{ "dependencies": { "no-deps": "1.0.0" } }`,
     "one-dep@1.0.0": `{ "dependencies": { "no-deps": "1.0.1" } }`,
@@ -437,7 +439,8 @@ describe("a bun.lock written by Bun 1.4", () => {
     return `${block(sections, "").slice(0, -1)}  "packages": {\n${packages().map(entryOf14).join("\n")}  }\n}\n`;
   }
 
-  // A fresh install of Bun 1.4 saves each of these: a version stands next to a rule that does not name it, and rightly.
+  // A fresh install with Bun 1.4 saves each of these. A version is next to a rule that doesn't mention it, and that's
+  // correct.
   test.concurrent.each<Saved>([
     {
       title: "the rule is a dist-tag",
@@ -802,7 +805,8 @@ describe("a bun.lock written by Bun 1.4", () => {
     }
   });
 
-  describe.each<Saved & { held: string }>([
+  // `folder` is where the entry is in node_modules. It defaults to the name of the package that `held` names.
+  describe.each<Saved & { held: string; folder?: string }>([
     {
       title: "a merge took the rule of one branch and the entry of the other",
       pkg: () => ({ dependencies: { "one-range-dep": "1.0.0" }, overrides: { "no-deps": "1.0.0" } }),
@@ -811,6 +815,34 @@ describe("a bun.lock written by Bun 1.4", () => {
         ["one-range-dep", "one-range-dep@1.0.0"],
       ],
       held: "no-deps@1.1.0",
+    },
+    {
+      title: "the rule is catalog:, and the catalog does not allow the entry",
+      pkg: () => ({
+        workspaces: { packages: [], catalog: { "no-deps": "1.0.0" } },
+        dependencies: { "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "catalog:" },
+      }),
+      catalogs: { catalog: { "no-deps": "1.0.0" } },
+      packages: () => [
+        ["no-deps", "no-deps@1.1.0"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+      held: "no-deps@1.1.0",
+    },
+    {
+      title: "the rule is catalog: for an npm: alias, and the entry is what the catalog has for the alias target",
+      pkg: () => ({
+        workspaces: { packages: [], catalog: { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" } },
+        dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+        overrides: { "my-alias@npm:no-deps@^1.0.0": "catalog:" },
+      }),
+      rules: { "my-alias@npm:no-deps@^1.0.0": { ".": "catalog:" } },
+      version: 3,
+      catalogs: { catalog: { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" } },
+      packages: () => [["my-alias", "no-deps@1.0.1"]],
+      held: "no-deps@1.0.1",
+      folder: "my-alias",
     },
     {
       title: "the rule came after the install, for a package that only a peer holds",
@@ -855,13 +887,13 @@ describe("a bun.lock written by Bun 1.4", () => {
       return { lock, dir: await project({ name: "foo", ...saved.pkg() }, { "bun.lock": lock }) };
     };
 
-    test.concurrent.each(frozen)("bun %s names the entry and the rule", async command => {
+    test.concurrent.each(frozen)("bun %s installs the entry", async command => {
       const { dir, lock } = await held();
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
-      expect(stderr).toBe(
-        `error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has ${saved.held}, overrides in package.json wants 1.0.0\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`,
-      );
-      expect(exitCode).toBe(1);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const name = saved.held.slice(0, saved.held.indexOf("@"));
+      expect(nodeModulesPackages(dir)).toContain(`node_modules/${saved.folder ?? name}/${saved.held}`);
       expect(await lockfile(dir)).toBe(lock);
     });
 
@@ -871,10 +903,536 @@ describe("a bun.lock written by Bun 1.4", () => {
       expect(stderr).toBe("Saved lockfile");
       expect(exitCode).toBe(0);
       const name = saved.held.slice(0, saved.held.indexOf("@"));
-      expect(nodeModulesPackages(dir)).toContain(`node_modules/${name}/${name}@1.0.0`);
+      expect(nodeModulesPackages(dir)).toContain(`node_modules/${saved.folder ?? name}/${name}@1.0.0`);
       const repaired = await lockfile(dir);
       expect(repaired).not.toContain(saved.held);
       await expectLockfileStable(dir, repaired);
     });
   });
+});
+
+// An install resolves a dependency again when bun.lock has a version that a rule does not allow. It does that after the
+// lockfile is cleaned, and the clean gives every package another id or drops it.
+describe("an entry is resolved again after other packages of the same install", () => {
+  const tarball = (of = registry) => `${of.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+  const folder = { "vendor/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }) };
+
+  type Manifest = { name: string; version: string; [field: string]: unknown };
+
+  /** Publishes to `to` without a client. A fixture cannot declare a tarball of the registry: the URL has the port. */
+  async function publish(to: TestRegistry, manifests: Manifest[]) {
+    const user = to.auth.addUser("overrides", "overrides");
+    for (const manifest of manifests) {
+      const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
+      await to.packages.publish(
+        parsePackageName(manifest.name)!,
+        {
+          name: manifest.name,
+          "dist-tags": { latest: manifest.version },
+          versions: { [manifest.version]: manifest },
+          _attachments: {
+            [`${manifest.name}-${manifest.version}.tgz`]: {
+              data: Buffer.from(await archive.bytes()).toString("base64"),
+            },
+          },
+        },
+        user,
+      );
+    }
+  }
+
+  /**
+   * `<name>` and `<name>-minor` have a 1.0.0 that depends on nothing. `<name>@2.0.0` has `major` and
+   * `<name>-minor@1.1.0` has `minor`. `<name>-caret` depends on `<name>-minor@^1.0.0`, `<name>-exact` on 1.0.0.
+   */
+  const family = (name: string, minor: object, major = minor): Manifest[] => [
+    { name, version: "1.0.0" },
+    { name, version: "2.0.0", ...major },
+    { name: `${name}-minor`, version: "1.0.0" },
+    { name: `${name}-minor`, version: "1.1.0", ...minor },
+    { name: `${name}-caret`, version: "1.0.0", dependencies: { [`${name}-minor`]: "^1.0.0" } },
+    { name: `${name}-exact`, version: "1.0.0", dependencies: { [`${name}-minor`]: "1.0.0" } },
+  ];
+  /**
+   * The first pass resolves `<name>-minor@1.1.0` for `<name>-caret`. Then `<name>-exact` asks for 1.0.0, both share it,
+   * and the clean drops 1.1.0 with what it depends on.
+   */
+  const dropsMinor = (name: string) => ({ [name]: "1.0.0", [`${name}-caret`]: "1.0.0", [`${name}-exact`]: "1.0.0" });
+
+  // One commit with the branches `main` and `other`.
+  let gitDir: ReturnType<typeof tempDir> | undefined;
+  let repository = "";
+  let commit = "";
+  const gitPkg = (ref: string) => `git+${pathToFileURL(repository)}#${ref}`;
+
+  beforeAll(async () => {
+    gitDir = tempDir("overrides-git-", {
+      "git-pkg/package.json": JSON.stringify({ name: "git-pkg", version: "1.0.0" }),
+    });
+    repository = join(String(gitDir), "git-pkg");
+    const git = new Bun.$.Shell().cwd(repository).env({
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "bun",
+      GIT_AUTHOR_EMAIL: "bun@example.com",
+      GIT_COMMITTER_NAME: "bun",
+      GIT_COMMITTER_EMAIL: "bun@example.com",
+    });
+    await git`git -c init.defaultBranch=main init --quiet && git add . && git -c commit.gpgsign=false commit --quiet -m 1.0.0 && git branch other`;
+    commit = (await git`git rev-parse HEAD`.text()).trim();
+    await publish(registry, [
+      ...family("remote-dep", { dependencies: { "no-deps": tarball() } }),
+      ...family(
+        "git-dep",
+        { dependencies: { "git-pkg": gitPkg("main") } },
+        { dependencies: { "git-pkg": gitPkg("other") } },
+      ),
+      { name: "late-peer", version: "1.0.0" },
+      {
+        name: "late-peer",
+        version: "2.0.0",
+        dependencies: { "a-dep": "1.0.1" },
+        peerDependencies: { "no-deps": "^1.0.0" },
+      },
+    ]);
+  });
+
+  afterAll(() => gitDir?.[Symbol.dispose]());
+
+  /** Installs `pkg`, then puts `rules` in package.json and in bun.lock. Only the entries of bun.lock are then behind. */
+  async function behindRules(
+    pkg: Record<string, unknown>,
+    rules: object,
+    files: Record<string, string> = {},
+    from = registry,
+  ) {
+    const dir = await project({ name: "foo", ...pkg }, files, from);
+    const { stderr, exitCode } = await bun(dir, "install", "--lockfile-only");
+    expect(stderr).toBe("Saved lockfile");
+    expect(exitCode).toBe(0);
+    await editPackageJson(dir, json => void (json.overrides = rules));
+    // A rule inside a package needs version 3.
+    const nested = Object.values(rules).some(rule => typeof rule === "object");
+    const lock = (await lockfile(dir))
+      .replace(/"lockfileVersion": \d+/, version => (nested ? `"lockfileVersion": 3` : version))
+      .replace(`"packages": {`, `"overrides": ${JSON.stringify(rules)},\n  "packages": {`);
+    expect(lock).toContain(`"overrides": ${JSON.stringify(rules)}`);
+    await write(join(dir, "bun.lock"), lock);
+    return dir;
+  }
+
+  /**
+   * Only the second pass moves `has`: a frozen install does not have that pass and accepts bun.lock, and an install
+   * saves `moved` in its place. bun.lock is put back.
+   */
+  async function expectBehind(dir: string, has: string, moved: string) {
+    const lock = await lockfile(dir);
+    const frozen = await bun(dir, "install", "--frozen-lockfile", "--lockfile-only");
+    expect({ stderr: frozen.stderr, exitCode: frozen.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect((await locked(dir, "")).all).toContain(has);
+
+    const { stderr, exitCode } = await bun(dir, "install", "--lockfile-only");
+    expect({ stderr, exitCode }).toEqual({ stderr: "Saved lockfile", exitCode: 0 });
+    const { all } = await locked(dir, "");
+    expect(all).not.toContain(has);
+    expect(all).toContain(moved);
+    await write(join(dir, "bun.lock"), lock);
+  }
+
+  /** From bun.lock: the package that `owner` gets for its dependency `name`, and every package once. */
+  async function locked(dir: string, owner: string, name = "no-deps") {
+    const { packages } = Bun.JSONC.parse(await lockfile(dir)) as { packages: Record<string, [string, ...unknown[]]> };
+    return {
+      [name]: (packages[`${owner}/${name}`] ?? packages[name])?.[0],
+      all: [...new Set(Object.values(packages).map(([id]) => id))].sort(),
+    };
+  }
+
+  // Both commands fetch the project's tarball again before the clean.
+  test.concurrent.each(["update no-deps", "install --force"])(
+    "bun %s: a package that declares the project's tarball gets that tarball",
+    async command => {
+      const dir = await behindRules(
+        { dependencies: { "no-deps": tarball(), "remote-dep": "1.0.0" } },
+        { "remote-dep": "2.0.0" },
+      );
+
+      const { stdout, stderr, exitCode } = await bun(dir, ...command.split(" "));
+      expect(stderr).toBe("Saved lockfile");
+      expect(stdout).toContain("^ remote-dep 1.0.0 -> 2.0.0");
+      expect(await locked(dir, "remote-dep")).toEqual({
+        "no-deps": `no-deps@${tarball()}`,
+        all: [`no-deps@${tarball()}`, "remote-dep@2.0.0"],
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent.each([
+    { to: "file:./vendor/no-deps", has: "no-deps@file:vendor/no-deps" },
+    { to: "link:./vendor/no-deps", has: "no-deps@link:./vendor/no-deps" },
+    { to: "workspace:*", has: "no-deps@workspace:vendor/no-deps", workspaces: ["vendor/*"] },
+  ])("a package that a rule gives the project's new $to gets it", async ({ to, has, workspaces }) => {
+    const rules = { "no-deps": to, "remote-dep": "2.0.0" };
+    // With `a-dep`, the folder gets another id when the lockfile is cleaned.
+    const dependencies = { "a-dep": "1.0.1", "remote-dep": "1.0.0" };
+    const dir = await behindRules({ workspaces, dependencies }, rules, folder);
+    await editPackageJson(dir, pkg => void (pkg.dependencies = { ...dependencies, "no-deps": to }));
+
+    const { stdout, stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe("Saved lockfile");
+    expect(stdout).toContain("^ remote-dep 1.0.0 -> 2.0.0");
+    expect(await locked(dir, "remote-dep")).toEqual({
+      "no-deps": has,
+      all: ["a-dep@1.0.1", has, "remote-dep@2.0.0"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The folder is moved to its new id and not read again: a second read makes a `file:` package next to the workspace.
+  test.concurrent("a package that a rule gives the folder of a new workspace gets the workspace", async () => {
+    const rules = { "no-deps": "file:./vendor/no-deps", "remote-dep": "2.0.0" };
+    const dir = await behindRules({ workspaces: ["vendor/*"], dependencies: { "remote-dep": "1.0.0" } }, rules, {
+      "vendor/a/package.json": JSON.stringify({ name: "a" }),
+    });
+    await write(join(dir, "vendor/no-deps/package.json"), folder["vendor/no-deps/package.json"]);
+
+    const { stdout, stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe("Saved lockfile");
+    expect(stdout).toContain("^ remote-dep 1.0.0 -> 2.0.0");
+    expect(await locked(dir, "remote-dep")).toEqual({
+      "no-deps": "no-deps@workspace:vendor/no-deps",
+      all: ["a@workspace:vendor/a", "no-deps@workspace:vendor/no-deps", "remote-dep@2.0.0"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    { kind: "tarball", rules: { "remote-dep": "2.0.0" }, has: () => `no-deps@${tarball()}` },
+    {
+      kind: "folder",
+      rules: { "no-deps": "file:./vendor/no-deps", "remote-dep": "2.0.0" },
+      has: () => "no-deps@file:vendor/no-deps",
+    },
+    // The registry's `no-deps` stays, so the name alone does not say which package was dropped.
+    {
+      kind: "tarball that has the name of a registry package",
+      rules: { "remote-dep": "2.0.0" },
+      has: () => `no-deps@${tarball()}`,
+      more: { "no-deps": "1.0.1" },
+    },
+  ])("a package gets the $kind that the clean dropped", async ({ rules, has, more = {} }) => {
+    const dir = await behindRules({ dependencies: { ...more, "remote-dep": "1.0.0" } }, rules, folder);
+    await editPackageJson(dir, pkg => void (pkg.dependencies = { ...more, ...dropsMinor("remote-dep") }));
+
+    const { stdout, stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe("Saved lockfile");
+    expect(stdout).toContain("^ remote-dep 1.0.0 -> 2.0.0");
+    expect(await locked(dir, "remote-dep")).toEqual({
+      "no-deps": has(),
+      all: [
+        ...Object.entries(more).map(([name, version]) => `${name}@${version}`),
+        has(),
+        "remote-dep-caret@1.0.0",
+        "remote-dep-exact@1.0.0",
+        "remote-dep-minor@1.0.0",
+        "remote-dep@2.0.0",
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a package gets the git repository that the clean dropped", async () => {
+    const dir = await behindRules({ dependencies: { "git-dep": "1.0.0" } }, { "git-dep": "2.0.0" });
+    await editPackageJson(dir, pkg => void (pkg.dependencies = dropsMinor("git-dep")));
+
+    const { stdout, stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe("Saved lockfile");
+    expect(stdout).toContain("^ git-dep 1.0.0 -> 2.0.0");
+    const checkout = `git-pkg@${gitPkg(commit)}`;
+    expect(await locked(dir, "git-dep", "git-pkg")).toEqual({
+      "git-pkg": checkout,
+      all: [checkout, "git-dep-caret@1.0.0", "git-dep-exact@1.0.0", "git-dep-minor@1.0.0", "git-dep@2.0.0"].sort(),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // git-dep@2.0.0 names the commit by its other branch, and one commit is one checkout.
+  test.concurrent("a package that declares another ref of the project's new git commit gets that commit", async () => {
+    // With `a-dep`, the checkout gets another id when the lockfile is cleaned.
+    const dependencies = { "a-dep": "1.0.1", "git-dep": "1.0.0" };
+    const dir = await behindRules({ dependencies }, { "git-dep": "2.0.0" });
+    await editPackageJson(dir, pkg => void (pkg.dependencies = { ...dependencies, "git-pkg": gitPkg("main") }));
+
+    const { stdout, stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe("Saved lockfile");
+    expect(stdout).toContain("^ git-dep 1.0.0 -> 2.0.0");
+    const checkout = `git-pkg@${gitPkg(commit)}`;
+    expect(await locked(dir, "git-dep", "git-pkg")).toEqual({
+      "git-pkg": checkout,
+      all: ["a-dep@1.0.1", "git-dep@2.0.0", checkout].sort(),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun add <name>@latest` takes the registry's package. The range that it writes links the workspace of that name, so
+  // the lockfile is cleaned a second time before the entry is resolved again. `basic-1` is then at the id of `no-deps`.
+  test.concurrent.each([
+    {
+      add: "a-dep@latest --force",
+      what: "the project's tarball",
+      w: { name: "a-dep", version: "1.0.10" },
+      app: () => ({ "basic-1": "1.0.0", "no-deps": tarball(), "remote-dep": "1.0.0" }),
+      rules: { "remote-dep": "2.0.0" },
+      has: () => `no-deps@${tarball()}`,
+    },
+    {
+      add: "left-pad@latest",
+      what: "the project's new folder",
+      w: { name: "left-pad", version: "1.0.0" },
+      root: { "basic-1": "1.0.0", "remote-dep": "1.0.0" },
+      rules: { "no-deps": "file:./vendor/no-deps", "remote-dep": "2.0.0" },
+      has: () => "no-deps@file:vendor/no-deps",
+    },
+    // The registry's remote-dep-minor@1.1.0 brings the tarball, and the second clean drops both.
+    {
+      add: "remote-dep-minor@latest",
+      what: "the tarball that the second clean dropped",
+      w: { name: "remote-dep-minor", version: "1.1.0" },
+      app: () => ({ "basic-1": "1.0.0", "remote-dep": "1.0.0" }),
+      rules: { "remote-dep": "2.0.0" },
+      has: () => `no-deps@${tarball()}`,
+    },
+  ])("bun add $add of a workspace: a package gets $what", async ({ add, w, app, root, rules, has }) => {
+    const dir = await behindRules({ workspaces: ["packages/*"], dependencies: root }, rules, {
+      ...folder,
+      "packages/app/package.json": JSON.stringify({ name: "app", dependencies: app?.() }),
+      "packages/w/package.json": JSON.stringify(w),
+    });
+    await expectBehind(dir, "remote-dep@1.0.0", "remote-dep@2.0.0");
+    if (root) await editPackageJson(dir, pkg => void (pkg.dependencies = { ...root, "no-deps": rules["no-deps"] }));
+
+    const { stderr, exitCode } = await bun(dir, "add", ...add.split(" "), "--filter", "app");
+    expect(stderr).toBe("Saved lockfile");
+    expect(await locked(dir, "remote-dep")).toEqual({
+      "no-deps": has(),
+      all: [
+        "app@workspace:packages/app",
+        "basic-1@1.0.0",
+        has(),
+        `${w.name}@workspace:packages/w`,
+        "remote-dep@2.0.0",
+      ].sort(),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun update no-deps --filter b` is not about one-fixed-dep, which only workspace `c` depends on. Its `no-deps` takes
+  // the 1.0.1 of `one-dep`, as after `bun install`, and 1.1.0 is not asked for. With `a`, one-fixed-dep gets the id of
+  // `b` when the lockfile is cleaned.
+  test.concurrent(
+    "bun update <name> --filter leaves a package of another workspace that is in bun.lock to the rule",
+    async () => {
+      using recorded = new TestRegistry({ recordRequests: true }).start();
+      const dir = await behindRules(
+        { workspaces: ["packages/*"] },
+        { "one-fixed-dep": { "no-deps": "^1.0.0" } },
+        {
+          "packages/a/package.json": JSON.stringify({ name: "a" }),
+          "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { "no-deps": "1.0.0" } }),
+          "packages/c/package.json": JSON.stringify({
+            name: "c",
+            dependencies: { "one-dep": "1.0.0", "one-fixed-dep": "2.0.0" },
+          }),
+        },
+        recorded,
+      );
+      await expectBehind(dir, "no-deps@2.0.0", "no-deps@1.0.1");
+
+      const { stderr, exitCode } = await bun(dir, "update", "no-deps", "--filter", "b");
+      expect(stderr).toBe("Saved lockfile");
+      expect(await locked(dir, "one-fixed-dep")).toEqual({
+        "no-deps": "no-deps@1.0.1",
+        all: [
+          "a@workspace:packages/a",
+          "b@workspace:packages/b",
+          "c@workspace:packages/c",
+          "no-deps@1.0.0",
+          "no-deps@1.0.1",
+          "one-dep@1.0.0",
+          "one-fixed-dep@2.0.0",
+        ],
+      });
+      expect(recorded.requests.map(request => request.path).filter(path => path.endsWith("no-deps-1.1.0.tgz"))).toEqual(
+        [],
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Workspace `b` reaches the new scope-leaf@2.0.0 only through `scope-host`, and both entries are resolved again. The
+  // packages of the other workspace come first or last by its name, so `scope-leaf` is resolved before `scope-host` in
+  // one project and after it in the other. While `scope-host` waits, a walk from `b` does not get to scope-leaf.
+  test.concurrent.each(["a", "c"])(
+    "bun update <name> --filter updates the dependency of a new package in scope, next to workspace %s",
+    async other => {
+      using published = new TestRegistry().start();
+      await publish(published, [
+        { name: "scope-top", version: "1.0.0", dependencies: { "scope-host": "1.0.0" } },
+        { name: "scope-host", version: "1.0.0", dependencies: { "scope-shared": "1.0.0" } },
+        { name: "scope-host", version: "2.0.0", dependencies: { "scope-shared": "1.0.0" } },
+        { name: "scope-shared", version: "1.0.0", dependencies: { "scope-leaf": "1.0.0" } },
+        { name: "scope-leaf", version: "1.0.0" },
+        { name: "scope-leaf", version: "2.0.0", dependencies: { "no-deps": "^1.0.0" } },
+      ]);
+      const dir = await behindRules(
+        { workspaces: ["packages/*"] },
+        { "scope-host": "2.0.0", "scope-leaf": "2.0.0" },
+        {
+          "packages/b/package.json": JSON.stringify({
+            name: "b",
+            dependencies: { "no-deps": "1.0.0", "one-dep": "1.0.0", "scope-top": "1.0.0" },
+          }),
+          [`packages/${other}/package.json`]: JSON.stringify({
+            name: other,
+            dependencies: { "scope-shared": "1.0.0" },
+          }),
+        },
+        published,
+      );
+
+      const { stderr, exitCode } = await bun(dir, "update", "no-deps", "--filter", "b");
+      expect(stderr).toBe("Saved lockfile");
+      expect(await locked(dir, "scope-leaf")).toEqual({
+        "no-deps": "no-deps@1.1.0",
+        all: [
+          "b@workspace:packages/b",
+          `${other}@workspace:packages/${other}`,
+          "no-deps@1.0.0",
+          "no-deps@1.0.1",
+          "no-deps@1.1.0",
+          "one-dep@1.0.0",
+          "scope-host@2.0.0",
+          "scope-leaf@2.0.0",
+          "scope-shared@1.0.0",
+          "scope-top@1.0.0",
+        ].sort(),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Each of these leaves a row behind when package.json changes, so that a row id of the first pass is past the end
+  // after the clean.
+  const fillers = { "7-no-deps": "1.0.0", "basic-1": "1.0.0", "has-types": "1.0.0", "left-pad": "1.0.0" };
+  const withoutFillers = (ids: string[]) => ids.filter(id => !(id.slice(0, id.lastIndexOf("@")) in fillers));
+
+  // late-peer@2.0.0 waits for the manifest of `a-dep`, and its peer is looked at in the meantime. That must not count
+  // as a part of the peer pass that the first pass ended with.
+  test.concurrent("a package gets its peer after the first pass resolved peers", async () => {
+    const dependencies = { "late-peer": "1.0.0", "one-dep": "1.0.0", ...fillers };
+    const dir = await behindRules({ dependencies }, { "late-peer": "2.0.0" });
+    await editPackageJson(
+      dir,
+      pkg =>
+        void (pkg.dependencies = { ...dependencies, "one-optional-peer-dep": "1.0.1", "peer-deps-fixed": "1.0.0" }),
+    );
+
+    const { stdout, stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe("Saved lockfile");
+    expect(stdout).toContain("^ late-peer 1.0.0 -> 2.0.0");
+    const { all, ...peer } = await locked(dir, "late-peer");
+    expect({ ...peer, all: withoutFillers(all) }).toEqual({
+      "no-deps": "no-deps@1.0.1",
+      all: [
+        "a-dep@1.0.1",
+        "late-peer@2.0.0",
+        "no-deps@1.0.1",
+        "one-dep@1.0.0",
+        "one-optional-peer-dep@1.0.1",
+        "peer-deps-fixed@1.0.0",
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A pass that failed resolves no peer, so the peer of `peer-deps-fixed` is still in the queue after the clean.
+  test.concurrent("an install that failed in the first pass fails with that error", async () => {
+    const dependencies = { "a-dep": "1.0.1", ...fillers };
+    const dir = await behindRules({ dependencies }, { "a-dep": "1.0.2" });
+    await expectBehind(dir, "a-dep@1.0.1", "a-dep@1.0.2");
+    await editPackageJson(dir, pkg => {
+      pkg.dependencies = { ...dependencies, "peer-deps-fixed": "1.0.0" };
+      pkg.peerDependencies = { missing: "file:./missing" };
+    });
+    const lock = await lockfile(dir);
+
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe('error: package.json not found for "file:./missing" dependency "missing"');
+    expect(await lockfile(dir)).toBe(lock);
+    expect(exitCode).toBe(1);
+  });
+
+  // The peer of `remote-peer` is a tarball, and it waits for that tarball's task when the first pass fails.
+  test.concurrent("a package gets the tarball that a peer of a failed first pass waits for", async () => {
+    // The registry answers for `remote-peer-host` after a tarball failed, and bun asks for `remote-peer` after that.
+    // So the failure is known when the peer is found.
+    const failed = Promise.withResolvers<void>();
+    using gated = new TestRegistry({
+      intercept: async request => {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/remote-peer-host") await failed.promise;
+        if (pathname === "/missing-tarball/-/missing-tarball-1.0.0.tgz") {
+          failed.resolve();
+          return new Response(null, { status: 404 });
+        }
+      },
+    }).start();
+    await publish(gated, [
+      { name: "remote-dep", version: "1.0.0" },
+      { name: "remote-dep", version: "2.0.0", dependencies: { "no-deps": tarball(gated) } },
+      { name: "remote-peer", version: "1.0.0", peerDependencies: { "no-deps": tarball(gated) } },
+      { name: "remote-peer-host", version: "1.0.0", dependencies: { "remote-peer": "1.0.0" } },
+    ]);
+    const dependencies = { "remote-dep": "1.0.0", ...fillers };
+    const dir = await behindRules({ dependencies }, { "remote-dep": "2.0.0" }, {}, gated);
+    await expectBehind(dir, "remote-dep@1.0.0", "remote-dep@2.0.0");
+    await editPackageJson(
+      dir,
+      pkg => void (pkg.dependencies = { ...dependencies, "missing-tarball": "1.0.0", "remote-peer-host": "1.0.0" }),
+    );
+    const lock = await lockfile(dir);
+
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe(`error: GET ${gated.registryUrl()}missing-tarball/-/missing-tarball-1.0.0.tgz - 404`);
+    expect(await lockfile(dir)).toBe(lock);
+    expect(exitCode).toBe(1);
+  });
+
+  // The tarball of `missing-tarball` fails for remote-dep-minor@1.1.0, which the clean drops, and remote-dep@2.0.0 asks
+  // for it again.
+  test.concurrent.each([
+    { dropped: "dependencies", resolved: "dependencies", says: ["error", "error"] },
+    { dropped: "optionalDependencies", resolved: "dependencies", says: ["warn", "error"] },
+    { dropped: "optionalDependencies", resolved: "optionalDependencies", says: ["warn", "warn", "Saved lockfile"] },
+  ])(
+    "a package gets the failure of a tarball that failed for a dropped package ($dropped, then $resolved)",
+    async ({ dropped, resolved, says }) => {
+      using own = new TestRegistry().start();
+      const missing = { "missing-tarball": "1.0.0" };
+      await publish(own, family("remote-dep", { [dropped]: missing }, { [resolved]: missing }));
+      const dir = await behindRules({ dependencies: { "remote-dep": "1.0.0" } }, { "remote-dep": "2.0.0" }, {}, own);
+      await expectBehind(dir, "remote-dep@1.0.0", "remote-dep@2.0.0");
+      await editPackageJson(dir, pkg => void (pkg.dependencies = dropsMinor("remote-dep")));
+      const lock = await lockfile(dir);
+
+      const { stderr, exitCode } = await bun(dir, "install");
+      const failure = `GET ${own.registryUrl()}missing-tarball/-/missing-tarball-1.0.0.tgz - 404`;
+      expect(stderr.split("\n")).toEqual(says.map(level => (level.includes(" ") ? level : `${level}: ${failure}`)));
+      const saves = says.includes("Saved lockfile");
+      expect((await lockfile(dir)) === lock).toBe(!saves);
+      if (saves) expect((await locked(dir, "remote-dep")).all).toContain("remote-dep@2.0.0");
+      expect(exitCode).toBe(saves ? 0 : 1);
+    },
+  );
 });

@@ -1,0 +1,18 @@
+# `A.make(o)` finds `make` on Base, the constructor function that A extends. Names on function objects are followed, so the call enters that function, and what it is handed stays in sight.
+# -- source: main.js
+# class O { constructor() { this.x = 1; } }
+# function Base(v) { this.held = v; }
+# Base.make = function (o) { return o.x + 1; };
+# class A extends Base { constructor(v) { super(v); this.y = 2; } }
+# print(A.make(new O()), Base.make(new O()), new A(3).y);
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 2 2 2
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2 2 2
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 2 2 2

@@ -26,6 +26,11 @@ const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
+const isStandardOutputStream: (value: unknown) => boolean | undefined = $newCppFunction(
+  "BunProcess.cpp",
+  "jsFunctionIsStandardOutputStream",
+  1,
+);
 
 const ObjectDefineProperties = Object.defineProperties;
 const SymbolAsyncDispose = Symbol.asyncDispose;
@@ -530,6 +535,7 @@ Readable.prototype.setEncoding = function (enc) {
   for (const data of state.buffer.slice(state.bufferIndex)) {
     content += decoder.write(data);
   }
+  if ((state[kState] & kEnded) !== 0) content += decoder.end();
   state.buffer.length = 0;
   state.bufferIndex = 0;
 
@@ -557,6 +563,13 @@ function computeNewHighWaterMark(n) {
   return n;
 }
 
+// `state.length` is the sum of the lengths of what is buffered.
+function firstChunkLength(state) {
+  const buffer = state.buffer;
+  const index = state.bufferIndex;
+  return buffer.length - index === 1 ? state.length : buffer[index].length;
+}
+
 // This function is designed to be inlinable, so please take care when making
 // changes to the function body.
 function howMuchToRead(n, state) {
@@ -564,10 +577,10 @@ function howMuchToRead(n, state) {
   if ((state[kState] & kObjectMode) !== 0) return 1;
   if (NumberIsNaN(n)) {
     // Fast path for buffers.
-    if ((state[kState] & kDecoder) === 0 && state.length) return state.buffer[state.bufferIndex].length;
+    if ((state[kState] & kDecoder) === 0 && state.length) return firstChunkLength(state);
 
     // Only flow one buffer at a time.
-    if ((state[kState] & kFlowing) !== 0 && state.length) return state.buffer[state.bufferIndex].length;
+    if ((state[kState] & kFlowing) !== 0 && state.length) return firstChunkLength(state);
 
     return state.length;
   }
@@ -841,7 +854,13 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   state.pipes.push(dest);
   $debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts);
 
-  const doEnd = (!pipeOpts || pipeOpts.end !== false) && dest !== process.stdout && dest !== process.stderr;
+  let doEnd = !pipeOpts || pipeOpts.end !== false;
+  if (doEnd) {
+    const isStandardOutput = isStandardOutputStream(dest);
+    // Making process.stdout or process.stderr would have loaded all of node:stream.
+    if (isStandardOutput === undefined) require("internal/stream");
+    doEnd = !isStandardOutput;
+  }
 
   const endFn = doEnd ? onend : unpipe;
   if ((state[kState] & kEndEmitted) !== 0) process.nextTick(endFn);

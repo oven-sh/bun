@@ -1,0 +1,31 @@
+# has finds a key's place in a table and keeps it for the get behind it; as users build the read at that place has no bound.
+# THE LIE, testing=RowSaysLess:Builtin/Map.prototype.clear/CollectionStorage: clear is said not to write the table's storage: the place is kept across it and the get reads where nothing of the table lies any more.
+# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition), under proof-checks and where the emitters alone test every position the read is held: there is a table, the table lives, holds values of the width that the place says, the entry is in use and its key lives: or the process stops by name.
+# There is no run of the lie alone.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: 10 20 2 10 20 5 6 6 undefined 9 10 11 12 13 14 6
+# RIGHT-NEXT: exited with 0
+# RUN(RANGES): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Map.prototype.clear/CollectionStorage,TestsEveryPosition
+# RANGES: AOT: f{{*}}
+# RANGES: crashed with SIGABRT
+# RUN(PROOFS): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Map.prototype.clear/CollectionStorage,CheckProofsAtRunTime
+# PROOFS: AOT: f{{*}}
+# PROOFS: crashed with SIGABRT
+# RUN(EMITTERS): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Map.prototype.clear/CollectionStorage,EmittersAloneTestEveryPosition
+# EMITTERS: AOT: f{{*}}
+# EMITTERS: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function said(keys: number[]): string {
+#   const table = new Map<number, number>([[1, 10], [2, 20]]);
+#   let all = "";
+#   for (let i = 0; i < keys.length; i++) {
+#     const key = keys[i]!;
+#     if (!table.has(key)) table.set(key, i);
+#     else if (i === 8) table.clear();
+#     all += table.get(key) + " ";
+#   }
+#   return all + table.size;
+# }
+# print(said(JSON.parse("[1,2,3,1,2,9,4,4,1,7,3,9,12,1,5]")));
+# -- end of source

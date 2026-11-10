@@ -346,7 +346,7 @@ function _addListener(target, type, fn, prepend) {
   if (!events) {
     events = target._events = Object.create(null);
     target._eventsCount = 0;
-  } else if (events.newListener) {
+  } else if (events.newListener !== undefined) {
     target.emit("newListener", type, fn.listener ?? fn);
     // A newListener handler can replace `_events` (e.g. a once wrapper's
     // removeListener dropping the count to 0 installs a fresh object).

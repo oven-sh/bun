@@ -7,10 +7,10 @@
 //
 // The checkout has to be prepared by `prepare-checkouts.ts` first.
 //
-// Same scheme as `extract-eslint.ts`: the test files are loaded with
-// `@typescript-eslint/rule-tester` replaced by a stub that records, the real
-// `Linter` is then run on every recorded case with the config the real
-// RuleTester would have built, and what upstream asserts is a cross-check.
+// Works like `extract-eslint.ts`. The test files are loaded with
+// `@typescript-eslint/rule-tester` replaced by a stub that records the cases.
+// The real `Linter` then runs on every recorded case with the config the real
+// RuleTester would have built. Upstream's assertions are only a cross-check.
 
 import { cpSync, existsSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -65,8 +65,8 @@ if (!args.worker) {
 // fixtures that only mention paths inside of it.
 process.chdir(projectDir);
 
-// The tests and the rules they import are TypeScript that Node.js cannot strip
-// (extensionless imports, enums); the repo's own `tsx` compiles them on require().
+// The tests and the rules they import are TypeScript that Node.js can't strip
+// (extensionless imports, enums), so the repo's own `tsx` compiles them on require().
 require("tsx/cjs/api").register();
 
 const requireFromRuleTester = createRequire(require.resolve("@typescript-eslint/rule-tester/package.json"));
@@ -154,7 +154,7 @@ stubModule("@typescript-eslint/rule-tester", {
   noFormat: (raw: TemplateStringsArray, ...keys: string[]) => String.raw({ raw }, ...keys),
 });
 
-/** Test case properties that are not ESLint config (`RULE_TESTER_PARAMETERS` upstream). */
+/** Test case properties that aren't ESLint config (`RULE_TESTER_PARAMETERS` upstream). */
 const notConfig = [
   "after",
   "before",
@@ -172,7 +172,7 @@ const notConfig = [
 
 const toPosix = (path: string) => path.split(sep).join("/");
 
-/** Absolute paths into the upstream fixture project become relative to it, everywhere. */
+/** Recursively makes absolute paths into the upstream fixture project relative to it. */
 function relativeToProject<T>(value: T): T {
   if (typeof value === "string") {
     if (value !== projectDir && !value.startsWith(projectDir + sep)) return value;
@@ -185,12 +185,12 @@ function relativeToProject<T>(value: T): T {
   return value;
 }
 
-/** The tsconfig a type-aware case is checked with, relative to the fixture project. */
+/** Returns the tsconfig a type-aware case is checked with, relative to the fixture project. */
 function findTsconfig(parserOptions: Config, filename: string): string | null {
   const root: string = parserOptions.tsconfigRootDir ?? process.cwd();
   const project = Array.isArray(parserOptions.project) ? parserOptions.project[0] : parserOptions.project;
   if (typeof project === "string") return toPosix(relative(projectDir, resolve(root, project)));
-  // `project: true` and `projectService`: the closest tsconfig.json.
+  // `project: true` and `projectService` use the closest tsconfig.json.
   for (let dir = dirname(resolve(root, filename)); ; dir = dirname(dir)) {
     if (existsSync(join(dir, "tsconfig.json"))) return toPosix(relative(projectDir, join(dir, "tsconfig.json")));
     if (dir === dirname(dir)) return null;
@@ -297,9 +297,9 @@ function runCase(
   const settings = jsonPart(config.settings, dropped, "settings") as Config | undefined;
   if (dropped.length > 0) skip ??= `not JSON-serializable: ${dropped.join(", ")}`;
 
-  // ESLint's own idea of these two. The parser is given `parserOptions`' when
-  // they are set there too, which the RuleTester always does; they are only
-  // worth recording when the two differ.
+  // These are the ESLint-level values. The RuleTester also always sets both in
+  // `parserOptions`, which is what the parser gets. Those are only recorded if
+  // they differ from the ESLint-level ones.
   let ecmaVersion: number | "latest" = config.languageOptions.ecmaVersion ?? "latest";
   if (typeof ecmaVersion === "number" && ecmaVersion >= 6 && ecmaVersion < 2015) ecmaVersion += 2009;
   const sourceType = config.languageOptions.sourceType ?? (/\.cjs$/.test(filename) ? "commonjs" : "module");
@@ -336,7 +336,7 @@ function runCase(
   return result;
 }
 
-/** `<rule>.test.ts` and everything under `<rule>/`, in a stable order. */
+/** Returns `<rule>.test.ts` and every test under `<rule>/`, in a stable order. */
 function testFiles(ruleName: string): string[] {
   const files = existsSync(join(testsDir, `${ruleName}.test.ts`)) ? [join(testsDir, `${ruleName}.test.ts`)] : [];
   if (existsSync(join(testsDir, ruleName))) {

@@ -1,0 +1,28 @@
+# -- source: what-this-body-puts-into-a-list-made-here-is-tested-for-at-what-the-list-hands-out.mjs
+# function byShift(from, to) { const queue = [{ node: from, steps: 0 }]; let sum = 0; while (queue.length) { const { node, steps } = queue.shift(); sum += node + steps; if (node < to) queue.push({ node: node + 1, steps: steps + 1 }); } return sum; }
+# function byIndex(from, to) { const stack = [{ spot: from, hops: 0 }]; let sum = 0; for (let at = 0; at < stack.length; at++) { const { spot, hops } = stack[at]; sum += spot + hops; if (spot < to) stack.push({ spot: spot + 1, hops: hops + 1 }); } return sum; }
+# const kept = [{ knot: 1, paces: 2 }];
+# function ofOthers(rows) { const line = []; for (let at = 0; at < rows.length; at++) line.push(rows[at]); let sum = kept[0].knot + kept[0].paces; while (line.length) { const { knot, paces } = line.shift(); sum += knot + paces; } return sum; }
+# globalThis.sink(byShift, byIndex, ofOthers);
+# -- end of source
+# f1 = byShift, f2 = byIndex, f3 = ofOthers
+# A layout whose objects never reach unseen code is not tested for at what comes out of unseen code: such a guess can never hold. What a method of a list hands out bears the seed of contents that nobody follows, and that seed
+# counts as unseen code; but a list made in this body holds what this body puts into it. The layouts that the body's own text puts into the list (its elements at birth, push, a store by key) stay in the expectation:
+# what the list hands out is asked for the layout once, and the fields are read by their slots.
+# RUN(SHIFT): walk f1 mechanisms=all
+# SHIFT: = ShapeTest
+# SHIFT: = GetSlot {{*}}key="node"
+# SHIFT: = GetSlot {{*}}key="steps"
+# What is read by an index off such a list is proven, as before: no test and no read by name.
+# RUN(INDEX): walk f2 mechanisms=all
+# INDEX: code f2:Body
+# INDEX-NOT: = PropGet
+# RUN(PROVEN): walk f2 mechanisms=all
+# PROVEN: code f2:Body
+# PROVEN-NOT: = ShapeTest
+# A list made here into which the body puts other things alone is asked for no layout of the file, though one has the names: the reads stay reads by name that ask the structure first.
+# RUN(OTHERS): walk f3 mechanisms=all
+# OTHERS: code f3:Body
+# OTHERS: = CallBuiltin {{*}}overload=ArrayPrototypeShift/0
+# OTHERS-NOT: = ShapeTest
+# OTHERS: = PropGet {{*}}key="knot" [receiverIsNoObjectOfCompiledCode]

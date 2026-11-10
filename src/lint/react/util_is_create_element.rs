@@ -3,14 +3,13 @@
 use crate::util_is_destructured_from_pragma_import::is_destructured_from_pragma_import;
 use bun_lint::prelude::*;
 
-/// `callee.type === "MemberExpression" && callee.property.name === name`: also `a[name]` and
-/// `a.#name`.
+/// `callee.type === "MemberExpression" && callee.property.name === name`. Also matches `a[name]` and `a.#name`.
 pub(crate) fn is_member_called(callee: Expr, name: &str) -> bool {
     !callee.is_chain_root()
         && match callee.kind() {
             ExprKind::Dot { name: property, .. } => {
-                let written = property.bytes();
-                written.strip_prefix(b"#").unwrap_or(written) == name.as_bytes()
+                let property_name = property.bytes();
+                property_name.strip_prefix(b"#").unwrap_or(property_name) == name.as_bytes()
             }
             ExprKind::Index { index, .. } => index.is_ident(name),
             _ => false,

@@ -1,0 +1,40 @@
+# (new EventTarget()).__proto__[hidden] = (value) => value(); performance.isPrototypeOf(second)
+# performance > Performance.prototype > EventTarget.prototype > Object.prototype: the lookup passes EventTarget.prototype. The store goes through a value that nobody follows, under a name that nobody knows: it may be `isPrototypeOf`.
+# No lock refuses it at run time: there is no member to lock on a holder that is only passed. The row only looks at its operand: if the call were taken for the row, `second` would be left out.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="EventTarget" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(EventTarget) flags=[IsExpected]}
+    v3 = Construct v2 calleeName="EventTarget"
+    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v5 = PropGet v4 key="__proto__"
+    v6 = PropGet v0 key="hidden" [isFreeName]
+    v7 = NewClosure function=f1
+    ElemSet v5, v6, v7
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="performance" [isFreeName]
+    v11 = Convert v10 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]}
+    v12 = PropGet v11 key="isPrototypeOf"
+    v13 = Convert v12 declared={type=builtin(ObjectPrototypeIsPrototypeOf) flags=[IsExpected]}
+    v14 = NewClosure function=f2
+    v15 = Call v13, v11, v14 calleeKey="isPrototypeOf" calleeName="performance.isPrototypeOf"
+    v16 = Undefined
+    Return v16
+}
+function f1 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

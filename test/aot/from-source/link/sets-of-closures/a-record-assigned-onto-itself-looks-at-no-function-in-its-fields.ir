@@ -1,0 +1,17 @@
+# -- source: main.js
+# function first(text) { return text + "1"; }
+# function second(text) { return text + "2"; }
+# function record(make, count) { return { make, count }; }
+# function run(held, text) { const make = held.make; return make(text); }
+# function one() { const held = record(first, 1); const copy = Object.assign(held, held); return run(copy, "x"); }
+# function two() { const held = record(second, 2); return run({ ...held }, "y"); }
+# print(one(), two());
+# -- end of source
+# Two functions meet in one field and are only called. Object.assign() of a record onto itself and a spread copy the field onto itself: neither looks at what lies in it.
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: function f2 callers-known
+# RUN(ANSWER): run-in-shell
+# ANSWER: x1 y2
+# ANSWER-NEXT: exited with 0

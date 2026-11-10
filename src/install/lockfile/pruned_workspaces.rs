@@ -31,7 +31,8 @@ pub(crate) fn workspace_is_missing_on_disk(
     !bun_sys::exists_z(package_json_path.slice_z())
 }
 
-/// Not for a local package's edge: that is an error (`exit_if_survivor_depends_on_missing`).
+/// Doesn't apply to a dependency of a local package. That's an error (see
+/// `exit_if_survivor_depends_on_missing`).
 pub(crate) fn skips_link_to_pruned_workspace(
     manager: &PackageManager,
     lockfile: &Lockfile,

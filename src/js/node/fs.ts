@@ -283,7 +283,7 @@ var access = function access(path, mode, callback?) {
     }
     callback = wrapFsCallback(callback);
     fs.readCb(
-      (err, bytesRead) => (err ? callback(err) : callback(null, bytesRead, buffer)),
+      (err, bytesRead) => (err ? callback(err, 0, buffer) : callback(null, bytesRead, buffer)),
       fd,
       buffer,
       offset,
@@ -293,7 +293,7 @@ var access = function access(path, mode, callback?) {
   },
   write = function write(fd, buffer, offsetOrOptions, length?, position?, callback?) {
     function onWritten(err, bytesWritten) {
-      if (err) callback(err);
+      if (err) callback(err, 0, buffer);
       else callback(null, bytesWritten, buffer);
     }
 
@@ -589,7 +589,7 @@ var access = function access(path, mode, callback?) {
     callback = ensureCallback(callback);
 
     fs.writevCb(
-      (err, bytesWritten) => (err ? callback(err) : callback(null, bytesWritten, buffers)),
+      (err, bytesWritten) => (err ? callback(err, 0, buffers) : callback(null, bytesWritten, buffers)),
       fd,
       buffers,
       position,
@@ -604,7 +604,12 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.readvCb((err, bytesRead) => (err ? callback(err) : callback(null, bytesRead, buffers)), fd, buffers, position);
+    fs.readvCb(
+      (err, bytesRead) => (err ? callback(err, 0, buffers) : callback(null, bytesRead, buffers)),
+      fd,
+      buffers,
+      position,
+    );
   },
   readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,
@@ -704,12 +709,12 @@ const realpathSync: typeof import("node:fs").realpathSync =
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
-        if (p instanceof URL) {
+        if (typeof p !== "string" && require("internal/url").isURL(p)) {
           const pathname = p.pathname;
           if (pathname.indexOf("%00") != -1) {
             throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
           }
-          p = Bun.fileURLToPath(p as URL);
+          p = require("internal/url").toPathIfFileURL(p);
         } else {
           if (typeof p !== "string") {
             p += "";
@@ -820,12 +825,12 @@ const realpath: typeof import("node:fs").realpath =
             $bindgen("node_util_binding.bind.ts", "assertEncodingValid")(encoding);
           }
         }
-        if (p instanceof URL) {
+        if (typeof p !== "string" && require("internal/url").isURL(p)) {
           const pathname = p.pathname;
           if (pathname.indexOf("%00") != -1) {
             throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
           }
-          p = Bun.fileURLToPath(p as URL);
+          p = require("internal/url").toPathIfFileURL(p);
         } else {
           if (typeof p !== "string") {
             p += "";

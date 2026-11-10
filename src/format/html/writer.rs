@@ -1,9 +1,8 @@
-//! What the printer writes the document with: the builders of Prettier's `document/builders`, for the elements of
-//! `ir`.
+//! The HTML printer's document writer: Prettier's `document/builders`, emitting `ir` elements.
 //!
-//! The printer of `ir` writes no line break on a line that is empty, Prettier's does: two of them in a row are an empty
-//! line. So this keeps track of whether anything has been written since the last line break, and asks for an empty line
-//! where Prettier gets one.
+//! Prettier prints every line break, so two in a row make an empty line. The `ir` printer skips a line break when the
+//! current line is empty. So this tracks whether anything has been written since the last line break, and emits an
+//! explicit empty line where Prettier would print one.
 
 use crate::ir::element::{
     Condition, CursorMark, DedentMode, Group, GroupMode, Interned, LineMode, PrintMode, Text,
@@ -12,32 +11,30 @@ use crate::ir::element::{
 use crate::prelude::*;
 use bun_core::strings;
 
-/// Whether the line is empty where the next element is printed.
+/// Tracks whether the next element is printed on an empty line.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum EmptyLine {
     No,
-    /// If the line break before is one: that is up to the group that both are in.
+    /// Only if the preceding `line` breaks, which depends on the enclosing group.
     IfGroupBreaks,
-    /// If the line break before is one: that is up to a group that has ended.
+    /// Only if the preceding `line` broke, which depends on a group that has already ended.
     IfGroupHasBroken(GroupId),
     Yes,
 }
 
 pub(crate) struct Writer<'w, 'f> {
     pub(crate) f: &'w mut Formatter<'f>,
-    /// Line breaks right after each other that have not been written yet: what they are if the group is on one line,
-    /// and how many.
+    /// Consecutive line breaks that haven't been written yet: their combined mode and their count.
     pending_line: Option<(LineMode, u32)>,
-    /// How many of them are blanks if they are no line breaks: see [`Writer::line_or_blank`].
-    pending_blanks: u32,
+    /// How many of them must each print a space when they don't break. See [`Writer::line_or_literal_space`].
+    pending_spaces: u32,
     empty_line: EmptyLine,
-    /// How many `indent`s are around what is written, if nothing else has a say in where its lines start.
+    /// Number of enclosing `indent`s, or `None` if something else also affects where lines start.
     indent_level: Option<u32>,
 }
 
 impl<'w, 'f> Writer<'w, 'f> {
-    /// `indent_level`: how many `indent`s are around what is written, if that is known. `is_at_start`: nothing has been
-    /// written yet.
+    /// `indent_level` is the number of enclosing `indent`s, if known. `is_at_start` means nothing has been written yet.
     pub(crate) fn new(
         f: &'w mut Formatter<'f>,
         indent_level: Option<u32>,
@@ -46,7 +43,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         Writer {
             f,
             pending_line: None,
-            pending_blanks: 0,
+            pending_spaces: 0,
             empty_line: if is_at_start {
                 EmptyLine::Yes
             } else {
@@ -64,7 +61,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.indent_level
     }
 
-    /// The column that the lines of what is written start in, if that does not depend on how the document is printed.
+    /// Returns the column where lines start, or `None` if it depends on how the document is printed.
     pub(crate) fn indentation_width(&self) -> Option<usize> {
         Some(self.indent_level? as usize * self.f.options().indent_width.value() as usize)
     }
@@ -82,17 +79,18 @@ impl<'w, 'f> Writer<'w, 'f> {
         });
     }
 
-    /// Writes the line breaks that are due.
+    /// Writes the pending line breaks.
     fn flush(&mut self) {
         let Some((mode, count)) = self.pending_line.take() else {
             return;
         };
-        // The first blank of a line is the printer's, unless it may be at the start of the line. The others are texts.
-        let (mode, blanks) = match (mode, std::mem::take(&mut self.pending_blanks)) {
-            (LineMode::SoftOrSpace, blanks @ 1..) if self.empty_line != EmptyLine::No => {
-                (LineMode::Soft, blanks)
+        // `SoftOrSpace` prints the first space, except where the line may be empty, because the `ir` printer drops a
+        // space there. The remaining spaces are written as text.
+        let (mode, extra_spaces) = match (mode, std::mem::take(&mut self.pending_spaces)) {
+            (LineMode::SoftOrSpace, extra_spaces @ 1..) if self.empty_line != EmptyLine::No => {
+                (LineMode::Soft, extra_spaces)
             }
-            (LineMode::SoftOrSpace, blanks @ 1..) => (mode, blanks - 1),
+            (LineMode::SoftOrSpace, extra_spaces @ 1..) => (mode, extra_spaces - 1),
             _ => (mode, 0),
         };
         match self.empty_line {
@@ -111,11 +109,11 @@ impl<'w, 'f> Writer<'w, 'f> {
             }
             empty_line => self.write_lines(mode, count, empty_line != EmptyLine::No),
         }
-        if blanks > 0 {
+        if extra_spaces > 0 {
             let condition = Condition::new(PrintMode::Flat);
             self.f
                 .write_element(FormatElement::Tag(Tag::StartConditionalContent(condition)));
-            for _ in 0..blanks {
+            for _ in 0..extra_spaces {
                 self.f.write_token(" ");
             }
             self.f
@@ -128,11 +126,11 @@ impl<'w, 'f> Writer<'w, 'f> {
         };
     }
 
-    /// `is_line_empty`: the printer leaves out the first on a line that is empty.
+    /// `is_line_empty` means the current line is empty, so the `ir` printer will skip the first line break.
     fn write_lines(&mut self, mode: LineMode, count: u32, is_line_empty: bool) {
-        let written_by_mode = if is_line_empty { 0 } else { 1 };
+        let breaks_printed_by_mode = if is_line_empty { 0 } else { 1 };
         if mode == LineMode::Hard && is_line_empty {
-            // The first is for the indentation that is due not to be written.
+            // The first `Hard` only resets the pending indentation, so it isn't printed on the empty lines.
             self.f
                 .write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));
@@ -142,11 +140,11 @@ impl<'w, 'f> Writer<'w, 'f> {
                 .write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));
         } else if mode == LineMode::Hard && count > 2 {
-            // The first ends the line, with the blanks at its end.
+            // The first one ends the current line and trims its trailing whitespace.
             self.f.write_element(FormatElement::Line(LineMode::Hard));
             self.write_lines(mode, count - 1, true);
         } else {
-            let with_empty_line = count > written_by_mode;
+            let with_empty_line = count > breaks_printed_by_mode;
             self.f
                 .write_element(FormatElement::Line(match (mode, with_empty_line) {
                     (mode, false) => mode,
@@ -157,15 +155,16 @@ impl<'w, 'f> Writer<'w, 'f> {
         }
     }
 
-    /// The group with `id` has just ended, and the last thing in it is a line break.
+    /// Call this right after the group `id` ends if the last thing in it is a line break.
     pub(crate) fn note_line_at_end_of_group(&mut self, id: GroupId) {
         self.empty_line = EmptyLine::IfGroupHasBroken(id);
     }
 
-    /// Something starts or ends that decides by itself whether the line breaks in it are line breaks.
+    /// Writes the start or end tag of a construct that decides for itself whether its line breaks break.
     fn tag(&mut self, tag: Tag) {
         self.flush();
-        // A line break in what starts here is one only if those of the group around it are.
+        // `IfGroupBreaks` survives entering a nested group, because a line break in there only breaks if the enclosing
+        // group's do too.
         if self.empty_line == EmptyLine::IfGroupBreaks
             && !matches!(tag, Tag::StartGroup(_) | Tag::StartFill | Tag::StartEntry)
         {
@@ -174,7 +173,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.f.write_element(FormatElement::Tag(tag));
     }
 
-    /// Something starts or ends that changes where lines start.
+    /// Writes a start or end tag that only changes indentation.
     fn indent_tag(&mut self, tag: Tag) {
         self.flush();
         self.f.write_element(FormatElement::Tag(tag));
@@ -192,6 +191,19 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.add_line(LineMode::Hard);
     }
 
+    /// Prints a `hardline` after `line`, which is the output of another formatter. That formatter only prints trailing
+    /// spaces and tabs that must be kept, and a `hardline` would trim them. A line break printed as text doesn't, and
+    /// the `hardline` after it then only indents.
+    pub(crate) fn hardline_after(&mut self, line: &[u8]) {
+        if !matches!(line.last(), Some(b' ' | b'\t')) {
+            return self.hardline();
+        }
+        self.flush();
+        self.f.write_text(b"\n", Some(TextWidth::multiline(0)));
+        self.f.write_element(FormatElement::Line(LineMode::Hard));
+        self.empty_line = EmptyLine::Yes;
+    }
+
     pub(crate) fn break_parent(&mut self) {
         self.flush();
         self.f.write_element(FormatElement::ExpandParent);
@@ -207,14 +219,14 @@ impl<'w, 'f> Writer<'w, 'f> {
         };
     }
 
-    /// A keyword or a punctuator.
+    /// A keyword or punctuator.
     pub(crate) fn token(&mut self, text: &'static str) {
         self.flush();
         self.empty_line = EmptyLine::No;
         self.f.write_token(text);
     }
 
-    /// `replaceEndOfLine(text)`: a line break in it is a `literalline`.
+    /// `replaceEndOfLine(text)`: each line break in it becomes a `literalline`.
     pub(crate) fn text(&mut self, text: &[u8]) {
         if text.is_empty() {
             return;
@@ -224,7 +236,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.f.write_text(text, None);
     }
 
-    /// A string that Prettier does not look into: a line break in it is a character without a width.
+    /// A string that Prettier prints as is, so a line break in it is just a zero-width character.
     pub(crate) fn string(&mut self, text: &[u8]) {
         if text.is_empty() {
             return;
@@ -234,14 +246,14 @@ impl<'w, 'f> Writer<'w, 'f> {
         super::js::write_string(text, self.f);
     }
 
-    /// The same for what `build` appends to the vector that it is given.
+    /// Like [`Writer::text`], for whatever `build` appends to its vector.
     pub(crate) fn built_text(&mut self, build: impl FnOnce(&mut Vec<u8>)) {
         let start = self.f.storage.text.len();
         build(&mut self.f.storage.text);
         self.text_built_from(start);
     }
 
-    /// What has been appended to the texts of the document from `start` on.
+    /// Writes `storage.text[start..]` as one text.
     fn text_built_from(&mut self, start: usize) {
         let Some(text) = self
             .f
@@ -283,12 +295,12 @@ impl<'w, 'f> Writer<'w, 'f> {
         });
     }
 
-    /// Text that another formatter has printed for lines that start where these do. A line break that is part of
-    /// a text in it is `\r\n`: see `FormatOptions::is_in_markdown`.
+    /// Writes the output of another formatter, whose lines get the current indentation. A line break inside one of its
+    /// texts is marked as `\r\n`. See `FormatOptions::is_in_markdown`.
     pub(crate) fn printed_text(&mut self, text: &[u8]) {
         let mut rest = text;
         loop {
-            // Up to the first line break that is not part of a text.
+            // Find the first line break that isn't part of a text.
             let (mut end, mut has_line_breaks) = (0, false);
             while let Some(at) =
                 strings::index_of_char_usize(&rest[end..], b'\n').map(|at| end + at)
@@ -313,12 +325,12 @@ impl<'w, 'f> Writer<'w, 'f> {
             let Some(after) = rest.get(end + 1..) else {
                 return;
             };
-            self.hardline();
+            self.hardline_after(line);
             rest = after;
         }
     }
 
-    // ───────────────────────────── what has contents ─────────────────────────────
+    // ───────────────────────────── containers ─────────────────────────────
 
     pub(crate) fn start_group(&mut self) {
         self.tag(Tag::StartGroup(Group::new()));
@@ -358,11 +370,12 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.indent_level = self.indent_level.map(|level| level + 1);
     }
 
-    /// `line`, to the letter: one that is no line break is a blank, also at the start of a line and behind another one, where
-    /// the printer of `ir` has none. HTML has no two in a row and none at the start of a line.
-    pub(crate) fn line_or_blank(&mut self) {
+    /// Prettier's `line`, exactly. When it doesn't break it prints a space, even at the start of a line or after
+    /// another space, where the `ir` printer would drop it. [`Writer::line`] is enough for HTML, which never has two in
+    /// a row or one at the start of a line.
+    pub(crate) fn line_or_literal_space(&mut self) {
         self.add_line(LineMode::SoftOrSpace);
-        self.pending_blanks += 1;
+        self.pending_spaces += 1;
     }
 
     /// `lineSuffix(..)`
@@ -387,7 +400,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.indent_tag(Tag::EndDedent(DedentMode::Root));
     }
 
-    /// `indentIfBreak(.., { groupId })`. Returns what to end it with.
+    /// `indentIfBreak(.., { groupId })`. Pass the returned value to [`Writer::end_indent_if_break`].
     pub(crate) fn start_indent_if_break(&mut self, group_id: GroupId) -> Option<u32> {
         self.indent_tag(Tag::StartIndentIfGroupBreaks(group_id));
         self.indent_level.take()
@@ -414,8 +427,8 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.tag(Tag::EndEntry);
     }
 
-    /// Starts what is only there if the group with the id is broken, or only if it is not. `None`: the group that it
-    /// is in.
+    /// Starts content that's only printed if the group `group_id` is broken (`is_broken`), or only if it isn't. `None`
+    /// means the enclosing group.
     pub(crate) fn start_if(&mut self, is_broken: bool, group_id: Option<GroupId>) {
         let mode = if is_broken {
             PrintMode::Expanded
@@ -445,9 +458,9 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.end_if();
     }
 
-    // ───────────────────────────── what somebody else writes ─────────────────────────────
+    // ───────────────────────────── content from other writers ─────────────────────────────
 
-    /// Calls `write` to write something that does not start and does not end with a line break.
+    /// Calls `write` to write content that neither starts nor ends with a line break.
     pub(crate) fn foreign<R>(&mut self, write: impl FnOnce(&mut Formatter<'f>) -> R) -> R {
         self.flush();
         let start = self.f.elements().len();
@@ -458,7 +471,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         result
     }
 
-    /// Starts something that may not become part of the document. Returns what to end it with.
+    /// Starts content that may end up being discarded. Pass the returned [`Attempt`] to [`Writer::end_attempt`].
     pub(crate) fn start_attempt(&mut self) -> Attempt {
         self.flush();
         Attempt {
@@ -468,39 +481,39 @@ impl<'w, 'f> Writer<'w, 'f> {
         }
     }
 
-    /// The start or the end of the part of the text that the cursor is in.
+    /// Marks the start or end of the text region that contains the cursor.
     pub(crate) fn cursor_mark(&mut self, mark: CursorMark) {
         self.flush();
         self.f.write_element(FormatElement::Cursor(mark));
     }
 
-    /// The same for something that is written behind a string that has not been written yet.
-    pub(crate) fn start_attempt_behind_text(&mut self) -> Attempt {
+    /// Like [`Writer::start_attempt`], for content that goes after a string that hasn't been written yet.
+    pub(crate) fn start_attempt_after_text(&mut self) -> Attempt {
         let attempt = self.start_attempt();
         self.empty_line = EmptyLine::No;
         attempt
     }
 
-    /// Ends it. It is part of the document if `is_kept`. Returns that.
+    /// Ends the attempt. Its content becomes part of the document if `is_kept`, which is also the return value.
     pub(crate) fn end_attempt(&mut self, attempt: Attempt, is_kept: bool) -> bool {
         match is_kept {
             true => self.flush(),
             false => {
                 self.pending_line = None;
-                self.pending_blanks = 0;
+                self.pending_spaces = 0;
                 self.empty_line = attempt.empty_line;
                 self.indent_level = attempt.indent_level;
             }
         }
-        let written = self.f.end_capture(attempt.slot);
-        if is_kept && written.len > 0 {
-            self.f.write_element(FormatElement::Interned(written));
+        let captured = self.f.end_capture(attempt.slot);
+        if is_kept && captured.len > 0 {
+            self.f.write_element(FormatElement::Interned(captured));
         }
         is_kept
     }
 
-    /// Ends it. Returns what has been written, which is not part of the document yet, if `is_kept` and it is
-    /// something.
+    /// Ends the attempt without adding its content to the document. Returns the content if `is_kept` and it isn't
+    /// empty.
     pub(crate) fn end_attempt_as_content(
         &mut self,
         attempt: Attempt,
@@ -508,14 +521,14 @@ impl<'w, 'f> Writer<'w, 'f> {
     ) -> Option<Interned> {
         match is_kept {
             true => self.flush(),
-            false => (self.pending_line, self.pending_blanks) = (None, 0),
+            false => (self.pending_line, self.pending_spaces) = (None, 0),
         }
         self.empty_line = attempt.empty_line;
         self.indent_level = attempt.indent_level;
-        Some(self.f.end_capture(attempt.slot)).filter(|written| is_kept && written.len > 0)
+        Some(self.f.end_capture(attempt.slot)).filter(|captured| is_kept && captured.len > 0)
     }
 
-    /// Ends what is written.
+    /// Writes any pending line breaks.
     pub(crate) fn finish(mut self) {
         self.flush();
     }

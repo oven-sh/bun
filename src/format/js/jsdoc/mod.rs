@@ -1,8 +1,8 @@
-//! oxfmt's `jsdoc` option: JSDoc comments are formatted the way
-//! [prettier-plugin-jsdoc](https://github.com/hosseinmd/prettier-plugin-jsdoc) does it.
+//! oxfmt's `jsdoc` option: formats JSDoc comments the way
+//! [prettier-plugin-jsdoc](https://github.com/hosseinmd/prettier-plugin-jsdoc) does.
 //!
-//! This follows `oxc_formatter`'s `formatter/jsdoc`, which is under the MIT license. The comments are read by
-//! `File::jsdoc`, descriptions are parsed by the parser for Markdown of this crate.
+//! This follows `oxc_formatter`'s `formatter/jsdoc`, which is under the MIT license. `File::jsdoc` parses the comments,
+//! and this crate's Markdown parser parses the descriptions.
 
 mod embedded;
 mod imports;
@@ -24,8 +24,8 @@ use crate::write;
 use bun_core::strings;
 use bun_lint::ast::jsdoc::JSDoc;
 
-/// Writes `comment` formatted, if the `jsdoc` option is set and it is a JSDoc comment that formatting changes.
-/// Returns whether it has been written.
+/// Writes the formatted `comment` if the `jsdoc` option is set and it's a JSDoc comment that formatting changes.
+/// Returns true if it wrote it.
 pub(crate) fn write_comment<'a>(comment: Comment<'_>, f: &mut Formatter<'a>) -> bool {
     let Some(options) = f.options().jsdoc else {
         return false;
@@ -47,7 +47,7 @@ fn write_formatted<'a>(
         return false;
     }
     let docs = f.file().jsdoc();
-    // `/*****/` is none.
+    // `/*****/` isn't a JSDoc comment.
     let Some(first) = docs
         .at(comment.span().start)
         .filter(|doc| !doc.is_all_asterisks())
@@ -64,7 +64,7 @@ fn write_formatted<'a>(
         .sum();
     let available_width = (f.options().line_width.value() as usize).saturating_sub(indent);
     let write_lines = |lines: &[u8], f: &mut Formatter<'a>| {
-        // See `Comment::fmt`: a comment that waits for the end of the line would be written after the `/**`.
+        // See `Comment::fmt`. Without the boundary, a pending line suffix comment would be printed after the `/**`.
         write!(f, [line_suffix_boundary(), "/**"]);
         for line in strings::split(lines, b"\n") {
             write!(f, [hard_line_break(), " *"]);
@@ -75,7 +75,7 @@ fn write_formatted<'a>(
         }
         write!(f, [hard_line_break(), " */"]);
     };
-    // An escape or a blank that is gone would end the comment early.
+    // Removing an escape or a space could produce a `*/`, which would end the comment early.
     let format = |doc: JSDoc<'a>, f: &Formatter<'a>| {
         format_jsdoc_comment(doc, f.file(), options, f.options(), available_width, stack).filter(
             |formatted| match formatted {

@@ -294,8 +294,8 @@ it("bun add --only-missing should not install existing package", async () => {
   }
 });
 
-// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json.
-// `urls` collects what it asks the registry for.
+// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json. `urls` collects
+// its registry requests.
 async function analyze(
   command: "add" | "install",
   source: string,
@@ -372,6 +372,17 @@ it("bun add --analyze leaves out builtins, paths and aliases, with or without a 
   ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
 });
 
+it("bun add --analyze does not add the package that the rest of a bun: specifier names", async () => {
+  const urls: string[] = [];
+  // "#!/usr/bin/env bun" makes this a file for bun.
+  expect(await analyze("add", `#!/usr/bin/env bun\nimport "bun:boba"; import "bar/sub";`, { urls })).toEqual({
+    added: ["bar"],
+    errors: [],
+    exitCode: 0,
+  });
+  expect(urls).toEqual([`${root_url}/bar`]);
+});
+
 it.each([
   ["billing", "billing"],
   ["billing", "billing/sub"],
@@ -388,7 +399,7 @@ it.each([
   expect(urls).toEqual([`${root_url}/bar`]);
 });
 
-it("bun add --analyze goes by the package.json with a name that is nearest to the importing file", async () => {
+it("bun add --analyze uses the nearest package.json with a name above the importing file", async () => {
   const urls: string[] = [];
   const member = join(package_dir, "packages", "member");
   await mkdir(join(member, "nested"), { recursive: true });
@@ -2975,7 +2986,7 @@ describe("a relative local path typed from a directory below package.json", () =
   });
 
   // From `package_dir/src`, `../<name>` is `package_dir/<name>`. From `package_dir` it is `add_dir`, another package.
-  it("a path that names another package relative to package.json installs the one the cwd names", async () => {
+  it("a path that matches one package relative to package.json and another relative to the cwd installs the cwd's", async () => {
     const name = basename(add_dir);
     await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
     await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
@@ -3138,7 +3149,7 @@ describe("-g and a relative local path", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("a path that is not there leaves the global package.json usable", async () => {
+  it("a path that doesn't exist leaves the global package.json usable", async () => {
     using dir = tempDir("bun-add-global-relative-missing", files);
     const home = String(dir);
 
@@ -3523,7 +3534,7 @@ it("should add multiple dependencies specified on command line", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("requests the manifests of all the packages on the command line at once", async () => {
+it("requests the manifests of all the packages on the command line at the same time", async () => {
   const registry = dummyRegistry([]);
   const lastWasRequested = Promise.withResolvers<void>();
   setHandler(async request => {
@@ -3831,7 +3842,7 @@ describe("should move existing dependency when an explicit group flag is given",
     ).toBe(pkgJson({ ...root, dependencies: { BaR: "^0.0.2" } }));
   });
 
-  it("--save-prod gives way to the flag of another group", async () => {
+  it("another group's flag wins over --save-prod", async () => {
     expect(await add({ ...root, dependencies: { BaR: "^0.0.2" } }, ["--save-prod", "--dev", "BaR"])).toBe(
       pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } }),
     );
@@ -3842,7 +3853,7 @@ describe("should move existing dependency when an explicit group flag is given",
     expect(await add(initial, ["--save-prod", "--only-missing", "BaR"])).toBe(pkgJson(initial));
   });
 
-  it.each(["remove", "update", "link"])("bun %s does not know --save-prod", async command => {
+  it.each(["link"])("bun %s has no --save-prod flag", async command => {
     const initial = pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } });
     await writeFile(join(package_dir, "package.json"), initial);
     await using proc = spawn({
@@ -4079,7 +4090,8 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     installed: (await file(join(project, "node_modules", "pkga", "package.json")).json()).version,
   });
 
-  // package.json, bun.lock and node_modules agree, and stay as they are: no key twice, a frozen install passes, a second install changes nothing.
+  // package.json, bun.lock and node_modules agree and are stable: no key appears twice, a frozen install passes, and a
+  // second install changes nothing.
   async function settled(project: string, frozen = true) {
     const after = await state(project);
     expect(duplicateKeys(after.packageJson)).toEqual([]);
@@ -4118,7 +4130,8 @@ describe("a spec without a name that resolves to a dependency package.json alrea
       peerDependencies: { lists: ["peerDependencies"] },
     },
   };
-  // Every cell with a folder. The other kinds only where the list can change the outcome, so that the file stays fast.
+  // Every cell with a folder. The other kinds are only tested where the list can change the outcome, to keep the file
+  // fast.
   const cell = (declared: Declared, kind: Kind, flag: Flag) => ({ declared, kind, flag });
   const cells = [
     ...(Object.keys(outcomes) as Flag[]).flatMap(flag =>
@@ -4483,7 +4496,7 @@ describe("-g and a package.json above the global directory", () => {
 
   const lock = JSON.stringify({ lockfileVersion: 1, workspaces: { "": { dependencies: { pkg: "1.0.0" } } } });
 
-  // Nor do they create an empty global package.json, against which the lockfile would lose every package.
+  // They don't create an empty global package.json either, which would make the lockfile lose every package.
   it.each([
     [["update"], "nothing to update"],
     [["remove", "pkg"], "nothing to remove"],

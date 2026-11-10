@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(...all: unknown[]): void;
+# interface Options { host?: string; port?: number }
+# function bare(port: number): Options { const o: Options = { port }; Object.defineProperty(o, "host", { value: "defined" }); return o; }
+# function other(port: number): Options { const o: Options = { port }; return o; }
+# print(bare(1).host, other(2).port);
+# -- end of source
+# f1 = bare, f2 = other, L1 = Options. Definitions alone give "host" its values: its slot is planned read-only, not enumerable, not configurable, and the structure of L1 lists it so.
+# A store that finds the name absent creates the plain form; one that finds it there must ask whether it may be written.
+# RUN: verify-code mechanisms=all
+# CHECK: {{*}}f2 Body b0 v4 (PutSlotOrAdd): a store fills a field whose slot is planned in the form that definitions create: L1.field0 "host"
+# -- code
+# code f2:Body {
+#   v0: "defined" @JSValue = String string="defined"
+#   b0(v1: int[0, 2147483647] @Int32) entry=0:
+#     v2: int[0, 2147483647] @OptionalInt64 = Box v1
+#     v3: L1 @Cell = NewObject -, v2 layout=L1 fields=[1] traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = PutSlotOrAdd v3, v0 key="host" receivers=[L1] level=Proven traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v5: L1 @JSValue = Box v3
+#     Return v5
+# }
+# -- end of code

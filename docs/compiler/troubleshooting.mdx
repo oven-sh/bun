@@ -1,0 +1,98 @@
+---
+title: "Troubleshooting"
+description: "The errors you're most likely to hit when you first build a program with bun compile, and the fix for each"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+Find your message in one of the tables. They show the part of each message that doesn't change.
+
+## The build stops at a type error
+
+```ts port.ts icon="/icons/typescript.svg"
+const port: number = "3000";
+console.log(port);
+```
+
+```bash terminal icon="terminal"
+bun compile ./port.ts
+```
+
+```txt
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at /path/to/port.ts:1:7
+```
+
+`bun run` never checks your types, so a project can carry type errors for years. [`bun compile` relies on them](/compiler/aot#type-errors-stop-the-build).
+
+`bun check --aot ./port.ts` lists every error the build would report, and builds nothing. Fix them, or put `// @ts-expect-error` above a line that you can't fix yet. `"noCheck": true` in `tsconfig.json` turns all of them off, as it does for `tsc`.
+
+The errors are TypeScript 7's, whichever version of `typescript` you have installed. [Coming from TypeScript 5](/runtime/check#coming-from-typescript-5) lists what changed.
+
+## Other messages from the build
+
+| Message                                         | Fix                                                                               |
+| ----------------------------------------------- | --------------------------------------------------------------------------------- |
+| `TS7016: Could not find a declaration file`     | `bun add -d @types/<package>`                                                     |
+| `TS100014: this assignment always throws`       | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only) |
+| `TS100053: Macros are disabled`                 | [Not supported](/compiler/compatibility#not-supported). Pass `--no-aot`           |
+| `TS100064: this import path isn't a constant`   | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `TS100064: this call loads a module`            | [Import the module by name](/compiler/compatibility#dynamic-imports)              |
+| `TS100064: the program hands a require() to`    | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `TS100078: ... runs from source, not compiled`  | [None needed](/compiler/compatibility#under-bun-test---aot)                       |
+| `TS100079: ... any file ... may load again`     | Move that line out of the test run, or run its test file on its own               |
+| `TS100080: ... and doesn't ask it`              | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
+| `TS100088: ... These aren't code`               | [None needed](/compiler/compatibility#dynamic-imports)                            |
+| `TS100089: The executable doesn't embed ...`    | [Write the extension](/compiler/compatibility#dynamic-imports)                    |
+| `TS100091: ... doesn't run again`               | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
+| `TS100092: ... doesn't ask an entry`            | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
+| `TS100093: ... gets require.cache here`         | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
+| `TS100094: This call may load a module`         | [Import the module by name](/compiler/compatibility#dynamic-imports)              |
+| `TS100095: ... the folders that this call`      | Write the list under `paths` in the call, each folder as a path from `__dirname`  |
+| `TS100096: ... the require() that is made here` | Keep it in a `const`, made for `import.meta.url`, and call it by that name        |
+| `TS100097: ... the search goes on in the`       | List the folder that holds the module                                             |
+| `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                        |
+| `--aot does not apply to a package.json script` | Put `--aot` inside the script                                                     |
+| `can't run code compiled by this Bun`           | Pass a `bun` built from the same sources with the same configuration              |
+| `this build of Bun doesn't support --trim`      | Use a release of Bun, not one you built                                           |
+
+A build looks for type errors in your own files. It doesn't report the ones in `node_modules`, in a package's TypeScript or in its `.d.ts` files. `bun check --all ./app.ts` lists them. Nor does a build stop where TypeScript gives up on a very long function (`TS2563`).
+
+## Errors when the program runs
+
+| Message                                                     | Fix                                                                               |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `... because built-in objects are read-only`                | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only) |
+| `Cannot load ...: it isn't in this executable`              | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `Cannot find module`, only on another machine               | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `Cannot find module` for a relative path to a data file     | [Name its folder or extension](/compiler/compatibility#dynamic-imports)           |
+| `... was not compiled into this executable`                 | Use that API once in your own code                                                |
+| `app: ... the build didn't see your code pass this option`  | Write `app` in the object that `Bun.serve()` is called with                       |
+| `EvalError: ... the compiler couldn't tell ...`             | Call `eval` or `new Function` directly                                            |
+| `--preload can't be used with this executable`              | Import the file from your entry point                                             |
+| `BUN_INSPECT can't be used with this executable`            | Build with `--compile-inspector`                                                  |
+| `--unhandled-rejections can't be used with this executable` | Build with `--compile-exec-argv=--unhandled-rejections=<mode>`                    |
+| `--sql-preconnect can't be used with this executable`       | Build with `--compile-exec-argv=--sql-preconnect`                                 |
+| `Cannot compile C code ... (PR_SET_MDWE)`                   | Compile the C file first, then `dlopen()`                                         |
+| `... map no more entry points of JSCallback`                | Let the executable read its own file, or `close()` callbacks you no longer use    |
+| `Cannot compare what the private field ... holds`           | Call the comparison by its own name; make one of the objects where it is called   |
+
+If your error tracker shows new groups after you switch, that's because [some messages are shorter](/compiler/compatibility#error-messages).
+
+## The executable is slower than `bun run`
+
+Look for these causes, in this order.
+
+1. Your hot code is untyped. [`bun compile --explain`](/compiler/explain) lists the code that compiled to a slow path, worst first, with a fix for each.
+2. A value doesn't match its declared type in hot code. Nothing is printed, because nothing goes wrong. [Find the guards that fail](/compiler/debugging#find-the-guards-that-fail).
+3. A library generates code at run time, and [Bun interprets it](/compiler/compatibility#code-from-strings).
+4. The program runs [WebAssembly that it doesn't import](/compiler/compatibility#webassembly).
+5. Code is loaded from disk, with `--external` or `--aot-allow-code-from-disk`. Bun interprets that too.
+
+## The executable is too large
+
+[`--trim`](/compiler/size) removes the Bun and Node.js APIs that your code never calls. If that changes little, something in your program could reach any API, usually `eval` or a dynamic `require()`. [`--explain=trim`](/compiler/size#what-blocks---trim) says what. `--no-compile-function-source` leaves out the source text of your functions.
+
+## Something else
+
+If a program passes `bun check --aot` and still behaves differently from `bun run` in a way that [Compatibility](/compiler/compatibility) doesn't describe, [open an issue](https://github.com/oven-sh/bun/issues) with the smallest program that shows it.

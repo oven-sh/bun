@@ -216,7 +216,7 @@ pub(crate) fn perform_security_scan_after_resolution(
     }
 
     let has_node_modules = {
-        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+        let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
         manager.root_dir.has_comptime_query(b"node_modules")
     };
     // A command that names the packages it adds or updates scans only those packages and `seeds`.
@@ -694,7 +694,7 @@ fn attempt_security_scan(
         );
         bun_core::pretty_errorln!(
             "<d>[SecurityProvider]<r> top_level_dir: '{}'",
-            BStr::new(FileSystem::instance().top_level_dir())
+            BStr::new(FileSystem::get().top_level_dir())
         );
         bun_core::pretty_errorln!(
             "<d>[SecurityProvider]<r> original_cwd: '{}'",
@@ -876,16 +876,13 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // Like a lifecycle script: the environment install resolved, and no `.env` file on top.
+        // Like a lifecycle script, it gets the environment that the install resolved, with no
+        // `.env` file on top.
         let code =
             std::ffi::CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
-        let argv = [
-            exec_path.as_cstr(),
-            c"--no-install",
-            c"--no-env-file",
-            c"-e",
-            code.as_c_str(),
-        ];
+        let mut argv = vec![exec_path.as_cstr(), c"--no-install", c"--no-env-file"];
+        argv.extend(bun_core::Global::ca_store_flag().map(bun_core::ZStr::as_cstr));
+        argv.extend([c"-e", code.as_c_str()]);
         let env = self.manager.env_mut();
         // Set in the process environment after the loader copied it.
         if bun_io::parent_death_watchdog::is_enabled() {
@@ -926,7 +923,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            cwd: Box::from(FileSystem::get().top_level_dir()),
             extra_fds,
             ..Default::default()
         };
@@ -1027,7 +1024,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            cwd: Box::from(FileSystem::get().top_level_dir()),
             extra_fds,
             windows: spawn::WindowsOptions {
                 loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),
@@ -1213,7 +1210,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // The JSON may still be in the pipe: drain it; only EOF tears the reader's poll down.
+            // The JSON may still be in the pipe, so drain it. Only EOF tears down the reader's
+            // poll.
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();

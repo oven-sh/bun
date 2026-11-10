@@ -1,0 +1,18 @@
+# f1 = turn
+# -- source: float64-array-mean-of-three-neighbors.ts
+# const signal = new Float64Array(514);
+# const smooth = new Float64Array(514);
+# function turn(i: number): number {
+#   for (let k = 1; k < signal.length - 1; k++) smooth[k] = (signal[k - 1]! + signal[k]! + signal[k + 1]!) / 3;
+#   return smooth[(i & 511) + 1]!;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 23 instructions, 16 of them patches, a turn of the written loop steps by 4.
+# When the bound was taken: loop: operations 17, patches 1, moves 1, unlikely 0.
+# RUN(X64): loops most:18 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 18

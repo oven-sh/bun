@@ -242,7 +242,7 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     },
   );
 
-  // The sibling is not in the registry. The range links it, and `latest` does not stand in for the range.
+  // The sibling isn't in the registry. The range links it, and `latest` doesn't replace the range.
   test.each([[[]], [["-r"]], [["pkg2"]]])(
     "bun update --latest %j leaves a range that links a workspace",
     async args => {
@@ -359,7 +359,7 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir, [""], { stderr: duplicateWarning() });
   });
 
-  // Of two entries for one name, an install picks the second of each pair here.
+  // If there are two entries for one name, an install picks the second of each pair here.
   test.each([
     ["dependencies", "devDependencies"],
     ["dependencies", "optionalDependencies"],
@@ -1361,7 +1361,7 @@ describe.concurrent("$ref overrides", () => {
   });
 
   // For one-range-dep's no-deps row the rule wins over the root's npm: alias of that name. The alias is never overridden.
-  test("next to an npm: alias of its name the overridden row is re-resolved and the alias stays", async () => {
+  test("next to an npm: alias with its name, the overridden dependency is resolved again and the alias is kept", async () => {
     const overrides = { "no-deps": "$dep-with-tags" };
     const deps = (tags: string) =>
       root({

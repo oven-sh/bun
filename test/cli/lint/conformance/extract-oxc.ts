@@ -1,15 +1,15 @@
 // Turns the test cases in oxlint's rule sources (`crates/oxc_linter/src/rules/{eslint,typescript}`) into input for
-// `extra-cases.ts`. Only the inputs are taken: what oxlint expects for them is not, because ESLint is the judge.
+// `extra-cases.ts`. Only the inputs are used. oxlint's expectations are ignored, because ESLint decides what's correct.
 //
 //   bun extract-oxc.ts --oxc <oxc checkout> --out <dir> [--fixtures <dir>] [rule...]
 //
-// Writes `<dir>/<plugin>/<rule>.json` for every rule that `fixtures/` has, and `<dir>/stats.json`. A case whose code and
-// options equal those of an upstream case is dropped.
+// Writes `<dir>/<plugin>/<rule>.json` for every rule in `fixtures/`, and `<dir>/stats.json`. A case with the same code
+// and options as an upstream case is dropped.
 //
-// The tests are Rust: `let pass = vec![..]`, `let fail = vec![..]`, `let fix = vec![..]`, `pass.extend(vec![..])` in `#[test]` functions, with
-// elements `"code"`, `("code", Some(json!([..])), Some(json!({ "globals": .. })), Some(PathBuf::from("a.ts")))` and
-// `("code", "fixed", Some(json!([..])))`. They are read by a scanner that knows the literals of Rust and little else. An
-// element that is anything more (`format!`, a variable) is counted in `unparsed`.
+// The tests are Rust: `let pass = vec![..]`, `let fail = vec![..]`, `let fix = vec![..]` and `pass.extend(vec![..])` in
+// `#[test]` functions. The elements are `"code"`, `("code", Some(json!([..])), Some(json!({ "globals": .. })),
+// Some(PathBuf::from("a.ts")))` and `("code", "fixed", Some(json!([..])))`. The scanner that reads them understands
+// Rust literals and little else. Any other element (`format!`, a variable) is counted in `unparsed`.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -17,7 +17,7 @@ import { join, relative, resolve } from "node:path";
 import { readJson, writeJson, type Fixture } from "./shared.ts";
 
 // ---------------------------------------------------------------------------
-// Tokens of Rust
+// Rust tokens
 // ---------------------------------------------------------------------------
 
 interface Token {
@@ -52,7 +52,7 @@ function unescapeRust(raw: string): string {
       out += String.fromCodePoint(parseInt(raw.slice(i + 2, end).replaceAll("_", ""), 16));
       i = end;
     } else if (c === "\n" || c === "\r") {
-      // A line continuation swallows the white space that follows.
+      // A line continuation swallows the whitespace after it.
       while (i + 1 < raw.length && /\s/.test(raw[i + 1])) i++;
     } else out += c;
   }
@@ -109,17 +109,17 @@ export function tokenizeRust(source: string): { tokens: Token[]; comments: Comme
 }
 
 // ---------------------------------------------------------------------------
-// The expressions that test cases are made of
+// The expressions that make up a test case
 // ---------------------------------------------------------------------------
 
 class Unparsed extends Error {}
 
-/** A path such as `FixKind::Safe`: known to be there, of no interest. */
+/** A path such as `FixKind::Safe`, which is parsed and then ignored. */
 const OPAQUE = Symbol("opaque");
 
 class Parser {
   at = 0;
-  /** `lookup` finds the value of a `let` or of a function without parameters. */
+  /** `lookup` returns the value of a `let` or of a function without parameters. */
   constructor(
     readonly tokens: Token[],
     readonly lookup: (name: string) => unknown = () => undefined,
@@ -256,9 +256,9 @@ export interface Case {
   filename?: string;
   languageOptions?: Record<string, unknown>;
   settings?: Record<string, unknown>;
-  /** The part of an `.oxlintrc.json` that the case is linted with, as it is written. */
+  /** The case's `.oxlintrc.json` fragment, verbatim. */
   oxlintrc?: Record<string, unknown>;
-  /** The path of the file as it is written, whatever its extension. */
+  /** The case's file path, verbatim, whatever its extension. */
   path?: string;
 }
 
@@ -276,7 +276,7 @@ const isObject = (value: unknown): value is Record<string, any> =>
 const EXTENSIONS = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const LANGUAGE_KEYS = new Set(["ecmaVersion", "sourceType", "globals", "parserOptions"]);
 
-/** rulegen leaves the `languageOptions` of the upstream test in a comment behind the case. */
+/** rulegen puts the upstream test's `languageOptions` in a comment after the case. */
 function languageOptionsIn(comment: string | undefined): Record<string, unknown> | undefined {
   const text = comment?.trim().replace(/,$/, "");
   if (!text?.startsWith("{")) return undefined;
@@ -350,7 +350,7 @@ export function casesOfFile(
     const list = tokens[at].kind === "word" ? /^_?(pass|fail|fix)/.exec(name)?.[1] : undefined;
     if (!list) continue;
     if (isLet) {
-      // Over the type, if there is one.
+      // Skip the type annotation, if any.
       while (at < tokens.length && tokens[at].text !== "=" && tokens[at].text !== ";") at++;
     } else {
       if (tokens[at + 1]?.text !== "." || tokens[at + 2]?.text !== "extend" || tokens[at + 3]?.text !== "(") continue;
@@ -444,7 +444,7 @@ if (import.meta.main) {
     console.error("usage: bun extract-oxc.ts --oxc <oxc checkout> --out <dir> [--fixtures <dir>] [rule...]");
     process.exit(2);
   }
-  // `env` in a test's configuration is a set of globals.
+  // An `env` in a test's config expands to a set of globals.
   const environments = process.env.ESLINT_DIR
     ? createRequire(join(resolve(process.env.ESLINT_DIR), "package.json"))("globals")
     : {};

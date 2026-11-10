@@ -23,7 +23,7 @@ use crate::stack::Stack;
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 
-/// Whether Prettier takes the file at `path` for Markdown.
+/// True if Prettier treats the file at `path` as Markdown.
 pub fn is_markdown_path(path: &[u8]) -> bool {
     const EXTENSIONS: [&[u8]; 10] = [
         b".md",
@@ -47,17 +47,17 @@ pub fn is_mdx_path(path: &[u8]) -> bool {
     path.len() >= 4 && path[path.len() - 4..].eq_ignore_ascii_case(b".mdx")
 }
 
-/// In the place of the language of a block of code: JSX in MDX, `import` and `export` in MDX.
+/// Stand-ins for a code block's language: JSX in MDX, `import` and `export` in MDX.
 const MDX_JSX: &[u8] = b"\0jsx";
 const MDX_ES_SYNTAX: &[u8] = b"\0es";
 
-/// Everything that is allocated to format a text. It is reused for the next one.
+/// Everything that's allocated to format a text. It's reused for the next one.
 #[derive(Default)]
 pub struct Scratch {
     tree: ast::Tree,
 }
 
-/// Fills `tree` with the syntax of `text`, which is a description in a JSDoc comment. Returns the root.
+/// Fills `tree` with the syntax tree of `text`, a description in a JSDoc comment. Returns the root.
 pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::NodeId> {
     parse::parse_content(text, tree, true)
 }
@@ -109,7 +109,7 @@ fn front_matter_between(text: &[u8], marker: u8) -> Option<(usize, usize, usize)
 
 /// The text in the form that the parser expects: every line break is `\n` and every NUL is U+FFFD.
 #[derive(Default)]
-struct AsRead {
+struct NormalizedText {
     bytes: Vec<u8>,
     /// The offset in `bytes` of each replacement that changed the length, and how many more bytes the original text has
     /// up to the end of that replacement.
@@ -118,31 +118,31 @@ struct AsRead {
     replaced: Vec<u32>,
 }
 
-impl AsRead {
+impl NormalizedText {
     const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
 
-    fn push_in_place_of(&mut self, bytes: &[u8], len_in_text: usize) {
+    fn push_replacement(&mut self, bytes: &[u8], len_in_text: usize) {
         let at = self.bytes.len() as u32;
         if bytes.len() != len_in_text {
             let more = self.changes.last().map_or(0, |it| it.1);
             self.changes
                 .push((at, more + len_in_text as i32 - bytes.len() as i32));
         }
-        if bytes == AsRead::REPLACEMENT {
+        if bytes == NormalizedText::REPLACEMENT {
             self.replaced.push(at);
         }
         self.bytes.extend_from_slice(bytes);
     }
 
-    fn new(mut rest: &[u8]) -> AsRead {
-        let mut this = AsRead::default();
+    fn new(mut rest: &[u8]) -> NormalizedText {
+        let mut this = NormalizedText::default();
         this.bytes.reserve(rest.len());
         while let Some(at) = bun_core::strings::index_of_any(rest, b"\r\0") {
             this.bytes.extend_from_slice(&rest[..at]);
             let len = 1 + usize::from(rest[at..].starts_with(b"\r\n"));
             match rest[at] {
-                0 => this.push_in_place_of(AsRead::REPLACEMENT, 1),
-                _ => this.push_in_place_of(b"\n", len),
+                0 => this.push_replacement(NormalizedText::REPLACEMENT, 1),
+                _ => this.push_replacement(b"\n", len),
             }
             rest = &rest[at + len..];
         }
@@ -166,12 +166,12 @@ impl AsRead {
 
 /// Fills `tree` with the mdast of `text`, which can have any kind of line break, and returns the root. Offsets in the
 /// tree are offsets into `text`. In a string that isn't a plain range of `text`, every line break is `\n`, except in
-/// those that [`ast::Tree::restore_line_breaks`] names.
+/// the ones that [`ast::Tree::restore_line_breaks`] handles.
 pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Option<ast::NodeId> {
     let is_changed = bun_core::strings::index_of_any(text, b"\r\0").is_some();
     let as_read = match is_changed {
-        true => AsRead::new(text),
-        false => AsRead::default(),
+        true => NormalizedText::new(text),
+        false => NormalizedText::default(),
     };
     let read: &[u8] = if is_changed { &as_read.bytes } else { text };
 
@@ -207,7 +207,7 @@ pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Op
 /// Prettier's `inferParser(options, { language })`: the parser for code in `language`.
 pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
     Some(match language {
-        // The names of languages, then other names for them, then extensions of files.
+        // Language names, then their aliases, then file extensions.
         b"json.stringify" | b"geojson" | b"jsonl" | b"sarif" | b"topojson" | b"importmap" => {
             b"json-stringify"
         }
@@ -243,7 +243,7 @@ pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
         b"handlebars" | b"hbs" | b"htmlbars" => b"glimmer",
         b"mdx" => b"mdx",
         b"html" | b"hta" | b"htm" | b"html.hl" | b"inc" | b"xht" => b"html",
-        // `xhtml` is another name for two languages, of which this is the first.
+        // `xhtml` is an alias of two languages, and this is the first.
         b"angular" | b"xhtml" | b"component.html" => b"angular",
         b"vue" => b"vue",
         b"lightning web components" | b"LWC" | b"lwc" => b"lwc",
@@ -259,9 +259,9 @@ pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
     })
 }
 
-/// oxfmt's `route`: the parser for a block of code in `language`, and for JavaScript and TypeScript the name of a file
-/// that says what it is. The names are those of Shiki. What has none of them stays as it is written.
-pub(crate) fn parser_of_oxfmt(language: &[u8]) -> Option<(&'static [u8], &'static [u8])> {
+/// oxfmt's `route`: the parser for a code block in `language`, and for JavaScript and TypeScript a file name that
+/// identifies the dialect. The names are Shiki's. A block with any other name is left as is.
+pub(crate) fn oxfmt_parser_for(language: &[u8]) -> Option<(&'static [u8], &'static [u8])> {
     Some(match language {
         b"graphql" | b"gql" => (b"graphql", b""),
         b"css" | b"postcss" => (b"css", b""),
@@ -289,7 +289,7 @@ pub(crate) fn parser_of_oxfmt(language: &[u8]) -> Option<(&'static [u8], &'stati
     })
 }
 
-/// Formats `code`, which is in a block of code in `language`, for lines of `width` columns.
+/// Formats `code`, the content of a code block in `language`, for lines of `width` columns.
 fn format_embedded(
     language: &[u8],
     code: &[u8],
@@ -298,19 +298,19 @@ fn format_embedded(
     is_in_template: bool,
     format_block: Option<&mut FormatBlock<'_>>,
 ) -> Option<Vec<u8>> {
-    // Nothing to format: front matter without anything in it.
+    // Nothing to format: empty front matter.
     if language.is_empty() {
         return Some(Vec::new());
     }
     let is_mdx_jsx = language == MDX_JSX;
-    let mut file_of_oxfmt: &[u8] = b"";
+    let mut oxfmt_file_name: &[u8] = b"";
     let parser: &[u8] = match language {
         _ if is_mdx_jsx || language == MDX_ES_SYNTAX => b"babel",
-        // The language of a plugin, which oxfmt has too.
+        // A plugin's language, which oxfmt supports too.
         b"svelte" if options.svelte.is_on => b"svelte",
         _ if options.flavor.is_oxfmt() => {
             let parser;
-            (parser, file_of_oxfmt) = parser_of_oxfmt(language)?;
+            (parser, oxfmt_file_name) = oxfmt_parser_for(language)?;
             parser
         }
         b"angular-html" => b"angular",
@@ -324,9 +324,9 @@ fn format_embedded(
         }
         false => code,
     };
-    // To the parsers of Prettier it is white space.
+    // Prettier's parsers treat it as whitespace.
     let code = code.strip_prefix(BOM).unwrap_or(code);
-    // To these parsers, nothing is a syntax error. Only a whole file with nothing in it does not get to them.
+    // These parsers reject empty input as a syntax error. Only an empty whole file never reaches them.
     if matches!(parser, b"json" | b"json5" | b"json-stringify" | b"graphql")
         && bun_core::strings::trim_js_whitespace_start(code).is_empty()
     {
@@ -389,7 +389,7 @@ fn format_embedded(
             }
             _ => {
                 let path: &[u8] = match parser {
-                    _ if !file_of_oxfmt.is_empty() => file_of_oxfmt,
+                    _ if !oxfmt_file_name.is_empty() => oxfmt_file_name,
                     b"babel" => b"dummy.jsx",
                     _ if language == b"tsx" => b"dummy.tsx",
                     _ => b"dummy.ts",
@@ -405,7 +405,7 @@ fn format_embedded(
     is_done.then_some(out)
 }
 
-/// Whether a comment with `@` and one of `pragmas` is at the start of `text`, behind the front matter.
+/// True if a comment with `@` and one of `pragmas` is at the start of `text`, after the front matter.
 fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     let content = &text[front_matter::parse(text).map_or(0, |it| it.end)..];
     let content = bun_core::strings::trim_js_whitespace_start(content);
@@ -442,7 +442,7 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     if is_between(&[b"<!--"], &[b"-->"]) || is_between(&[b"{", b"/*"], &[b"*/", b"}"]) {
         return true;
     }
-    // A comment with a line that is nothing but the pragma, which ends on a later line.
+    // A comment with a line that's only the pragma, and that ends on a later line.
     if !content.starts_with(b"<!--") {
         return false;
     }
@@ -455,8 +455,8 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     has_line && lines.any(|line| bun_core::strings::contains(line, b"-->"))
 }
 
-/// Formats the JavaScript and TypeScript in blocks of code, as [`crate::options::FormatJavaScript`] does. It can keep
-/// what it allocates from one block to the next.
+/// Formats the JavaScript and TypeScript in code blocks, as [`crate::options::FormatJavaScript`] does. It can reuse its
+/// allocations from one block to the next.
 pub type FormatBlock<'f> = dyn FnMut(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool + 'f;
 
 /// Appends the formatted `text` to `out`.
@@ -469,7 +469,7 @@ pub fn format(
     format_with(text, options, scratch, out, None)
 }
 
-/// The same. `format_block` takes the place of `FormatOptions::format_javascript`.
+/// The same. `format_block` replaces `FormatOptions::format_javascript`.
 pub fn format_with(
     text: &[u8],
     options: &FormatOptions,
@@ -497,7 +497,7 @@ pub fn format_mdx_with(
 
 #[derive(Copy, Clone, Default)]
 struct Mode {
-    /// The document is for a template in JavaScript.
+    /// The document is for a JavaScript template.
     is_in_template: bool,
     is_mdx: bool,
 }
@@ -518,8 +518,8 @@ fn format_in(
         line_ending: options.line_ending.resolve(text),
         ..options.clone()
     };
-    // oxfmt hands MDX to the Prettier that comes with it, and nothing in it comes back: the code in it is Prettier's
-    // too, and what only oxfmt does is not done.
+    // oxfmt hands MDX to its bundled Prettier and nothing comes back to it: the code inside is also formatted by
+    // Prettier, and oxfmt-only features don't apply.
     if mode.is_mdx && options.flavor.is_oxfmt() {
         options.flavor = crate::options::Flavor::Prettier;
         (options.sort_imports, options.jsdoc, options.tailwind) = (None, None, None);
@@ -557,7 +557,8 @@ fn format_in(
         with_pragma.extend_from_slice(&text[front_matter_end..]);
         text = &with_pragma;
     }
-    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    // Prettier's `coreFormat` trims what JavaScript counts as whitespace, so it turns a lone no-break space into an
+    // empty file. Here only ASCII whitespace counts, and the no-break space stays.
     if text.trim_ascii_start().is_empty() {
         return Ok(());
     }

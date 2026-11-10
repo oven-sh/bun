@@ -1,17 +1,17 @@
 //! TOML, the way oxfmt formats it. Prettier has no TOML. Without an oxfmt config, arrays and inline tables get Bun's own
 //! layout, which `printer.rs` describes.
 //!
-//! oxfmt does it with the crate [`oxc-toml`](https://crates.io/crates/oxc-toml) (MIT license, Ferenc
-//! Tamás, VoidZero Inc. and contributors), a fork of taplo, whose formatter `printer.rs` is a port of,
-//! as far as oxfmt's options reach. Keys and values are written as they are in the text. What changes
-//! is white space, empty lines, and whether an array is on one line.
+//! oxfmt uses the [`oxc-toml`](https://crates.io/crates/oxc-toml) crate (MIT license, Ferenc Tamás,
+//! VoidZero Inc. and contributors), a fork of taplo. `printer.rs` is a port of its formatter,
+//! limited to the options that oxfmt uses. Keys and values are copied verbatim. Only whitespace,
+//! empty lines and whether an array is on one line change.
 //!
 //! ```text
-//! text ─ Bun's scanner of TOML ─→ tokens ─ tree::build ─→ taplo's tree ─ printer::print ─→ text
+//! text ─ Bun's TOML scanner ─→ tokens ─ tree::build ─→ taplo's tree ─ printer::print ─→ text
 //! ```
 //!
-//! What Bun does not read as TOML is a syntax error. oxfmt writes such a text again around its errors,
-//! and not always in the same order.
+//! Anything that Bun's parser rejects as TOML is a syntax error. oxfmt reprints such a file around
+//! its errors, and not always in the same order.
 
 mod printer;
 mod tree;
@@ -20,8 +20,8 @@ use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 use bun_parsers::toml::TOML;
 
-/// Why [`format`] takes `text` for something else than TOML, in the words of Bun's parser, and at which byte, not counting
-/// a byte order mark. The text is read once more for it.
+/// Returns why [`format`] rejects `text` as TOML: the message from Bun's parser and its byte
+/// offset, not counting a byte order mark. This scans the text a second time.
 #[cold]
 pub fn syntax_error(text: &[u8]) -> Option<(Vec<u8>, u32)> {
     let (message, offset) = TOML::tokens(text).err()?;
@@ -34,7 +34,7 @@ pub fn syntax_error(text: &[u8]) -> Option<(Vec<u8>, u32)> {
 
 /// Appends the formatted `text` to `out`.
 pub fn format(text: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> Result<(), FormatError> {
-    // Of a text that is nothing but white space, oxfmt makes nothing.
+    // oxfmt turns a whitespace-only file into an empty one.
     if (text.iter()).all(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r')) {
         return Ok(());
     }

@@ -1,0 +1,28 @@
+# The reads go off the entry parameter; where no options are given THE CALLER writes `{}`. What is seen to arrive is that literal without names (L0) beside the layout that answers (L2): no family holds
+# the two, so nothing was tested and all eight reads went by name (280 instructions a turn with options given; 166 now). The layouts that answer are asked; the literal is left to the closed arm, which is
+# as likely (a read of a name that a literal of the caller lacks has no typed form: a second turn bought nothing there). f1 = configure.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L2] [refusesMarkedObjects]
+# CHECK: = GetSlot {{*}}key="encoding" receivers=[L2] level=Proven
+# CHECK-NOT: layouts=[L0]
+# CHECK: = GetSlot {{*}}key="limit" receivers=[L2] level=Proven
+# -- source: where-the-caller-writes-the-empty-literal-the-layout-that-answers-is-asked-at-the-parameter.cjs
+# function configure(stream, opts) {
+#   var encoding = opts.encoding !== undefined ? opts.encoding : null;
+#   var limit = opts.limit | 0;
+#   var length = opts.length != null && !isNaN(opts.length) ? opts.length | 0 : 0;
+#   var strict = opts.strict === true ? 1 : 0;
+#   return stream + limit + length + strict + (encoding === null ? 0 : 1) + (opts.verify ? 1 : 0);
+# }
+# const table = { configure };
+# const turns = Number(process.argv[2] || 1) * 100000;
+# const given = process.argv[3] !== "absent";
+# function make(i) {
+#   return { limit: 3, length: i & 7, encoding: "utf8", strict: true };
+# }
+# const handed = [make(1), make(2), make(3), make(4)];
+# let sum = 0;
+# for (let i = 0; i < turns; i++) sum += table[process.argv.length > 99 ? "x" : "configure"](i & 1, given ? handed[i & 3] : {});
+# console.log(sum / turns);
+# -- end of source

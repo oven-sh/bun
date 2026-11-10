@@ -1,0 +1,12 @@
+# `pending.push(Promise.all([tail, i])); line += ..`: the list holds nothing of the text that grows: one operation still takes its elements.
+# f1 = gather
+# -- source: list-written-for-promise-all-beside-a-text-that-grows.js
+# function gather(count, tail) { const pending = []; let line = ""; for (let i = 0; i < count; i++) { pending.push(Promise.all([tail, i])); line += "k" + i; } pending.push(line); return pending; }
+# Promise.all(gather(id(2), id("-"))).then(all => print(all.join("|")));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: -,0|-,1|k0k1
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# FORM: = PromiseAllOfElements

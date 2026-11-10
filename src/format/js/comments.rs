@@ -1,12 +1,12 @@
-//! The comments of the file that is being formatted.
+//! The comments of the file being formatted.
 //!
-//! A comment is a [`Comment`] handle to the record that the lexer and the parser filled in. The formatter adds only what it
-//! decides itself, keyed by comment id:
+//! A comment is a [`Comment`] handle to the record that the lexer and the parser filled in. The formatter adds only
+//! what it decides itself, keyed by comment id:
 //! - which node owns each comment ([`attach`](super::attach), [`Owners`]),
 //! - which comments have been printed ([`Comments::mark_printed`]).
 //!
-//! Printers ask for the comments of a node with [`Comments::of_node`]. Every comment has to be printed exactly once. If one is
-//! left over at the end, the file is not written.
+//! Printers get a node's comments with [`Comments::of_node`]. Every comment has to be printed exactly once. If one is
+//! left over at the end, the file isn't written.
 
 use super::ast_nodes::AstNodes;
 use super::attach::{self, Marker, Owner, Placement};
@@ -17,10 +17,10 @@ use bun_lint::ast::{File, Node};
 use bun_lint::span::Span;
 use std::cell::Cell;
 
-/// Questions about the text of a comment that only the formatter asks.
+/// Checks on a comment's text that only the formatter needs.
 pub(crate) trait CommentExt {
-    /// Prettier's `isIndentableBlockComment`: a block comment in which every line after the first starts with `*`. Its lines
-    /// are re-indented.
+    /// Prettier's `isIndentableBlockComment`: a block comment in which every line after the first starts with `*`. Its
+    /// lines are re-indented.
     fn is_indentable_block(self) -> bool;
     /// Prettier's `isTypeCastComment`: a JSDoc comment with `@type` or `@satisfies`.
     fn looks_like_type_cast(self) -> bool;
@@ -38,10 +38,11 @@ impl CommentExt for Comment<'_> {
     }
 
     fn is_ignore_comment(self, flavor: Flavor) -> bool {
-        let content = self.content().trim_ascii_start();
+        // Like JavaScript's `trim()`, this also strips no-break spaces.
+        let content = bun_core::strings::trim_js_whitespace_start(self.content());
         // Few comments get past this.
         matches!(content.first(), Some(b'p' | b'o'))
-            && flavor.is_ignore_comment(content.trim_ascii_end())
+            && flavor.is_ignore_comment(bun_core::strings::trim_js_whitespace(content))
     }
 }
 
@@ -63,7 +64,7 @@ fn is_indentable_text(content: &[u8]) -> bool {
     true
 }
 
-/// Whether `content` has an `@type` or `@satisfies` tag.
+/// True if `content` has an `@type` or `@satisfies` tag.
 pub(crate) fn is_type_cast_text(content: &[u8]) -> bool {
     let mut rest = content;
     while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'@') {
@@ -161,8 +162,8 @@ impl<'a> CommentList<'a> {
         (self.slice(0, index), self.slice(index, self.len()))
     }
 
-    /// Splits off the comments at the start that are on the line of the token before them, if that line ends after one of
-    /// them. Otherwise none.
+    /// Splits off the leading run of comments that are on the same line as the token before them, if that line ends
+    /// after one of them. Otherwise splits off nothing.
     pub(crate) fn split_at_end_of_line(self) -> (CommentList<'a>, CommentList<'a>) {
         let count = (self.iter())
             .take_while(|comment| !comment.has_newline_before())
@@ -229,7 +230,7 @@ pub(crate) struct OwnedComments<'a> {
     pub(crate) leading: CommentList<'a>,
     pub(crate) trailing: CommentList<'a>,
     pub(crate) dangling: CommentList<'a>,
-    /// Prettier's `hasNodeIgnoreComment`: the node is not formatted. Its source text is copied.
+    /// Prettier's `hasNodeIgnoreComment`: the node isn't formatted, and its source text is copied.
     pub(crate) is_ignored: bool,
 }
 
@@ -246,16 +247,17 @@ impl OwnedComments<'_> {
     }
 }
 
-/// How a comment is attached, without the owner.
+/// A comment's attachment, without the owner.
 #[derive(Copy, Clone)]
 pub(crate) struct AttachmentInfo {
     pub(crate) placement: Placement,
     pub(crate) marker: Marker,
-    /// The [`AstKind`](super::ast_nodes::AstKind) of the owner, for error messages. `u8::MAX` if the owner is not a node.
+    /// The [`AstKind`](super::ast_nodes::AstKind) of the owner, for error messages. `u8::MAX` if the owner isn't a
+    /// node.
     pub(crate) owner_kind: u8,
 }
 
-/// What the formatter computes once per file about its comments.
+/// Comment data that the formatter computes once per file.
 pub(crate) struct FileComments {
     /// Indexed by comment id.
     attachments: Vec<AttachmentInfo>,
@@ -275,20 +277,20 @@ impl FileComments {
 
 pub(crate) static NO_COMMENTS: FileComments = FileComments::EMPTY;
 
-/// Only Babel, which Prettier uses for JavaScript, keeps the parentheses after `/** @type {T} */` in its tree. In TypeScript
-/// they are ordinary parentheses. oxfmt keeps them there too.
-fn keeps_type_casts(file: &File<'_>, flavor: Flavor, has_tree_of_babel: bool) -> bool {
-    has_tree_of_babel || file.is_javascript() || flavor.is_oxfmt()
+/// Only Babel, which Prettier uses for JavaScript, keeps the parentheses after `/** @type {T} */` in its tree. In
+/// TypeScript they're ordinary parentheses. oxfmt keeps them there too.
+fn keeps_type_casts(file: &File<'_>, flavor: Flavor, has_babel_tree: bool) -> bool {
+    has_babel_tree || file.is_javascript() || flavor.is_oxfmt()
 }
 
-/// The offsets of every `(` that directly follows a type cast comment. Sorted. If such a `(` is around an expression, Prettier
-/// keeps the `ParenthesizedExpression`.
+/// Returns the sorted offsets of every `(` that directly follows a type cast comment. If such a `(` wraps an
+/// expression, Prettier keeps the `ParenthesizedExpression`.
 pub(crate) fn cast_parens<'a>(
     file: &'a File<'a>,
     flavor: Flavor,
-    has_tree_of_babel: bool,
+    has_babel_tree: bool,
 ) -> Vec<u32> {
-    if !keeps_type_casts(file, flavor, has_tree_of_babel) {
+    if !keeps_type_casts(file, flavor, has_babel_tree) {
         return Vec::new();
     }
     let text = file.text();
@@ -308,13 +310,13 @@ pub(crate) fn cast_parens<'a>(
     cast_parens
 }
 
-/// Attaches the comments of `file`. The result is cached in the file, so that it lives as long as the handles.
-pub(crate) fn of_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> &'a FileComments {
+/// Attaches the comments of `file`. The result is cached in the file, so it lives as long as the handles.
+pub(crate) fn for_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> &'a FileComments {
     let comments = file.extension(|| {
-        let has_tree_of_babel = super::context::has_tree_of_babel(file, options);
-        let cast_parens = cast_parens(file, options.flavor, has_tree_of_babel);
+        let has_babel_tree = super::context::has_babel_tree(file, options);
+        let cast_parens = cast_parens(file, options.flavor, has_babel_tree);
         let attach_options = attach::Options {
-            has_tree_of_babel,
+            has_babel_tree,
             experimental_ternaries: options.experimental_ternaries,
             flavor: options.flavor,
         };
@@ -346,14 +348,15 @@ pub(crate) struct CommentSnapshot {
 }
 
 pub(crate) struct Comments<'a> {
-    /// `None` if the document is not written for JavaScript. There are no comments then.
+    /// `None` if the document isn't JavaScript, in which case there are no comments.
     file: Option<&'a File<'a>>,
     flavor: Flavor,
     file_comments: &'a FileComments,
-    /// The result of the last search by offset. Nodes are mostly printed in source order, so the next search starts here.
+    /// The result of the last search by offset. Nodes are mostly printed in source order, so the next search starts
+    /// here.
     search_hint: Cell<u32>,
-    /// The offsets for which the last search by offset has the same result: from after the start of the comment before it to
-    /// the start of the comment that was found, or `u32::MAX` if none was.
+    /// The inclusive range of offsets for which the last search result still holds: from just after the start of the
+    /// previous comment to the start of the comment that was found, or `u32::MAX` if none was.
     searched_offsets: Cell<(u32, u32)>,
     /// One bit per comment id.
     printed_bitset: Vec<u64>,
@@ -378,7 +381,7 @@ impl<'a> Comments<'a> {
         }
     }
 
-    /// How many comments there are. Their ids are below this.
+    /// Returns the number of comments. All ids are below this.
     fn count(&self) -> u32 {
         self.file_comments.attachments.len() as u32
     }
@@ -417,8 +420,8 @@ impl<'a> Comments<'a> {
         !self.of_node(node).is_empty()
     }
 
-    /// Whether one of the `AstNodes` that are made of `raw` owns a comment or is ignored. Cheaper than making the `AstNodes`
-    /// to ask [`Comments::of_node`].
+    /// True if one of the `AstNodes` backed by `raw` owns a comment or is ignored. Cheaper than building the `AstNodes`
+    /// and calling [`Comments::of_node`].
     #[inline]
     pub(crate) fn is_owner(&self, raw: Node<'_>) -> bool {
         self.file_comments.owners.is_owner(raw)
@@ -436,7 +439,7 @@ impl<'a> Comments<'a> {
         self.owned(self.file_comments.owners.of_cast_parens(open_paren))
     }
 
-    /// Whether `node` is copied from the source because of a `prettier-ignore` comment.
+    /// True if `node` is copied from the source because of a `prettier-ignore` comment.
     #[inline]
     pub(crate) fn is_ignored(&self, node: AstNodes<'_>) -> bool {
         self.file_comments.has_ignore_comments && self.file_comments.owners.of_node(node).is_ignored
@@ -547,8 +550,8 @@ impl<'a> Comments<'a> {
         }
     }
 
-    /// The first of the comments directly before the token at `token_start` that is a leading comment. The ones before it
-    /// trail the previous node.
+    /// The first of the comments directly before the token at `token_start` that is a leading comment. The ones before
+    /// it trail the previous node.
     pub(crate) fn first_leading_comment_before(&self, token_start: u32) -> Option<Comment<'a>> {
         (self.comments_directly_before(token_start).iter()).find(|comment| {
             (self.attachment(*comment))
@@ -556,19 +559,19 @@ impl<'a> Comments<'a> {
         })
     }
 
-    /// Whether there is a comment between the token that starts at `token_start` and the token before it.
+    /// True if there's a comment between the token that starts at `token_start` and the token before it.
     pub(crate) fn has_comment_before(&self, token_start: u32) -> bool {
         !self.comments_directly_before(token_start).is_empty()
     }
 
-    /// Whether one of the comments directly before the token at `token_start` is the last thing on its line.
+    /// True if one of the comments directly before the token at `token_start` ends its line.
     pub(crate) fn has_leading_own_line_comment(&self, token_start: u32) -> bool {
         (self.comments_directly_before(token_start).iter())
             .any(|comment| comment.has_newline_after())
     }
 
-    /// Whether printing the node at `span` has to deal with comments at all: a comment starts inside it, a node inside it owns
-    /// a comment that is somewhere else, or it has type cast parentheses in it.
+    /// True if printing the node at `span` has to deal with comments at all. That's the case if a comment starts inside
+    /// it, a node inside it owns a comment located elsewhere, or it contains type cast parentheses.
     #[inline]
     pub(crate) fn has_comment_or_owner_in(&self, span: Span) -> bool {
         self.has_comment_in_span(span)
@@ -576,7 +579,8 @@ impl<'a> Comments<'a> {
             || self.has_cast_parenthesis_in(span)
     }
 
-    /// `/** @type {T} */ (a).b`: the comment is before the member access, and the parentheses it is about are inside it.
+    /// `/** @type {T} */ (a).b`: the comment is before the member access, but the parentheses it applies to are inside
+    /// it.
     #[inline]
     fn has_cast_parenthesis_in(&self, span: Span) -> bool {
         let cast_parens = &self.file_comments.cast_parens;
@@ -593,7 +597,7 @@ impl<'a> Comments<'a> {
         !self.file_comments.cast_parens.is_empty()
     }
 
-    /// Whether the `(` at `open_paren` directly follows a type cast comment.
+    /// True if the `(` at `open_paren` directly follows a type cast comment.
     pub(crate) fn is_cast_parenthesis(&self, open_paren: u32) -> bool {
         self.file_comments
             .cast_parens
@@ -601,7 +605,7 @@ impl<'a> Comments<'a> {
             .is_ok()
     }
 
-    /// Whether the file has a `prettier-ignore` comment.
+    /// True if the file has a `prettier-ignore` comment.
     #[inline]
     pub(crate) fn has_suppression_comments(&self) -> bool {
         self.file_comments.has_ignore_comments
@@ -620,7 +624,8 @@ impl<'a> Comments<'a> {
             .is_some_and(|word| word & (1 << (comment.id() % 64)) != 0)
     }
 
-    /// Call before printing `comment`. Returns false if it has been printed already, and must not be printed again.
+    /// Call before printing `comment`. Returns false if it was already printed, in which case it must not be printed
+    /// again.
     pub(crate) fn mark_printed(&mut self, comment: Comment<'_>) -> bool {
         let Some(word) = self.printed_bitset.get_mut(comment.id() as usize / 64) else {
             return false;
@@ -646,20 +651,20 @@ impl<'a> Comments<'a> {
         self.comment(*self.printed_log.last()?)
     }
 
-    /// Whether the comment that was printed last is a line comment that starts after `offset`.
+    /// True if the last printed comment is a line comment that starts after `offset`.
     pub(crate) fn has_printed_line_comment_after(&self, offset: u32) -> bool {
         (self.last_printed())
             .is_some_and(|comment| comment.is_line() && comment.span().start > offset)
     }
 
-    /// The comments that have not been printed. There must be none once the file is formatted.
+    /// The comments that haven't been printed. There must be none once the file is formatted.
     pub(crate) fn unprinted(&self) -> impl Iterator<Item = Comment<'a>> + use<'a, '_> {
         (0..self.count())
             .filter_map(|id| self.comment(id))
             .filter(|comment| !self.is_printed(*comment))
     }
 
-    /// For formatting something speculatively: [`Comments::restore`] forgets what was printed since the snapshot.
+    /// For speculative formatting. [`Comments::restore`] unmarks everything printed since the snapshot.
     pub(crate) fn snapshot(&self) -> CommentSnapshot {
         CommentSnapshot {
             printed_log_len: self.printed_log.len(),

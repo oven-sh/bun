@@ -1,0 +1,93 @@
+# -- source: main.cjs
+# "use strict";
+# function kept(x) { let c = 0; for (let i = 0; i < 24; i++) { const isConst = x === "const"; if (isConst) c += 2; c += i; } return c; }
+# globalThis.kept = kept;
+# console.log(kept("const"), kept("let"), kept(5));
+# -- end of source
+# `const isConst = x === "const"; if (isConst) ..`: the comparison has two uses: the truth that is asked of it, and the proof on the edge of the branch, which narrows THE RESULT (to true), not what was
+# compared. Whoever asked which operands the test narrows heard "not known" as soon as there was more than one use, and the comparison kept its general form: 14 instructions in every turn, where
+# `if (x === "const")` stood in front of the loop. Now: the first user asks its truth, a branch alone uses that truth, and the proofs on its edges make up all the other uses: none of its operands is narrowed.
+# RUN: compile ComparisonsWithTextsThatStandInFrontOfLoops mechanisms=all
+# CHECK: statistic ComparisonsWithTextsThatStandInFrontOfLoops 1
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 place=0
+layout L1 module=m0 place=0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=2
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = Builtin builtin=GlobalThis @149
+    v6 = PropGet v5 key="globalThis" [isFreeName] @149
+    v7 = Convert v6 declared={type=builtin(GlobalThis) flags=[IsExpected]} @149
+    PropSet v7, v4 key="kept" @149
+    v9 = Builtin builtin=GlobalThis @173
+    v10 = PropGet v9 key="console" [isFreeName] @173
+    v11 = Convert v10 declared={type=builtin(Console) flags=[IsExpected]} @173
+    v12 = PropGet v11 key="log" @173
+    v13 = Convert v12 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @173
+    v14 = String string="const" @190
+    v15 = Call v4, -, v14 calleeName="kept" @185
+    v16 = String string="let" @205
+    v17 = Call v4, -, v16 calleeName="kept" @200
+    v18 = Integer integer=5 @218
+    v19 = Call v4, -, v18 calleeName="kept" @213
+    v20 = Call v13, v11, v15, v17, v19 calleeKey="log" calleeName="console.log" @181
+    v21 = Undefined @173
+    Return v21 @173
+}
+function f1 name="kept" module=m0 position=14 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @41
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @41
+    v3 = Integer @57
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @57
+    Jump -> next b1(v2, v4) @53
+  b1(v5, v6):
+    LoopHint @53
+    v8 = Integer integer=24 @64
+    v9 = Less v6, v8 @64
+    Branch v9 -> taken b2(), notTaken b5() @64
+  b2():
+    v10 = String string="const" @97
+    v11 = StrictEq v0, v10 @97
+    v12 = ToBoolean v11 @110
+    Branch v12 -> taken b3(| 0), notTaken b4(v5) @110
+  b3(v13):
+    v14 = Integer integer=2 @124
+    v15 = Add v5, v14 @124
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @119
+    Jump -> next b4(v16) @119
+  b4(v17):
+    v18 = Add v17, v6 @132
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @127
+    v20 = Increment v6 @68
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @68
+    Jump -> next b1(v19, v21) @68
+  b5():
+    Return v5 @144
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private

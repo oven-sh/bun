@@ -1,11 +1,12 @@
 //! The special cases of comment attachment, from Prettier's `handle-comments.js`.
 //!
-//! Each `handle_*` function has the name of the Prettier function it implements. Prettier runs its handlers one after the
-//! other, and almost every handler starts by checking the type of the enclosing node. Here
-//! [`Rules::handle_by_enclosing_node`] checks that type once and only calls the handlers that apply to it, in Prettier's order.
+//! Each `handle_*` function has the name of the Prettier function it implements. Prettier runs its handlers one after
+//! the other, and almost every handler starts by checking the type of the enclosing node. Here
+//! [`Rules::handle_by_enclosing_node`] checks that type once and only calls the handlers that apply to it, in
+//! Prettier's order.
 //!
-//! Where Prettier scans the source text for a token such as `else` or `)`, this code compares offsets with the tokens that the
-//! lexer recorded next to the comment.
+//! Where Prettier scans the source text for a token such as `else` or `)`, this code compares offsets with the tokens
+//! that the lexer recorded next to the comment.
 
 use super::TextPosition::{EndOfLine, OwnLine, Remaining};
 use super::flow::{self, FunctionType};
@@ -27,8 +28,8 @@ use bun_lint::span::Span;
 
 mod oxfmt;
 
-/// Returns `None` if no special case applies. Sets `ignored_node` if the comment is a `prettier-ignore` comment that applies to
-/// a node other than the one it gets attached to.
+/// Returns `None` if no special case applies. Sets `ignored_node` if the comment is a `prettier-ignore` comment that
+/// applies to a node other than the one it gets attached to.
 pub(super) fn handle_comment<'a>(
     cx: &AttachContext<'a, '_>,
     context: &CommentContext<'a>,
@@ -78,7 +79,8 @@ fn is_block(owner: Owner<'_>) -> bool {
     )
 }
 
-/// One step of [`Rules::is_name_of_type_query_or_jsx_element`]: the member access that `e` is the object of, or else the answer.
+/// One step of [`Rules::is_name_of_type_query_or_jsx_element`]. Returns the member access that `e` is the object of, or
+/// else the answer.
 fn member_access_or_is_name(e: Expr<'_>) -> Result<Expr<'_>, bool> {
     match e.parent() {
         Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { .. }) => Ok(parent),
@@ -89,7 +91,7 @@ fn member_access_or_is_name(e: Expr<'_>) -> Result<Expr<'_>, bool> {
     }
 }
 
-/// The statement after `statement` in the program, the block or the namespace that it is in. Empty statements do not count.
+/// Returns the statement after `statement` in its program, block or namespace, skipping empty statements.
 fn statement_after(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     let statements = match statement.parent() {
         Node::File(file) => file.body(),
@@ -108,7 +110,7 @@ fn statement_after(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     Some(next)
 }
 
-/// A parameter of a function that is not `this`.
+/// True for a function parameter other than `this`.
 fn is_parameter(owner: Owner<'_>) -> bool {
     matches!(
         owner,
@@ -133,13 +135,13 @@ impl<'a> Rules<'_, 'a, '_> {
         self.cx.prev_token_ends_with(self.context.comment, byte)
     }
 
-    /// Whether there is no token between the comment and `owner`, which comes after it.
+    /// True if there's no token between the comment and `owner`, which comes after it.
     fn is_directly_before(&self, owner: Owner<'a>) -> bool {
         self.context.comment.next_token_start() == self.cx.start_of(owner)
     }
 
     fn is_on_same_line_as_end_of(&self, owner: Owner<'a>) -> bool {
-        // Prettier's `locEnd` of a statement does not include the `;`.
+        // Prettier's `locEnd` of a statement doesn't include the `;`.
         let owner = self.cx.file.without_semicolon(self.cx.span_of(owner));
         let between = owner.between(self.context.comment.span());
         !self.cx.source.has_newline_in_range(between)
@@ -159,7 +161,7 @@ impl<'a> Rules<'_, 'a, '_> {
         (types.into_iter().flatten()).map(|ty| self.cx.owner_of_type(ty))
     }
 
-    /// Whether `owner` is an `Identifier` in ESTree.
+    /// True if `owner` is an `Identifier` in ESTree.
     fn is_identifier(&self, owner: Option<Owner<'a>>) -> bool {
         match owner {
             Some(Owner::Node(N::IdentifierReference(_) | N::BindingIdentifier(_))) => true,
@@ -176,8 +178,8 @@ impl<'a> Rules<'_, 'a, '_> {
         }
     }
 
-    /// Babel's `ClassPrivateMethod` and `ClassPrivateProperty`. Prettier's node type lists leave them out. For oxfmt a private
-    /// member is like any other.
+    /// Babel's `ClassPrivateMethod` and `ClassPrivateProperty`. Prettier's node type lists omit them. For oxfmt a
+    /// private member is like any other.
     fn is_private_member_of_babel(&self, member: Member<'a>) -> bool {
         self.cx.is_babel()
             && !self.cx.options.flavor.is_oxfmt()
@@ -196,7 +198,7 @@ impl<'a> Rules<'_, 'a, '_> {
 
     fn is_function_like(&self, node: N<'a>) -> bool {
         match node {
-            // Flow's `HookDeclaration` and `ComponentDeclaration` are not in Prettier's list.
+            // Flow's `HookDeclaration` and `ComponentDeclaration` aren't in Prettier's list.
             N::Function(func)
                 if self.cx.file.is_flow() && flow::is_hook_or_component_declaration(func) =>
             {
@@ -226,7 +228,7 @@ impl<'a> Rules<'_, 'a, '_> {
         }
     }
 
-    /// The `key` of a class member or an object property.
+    /// Returns the `key` of a class member or an object property.
     fn key_of(&self, node: N<'a>) -> Option<Owner<'a>> {
         let (key, computed) = match node {
             N::MethodDefinition(member)
@@ -243,7 +245,6 @@ impl<'a> Rules<'_, 'a, '_> {
         }
     }
 
-    /// The `body` of an arrow function.
     fn body_of_arrow(&self, func: Func<'a>) -> Owner<'a> {
         match func.body() {
             FnBody::Expr(e) => self.cx.owner_of_expr(e),
@@ -263,8 +264,8 @@ impl<'a> Rules<'_, 'a, '_> {
 
     // ───────────────────────────── blocks ─────────────────────────────
 
-    /// The first statement of a block, or the first member of a class or interface body. Skips empty statements, and
-    /// directives for Babel, which does not keep them in `body`.
+    /// Returns the first statement of a block, or the first member of a class or interface body. Skips empty
+    /// statements, and directives for Babel, which doesn't keep them in `body`.
     fn first_child_of_block(&self, block: Owner<'a>) -> Option<Owner<'a>> {
         let first_statement = |statements: List<'a, Stmt<'a>>| {
             (statements.iter())
@@ -343,13 +344,13 @@ impl<'a> Rules<'_, 'a, '_> {
             .or_else(|| self.handle_union_type_leading_comments(ignored_node))
     }
 
-    /// Whether `e` is the `a.b`, or the `a.b` in the `a.b.c`, of `typeof a.b.c` or `<a.b.c />`.
+    /// True if `e` is the `a.b`, or the `a.b` in the `a.b.c`, of `typeof a.b.c` or `<a.b.c />`.
     fn is_name_of_type_query_or_jsx_element(&self, e: Expr<'a>) -> bool {
         (self.cx.is_name_of_type_query_or_jsx_element).find(e, member_access_or_is_name)
     }
 
-    /// `a! /* comment */ !`: in ESTree the comment trails the `a!` inside `a!!`. Here `a!!` is one node, which prints the comment
-    /// after the `!` that it comes after.
+    /// `a! /* comment */ !`: in ESTree the comment trails the `a!` inside `a!!`. Here `a!!` is one node, which prints
+    /// the comment after the same `!` as in the source.
     fn handle_comment_between_non_null_marks(
         &self,
         ignored_node: &mut Option<Owner<'a>>,
@@ -369,15 +370,15 @@ impl<'a> Rules<'_, 'a, '_> {
         Some(Attachment::dangling(Owner::Node(N::TSNonNullExpression(e))))
     }
 
-    /// Whether the comment is directly before the `;` that `statement` ends with.
+    /// True if the comment is directly before the `;` that ends `statement`.
     fn is_before_semicolon_of(&self, statement: Stmt<'a>) -> bool {
         self.following_node.is_none()
             && self.next_token_starts_with(b';')
             && self.context.comment.next_token_start() + 1 == statement.span().end
     }
 
-    /// `export type A = B /* comment */;`. Prettier's `locEnd` of an `export` is the end of its content, so the comment comes after
-    /// the `export` and not inside the declaration. It is between the `export` and the next statement.
+    /// `export type A = B /* comment */;`. Prettier's `locEnd` of an `export` is the end of its content, so the comment
+    /// comes after the `export` and not inside the declaration. It's between the `export` and the next statement.
     fn handle_comment_before_semicolon_of_export(&self, node: N<'a>) -> Option<Attachment<'a>> {
         let statement = match node {
             // Flow's `declare export default A /* comment */;` is a type alias in the tree. The comment trails the `A`.
@@ -389,7 +390,8 @@ impl<'a> Rules<'_, 'a, '_> {
             N::Function(func) => func.owner().as_stmt()?,
             _ => return None,
         };
-        // Flow's `declare export function a(): B /* comment */;` is a `DeclareExportDeclaration`, which ends after its `;`.
+        // Flow's `declare export function a(): B /* comment */;` is a `DeclareExportDeclaration`, which ends after its
+        // `;`.
         if !statement.is_exported()
             || is_flow_declare_export(statement)
             || !self.is_before_semicolon_of(statement)
@@ -424,7 +426,8 @@ impl<'a> Rules<'_, 'a, '_> {
             return has_no_arguments.then(|| Attachment::dangling(Owner::Node(node)));
         }
         let func = function_of(node).filter(|func| !has_parameters(*func))?;
-        // Flow's `FunctionTypeAnnotation` is not in Prettier's list, so the comment leads the next node: `() => /* comment */ A`.
+        // Flow's `FunctionTypeAnnotation` isn't in Prettier's list, so the comment leads the next node:
+        // `() => /* comment */ A`.
         if self.cx.file.is_flow()
             && flow::function_type(func) == Some(FunctionType::FunctionTypeAnnotation)
         {
@@ -501,7 +504,8 @@ impl<'a> Rules<'_, 'a, '_> {
             {
                 self.handle_member_expression_comments_for_oxfmt(node)
             }
-            // The `a.b` of `typeof a.b` is a `TSQualifiedName` in ESTree, that of `<a.b />` a `JSXMemberExpression`.
+            // The `a.b` of `typeof a.b` is a `TSQualifiedName` in ESTree, and the `a.b` of `<a.b />` is a
+            // `JSXMemberExpression`.
             N::StaticMemberExpression(e) if self.is_name_of_type_query_or_jsx_element(e) => None,
             // `handleMemberExpressionComments`
             N::StaticMemberExpression(_)
@@ -509,7 +513,7 @@ impl<'a> Rules<'_, 'a, '_> {
             | N::PrivateFieldExpression(_) => (text_position == OwnLine
                 && self.is_identifier(self.following_node))
             .then(|| Attachment::leading(enclosing_node)),
-            // The `A.B` of `interface C extends A.B {}` is a member expression in ESTree. For oxfmt it is a name.
+            // The `A.B` of `interface C extends A.B {}` is a member expression in ESTree. For oxfmt it's a name.
             N::TSInterfaceHeritage(_) | N::TSClassImplements(_)
                 if !self.cx.options.flavor.is_oxfmt() =>
             {
@@ -550,7 +554,7 @@ impl<'a> Rules<'_, 'a, '_> {
             | N::TSConstructSignatureDeclaration(_)
             | N::TSFunctionType(_)
             | N::TSConstructorType(_) => self.handle_function_comments(node),
-            // An `ImportAttribute`. In an import type it is a property of an object.
+            // An `ImportAttribute`. In an import type it's a property of an object.
             N::ObjectProperty(prop)
                 if prop.is_import_attribute() && matches!(prop.parent(), Node::Stmt(_)) =>
             {
@@ -600,7 +604,7 @@ impl<'a> Rules<'_, 'a, '_> {
                 (self.context.comment.has_newline_after()).then(|| Attachment::trailing(specifier))
             }
 
-            // Flow's `DeclareTypeAlias` is not in Prettier's list.
+            // Flow's `DeclareTypeAlias` isn't in Prettier's list.
             N::TSTypeAliasDeclaration(statement)
                 if self.cx.file.is_flow() && statement.flags().contains(Flags::AMBIENT) =>
             {
@@ -668,7 +672,8 @@ impl<'a> Rules<'_, 'a, '_> {
             N::TSUnionType(_) if self.cx.options.flavor.is_oxfmt() => {
                 self.handle_ignore_comment_before_union_operator_for_oxfmt()
             }
-            // `A[ /* a ⏎ b */ ]`. Prettier and oxfmt print `A /* a ⏎ b */[]`, which does not parse: a line break before the `[` ends the type.
+            // `A[ /* a ⏎ b */ ]`. Prettier and oxfmt print `A /* a ⏎ b */[]`, which doesn't parse: a line break before
+            // the `[` ends the type.
             N::TSArrayType(_)
                 if self.context.comment.is_multiline_block()
                     && self.next_token_starts_with(b']') =>
@@ -874,7 +879,8 @@ impl<'a> Rules<'_, 'a, '_> {
                     .map(|e| Owner::Node(N::Decorator(e))),
                 class.name().map(|it| Owner::Name(it.span().start)),
                 type_parameters(Node::Class(class), class.type_params().is_empty()),
-                // `extends a?.b`: with typescript-estree the `superClass` is a `ChainExpression`, which is never next to a comment.
+                // `extends a?.b`: with typescript-estree the `superClass` is a `ChainExpression`, which is never next
+                // to a comment.
                 (class.extends())
                     .filter(|e| cx.is_babel() || !e.is_chain_root())
                     .map(|e| cx.owner_of_expr(e)),
@@ -916,8 +922,8 @@ impl<'a> Rules<'_, 'a, '_> {
             if !self.cx.options.flavor.is_oxfmt() {
                 return Some(self.add_block_statement_first_comment(body));
             }
-            // `class A extends (B // comment⏎) {}`: see `handle_comment_before_body_for_oxfmt`. A `prettier-ignore` comment
-            // there ignores `B`.
+            // `class A extends (B // comment⏎) {}`: see `handle_comment_before_body_for_oxfmt`. A `prettier-ignore`
+            // comment there ignores `B`.
             if self.context.is_ignore_comment && self.preceding_node == super_class {
                 *ignored_node = super_class;
             }
@@ -952,13 +958,13 @@ impl<'a> Rules<'_, 'a, '_> {
         self.preceding_node.map(Attachment::trailing)
     }
 
-    /// Flow: a comment before the `(` of a function type that comes directly after a name or a modifier. After type parameters it is
-    /// between two nodes like any other comment: `f<T> /* comment */(): void`
+    /// Flow: a comment before the `(` of a function type that comes directly after a name or a modifier. After type
+    /// parameters it's between two nodes like any other comment: `f<T> /* comment */(): void`
     ///
-    /// - `declare function f /* comment */ (): void` and `{ static /* comment */ (): void }`: the comment leads the function type,
-    ///   which starts at the `(`. Prettier prints `f/* comment */ (): void`.
-    /// - `{ m /* comment */ (): void }`: the function type starts at the `m`, so the comment leads the next node in it. Prettier
-    ///   prints `m(): /* comment */ void`.
+    /// - `declare function f /* comment */ (): void` and `{ static /* comment */ (): void }`: the comment leads the
+    ///   function type, which starts at the `(`. Prettier prints `f/* comment */ (): void`.
+    /// - `{ m /* comment */ (): void }`: the function type starts at the `m`, so the comment leads the next node in it.
+    ///   Prettier prints `m(): /* comment */ void`.
     /// - `{ get a /* comment */ (): void }`: the comment trails the `a`.
     fn handle_comment_before_parenthesis_of_function_type(
         &self,
@@ -994,8 +1000,8 @@ impl<'a> Rules<'_, 'a, '_> {
         }
     }
 
-    /// Flow: `declare function f(a: A): boolean %checks(a) /* comment */;`. The comment trails the `DeclaredPredicate`, which is part of
-    /// the return type in the tree.
+    /// Flow: `declare function f(a: A): boolean %checks(a) /* comment */;`. The comment trails the `DeclaredPredicate`,
+    /// which is part of the return type in the tree.
     fn handle_comment_after_declared_predicate(&self, node: N<'a>) -> Option<Attachment<'a>> {
         let N::Function(func) = node else {
             return None;
@@ -1011,7 +1017,7 @@ impl<'a> Rules<'_, 'a, '_> {
     }
 
     fn handle_function_comments(&self, node: N<'a>) -> Option<Attachment<'a>> {
-        // The other rules are not for the function types of Flow.
+        // The other rules don't apply to Flow's function types.
         if self.cx.file.is_flow()
             && function_of(node).is_some_and(|it| flow::function_type(it).is_some())
         {
@@ -1049,7 +1055,8 @@ impl<'a> Rules<'_, 'a, '_> {
         let is_parameter = |owner: Owner<'a>| {
             is_parameter(owner) || matches!(owner, Owner::Node(N::TSThisParameter(_)))
         };
-        // `type A = (a: B) // comment⏎ => C`. In `declare component` the comment has to be before the `)`. A hook type has no rule.
+        // `type A = (a: B) // comment⏎ => C`. In `declare component` the comment has to be before the `)`. A hook type
+        // has no rule.
         if self.cx.file.is_flow()
             && let Some(function_type) = function_of(node).and_then(flow::function_type)
         {
@@ -1087,7 +1094,7 @@ impl<'a> Rules<'_, 'a, '_> {
         if text_position == EndOfLine {
             return None;
         }
-        // `obj = { fn /* comment */() {} }`. Babel does not need this.
+        // `obj = { fn /* comment */() {} }`. Babel doesn't need this.
         if let Some(preceding_node) = self.preceding_node
             && match node {
                 // Not in `{ key: (/* comment */ (value)) }`.
@@ -1153,7 +1160,7 @@ impl<'a> Rules<'_, 'a, '_> {
             N::Function(func) if !func.has_body() && matches!(func.owner(), Node::Stmt(_)) => func,
             _ => return None,
         };
-        // The `returnType` of a `TSAbstractMethodDefinition` is on its `value`, so Prettier does not see it here.
+        // The `returnType` of a `TSAbstractMethodDefinition` is on its `value`, so Prettier doesn't see it here.
         let return_type = (func.return_type())
             .filter(|_| !matches!(node, N::MethodDefinition(_)))
             .map(|ty| Owner::Node(N::TSTypeAnnotation(ty)));
@@ -1272,8 +1279,8 @@ impl<'a> Rules<'_, 'a, '_> {
         }
     }
 
-    /// `type A = /* comment */ B`, `type A = (/* comment */ B)`. Prettier looks for the first `=` after the name, so the `=` of a
-    /// default counts: `type A<T = B> /* comment */ = C`.
+    /// `type A = /* comment */ B`, `type A = (/* comment */ B)`. Prettier looks for the first `=` after the name, so
+    /// the `=` of a default counts: `type A<T = B> /* comment */ = C`.
     fn is_after_operator_of_type_alias(&self, node: N<'a>) -> bool {
         let N::TSTypeAliasDeclaration(statement) = node else {
             return false;
@@ -1338,8 +1345,8 @@ impl<'a> Rules<'_, 'a, '_> {
             .map(Attachment::trailing)
     }
 
-    /// `import("a", { with: { b: "c" } /* comment */ }).D`. In ESTree the comment is in the outer object, which is no node here, so
-    /// `D` does not follow it.
+    /// `import("a", { with: { b: "c" } /* comment */ }).D`. In ESTree the comment is in the outer object, which isn't a
+    /// node here, so `D` doesn't follow it.
     fn handle_comment_after_attributes_of_import_type(
         &self,
         ty: TypeNode<'a>,
@@ -1373,8 +1380,8 @@ impl<'a> Rules<'_, 'a, '_> {
                 Marker::InIgnoredNode,
             ));
         }
-        // `{ /* comment */ [K in T]: V }`. Prettier wants something between the comment and the `[`: `{ /* comment */[K in T]: V }` is
-        // `{ [/* comment */ K in T]: V }`. oxfmt does not.
+        // `{ /* comment */ [K in T]: V }`. Prettier requires something between the comment and the `[`:
+        // `{ /* comment */[K in T]: V }` is `{ [/* comment */ K in T]: V }`. oxfmt doesn't.
         let touches_bracket = comment.span().end == comment.next_token_start()
             && self.next_token_starts_with(b'[')
             && !self.cx.options.flavor.is_oxfmt();
@@ -1393,9 +1400,9 @@ impl<'a> Rules<'_, 'a, '_> {
         (self.context.text_position == EndOfLine).then(|| Attachment::leading(following_node))
     }
 
-    /// `const { a } // comment⏎: T = b`. In ESTree the type annotation is a child of the pattern, so the pattern is the enclosing
-    /// node, and the preceding node is its last property or element. The type annotation of `...[a]: T` is a child of the
-    /// `RestElement`.
+    /// `const { a } // comment⏎: T = b`. In ESTree the type annotation is a child of the pattern, so the pattern is the
+    /// enclosing node, and the preceding node is its last property or element. The type annotation of `...[a]: T` is a
+    /// child of the `RestElement`.
     fn handle_comments_in_destructuring_pattern(&self) -> Option<Attachment<'a>> {
         let (
             Owner::Node(N::ObjectPattern(pattern) | N::ArrayPattern(pattern)),

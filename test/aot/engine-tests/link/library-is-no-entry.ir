@@ -1,0 +1,55 @@
+# If every function with a `runtimefunction` record and every module of the library counted as an entry of the program, `console.log(1 + 2)` would compile 783 units in place of 1, and the library's own code would decide what is known of every program: that it may run unseen code, that it may start a worker
+# print(3);
+# Nothing that is reached leads to the library. `map` stands behind a built-in that the program cannot come by, `createElement` behind a helper that no operation names,
+# nobody asks for the module, and `helper` lies in a variable of a file of which no function is reached.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+# CHECK: function f2 unreached
+# CHECK: function f3 unreached
+# CHECK: function f4 unreached
+# RUN(NONE): link functions mechanisms=none
+# NONE-COUNT-4: unreached
+# NONE-NOT: unreached
+# RUN(UNITS): units-with-code
+# UNITS: units 1,
+# RUN(CLOSED): units-with-code mechanisms=none
+# CLOSED: units 1,
+# RUN(IMAGE): image ProgramTables
+# IMAGE-NOT: compiledRuntimeFunction
+
+variable g0 name="helper" module=m1 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+module m2 path="node:module" displayPath="node:module" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule body=f3
+entry module=m0
+runtimefunction id=ArrayPrototypeMap function=f1
+runtimefunction id=DecoratorsCreateElement function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Integer integer=3
+    v3 = Call v1, -, v2 calleeName="print"
+    v4 = Undefined
+    Return v4
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v0, v1
+    Return v3
+}
+function f2 name="createElement" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=DecoratorsCreateElement thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="helper" module=m1 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

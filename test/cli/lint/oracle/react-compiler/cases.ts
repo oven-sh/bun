@@ -1,14 +1,14 @@
-// oxlint's own test cases of the rules of the React Compiler as files, for oxlint.ts and compare.ts.
+// Writes oxlint's own test cases for the React Compiler rules as files, for oxlint.ts and compare.ts.
 //
 //   bun cases.ts <cases> <out directory>                     writes <rule>/<number>.<valid|invalid>.tsx
-//   bun cases.ts <cases> <out directory> --check=<jsonl>     and: do the lines of oxlint.ts say what the cases expect?
+//   bun cases.ts <cases> <out directory> --check=<jsonl>     also checks the output of oxlint.ts against the cases
 //
 // <cases> is one of:
-//   - oxlint's `crates/oxc_linter/src/rules/react`: the `let pass = vec![..]` and `let fail = vec![..]` of `<rule>.rs`. A case
-//     that fails expects at least one diagnostic of its rule, one that passes expects none.
-//   - a directory with a file `<rule>.json` for each rule: {"cases": [{"valid", "code", "filename", "messages": [{"message",
-//     "line", "column"}]}]}. A case expects these messages at these places.
-// A case in `node_modules` stays in a directory of that name.
+//   - oxlint's `crates/oxc_linter/src/rules/react`. The cases are the `let pass = vec![..]` and `let fail = vec![..]`
+//     in `<rule>.rs`. A `fail` case expects at least one diagnostic from its rule, and a `pass` case expects none.
+//   - a directory with a `<rule>.json` for each rule: {"cases": [{"valid", "code", "filename", "messages": [{"message",
+//     "line", "column"}]}]}. A case expects exactly these messages at these positions.
+// A case in `node_modules` stays in a directory with that name.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
@@ -18,13 +18,13 @@ type Case = {
   valid: boolean;
   code: string;
   filename: string;
-  /** Null: not known, but there is one if the case is not valid. */
+  /** Null if the messages are unknown. An invalid case then expects at least one. */
   messages: { message: string; line: number; column: number }[] | null;
 };
 
 const ESCAPES: Record<string, string> = { n: "\n", r: "\r", t: "\t", "0": "\0", "\\": "\\", '"': '"', "'": "'" };
 
-/** The string literal of Rust that starts at `at`, and where it ends. Null: there is none. */
+/** Returns the Rust string literal that starts at `at` and its end offset, or null if there isn't one. */
 function literal(text: string, at: number): { value: string; end: number } | null {
   const raw = /^r(#*)"/.exec(text.slice(at, at + 12));
   if (raw !== null) {
@@ -50,7 +50,7 @@ function literal(text: string, at: number): { value: string; end: number } | nul
       value += String.fromCharCode(parseInt(text.slice(i + 1, i + 3), 16));
       i += 2;
     } else if (next === "\n") {
-      // The line goes on after the blanks of the next one.
+      // A line continuation skips the next line's leading whitespace.
       while (/\s/.test(text[i + 1] ?? "")) i++;
     } else {
       value += ESCAPES[next] ?? next;
@@ -59,7 +59,7 @@ function literal(text: string, at: number): { value: string; end: number } | nul
   return null;
 }
 
-/** The elements of `vec![` whose `[` is before `at`: of each the first string, and the one in `PathBuf::from(..)`. */
+/** Parses a `vec![` whose elements start at `at`. Returns each element's first string and its `PathBuf::from(..)`. */
 function elements(text: string, at: number): { code: string; filename: string | null }[] {
   const found: { code: string; filename: string | null }[] = [];
   let current: { code: string; filename: string | null } | null = null;
@@ -100,7 +100,7 @@ function fromSource(path: string, rule: string): Case[] {
 
 export type Expectation = { rule: string; code: string; messages: Case["messages"] };
 
-/** The cases of all rules, by the path that each is written to. */
+/** Returns every rule's cases, keyed by the path each one is written to. */
 export function casesOf(directory: string): Map<string, Expectation> {
   const found = new Map<string, Expectation>();
   for (const [rule] of RULES) {

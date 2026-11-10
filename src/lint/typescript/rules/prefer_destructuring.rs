@@ -7,7 +7,7 @@ use bun_lint_eslint::rules::prefer_destructuring::{Config, PREFER_DESTRUCTURING}
 pub struct PreferDestructuring {
     base: Config,
     enforce_for_declaration_with_type_annotation: bool,
-    /// `getNormalizedEnabledType(nodeType, 'object')`. It differs from what the base rule reads: here the options are merged
+    /// `getNormalizedEnabledType(nodeType, 'object')`. Unlike the base rule, it reads the options after they're merged
     /// into the defaults.
     object_in_variable_declarator: bool,
     object_in_assignment_expression: bool,
@@ -23,7 +23,7 @@ fn is_type_any_or_iterable_type(ty: Type) -> bool {
     ty.types().iter().all(is_type_any_or_iterable_type)
 }
 
-/// The `object` of `node`, if that is `object[0]`: `isArrayLiteralIntegerIndexAccess`.
+/// `isArrayLiteralIntegerIndexAccess`: returns `object` if `node` is `object[0]`.
 fn object_of_integer_index_access(node: Expr<'_>) -> Option<Expr<'_>> {
     let Some((obj, index, Chain::No)) = node.as_index() else {
         return None;
@@ -35,7 +35,7 @@ fn object_of_integer_index_access(node: Expr<'_>) -> Option<Expr<'_>> {
 }
 
 impl PreferDestructuring {
-    /// Whether the base rule is to run. `is_object_enabled`: for the kind of node that `report_node` is.
+    /// Returns true if the base rule should run. `is_object_enabled` is the `object` option for `report_node`'s kind.
     fn check_index_access<'a>(
         &self,
         right: Expr<'a>,

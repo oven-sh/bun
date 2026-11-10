@@ -1109,3 +1109,18 @@ describe.concurrent("false route with no fetch handler", () => {
     await proc.exited;
   });
 });
+
+it("request.clone() copies a param whose name is an array index", async () => {
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/users/:id": req => {
+        (req.params as Record<string, string>)[0] = "zero";
+        const params = req.clone().params as Record<string, string>;
+        return Response.json({ keys: Object.keys(params), byIndex: params[0] });
+      },
+    },
+  });
+  const res = await fetch(`${server.url}users/42`);
+  expect(await res.json()).toEqual({ keys: ["0", "id"], byIndex: "zero" });
+});

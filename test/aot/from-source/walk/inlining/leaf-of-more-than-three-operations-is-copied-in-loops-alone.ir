@@ -1,0 +1,22 @@
+# f1 = isWordPart, f2 = countDown, f3 = count, f4 = first
+# -- source: leaf-of-more-than-three-operations-is-copied-in-loops-alone.js
+# function isWordPart(ch) { return ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122 || ch >= 48 && ch <= 57; }
+# function count(text) { let letters = 0; for (let i = 0; i < text.length; i++) letters += isWordPart(text.charCodeAt(i)) ? 1 : 0; return letters; }
+# function countDown(text, i) { if (i < 0) return 0; return (isWordPart(text.charCodeAt(i)) ? 1 : 0) + countDown(text, i - 1); }
+# function first(text) { return isWordPart(text.charCodeAt(0)) ? 1 : 0; }
+# print(count("a1_ b"), countDown("a1_ b", 4), first("a"), first("_"));
+# -- end of source
+# If a callee were judged by the number of its operations, `isWordPart` would be called everywhere: constants and what turns a boolean into a boolean count there: in a copy it is six compares.
+# A callee without loops that calls nobody goes by what a copy pays for: 12 and its operands where the call stands in a loop: in `count`. Outside of loops 3 and its operands: `first` calls it, and so does `countDown`, which calls itself: no loop stands in its text.
+# RUN: walk f3 mechanisms=all
+# CHECK: frame 1 callee=f1
+# RUN(RECURSION): walk f2 mechanisms=all
+# RECURSION-NOT: callee=f1
+# RECURSION: CallDirect {{*}} function=f1
+# RUN(ELSEWHERE): walk f4 mechanisms=all
+# ELSEWHERE-NOT: frame 1
+# ELSEWHERE: CallDirect {{*}} function=f1
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}} leaf=6
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

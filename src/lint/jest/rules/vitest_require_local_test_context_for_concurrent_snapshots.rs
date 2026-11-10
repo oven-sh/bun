@@ -7,7 +7,7 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, static_property_name};
 /// The rule is intended to ensure that concurrent snapshot tests are executed within a properly configured local test context.
 pub struct RequireLocalTestContextForConcurrentSnapshots;
 
-const REQUIRE_LOCAL_TEST_CONTEXT_FOR_CONCURRENT_SNAPSHOTS: Message = Message::new(
+const REQUIRE_LOCAL_TEST_CONTEXT_FOR_CONCURRENT_SNAPSHOTS: &Message = &Message::new(
     "",
     "Require local Test Context for concurrent snapshot tests",
 );
@@ -42,7 +42,7 @@ impl Rule for RequireLocalTestContextForConcurrentSnapshots {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // Whether something is in a call of `it.concurrent` or the like.
+        // Caches whether a node is inside a call to `it.concurrent` or similar.
         let mut in_concurrent = AncestorMemo::default();
         for possible_jest_node in
             jest::iter_possible_jest_call_node(cx.file(), jest::Runner::Vitest)
@@ -71,7 +71,7 @@ impl Rule for RequireLocalTestContextForConcurrentSnapshots {
     }
 }
 
-/// `it.concurrent(..)`, `describe["concurrent"](..)`
+/// Matches `it.concurrent(..)` and `describe["concurrent"](..)`.
 fn is_test_or_describe_node(node: Node) -> bool {
     let Some(member_expr) = node
         .as_expr()

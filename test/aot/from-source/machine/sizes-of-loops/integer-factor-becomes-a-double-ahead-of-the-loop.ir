@@ -1,0 +1,17 @@
+# f1 = scaledSum
+# -- source: integer-factor-becomes-a-double-ahead-of-the-loop.ts
+# function scaledSum(list: Float64Array, factor: number): number {
+#   let sum = 0;
+#   for (let k = 0; k < list.length; k++) sum += list[k] * factor;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = scaledSum(new Float64Array(input), input | 0);
+# -- end of source
+# The compiler before this one: 18 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 20, patches 0, moves 8, unlikely 6 ; loop: operations 6, patches 1, moves 1, unlikely 0.
+# RUN(X64): loops most:28,7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 28
+# X64-NEXT: loop: at most 7

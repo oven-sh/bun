@@ -1,0 +1,26 @@
+# -- source: a-list-as-made-from-in-front-of-a-loop-is-taken-apart-by-reads-of-its-kind-under-written-places.cjs
+# "use strict";
+# function dot(a, b) { const [x, y, z] = a, [u, v, w] = b; return x * u + y * v + z * w; }
+# const first = [1.5, 2.5, 3.5], second = [0.5, 0.25, 4], short = [2.5], holed = [1.5, , 3.5], whole = [1, 2, 3];
+# function run(t) { first[0] = t & 7; let s = t & 1; for (let i = 0; i < 10; i++) s += dot(first, second); return s; }
+# function runShort(t) { let s = t & 1; for (let i = 0; i < 3; i++) s += dot(short, second); return s; }
+# function runHoled(t) { let s = t & 1; for (let i = 0; i < 3; i++) s += dot(holed, second); return s; }
+# function runWhole(t) { let s = t & 1; for (let i = 0; i < 3; i++) s += dot(whole, second); return s; }
+# print(run(3), runShort(3), runHoled(3), runWhole(3));
+# -- end of source
+# f2 = run. dot() takes two lists apart that the link knows to stay as made: nobody sees the steps, nothing runs between them, and what lies past the end reads as undefined either way: each step is a read under
+# its written place, without a test of the place against the length and without a join. dot() is copied into the loop as a leaf that reads elements of a holder from in front is, the loop is built twice for the
+# two lists, which are asked for their kind in front of the typed copy, and the six reads go by that kind in line. A short list and a hole give NaN; whole numbers are read out of their own kind.
+# RUN: walk f2 mechanisms=all
+# CHECK: HasArrayStorage {{*}} arrayStorage=Double [admitsInt32Storage]
+# CHECK: HasArrayStorage {{*}} arrayStorage=Double [admitsInt32Storage]
+# RUN(READS): walk f2 mechanisms=all
+# READS: undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# READS: undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# READS: undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# READS: undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# READS: undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# READS: undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 162.25 NaN NaN 40
+# ANSWER-NEXT: exited with 0

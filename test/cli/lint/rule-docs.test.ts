@@ -159,8 +159,8 @@ describe("docs/lint/rules", () => {
     const outcomes = await lintExamples(String(dir), examples, byPage, lint);
     for (const it of examples) {
       const { reports, error } = outcomes.get(it)!;
-      const given = it.config === "oxlint" ? ", with an oxlint config" : "";
-      const where = `${it.page}: line ${it.line}${it.options.length ? ` with ${JSON.stringify(it.options)}` : ""}${given}`;
+      const configNote = it.config === "oxlint" ? ", with an oxlint config" : "";
+      const where = `${it.page}: line ${it.line}${it.options.length ? ` with ${JSON.stringify(it.options)}` : ""}${configNote}`;
       if (error) wrong.push(`${where}: ${error}`);
       else if (it.want === "good" && reports.length) wrong.push(`${where}: reported: ${reports[0][4]}`);
       else if (it.want === "bad" && !reports.length) wrong.push(`${where}: not reported`);

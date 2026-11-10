@@ -85,7 +85,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::importJwk(CryptoAlgorithmIdentifier identifier,
 {
     if (keyData.kty != "EC"_s)
         return nullptr;
-    if (keyData.key_ops && ((keyData.usages & usages) != usages))
+    if (!jwkKeyOpsAllow(keyData, usages))
         return nullptr;
     if (keyData.ext && !keyData.ext.value() && extractable)
         return nullptr;

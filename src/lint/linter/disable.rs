@@ -1,10 +1,10 @@
-//! ESLint's `apply-disable-directives.js`: which messages the `eslint-disable` comments of a file
-//! suppress, and which of these comments do nothing.
+//! ESLint's `apply-disable-directives.js`: which messages a file's `eslint-disable` comments suppress, and which of
+//! those comments are unused.
 
 use super::message::{LintMessage, NotNumbers, RuleId, Suppression};
 use crate::ast::File;
 use crate::context::Severity;
-use crate::fix::{Around, Fix};
+use crate::fix::{Fix, Removal};
 use crate::span::Span;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -20,32 +20,32 @@ pub(crate) enum Kind {
 /// A comment that disables or enables rules: ESLint's `parentDirective`.
 pub(crate) struct Parent<'a> {
     pub(crate) comment: Span,
-    /// The list of rules as it is written, trimmed.
+    /// The list of rules as written, trimmed.
     pub(crate) list: &'a [u8],
     pub(crate) list_span: Span,
-    /// The names in `list`, of rules that exist and of others.
+    /// The names in `list`, whether or not a rule with that name exists.
     pub(crate) names: Vec<&'a [u8]>,
     pub(crate) justification: &'a [u8],
-    /// Where the comment starts.
+    /// The comment's start position.
     pub(crate) start: (u32, u32),
-    /// `eslint`, or `oxlint`: what it is called after.
+    /// `eslint` or `oxlint`, depending on the comment's prefix.
     pub(crate) tool: &'static str,
 }
 
-/// One rule of such a comment, or all rules if it names none.
+/// One rule of such a comment, or all rules if it doesn't list any.
 pub(crate) struct Directive<'a> {
     pub(crate) kind: Kind,
-    /// Where the comment starts. For `eslint-disable-next-line`, where it ends.
+    /// The comment's start. For `eslint-disable-next-line`, its end.
     pub(crate) line: u32,
     pub(crate) column: u32,
     pub(crate) rule: Option<RuleId>,
-    /// As it is written.
+    /// As written.
     pub(crate) name: &'a [u8],
     /// An index into the `Parent`s.
     pub(crate) parent: u32,
 }
 
-/// A point of the file from which a rule, or all rules, are disabled or enabled.
+/// A position in the file from which a rule, or all rules, are disabled or enabled.
 struct Switch {
     disables: bool,
     line: u32,
@@ -62,12 +62,12 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) wants_fixes: bool,
     /// [`LintOptions::wants_suppressions`](super::LintOptions::wants_suppressions)
     pub(crate) wants_suppressions: bool,
-    /// The rules that are enabled and were filtered out. What disables them is not reported.
+    /// The enabled rules that were filtered out. Directives that disable them aren't reported.
     pub(crate) rules_to_ignore: &'i [RuleId],
-    /// There are more of them, which have no name here.
+    /// There are more such rules, whose names aren't known here.
     pub(crate) has_skipped_rules: bool,
-    /// Rules that are off, when there's no config file. An unused directive that names one isn't reported, because it may be
-    /// there for another tool.
+    /// Rules that are off, when there's no config file. An unused directive that lists one isn't reported, because it
+    /// may be there for another tool.
     pub(crate) off: &'i [RuleId],
 }
 
@@ -78,13 +78,13 @@ impl Input<'_, '_> {
 
     fn is_ignored(&self, rule: Option<&RuleId>) -> bool {
         match rule {
-            // What applies to all rules may be used by one that did not run.
+            // A directive for all rules may be used by a rule that didn't run.
             None => !self.rules_to_ignore.is_empty() || self.has_skipped_rules,
             Some(rule) => self.rules_to_ignore.contains(rule) || self.off.contains(rule),
         }
     }
 
-    /// `createIndividualDirectivesRemoval`: removes `name` from the list of `parent`.
+    /// `createIndividualDirectivesRemoval`: removes `name` from `parent`'s list.
     fn removal_from_list(&self, parent: &Parent, name: &[u8]) -> Option<Span> {
         let (text, list) = (self.file.text(), parent.list);
         let joined = self.file.joined_comment(parent.list_span);
@@ -150,25 +150,27 @@ impl Input<'_, '_> {
         None
     }
 
-    /// Removes a whole comment. ESLint puts a space in its place, which leaves a line with only a space on it, or a space at the
-    /// end of a line, and `bun fmt --check` fails on both. With no config file, a comment that ends its line goes with the
-    /// spaces around it, and with the line break too if nothing else is on the line.
+    /// Removes a whole comment. ESLint replaces it with a space, which leaves a line with only a space on it, or a
+    /// space at the end of a line, and `bun fmt --check` fails on both. With no config file, a comment that ends its
+    /// line is removed along with the spaces around it, and with the line break too if nothing else is on the line.
     fn removal_of(&self, comment: Span) -> Fix {
-        let around = Around::of(self.file.text(), comment);
-        if !self.file.language().stands_alone || around.line_break.is_none() {
+        let surroundings = Removal::of(self.file.text(), comment);
+        if !self.file.language().has_no_foreign_config || surroundings.line_break.is_none() {
             return Fix {
                 span: comment,
                 text: b" ".to_vec(),
             };
         }
         Fix {
-            span: around.whole_lines().unwrap_or(around.with_blanks),
+            span: surroundings
+                .whole_lines()
+                .unwrap_or(surroundings.with_spaces),
             text: Vec::new(),
         }
     }
 
-    /// `processUnusedDirectives`, and the messages that `applyDirectives` makes of its result.
-    /// `unused`: indices into the directives.
+    /// `processUnusedDirectives`, plus the messages that `applyDirectives` builds from its result. `unused` holds
+    /// indices into the directives.
     fn report(&self, unused: &[u32], out: &mut Vec<LintMessage>) {
         let mut groups: Vec<(u32, Vec<u32>)> = Vec::new();
         let mut group_of_parent: FxHashMap<u32, usize> = FxHashMap::default();
@@ -277,10 +279,10 @@ impl Input<'_, '_> {
         }
     }
 
-    /// `collectUsedEnableDirectives`: marks the `eslint-enable` directives that end what an
-    /// `eslint-disable` before them has started.
+    /// `collectUsedEnableDirectives`: marks the `eslint-enable` directives that end a range started by an earlier
+    /// `eslint-disable`.
     fn mark_used_enables(&self, switches: &[Switch], is_used: &mut [bool]) {
-        // The `eslint-enable` that is the next for each rule, and for all rules.
+        // The next `eslint-enable` for each rule, and for all rules.
         let mut enabled: Vec<(Option<&RuleId>, u32)> = Vec::new();
         for switch in switches.iter().rev() {
             let rule = self.rule(switch);
@@ -304,8 +306,8 @@ impl Input<'_, '_> {
         }
     }
 
-    /// `applyDirectives`. `switches` and `messages` are sorted by position. Linear in both, apart
-    /// from the comments that are in effect at the same time.
+    /// `applyDirectives`. `switches` and `messages` are sorted by position. It's linear in both, apart from the
+    /// comments that are in effect at the same time.
     fn apply(
         &self,
         switches: &[Switch],
@@ -316,17 +318,17 @@ impl Input<'_, '_> {
             return;
         }
         let mut is_used = vec![false; self.directives.len()];
-        // The switches that disable and that no later one has undone, as indices into `switches`, in order: those for all
+        // The disabling switches that no later switch has undone, as indices into `switches`, in order: those for all
         // rules, and those for each rule.
         let mut active_for_all: Vec<u32> = Vec::new();
         let mut active_for: FxHashMap<&RuleId, Vec<u32>> = FxHashMap::default();
-        // For each rule that has been enabled by name: the index of the switch that did it last.
+        // For each rule that was enabled by name: the index of the last switch that did so.
         let mut enabled_at: FxHashMap<&RuleId, u32> = FxHashMap::default();
         let mut next = 0;
         for message in messages {
-            let place = (message.line as i32, message.column as i32);
+            let message_position = (message.line as i32, message.column as i32);
             while let Some(switch) = switches.get(next)
-                && (switch.line as i32, switch.column as i32) <= place
+                && (switch.line as i32, switch.column as i32) <= message_position
             {
                 match (switch.disables, self.rule(switch)) {
                     (true, None) => active_for_all.push(next as u32),
@@ -344,7 +346,7 @@ impl Input<'_, '_> {
                 next += 1;
             }
             let rule = message.rule_id.as_ref();
-            // What disables all rules does not apply to one that has been enabled since.
+            // A directive that disables all rules doesn't apply to a rule that has been enabled since.
             let for_all = match rule.and_then(|it| enabled_at.get(it)) {
                 Some(&since) => {
                     &active_for_all[active_for_all.partition_point(|&it| it <= since)..]
@@ -362,7 +364,7 @@ impl Input<'_, '_> {
                     .suppressions
                     .push(Suppression::directive(parent.justification));
             };
-            // The last decides which comment is used.
+            // The last one decides which comment counts as used.
             let last = for_all
                 .last()
                 .max(for_rule.last())
@@ -416,8 +418,8 @@ impl Input<'_, '_> {
     }
 }
 
-/// Adds to each of `messages`, which are sorted by position, what suppresses it, and adds a message
-/// for each comment that does nothing, if these are to be reported.
+/// Adds its suppressions to each of `messages`, which are sorted by position. Also adds a message for each unused
+/// comment, if those should be reported.
 pub(crate) fn apply_disable_directives(input: &Input, messages: &mut Vec<LintMessage>) {
     let (mut blocks, mut lines) = (Vec::new(), Vec::new());
     for (i, directive) in input.directives.iter().enumerate() {

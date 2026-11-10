@@ -1,0 +1,41 @@
+# -- source: main.js
+# class Gauge { constructor(level) { this.level = level; } get twice() { return this.level * 2; } set twice(value) { this.level = value / 2; } set only(value) { this.level = value; } }
+# function read(gauge) { return gauge.twice; }
+# function store(gauge, value) { gauge.twice = value; }
+# function readWhereOnlySetterStands(gauge) { return gauge.only; }
+# const gauge = new Gauge(3);
+# print(read(gauge));
+# store(gauge, 10);
+# print(gauge.level);
+# print(readWhereOnlySetterStands(gauge));
+# -- end of source
+# f1 = read, f2 = store, f3 = readWhereOnlySetterStands
+# No object of Gauge gains a property. A read or a store under the name of an accessor declared above comes to the accessor without a look at the object: the tables say that nothing of its own hides it.
+# A build asks nothing there. Under either word that checks, the object is asked where that is leaned on, in front of the body of the accessor: it holds nothing of its own under the name.
+# RUN(PLAIN): walk f1 f2 f3 mechanisms=all
+# PLAIN-NOT: FindsNoMember
+# RUN(WALK): walk f1 f2 f3 mechanisms=all testing=CheckWalkAtRunTime
+# WALK-LABEL: code f1:Body
+# WALK: [[getter]]: boolean @Boolean = FindsNoMember {{*}} key="twice" receivers=[L0] [asksForNoExtraPropertyUnderKey, asksRunTime]
+# WALK-NEXT: CheckProof [[getter]] checkedType=true {{*}} source=WhatIsRemembered
+# WALK: GetSlot {{*}} key="level"
+# WALK-LABEL: code f2:Body
+# WALK: [[setter]]: boolean @Boolean = FindsNoMember {{*}} key="twice" receivers=[L0] [asksForNoExtraPropertyUnderKey, asksRunTime]
+# WALK-NEXT: CheckProof [[setter]] checkedType=true {{*}} source=WhatIsRemembered
+# WALK: PutSlot {{*}} key="level"
+# WALK-LABEL: code f3:Body
+# WALK: [[nothing]]: boolean @Boolean = FindsNoMember {{*}} key="only" receivers=[L0] [asksForNoExtraPropertyUnderKey, asksRunTime]
+# WALK-NEXT: CheckProof [[nothing]] checkedType=true {{*}} source=WhatIsRemembered
+# RUN(PROOFS): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# PROOFS: [[asked]]: boolean @Boolean = FindsNoMember {{*}} key="twice" receivers=[L0] [asksForNoExtraPropertyUnderKey, asksRunTime]
+# PROOFS-NEXT: CheckProof [[asked]] checkedType=true {{*}} source=WhatIsRemembered
+# RUN: run-in-shell void 0;
+# CHECK: 6
+# CHECK-NEXT: 5
+# CHECK-NEXT: undefined
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime void 0;
+# CHECKED: 6
+# CHECKED-NEXT: 5
+# CHECKED-NEXT: undefined
+# CHECKED-NEXT: exited with 0

@@ -1,0 +1,11 @@
+# the object comes out of the text and may be Bun; the name `color` stands in the program: it is no name from run time
+# -- source: a-member-of-a-namespace-found-under-a-name-that-the-program-writes-counts.ts
+# declare const input: any;
+# const made = new Function(input)();
+# made.color("red", "hex");
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by BunColor found-by-name
+# RUN(NEVER): features
+# NEVER-NOT: by BunColor named-at-run-time

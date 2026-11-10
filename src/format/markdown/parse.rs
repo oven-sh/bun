@@ -1,8 +1,8 @@
-//! The syntax tree from the events of `bun_md`, Bun's Markdown parser.
+//! Builds the syntax tree from the events of `bun_md`, Bun's Markdown parser.
 //!
-//! The parser says what the blocks are and where their lines and markers are. Where a node starts and ends in
-//! mdast is worked out here: micromark and mdast-util-from-markdown have their ways with line breaks and white
-//! space at the ends of containers.
+//! The parser reports the blocks and where their lines and markers are. This file works out where each node starts and
+//! ends in mdast: micromark and mdast-util-from-markdown have their own rules for line breaks and whitespace at the
+//! ends of containers.
 
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
 use super::spans::{self, push_without_nul};
@@ -21,7 +21,7 @@ use std::cell::Cell;
 pub(crate) struct Segment {
     pub(crate) start: u32,
     pub(crate) end: u32,
-    /// The virtual spaces before `start`, which are spaces in a value.
+    /// The virtual spaces before `start`. They become spaces in a value.
     pub(crate) virtual_spaces: u8,
 }
 
@@ -30,11 +30,13 @@ pub(crate) enum Syntax {
     Markdown,
     /// The same with oxfmt's `:::` containers.
     WithDirectives,
-    /// The same, to see what two lines are: see `leaves_paragraph`, which is not asked again for them.
+    /// The same, used to parse two lines on their own: see `leaves_paragraph`, which isn't called again for them.
     TwoLines,
+    /// `Markdown`, used to parse two lines on their own.
+    MarkdownTwoLines,
     /// See [`parse_content`].
     Plain,
-    /// What Prettier makes of MDX, with remark-parse 8: `import` and `export`, any tag starts HTML, which is JSX.
+    /// MDX as Prettier parses it, with remark-parse 8: `import` and `export`, and any tag starts HTML, which is JSX.
     Mdx,
     /// CommonMark as specified, optionally with the GFM extensions and math, and without any of Prettier's additions.
     CommonMark {
@@ -43,8 +45,8 @@ pub(crate) enum Syntax {
     },
 }
 
-/// What Prettier parses has blanks in the place of the front matter. That only makes a difference if something
-/// follows the front matter on its last line. Then this is the text with the blanks.
+/// Prettier parses a text with spaces in place of the front matter. That only makes a difference if something follows
+/// the front matter on its last line. In that case this returns the text with the spaces.
 pub(crate) fn blank_front_matter(text: &[u8]) -> Option<Vec<u8>> {
     let end = super::front_matter::parse(text)?.end;
     if matches!(text.get(end), None | Some(b'\n')) {
@@ -57,8 +59,8 @@ pub(crate) fn blank_front_matter(text: &[u8]) -> Option<Vec<u8>> {
     Some(blanked)
 }
 
-/// Fills `tree` with the syntax of `text`, in which every line break is `\n`. Returns the root. `original`: the
-/// same, or the text that `text` is for [`blank_front_matter`].
+/// Fills `tree` with the syntax tree of `text`, in which every line break is `\n`. Returns the root. `original` is the
+/// same text, or the input of [`blank_front_matter`] if `text` is its output.
 pub(crate) fn parse(
     text: &[u8],
     original: &[u8],
@@ -80,8 +82,8 @@ pub(crate) fn parse(
     Some(root)
 }
 
-/// `is_plain`: CommonMark with strikethrough, footnotes and task lists, and nothing else: no tables, math, Liquid,
-/// wiki links, or links that are not marked as such.
+/// `is_plain` means CommonMark with strikethrough, footnotes and task lists, and nothing else: no tables, math, Liquid,
+/// wiki links or autolink literals.
 pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Option<NodeId> {
     let syntax = if is_plain {
         Syntax::Plain
@@ -100,18 +102,18 @@ fn line_end_in(text: &[u8], offset: usize) -> usize {
     offset + bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())
 }
 
-/// What `liquid_end` has looked for, so that it is not looked for again from every `{{`.
+/// Caches `liquid_end`'s searches so they aren't repeated from every `{{`.
 #[derive(Copy, Clone, Default)]
 struct LeafMemo {
-    /// For `}}` and for `%}`: from where it has been looked for, and where the first one is from there. `usize::MAX`:
-    /// there is none. 0: it has not been looked for.
+    /// For `}}` and for `%}`: where the search started, and the first match from there. `usize::MAX` means there's
+    /// none. 0 means it hasn't been searched.
     closing: [(usize, usize); 2],
     /// The start of a line that starts a container, with no such line between it and `no_container_from`.
     container: usize,
     no_container_from: usize,
 }
 
-/// Where the `{{ .. }}` or `{% .. %}` ends that starts a line, if nothing follows it on its last line.
+/// The end of the `{{ .. }}` or `{% .. %}` that starts a line, if nothing follows it on its last line.
 fn liquid_end(start: &LeafStart<'_>, memo: &Cell<LeafMemo>) -> Option<OFF> {
     let (text, off) = (start.text, start.off as usize);
     let (closing, kind): (&[u8], usize) = match text.get(off + 1)? {
@@ -122,7 +124,7 @@ fn liquid_end(start: &LeafStart<'_>, memo: &Cell<LeafMemo>) -> Option<OFF> {
     let mut line_end = line_end_in(text, off);
     let from = off + 2;
     let mut known = memo.get();
-    // Over several lines only outside of containers.
+    // It can span several lines only outside containers.
     let at = if start.is_in_container {
         from + bun_core::strings::index_of(text.get(from..line_end)?, closing)?
     } else {
@@ -144,7 +146,7 @@ fn liquid_end(start: &LeafStart<'_>, memo: &Cell<LeafMemo>) -> Option<OFF> {
     {
         return None;
     }
-    // No line in it starts a container.
+    // No line inside it may start a container.
     if (known.no_container_from..known.container).contains(&line_end) {
         return (end < known.container).then_some(end as OFF);
     }
@@ -160,8 +162,8 @@ fn liquid_end(start: &LeafStart<'_>, memo: &Cell<LeafMemo>) -> Option<OFF> {
     Some(end as OFF)
 }
 
-/// Prettier's `tokenizeEsSyntax`: `import` or `export` at the start of a line that is not in a container, up to the
-/// next empty line.
+/// Prettier's `tokenizeEsSyntax`: `import` or `export` at the start of a line that isn't in a container, up to the next
+/// empty line.
 fn es_syntax_end(start: &LeafStart<'_>) -> Option<OFF> {
     if start.is_in_container || start.indent > 0 || start.interrupts_paragraph {
         return None;
@@ -176,9 +178,9 @@ fn es_syntax_end(start: &LeafStart<'_>) -> Option<OFF> {
     Some(start.off + len as OFF)
 }
 
-// ───────────────────────────── spans that are not CommonMark's ─────────────────────────────
+// ───────────────────────────── non-CommonMark spans ─────────────────────────────
 
-/// What `span_at` has found.
+/// The kinds of span that `span_at` finds.
 mod tag {
     pub(super) const LIQUID: u32 = 0;
     pub(super) const ES_COMMENT: u32 = 1;
@@ -190,24 +192,24 @@ mod tag {
     pub(super) const CHECK: u32 = 7;
 }
 
-/// The bytes that math, a wiki link, Liquid and a comment of MDX start with, and those that an address and a URL are
-/// told by.
+/// The bytes that start math, a wiki link, Liquid or an MDX comment, and the ones that give away an email address or a
+/// URL.
 const SPAN_BYTES: &[u8] = b"$[{@:.";
 
-/// What has been looked for in a text, so that it is not looked for again from every marker. Places are addresses.
+/// Caches searches in a text so they aren't repeated from every marker. Positions are memory addresses.
 #[derive(Copy, Clone, Default)]
 struct SpanMemo {
-    /// `SpanStart::serial` of the text.
+    /// The text's `SpanStart::serial`.
     serial: u32,
-    /// What is from the first place to the second could be the name of an address, and is not.
+    /// The text between the two positions could be an email address's name, but isn't one.
     no_address: (usize, usize),
-    /// There is no `}}`, no `%}` from the first place to the second.
+    /// There's no `}}` or `%}` between the two positions.
     no_liquid_end: [(usize, usize); 2],
-    /// There is no `]` and no line break from the first place to the second.
+    /// There's no `]` and no line break between the two positions.
     no_bracket: (usize, usize),
 }
 
-/// Prettier's `tokenizeEsComment`: `{/* .. */}` on one line. Returns where what is in it is, and where it ends.
+/// Prettier's `tokenizeEsComment`: `{/* .. */}` on one line. Returns the range of its content, and its end.
 fn es_comment(bytes: &[u8], start: usize) -> Option<((usize, usize), usize)> {
     let skip = |from: usize| {
         from + bytes[from..]
@@ -221,7 +223,7 @@ fn es_comment(bytes: &[u8], start: usize) -> Option<((usize, usize), usize)> {
     }
     let value_start = open + 2;
     let line_end = line_end_in(bytes, value_start);
-    // The last `*/` on the line that `}` follows.
+    // The last `*/` on the line that's followed by `}`.
     let mut limit = line_end;
     loop {
         let close =
@@ -243,7 +245,7 @@ fn es_comment(bytes: &[u8], start: usize) -> Option<((usize, usize), usize)> {
     }
 }
 
-/// The address that starts at `beg`.
+/// The email address that starts at `beg`.
 fn email_at(bytes: &[u8], beg: usize) -> Option<ExtensionSpan> {
     if beg > 0 && (bytes[beg - 1] == b'/' || spans::is_gfm_atext(bytes[beg - 1])) {
         return None;
@@ -256,7 +258,7 @@ fn email_at(bytes: &[u8], beg: usize) -> Option<ExtensionSpan> {
     })
 }
 
-/// Where what can be the name of an address starts that ends at `end`.
+/// The start of the text that ends at `end` and could be an email address's name.
 fn atext_start(start: &SpanStart<'_>, end: usize) -> usize {
     let before = &start.content[start.from.min(end)..end];
     end - before
@@ -266,8 +268,8 @@ fn atext_start(start: &SpanStart<'_>, end: usize) -> usize {
         .count()
 }
 
-/// The span that a byte of `SPAN_BYTES` is in, in the text of a paragraph, a heading or a cell.
-/// `can_start_with_check`: see `Builder::can_start_with_check`.
+/// The span that contains a byte of `SPAN_BYTES`, in the text of a paragraph, heading or cell.
+/// For `can_start_with_check`, see `Builder::can_start_with_check`.
 fn span_at(
     start: &SpanStart<'_>,
     syntax: Syntax,
@@ -275,12 +277,12 @@ fn span_at(
     memo: &Cell<SpanMemo>,
 ) -> Option<ExtensionSpan> {
     let (bytes, index) = (start.content, start.pos);
-    // micromark-extension-gfm-task-list-item: `[ ]` or `[x]`, with white space and something else behind it.
+    // micromark-extension-gfm-task-list-item: `[ ]` or `[x]`, followed by whitespace and something else.
     if index == 0
         && can_start_with_check
         && let [b'[', value, b']', after, ..] = *bytes
         && matches!(value, b' ' | b'\t' | b'x' | b'X')
-        // remark-parse 7, which reads MDX: a blank is behind it.
+        // remark-parse 7, which parses MDX, requires a space or tab after it.
         && ((after == b'\n' && syntax != Syntax::Mdx)
             || (is_space(after) && bytes[3..].iter().any(|&byte| !is_space(byte))))
     {
@@ -311,7 +313,7 @@ fn span_at(
     let byte = bytes[index];
     match byte {
         b'$' => {
-            // Only the whole of a run. The first of it can be escaped.
+            // Only a whole run counts. Its first `$` can be escaped.
             if index > 0 && bytes[index - 1] == b'$' {
                 let backslashes = bytes[..index - 1]
                     .iter()
@@ -338,7 +340,7 @@ fn span_at(
             if bytes.get(index + 1) != Some(&b'[') || is_common_mark {
                 return None;
             }
-            // `![` is the start of an image, whatever follows.
+            // `![` starts an image, whatever follows.
             if index > 0 && bytes[index - 1] == b'!' {
                 let backslashes = bytes[..index - 1]
                     .iter()
@@ -398,7 +400,7 @@ fn span_at(
             };
             Some(from_here(index + 2 + len + 2, tag::LIQUID))
         }
-        // No literal autolinks in what can still become the text of a link.
+        // No autolink literals in what can still become a link's text.
         _ if start.is_after_open_bracket => None,
         b'@' => email_at(bytes, atext_start(start, index)),
         // `http://`, `https://`
@@ -431,7 +433,7 @@ fn span_at(
             if !bytes[beg..index].eq_ignore_ascii_case(b"www") {
                 return None;
             }
-            // An address that it is the start of, or a part of the name of, comes first.
+            // An email address that starts with it, or has it in its name, takes precedence.
             if !(known.no_address.0..known.no_address.1).contains(&address(beg)) {
                 let name_start = atext_start(start, beg);
                 let name_end = index
@@ -466,14 +468,14 @@ fn span_at(
     }
 }
 
-/// A container that is open.
+/// An open container.
 struct Open {
     node: NodeId,
-    /// The line that its last child ends on, as far as blank lines between children go. 0: it has no child.
+    /// The line that its last child ends on, for detecting blank lines between children. 0 means it has no child.
     last_child_line: u32,
 }
 
-/// Fenced code or HTML that nothing has ended. What it ends with depends on what follows it.
+/// Fenced code or HTML that hasn't been closed. Where it ends depends on what follows.
 struct Unended {
     node: NodeId,
     is_html: bool,
@@ -483,22 +485,22 @@ struct Unended {
 struct Builder<'t> {
     /// The whole text.
     text: &'t [u8],
-    /// Where what the parser is given starts in it.
+    /// Where the parser's input starts in it.
     base: u32,
     is_mdx: bool,
     is_for_oxfmt: bool,
     has_nul: bool,
-    /// What a NUL is in the tree: U+FFFD, as CommonMark says. oxfmt prints what is written.
+    /// The replacement for a NUL in the tree: U+FFFD, as CommonMark specifies. oxfmt prints the source text.
     nul: &'static [u8],
     tree: &'t mut Tree,
-    /// The containers that are open, the root first.
+    /// The open containers, root first.
     open: Vec<Open>,
     /// How many of them are block quotes.
     open_blockquotes: u32,
-    /// What the parser has said last about a container, and the lines of a leaf block.
+    /// The parser's last report about a container, and a leaf block's lines.
     source: (u32, u32, u32),
     lines: Vec<VerbatimLine>,
-    /// The definitions that are not in the tree yet, by where they start.
+    /// The definitions that aren't in the tree yet, by start offset.
     definitions: Vec<(u32, NodeId)>,
     next_definition: usize,
     are_definitions_sorted: bool,
@@ -506,85 +508,89 @@ struct Builder<'t> {
     unended: Option<Unended>,
     /// The containers that have ended since the last leaf block, each with the start of the line that ended it.
     ended: Vec<(NodeId, u32)>,
-    /// What is open goes on to the very end of the text: see `Builder::goes_on_to_the_end`.
+    /// The open nodes extend to the very end of the text: see `Builder::extends_to_the_end`.
     is_extended_to_the_end: bool,
 
-    /// The paragraph, the heading or the cell that is open, and the spans that are open in it.
+    /// The open paragraph, heading or cell, and the open spans in it.
     spans: Vec<NodeId>,
-    /// What the parser has said last about where something in a line is.
-    place: (u32, u32),
+    /// The parser's last report about a position within a line.
+    inline_range: (u32, u32),
     /// Where the opening marker of each of `spans` ends.
     marker_ends: Vec<u32>,
-    /// The text that is not a node yet: where it is, what it stands for, and whether that is what is written.
+    /// The text that isn't a node yet: its range, its decoded value, and whether that equals the source text.
     text_range: Option<(u32, u32)>,
     text_value: Vec<u8>,
-    is_text_as_written: bool,
-    /// The text of what is in the image that is open.
+    text_matches_source: bool,
+    /// The text content of the open image.
     alt: Vec<u8>,
-    /// Where the last part of it ends.
+    /// Where its last part ends.
     alt_end: u32,
-    /// Whether the text that is read next is where the `[x]` of a task is looked for: that of a paragraph that is the
-    /// first thing in a list item, but for definitions.
+    /// True if the next text is where a task's `[x]` is looked for: the text of a paragraph that's the first thing in a
+    /// list item, not counting definitions.
     can_start_with_check: &'t Cell<bool>,
-    /// The paragraph that is open starts with one.
+    /// The open paragraph starts with one.
     starts_with_check: bool,
-    /// For oxfmt: a line break whose fate what follows it decides.
+    /// The syntax `leaves_paragraph` parses two lines with. If `None`, lines that are paragraph text only because
+    /// they're indented aren't handled specially.
+    two_lines: Option<Syntax>,
+    /// A pending line break. How it's printed depends on the node after it.
     guarded_break: Option<GuardedBreak>,
-    /// For oxfmt: the line is one that it prints as it is written.
-    is_on_line_as_written: bool,
+    /// For oxfmt: the current line is one that it prints verbatim.
+    is_on_verbatim_line: bool,
 }
 
-/// A line break before a line that is text only because it is indented.
+/// A line break before a line that is paragraph text only because it's indented. Prettier always strips the
+/// indentation, so a fence starts a code block, `***` becomes a thematic break, and `<div>` starts HTML.
 #[derive(Copy, Clone)]
 struct GuardedBreak {
-    place: (u32, u32),
+    break_range: (u32, u32),
     kind: LineBreak,
-    /// The line before it, and the line behind it without its indentation.
+    /// The line before it, and the line after it without its indentation.
     above: (u32, u32),
     line: (u32, u32),
 }
 
 #[derive(Copy, Clone)]
 enum LineBreak {
-    /// `is_as_written`: nothing has been taken away before it.
+    /// `matches_source` means nothing was removed before it.
     Soft {
-        is_as_written: bool,
+        matches_source: bool,
     },
     Hard,
 }
 
-/// What follows a [`GuardedBreak`].
+/// The kind of node that follows a [`GuardedBreak`].
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Follower {
     Text,
-    /// HTML, Liquid, math: what is printed as it is written.
+    /// HTML, Liquid, math: nodes that are printed verbatim.
     Verbatim,
-    /// A code span, whose backticks are counted anew.
+    /// A code span, whose backticks are recounted.
     Code,
     Other,
 }
 
-/// The first `len` bytes of `rest`, a line that starts with a code span, with as few backticks before it as what is in
-/// the span allows.
+/// The first `len` bytes of `rest`, a line that starts with a code span, with as few backticks in front as the span's
+/// content allows.
 fn with_printed_backticks(rest: &[u8], len: usize) -> Vec<u8> {
     let run_at = |at: usize| rest[at..].iter().take_while(|&&byte| byte == b'`').count();
-    let written = run_at(0);
-    let (mut lengths, mut at) = (0u64, written);
+    let source_run = run_at(0);
+    let (mut lengths, mut at) = (0u64, source_run);
     while let Some(skipped) = bun_core::strings::index_of_char_usize(&rest[at..], b'`') {
         at += skipped;
         let run = run_at(at);
-        if run == written {
+        if run == source_run {
             break;
         }
         lengths |= 1 << (run.clamp(1, 64) - 1);
         at += run;
     }
     let mut line = vec![b'`'; lengths.trailing_ones() as usize + 1];
-    line.extend_from_slice(rest.get(written..len).unwrap_or_default());
+    line.extend_from_slice(rest.get(source_run..len).unwrap_or_default());
     line
 }
 
-/// oxfmt's `is_line_shape_start`: `:::` that does not start a container, `<<<` of VitePress, the tag of a component.
+/// oxfmt's `is_line_shape_start`: `:::` that doesn't start a container, VitePress's `<<<`, a component's tag.
 fn is_line_shape_start(line: &[u8]) -> bool {
     if line.starts_with(b":::") {
         let colons = line.iter().take_while(|&&byte| byte == b':').count();
@@ -613,18 +619,18 @@ fn is_line_shape_start(line: &[u8]) -> bool {
     })
 }
 
-/// Whether `line` may be the row under the header of a table.
-fn is_like_delimiter_row(line: &[u8]) -> bool {
+/// True if `line` may be a table's delimiter row.
+fn looks_like_delimiter_row(line: &[u8]) -> bool {
     line.iter()
         .all(|byte| matches!(byte, b'|' | b':' | b'-' | b' ' | b'\t'))
 }
 
-/// Whether `line` is not a line of the paragraph any more if it starts in the first column. `above` is the line
-/// before it, which only the row under the header of a table looks at. Without it, the header is taken to fit.
-fn leaves_paragraph(above: Option<&[u8]>, line: &[u8]) -> bool {
+/// True if `line` would no longer be part of the paragraph if it started in the first column. `above` is the line
+/// before it, which only matters for a table's delimiter row. Without it, a matching header is assumed.
+pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax) -> bool {
     let fitting_header: Vec<u8>;
     let first: &[u8] = match above {
-        _ if !is_like_delimiter_row(line) => b"a",
+        _ if !looks_like_delimiter_row(line) => b"a",
         Some(above) => above,
         None => {
             let letter = |&byte: &u8| {
@@ -640,7 +646,7 @@ fn leaves_paragraph(above: Option<&[u8]>, line: &[u8]) -> bool {
     };
     let text = [first, b"\n", line, b"\n"].concat();
     let mut tree = Tree::default();
-    let Some(root) = parse_lines(&text, &mut tree, Syntax::TwoLines, 0) else {
+    let Some(root) = parse_lines(&text, &mut tree, syntax, 0) else {
         return false;
     };
     let first = tree.get(root).map_or(NONE, |root| root.first_child);
@@ -650,15 +656,15 @@ fn leaves_paragraph(above: Option<&[u8]>, line: &[u8]) -> bool {
 }
 
 impl Builder<'_> {
-    // ───────────────────────────── places ─────────────────────────────
+    // ───────────────────────────── positions ─────────────────────────────
 
-    /// Where the line that `offset` is on ends.
+    /// The end of the line that `offset` is on.
     fn line_end(&self, offset: u32) -> u32 {
         let rest = self.text.get(offset as usize..).unwrap_or_default();
         offset + bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()) as u32
     }
 
-    /// The column of `offset`. A tab goes to the next multiple of four.
+    /// The column of `offset`. A tab advances to the next multiple of four.
     fn column(&self, offset: u32) -> u32 {
         let start = self.tree.line_start(offset);
         let before = self
@@ -671,8 +677,8 @@ impl Builder<'_> {
         })
     }
 
-    /// Where the `indent` columns of white space before `beg` start, and how many of them are the rest of a tab
-    /// before that place.
+    /// The start of the `indent` columns of whitespace before `beg`, and how many of those columns are the rest of a
+    /// tab that starts before that position.
     fn indentation_start(&self, beg: u32, indent: u32) -> (u32, u8) {
         if indent == 0 {
             return (beg, 0);
@@ -722,8 +728,8 @@ impl Builder<'_> {
         self.open_blockquotes > 0
     }
 
-    /// Adds `node`, which starts at `start`, to the container that is open. A blank line before it spreads out a
-    /// list or an item.
+    /// Adds `node`, which starts at `start`, to the open container. A blank line before it makes a list or an item
+    /// `spread`.
     fn append(&mut self, node: NodeId, start: u32) {
         let Some(&Open {
             node: parent,
@@ -741,7 +747,7 @@ impl Builder<'_> {
         }
     }
 
-    /// The last child of the container that is open ends at `end`.
+    /// Records that the open container's last child ends at `end`.
     fn note_child_end(&mut self, end: u32) {
         if let Some(parent) = self.open.last_mut()
             && matches!(
@@ -753,9 +759,9 @@ impl Builder<'_> {
         }
     }
 
-    /// The definitions that start before `offset` are children of the container that is open.
+    /// Adds the definitions that start before `offset` to the open container.
     fn add_definitions_before(&mut self, offset: u32) {
-        // Those in front of a setext heading have come first.
+        // The ones in front of a setext heading were reported first, out of order.
         if !std::mem::replace(&mut self.are_definitions_sorted, true) {
             crate::sort::sort_by_key(&mut self.definitions[..], |it| it.0);
         }
@@ -781,7 +787,7 @@ impl Builder<'_> {
         node
     }
 
-    /// The value of a string in which escapes and character references count. `null` if it is empty.
+    /// The value of a string where escapes and character references are decoded. `null` if it's empty.
     fn string_value(&mut self, start: u32, end: u32) -> Str {
         let raw = self
             .text
@@ -796,13 +802,13 @@ impl Builder<'_> {
         Str::source(start, end)
     }
 
-    /// The lines `segments[first..]`, joined by line breaks. They are taken away.
+    /// Joins the lines `segments[first..]` with line breaks, and removes them from `segments`.
     fn joined_value(&mut self, first: usize) -> Str {
         let segments = self.segments.get(first..).unwrap_or_default();
         let (Some(first_segment), Some(last_segment)) = (segments.first(), segments.last()) else {
             return Str::EMPTY;
         };
-        // Nothing has been taken away from the lines: the value is in the text as it is.
+        // Nothing was stripped from the lines, so the value is a plain range of the text.
         let is_plain = segments.iter().all(|it| it.virtual_spaces == 0)
             && segments
                 .iter()
@@ -840,16 +846,16 @@ impl Builder<'_> {
         value
     }
 
-    // ───────────────────────────── code and HTML that nothing ends ─────────────────────────────
+    // ───────────────────────────── unclosed code and HTML ─────────────────────────────
 
-    /// micromark takes what is behind the last line break of the text for a line. Lists go on with it, block
-    /// quotes do not. So code and HTML that nothing has ended, and the lists they are in, have that line break.
-    fn goes_on_to_the_end(&self, last_line_end: u32) -> bool {
+    /// micromark treats what follows the text's last line break as a line. Lists continue onto it, block quotes don't.
+    /// So unclosed code and HTML, and the lists they're in, include that line break.
+    fn extends_to_the_end(&self, last_line_end: u32) -> bool {
         last_line_end as usize + 1 == self.text.len() && !self.is_in_blockquote()
     }
 
-    /// `line_start`: the line that starts there has the marker of a container, which ends the code or the HTML. It has
-    /// taken the line break before that by then.
+    /// If `line_start` is set, the line that starts there has a container's marker, which ends the code or HTML. By
+    /// then the node has already taken the line break before it.
     fn end_unended(&mut self, line_start: Option<u32>) {
         let Some(Unended {
             node,
@@ -872,7 +878,7 @@ impl Builder<'_> {
             });
             self.set_end(node, end);
         }
-        // Without a closing fence, the line break at the end is not part of the value.
+        // Without a closing fence, the line break at the end isn't part of the value.
         if !is_html
             && self
                 .segments
@@ -890,7 +896,7 @@ impl Builder<'_> {
 
     // ───────────────────────────── leaf blocks ─────────────────────────────
 
-    /// A paragraph, or a heading of `setext_depth` with a line under it.
+    /// A paragraph, or a setext heading of depth `setext_depth`.
     fn paragraph(&mut self, lines: &[VerbatimLine], setext_depth: Option<u32>) {
         let mut lines = lines.iter().filter(|line| line.beg <= line.end);
         let Some(first) = lines.next() else {
@@ -904,7 +910,7 @@ impl Builder<'_> {
             }
             Some(depth) => {
                 self.add_definitions_before(first.beg);
-                // The heading starts where the definitions do that are right before it.
+                // The heading starts where the definitions right before it start.
                 let mut start = first.beg;
                 let mut previous = self
                     .tree
@@ -945,8 +951,7 @@ impl Builder<'_> {
         true
     }
 
-    /// mdast-util-gfm-task-list-item: the first character of the white space behind `[x]` is not part of the
-    /// paragraph.
+    /// mdast-util-gfm-task-list-item: the first whitespace character after `[x]` isn't part of the paragraph.
     fn strip_space_after_check(&mut self, paragraph: NodeId) {
         let head = self
             .tree
@@ -992,7 +997,7 @@ impl Builder<'_> {
         self.spans.push(node);
     }
 
-    /// `info_start`: where what is behind the opening fence starts.
+    /// `info_start` is where the text after the opening fence starts.
     fn fenced_code(&mut self, lines: &[VerbatimLine], info_start: u32, is_closed: bool) {
         let mut fence_end = info_start;
         while fence_end > 0 && is_space(self.text[fence_end as usize - 1]) {
@@ -1020,13 +1025,13 @@ impl Builder<'_> {
             Kind::Code => info.iter().take_while(|&&byte| !is_space(byte)).count(),
             _ => 0,
         } as u32;
-        let blanks = info[lang_len as usize..]
+        let whitespace_len = info[lang_len as usize..]
             .iter()
             .take_while(|&&byte| is_space(byte))
             .count() as u32;
         let (lang, meta) = (
             self.string_value(info_start, info_start + lang_len),
-            self.string_value(info_start + lang_len + blanks, info_end),
+            self.string_value(info_start + lang_len + whitespace_len, info_end),
         );
         if let Some(node) = self.tree.get_mut(node) {
             (node.second, node.third) = (lang, meta);
@@ -1043,7 +1048,7 @@ impl Builder<'_> {
             }
             return;
         }
-        self.is_extended_to_the_end = self.goes_on_to_the_end(last_line_end);
+        self.is_extended_to_the_end = self.extends_to_the_end(last_line_end);
         self.unended = Some(Unended {
             node,
             is_html: false,
@@ -1055,16 +1060,16 @@ impl Builder<'_> {
         let Some(first) = lines.first() else {
             return;
         };
-        // At the end of a line, micromark asks whether that line goes on without the markers of its containers, not
-        // the next: code that starts on the line that ends a container ends with that line.
+        // At the end of a line, micromark checks if that same line, not the next one, continues without its containers'
+        // markers. So code that starts on the line that ends a container ends with that line.
         let line_start = self.tree.line_start(first.beg);
         if lines.len() > 1 && !self.is_for_oxfmt && self.ended.iter().any(|it| it.1 == line_start) {
             self.indented_code(&lines[..1]);
-            let blank = lines[1..]
+            let blank_lines = lines[1..]
                 .iter()
                 .take_while(|line| line.beg >= line.end)
                 .count();
-            return self.indented_code(&lines[1 + blank..]);
+            return self.indented_code(&lines[1 + blank_lines..]);
         }
         let (start, _) = self.indentation_start(first.beg, first.indent + 4);
         // A blank line that is indented enough is part of the code, even at its end.
@@ -1081,7 +1086,7 @@ impl Builder<'_> {
             let segment = self.segment(line);
             self.segments.push(segment);
         }
-        // A line break at the end is not part of the value.
+        // A line break at the end isn't part of the value.
         if count > 1
             && self
                 .segments
@@ -1097,7 +1102,7 @@ impl Builder<'_> {
         }
     }
 
-    /// A block that `liquid_end` or `es_syntax_end` has found.
+    /// A block that `liquid_end` or `es_syntax_end` found.
     fn extension(&mut self, line: &VerbatimLine) {
         let source = self
             .text
@@ -1138,7 +1143,7 @@ impl Builder<'_> {
             self.segments.push(segment);
         }
         if is_unended {
-            self.is_extended_to_the_end = self.goes_on_to_the_end(last.end);
+            self.is_extended_to_the_end = self.extends_to_the_end(last.end);
             self.unended = Some(Unended {
                 node,
                 is_html: true,
@@ -1166,21 +1171,22 @@ impl Builder<'_> {
     }
 
     fn table_row(&mut self) {
-        let (start, end) = (self.place.0, self.line_end(self.place.1));
+        let (start, end) = (self.inline_range.0, self.line_end(self.inline_range.1));
         let row = self.tree.add(Kind::TableRow, start, end);
         self.tree
             .append(self.spans.last().copied().unwrap_or(NONE), row);
         self.spans.push(row);
     }
 
-    /// A cell has the pipe before it. The first has what is before it in the row, the last what is behind it.
+    /// A cell includes the pipe before it. The first cell also includes what's before it in the row, and the last
+    /// what's after it.
     fn table_cell(&mut self, align: Option<Align>) {
         let row = self.spans.last().copied().unwrap_or(NONE);
         let start = match self.tree.get(row) {
             Some(row) if row.first_child == NONE => row.start,
-            _ => self.place.0.saturating_sub(1),
+            _ => self.inline_range.0.saturating_sub(1),
         };
-        let cell = self.tree.add(Kind::TableCell, start, self.place.1);
+        let cell = self.tree.add(Kind::TableCell, start, self.inline_range.1);
         self.tree.append(row, cell);
         self.spans.push(cell);
         if let Some(align) = align {
@@ -1203,7 +1209,7 @@ impl Builder<'_> {
         else {
             return;
         };
-        // A row that is nothing but a pipe has a cell.
+        // A row that's only a pipe still has a cell.
         if last_child == NONE {
             let cell = self.tree.add(Kind::TableCell, start, end);
             return self.tree.append(row, cell);
@@ -1213,25 +1219,25 @@ impl Builder<'_> {
 
     // ───────────────────────────── containers ─────────────────────────────
 
-    /// Where what is in the item starts whose marker ends at `marker_end`: behind one to four columns of white
-    /// space. If there are more, the rest is indented code. If nothing follows, the white space is not part of it.
+    /// The start of the content of the item whose marker ends at `marker_end`: after one to four columns of whitespace.
+    /// If there are more, the rest is indented code. If nothing follows, the whitespace isn't part of it.
     fn item_content_start(&self, marker_end: u32) -> u32 {
         let line_end = self.line_end(marker_end);
         let rest = &self.text[marker_end as usize..line_end as usize];
-        let blanks = rest.iter().take_while(|&&byte| is_space(byte)).count();
-        if blanks == rest.len() {
+        let whitespace_len = rest.iter().take_while(|&&byte| is_space(byte)).count();
+        if whitespace_len == rest.len() {
             return marker_end;
         }
         let start = self.column(marker_end);
-        let width = self.column(marker_end + blanks as u32) - start;
+        let width = self.column(marker_end + whitespace_len as u32) - start;
         match width <= 4 {
-            true => marker_end + blanks as u32,
+            true => marker_end + whitespace_len as u32,
             false => marker_end + 1,
         }
     }
 
-    /// A container starts whose marker is at `marker`, behind `indent` columns of white space.
-    /// `is_next_item`: it is the next item of the list that is open.
+    /// Called when a container starts whose marker is at `marker`, after `indent` columns of whitespace.
+    /// `is_next_item` means it's the next item of the open list.
     fn before_container(&mut self, marker: u32, indent: u32, marker_end: u32, is_next_item: bool) {
         self.add_definitions_before(marker);
         let line_start = self.tree.line_start(marker);
@@ -1241,8 +1247,7 @@ impl Builder<'_> {
             && ended.iter().all(|it| it.1 == line_start);
         self.end_unended(takes_line_break.then_some(line_start));
         if is_next_item {
-            // With no line break between them, mdast-util-from-markdown ends an item where the marker of the next
-            // ends.
+            // With no line break between them, mdast-util-from-markdown ends an item where the next item's marker ends.
             if takes_line_break {
                 let previous_item = ended.last().map_or(NONE, |it| it.0);
                 for &(node, _) in &ended {
@@ -1252,8 +1257,8 @@ impl Builder<'_> {
             }
             return;
         }
-        // micromark ends the containers here, and then moves their ends back over line breaks and indentation. The
-        // marker of a block quote is in the way of that.
+        // micromark ends the containers here, and then moves their ends back over line breaks and indentation. A block
+        // quote's marker blocks that.
         if takes_line_break || self.is_in_blockquote() {
             let (end, _) = self.indentation_start(marker, indent);
             for &(node, _) in ended.iter().filter(|it| it.1 == line_start) {
@@ -1304,7 +1309,7 @@ impl Builder<'_> {
             _ => ended_by,
         };
         let mut node_end = end;
-        // An empty line with the marker of a block quote belongs to the lists in that, but not to their items.
+        // An empty line with a block quote's marker belongs to the lists in the quote, but not to their items.
         if self.tree.kind(node) != Some(Kind::ListItem)
             && self.tree.kind(node) != Some(Kind::Blockquote)
             && self.is_in_blockquote()
@@ -1318,10 +1323,10 @@ impl Builder<'_> {
         self.ended.push((node, ended_by));
     }
 
-    // ───────────────────────────── what is in the lines ─────────────────────────────
+    // ───────────────────────────── inline content ─────────────────────────────
 
-    /// What is written from `start` to `end` in the block that is open, without what is before its lines in the file
-    /// but their indentation.
+    /// The source text from `start` to `end` in the open block, without what precedes its lines in the file, except
+    /// their indentation.
     fn push_content_between(&self, start: u32, end: u32, out: &mut Vec<u8>) {
         let mut from = start;
         loop {
@@ -1351,7 +1356,7 @@ impl Builder<'_> {
             .is_some_and(|it| !bun_core::strings::contains_char(it, b'\n'))
     }
 
-    /// The string from `start` to `end` as it is.
+    /// The string from `start` to `end`, not decoded.
     fn raw(&mut self, start: u32, end: u32) -> Str {
         if self.is_on_one_line(start, end)
             && !(self.has_nul
@@ -1365,7 +1370,7 @@ impl Builder<'_> {
         self.tree.owned(|out| push_without_nul(&bytes, nul, out))
     }
 
-    /// `bytes` without the backslashes of escapes and with what character references stand for.
+    /// `bytes` with backslash escapes and character references decoded.
     fn decoded(&mut self, bytes: &[u8]) -> Str {
         let nul = self.nul;
         self.tree.owned(|out| {
@@ -1384,7 +1389,7 @@ impl Builder<'_> {
         })
     }
 
-    /// `label` and `identifier` of a reference whose label is written from `start` to `end`.
+    /// The `label` and `identifier` of a reference whose label spans `start` to `end`.
     fn label(&mut self, start: u32, end: u32) -> (Str, Str) {
         let mut bytes = Vec::new();
         self.push_content_between(start, end, &mut bytes);
@@ -1395,8 +1400,8 @@ impl Builder<'_> {
         )
     }
 
-    /// The value of code or math between its fences: without one space at each end, if there is one at both and
-    /// something else between.
+    /// The value of code or math between its fences: one space is stripped from each end if both ends have one and
+    /// there's something else between them.
     fn code_value(&mut self, start: u32, end: u32) -> Str {
         let end = end.max(start);
         let is_on_one_line = self.is_on_one_line(start, end);
@@ -1445,12 +1450,12 @@ impl Builder<'_> {
         })
     }
 
-    /// Makes a node of the text that is not one yet.
+    /// Turns the pending text into a node.
     fn end_text(&mut self) {
         let Some((start, end)) = self.text_range.take() else {
             return;
         };
-        let value = match self.is_text_as_written {
+        let value = match self.text_matches_source {
             true => Str::source(start, end),
             false => {
                 let value = &self.text_value;
@@ -1466,24 +1471,24 @@ impl Builder<'_> {
             .append(self.spans.last().copied().unwrap_or(NONE), node);
     }
 
-    /// From here on the text that is open is not what is written: `text_value` has it.
+    /// From here on the pending text differs from the source, and `text_value` holds it.
     fn copy_text(&mut self) {
         if let Some((start, end)) = self.text_range
-            && self.is_text_as_written
+            && self.text_matches_source
         {
             let text = self.text;
             self.text_value
                 .extend_from_slice(&text[start as usize..end as usize]);
         }
-        self.is_text_as_written = false;
+        self.text_matches_source = false;
     }
 
-    /// `value` is what is written at `self.place` stands for.
-    fn add_text(&mut self, value: &[u8], is_as_written: bool) {
-        let (start, end) = self.place;
+    /// `value` is the decoded form of the source text at `self.inline_range`.
+    fn add_text(&mut self, value: &[u8], matches_source: bool) {
+        let (start, end) = self.inline_range;
         match self.text_range {
             Some((from, to)) => {
-                if !(self.is_text_as_written && is_as_written && to == start) {
+                if !(self.text_matches_source && matches_source && to == start) {
                     self.copy_text();
                     self.text_value.extend_from_slice(value);
                 }
@@ -1491,44 +1496,57 @@ impl Builder<'_> {
             }
             None => {
                 self.text_range = Some((start, end));
-                self.is_text_as_written = is_as_written;
-                if !is_as_written {
+                self.text_matches_source = matches_source;
+                if !matches_source {
                     self.text_value.extend_from_slice(value);
                 }
             }
         }
     }
 
-    /// A node without anything in it at `self.place`.
-    /// The line break at `self.place`, if what follows it has a say in what becomes of it.
+    /// The line break at `self.inline_range`, if how it's printed depends on what follows it.
     fn guarded_break(&mut self, kind: LineBreak) -> Option<GuardedBreak> {
-        if !self.is_for_oxfmt {
-            return None;
-        }
-        let next = self.lines.partition_point(|line| line.beg <= self.place.0);
+        self.two_lines?;
+        let next = self
+            .lines
+            .partition_point(|line| line.beg <= self.inline_range.0);
         let (above, line) = (self.lines.get(next.checked_sub(1)?)?, self.lines.get(next)?);
-        let written = self.text.get(line.beg as usize..line.end as usize)?;
+        let line_text = self.text.get(line.beg as usize..line.end as usize)?;
         // oxfmt's `may_open_block`
         let may_start_block = matches!(
-            written.first()?,
+            line_text.first()?,
             b'>' | b'=' | b'-' | b'*' | b'_' | b'+' | b'0'
                 ..=b'9' | b'#' | b'`' | b'~' | b'<' | b'$' | b'{' | b':' | b'[' | b'|'
         );
-        if !may_start_block || (line.indent < 4 && !is_like_delimiter_row(written)) {
-            self.is_on_line_as_written = is_line_shape_start(written);
+        if !may_start_block || (line.indent < 4 && !looks_like_delimiter_row(line_text)) {
+            self.is_on_verbatim_line = is_line_shape_start(line_text);
             return None;
         }
+        // Prettier escapes these or keeps them off the start of a line, and so does this printer.
+        if !self.is_for_oxfmt {
+            let word = &line_text[..line_text
+                .iter()
+                .take_while(|&&byte| !is_space(byte))
+                .count()];
+            let marks = line_text.trim_ascii_end();
+            if super::printer::Printer::may_start_block(word)
+                || marks.iter().all(|&byte| byte == b'=')
+                || marks.iter().all(|&byte| byte == b'-')
+            {
+                return None;
+            }
+        }
         Some(GuardedBreak {
-            place: self.place,
+            break_range: self.inline_range,
             kind,
             above: (above.beg, above.end),
             line: (line.beg, line.end),
         })
     }
 
-    /// `follower` comes next: now it is known what becomes of the line break before it.
+    /// `follower` comes next, which settles how the line break before it is printed.
     fn end_guarded_break(&mut self, follower: Follower) {
-        let Some(it) = self.guarded_break.take() else {
+        let (Some(it), Some(two_lines)) = (self.guarded_break.take(), self.two_lines) else {
             return;
         };
         let text = self.text;
@@ -1544,41 +1562,43 @@ impl Builder<'_> {
             }
             _ => line,
         };
-        let is_line_as_written = is_line_shape_start(line)
+        let is_verbatim_line = is_line_shape_start(line)
             || (follower == Follower::Text
                 && (line.starts_with(b"```")
                     || line.starts_with(b"~~~")
                     || line.starts_with(b"$$")));
         let is_hard = matches!(it.kind, LineBreak::Hard);
-        let stays = is_hard || self.is_on_line_as_written || is_line_as_written;
-        self.is_on_line_as_written = is_line_as_written;
-        // Behind a line break that stays it does not look at the line above.
-        let leaves = leaves_paragraph((!stays).then(|| slice(it.above)), line);
-        if let LineBreak::Soft { is_as_written } = it.kind {
-            // What looks like the line under a heading is escaped.
+        // Only oxfmt prints some lines verbatim.
+        let stays =
+            is_hard || (self.is_for_oxfmt && (self.is_on_verbatim_line || is_verbatim_line));
+        self.is_on_verbatim_line = is_verbatim_line;
+        // After a line break that stays, the line above isn't considered.
+        let ends_paragraph = leaves_paragraph((!stays).then(|| slice(it.above)), line, two_lines);
+        if let LineBreak::Soft { matches_source } = it.kind {
+            // A line that looks like a setext underline is escaped.
             let marks = line.trim_ascii_end();
             let is_underline =
                 marks.iter().all(|&byte| byte == b'=') || marks.iter().all(|&byte| byte == b'-');
-            let place = std::mem::replace(&mut self.place, it.place);
-            match leaves && !stays && !is_underline {
-                // Words are cut from the text as it is written, where there is a line break.
-                true => self.add_blanks(b" "),
-                false => self.add_text(b"\n", is_as_written),
+            let saved_range = std::mem::replace(&mut self.inline_range, it.break_range);
+            match ends_paragraph && !stays && !is_underline {
+                // Words are sliced from the source text, which has a line break here.
+                true => self.add_verbatim_spaces(b" "),
+                false => self.add_text(b"\n", matches_source),
             }
-            self.place = place;
+            self.inline_range = saved_range;
         }
-        if leaves && stays && matches!(follower, Follower::Text | Follower::Verbatim) {
-            let place = self.place;
-            self.place = (place.0, place.0);
-            self.add_blanks(b"    ");
-            self.place = place;
+        if ends_paragraph && stays && matches!(follower, Follower::Text | Follower::Verbatim) {
+            let saved_range = self.inline_range;
+            self.inline_range = (saved_range.0, saved_range.0);
+            self.add_verbatim_spaces(b"    ");
+            self.inline_range = saved_range;
         }
     }
 
-    /// `blanks` that are printed as they are.
-    fn add_blanks(&mut self, blanks: &[u8]) {
+    /// `spaces`, printed verbatim.
+    fn add_verbatim_spaces(&mut self, spaces: &[u8]) {
         let node = self.add_span(Kind::Html);
-        let value = self.tree.owned(|out| out.extend_from_slice(blanks));
+        let value = self.tree.owned(|out| out.extend_from_slice(spaces));
         if let Some(node) = self.tree.get_mut(node) {
             node.value = value;
         }
@@ -1586,26 +1606,28 @@ impl Builder<'_> {
 
     fn add_span(&mut self, kind: Kind) -> NodeId {
         self.end_text();
-        let node = self.tree.add(kind, self.place.0, self.place.1);
+        let node = self
+            .tree
+            .add(kind, self.inline_range.0, self.inline_range.1);
         self.tree
             .append(self.spans.last().copied().unwrap_or(NONE), node);
         node
     }
 
-    /// A node that starts with the marker at `self.place`.
+    /// A node that starts with the marker at `self.inline_range`.
     fn enter(&mut self, kind: Kind) -> NodeId {
         let node = self.add_span(kind);
         self.spans.push(node);
-        self.marker_ends.push(self.place.1);
+        self.marker_ends.push(self.inline_range.1);
         node
     }
 
-    /// A link that is not marked as one, or an address.
+    /// An autolink literal or an email address.
     fn literal_autolink(&mut self, prefix: &[u8], content: &[u8]) {
         if self.is_in_image() {
             return self.alt.extend_from_slice(content);
         }
-        let (start, end) = self.place;
+        let (start, end) = self.inline_range;
         let node = self.add_span(Kind::Link);
         let text = self.tree.add(Kind::Text, start, end);
         self.tree.append(node, text);
@@ -1636,7 +1658,7 @@ impl RendererImpl for Builder<'_> {
         let base = self.base;
         let starts = starts.iter().map(|start| start + base);
         self.tree.line_starts.extend(starts);
-        // What is behind the last line break is a line too, an empty one.
+        // What follows the last line break is also a line, an empty one.
         if self.text.is_empty() || self.text.ends_with(b"\n") {
             self.tree.line_starts.push(self.text.len() as u32);
         }
@@ -1667,13 +1689,13 @@ impl RendererImpl for Builder<'_> {
     }
 
     fn inline_source(&mut self, beg: OFF, end: OFF) {
-        self.place = (beg + self.base, end + self.base);
+        self.inline_range = (beg + self.base, end + self.base);
     }
 
     fn definition(&mut self, definition: &Definition<'_>) {
         let (start, end) = (definition.beg + self.base, definition.end + self.base);
         let node = self.tree.add(Kind::Definition, start, end);
-        // With the indentation of its further lines.
+        // Including the indentation of its continuation lines.
         let mut label_with_indentation = Vec::new();
         let mut raw_label = definition.label;
         if bun_core::strings::contains_char(raw_label, b'\n') {
@@ -1798,7 +1820,7 @@ impl RendererImpl for Builder<'_> {
             })),
             BlockType::Td => self.table_cell(None),
         }
-        // What is in a paragraph is cut from them.
+        // A paragraph's content is sliced from them.
         self.lines = lines;
         Ok(())
     }
@@ -1814,7 +1836,7 @@ impl RendererImpl for Builder<'_> {
             }
             BlockType::P | BlockType::H | BlockType::Table | BlockType::Th | BlockType::Td => {
                 self.end_guarded_break(Follower::Other);
-                self.is_on_line_as_written = false;
+                self.is_on_verbatim_line = false;
                 self.end_text();
                 self.can_start_with_check.set(false);
                 let node = self.spans.pop();
@@ -1911,7 +1933,7 @@ impl RendererImpl for Builder<'_> {
         let (Some(node), Some(marker_end)) = (self.spans.pop(), self.marker_ends.pop()) else {
             return Ok(());
         };
-        let (closing_start, end) = self.place;
+        let (closing_start, end) = self.inline_range;
         self.set_end(node, end);
         let Some(&super::ast::Node {
             kind,
@@ -1923,14 +1945,14 @@ impl RendererImpl for Builder<'_> {
         };
         if matches!(kind, Kind::Image | Kind::ImageReference) {
             let mut alt = std::mem::take(&mut self.alt);
-            // remark-parse 8: what is written between the brackets, whatever it is. oxfmt prints that.
+            // remark-parse 8 uses the source text between the brackets, whatever it is. oxfmt prints that.
             if self.is_mdx || self.is_for_oxfmt {
-                let mut written = Vec::new();
-                self.push_content_between(marker_end, closing_start, &mut written);
+                let mut raw_alt = Vec::new();
+                self.push_content_between(marker_end, closing_start, &mut raw_alt);
                 alt.clear();
                 match self.is_mdx {
-                    true => unescape(&written, &mut alt),
-                    false => alt = written,
+                    true => unescape(&raw_alt, &mut alt),
+                    false => alt = raw_alt,
                 }
             }
             let value = self.tree.owned(|out| out.extend_from_slice(&alt));
@@ -1972,15 +1994,16 @@ impl RendererImpl for Builder<'_> {
                 TextType::NullChar => self.alt.extend_from_slice(self.nul),
                 TextType::Entity => unescape(content, &mut self.alt),
                 TextType::Softbr => {
-                    if self.alt_end == self.place.0 {
-                        let blanks = self.alt.iter().rev().take_while(|it| is_white(it)).count();
-                        self.alt.truncate(self.alt.len() - blanks);
+                    if self.alt_end == self.inline_range.0 {
+                        let whitespace_len =
+                            self.alt.iter().rev().take_while(|it| is_white(it)).count();
+                        self.alt.truncate(self.alt.len() - whitespace_len);
                     }
                     self.alt.push(b'\n');
                 }
                 TextType::Br => {}
             }
-            self.alt_end = self.place.1;
+            self.alt_end = self.inline_range.1;
             return Ok(());
         }
         self.end_guarded_break(match text_type {
@@ -1996,38 +2019,40 @@ impl RendererImpl for Builder<'_> {
                 self.add_text(&value, false);
             }
             TextType::Normal => {
-                let is_as_written =
-                    self.place.1.saturating_sub(self.place.0) as usize == content.len();
-                self.add_text(content, is_as_written);
+                let matches_source = self.inline_range.1.saturating_sub(self.inline_range.0)
+                    as usize
+                    == content.len();
+                self.add_text(content, matches_source);
             }
-            // The value of code is cut from the text when it ends.
+            // A code span's value is sliced from the text when it ends.
             TextType::Code | TextType::Latexmath => {}
             TextType::NullChar => self.add_text(self.nul, false),
             TextType::Entity => {
                 self.add_text(b"", false);
                 unescape(content, &mut self.text_value);
             }
-            // The white space before it is not part of the text.
+            // The whitespace before it isn't part of the text.
             TextType::Softbr => {
                 let so_far = match self.text_range {
-                    Some((start, end)) if self.is_text_as_written => {
+                    Some((start, end)) if self.text_matches_source => {
                         &self.text[start as usize..end as usize]
                     }
                     _ => &self.text_value[..],
                 };
-                let blanks = so_far.iter().rev().take_while(|it| is_white(it)).count();
-                if blanks > 0 {
+                let whitespace_len = so_far.iter().rev().take_while(|it| is_white(it)).count();
+                if whitespace_len > 0 {
                     self.copy_text();
-                    self.text_value.truncate(self.text_value.len() - blanks);
+                    self.text_value
+                        .truncate(self.text_value.len() - whitespace_len);
                     if self.text_value.is_empty() {
                         self.text_range = None;
                     }
                 }
                 self.guarded_break = self.guarded_break(LineBreak::Soft {
-                    is_as_written: blanks == 0,
+                    matches_source: whitespace_len == 0,
                 });
                 if self.guarded_break.is_none() {
-                    self.add_text(b"\n", blanks == 0);
+                    self.add_text(b"\n", whitespace_len == 0);
                 }
             }
             TextType::Br => {
@@ -2036,7 +2061,7 @@ impl RendererImpl for Builder<'_> {
             }
             TextType::Html => {
                 let node = self.add_span(Kind::Html);
-                let value = self.raw(self.place.0, self.place.1);
+                let value = self.raw(self.inline_range.0, self.inline_range.1);
                 if let Some(node) = self.tree.get_mut(node) {
                     node.value = value;
                 }
@@ -2050,7 +2075,7 @@ impl RendererImpl for Builder<'_> {
             tag::LIQUID | tag::MATH => Follower::Verbatim,
             _ => Follower::Other,
         });
-        let (start, end) = self.place;
+        let (start, end) = self.inline_range;
         let (kind, value) = match tag {
             tag::CHECK => {
                 let item = self.parent();
@@ -2109,8 +2134,8 @@ impl RendererImpl for Builder<'_> {
     }
 }
 
-/// Fills `tree` with the syntax of `text`, in which every line break is `\n`, from `first_line` on, which is where a
-/// line starts. Returns the root.
+/// Fills `tree` with the syntax tree of `text`, in which every line break is `\n`, starting at `first_line`, which is
+/// the start of a line. Returns the root.
 pub(crate) fn parse_lines(
     text: &[u8],
     tree: &mut Tree,
@@ -2122,7 +2147,7 @@ pub(crate) fn parse_lines(
         return None;
     }
     let root = tree.add(Kind::Root, 0, text.len() as u32);
-    // The parser says where the lines start that it is given.
+    // The parser only reports line starts for the input it's given.
     let first_line = first_line.min(text.len());
     let mut from = 0;
     while from < first_line {
@@ -2135,12 +2160,12 @@ pub(crate) fn parse_lines(
     let mut options = Options::default();
     (options.tables, options.math_blocks) = (!is_plain, !is_plain);
     (options.footnotes, options.no_single_tilde) = (true, true);
-    let is_as_oxfmt_reads = matches!(syntax, Syntax::WithDirectives | Syntax::TwoLines);
-    options.directives = is_as_oxfmt_reads;
+    let uses_oxfmt_syntax = matches!(syntax, Syntax::WithDirectives | Syntax::TwoLines);
+    options.directives = uses_oxfmt_syntax;
     // See `tag::CHECK`.
     options.tasklists = false;
     (options.micromark, options.mdx) = (true, is_mdx);
-    options.micromark_to_the_letter = !is_as_oxfmt_reads;
+    options.micromark_to_the_letter = !uses_oxfmt_syntax;
     if let Syntax::CommonMark { gfm, math } = syntax {
         (options.tables, options.strikethrough, options.footnotes) = (gfm, gfm, gfm);
         (options.math_blocks, options.no_single_tilde) = (math, false);
@@ -2158,7 +2183,10 @@ pub(crate) fn parse_lines(
         leaf_bytes: match syntax {
             Syntax::Plain | Syntax::CommonMark { .. } => b"",
             Syntax::Mdx => b"ie",
-            Syntax::Markdown | Syntax::WithDirectives | Syntax::TwoLines => b"{",
+            Syntax::Markdown
+            | Syntax::WithDirectives
+            | Syntax::TwoLines
+            | Syntax::MarkdownTwoLines => b"{",
         },
         leaf: &leaf,
         span_bytes: match syntax {
@@ -2199,17 +2227,22 @@ pub(crate) fn parse_lines(
         ended: Vec::new(),
         is_extended_to_the_end: false,
         spans: Vec::new(),
-        place: (0, 0),
+        inline_range: (0, 0),
         marker_ends: Vec::new(),
         text_range: None,
         text_value: Vec::new(),
-        is_text_as_written: false,
+        text_matches_source: false,
         alt: Vec::new(),
         alt_end: 0,
         can_start_with_check: &can_start_with_check,
         starts_with_check: false,
+        two_lines: match syntax {
+            Syntax::WithDirectives => Some(Syntax::TwoLines),
+            Syntax::Markdown => Some(Syntax::MarkdownTwoLines),
+            _ => None,
+        },
         guarded_break: None,
-        is_on_line_as_written: false,
+        is_on_verbatim_line: false,
     };
     render_with_extensions(
         &text[first_line..],

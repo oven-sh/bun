@@ -63,6 +63,8 @@ export const emit = noop;
 export const prependListener = noop;
 export const prependOnceListener = noop;
 export const emitWarning = function (warning, type) {
+  // An Error prints with its own name and ignores `type`, as in node.
+  if (warning instanceof Error) return console.warn(String(warning));
   var name = typeof type === "string" ? type : (type && type.type) || "Warning";
   console.warn(name + ": " + (warning && warning.message ? warning.message : warning));
 };

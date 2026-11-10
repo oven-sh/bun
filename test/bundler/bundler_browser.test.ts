@@ -974,6 +974,34 @@ describe("bundler", () => {
         'TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received object',
     },
   });
+  // node prints a string with its type and an Error with its own name.
+  itBundled("browser/NodeProcessEmitWarning", {
+    files: {
+      "/entry.js": /* js */ `
+        import process, { emitWarning } from "node:process";
+        const lines = [];
+        console.warn = line => lines.push(line);
+        emitWarning("plain");
+        emitWarning("typed", "DeprecationWarning");
+        emitWarning("options", { type: "CustomWarning" });
+        const error = new TypeError("from an error");
+        process.emitWarning(error, "IgnoredType");
+        error.name = "ExperimentalWarning";
+        process.emitWarning(error);
+        console.log(JSON.stringify(lines));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: JSON.stringify([
+        "Warning: plain",
+        "DeprecationWarning: typed",
+        "CustomWarning: options",
+        "TypeError: from an error",
+        "ExperimentalWarning: from an error",
+      ]),
+    },
+  });
   // In a browser, `({ setTimeout }).setTimeout(fn)` throws "Illegal invocation".
   // The default export and `require("timers")` call the timers as methods.
   itBundled("browser/NodeTimersCalledAsMethods", {

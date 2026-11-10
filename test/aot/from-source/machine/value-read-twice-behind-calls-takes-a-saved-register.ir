@@ -1,8 +1,9 @@
 # -- source: value-read-twice-behind-calls.js
-# function keep(a, b) { report(a); report(b); return b; }
-# report(id(keep)(1, 2));
+# function keep(a) { const b = id(2); report(a); report(b); return b; }
+# report(id(keep)(1));
 # -- end of source
-# b lives across the calls and is read twice behind them: in memory it would cost a store and two loads, which is more than the store and the load of a callee-saved register. It takes one.
+# b is what a call gave. It lives across the calls and is read twice behind them: in memory it would cost a store and two loads, which is more than the store and the load of a callee-saved register. It takes one.
+# An argument that calls alone read is another matter: the set-up pushes it into its slot and each call loads it into the register that it wants (tests/AOTMachineFrameFormTests.cpp).
 # The twin, in which b is read once: value-read-once-behind-calls-takes-no-new-saved-register.ir
 # f1 = keep
 # REQUIRES: unsanitized-code

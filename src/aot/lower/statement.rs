@@ -25,6 +25,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.count_statement(statement);
                 continue;
             }
+            if self.lower_store_at_birth(statement) {
+                continue;
+            }
             if dispose::find_resource_declarations(hir, statement).is_some() {
                 let rest = IdList::new(statements.start + index, statements.len - index);
                 self.lower_statements_with_resources(rest);
@@ -229,7 +232,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         if holds_nothing(yes)
             && holds_nothing(no)
-            && self.file.reads_only_what_bun_run_leaves_out(test, true)
+            && self
+                .file
+                .reads_only_what_bun_run_leaves_out_of_empty_if(test)
         {
             return;
         }

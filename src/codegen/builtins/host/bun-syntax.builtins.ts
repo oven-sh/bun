@@ -124,6 +124,9 @@ export default b.declarations(
   operation("findsNoMember", "FindsNoMember"),
   operation("isPlainInstanceOf", "IsPlainInstanceOf"),
   operation("isPlainHeirOf", "IsPlainHeirOf"),
+  operation("isAsBorn", "IsAsBorn"),
+  operation("isAsBornExceptForAddedNames", "IsAsBornExceptForAddedNames"),
+  operation("isPrototypeChainPlain", "IsPrototypeChainPlain"),
   b.intrinsic("isObjectPrototypeWithoutAddedNames", "Call", {
     intrinsic: "IsHolderWithoutAddedNames",
     path: "Object.prototype",

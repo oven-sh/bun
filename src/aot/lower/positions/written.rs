@@ -60,7 +60,8 @@ mod tests {
     fn reported_positions(source: &str, opcode: Opcode) -> Vec<u32> {
         let options = LoweringOptions {
             platform: host_platform(),
-            embeds_function_text: false,
+            embeds_function_source: false,
+            reparses_function_sources: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,

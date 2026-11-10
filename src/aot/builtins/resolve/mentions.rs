@@ -3,6 +3,7 @@ use super::mention_use::MentionUse;
 use super::module_cache::{is_function_that_loader_calls, is_module_cache, is_table_of_loaders};
 use super::resolver::{ExprState, FunctionsReadingThis, ResolvedValue, Resolver};
 use super::unnamed_uses::MOST_VARIABLES_FOLLOWED;
+use super::written_members::holder_of;
 use crate::builtins::runtime_uses::is_evaluator;
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, CallsForTexts, Intrinsic, Prototype,
@@ -391,6 +392,69 @@ impl Resolver<'_, '_> {
             })
     }
 
+    fn note_name_that_tests_may_lay_above(&mut self, id: BuiltinId, name: Atom) {
+        if self.input.runs_tests
+            && self.input.dialect == SourceDialect::Program
+            && table::entry(table::canonical_id(id)).kind == BuiltinKind::Namespace
+        {
+            let noted = &mut self.output.names_asked_for_that_are_not_listed;
+            noted.push((id, name));
+        }
+    }
+
+    fn lists_member(&self, object: BuiltinId, name: Atom) -> bool {
+        let name = self.input.names.get(name);
+        name.is_some_and(|name| table::own_member(holder_of(object), name).is_some())
+    }
+
+    fn note_names_that_tests_may_lay_above(&mut self, id: BuiltinId, holders: &[ExprId]) {
+        for &holder in holders {
+            let Some(member) = self.find_member_of(holder) else {
+                continue;
+            };
+            let hir = self.input.hir;
+            let name = match hir.member_key(member) {
+                Some((_, MemberKey::Name(name))) => name,
+                Some((_, MemberKey::Computed(key))) => match self.find_constant_that_key_is(key) {
+                    FoldedValue::Constant(Constant::String(name))
+                    | FoldedValue::ConstantOutsideDeadZone(Constant::String(name))
+                        if !self.lists_member(id, name) =>
+                    {
+                        name
+                    }
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            if mentioned_id(self.state(member)).is_none() {
+                self.note_name_that_tests_may_lay_above(id, name);
+            }
+        }
+    }
+
+    fn find_where_variable_holds_what_is_stored(&self, stored: ExprId) -> Vec<ExprId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let Parent::Expr(assignment) = bound.parent_of_expr(self.outermost_assertion_of(stored))
+        else {
+            return Vec::new();
+        };
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[assignment].kind
+        else {
+            return Vec::new();
+        };
+        let Binding::Symbol(variable) = bound.binding(target) else {
+            return Vec::new();
+        };
+        if !self.input.runs_tests || hir.skip_type_assertions(value) != stored {
+            return Vec::new();
+        }
+        self.names_of(variable).chain([assignment]).collect()
+    }
+
     fn find_receiver_handed_to_operands(
         &self,
         function: ExprId,
@@ -535,10 +599,6 @@ impl Resolver<'_, '_> {
         }
         let is_handed = self.is_handed_to_code_laid_above(expr, id);
         self.hand_to_code_laid_above(id, is_handed);
-        if self.input.dialect == SourceDialect::Program && table::root_of(id) == BuiltinId::Proxy {
-            self.output.process_reaches_code_on_its_prototypes |=
-                !matches!(self.classify_use(expr), MentionUse::Inspected);
-        }
         self.output.inspects_prototype_chain_of_process |=
             self.is_asked_for_member_of_node_events(expr, id);
         if let Some(receiver) = self.find_receiver_handed_to_operands(expr, id) {
@@ -554,6 +614,7 @@ impl Resolver<'_, '_> {
         {
             self.expose(holder);
         }
+        self.mention_members_read_under_written_keys(expr);
         match self.classify_use(expr) {
             MentionUse::Called(call) if self.is_import_site(call) => {}
             MentionUse::Called(call) if self.asks_for_symbol_that_host_ignores(call, id) => {}
@@ -571,8 +632,14 @@ impl Resolver<'_, '_> {
                 }
                 self.output.handed_to_hooks_of_instanceof.push(id);
             }
-            MentionUse::Inspected | MentionUse::Holder | MentionUse::Aliased => {}
+            MentionUse::Holder => self.note_names_that_tests_may_lay_above(id, &[expr]),
+            MentionUse::Inspected => {
+                let holders = self.find_where_variable_holds_what_is_stored(expr);
+                self.note_names_that_tests_may_lay_above(id, &holders);
+            }
+            MentionUse::Aliased => {}
             MentionUse::ReadByComputedKey => {
+                self.note_names_that_tests_may_lay_above(id, &[expr]);
                 self.note_holder_of_loader_functions_out_of_sight(expr, id);
                 self.expose(id);
             }
@@ -588,6 +655,39 @@ impl Resolver<'_, '_> {
                         self.expose(id);
                     }
                 }
+            }
+        }
+    }
+
+    fn mention_members_read_under_written_keys(&mut self, holder: ExprId) {
+        let hir = self.input.hir;
+        let written = self.outermost_assertion_of(holder);
+        let Parent::Expr(user) = self.input.bound.parent_of_expr(written) else {
+            return;
+        };
+        let key = match (hir.member_key(user), self.find_call_taking_first(written)) {
+            (Some((object, MemberKey::Computed(key))), _) if object == written => Some(key),
+            (_, Some((_, call, function))) => {
+                let readers = [
+                    BuiltinId::ReflectGet,
+                    BuiltinId::ReflectGetOwnPropertyDescriptor,
+                    BuiltinId::ObjectGetOwnPropertyDescriptor,
+                ];
+                let reads_member = readers.map(table::canonical_id).contains(&function);
+                (hir.ids(hir[call].args).nth(1)).filter(|_| reads_member)
+            }
+            _ => None,
+        };
+        let object = self.value_of(holder).or_else(|| self.held_value_of(holder));
+        if let (Some(key), Some(object)) = (key, object) {
+            self.mention_members_under_written_key(object, key);
+        }
+    }
+
+    fn mention_members_under_written_key(&mut self, object: ResolvedValue, key: ExprId) {
+        for name in self.find_names_written_as_key(key) {
+            if let Some(member) = self.find_member(object, name) {
+                self.mention(member.id);
             }
         }
     }
@@ -623,13 +723,13 @@ impl Resolver<'_, '_> {
                 else {
                     return None;
                 };
-                let holder = bound.initialized_binding(hir[declaration].pat);
-                let reads = (0..hir.exprs.len() as u32).map(ExprId).filter(|&read| {
-                    matches!(hir[read].kind, ExprKind::Ident(_)) && bound.binding(read) == holder
-                });
+                let Binding::Symbol(holder) = bound.initialized_binding(hir[declaration].pat)
+                else {
+                    return None;
+                };
+                let reads = self.names_of(holder);
                 let mut steps = reads.map(|read| self.count_steps_up_where_only_looked_at(read));
-                matches!(holder, Binding::Symbol(_))
-                    .then(|| steps.try_fold(0, |most, steps| Some(most.max(steps?))))?
+                steps.try_fold(0, |most, steps| Some(most.max(steps?)))
             }
             MentionUse::Exposed => {
                 let operand = self.outermost_assertion_of(value);
@@ -1101,6 +1201,9 @@ impl Resolver<'_, '_> {
             for prop in props.iter() {
                 let prop = &input.hir[prop];
                 let PropKey::Name(name) = prop.key else {
+                    if let PropKey::Computed(key) = prop.key {
+                        self.mention_members_under_written_key(holder, key);
+                    }
                     self.expose(holder.path.id);
                     continue;
                 };
@@ -1116,6 +1219,7 @@ impl Resolver<'_, '_> {
                     self.expose(holder.path.id);
                 }
                 let Some(member) = self.find_named_member(holder, name) else {
+                    self.note_name_that_tests_may_lay_above(holder.path.id, name);
                     continue;
                 };
                 self.mention(member.id);

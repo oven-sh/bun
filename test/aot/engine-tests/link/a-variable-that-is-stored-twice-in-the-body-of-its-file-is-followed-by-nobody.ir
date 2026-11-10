@@ -1,0 +1,28 @@
+# No source gives this wire: a variable that the wire calls immutable is stored twice in the body of its file, with Bun and then with process; another body reads a name off it.
+# Nobody can say which of the two the other body finds, so the variable is followed by nobody, and each store lets its built-in go.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: causes mechanisms=all
+# CHECK: cause RunsUnseenCode BunPlugin at f0 v1
+# CHECK: machine-code ProcessDlopen at f0 v3
+
+variable g0 name="host" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=Process
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = Call v4 calleeName="ask"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="ask" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="host"
+    v2 = PropGet v1 key="title"
+    Return v2
+}

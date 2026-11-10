@@ -2,8 +2,7 @@
 //
 // `bun run` has no such rule. Its transpiler writes a `try` statement for the scope and means the first `using` as the place of the
 // call that disposes, and its source map gives another: the brace that ends a bare block, the last `)` in the block of an `if`, a place
-// in the `finally` behind the block of a `try`, the brace of the outer block for a block in a block. So nothing here is held to it
-// (docs/compiler/compatibility.mdx, "Smaller differences").
+// in the `finally` behind the block of a `try`, the brace of the outer block for a block in a block. So nothing here is held to it.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";

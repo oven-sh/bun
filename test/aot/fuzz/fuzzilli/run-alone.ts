@@ -9,7 +9,7 @@
 // `--scene a,b` draws every program from those scenes of write-ordinary-scenes.ts, one scene to a program. Without it a program has one to three scenes of any kind.
 // `--families 25` draws 25 programs of 100 from the sources of ../sources.ts that give one file.
 // `--programs <folder>` takes the files of the folder, once each, in place of draws.
-// `--checks-proofs 50` builds 50 programs of 100 once more with --aot-testing=CheckProofsAtRunTime, `--writes-straight 50` with --aot-testing=WritesBodiesStraight. Both executables have to do as `bun <file>` does.
+// `--checks-proofs 50` builds 50 programs of 100 once more with --aot-testing=CheckProofsAtRunTime or another word under which the executable checks itself, `--writes-straight 50` with --aot-testing=ForceStraightCompilation. Both executables have to do as `bun <file>` does.
 // `--as-a-test 25` has a test import 25 programs of 100, under `bun test --aot` and under `bun test`. A difference counts where the compiled test run prints something else than the executable too.
 // `--shuffles-costs 50` builds 50 programs of 100 once more under a word that may only change what the code costs: guesses fail unasked, expected types are ignored or shuffled, so are the frequencies of blocks and
 // the choices by cost, Link is given more. An answer that changes there is a miscompilation.
@@ -26,14 +26,20 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
-import { strikeWhatOnlyCounts } from "./write-hands.ts";
-import { writeKin } from "./write-kin.ts";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
+import {
+  comesToTheEndOfTheStack,
+  hearsWhatCodeFromStringsMayHear,
+  refusesOnlyWhatThePageLists,
+} from "./what-the-page-declares.ts";
+import { withoutWhatKeepsTheLibrary, writeKin } from "./write-kin.ts";
 import { writeOrdinaryScenes } from "./write-ordinary-scenes.ts";
 
 const { values: options } = parseArgs({
@@ -81,16 +87,20 @@ for (const name of [
 ])
   options[name] = String(options[name]);
 if (!work || !finds) throw new Error("Expected --work and --finds");
+withoutInstallingPackages(work);
 const flags = options.flags.split(" ").filter(Boolean);
 const folder = join(work, `alone-${process.pid}`);
 mkdirSync(finds, { recursive: true });
+/** An executable is shipped without its sources. Beside them the one without --aot reads a file from disk where a load goes by a made name, and runs it a second time. */
+const away = join(work, `away-${process.pid}`);
+mkdirSync(away, { recursive: true });
 
 type Ended = { stdout: string; stderr: string; end: string; seconds: number };
-async function spawn(cmd: string[], seconds: number): Promise<Ended> {
+async function spawn(cmd: string[], seconds: number, cwd = folder): Promise<Ended> {
   const began = performance.now();
   const child = Bun.spawn({
     cmd,
-    cwd: folder,
+    cwd,
     env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", NO_COLOR: "1" },
     stdin: "ignore",
     stdout: "pipe",
@@ -120,54 +130,81 @@ const withoutDetails = (output: string) =>
     .map(line => line.replace(/Error: .*/, "Error").replace(/\[(\w*Function): [^\]]*\]/g, "[$1]"))
     .join("\n");
 const agree = (a: Ended, b: Ended) => a.end === b.end && withoutDetails(a.stdout) === withoutDetails(b.stdout);
-/** As `agree()`, where one side runs the library's plain text: how often that text reads a member of what a program hands to it is its own matter (write-hands.ts). */
-function agreesWithPlain(ours: Ended, plain: Ended) {
-  const [expected, found] = strikeWhatOnlyCounts(plain.stdout, ours.stdout);
-  return ours.end === plain.end && withoutDetails(found) === withoutDetails(expected);
-}
 /** The two runs differ in where the lines of a function's text break and in parentheses that change nothing. As in run-batch.ts. */
-const withoutLayout = (output: string) => withoutDetails(output).replace(/\\n|[\s()]/g, "");
-/** What docs/compiler/compatibility.mdx lists, by what the executable says or the program names. */
-const isDocumented = (text: string, ours: Ended) =>
-  [
-    "read-only in a compiled executable",
-    "Attempted to assign to readonly property",
-    "this executable was compiled assuming",
-    "Maximum call stack size exceeded",
-    // Only a program that runs code from a string may hear that something was not compiled.
-    ...(/\beval\b|\bFunction\(|node:vm/.test(text) ? ["was not compiled into this executable", "Cannot load"] : []),
-  ].some(message => ours.stderr.includes(message) || ours.stdout.includes(message)) ||
-  ["WeakRef", "FinalizationRegistry", "import.meta", "__filename", "__dirname", ".argv", ".stack", ".caller"].some(
-    name => text.includes(name),
-  );
-const stopAtAFalseProof = /^AOT: .*$/m;
+const withoutLayout = (output: string) => withoutDetails(output).replace(/\\n|%20|%0A|%09|[\s()]/g, "");
+/** Where a program lies: the folder of the run, and the root inside an executable. A program that asks hears another folder there. That alone is declared: what still parts with the two taken out is a difference like any other. */
+const withoutRoots = (output: string) =>
+  withoutDetails(output)
+    .replaceAll(realpathSync(folder), "<root>")
+    .replaceAll(folder, "<root>")
+    .replaceAll("/$bunfs/root", "<root>")
+    // What `process.argv` begins with.
+    .replaceAll(bun, "bun")
+    .replace(/<root>\/(?:program\.\w+|executable|plain-executable)\b/g, "<entry>");
+const isDocumented = (text: string, ours: Ended, plain: Ended) =>
+  refusesOnlyWhatThePageLists(ours) ||
+  comesToTheEndOfTheStack(plain) ||
+  hearsWhatCodeFromStringsMayHear(text, ours) ||
+  ["WeakRef", "FinalizationRegistry", ".finalization", ".stack", ".caller"].some(name => text.includes(name));
+/** The two printed the same lines, each as often, in another order. */
+const sameLinesInAnotherOrder = (a: Ended, b: Ended) =>
+  withoutDetails(a.stdout).split("\n").sort().join("\n") === withoutDetails(b.stdout).split("\n").sort().join("\n");
+/** Whether the first text is the second with some of its lines left out. */
+function lacksOnlyLines(less: string, more: string) {
+  const wanted = less.split("\n").filter(line => !line.startsWith("bun test v"));
+  let at = 0;
+  for (const line of more.split("\n")) if (at < wanted.length && line === wanted[at]) at++;
+  return at === wanted.length;
+}
+const stopAtAFalseProof = /^bun: internal AOT error: .*$/m;
 
 /** `plain` and `plainAgain` are two runs of the reference, `ours` is the second run of what was compiled. */
 function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: Ended) {
   if (!agree(plain, plainAgain)) return "the reference is unsteady";
-  if (agreesWithPlain(ours, plainAgain)) return "unsteady";
+  if (agree(ours, plainAgain)) return "unsteady";
   // What `bun <file>` does in a moment and the executable not in forty seconds is no matter of speed.
   if (ours.end === "time") return plain.seconds < 1 && plainAgain.seconds < 1 ? "never-ends" : "limit";
   if (stopAtAFalseProof.test(ours.stderr)) return "false-proof";
   // No page declares a death.
   if (/^SIG/.test(ours.end) || Number(ours.end) >= 128) return "signal";
   if (ours.end === plainAgain.end && withoutLayout(ours.stdout) === withoutLayout(plainAgain.stdout))
-    return "function text";
-  // Where the first line on which they part is a line of the program itself, `bun <file>` prints the text of a function.
+    return "function source";
+  // Where the first line on which they part is a line of the program itself, `bun <file>` prints the source of a function.
   const [left, right] = [withoutDetails(ours.stdout).split("\n"), withoutDetails(plainAgain.stdout).split("\n")];
   const parting = (right[left.findIndex((each, at) => each !== right[at])] ?? "").trim();
   if (
-    (parting.length > 12 && text.includes(parting)) ||
-    /^(?:async )?function\b.*\{$|^class\b.*\{$|=> \{$|\) \{$/.test(parting)
+    (parting.length > 12 && /[{};]|=>/.test(parting) && text.includes(parting)) ||
+    /^(?:async )?function\b.*\{$|^class\b.*\{$|=> \{$|\) \{$|^(?:let|const|var|return|if|for|while|try) .*[;{]$/.test(
+      parting,
+    )
   )
-    return "function text";
-  // The text of a function of the library is not in the executable.
+    return "function source";
+  // The source of a library function is not in the executable.
   if (ours.stdout.includes("{ [native code] }") && !plainAgain.stdout.includes("{ [native code] }"))
-    return "function text";
-  if (isDocumented(text, ours)) return "documented difference";
+    return "function source";
+  // A message that names the file of the program names another folder in an executable.
+  if (ours.end === plainAgain.end && withoutRoots(ours.stdout) === withoutRoots(plainAgain.stdout))
+    return "documented difference";
+  if (isDocumented(text, ours, plainAgain)) return "documented difference";
   return ours.end !== plainAgain.end ? "exit-code" : "stdout";
 }
 const kept = ["false-proof", "signal", "exit-code", "stdout", "limit", "never-ends"];
+/**
+ * The program without the statements of which the build says that they throw: a store to a read-only built-in (TS100014).
+ * Such a program is judged again without them, so that the refusal hides no other difference. A statement is a line that ends in a semicolon and closes what it opens.
+ */
+function withoutRefusedStatements(text: string, built: Ended): string | undefined {
+  const lines = text.split("\n");
+  let isShorter = false;
+  for (const [, line] of `${built.stdout}\n${built.stderr}`.matchAll(/TS100014:.*\n\s*at \S*\bprogram\.\w+:(\d+):/g)) {
+    const statement = lines[Number(line) - 1] ?? "";
+    const isWhole = ["()", "[]", "{}"].every(([open, close]) => statement.split(open).length === statement.split(close).length); // prettier-ignore
+    if (!isWhole || !statement.trimEnd().endsWith(";")) continue;
+    lines[Number(line) - 1] = "";
+    isShorter = true;
+  }
+  return isShorter ? lines.join("\n") : undefined;
+}
 function firstDifference(ours: Ended, plain: Ended) {
   const [left, right] = [withoutDetails(ours.stdout).split("\n"), withoutDetails(plain.stdout).split("\n")];
   const line = left.findIndex((each, at) => each !== right[at]);
@@ -183,14 +220,16 @@ function keepFind(kind: string, summary: string, files: Record<string, string>) 
   const name = `${group}/${Math.floor(Math.log2(Math.max(1, Object.values(files)[0].length)))}`;
   if (existsSync(join(finds, name))) return;
   mkdirSync(join(finds, name), { recursive: true });
-  for (const [file, text] of Object.entries(files)) writeFileSync(join(finds, name, file), text.slice(0, 256 << 10));
+  // What a run printed is cut. A program is kept whole: a cut one cannot be asked again.
+  for (const [file, text] of Object.entries(files))
+    writeFileSync(join(finds, name, file), /^(?:program|stored)\./.test(file) ? text : text.slice(0, 256 << 10));
   appendFileSync(join(finds, "index.txt"), name + "\n");
 }
 
 type Family = (
   seed: number,
   bed: unknown,
-) => { text: string; extension: string; flags?: string[]; files?: unknown } | undefined;
+) => { text: string; extension: string; flags?: string[]; files?: unknown; meant?: Drawn["meant"] } | undefined;
 let families: [string, Family][] = [];
 if (Number(options.families) > 0) {
   const { allSources } = await import("../sources.ts");
@@ -257,6 +296,8 @@ type Drawn = {
   extension: string;
   isKin?: boolean;
   from?: { name: string; text: string };
+  /** Why the two runs may print these two texts, where the source of the program knows of an intended difference. */
+  meant?: (plain: string, compiled: string) => string | undefined;
   /** The programs that this one imports in a row. */
   members?: Drawn[];
   /** The ways to build it, where they are not drawn. */
@@ -266,7 +307,14 @@ type Drawn = {
   /** None of its members parts alone. */
   isCompany?: boolean;
 };
-function draw(): Drawn | undefined {
+/** One draw of two goes without what keeps the library: see withoutWhatKeepsTheLibrary(). One member that keeps it keeps it for all, so a company takes one coin. */
+function draw(keepsLittle = !given && Math.random() < 0.5): Drawn | undefined {
+  const drawn = drawAsItPrints();
+  if (drawn && keepsLittle && !drawn.text.includes("// @filename: "))
+    drawn.text = withoutWhatKeepsTheLibrary(drawn.text, /ts$/.test(drawn.extension)) ?? drawn.text;
+  return drawn;
+}
+function drawAsItPrints(): Drawn | undefined {
   if (Math.random() * 100 < Number(options.kin)) {
     const kin = drawKin();
     if (kin) return kin;
@@ -298,7 +346,11 @@ function drawAScene(): Drawn | undefined {
     try {
       const drawn = family(seed % 2 ** 31, bed);
       if (drawn && !drawn.flags?.length && !drawn.files && drawn.extension.endsWith(options.draws))
-        return { text: `${drawn.text}\n// ${name} ${seed % 2 ** 31}\n`, extension: "." + drawn.extension };
+        return {
+          text: `${drawn.text}\n// ${name} ${seed % 2 ** 31}\n`,
+          extension: "." + drawn.extension,
+          meant: drawn.meant,
+        };
     } catch {}
   }
   const start = `const printValue = console.log;\n// ${seed.toString(36)}\nexport {};\n`;
@@ -355,6 +407,8 @@ const asksForDepth = /^function visit_\d+\(depth/m;
 const endsTheProcess = /process\.(?:exit|abort|kill|reallyExit|on|once)\b|uncaughtException|unhandledRejection/;
 // When an `import()` settles against what a module beside it awaits is an order of loads.
 const loadsLate = /\bimport\(/;
+// Whether a timer of no delay rings in front of an immediate of another member hangs on how long the start took, and an executable starts faster.
+const waitsForTheClock = /\bset(?:Timeout|Immediate|Interval)\b/;
 // What one program does to a global or to a built-in, its neighbors would meet (the classes of a drawn scene end in its number): an executable refuses some of it, and then they part for no fault of their own.
 const changesTheWorld =
   /globalThis(?:\.\w+|\[[^\]]+\]| as any\)(?:\.\w+|\[[^\]]+\]))\s*=[^=]|\bprocess\s*(?:\+\+|--|[-+*]?=[^=])|\b[A-Z]\w*[A-Za-z]\.prototype(?:\.\w+|\[[^\]]+\]| as any\)(?:\.\w+|\[[^\]]+\]))\s*=[^=]|Object\.(?:defineProperty|defineProperties|setPrototypeOf|assign|freeze)\((?:globalThis|process|[A-Z]\w*[A-Za-z](?:\.prototype)?)\b|\bdelete (?:globalThis|process|[A-Z]\w*[A-Za-z])\b/;
@@ -362,13 +416,14 @@ const changesTheWorld =
 /** So many programs that `bun <file>` runs to their end, as one. What cannot stand in company waits to be judged alone. */
 async function drawTogether(size: number): Promise<Drawn | undefined> {
   const members: Drawn[] = [];
+  const keepsLittle = !given && Math.random() < 0.5;
   for (let tries = 0; members.length < size && tries < size * 4; tries++) {
-    const program = draw();
+    const program = draw(keepsLittle);
     if (!program) break;
     lay(program);
     const plain = await spawn([bun, "program" + program.extension], 20);
-    const canStandInCompany = ![endsTheProcess, asksForDepth, loadsLate, changesTheWorld].some(pattern =>
-      pattern.test(program.text),
+    const canStandInCompany = ![endsTheProcess, asksForDepth, loadsLate, waitsForTheClock, changesTheWorld].some(
+      pattern => pattern.test(program.text),
     );
     if (plain.end === "0" && canStandInCompany) members.push(program);
     else if (!program.isKin || plain.end === "0") waiting.push(program);
@@ -388,10 +443,29 @@ function drawArms(text: string): Arm[] {
   if (named) return [[`${named[1].replace(/^--aot-testing=|:.*/g, "")}-`, named[1].split(" ")]];
   const arms: Arm[] = [["", []]];
   if (asksForDepth.test(text)) return arms;
+  // One time in two the walk is held against itself beside the proofs: under that word every typed read by name asks again what an inquiry finds, so each such read in a drawn program is an oracle of its own.
   if (Math.random() * 100 < Number(options["checks-proofs"]))
-    arms.push(["proof-checks-", ["--aot-testing=CheckProofsAtRunTime", ownChecks]]);
+    arms.push(
+      Math.random() < 0.5
+        ? ["proof-checks-", ["--aot-testing=CheckProofsAtRunTime", ownChecks]]
+        : ["checks-CheckWalkAtRunTime-", ["--aot-testing=CheckProofsAtRunTime,CheckWalkAtRunTime", ownChecks]],
+    );
+  // The other words under which the executable checks itself while it runs, or is built with more tests than it needs. Every answer stays. Half as often, and beside the arm above, not in its place.
+  if (Math.random() * 200 < Number(options["checks-proofs"])) {
+    const word = [
+      "CheckEffectsAtRunTime",
+      "CheckEffectsAtRunTime",
+      "CheckProofsAtEntries",
+      "CheckProofsAtEntriesAndFields",
+      "CheckBoundsAtRunTime",
+      "DisableFrameCells",
+      "DelayFlowRules",
+      "DelayOtherFlowRules",
+    ][Math.floor(Math.random() * 8)];
+    arms.push([`checks-${word.replace(/.*,/, "")}-`, [`--aot-testing=${word}`, ownChecks]]);
+  }
   if (Math.random() * 100 < Number(options["writes-straight"]))
-    arms.push(["straight-", ["--aot-testing=WritesBodiesStraight", ownChecks]]);
+    arms.push(["straight-", ["--aot-testing=ForceStraightCompilation", ownChecks]]);
   if (Math.random() * 100 < Number(options["shuffles-costs"])) {
     const seed = 1 + Math.floor(Math.random() * 1000);
     const word = [
@@ -399,16 +473,24 @@ function drawArms(text: string): Arm[] {
       `ShuffleBlockFrequencies:${seed}`,
       "IgnoreExpectedTypes",
       `ShuffleExpectedTypes:${seed}`,
-      "FailGuesses",
-      `FailGuesses:${1 + (seed % 7)}:${seed}`,
-      `GiveLinkMore:${seed}`,
+      "FailSpeculations",
+      // Every n-th guess fails. With n over one a typed copy of a loop is entered and then left for its closed copy in the middle of ordinary turns; with one, the tests in front fail too and no typed copy is entered.
+      `FailSpeculations:${[2, 3, 7][seed % 3]}:${seed}`,
+      `FailSpeculations:${[2, 3, 7][seed % 3]}:${seed}`,
+      `FailSpeculations:${[2, 3, 7][seed % 3]}:${seed}`,
+      `WidenFlowNodes:${seed}`,
       `ShuffleChoices:${seed}`,
-    ][Math.floor(Math.random() * 8)];
+      "ForceFallbackBlockOrder",
+      "ForceWalkMode:NothingCarried",
+      "ForceWalkMode:Closed",
+      `ForceWalkMode:${seed & 1 ? "NothingCarried" : "Closed"}:${2 + (seed % 3)}:${seed}`,
+      `AbortLoopVisits:${1 + (seed % 13)}:${seed % (1 + (seed % 13))}`,
+    ][Math.floor(Math.random() * 15)];
     arms.push([
       `cost-${word.replace(/:.*/, "")}-`,
       [
         `--aot-testing=${word}`,
-        ...(word.startsWith("GiveLinkMore") ? ["--aot-check=FlowFindsNoLessFromMore"] : []),
+        ...(word.startsWith("WidenFlowNodes") ? ["--aot-check=FlowMonotonicity"] : []),
         ...(Math.random() < 0.5 ? [ownChecks] : []),
       ],
     ]);
@@ -467,7 +549,7 @@ while (performance.now() < lastStart || waiting.length) {
     waiting.shift() ?? (Number(options.together) > 1 ? await drawTogether(Number(options.together)) : draw());
   if (!program) break;
   if (program.isCompany) program = await withoutBystanders(program, program.arms![0]);
-  const { text, extension, members, isCompany, company } = program;
+  const { text, extension, members, isCompany, company, meant } = program;
   const hasFiles = lay(program);
   if (!program.arms) counts.taken += members?.length ?? 1;
   const inCompany = isCompany ? "together-" : "";
@@ -490,9 +572,10 @@ while (performance.now() < lastStart || waiting.length) {
         for (const member of members!) waiting.push({ ...member, arms: [[arm, more]], company: record });
       };
       if (!existsSync(join(folder, "executable"))) {
-        const stop = /internal compiler error.*$|Stopped while compiling.*$|^panic.*$|^AOT: .*$/m.exec(
-          built.stderr + built.stdout,
-        )?.[0];
+        const stop =
+          /internal compiler error.*$|Stopped while compiling.*$|^panic.*$|^AOT: .*$|^bun: internal AOT error: .*$/m.exec(
+            built.stderr + built.stdout,
+          )?.[0];
         if (stop === undefined && built.end === "1") {
           add(`${arm}refused`);
           // One member that the build refuses takes its company along.
@@ -517,7 +600,7 @@ while (performance.now() < lastStart || waiting.length) {
       }
       let ours = await spawn([join(folder, "executable")], members ? 80 : 40);
       if (arm === "") asBuilt = ours;
-      if (agreesWithPlain(ours, plain)) {
+      if (agree(ours, plain)) {
         add(`${inCompany}${arm}same`);
         rmSync(join(folder, "executable"), { force: true });
         continue;
@@ -534,8 +617,19 @@ while (performance.now() < lastStart || waiting.length) {
         await spawn([join(folder, "executable")], 80),
       ];
       rmSync(join(folder, "executable"), { force: true });
-      const kind = kindOfDifference(text, plain, plainAgain, oursAgain);
+      const kind = meant?.(plainAgain.stdout, oursAgain.stdout)
+        ? "documented difference"
+        : kindOfDifference(text, plain, plainAgain, oursAgain);
       ours = oursAgain;
+      const shorter =
+        !members && ["stdout", "exit-code", "documented difference"].includes(kind)
+          ? withoutRefusedStatements(text, built)
+          : undefined;
+      if (shorter !== undefined) {
+        add(arm + "judged again without a refused statement");
+        waiting.push({ ...program, text: shorter, arms: [[arm, more]] });
+        continue;
+      }
       // Where `bun build --compile` without --aot parts from `bun <file>` too, and in the same way, the bundler and the runner read something differently: a tsconfig.json in a folder, the path of
       // a file, when an `import()` settles. That is no fault of the compiler.
       if (kind === "stdout" || kind === "exit-code") {
@@ -544,10 +638,10 @@ while (performance.now() < lastStart || waiting.length) {
           300,
         );
         const bundled = existsSync(join(folder, "plain-executable"))
-          ? await spawn([join(folder, "plain-executable")], 40)
+          ? await spawn([join(folder, "plain-executable")], 40, away)
           : undefined;
         rmSync(join(folder, "plain-executable"), { force: true });
-        if (bundled && agreesWithPlain(ours, bundled)) {
+        if (bundled && agree(ours, bundled)) {
           add(inCompany + arm + "as the executable without --aot");
           continue;
         }
@@ -605,8 +699,20 @@ while (performance.now() < lastStart || waiting.length) {
         withoutDetails(ours.stdout.replace(/^bun test v.*\n/, "")) === withoutDetails(asBuilt.stdout)
       )
         kind = "as the executable";
-      else if ((kind === "stdout" || kind === "exit-code") && hasFiles && /\bimport\(|\brequire\(/.test(text))
+      else if (
+        kind === "stdout" &&
+        hasFiles &&
+        /\bimport\(|\brequire\(/.test(text) &&
+        sameLinesInAnotherOrder(ours, referenceAgain)
+      )
         kind = "an order of loads";
+      // A test run ends with its tests. Whether a file that somebody began to load without waiting for it still runs is a race in `bun test` itself: it answers now one way and now the other.
+      else if (
+        kind === "stdout" &&
+        /(?<!await )(?<!return )\bimport\(/.test(text) &&
+        (lacksOnlyLines(ours.stdout, referenceAgain.stdout) || lacksOnlyLines(referenceAgain.stdout, ours.stdout))
+      )
+        kind = "what nobody waits for at the end of a test run";
       add("test-run-" + kind);
       if (kept.includes(kind)) {
         const summary = firstDifference(ours, referenceAgain);

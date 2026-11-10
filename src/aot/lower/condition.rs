@@ -289,8 +289,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_truthiness(&mut self, expression: ExprId, if_true: BlockId, if_false: BlockId) {
         let value = self.lower_expression(expression);
+        let field = self.find_field_of_union(expression);
         self.set_position(self.file.hir[expression].pos);
-        self.branch_on_truthiness(value, if_true, if_false);
+        let split = self.split_on_truthiness(value);
+        let Some(field) = field else {
+            return self.finish_split(split, if_true, if_false);
+        };
+        let edges = [
+            (split.taken, split.taken_value, if_true),
+            (split.not_taken, split.not_taken_value, if_false),
+        ];
+        for (block, read, target) in edges {
+            self.builder.switch_to(block);
+            self.narrow_holder(field, read);
+            self.jump(target);
+        }
     }
 
     fn branch_on_truthiness(&mut self, value: ValueId, if_true: BlockId, if_false: BlockId) {

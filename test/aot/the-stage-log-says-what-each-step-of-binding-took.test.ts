@@ -41,7 +41,7 @@ test("with the stage log, and only with it", async () => {
     expect(lines).toContainEqual(
       expect.stringMatching(
         new RegExp(
-          `^AOT phase times: front end \\| ${step} \\| wall [0-9.]+ ms \\| cpu [0-9.]+ ms \\| resident [0-9]+ MB \\| peak [0-9]+ MB( \\| instructions [0-9.]+ M)?$`,
+          `^AOT phase times: front end \\| ${step} \\| wall [0-9.]+ ms \\| cpu [0-9.]+ ms \\| resident [0-9]+ MB \\| peak [0-9]+ MB( \\| instructions [0-9.]+ M( \\| of this process alone [0-9.]+ M)?)?$`,
         ),
       ),
     );

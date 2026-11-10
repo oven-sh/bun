@@ -39,6 +39,33 @@ pub fn loader_by_name(path: &[u8]) -> Loader {
     loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
 }
 
+pub fn encode_loaders_given_to_build<E: AsRef<[u8]>>(table: &[(E, Loader)]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    for (ending, loader) in table {
+        if loader_named_by_path(DEFAULT_LOADERS, ending.as_ref()) != Some(*loader) {
+            let fields = [
+                ending.as_ref(),
+                b"\0",
+                type_attribute_of(*loader).as_bytes(),
+                b"\0",
+            ];
+            encoded.extend_from_slice(&fields.concat());
+        }
+    }
+    encoded
+}
+
+fn loader_by_name_in_build(loaders_given_to_build: &[u8], path: &[u8]) -> Loader {
+    let ending = extension_of(path);
+    let mut fields = bun_core::strings::split(loaders_given_to_build, b"\0");
+    while let (Some(given), Some(type_attribute)) = (fields.next(), fields.next()) {
+        if given == ending {
+            return Loader::from_string(type_attribute).unwrap_or(Loader::File);
+        }
+    }
+    loader_by_name(path)
+}
+
 pub fn loader_by_path_or<E: AsRef<[u8]>>(
     table: &[(E, Loader)],
     path: &[u8],
@@ -157,14 +184,22 @@ pub const DATABASE_NAMESPACE: &[u8] = b"database";
 pub fn name_of_database(specifier: &[u8]) -> Vec<u8> {
     let mut buffer = vec![0; specifier.len() + 2];
     let normalized = normalize_string_buf::<true, Posix, false>(specifier, &mut buffer);
+    if specifier.starts_with(b"/") {
+        return [b"/", &*normalized].concat();
+    }
     match normalized.starts_with(b"../") {
         true => normalized.to_vec(),
         false => [b"./", &*normalized].concat(),
     }
 }
 
-pub fn places_of_form(path: &[u8], type_attribute: &[u8]) -> Option<PlacesOfForm> {
-    let has_form = |&it: &Loader| parses_text_as_data(it) || it == Loader::Sqlite;
+pub fn places_of_form(
+    path: &[u8],
+    type_attribute: &[u8],
+    loaders_given_to_build: &[u8],
+) -> Option<PlacesOfForm> {
+    let has_form =
+        |&it: &Loader| parses_text_as_data(it) || it == Loader::Sqlite || it == Loader::File;
     let loader = Loader::from_string(type_attribute).filter(has_form)?;
     if path.starts_with(b"./") || path.starts_with(b"../") {
         return (loader == Loader::Sqlite).then(|| PlacesOfForm {
@@ -172,9 +207,13 @@ pub fn places_of_form(path: &[u8], type_attribute: &[u8]) -> Option<PlacesOfForm
             is_form_without_attributes: false,
         });
     }
+    let has_query = bun_core::strings::contains_char(path, b'?');
+    let read_by_build_with = loader_by_name_in_build(loaders_given_to_build, path);
     Some(PlacesOfForm {
         path_of_form: path_of_form(path, loader),
-        is_form_without_attributes: !is_url_with_text(path) && loader == loader_by_name(path),
+        is_form_without_attributes: !is_url_with_text(path)
+            && !has_query
+            && loader == read_by_build_with,
     })
 }
 
@@ -216,7 +255,7 @@ mod tests {
     use super::*;
 
     fn places(path: &[u8], type_attribute: &[u8]) -> Option<(Vec<u8>, bool)> {
-        let places = places_of_form(path, type_attribute)?;
+        let places = places_of_form(path, type_attribute, b"")?;
         Some((places.path_of_form, places.is_form_without_attributes))
     }
 
@@ -290,9 +329,47 @@ mod tests {
 
     #[test]
     fn type_that_is_not_a_data_format_is_left_to_the_run_time_loader() {
-        for type_attribute in [&b"file"[..], b"js", b"ts", b"wasm", b"no loader"] {
+        for type_attribute in [&b"js"[..], b"ts", b"wasm", b"no loader"] {
             assert_eq!(places(b"/$bunfs/root/a.js", type_attribute), None);
         }
+    }
+
+    #[test]
+    fn file_asked_for_as_a_file_is_keyed_by_that_type() {
+        let as_file = |path: &[u8]| [path, b"?file"].concat();
+        let (text, picture) = (b"/$bunfs/root/a.txt", b"/$bunfs/root/a.png");
+        assert_eq!(places(text, b"file"), Some((as_file(text), false)));
+        assert_eq!(places(picture, b"file"), Some((as_file(picture), true)));
+        assert_eq!(places(b"./a.txt", b"file"), None);
+    }
+
+    #[test]
+    fn module_under_a_query_answers_for_no_type() {
+        let code = b"/$bunfs/root/a.js?x";
+        assert_eq!(
+            places(code, b"file"),
+            Some((b"/$bunfs/root/a.js?x?file".to_vec(), false))
+        );
+    }
+
+    #[test]
+    fn module_without_attributes_is_what_the_loaders_given_to_the_build_made() {
+        let table = [
+            (&b".pic"[..], Loader::Text),
+            (b".ts", Loader::Ts),
+            (b".txt", Loader::File),
+        ];
+        let given = encode_loaders_given_to_build(&table);
+        assert_eq!(given, b".pic\0text\0.txt\0file\0");
+        let answers = |path: &[u8], type_attribute: &[u8]| {
+            places_of_form(path, type_attribute, &given).map(|it| it.is_form_without_attributes)
+        };
+        assert_eq!(answers(b"/$bunfs/root/a.pic", b"file"), Some(false));
+        assert_eq!(answers(b"/$bunfs/root/a.pic", b"text"), Some(true));
+        assert_eq!(answers(b"/$bunfs/root/a.txt", b"file"), Some(true));
+        assert_eq!(answers(b"/$bunfs/root/a.txt", b"text"), Some(false));
+        assert_eq!(answers(b"/$bunfs/root/a.png", b"file"), Some(true));
+        assert_eq!(encode_loaders_given_to_build(DEFAULT_LOADERS), b"");
     }
 
     #[test]

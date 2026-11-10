@@ -1,0 +1,71 @@
+# no turn changes the factor or the bound. The bound is asked for an int32 and the factor for its written type, in a row in front of the loop, which is built twice, and in the copy behind the test the number is taken out of its box once, in front of the head
+# function scaled(k: number, n: number) { let s = 0.5; for (let i = 0; i < n; i++) s = s * k + i; return s; }
+# (globalThis as any).kept = scaled;
+# console.log(scaled(1.5, 5));
+# The guard at the entry is withheld: with it the parameters are proven in the whole body, and the loop has nothing to test.
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: [[test]]: boolean @Boolean = TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[test]] ->
+# CHECK: [[proven]]: number @JSValue = Narrowed {{*}}, [[test]]
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = Mul {{*}}form=NumberAndValue
+# CHECK: [[head]]({{*}}isInLoop=true isLoopHead=true
+# CHECK-NOT: Unbox
+# CHECK: ():
+# CHECK-NOT: isInLoop
+# CHECK: [[raw]]: number @Double = Unbox [[proven]]
+# CHECK-NEXT: Jump -> next [[head]](
+# CHECK-NOT: Unbox
+# CHECK: = Mul {{*}}, [[raw]] form=Numbers
+
+module m0 path="conversion-of-a-number-stands-in-front-of-the-loop.ts" displayPath="conversion-of-a-number-stands-in-front-of-the-loop.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @109
+    v3 = PropGet v2 key="globalThis" [isFreeName] @109
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @109
+    PropSet v4, v1 key="kept" @109
+    v6 = Builtin builtin=GlobalThis @143
+    v7 = PropGet v6 key="console" [isFreeName] @143
+    v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]} @143
+    v9 = PropGet v8 key="log" @143
+    v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @143
+    v11 = Double number=1.5 @162
+    v12 = Integer integer=5 @167
+    v13 = Call v1, -, v11, v12 calleeName="scaled" @155
+    v14 = Call v10, v8, v13 calleeKey="log" calleeName="console.log" @151
+    v15 = Undefined @143
+    Return v15 @143
+}
+function f1 name="scaled" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @0
+  b1():
+    v2 = Double number=0.5 @48
+    v3 = Convert v2 declared={type=number} @48
+    v4 = Integer @66
+    v5 = Convert v4 declared={type=number} @66
+    Jump -> next b2(v3, v5) @62
+  b2(v6: number, v7: number):
+    LoopHint @62
+    v9 = Less v7, v1 @73
+    Branch v9 -> taken b3(), notTaken b5() @73
+  b3():
+    v10 = Mul v6, v0 @89
+    v11 = Add v10, v7 @93
+    v12 = Convert v11 declared={type=number} @81
+    Jump -> next b4() @81
+  b4():
+    v13 = Increment v7 @76
+    v14 = Convert v13 declared={type=number} @76
+    Jump -> next b2(v12, v14) @76
+  b5():
+    Return v6 @103
+}

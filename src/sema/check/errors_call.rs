@@ -8,7 +8,6 @@
 //! rechecks it for each candidate (`check_argument`). Whenever that leaves a candidate's applicability undecided,
 //! nothing is reported.
 
-use super::aot::DiagnosticSubject;
 use super::call::{Arg, CallLike, CallState};
 use super::explain::{Line, NOWHERE};
 use super::relate::Relation;
@@ -329,9 +328,6 @@ impl Checker<'_, '_> {
             self.related_to_invocation_error(at.0, target, apparent, construct, has_one_argument);
         if let Some(head) = head {
             diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, head, &[]);
-        }
-        if construct && self.is_class_below_brought_class(at.0, target) {
-            diagnostic.subject = (diagnostic.subject).or(DiagnosticSubject::BroughtDeclaration);
         }
         self.add_diagnostic(diagnostic);
     }
@@ -786,21 +782,6 @@ impl Checker<'_, '_> {
 
     /// `reportCallResolutionErrors`
     pub(super) fn report_call_resolution_errors(
-        &mut self,
-        s: &CallState<'_>,
-        sigs: &[SigId],
-        head: Option<u32>,
-    ) {
-        let from = self.reported.len();
-        self.report_call_resolution_errors_of(s, sigs, head);
-        if sigs.iter().any(|&sig| self.is_signature_brought(sig)) {
-            for diagnostic in self.reported.iter_mut().skip(from) {
-                diagnostic.subject = (diagnostic.subject).or(DiagnosticSubject::BroughtDeclaration);
-            }
-        }
-    }
-
-    fn report_call_resolution_errors_of(
         &mut self,
         s: &CallState<'_>,
         sigs: &[SigId],

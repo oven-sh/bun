@@ -3,43 +3,33 @@
 // # each list comes out of JSON.parse and each function is called by value out of what unseen code holds
 // # f4 = grows, f5 = storesBehindTheEnd, f6 = setsTheLength, f7 = empties, f8 = pops, f9 = shifts, f10 = takesAFraction, f11 = takesAnObject, f12 = losesAnElement, f13 = isWrittenThroughAnotherName, f14 = isChangedByACallee, f15 = isChangedByAGetter, f16 = isChangedByAConversion, f17 = takesAnotherList, f18 = isChangedByTheOuterTurn, f19 = isChangedInAHandler, f20 = storesIntoALiteral, f1 = literal, f21 = waits, f22 = hands
 // # RUN(GROWS): walk f4 mechanisms=all
-// # REQUIRES(GROWS): entries-of-bun
 // # GROWS-NOT: = GetArrayStorage
 // # RUN(CALLEE): walk f14 mechanisms=all
-// # REQUIRES(CALLEE): entries-of-bun
 // # CALLEE-NOT: = GetArrayStorage
 // # RUN(INNER): walk f18 mechanisms=all
-// # REQUIRES(INNER): entries-of-bun
 // # INNER-LABEL: code f18:Body
 // # INNER-NOT: = GetArrayStorage
 // # INNER: isInLoop=true isLoopHead=true
 // # INNER: = HasArrayStorage
 // # INNER: = GetArrayStorage
 // # RUN(WAITS): walk f21:CoroutineBody mechanisms=all
-// # REQUIRES(WAITS): entries-of-bun
 // # WAITS-NOT: = GetArrayStorage
 // # RUN(HANDS): walk f22:CoroutineBody mechanisms=all
-// # REQUIRES(HANDS): entries-of-bun
 // # HANDS-NOT: = GetArrayStorage
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 118 of 118 of 118
 // # CHECK-NEXT: exited with 0
 // # RUN(ALSO1): run-in-shell mechanisms=-LoopInvariants $SHELL
-// # REQUIRES(ALSO1): entries-of-bun
 // # ALSO1: 118 of 118 of 118
 // # ALSO1-NEXT: exited with 0
 // # RUN(ALSO2): run-in-shell mechanisms=-Guesses $SHELL
-// # REQUIRES(ALSO2): entries-of-bun
 // # ALSO2: 118 of 118 of 118
 // # ALSO2-NEXT: exited with 0
 // # RUN(ALSO3): run-in-shell mechanisms=-Folding $SHELL
-// # REQUIRES(ALSO3): entries-of-bun
 // # ALSO3: 118 of 118 of 118
 // # ALSO3-NEXT: exited with 0
 // # RUN(ALSO4): run-in-shell mechanisms=-Handlers $SHELL
-// # REQUIRES(ALSO4): entries-of-bun
 // # ALSO4: 118 of 118 of 118
 // # ALSO4-NEXT: exited with 0
 declare function report(value: unknown): void;

@@ -1,0 +1,17 @@
+# f1 = ramp
+# -- source: counter-times-a-number-in-a-loop.ts
+# function ramp(list: Float64Array, slope: number): void {
+#   for (let k = 0; k < list.length; k++) list[k] = k * slope;
+# }
+# declare const input: any;
+# const samples = new Float64Array(input);
+# ramp(samples, +input);
+# (globalThis as any).answer = samples;
+# -- end of source
+# The compiler before this one: 41 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 36, patches 0, moves 0, unlikely 6 ; loop: operations 7, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:36,7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 36
+# X64-NEXT: loop: at most 7

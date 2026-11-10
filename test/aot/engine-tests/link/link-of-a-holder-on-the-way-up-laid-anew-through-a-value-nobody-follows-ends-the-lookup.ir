@@ -1,0 +1,38 @@
+# (new EventTarget()).__proto__.__proto__ = hidden; performance.isPrototypeOf(second)
+# As name-nobody-knows-laid-on-a-holder-on-the-way-up-through-a-value-nobody-follows-is-not-taken-for-the-tables.ir: here the link of the holder that is passed is laid anew: what stands above it then is not what the table says.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="EventTarget" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(EventTarget) flags=[IsExpected]}
+    v3 = Construct v2 calleeName="EventTarget"
+    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v5 = PropGet v4 key="__proto__"
+    v6 = PropGet v0 key="hidden" [isFreeName]
+    PropSet v5, v6 key="__proto__"
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="performance" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]}
+    v11 = PropGet v10 key="isPrototypeOf"
+    v12 = Convert v11 declared={type=builtin(ObjectPrototypeIsPrototypeOf) flags=[IsExpected]}
+    v13 = NewClosure function=f2
+    v14 = Call v12, v10, v13 calleeKey="isPrototypeOf" calleeName="performance.isPrototypeOf"
+    v15 = Undefined
+    Return v15
+}
+function f1 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

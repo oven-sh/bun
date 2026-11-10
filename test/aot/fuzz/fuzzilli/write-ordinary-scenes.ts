@@ -6,9 +6,13 @@ import { combinations, conversions, predicates } from "./hand-over-built-ins.ts"
 import { randomFrom } from "./print-members-of-objects.ts";
 import { writeSceneOfCalls } from "./write-calls.ts";
 import { writeSceneOfAChange } from "./write-changes.ts";
+import { writeSceneOfDispatch } from "./write-dispatch.ts";
 import { writeSceneOfAHand } from "./write-hands.ts";
 import { writeSceneOfHiddenEffects } from "./write-hidden-effects.ts";
 import { writeSceneOfALoop } from "./write-loops.ts";
+import { writeSceneOfHeirsOfTheLibrary } from "./write-heirs-of-the-library.ts";
+import { writeSceneOfWhatIsLaidAbove } from "./write-laid-above.ts";
+import { writeSceneOfMakers } from "./write-makers.ts";
 import { writeSceneOfASingleDeed } from "./write-single-deeds.ts";
 import { writeSceneOfTypedPlaces } from "./write-typed-places.ts";
 
@@ -3648,6 +3652,30 @@ class Scenes {
     const { imports, lines } = writeSceneOfAHand(this.random, ++this.count, this.isTypeScript);
     for (const line of imports) if (!this.imports.includes(line)) this.imports.push(line);
     this.lines.push(...lines, "process.exit(0);");
+  }
+
+  /** Heirs of the library's classes, in the old way and the new (write-heirs-of-the-library.ts). */
+  sceneOfHeirsOfTheLibrary() {
+    const lines = writeSceneOfHeirsOfTheLibrary(this.random, ++this.count, this.isTypeScript);
+    this.imports.push(...lines.filter(line => line.startsWith("import ")));
+    this.lines.push(...lines.filter(line => !line.startsWith("import ")));
+  }
+
+  /** A function of the program's own above an object of the library (write-laid-above.ts). Drawn by name alone: it changes what every other scene would meet. */
+  sceneOfWhatIsLaidAbove() {
+    const lines = writeSceneOfWhatIsLaidAbove(this.random, ++this.count, this.isTypeScript);
+    this.imports.push(...lines.filter(line => line.startsWith("import ")));
+    this.lines.push(...lines.filter(line => !line.startsWith("import ")));
+  }
+
+  /** How objects are made and filled (write-makers.ts). */
+  sceneOfMakers() {
+    this.lines.push(...writeSceneOfMakers(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** One call site, many kinds of receivers (write-dispatch.ts). */
+  sceneOfDispatch() {
+    this.lines.push(...writeSceneOfDispatch(this.random, ++this.count, this.isTypeScript));
   }
 
   /** One function, called from places that are unlike each other (write-calls.ts). */
@@ -8323,6 +8351,30 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfUnlikeCallSites(),
         () => scenes.sceneOfUnlikeCallSites(),
         () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
         () => scenes.sceneOfAChange(),
         () => scenes.sceneOfAChange(),
         () => scenes.sceneOfAChange(),

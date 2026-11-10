@@ -1,0 +1,32 @@
+# -- source: a-sum-out-of-a-loop-in-front-of-a-try-reaches-the-finally-in-the-form-that-every-edge-brings.js
+# function k(x, z) {
+#   let d = 0, e = 0;
+#   for (let h = 0; h < x; h++) d = true;
+#   for (let i = 0; i < x; i++) {
+#     d = 1;
+#     e += z;
+#   }
+#   try {
+#     for (let i = 0; i < x; i++) d = (e + z) & 7;
+#   } finally {
+#     e++;
+#   }
+#   return [d, e].join();
+# }
+# print(k(3, 2));
+# -- end of source
+# The sum is the head parameter of a loop in front of the try that was built twice: it stands above the handler and travels as a name, not as an argument of the handler. The purchase of the loop under the try asks in front
+# whether the sum is an int32 and names it otherwise in the typed copy: the edges into the handler bring two names, both as raw numbers. The handler's parameter takes the form that every edge brings; once it was boxed because
+# the block is a handler, nothing may be built on an edge to a handler, and the build stopped: "what a handler edge brings is not in the form of the handler's parameter".
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: : int|whole @Double) role=CleanupHandler
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0,7
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
+# FAILING: 0,7
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 0,7
+# HELD-NEXT: exited with 0

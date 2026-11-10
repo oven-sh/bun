@@ -1,4 +1,5 @@
-// A function's code depends only on the function, the facts about what it mentions and the plan, not on what else the program holds.
+// A function's code does not hang on how large the program is: not on how many functions, names or layouts stand beside it.
+// What is guessed of a value and tested at the run may come from any file of the program, and a proof is about the whole program: neither is asked about here.
 //
 // Feature 2 of the application of bench/compiler uses features 1 and 0, and the three use the shared router, the parser of command lines and the
 // helpers for text: that is the small program. The large one has a hundred times as many features, and the same text in the files of these.
@@ -9,6 +10,7 @@
 //   alone | padded            the main file holds ten thousand more functions, and no function of another file changes a byte
 //   inside | padded           the same in the large program, where the sets of layouts are long
 //   inside | other layouts    its main file makes a thousand records under names of their own, and no function of the feature changes an operation
+//   a reader | beside names   a file that it never names mentions more names than the table of lookups has columns: the reader's names keep theirs
 //   alone | another limit     the control: one constant of the feature is changed, and the comparison must report it
 //   alone | another type      the control: somebody hands a shared helper what the features never do, and the comparison must report it
 //   alone | another helper    the control: a shared helper is no longer copied in line, and the comparison must report the call
@@ -76,14 +78,15 @@ const depth = flagOf(new Map([["depth", "4"]]), "depth", "9");
 console.log(hash("a text that no feature has") + depth.length + Number(isInteger(depth)) + router.handle("/elsewhere/here").body.length);
 `;
 const anotherCaller = callerThatHandsOver("`${request.parameters.place}${request.path}`");
-// The sum of two values that nobody has proven to be texts may be a number, a text or a bigint. The slot of the body is held to all three then, and
-// whoever stores into it asks for all three.
-const callerWithAnotherType = callerThatHandsOver("request.parameters.place + request.path");
+// What JSON.parse() gives may be anything. The slot of the body is no longer held to a text then, and whoever reads it has to ask.
+// Not a sum with a text: that is proven to be a text.
+const callerWithAnotherType = callerThatHandsOver("JSON.parse(JSON.stringify(request.path))");
 
 // Each stands at the top of the module and captures nothing: no new layout, no environment. Each has the router make its record, with what the router
 // puts there itself, stores into it, keeps it in a list that stays and reads it. So the plan numbers nothing new and holds the slots to what it held them
 // to, and the program has ten thousand more callers of a shared helper, allocations, stores with a barrier, reads and tests. A literal of its own would
 // give the record another home, and a variable that is written or a parameter that is read by name would have the layouts numbered in another order.
+// So would `const kept = [..]`: a name that is stored once is expected to hold what the text of its file makes, and that word names the record.
 // Each calls itself, so no caller inlines it and it is compiled.
 // Not `padded += ..`: the type in front of a compound assignment is asked of the assignment in front of it, and TypeScript gives up 2,000 of those deep (TS2563).
 function padding(dress: Dress) {
@@ -99,7 +102,7 @@ function padding(dress: Dress) {
 padded = padded + pad${index}(2);
 `,
   );
-  return `\nimport { text } from "./router";\nlet padded = 0;\nconst kept = [text(404, "not found")];\n${functions.join("")}console.log(padded + kept[0].status);\n`;
+  return `\nimport { text } from "./router";\nlet padded = 0;\nconst kept = Array.of(text(404, "not found"));\n${functions.join("")}console.log(padded + kept[0].status);\n`;
 }
 
 // Each record has a name that nothing else has, so no set of layouts that another file mentions gains a member, and the plan has a thousand more to number.
@@ -117,17 +120,64 @@ owned = owned + own${index}(2);
   return `\nlet owned = 0;\n${functions.join("")}console.log(owned);\n`;
 }
 
+// `def` is typed by nobody and is read for `least` and `abort`. reader.js writes one record that lists `least` and may gain the rest. Which layout a guess
+// takes for `def` may hang on what reader.js and the files that it imports write, and on nothing that a file writes which reader.js never names.
+// `spare`: which answer of its site a read by name asks first hangs on whether the file of the reader writes a field under the name: here it does.
+const reader = `
+function least(value, params) { return { check: "least", ...JSON.parse(params), least: value }; }
+function Check(def) { this.run = value => { let w = 0; for (let i = 0; i < 2; i++) w = (w + i) | 0; if (value >= def.least) return "ok" + w; return def.abort ? "abort" : "small"; }; }
+globalThis.Check = Check; globalThis.least = least; globalThis.spare = { abort: false };
+`;
+const readerInCompany =
+  (company?: string, text = reader) =>
+  () => ({
+    "reader.js": text,
+    ...(company && { "company.js": `globalThis.frame = ${company};\n` }),
+    "main.js": `import "./reader.js";
+${company ? 'import "./company.js";' : ""}
+const n = JSON.parse("[3,5,1]"), Made = globalThis.Check, make = globalThis.least;
+const a = new Made(make(n[0], "{}")), b = new Made(make(n[0], '{"abort":true}'));
+console.log([a.run(n[1]), a.run(n[2]), b.run(n[1]), b.run(n[2])].join(" "));
+`,
+  });
+
+// The table of lookups has a column for 65,534 names. The names that a program mentions are taken in the order of their numbers, which no program
+// chooses, and those behind the last column are looked up by a hash. The two names that this reader reads stand late in that order.
+const namesThatStandLate = ["a010060", "a010218"];
+const readerOfNamesThatStandLate = reader
+  .replace("least: value", `${namesThatStandLate[0]}: value`)
+  .replace("def.least", `def.${namesThatStandLate[0]}`)
+  .replace("def.abort", `def.${namesThatStandLate[1]}`)
+  .replace("{ abort: false }", `{ ${namesThatStandLate[1]}: false }`);
+const namesOfCompany = 70_000;
+const readsInOneFunction = 1_000;
+function companyThatMentionsMoreNamesThanThereAreColumns() {
+  const names = Array.from({ length: namesOfCompany }, (_, index) => `a0${index}`).filter(
+    name => !namesThatStandLate.includes(name),
+  );
+  const functions: string[] = [];
+  for (let first = 0; first < names.length; first += readsInOneFunction) {
+    const reads = names.slice(first, first + readsInOneFunction).map(name => `o.${name};`);
+    functions.push(`o => { ${reads.join(" ")} }`);
+  }
+  return `[\n${functions.join(",\n")},\n]`;
+}
+
 function withChange(dress: Dress, name: string, change: (text: string) => string, features = featuresAlone) {
   const files = generate(features, dress);
   const path = `${name}.${extensions[dress]}`;
   files[path] = change(files[path]);
   return files;
 }
-
 const sources = {
   alone: (dress: Dress) => generate(featuresAlone, dress),
   inside: (dress: Dress) => generate(featuresInside, dress),
   "another caller": (dress: Dress) => withChange(dress, "main", text => text + anotherCaller),
+  "a reader of names that stand late": readerInCompany(undefined, readerOfNamesThatStandLate),
+  "a reader of names that stand late beside more names than there are columns": readerInCompany(
+    companyThatMentionsMoreNamesThanThereAreColumns(),
+    readerOfNamesThatStandLate,
+  ),
   "another type": (dress: Dress) => withChange(dress, "main", text => text + callerWithAnotherType),
   // A loop keeps a function from being copied. The files of the features keep every position.
   "another helper": (dress: Dress) =>
@@ -307,7 +357,7 @@ for (const dress of Object.keys(extensions) as Dress[]) {
   const feature = features.at(-1)!;
   const everyFileButMain = [...features, ...["flags", "router", "text"].map(fileNamed)];
 
-  describe.concurrent(`a function compiles to the same code whatever else the program holds: ${dress}`, () => {
+  describe.concurrent(`a function compiles to the same code however large the program is: ${dress}`, () => {
     declared(
       "alone and inside a program a hundred times as large",
       async () => expectSameCode(await both(dress, "alone", "inside"), [feature], "operations of a larger program"),
@@ -335,6 +385,21 @@ for (const dress of Object.keys(extensions) as Dress[]) {
     declared(
       "another caller of the shared helpers changes no operation of the features that call them",
       async () => expectSameCode(await both(dress, "alone", "another caller"), features),
+      timeLimit,
+    );
+
+    // HOW MANY names the whole program mentions decides which of them have a column (chooseKeysWithColumnForNamePlan): no access is compiled by it.
+    (dress === "erased" ? declared : test.skip)(
+      "a file that a reader never names mentions more names than there are columns, and the reader stays as it is",
+      async () =>
+        expectSameCode(
+          await both(
+            dress,
+            "a reader of names that stand late",
+            "a reader of names that stand late beside more names than there are columns",
+          ),
+          ["reader.js"],
+        ),
       timeLimit,
     );
 

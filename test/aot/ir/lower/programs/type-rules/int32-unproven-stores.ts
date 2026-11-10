@@ -66,14 +66,14 @@ console.log(kept, cursor, point, subtract(1, 2), times(1, 2), half(1), negative(
 
 // GENERATED: subtract half negative power unsigned floor Cursor
 // CHECK-LABEL: function {{*}}name="subtract"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}, {type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}, {type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32, v1: i32):
 // CHECK-NEXT: v2 = Sub v0, v1
 // CHECK-NEXT: v3 = Convert v2 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="half"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Integer integer=2
 // CHECK-NEXT: v2 = Div v0, v1
@@ -81,14 +81,14 @@ console.log(kept, cursor, point, subtract(1, 2), times(1, 2), half(1), negative(
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="negative"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Negate v0
 // CHECK-NEXT: v2 = Convert v1 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="power"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Integer integer=2
 // CHECK-NEXT: v2 = Pow v0, v1
@@ -96,7 +96,7 @@ console.log(kept, cursor, point, subtract(1, 2), times(1, 2), half(1), negative(
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="unsigned"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Integer
 // CHECK-NEXT: v2 = URShift v0, v1
@@ -104,7 +104,7 @@ console.log(kept, cursor, point, subtract(1, 2), times(1, 2), half(1), negative(
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="floor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: v1 = Builtin builtin=Math
 // CHECK-NEXT: v2 = Builtin builtin=MathFloor
@@ -112,7 +112,7 @@ console.log(kept, cursor, point, subtract(1, 2), times(1, 2), half(1), negative(
 // CHECK-NEXT: ReturnCall v3 casts=[{declared={type=number}}, {declared={type=i32 flags=[IsInt32Promise]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Cursor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|i32 flags=[IsInt32Promise]}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|i32 flags=[IsInt32Promise]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|i32):
 // CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
 // CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]

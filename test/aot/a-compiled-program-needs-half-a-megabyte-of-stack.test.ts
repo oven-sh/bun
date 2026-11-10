@@ -1,4 +1,4 @@
-// A compiled program keeps 256 KB of the stack of every thread for the code of the run time, three times that with a sanitizer: docs/compiler/compatibility.mdx, "Smaller differences".
+// A compiled program keeps 256 KB of the stack of every thread for the code of the run time, three times that with a sanitizer.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";

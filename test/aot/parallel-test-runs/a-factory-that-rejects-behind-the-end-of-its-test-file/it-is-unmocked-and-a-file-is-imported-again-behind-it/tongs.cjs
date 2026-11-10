@@ -1,0 +1,1 @@
+exports.grip = "firm";

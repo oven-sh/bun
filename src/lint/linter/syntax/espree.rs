@@ -23,7 +23,7 @@ use crate::semantic::{Declaration, Scope, ScopeKind};
 use crate::span::Span;
 use crate::tokens::{TokenKind, skip_trivia, token_len};
 use crate::types::IdMap;
-use crate::utils::oxlint::{is_script, is_strict_mode, source_type};
+use crate::utils::oxlint::{is_script, is_strict_mode, makes_strict, source_type};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
@@ -1422,7 +1422,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                         .max_by_key(|scope| scope.span().start)
                         .is_some_and(|scope| match self.is_oxc {
                             true => is_strict_mode(scope, file),
-                            false => scope.is_strict(),
+                            false => Self::is_strict_for_acorn(scope, it.start),
                         });
             if is_strict && self.is_oxc {
                 self.oxc_octal_error(it);
@@ -1430,6 +1430,28 @@ impl<'a, 'c> Checks<'a, 'c> {
                 self.translate_parser_error(Some(it), it.start);
             }
         }
+    }
+
+    /// Whether acorn's tokenizer is strict at `at`, inside `scope`. A `"use strict"` in a function's body makes it
+    /// strict only once acorn reads the body: its parameters are read in the strictness around the function.
+    fn is_strict_for_acorn(scope: Scope<'a>, at: u32) -> bool {
+        let is_in_params = |func: Func<'a>| match func.body() {
+            FnBody::Block(_) => func.body_span().is_some_and(|body| at < body.start),
+            FnBody::Expr(body) => at < body.outer_span().start,
+            FnBody::None => true,
+        };
+        for it in scope.chain() {
+            if matches!(it.node(), Node::Func(func) if is_in_params(func)) {
+                continue;
+            }
+            if !it.is_strict() {
+                return false;
+            }
+            if makes_strict(it) || it.parent().is_none() {
+                return true;
+            }
+        }
+        false
     }
 
     /// oxc's error for an octal literal or escape in strict code. Its label covers the whole literal.

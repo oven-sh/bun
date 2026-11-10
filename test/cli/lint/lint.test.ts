@@ -1384,6 +1384,15 @@ describe.concurrent("bun lint", () => {
       ['"use strict"; let [a, a];', "1:23: Parsing error: Identifier 'a' has already been declared"],
       ['"use strict"; let a, b; let [b, a] = x;', "1:30: Parsing error: Identifier 'b' has already been declared"],
       ['"use strict"; import.meta\n08', "2:1: Parsing error: Invalid number"],
+      // acorn reads the parameters before the directive in the body makes it strict.
+      [
+        'function f(a = 08) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      [
+        'function g(a = function h() { "use strict"; return (b = 08) => 1 }) { "use strict" }',
+        "1:57: Parsing error: Invalid number",
+      ],
     ];
     // With an older `ecmaVersion`, newer syntax is a tokenizer error, which comes before a deferred check.
     const editions: [ecmaVersion: number, code: string, error: string][] = [
@@ -1393,6 +1402,9 @@ describe.concurrent("bun lint", () => {
       [2020, "var f = (a, a) => 1_000", "1:20: Parsing error: Identifier directly after number"],
       [5, "try {} `a`", "1:8: Parsing error: Unexpected character '`'"],
       [2015, "try {} /a/s", "1:9: Parsing error: Invalid regular expression flag"],
+      // Before ES2022 every member is a method.
+      [2021, "class A { static prototype }", "1:18: Parsing error: Classes may not have a static property named prototype"],
+      [2021, 'class A { "constructor" }', "1:25: Parsing error: Unexpected token }"],
     ];
     const name = (i: number, extension: string) => `b${String(i).padStart(2, "0")}.${extension}`;
     const files = Object.fromEntries([

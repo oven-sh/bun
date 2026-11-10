@@ -1,6 +1,6 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 3
-// STATISTIC: LoopsWithCopyForListsOfAnything >= 1
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 3
+// STATISTIC: LoopsVersionedForAnyArray >= 1
 // The test for a list of numbers asks the class alone. A list that holds texts, objects or holes beside its numbers fails the question for its kind of storage, which is asked in the chain of tests: it goes on to the next member, a list of anything, whose copy reads boxed elements.
 const key = JSON.parse('"go"');
 const tested = { go(d) { let s = 0; for (let i = 0; i < d.length; i++) if (typeof d[i] === "number") s += d[i]; return s; } };

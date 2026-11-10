@@ -28,7 +28,7 @@
 # CHECK-NEXT: 0,6
 # CHECK-NEXT: exited with 0
 # CHECK-NEXT: the source prints the same
-# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
 # FAILING: turn 2,106
 # FAILING-NEXT: turn 0,106
 # FAILING-NEXT: 0,6

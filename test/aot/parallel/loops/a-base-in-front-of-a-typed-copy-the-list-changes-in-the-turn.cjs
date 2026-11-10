@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 let rows = [];

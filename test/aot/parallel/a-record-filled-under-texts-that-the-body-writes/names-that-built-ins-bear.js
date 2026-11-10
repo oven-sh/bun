@@ -1,4 +1,4 @@
-// STATISTIC: StoresHeardUnderTextsThatBodyWrites >= 1
+// STATISTIC: StoresResolvedToLiteralKeys >= 1
 function made() { return "made"; }
 function text() { return "text"; }
 function worth() { return 7; }

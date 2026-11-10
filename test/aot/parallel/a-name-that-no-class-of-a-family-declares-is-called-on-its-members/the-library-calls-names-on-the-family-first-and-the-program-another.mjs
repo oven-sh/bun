@@ -1,4 +1,4 @@
-// STATISTIC: SharedCallsWhoseSilentMembersSleep >= 2
+// STATISTIC: SharedCallsWithDormantMembers >= 2
 import { once } from 'node:events'
 class Base { a = 1 }
 class Told extends Base {

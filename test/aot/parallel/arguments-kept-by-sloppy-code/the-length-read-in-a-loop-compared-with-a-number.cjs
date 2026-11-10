@@ -1,5 +1,5 @@
 // The length is compared with a written number: as made, overwritten by the same number out of a division, by a fraction, by a text of the same digits, and deleted. The object is held by a closure of its function, which reads its length in a loop whose bound comes out of data.
-// STATISTIC: LengthsOfArgumentsObjectsReadInLine >= 1
+// STATISTIC: ArgumentsLengthsReadInline >= 1
 const upTo = JSON.parse("[0,1,2,3,4,5]");
 let kept;
 const halves = JSON.parse("[6,7]");

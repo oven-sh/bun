@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate
-// STATISTIC: MethodCallsOnExpectedReceiversToldApartByShape >= 1
+// STATISTIC: SpeculatedReceiversDispatchedByShape >= 1
 interface Tile {
   side: number;
   label(by: number): string;

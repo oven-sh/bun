@@ -1,5 +1,5 @@
 // A function in sight holds `Machine.prototype.alike = other`: who else lays something under the name is not asked.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 8
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 8
 function Atom(name) { this.name = name; }
 function Num(value) { this.value = value; }
 function Struct(name, args) { this.name = name; this.args = args; }

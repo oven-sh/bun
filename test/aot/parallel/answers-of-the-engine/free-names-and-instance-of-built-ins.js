@@ -1,5 +1,5 @@
 // A free name that finds a member of the global object which never changes is that built-in, and `instanceof` against it walks the chain of the value alone. A name that the program stores, declares or adds later is looked up, and a chain that was changed, a proxy and a primitive answer as the operator says.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const attempt = (way) => { try { return way(); } catch (error) { return error.name; } };
 const Native = Promise;

@@ -1,4 +1,4 @@
-// STATISTIC: WalksOfLoops <= 22
+// STATISTIC: LoopVisits <= 22
 "use strict";
 // A nest two deep is untouched: the inner loop holds no loop, and keeps its plain walk as its other copy inside the typed copy of the loop around.
 const stream = new Uint8Array(300); for (let i = 0; i < stream.length; i++) stream[i] = (i * 37 + 11) & 255;

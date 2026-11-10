@@ -32,7 +32,7 @@ exports.Fragment = "fragment";
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="React"

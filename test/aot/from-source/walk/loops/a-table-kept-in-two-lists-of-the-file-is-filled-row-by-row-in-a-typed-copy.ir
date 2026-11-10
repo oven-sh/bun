@@ -18,10 +18,10 @@
 # `above` and `last` take what `heights[i]` gives round the loop. In the plain walk that may be undefined; in the typed copy the turn that finds no element begins again in the other copy, so its head
 # starts without undefined, the store takes a number, and the turns come round. What the store has tested to be an int32 is an int32 behind the store, so `last` comes round as one.
 # f1 = spread
-# RUN(COUNT): compile ConstantsOfFilesReadInFrontOfLoops ParametersThatAbsentElementsAloneWidened NumbersKnownBehindTypedStores LoopsBuiltTwice mechanisms=all
-# COUNT: statistic ConstantsOfFilesReadInFrontOfLoops 2
-# COUNT: statistic ParametersThatAbsentElementsAloneWidened 2
-# COUNT: statistic NumbersKnownBehindTypedStores 1
+# RUN(COUNT): compile ModuleConstantReadsHoisted AbsentArrayElementWideningsAvoided StoredValuesNarrowedToInt32 WalkLoopsVersioned mechanisms=all
+# COUNT: statistic ModuleConstantReadsHoisted 2
+# COUNT: statistic AbsentArrayElementWideningsAvoided 2
+# COUNT: statistic StoredValuesNarrowedToInt32 1
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = GetModuleVariable

@@ -1,14 +1,17 @@
-# super.price(..) is called directly behind two guards: the link of the home class, and the name above the objects of the class above.
-# THE LIE, testing=GuardOfLinkIsPassedOverAtCallsThroughSuper: the guard of the link is not asked: the method that the classes' records name is called though another object stands above the home by now.
-# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the base of super and the read through it are also made as written behind the guards, and what they find is asked to be the closure that the table holds, or the process stops by name.
+# super.price(..) is called directly after two guards: one on the prototype link of the home class, and one on the method's name on the prototype object of the superclass.
+# Fault injection, testing=SkipSuperPrototypeGuard: the guard on the prototype link is not built.
+# The method that the class records name is called even though the home object has another prototype by now.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime), the super base and the read through it are also built as written, after the guards.
+# Their result is checked to be the closure that the table holds. If it is not, the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: 7 7 101
 # RIGHT-NEXT: exited with 0
-# RUN(WRONG): run-in-shell mechanisms=all testing=GuardOfLinkIsPassedOverAtCallsThroughSuper
+# RUN(WRONG): run-in-shell mechanisms=all testing=SkipSuperPrototypeGuard
 # WRONG: 7 7 7
 # WRONG-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=GuardOfLinkIsPassedOverAtCallsThroughSuper,CheckProofsAtRunTime
-# HELD: AOT: f{{*}}what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipSuperPrototypeGuard,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: redundancy elimination check failed
+# HELD-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

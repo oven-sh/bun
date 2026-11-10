@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 // Under: --aot-testing=CheckEffectsAtRunTime: where the second walk begins the copy has done nothing that anybody sees
 // Under: --aot-check=Validate: the verifier reads both walks
 // Under: --aot-harden=proof-checks: what the second walk leans on is asked at the run

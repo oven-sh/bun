@@ -109,8 +109,8 @@
 # print(nest(JSON.parse("3")));
 # -- end of source
 # The twin of the four pairs: twice the width, and the walks are fifteen a pair and three.
-# RUN: compile WalksOfLoops mechanisms=all
-# CHECK: statistic WalksOfLoops 123
+# RUN: compile LoopVisits mechanisms=all
+# CHECK: statistic LoopVisits 123
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: 863 288 awxyaxyza
 # SHELL-NEXT: exited with 0

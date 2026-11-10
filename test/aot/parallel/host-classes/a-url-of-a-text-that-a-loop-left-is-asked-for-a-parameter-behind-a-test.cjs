@@ -1,5 +1,5 @@
 // As beside it, without a handler: the question stands in a later block than `new URL`.
-// STATISTIC: URLsLeftUnbuilt >= 1
+// STATISTIC: URLAllocationsElided >= 1
 const data = JSON.parse('{"rows":[["https://a.example/z?d=e"],["https://a.example/z?d=e","https://a.example/c?d=f%20g"],["x","y","https://a.example/?q=1&d=%E2%82%AC"]],"name":"d"}');
 function read(texts, name) {
   let text = "https://a.example/";

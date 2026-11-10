@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 import { heapStats } from "bun:jsc";
 interface Row { id: number; name: string; email: string; active: boolean; score: number }
 const build = (i: number): Row => { const out: Record<string, unknown> = {}; for (const [key, value] of [["id", i], ["name", "n" + i], ["email", "e" + i + "@x"], ["active", i % 3 === 0], ["score", i * 1.5]] as [string, unknown][]) out[key] = value; return out as unknown as Row; };

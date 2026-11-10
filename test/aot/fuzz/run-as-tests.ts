@@ -228,7 +228,7 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
   if (compiled.signal || compiled.timedOut) {
     judged.kind = compiled.signal ? "crash" : "hang";
     judged.why =
-      `${compiled.signal ?? ""} ${/^.*(panic|ASSERTION FAILED|Segmentation fault|AOT: |error: internal).*$/m.exec(compiled.stderr)?.[0] ?? ""}`.trim();
+      `${compiled.signal ?? ""} ${/^.*(panic|ASSERTION FAILED|Segmentation fault|AOT: |internal AOT error|error: internal).*$/m.exec(compiled.stderr)?.[0] ?? ""}`.trim();
     return judged;
   }
   // What was read of a run ends at a limit, and with --parallel the files end in any order: another file is cut each time.

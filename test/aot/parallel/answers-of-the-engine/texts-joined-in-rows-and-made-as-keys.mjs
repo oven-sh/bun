@@ -1,5 +1,5 @@
 // A row of joins is one operation where each part is proven to have text by itself, and a text whose first reader takes it as a key is made as a key: AOTWalkTypedTexts.cpp. Each way in which that could show: numbers of every kind among the parts, -0 and whole doubles as parts of keys, undefined, null, booleans and BigInts, a row on the right, two rows, a sum in front of the text, objects whose conversions tell their order, a text with a second reader, keys of objects, of a Set and of a Map.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function typed(a, n) { if (typeof a !== "string" || typeof n !== "number") return "no"; return "<" + a + ":" + n + ">" + a + n; }
 function onTheRight(text, a, n) { if (typeof text !== "string" || typeof a !== "string" || typeof n !== "number") return "no"; return text + (a + n + ","); }

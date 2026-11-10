@@ -20,8 +20,8 @@
 # is expected to be of the kind that the layout's field holds, so the products in `area`, copied in line, ask for numbers in both copies of the loop, and `row.name + from` asks for a text, not for a number because a number stands beside it. A read that stays generic says that its receiver is no object of compiled code, so that its stub asks the structure first. In `Pair` the names are those of its own instances; with that layout gone the empty literal that
 # stands in for a missing pair is no guess either, for it answers none of the names: the reads stay one operation each and the instance still falls away.
 # f1 = Pair, f2 = total, f3 = areas, f4 = labels, f5 = firsts
-# RUN(COUNT): compile LayoutsNotTestedForAtWhatComesOutOfUnseenCode mechanisms=all
-# COUNT-NOT: statistic LayoutsNotTestedForAtWhatComesOutOfUnseenCode 0
+# RUN(COUNT): compile UnescapedShapesDroppedFromSpeculations mechanisms=all
+# COUNT-NOT: statistic UnescapedShapesDroppedFromSpeculations 0
 # RUN(PARSED): walk f2 mechanisms=all
 # PARSED-LABEL: code f2:Body
 # PARSED-NOT: = ShapeTest

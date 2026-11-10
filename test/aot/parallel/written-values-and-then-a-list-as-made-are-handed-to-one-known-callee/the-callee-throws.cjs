@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList >= 1
+// STATISTIC: SpreadCallsUnpackedToParameters >= 1
 function inner(a, b, c) { if (c === 3) throw new RangeError("three " + a + b); return a + b + c; }
 function outer(...rest) { return inner("w", ...rest); }
 const byValue = JSON.parse("[0,1]").map(() => outer);

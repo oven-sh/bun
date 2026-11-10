@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice <= 60
+// STATISTIC: WalkLoopsVersioned <= 60
 // Each level asked the one bound anew, in both copies of the level around: 127 loops built twice.
 function deep(bound) {
   let sum = 0;

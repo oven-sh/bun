@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedInTurnsOfTypedCopies >= 2
+// STATISTIC: ArraysGuardedInIterations >= 2
 const steps = JSON.parse(`["run"]`);
 const ops = { run, join };
 function call(d, t) {

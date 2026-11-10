@@ -1,5 +1,5 @@
 // The function is called in front of the let: with no turn nothing is read and nothing is thrown; with one turn a ReferenceError; behind the let it counts.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 0
+// STATISTIC: CapturedVariableReadsHoisted >= 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

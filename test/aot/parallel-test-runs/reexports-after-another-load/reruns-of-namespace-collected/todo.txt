@@ -1,0 +1,6 @@
+"SAID run 2 101,101,101 101,101,101 true 1 leaf" | "SAID run 2 200,200,200 200,200,200 true 1 leaf": under --rerun-each a module that re-exports from a test file reads the variables of its latest run, not of the run that it is linked to
+"SAID bumped 101,101,101 101,101,101" | "SAID bumped 201,201,201 201,201,201": under --rerun-each a module that re-exports from a test file reads the variables of its latest run, not of the run that it is linked to
+"SAID wrote 101,101,101 101,101,101" | "SAID wrote 201,201,201 201,201,201": under --rerun-each a module that re-exports from a test file reads the variables of its latest run, not of the run that it is linked to
+"SAID run 3 101,101,101 101,101,101 true 1 leaf" | "SAID run 3 300,300,300 300,300,300 true 1 leaf": under --rerun-each a module that re-exports from a test file reads the variables of its latest run, not of the run that it is linked to
+"SAID bumped 201,201,201 201,201,201" | "SAID bumped 301,301,301 301,301,301": under --rerun-each a module that re-exports from a test file reads the variables of its latest run, not of the run that it is linked to
+"SAID wrote 201,201,201 201,201,201" | "SAID wrote 301,301,301 301,301,301": under --rerun-each a module that re-exports from a test file reads the variables of its latest run, not of the run that it is linked to

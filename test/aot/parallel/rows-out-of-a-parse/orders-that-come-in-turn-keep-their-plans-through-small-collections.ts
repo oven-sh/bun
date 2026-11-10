@@ -2,8 +2,8 @@
 // comes round again. Its plan is kept: a plan goes only when the table has been asked more than twice as often as it holds plans since the plan was last found, and of a thousand orders in turn
 // each is found once in a thousand askings. Counted in collections alone, every request built its plan anew: 7,000 instructions where parsing the body takes 2,400.
 // COUNTER: RecordPlansTried <= 1000
-// COUNTER: RecordPlansForgotten <= 0
-// COUNTER: MostRecordPlansHeld <= 1000
+// COUNTER: RecordPlansEvicted <= 0
+// COUNTER: PeakRecordPlansCached <= 1000
 // COUNTER: ObjectsParsedIntoRecords >= 20000
 import { edenGC } from "bun:jsc";
 interface Order { amount?: number; buyer?: number; city?: number; day?: number; email?: number; flag?: number; grade?: number; hours?: number; item?: number; job?: number; kind?: number; level?: number }

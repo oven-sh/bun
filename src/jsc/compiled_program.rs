@@ -1148,7 +1148,6 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::NotAnImage => "the file is corrupt (bad header)",
         ImageVerdict::Truncated => "the file is truncated. Copy or download it again",
         ImageVerdict::Misaligned => "the code isn't page-aligned. Something modified the executable after it was built",
-        ImageVerdict::AlreadyInUse => "this process has already loaded another compiled program",
         ImageVerdict::LowPagesAccessible => "it needs the lowest pages of the address space to be unmapped, and this system maps them",
         ImageVerdict::NoCode => "it contains no code",
         ImageVerdict::CannotMapCode => "its code could not be mapped as executable memory",

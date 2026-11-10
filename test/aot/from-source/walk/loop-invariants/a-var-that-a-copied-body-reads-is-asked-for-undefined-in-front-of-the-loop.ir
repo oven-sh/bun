@@ -1,6 +1,6 @@
 # A `var` is born with undefined. Its type leaves that out where no reader can start ahead of the store. In front of the typed copy the word is read as it lies and asked for undefined. f1 = go.
 # RUN: walk f1 mechanisms=all
-# CHECK: undefined|{{*}} = GetModuleVariable {{*}}givesWordAsItLies
+# CHECK: undefined|{{*}} = GetModuleVariable {{*}}returnsRawSlot
 # CHECK-NEXT: = TypeTest {{*}}testedType=undefined
 # CHECK: = Narrowed
 # CHECK-NEXT: = Unbox

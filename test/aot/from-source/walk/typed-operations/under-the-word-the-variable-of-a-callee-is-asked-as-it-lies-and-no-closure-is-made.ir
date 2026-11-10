@@ -20,7 +20,7 @@
 # RUN(ASKED): walk f3 mechanisms=all-Inlining testing=CheckProofsAtRunTime
 # ASKED-LABEL: code f3:Body
 # ASKED-NOT: : f1 @JSValue = GetModuleVariable
-# ASKED: [[word]]: absent|f1 @JSValue = GetModuleVariable variable=g0 [givesWordAsItLies]
+# ASKED: [[word]]: absent|f1 @JSValue = GetModuleVariable variable=g0 [returnsRawSlot]
 # ASKED-NEXT: CheckProof [[word]] checkedType=absent|f1 {{*}}source=Variable
 # ASKED: = CallDirect function=f1
 # RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime

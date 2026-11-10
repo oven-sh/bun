@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 0
+// STATISTIC: WalkLoopsVersioned >= 0
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 class Store { #rows = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5]; get rows() { return this.#rows; } swap(i) { if (i === 3) this.#rows = [100.5, 200.5, 300.5, 400.5, 500.5, q]; } }

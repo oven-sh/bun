@@ -1,6 +1,6 @@
 // STATISTIC: OwnKeyWalksExpanded >= 1
 // The source in front is a parameter whose keys are asked.
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+// STATISTIC: ObjectAssignCallsExpanded >= 1
 function place(s, n) {
   const t = { a: n, b: n + 1 };
   Object.assign(t, s, t);

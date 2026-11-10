@@ -2,7 +2,7 @@
 import * as b from "bun-builtins-table";
 import { cppClassBehindGlobal, prototypeBehindGlobalListsAllMembers } from "../collect-webcore-tables.ts";
 import { builtinModulesCell, detailsOfEventsCell, errorsOfEventsCell, targetsOfEventsCell } from "./native-cells.ts";
-import { answering, constructing, handedOver, promiseOf } from "./native-code.ts";
+import { answering, constructing, promiseOf, retainedByNativeCode } from "./native-code.ts";
 
 const constructorsBelowFunctionPrototype = [
   "ByteLengthQueuingStrategy",
@@ -281,8 +281,8 @@ const streamClass = (name: string, operands: readonly string[], proto: Readonly<
                 operands.map((operand, index) => [
                   operand,
                   index
-                    ? handedOver
-                    : [...handedOver, b.createdIn(b.instance(`${name}DefaultController`), b.nativeMemory)],
+                    ? retainedByNativeCode
+                    : [...retainedByNativeCode, b.createdIn(b.instance(`${name}DefaultController`), b.nativeMemory)],
                 ]),
               ),
               implementation: b.hostCall,
@@ -481,7 +481,7 @@ const cancelsStream = {
   this: b.any,
   args: { reason: b.any.optional },
   returns: promiseOf(b.undefined),
-  uses: { ...keepsStream, reason: handedOver },
+  uses: { ...keepsStream, reason: retainedByNativeCode },
 } satisfies b.FunctionField;
 const closesStream = {
   ...onStream,
@@ -520,7 +520,11 @@ const takesBytesOf = (operand: string, returns: b.TableType) =>
     returns,
     capability: "js",
     throws: true,
-    uses: { this: [b.retained], [operand]: [...handedOver, b.writesContents()], others: handedOver },
+    uses: {
+      this: [b.retained],
+      [operand]: [...retainedByNativeCode, b.writesContents()],
+      others: retainedByNativeCode,
+    },
     implementation: b.generic,
   }) satisfies b.FunctionField;
 const takesViewOfBytes = (operand: string) =>
@@ -740,7 +744,7 @@ export default b.declarations(
       this: b.any,
       args: { destination: b.any.optional, options: b.any.optional },
       returns: promiseOf(b.undefined),
-      uses: { ...keepsStream, destination: handedOver, options: optionsOfPipe },
+      uses: { ...keepsStream, destination: retainedByNativeCode, options: optionsOfPipe },
     },
     tee: {
       ...onStream,
@@ -769,7 +773,7 @@ export default b.declarations(
     usesFeature: "WebStreams",
     proto: {
       next: readsChunk,
-      return: { ...readsChunk, args: { value: b.any.optional }, uses: { ...keepsStream, value: handedOver } },
+      return: { ...readsChunk, args: { value: b.any.optional }, uses: { ...keepsStream, value: retainedByNativeCode } },
     },
   }),
   // JSReadableStreamDefaultReader.cpp. For a receiver that is no reader `closed`, `cancel` and `read` answer a new rejected promise.
@@ -789,13 +793,13 @@ export default b.declarations(
       ...onStream,
       args: { chunk: b.any.optional },
       returns: b.undefined,
-      uses: { ...keepsStream, chunk: handedOver },
+      uses: { ...keepsStream, chunk: retainedByNativeCode },
     },
     error: {
       ...onStream,
       args: { reason: b.any.optional },
       returns: b.undefined,
-      uses: { ...keepsStream, reason: handedOver },
+      uses: { ...keepsStream, reason: retainedByNativeCode },
     },
   }),
   streamClass("WritableStream", ["underlyingSink", "strategy"], {
@@ -817,7 +821,7 @@ export default b.declarations(
       this: b.any,
       args: { chunk: b.any.optional },
       returns: promiseOf(b.undefined),
-      uses: { ...keepsStream, chunk: handedOver },
+      uses: { ...keepsStream, chunk: retainedByNativeCode },
     },
   }),
   // JSWritableStreamDefaultController.cpp, JSTransformStreamDefaultController.cpp: INVALID_THIS and ERR_INVALID_STATE, with messages that are written there.
@@ -827,7 +831,7 @@ export default b.declarations(
       ...onStream,
       args: { reason: b.any.optional },
       returns: b.undefined,
-      uses: { ...keepsStream, reason: handedOver },
+      uses: { ...keepsStream, reason: retainedByNativeCode },
     },
   }),
   methodsOf("TransformStreamDefaultController.prototype", {
@@ -836,13 +840,13 @@ export default b.declarations(
       ...onStream,
       args: { chunk: b.any.optional },
       returns: b.undefined,
-      uses: { ...keepsStream, chunk: handedOver },
+      uses: { ...keepsStream, chunk: retainedByNativeCode },
     },
     error: {
       ...onStream,
       args: { reason: b.any.optional },
       returns: b.undefined,
-      uses: { ...keepsStream, reason: handedOver },
+      uses: { ...keepsStream, reason: retainedByNativeCode },
     },
     terminate: { ...onStream, returns: b.undefined, uses: keepsStream },
   }),
@@ -856,7 +860,7 @@ export default b.declarations(
       ...onStream,
       args: { reason: b.any.optional },
       returns: b.undefined,
-      uses: { ...keepsStream, reason: handedOver },
+      uses: { ...keepsStream, reason: retainedByNativeCode },
     },
   }),
   // For a receiver that is no reader both answer a new rejected promise.

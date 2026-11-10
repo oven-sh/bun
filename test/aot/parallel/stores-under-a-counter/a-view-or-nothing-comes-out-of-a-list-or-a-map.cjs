@@ -1,4 +1,4 @@
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the walk as users build it, and every raw store asks its position at the run.
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the walk as users build it, and every raw store asks its position at the run.
 "use strict";
 const buffer = new ArrayBuffer(256), all = new Uint8Array(buffer);
 const bytes = [new Uint8Array(buffer, 16, 12), new Uint8Array(buffer, 48, 12)];

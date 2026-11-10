@@ -337,7 +337,7 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
                 target,
                 timing: match target {
                     Some(target)
-                        if is_linked_with_importer && files.is_es_module_to_imports(target) =>
+                        if is_linked_with_importer && files.is_imported_as_es_module(target) =>
                     {
                         timing.max(LoadTiming::Conditional)
                     }

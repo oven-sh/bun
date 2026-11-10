@@ -6,8 +6,8 @@
 # print(row(), counted, row(), counted);
 # -- end of source
 # A `let` of the file that the text of the loop does not store may still be stored by what a turn calls. What is known of the variable ends with the call, the read in the turn then names another holder, and the row in front is not taken for it.
-# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
-# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 200 6 450 12
 # RIGHT-NEXT: exited with 0

@@ -25,42 +25,52 @@
 # CHECK-NEXT: 1 2 label 1 undefined object
 # CHECK-NEXT: exited with 0
 # RUN(REPLACES): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).twice = function () { return 0; }; print("went on"); };
-# REPLACES: AOT: ReplaceMember of the prototype object of the class of layout L0: the compiler has proven that it never happens, and compiled code finds the members of the class without a look. This is a bug in Bun.
+# REPLACES: bun: internal AOT error: object mutation check failed
+# REPLACES-NEXT: ReplaceMember on the prototype of class 'Closed', but the compiler proved that this never happens
 # REPLACES-NOT: went on
 # REPLACES: crashed with
 # RUN(DELETES): run-in-shell globalThis.poke = () => { delete Object.getPrototypeOf(aotFindObjectOfLayout(0)).twice; print("went on"); };
-# DELETES: AOT: DeleteMember of the prototype object of the class of layout L0
+# DELETES: bun: internal AOT error: object mutation check failed
+# DELETES-NEXT: DeleteMember on the prototype of class 'Closed'
 # DELETES-NOT: went on
 # DELETES: crashed with
 # RUN(REDEFINES): run-in-shell globalThis.poke = () => { Object.defineProperty(Object.getPrototypeOf(aotFindObjectOfLayout(0)), "label", { get() { return "got"; } }); print("went on"); };
-# REDEFINES: AOT: ReplaceMember of the prototype object of the class of layout L0
+# REDEFINES: bun: internal AOT error: object mutation check failed
+# REDEFINES-NEXT: ReplaceMember on the prototype of class 'Closed'
 # REDEFINES-NOT: went on
 # REDEFINES: crashed with
 # RUN(ADDS): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).late = "above"; print("went on"); };
-# ADDS: AOT: AddName of the prototype object of the class of layout L0
+# ADDS: bun: internal AOT error: object mutation check failed
+# ADDS-NEXT: AddProperty on the prototype of class 'Closed'
 # ADDS-NOT: went on
 # ADDS: crashed with
 # RUN(OVERRIDES): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).toString = function () { return "own"; }; print("went on"); };
-# OVERRIDES: AOT: AddName of the prototype object of the class of layout L0
+# OVERRIDES: bun: internal AOT error: object mutation check failed
+# OVERRIDES-NEXT: AddProperty on the prototype of class 'Closed'
 # OVERRIDES-NOT: went on
 # OVERRIDES: crashed with
 # RUN(MARKS): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0))[Symbol.toPrimitive] = function () { return 1; }; print("went on"); };
-# MARKS: AOT: AddName of the prototype object of the class of layout L0
+# MARKS: bun: internal AOT error: object mutation check failed
+# MARKS-NEXT: AddProperty on the prototype of class 'Closed'
 # MARKS-NOT: went on
 # MARKS: crashed with
 # RUN(RELINKS): run-in-shell globalThis.poke = () => { Object.setPrototypeOf(Object.getPrototypeOf(aotFindObjectOfLayout(0)), { late: "far above" }); print("went on"); };
-# RELINKS: AOT: ChangePrototype of the prototype object of the class of layout L0
+# RELINKS: bun: internal AOT error: object mutation check failed
+# RELINKS-NEXT: ChangePrototype on the prototype of class 'Closed'
 # RELINKS-NOT: went on
 # RELINKS: crashed with
 # RUN(OVERWRITES): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0).constructor.make = function () { return "other"; }; print("went on"); };
-# OVERWRITES: AOT: ReplaceMember of the class object of the class of layout L0
+# OVERWRITES: bun: internal AOT error: object mutation check failed
+# OVERWRITES-NEXT: ReplaceMember on the constructor of class 'Closed'
 # OVERWRITES-NOT: went on
 # OVERWRITES: crashed with
 # RUN(REMOVES): run-in-shell globalThis.poke = () => { delete aotFindObjectOfLayout(0).constructor.make; print("went on"); };
-# REMOVES: AOT: DeleteMember of the class object of the class of layout L0
+# REMOVES: bun: internal AOT error: object mutation check failed
+# REMOVES-NEXT: DeleteMember on the constructor of class 'Closed'
 # REMOVES-NOT: went on
 # REMOVES: crashed with
 # RUN(REPARENTS): run-in-shell globalThis.poke = () => { Object.setPrototypeOf(aotFindObjectOfLayout(0).constructor, { make() { return "other"; } }); print("went on"); };
-# REPARENTS: AOT: ChangePrototype of the class object of the class of layout L0
+# REPARENTS: bun: internal AOT error: object mutation check failed
+# REPARENTS-NEXT: ChangePrototype on the constructor of class 'Closed'
 # REPARENTS-NOT: went on
 # REPARENTS: crashed with

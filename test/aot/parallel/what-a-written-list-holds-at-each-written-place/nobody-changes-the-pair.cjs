@@ -1,4 +1,4 @@
-// STATISTIC: ReadsUnderWrittenIndexesGivenWhatIsWrittenAtThePlace >= 1
+// STATISTIC: ArrayLiteralElementReadsResolved >= 1
 "use strict";
 // Nobody changes the pair: the second place holds numbers alone.
 const odd = JSON.parse('["text", {"name": "odd"}, null, true]');

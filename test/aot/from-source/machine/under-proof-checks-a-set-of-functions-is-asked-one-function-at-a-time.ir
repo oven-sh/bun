@@ -12,28 +12,30 @@
 # drive(overVariable);
 # -- end of source
 # f1 = add, f2 = sub, f3 = low, f5 = overVariable
-# A variable of the file in which two closures were seen is asked for the two in front of the loop that calls it. Compiled code asks "one of these functions" by runs of closure numbers: not below the first of a run, not above its last.
+# Two closures were seen in a module variable. A hoisted check tests the variable for those two, before the loop that calls it.
+# Compiled code tests "one of these functions" by runs of closure numbers: not below the first of a run, not above its last.
 # RUN(SET): walk f5 mechanisms=all
 # SET: = TypeTest {{*}}testedType=f1|f2
-# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) what the test has let pass is asked for the same type, and that check asks each function by itself: it compares with no run.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the value that has passed the test is checked for the same type. That check compares with each function by itself and with no run.
 # RUN(CHECKED): walk f5 mechanisms=all testing=CheckProofsAtRunTime
 # CHECKED: = TypeTest {{*}}testedType=f1|f2
 # CHECKED: = CheckProof {{*}}checkedType=f1|f2 {{*}}source=Test
-# The shell calls the function with the loop, lays a third function into the variable out of sight, and calls it again.
+# The shell calls the function that contains the loop, stores a third function into the variable out of the compiler's sight, and calls the function again.
 # RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime flag = function () { return true; }; outside = function (lay, first, second, third) { lay(third); }; drive = function (over) { print(over(1), over(3)); };
 # RIGHT: 11 34
 # RIGHT-NEXT: 7 16
 # RIGHT-NEXT: exited with 0
-# THE LIE, testing=RunsOfClosureNumbersTakeInTheNextFunction: the last of a run is taken one higher, so the function that is declared right behind the two passes the test.
-# RUN(RUNS): bytes f5:Body mechanisms=all testing=RunsOfClosureNumbersTakeInTheNextFunction
+# Fault injection, testing=OverstateClosureNumberRuns: the last number of a run is taken one higher, so the function that is declared right after the two passes the test.
+# RUN(RUNS): bytes f5:Body mechanisms=all testing=OverstateClosureNumberRuns
 # RUNS: relocation {{*}}ClosureFunction {{*}}"sub" plus 1
-# Alone it changes no answer here: behind the test of the two, the arm that is walked in line asks for its own function, and whatever else has passed runs the loop as written.
-# RUN(ALONE): run-in-shell testing=RunsOfClosureNumbersTakeInTheNextFunction flag = function () { return true; }; outside = function (lay, first, second, third) { lay(third); }; drive = function (over) { print(over(1), over(3)); };
+# By itself the fault changes no result here. After the test for the two, the branch that is inlined tests for its own function, and whatever else has passed runs the loop as written.
+# RUN(ALONE): run-in-shell testing=OverstateClosureNumberRuns flag = function () { return true; }; outside = function (lay, first, second, third) { lay(third); }; drive = function (over) { print(over(1), over(3)); };
 # ALONE: 11 34
 # ALONE-NEXT: 7 16
 # ALONE-NEXT: exited with 0
-# With the check the process stops by name where the third function has passed the test of the two.
-# RUN(HELD): run-in-shell testing=RunsOfClosureNumbersTakeInTheNextFunction,CheckProofsAtRunTime flag = function () { return true; }; outside = function (lay, first, second, third) { lay(third); }; drive = function (over) { print(over(1), over(3)); };
+# With the check, the process crashes with a named error where the third function has passed the test for the two.
+# RUN(HELD): run-in-shell testing=OverstateClosureNumberRuns,CheckProofsAtRunTime flag = function () { return true; }; outside = function (lay, first, second, third) { lay(third); }; drive = function (over) { print(over(1), over(3)); };
 # HELD: 11 34
-# HELD: AOT: f5 {{*}}what a test has let pass is not of the type that the compiler has proven of it
+# HELD: bun: internal AOT error: type check failed at {{*}} (overVariable)
+# HELD-NEXT: in a value narrowed by a branch
 # HELD: crashed with SIGABRT

@@ -15,8 +15,8 @@ variable g1 name="read" module=m0 declared={type=f2 flags=[IsFromCompiler]} init
 variable g2 name="gather" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
 variable g3 name="sum" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
 variable g4 name="test" module=m1 declared={type=anything}
-module m0 path="main.test.js" displayPath="main.test.js" flags=[KeepsError, IsListedInCache] body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0, 33, 143, 241, 360, 381, 448, 465, 529, 545, 547, 621, 657, 704, 723, 809, 866, 905, 974, 993, 1032, 1037, 1086, 1116, 1192, 1196] quotedTexts=[{position=234 start=67 end=70}, {position=327 start=70 end=81}, {position=335 start=70 end=86}, {position=487 start=90 end=101}, {position=514 start=110 end=123}, {position=519 start=115 end=122}, {position=640 start=123 end=138}, {position=680 start=138 end=155}, {position=688 start=138 end=160}, {position=769 start=160 end=167}, {position=778 start=167 end=178}, {position=791 start=178 end=187}, {position=796 start=178 end=192}, {position=833 start=199 end=212}, {position=838 start=204 end=211}, {position=855 start=221 end=230}, {position=978 start=361 end=374}, {position=1004 start=374 end=387}, {position=1013 start=374 end=400}, {position=1069 start=248 end=263}, {position=1076 start=255 end=262}, {position=1088 start=263 end=289}, {position=1118 start=289 end=300}, {position=1126 start=289 end=361}, {position=1150 start=321 end=334}, {position=1155 start=326 end=333}, {position=1165 start=336 end=353}, {position=1172 start=343 end=352}, {position=1181 start=336 end=360}] textOfQuotes="test(\x22the elements of a combinator go through a replaced member\x22, )r.nPromise.all([r])i < list.lengthtotal += read(list[i])Promise.resolvePromise.prototype.thenmake(i)gather(rec)kept.push(rec)typeof read(kept[7]) + \x22 \x22 + sum(kept)Promise.resolve = gather(kept[i])Promise.resolve = originalconsole.log(before, \x22|\x22, typeof read(kept[7]), String(sum(kept)).length)value.n = \x22t\x22original.call(this, value)"} functionText="import { test } from \x22bun:test\x22;\x0afunction make(i) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return { n: i + work }; }\x0afunction read(r) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return r.n; }\x0afunction gather(r) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; Promise.all([r]); return work; }\x0afunction sum(list) {\x0a  let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0;\x0a  let total = 0;\x0a  for (let i = 0; i < list.length; i++) total += read(list[i]);\x0a  return total;\x0a}\x0atest(\x22the elements of a combinator go through a replaced member\x22, () => {\x0a  const original = Promise.resolve;\x0a  const originalThen = Promise.prototype.then;\x0a  const kept = [];\x0a  for (let i = 0; i < 300; i++) { const rec = make(i); gather(rec); kept.push(rec); }\x0a  const before = typeof read(kept[7]) + \x22 \x22 + sum(kept);\x0a  Promise.resolve = function (value) {\x0a    let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0;\x0a    value.n = \x22t\x22;\x0a    return original.call(this, value);\x0a  };\x0a  for (let i = 0; i < 300; i++) gather(kept[i]);\x0a  Promise.resolve = original;\x0a  console.log(before, \x22|\x22, typeof read(kept[7]), String(sum(kept)).length);\x0a});\x0a" namespaceLayout=L(m0)
-module m1 path="bun:test" displayPath="bun:test" kind=Runtime flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunTest syntheticExports=[{name="test" variable=g4 isKnownMember=true}]
+module m0 path="main.test.js" displayPath="main.test.js" flags=[CachesEvaluationError, IsListedInCache] body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0, 33, 143, 241, 360, 381, 448, 465, 529, 545, 547, 621, 657, 704, 723, 809, 866, 905, 974, 993, 1032, 1037, 1086, 1116, 1192, 1196] quotedSources=[{position=234 start=67 end=70}, {position=327 start=70 end=81}, {position=335 start=70 end=86}, {position=487 start=90 end=101}, {position=514 start=110 end=123}, {position=519 start=115 end=122}, {position=640 start=123 end=138}, {position=680 start=138 end=155}, {position=688 start=138 end=160}, {position=769 start=160 end=167}, {position=778 start=167 end=178}, {position=791 start=178 end=187}, {position=796 start=178 end=192}, {position=833 start=199 end=212}, {position=838 start=204 end=211}, {position=855 start=221 end=230}, {position=978 start=361 end=374}, {position=1004 start=374 end=387}, {position=1013 start=374 end=400}, {position=1069 start=248 end=263}, {position=1076 start=255 end=262}, {position=1088 start=263 end=289}, {position=1118 start=289 end=300}, {position=1126 start=289 end=361}, {position=1150 start=321 end=334}, {position=1155 start=326 end=333}, {position=1165 start=336 end=353}, {position=1172 start=343 end=352}, {position=1181 start=336 end=360}] quotedSourceText="test(\x22the elements of a combinator go through a replaced member\x22, )r.nPromise.all([r])i < list.lengthtotal += read(list[i])Promise.resolvePromise.prototype.thenmake(i)gather(rec)kept.push(rec)typeof read(kept[7]) + \x22 \x22 + sum(kept)Promise.resolve = gather(kept[i])Promise.resolve = originalconsole.log(before, \x22|\x22, typeof read(kept[7]), String(sum(kept)).length)value.n = \x22t\x22original.call(this, value)"} functionSource="import { test } from \x22bun:test\x22;\x0afunction make(i) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return { n: i + work }; }\x0afunction read(r) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return r.n; }\x0afunction gather(r) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; Promise.all([r]); return work; }\x0afunction sum(list) {\x0a  let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0;\x0a  let total = 0;\x0a  for (let i = 0; i < list.length; i++) total += read(list[i]);\x0a  return total;\x0a}\x0atest(\x22the elements of a combinator go through a replaced member\x22, () => {\x0a  const original = Promise.resolve;\x0a  const originalThen = Promise.prototype.then;\x0a  const kept = [];\x0a  for (let i = 0; i < 300; i++) { const rec = make(i); gather(rec); kept.push(rec); }\x0a  const before = typeof read(kept[7]) + \x22 \x22 + sum(kept);\x0a  Promise.resolve = function (value) {\x0a    let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0;\x0a    value.n = \x22t\x22;\x0a    return original.call(this, value);\x0a  };\x0a  for (let i = 0; i < 300; i++) gather(kept[i]);\x0a  Promise.resolve = original;\x0a  console.log(before, \x22|\x22, typeof read(kept[7]), String(sum(kept)).length);\x0a});\x0a" namespaceLayout=L(m0)
+module m1 path="bun:test" displayPath="bun:test" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunTest syntheticExports=[{name="test" variable=g4 isKnownMember=true}]
 sourcestamp module=m0 low=175745419 high=414156380
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -29,7 +29,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v6 = Undefined @547
     Return v6 @547
 }
-function f1 name="make" module=m0 position=33 text={start=33 end=142} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="make" module=m0 position=33 sourceRange={start=33 end=142} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = Integer @63
     v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @63
@@ -55,7 +55,7 @@ function f1 name="make" module=m0 position=33 text={start=33 end=142} flags=[Has
     v18 = FinishObject v17 @124
     Return v18 @124
 }
-function f2 name="read" module=m0 position=143 text={start=143 end=240} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="read" module=m0 position=143 sourceRange={start=143 end=240} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     v1 = Integer @173
     v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @173
@@ -79,7 +79,7 @@ function f2 name="read" module=m0 position=143 text={start=143 end=240} flags=[H
     v16 = PropGet v0 key="n" @234
     Return v16 @234
 }
-function f3 name="gather" module=m0 position=241 text={start=241 end=359} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="gather" module=m0 position=241 sourceRange={start=241 end=359} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     v1 = Integer @273
     v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @273
@@ -109,7 +109,7 @@ function f3 name="gather" module=m0 position=241 text={start=241 end=359} flags=
     v22 = Call v20, v18, v21 calleeKey="all" calleeName="Promise.all" @335
     Return v5 @352
 }
-function f4 name="sum" module=m0 position=360 text={start=360 end=546} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 name="sum" module=m0 position=360 sourceRange={start=360 end=546} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|L0>):
     v1 = Integer @394
     v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @394
@@ -152,7 +152,7 @@ function f4 name="sum" module=m0 position=360 text={start=360 end=546} flags=[Ha
   b6():
     Return v20 @538
 }
-function f5 module=m0 position=613 text={start=613 end=1193} kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f5 module=m0 position=613 sourceRange={start=613 end=1193} kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Builtin builtin=GlobalThis @640
     v1 = PropGet v0 key="Promise" [isFreeName] @640
@@ -243,7 +243,7 @@ function f5 module=m0 position=613 text={start=613 end=1193} kind=Arrow thisType
     v76 = Undefined @1118
     Return v76 @1118
 }
-function f6 module=m0 position=886 text={start=886 end=1035} flags=[HasThis] length=1 captures=[{type=builtin(PromiseResolve) flags=[IsExpected] variableName="original"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f6 module=m0 position=886 sourceRange={start=886 end=1035} flags=[HasThis] length=1 captures=[{type=builtin(PromiseResolve) flags=[IsExpected] variableName="original"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: builtin(PromiseResolve), v1: anything, v2: anything):
     v3 = Integer @920
     v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @920

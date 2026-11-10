@@ -1,5 +1,5 @@
 // What stands in front of a loop runs where the loop has no turn, and where a turn passes by the operation. So no getter runs, nothing throws for undefined, null or a variable in its dead zone, and nothing is read through what is no object.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Box { x; constructor(x) { this.x = x; } }
 let log = "";

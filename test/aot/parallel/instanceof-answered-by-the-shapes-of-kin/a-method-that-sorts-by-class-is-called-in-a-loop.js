@@ -1,5 +1,5 @@
 // The questions stand in a method without a loop; the loop that calls it copies it, and in the copy the shapes answer.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 4
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 4
 const rows = JSON.parse('[{"kind":"click","x":1,"key":"a"},{"kind":"key","x":2,"key":"bc"},{"kind":"scroll","x":3,"key":"d"},{"kind":"touch","x":4,"key":"e"},{"kind":"custom","x":5,"key":"fgh"}]');
 class UiEvent { constructor(row) { this.x = row.x; this.handled = false; } }
 class PointerEvent extends UiEvent { get y() { return this.x * 2; } }

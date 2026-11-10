@@ -1,5 +1,5 @@
 // The first element is an accessor that shortens the list: what is read behind it sees the list as it then is.
-// STATISTIC: ListsHandedInAskedOnceForWhatStandsBehindBranch = 1
+// STATISTIC: ArrayParameterChecksSpanningBranches = 1
 function gather(parts: readonly number[]): string {
   if (parts.length === 0) return "none";
   if (parts.length === 2) return parts[0] + ":" + parts.length + ":" + parts[1];

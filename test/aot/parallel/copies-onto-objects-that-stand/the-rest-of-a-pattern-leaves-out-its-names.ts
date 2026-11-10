@@ -1,4 +1,4 @@
-// STATISTIC: CopiesThatAreDefinitionsOneByOne >= 1
+// STATISTIC: ObjectSpreadsExpandedToDefines >= 1
 // `const { a, ...rest } = source`: the copy leaves out the names that the pattern has taken: in a loop, out of a default in sight, with a name that the source has not, with all its names, with a computed one.
 function show(o: any): string { return Reflect.ownKeys(o).map(k => String(k) + "=" + String(o[k])).join(",") + "#" + ("a" in o); }
 type Props = { a: number; b: string; c: boolean };

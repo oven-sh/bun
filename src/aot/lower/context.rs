@@ -30,7 +30,7 @@ use super::function::{ConstsOfPrefixes, StatementsThatNest, ValuesThatConstsWere
 use super::layouts::{LayoutState, NamesCreatedOnExports};
 use super::module::{LibraryFunctions, ModuleState};
 use super::object::EnumsThatStayAsBorn;
-use super::quoted_text::QuotedTexts;
+use super::quoted_source::QuotedSources;
 use super::said_types::SaidTypes;
 use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
 use super::tables::TaskState;
@@ -117,8 +117,8 @@ impl FileInputs<'_> {
 #[derive(Copy, Clone, Debug)]
 pub struct LoweringOptions {
     pub platform: Platforms,
-    pub embeds_function_text: bool,
-    pub reads_function_texts_back: bool,
+    pub embeds_function_source: bool,
+    pub reparses_function_sources: bool,
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
     pub obfuscates: bool,
@@ -218,10 +218,10 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) consts_of_prefixes: ConstsOfPrefixes,
     pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
-    pub(in crate::lower) quoted_texts: QuotedTexts,
+    pub(in crate::lower) quoted_sources: QuotedSources,
     pub(in crate::lower) written_path: Vec<u8>,
     pub(in crate::lower) known_helpers_lowered: KnownHelpersLowered,
-    pub(in crate::lower) texts_read_back: u64,
+    pub(in crate::lower) function_sources_reparsed: u64,
     pub(in crate::lower) declared_records_without_position:
         Vec<(hir::FnId, crate::ir::generated::DeclaredRecord)>,
     scratch: BuilderScratch,
@@ -332,10 +332,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             consts_of_prefixes: ConstsOfPrefixes::default(),
             enums_that_stay_as_born: None,
             counted_places,
-            quoted_texts: QuotedTexts::default(),
+            quoted_sources: QuotedSources::default(),
             written_path: Vec::new(),
             known_helpers_lowered: KnownHelpersLowered::default(),
-            texts_read_back: 0,
+            function_sources_reparsed: 0,
             declared_records_without_position: Vec::new(),
             scratch: BuilderScratch::default(),
         }
@@ -403,7 +403,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             layouts,
             functions,
             known_helpers_lowered,
-            texts_read_back,
+            function_sources_reparsed,
             shown_names,
             ..
         } = self;
@@ -414,7 +414,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             diagnostics,
             queries,
             known_helpers: known_helpers_lowered,
-            texts_read_back,
+            function_sources_reparsed,
             written_function_names: shown_names.written_function_names,
         }
     }

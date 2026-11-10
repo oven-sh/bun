@@ -1,4 +1,4 @@
-// STATISTIC: ElementsOfFreshListsKnownAgain >= 1
+// STATISTIC: FreshArrayElementReadsEliminated >= 1
 "use strict";
 // The second read is answered by the first. The written index is the key at one turn in four.
 const values = JSON.parse('[["a",1],["b",2],["c",3],["d",4]]');

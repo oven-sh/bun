@@ -1,167 +1,117 @@
-# Tests of ahead-of-time compilation (`bun build --compile --aot`)
+# Tests of ahead-of-time compilation
 
-This page lists the kinds of tests, the command that runs each, what CI has to know, where a new test goes, and the tools.
+These are the tests of `bun build --compile --aot` and `bun test --aot`. CI runs all of them on every pull request.
 
-## The tests
+## Layout
 
-CI runs all of them on every pull request.
+| Where | What it is | What runs it |
+| --- | --- | --- |
+| `parallel/<topic>/<name>.ts` | A program. Compiled, it must exit and print as it does under `bun <file>`. A program of several files is a folder with a `main.*` | `run-parallel.ts` |
+| `library-sweeps/` | Programs that compile much of Bun's library | `run-parallel.ts --root=test/aot/library-sweeps` |
+| `ir/` | A small source text and the IR that the front end must make of it. See [`ir/README.md`](ir/README.md) | `cargo test` |
+| `engine-tests/`, `from-source/`, `answers/`, `native/` | Tests of one stage of the engine that need Bun's table of built-ins or Bun's front end. The rest of the engine's tests are in WebKit, in `Source/JavaScriptCore/aot/tests`, and its README says how to write one | `testaot`, which `engine/*.test.ts` start |
+| `*.test.ts`, here and in the topic folders | Everything else: flags, messages, several builds, a server, what the executable holds | `bun test` |
+| `harness/`, `supported.ts` | Helpers for the test files | |
+| `tools/`, `shell/`, `fuzz/`, `perf/`, `other-suites/` | Tools that you start by hand | |
 
-| Kind                                                                                                  | Where                                                                                                                                                    | What runs it                                                                                                                                                                                | By hand                                                               |
-| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| **A program** that must exit and print as it does under `bun <file>`                                  | `parallel/<topic>/<name>.ts` (`.tsx`, `.js`, `.mjs`, `.cjs` ..), or a folder with a `main.*` and its other files                                         | [`run-parallel.ts`](run-parallel.ts), which `scripts/runner.node.ts` starts. Its top says which comment lines a program may hold                                                            | `bun test/aot/run-parallel.ts test/aot/parallel/<topic>/<name>.ts ..` |
-| **What the front end makes of a source text**: a small input, a command and the IR text it must print | `ir/`                                                                                                                                                    | `src/aot/tests/ir_tests.rs`. [`ir/README.md`](ir/README.md)                                                                                                                                 | `cargo test -p bun_aot --test ir_tests`                               |
-| **One stage of the engine**: IR text or facts as text, what is run on it and what must be printed     | `Source/JavaScriptCore/aot/tests/<stage>/[<subject>/]<case>.ir` in WebKit                                                                                | `engine/ir-<n>.test.ts`; `engine/native-<n>.test.ts` run the engine's tests that are written in C++. The top of [`engine/testaot.ts`](engine/testaot.ts) says where `testaot` is looked for | `testaot run <file or folder> .. --show-output`                       |
-| **What the engine makes of Bun's own built-ins**: IR text that names entries of Bun's table of built-ins, or a test in C++ that asks that table | `engine-tests/<stage>/[<subject>/]<case>.ir`, `native/*.cpp` | `engine/ir-<n>.test.ts`; `engine/native-<n>.test.ts`: the build links them into `testaot`, which runs them behind the engine's own | `testaot run test/aot/engine-tests/<file or folder> ..`, `testaot native <part of the name>` |
-| **Everything else**: flags, messages, several builds, a server, what the executable holds             | `<what-it-tests>.test.ts`, here and in the folders of a topic                                                                                            | `bun test`                                                                                                                                                                                  | `bun test test/aot/<what-it-tests>`                                   |
+More tests of `--aot` are in `test/cli/aot-*.test.ts`, `test/cli/run/run-aot.test.ts`, `test/cli/test/test-aot*.test.ts`, `test/cli/inspect/compile-aot-inspector.test.ts`, `test/bundler/compile-aot-*.test.ts` and `test/bundler/bundler_compile_aot.test.ts`.
 
-Tests of `--aot` outside this folder, all found by `bun test aot`: `test/cli/aot-*.test.ts`, `test/cli/run/run-aot.test.ts`,
-`test/cli/test/test-aot*.test.ts`, `test/cli/inspect/compile-aot-inspector.test.ts`,
-`test/bundler/compile-aot-*.test.ts`, `test/bundler/bundler_compile_aot.test.ts`.
+## Run
 
-**Nothing in this folder waits to be run by hand.** A file here is one of the tests above, is used by one, or is a tool of the
-last section.
+```sh
+# one program, or several
+bun bd test/aot/run-parallel.ts test/aot/parallel/<topic>/<name>.ts
+bun bd test/aot/run-parallel.ts test/aot/parallel/<topic>/<name>/main.ts
 
-## What CI has to know
+# one test file, or all of them
+bun bd test test/aot/<name>.test.ts
+bun bd test test/aot
 
-- **Nothing has to be registered.** `scripts/runner.node.ts` runs every file under `test/` whose name contains `.test.` or `spec.`,
-  and every program under `parallel/`. For the same reason no program or helper may have such a name.
-- **This folder has no steps of its own.** The `test-bun` shards of every platform run all of it on every pull request, under the
-  rules of every other test: the same retries, the same time limits, and a red holds up the merge. What a pull request touches
-  decides nothing.
-- **A program brings every package that it loads**, in a `node_modules` beside or above it, a project of `parallel-test-runs/` in a
-  folder `installed`: where no `node_modules` stands above a file, plain Bun asks the registry for a package that it does not find
-  and runs what comes, and a made-up name may be somebody's package there. A package that is meant not to be there has a name under
-  `@made-up/`, never a plain word. `test/internal/source-lints/packages-of-stored-programs.test.ts` holds both.
-- **A program that compiles all of Bun's library, or much of it, lies under `library-sweeps/`**, not under `parallel/`:
-  thousands of functions each, in seconds. `scripts/rust-test.ts` hands them to `run-parallel.ts` in the step `cargo-test`, which has sixteen
-  processors and which no shard of the tests waits for: `bun test/aot/run-parallel.ts --root=test/aot/library-sweeps test/aot/library-sweeps/*.*[jt]s`.
-  They are built as every program is, and none in a checking mode: `every-library-module-runs-under-the-checks.test.ts`
-  builds the library under the compiler's own checks.
-- **The programs under `parallel/` are dealt out like test files**: `run-parallel.ts --deal` says what the build of each takes, and
-  `getRelevantTests()` in `scripts/runner.node.ts` deals them by cost, the number of the shard and the number of shards, never by
-  the commit. Only a program that took 0.7 s or more has a line in `test/expected-durations.json`. A program that fails is not run again.
-- **Every program is built by itself**, as anybody builds it, and in each way of `harness/ways.ts`: as written and with its types erased.
-  Behind those it is built once more with `--aot-testing=FailGuesses:<n>`, where one guess in n fails on purpose and the program walks from its
-  typed copies into the closed ones: the head of `run-parallel.ts` says which n. In CI only Ubuntu without a sanitizer makes the
-  builds behind the first: elsewhere `flagsOfAotDriver()` in `scripts/runner.node.ts` says `--no-erased`. What a build makes of a
-  program goes by all that the build holds, and beside others a fault may not show. `// Runs by itself: <why>` is for a program that
-  keeps more threads busy than a machine has processors: its runs come last, each with nothing beside it.
-- **The cargo tests** run in a step of their own (`getCargoTestStep()` in `.buildkite/ci.ts`, `bun run rust:test`).
-- **The engine's tests need `testaot`**, `jsc` and the folder `aot-tests`, which CI packs beside the Bun under test. On the ASAN lane
-  they are built with the sanitizer and with assertions.
-- **A platform or a sanitizer that cannot run a program** has a line for it in `test/expectations.txt`, with the reason. Such a line
-  takes the file out of the run there and does nothing else.
-- **A program that does not pass today** says so in itself: `// Todo: <what differs>: <why>`. It is run all the same, fails once it passes, and fails by any other difference. An
-  `.ir` file has `# TODO: <why>` for the same. In a test file: `test.todo(..)` with its body under a line `// TODO: <what happens today>`,
-  or `eachRow([.. gap("<what happens today>", [..]) ..])` of `supported.ts` for a row of a table: such a row is run all the same, and fails once it has come true.
-- **A test that needs another build of Bun skips itself** on every build but that one: a sanitizer (`isASAN`), `--hardened=on`
-  (`isHardened` of `hardened.ts`). The lane of the hardened build runs
-  what its row in `testPlatforms` of `.buildkite/ci.ts` names. `the-build-under-test-is-the-one-its-step-names.test.ts` never skips
-  itself: a step says which build it tests (`EXPECTED_PLATFORM_PROFILE`, `EXPECTED_PLATFORM_CANARY`), and the file is red where the
-  Bun under test is another.
-- **No platform rejects `--aot`**, and `every-platform.test.ts` never skips itself. Only a Bun that was built without the compiler
-  rejects the flag. A test file that uses the flag skips itself there: `import { describe, test } from "./supported";` in place of
-  the same names of `bun:test`, or `test.skipIf(!!unsupported)` with `unsupported` of `harness/commands.ts` where only some of its
-  tests use it. Never a list of platforms: the Bun under test is asked.
-- **A skip says why on stderr**: `console.error("SKIPPED: <file>: <what is missing, what switches it on>")`. Neither reporter prints the
-  name of a skipped test, and CI's prints a dot.
-- **A test file is a process in CI, and `bun test test/aot` is one process for all.** What a helper keeps in a variable of its
-  module, and what an `afterAll` removes, meets the next file there.
-- **The runner's environment reaches every build and every executable** through `bunEnv`: `BUN_GARBAGE_COLLECTOR_LEVEL=1` and
-  `BUN_JSC_randomIntegrityAuditRate=1.0` on every lane, a `TMPDIR` of its own for each file.
-- **The reference transpiles on one thread**: `run-parallel.ts` starts plain Bun with
-  `BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=1`, so that it reads the files in the order in which they are asked for. It then takes
-  every `.cjs` file for CommonJS and every `.mjs` file for an ES module. Without the variable, and under `--aot`, a file that only
-  `import` loads and whose text says neither is what the "type" of its package says. So a CommonJS file of a program names `module`
-  or `exports`, an ES module has an `import` or an `export`, and a program about what a file is taken for has the line
-  `// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0`. So has a program about when users see a file run that `import()` asks
-  for: without the variable the text comes in a later turn of the event loop, under `bun run` and in an executable. Plain Bun is
-  steady there only while no two texts are being read at once: otherwise the program stores its lines.
-- **What changes code is a flag.** No environment variable changes the code that a build generates. A program asks for a flag, hidden
-  `--aot-<word>` flags included, with `// Flags:`.
-- **A declaration file anywhere under `parallel/` is read for every program there**, because `parallel/tsconfig.json` includes it, as
-  a project's `tsconfig.json` would. What a `.d.ts` of a test declares needs names of its own: no `declare function require`, no
-  class with a method `m`.
-- **The time limit of a file is three minutes**, as for any other test (`getTestTimeout()` in `scripts/runner.node.ts`): whatever
-  limit a test gives itself, the file is killed then, with all that it has started (`BUN_FEATURE_FLAG_NO_ORPHANS`). Where two
-  or three files run beside one another in processes of their own, the limit is two or three times as long.
-- **What a signal ends is judged at once**, by that signal and with what it had printed. Nothing that `run-parallel.ts` starts
-  writes a core dump: an executable reserves tens of gigabytes of addresses, and where the kernel hands a core to a program
-  (`systemd-coredump`, `apport`) the process is gone only when all of them are read. `run()` and `spawned()` of the harness do the
-  same there, and start a command as it is where cores are files, which `scripts/runner.node.ts` looks for. A report goes where the
-  runner says, or nowhere (`BUN_ENABLE_CRASH_REPORTING=0`): `harness/without-core-dump.ts`.
-- **A file runs beside others.** One that takes under fifteen seconds on every lane runs in a bucket, many files to a process
-  (`test/parallel-allowlist.json`), with no more of its concurrent tests under way than its share of the processors. The longer ones run beside one another too, each in a process of its own: one for every three
-  processors, and no more than one for every three gigabytes of the machine. A file that judges by a clock, or by the memory that is
-  held or left, says so in a line `// Runs alone: <why>`, and nothing else of the shard runs beside it.
-- **Every test runs on every push, on x64 and arm64: the programs of `parallel/` and a few folders of test files on Ubuntu
-  (`distroOfAotTest` in `scripts/runner.node.ts`), the other test files on Debian. Neither repeats what the other runs. The other lanes (Alpine, Windows, macOS) run what asks the system**: processes, Workers and
-  threads, the environment, files and paths, sockets, memory and its limits, faults, the image of an executable, native code. A
-  test whose verdict hangs on what the compiler makes of a program runs on that one lane: the compiler is deterministic. The list is
-  `aotTestsThatAskTheSystem` in `scripts/runner.node.ts`: a test file or a folder of programs that asks the system is added there.
-  A test that counts instructions also runs on Alpine, the one lane where CI can count them: `aotTestsThatAskAlpine`.
-  The lane with a sanitizer runs everything but what compiles one text again and again: `aotTestsThatFeedNothingNew`.
-- **A path is short.** Windows does not find a path of 260 characters: `the-folder-of-a-program-has-a-short-name.test.ts`.
-- **Disk.** Each build leaves an executable the size of Bun in the temporary directory, which is deleted afterwards. CI tests
-  `bun-profile`, which on Linux carries its debug information: three times the bytes of the Bun that ships. A test file that builds
-  many programs builds them on a stripped copy: `harness/without-debug-information.ts`.
-- **The ASAN lane** gives a file twice the time. The runner sets `BUN_JSC_validateExceptionChecks=1` there for every file that
-  `test/no-validate-exceptions.txt` does not list, and the builds and executables that a test starts inherit it. It also lays an
-  unpacked copy of Bun's debug information where a symbolizer looks first (`LLVM_SYMBOLIZER_OPTS`): unpacking it takes seconds, and
-  without the copy every process that ends with something to hold against `test/leaksan.supp` does it again. The files of this
-  folder run there on a copy of `bun-asan` without the debug information, half the size, and so are the executables that they build.
-  It has the build ID of `bun-asan`, so a symbolizer answers for it as for `bun-asan`. A file that fails is tried again on `bun-asan`.
-- **A group that needs more than a Bun** is switched on by an environment variable named `AOT_<GROUP>`, and without it every test of
-  the group is skipped, so that `bun test test/aot` never needs more than a Bun. The top of each such test file says what its
-  variables mean: `AOT_SERVERS` and `AOT_BACKEND` need npm, the second also a PostgreSQL.
+# the front end's IR tests
+cargo test -p bun_aot --test ir_tests
 
-## Where a new test goes
+# the engine's tests
+testaot run test/aot/engine-tests/<file or folder> --show-output
+testaot native <part of a name>
+bun bd test test/aot/engine
+```
 
-The cheapest kind that still asks the question.
+`run-parallel.ts` tests the Bun that runs it. It prints one line of JSON per program, with `"state":"pass"` or `"state":"fail"`, and exits with 1 if a program failed. It builds each program four times: as written, with `--aot-erase-types`, with `--aot-testing=FailSpeculations:<n>` and with `--aot-harden=proof-checks`. `--no-erased` makes only the first build.
 
-| What it is                                                                 | Where                                                                                                                                                                                                     |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| What the front end lowers a construct to                                   | `ir/lower/<construct family>/<name>.ts`                                                                                                                                                                   |
-| One rule of Facts, one rewrite of the walk, one stage by itself            | IR text: `aot/tests/<folder>/<name>.ir` in WebKit. `tools/ir-test-from-source.ts` drafts one. With its records as the tool makes them: `from-source/<folder>/<name>.ir`, which holds none                 |
-| A closed program whose answers the shell of the engine checks by itself    | `answers/<name>.ts`: the head of an IR test and the program. `tools/answers-test-from-source.ts --store <program>` writes it; `engine/answers.ts` makes the records and runs it                           |
-| A program that must print what plain Bun prints                            | `parallel/<topic>/<name>.ts`, or a folder `parallel/<topic>/<name>/` whose entry point is `main.*`. Its first line says what it tests. One case a program where a case can change what the compiler knows |
-| The smallest program for something the compiler once got wrong             | the same, in the folder of its topic or in `parallel/edge-cases/`                                                                                                                                         |
-| A fault that shows only under flags that no way of `harness/ways.ts` has   | the same, with `// Under: <flags>: <why>`: it is built once more with those flags and held to the same                                                                                                    |
-| A program that differs from plain Bun on purpose                           | the same, with `/* Output: .. */` or `/* Build errors: .. */` at its end; most are in `parallel/type-rules/`                                                                                              |
-| That an optimization ran on a whole program                                | the same, with `// STATISTIC: <name> (= \| >= \| <=) <n>`                                                                                                                                                 |
-| A package that ships the TypeScript that `--aot` compiles                  | a `<what-it-tests>.test.ts` that writes the package into `node_modules`, with the file under the `"aot"` condition of `exports` in its `package.json`                                                     |
-| That `--trim` changes nothing about a program                              | a section in `trimmed-is-whole/cases/<subject>.js.txt`. The top of `trimmed-is-whole/run.ts` says how one is written, and when it is built alone                                                          |
-| Anything that needs several builds, a server, or looks into the executable | a `<what-it-tests>.test.ts` of its own. A build is what costs: one build for many cases                                                                                                                   |
-| Programs that a script writes                                              | a source of `fuzz/run.ts` ([`fuzz/README.md`](fuzz/README.md)). What it finds is cut down and becomes one of the kinds above, with the fix                                                                |
+`engine/*.test.ts` look for `testaot` in `$TESTAOT`, beside the Bun under test, in `build/release-local` and in `build/release`. `bun run build:local --target=engine-test-programs` builds it.
 
-A function of a sloppy file that starts with `"use strict"` is strict mode code in an executable and in a test run, as in Node, and plain Bun drops the directive. A program that can tell has a stored `/* Output: .. */`. What to store is what plain Bun prints for the text as it is written: with `// @bun @bun-cjs` as the first line and `(function(exports, require, module, __filename, __dirname) {` .. `})` round the rest nothing is transpiled, so the engine itself reads the directive.
+## Add a test
 
-A `const` is a variable in an executable built without `--minify-syntax`, as in Node: a read in its dead zone throws a ReferenceError, a `with` object or a `var` of evaluated text hides it, `import(name)` loads the module, and behind `mock.module` a read gets what the mock stored. Plain Bun prints the value of a constant that holds a literal in place of each read, where nothing but declarations of constants stands in front of it in its list of statements. A program that can tell has a stored `/* Output: .. */` and says in its first lines what plain Bun prints. What to store is what Node prints, where the program runs there.
+Pick the cheapest kind that still asks the question.
 
-## The tools
+| What you want to test | Where it goes |
+| --- | --- |
+| What the front end lowers a construct to | `ir/lower/<construct family>/<name>.ts` |
+| One rule or one rewrite of the engine | An `.ir` file in WebKit's `aot/tests/<stage>/`. `tools/ir-test-from-source.ts` drafts one |
+| A program that must print what plain Bun prints | `parallel/<topic>/<name>.ts` |
+| The smallest program for something the compiler got wrong | The same, in the folder of its topic or in `parallel/edge-cases/` |
+| Several builds, a server, or a look into the executable | A `<what-it-tests>.test.ts`. The build is what costs, so use one build for many cases |
+| That `--trim` changes nothing about a program | A section in `trimmed-is-whole/cases/<subject>.js.txt` |
 
-No test. Somebody starts them at the desk.
+Nothing has to be registered. `scripts/runner.node.ts` runs every file under `test/` whose name contains `.test.` or `spec.`, and every program under `parallel/`. So no program or helper may have such a name.
 
-| What for                                                | Command                                                                                                                                                                                                                                                                            | What it does                                                                                                                                                                                                  | What it needs                                                                   |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **Programs without end**                                | `bun test/aot/fuzz/run.ts`, `bun test/aot/fuzz/burst.ts`                                                                                                                                                                                                                           | Every generator and mutator, round after round with new seeds. [`fuzz/README.md`](fuzz/README.md)                                                                                                             | The builds, a machine with hours to spare                                       |
-| **Speed**                                               | `bun test/aot/perf/compare-builds.ts --before <bun> --after <bun>`                                                                                                                                                                                                                 | Instructions of small benchmarks and of a request of each route of seven servers: the rows that moved. [`perf/README.md`](perf/README.md) says how to measure and which number decides                        | Linux, user-mode counters                                                       |
-| **Do two builds of Bun generate the same code**         | `bun test/aot/tools/same-output.ts --before <bun> --after <bun> [<program or folder>..]`                                                                                                                                                                                           | Each program built with both: the IR that the front end hands over, and the machine code function by function. For a change that is meant to change nothing                                                   | Nothing                                                                         |
-| **The same code however a property name is spelled**    | `bun test/aot/tools/same-code-in-every-spelling.ts [--bun <bun>] <program or folder>..`                                                                                                                                                                                            | Each program with every property name behind a dot, in quotes, in brackets and between backticks; the machine code compared function by function. The test file beside it holds a fixed set of programs to it | Nothing                                                                         |
-| **The same code wherever the text stands**              | `bun test/aot/tools/same-code-wherever-the-text-stands.ts [--bun <bun>] <program or folder>..`                                                                                                                                                                                     | Each program as written and with blanks, comments and empty lines sown between its tokens. The test file beside it holds a fixed set of programs to it                                                        | Nothing                                                                         |
-| **The React Compiler as in a bundle**                   | `bun test/aot/tools/react-compiler-fixtures.ts [--bun <bun>] [<part of a name>]`                                                                                                                                                                                                   | Each upstream fixture of the compiler built with `--compile` and with `--compile --aot`, unminified and with `minify.syntax`: the same results, and memo caches of the same sizes; and the same results as without the compiler. Eight minutes on 48 cores.  |
-| **From a wrong answer to its cause**                    | `bun test/aot/tools/bisect.ts <program> [--bun <bun>] [--flags <flag>..]`                                                                                                                                                                                                          | Builds and runs a program that differs from plain Bun with each of its switches (`--aot-erase-types`), and prints the fewest of them that set the answer right, where to look for each, and the command that builds it so | Nothing                                                                         |
-| **An IR text test from a program**                      | `bun test/aot/tools/ir-test-from-source.ts`, `bun test/aot/tools/update-ir-tests.ts <file or folder> ..`                                                                                                                                                                           | The first drafts an `.ir` test of the engine from a small program; the second writes such a file anew from the source and the commands it holds, as `bun test -u` does for snapshots                          | `testaot`                                                                       |
-| **Stored expectations after an engine change**          | `<the Bun you built> test/aot/tools/update-expectations.ts`                                                                                                                                                                                                                        |
-| **The programs without building Bun**                   | `JSC=<jsc> FRONT_END=<bun> TESTAOT=<testaot> PLAIN=<any bun> test/aot/shell/quick.py all`                                                                                                                                                                                          | Front end, `testaot compile`, `jsc`. `shell/expectations.py` checks the `// IR+`, `// IR=` .. lines of a program with the front end and `testaot`                                                             | `jsc` and `testaot`; the top of `shell/toolchain.py` says how to build them     |
-|                                                         | `.. python3 test/aot/shell/collector-stress.py all`                                                                                                                                                                                                                                | The programs twice: as they are, and with a collection at every third allocation that leaves the fast path. `--every 1`, `--every 2` and `--young` ask other questions                                        | The same                                                                        |
-|                                                         | `.. python3 test/aot/shell/bad-time.py all`                                                                                                                                                                                                                                        | At the end of each program the shell is asked whether every array of its realm has gone to the slow storage                                                                                                   | The same                                                                        |
-|                                                         | `.. python3 test/aot/shell/test262.py <test262> --out <file> built-ins language`, then `--known <file>`                                                                                                                                                                            | The conformance suite of ECMAScript, compiled forty tests to a program. The second run fails when a test that passed in the first no longer does                                                              | The same, and a checkout of test262                                             |
-| **Where a command ended**                               | `python3 test/aot/shell/where-it-died.py <jsc> --aotImagePath=<image> ..`                                                                                                                                                                                                          | Follows a command with ptrace and prints the place where it ended, its callers and the code around it. A place is a file and an offset, with the function where the file has its symbols                      | Linux on x86-64 or ARM64                                                        |
-| **All of Bun's tests under `--aot`**                    | `bun test/aot/whole-suite.ts`                                                                                                                                                                                                                                                      | Every test file of the repository twice with `scripts/runner.node.ts`: as it is, and with `--aot` added to each `bun test` and `bun run`. It lists the files that pass only as they are                       | What the whole suite needs, twice the time                                      |
-| **Other people's suites**                               | `bun test/aot/other-suites/run.ts jsc <WebKit>/JSTests`, `.. test262 <test262>`, `.. node test/js/node/test`                                                                                                                                                                       | Each file run by plain Bun and as an executable. Not whether a test passes is asked, but whether the executable does what plain Bun does with the same file                                                   | The suites                                                                      |
-| **Bun's own tests**                                     | `bun test/aot/other-suites/bun-tests.ts test/js`                                                                                                                                                                                                                                   | Each test file of `test/js` run twice by the same Bun, `bun test` and `bun test --debug-aot`, and the verdicts compared test by test                                                                          | Hours                                                                           |
-| **Trimmed against whole**                               | `bun test/aot/trimmed-against-whole/run.ts --cores 0-15 --corpus test262 --test262 <test262> --corpus docs --corpus locales --corpus every-name ..`                                                                                                                                | Each program is built twice, with `--compile --aot` and with `--trim` as well, and both executables must print the same and exit the same                                                                     | The suites it is given                                                          |
-|                                                         | `bun test/aot/trimmed-is-whole/sweep.ts <a Bun that can trim> <an empty folder> <out.tsv>`                                                                                                                                                                                         | Every case of `trimmed-is-whole/environment-cases.ts` with every program, every option and every variable                                                                                                     | Hours                                                                           |
-| **What a script writes, to be read**                    | `bun test/aot/generate.ts <folder> <where>`                                                                                                                                                                                                                                        | Writes the programs of a generator of `generate/` out                                                                                                                                                         | The table of built-ins, `aot_builtin_table.json`, for those that follow from it |
-| **Applications against Go and Rust**                    | [`backend/README.md`](backend/README.md), [`backend/tracker/README.md`](backend/tracker/README.md), [`servers/measure/README.md`](servers/measure/README.md), [`real-apps/README.md`](real-apps/README.md)                                                                         | Each page has its commands                                                                                                                                                                                    | Each page says                                                                  |
+### A program
+
+The first line is a comment that says what the program tests. Keep one case to a program where a case can change what the compiler knows about the others.
+
+```ts
+// A call with two numbers returns their sum.
+function add(a: number, b: number): number {
+  return a + b;
+}
+console.log(add(2, 3));
+```
+
+More comment lines at the top say how it is built and run. These are the common ones, and the top of `run-parallel.ts` has the full list.
+
+| Line | Meaning |
+| --- | --- |
+| `// Flags: <flags>` | more flags for the build |
+| `// Env: NAME=value` | the environment of both runs |
+| `// Exit code: <n>` | what both runs end with. Without it, a reference run that does not exit with 0 fails the program |
+| `// Under: <flags>: <why>` | one more build with those flags |
+| `// STATISTIC: <name> >= <n>` | holds a counter of the build to a number, to show that an optimization ran. Also `=` and `<=` |
+| `// Todo: it grows: <why>`, `// Todo: "<word>" \| "<word in its place>": <why>`, `// Todo: only frames (..): <why>` | a known difference of one of these three kinds. The program still runs, and fails once it passes. No other difference can be marked |
+
+A program that differs from plain Bun on purpose ends with what it must print:
+
+```ts
+/* Output:
+two
+*/
+```
+
+A program brings every package that it loads, in a `node_modules` beside or above it. A package that is meant to be missing has a name under `@made-up/`.
+
+### A test file
+
+Import `describe` and `test` from `./supported` in place of `bun:test`. They skip the file on a Bun that was built without the compiler. Never skip by a list of platforms.
+
+A test that does not pass today is a `test.todo(..)` with its body.
+
+## CI
+
+- A test file that asks the operating system something (processes, files, sockets, memory, native code) runs on every platform only if `aotTestsThatAskTheSystem` in `scripts/runner.node.ts` lists it. Everything else runs on Linux alone, because the compiler is deterministic.
+- A platform or a sanitizer that cannot run a program has a line for it in `test/expectations.txt`, with the reason.
+- A file is killed after three minutes.
+- A file that judges by a clock or by memory has a line `// Runs alone: <why>`.
+- A path is short. Windows does not find a path of 260 characters.
+- A group of tests that needs more than a Bun is switched on by an environment variable `AOT_<GROUP>`. The top of each such file says what it needs.
+
+## Tools
+
+| Command | What it does |
+| --- | --- |
+| `bun test/aot/tools/bisect.ts <program> [--bun <bun>]` | Builds a program that differs from plain Bun with each switch, and prints the fewest that set the answer right |
+| `bun test/aot/tools/same-output.ts --before <bun> --after <bun> <program or folder>..` | Compares the IR and the machine code that two Buns make, for a change that is meant to change nothing |
+| `bun test/aot/tools/ir-test-from-source.ts main.ts > main.ir` | Drafts an `.ir` test of the engine from a small program |
+| `bun test/aot/tools/update-ir-tests.ts <file or folder>..` | Rewrites such a file from the source it holds, as `bun test -u` does for snapshots |
+
+The last two need `testaot`. The top of every other file in `tools/`, `shell/` and `other-suites/` says what it does and what it needs.
+
+[`fuzz/README.md`](fuzz/README.md), [`perf/README.md`](perf/README.md), [`backend/README.md`](backend/README.md) and [`real-apps/README.md`](real-apps/README.md) have the fuzzers, the benchmarks and the applications.

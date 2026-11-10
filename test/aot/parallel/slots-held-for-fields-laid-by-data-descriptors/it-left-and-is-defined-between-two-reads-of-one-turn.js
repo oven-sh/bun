@@ -1,6 +1,6 @@
 // The constructor lays `works` by a data descriptor, read-only and not configurable, and its slot is held to what is seen defined. One object leaves before that and the constructor ends early. Code out of a text defines the name with a text between two reads of one turn of a loop.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 1
+// STATISTIC: FieldTypesEnforced >= 2
+// COUNTER: FieldsEvictedByTypeMismatch >= 1
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 function Clock(teeth, early) {

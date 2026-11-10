@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 1
+// STATISTIC: MapResultsGuardedAsNumbers >= 1
 const turns = JSON.parse("8") | 0;
 // Between the two lookups the turn lays into a list. The second answer is a text. Nothing is laid twice.
 const table = new Map(Object.entries(JSON.parse("{\"a\":1,\"t\":\"x\"}"))), log = [];

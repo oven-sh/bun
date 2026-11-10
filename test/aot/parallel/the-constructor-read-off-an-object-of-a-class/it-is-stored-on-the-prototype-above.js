@@ -1,5 +1,5 @@
 // In the middle of the loop another class is stored under constructor on the prototype of the class above, which the heirs hide.
-// STATISTIC: ConstructorsReadOffObjectsOfClasses >= 1
+// STATISTIC: ConstructorReadsResolvedToClasses >= 1
 class Tree { k = 0; again() { return new this.constructor(); } }
 class Ash extends Tree { k = 1; }
 class Birch extends Tree { k = 20; }

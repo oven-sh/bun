@@ -73,7 +73,7 @@ test("files that merely lie in the folder change nothing of the program", async 
   using above = tempDir("aot-files-that-lie-beside", { inner: program });
   using elsewhere = tempDir("aot-the-same-files-in-a-folder-of-another-name-and-another-length", program);
   const folder = join(String(above), "inner");
-  const handedOver = async (startedIn = folder, entry = "./entry.ts") => {
+  const buildProgram = async (startedIn = folder, entry = "./entry.ts") => {
     const wire = join(startedIn, "program.ir");
     await build({ folder: startedIn, entry }, [withProgramOutput(wire)]);
     const bytes = readFileSync(wire);
@@ -84,13 +84,13 @@ test("files that merely lie in the folder change nothing of the program", async 
     expect(layouts.length).toBeGreaterThan(10);
     return { bytes: `${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")} ${bytes.length}`, layouts };
   };
-  const alone = await handedOver();
-  expect((await handedOver()).bytes).toBe(alone.bytes);
-  expect((await handedOver(String(elsewhere))).bytes).toBe(alone.bytes);
+  const alone = await buildProgram();
+  expect((await buildProgram()).bytes).toBe(alone.bytes);
+  expect((await buildProgram(String(elsewhere))).bytes).toBe(alone.bytes);
   // The program names its files from the folder in which the build is started, so its bytes differ.
-  expect((await handedOver(String(above), "./inner/entry.ts")).layouts).toEqual(alone.layouts);
+  expect((await buildProgram(String(above), "./inner/entry.ts")).layouts).toEqual(alone.layouts);
   for (const [name, text] of Object.entries(lyingBeside)) writeFileSync(join(folder, name), text);
-  expect((await handedOver()).bytes).toBe(alone.bytes);
+  expect((await buildProgram()).bytes).toBe(alone.bytes);
   writeFileSync(join(folder, "entry.ts"), `import "./0-in-front.ts";\n${program["entry.ts"]}`);
-  expect((await handedOver()).bytes).not.toBe(alone.bytes);
+  expect((await buildProgram()).bytes).not.toBe(alone.bytes);
 });

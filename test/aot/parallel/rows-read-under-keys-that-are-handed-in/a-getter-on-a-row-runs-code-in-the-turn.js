@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedInTurnsOfTypedCopies >= 1
+// STATISTIC: ArraysGuardedInIterations >= 1
 const log = [];
 function one(d, a, b) {
   let sum = 0;

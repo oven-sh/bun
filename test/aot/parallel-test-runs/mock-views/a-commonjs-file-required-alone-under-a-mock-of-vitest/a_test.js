@@ -1,4 +1,4 @@
-// Only a require() has loaded dep.cjs: no import has run its face. The mock stands in the place of the module for imports, as under bun test: a name that it lacks throws. The body runs once.
+// Only a require() has loaded dep.cjs: no import has run its facade. The mock stands in the place of the module for imports, as under bun test: a name that it lacks throws. The body runs once.
 import { vi, mock, jest, test } from "bun:test";
 let step = "";
 const ask = async (how, read) => {

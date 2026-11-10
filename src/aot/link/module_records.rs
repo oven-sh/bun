@@ -104,7 +104,7 @@ pub(super) fn exported_variable_key(
         ExportBinding::Synthetic(id) => {
             let export = graph.synthetic_export(id);
             let is_copy =
-                graph.face(export.module).is_some() && !graph.settled(export.module, export.name);
+                graph.facade(export.module).is_some() && !graph.settled(export.module, export.name);
             let behind = graph
                 .commonjs()
                 .member_behind_getter(export.module, export.name);
@@ -124,15 +124,15 @@ pub(super) fn holds_exports_in_variable(graph: &ModuleGraph, module: ModuleRef) 
     match graph.shape(module) {
         Shape::Value => true,
         Shape::AsToday => match module {
-            ModuleRef::File(file) => graph.commonjs().face_captures(file),
+            ModuleRef::File(file) => graph.commonjs().has_capturing_facade(file),
             _ => false,
         },
         Shape::EsModule | Shape::Names => false,
     }
 }
 
-pub(super) fn is_filled_by_loader(graph: &ModuleGraph, face: ModuleRef) -> bool {
-    !matches!(graph.interop(face).export_rule, SyntheticExportRule::None)
+pub(super) fn is_filled_by_loader(graph: &ModuleGraph, facade: ModuleRef) -> bool {
+    !matches!(graph.interop(facade).export_rule, SyntheticExportRule::None)
 }
 
 fn find_binding_in_other_project(
@@ -185,12 +185,12 @@ pub(super) fn variables_shown_by_export_tables(
                     false => continue,
                 }
             }
-            ProgramModule::Face(file) => {
+            ProgramModule::Facade(file) => {
                 let graph = projects.get(file.project).graph;
-                let face = ModuleRef::Face(file.file);
-                match is_filled_by_loader(graph, face) {
+                let facade = ModuleRef::Facade(file.file);
+                match is_filled_by_loader(graph, facade) {
                     true => continue,
-                    false => (file.project, graph.exports_of(face)),
+                    false => (file.project, graph.exports_of(facade)),
                 }
             }
             ProgramModule::Inner { .. }
@@ -478,7 +478,7 @@ fn collect_synthetic_exports(input: &RecordInput<'_, '_>) -> Vec<Vec<MergedSynth
                 name,
                 is_known_member,
                 is_replaceable,
-                writer: ExportWriter::Loader | ExportWriter::Face | ExportWriter::Capture,
+                writer: ExportWriter::Loader | ExportWriter::Facade | ExportWriter::Capture,
             }) => exports[module as usize].push(MergedSyntheticExport {
                 name,
                 merged_variable: merged_variable as u32,
@@ -1049,7 +1049,7 @@ impl RecordBuilder<'_, '_, '_> {
                     self.build_file_record(units, unit, index, file)
                 }
                 ProgramModule::Inner { file, .. }
-                | ProgramModule::Face(file)
+                | ProgramModule::Facade(file)
                 | ProgramModule::Check(file) => self.build_further_record(index, module, file),
                 ProgramModule::Runtime(runtime_module) => {
                     let path = self.strings.intern(table::specifier_of(runtime_module));
@@ -1173,8 +1173,8 @@ impl RecordBuilder<'_, '_, '_> {
                 {
                     record.flags |= ModuleFlags::IS_FOUND_BY_NAME;
                 }
-                if interop.answers_loader_with_namespace {
-                    record.flags |= ModuleFlags::ANSWERS_LOADER_WITH_NAMESPACE;
+                if interop.loader_returns_namespace {
+                    record.flags |= ModuleFlags::LOADER_RETURNS_NAMESPACE;
                 }
                 record.data = find_program_id(fragment.data, &ids.data);
                 self.fill_export_table_record(file, &mut record);
@@ -1230,10 +1230,10 @@ impl RecordBuilder<'_, '_, '_> {
         record.requests = self.build_requests(project, own);
         record.exports_variable = input.exports_variable(module);
         match module {
-            ProgramModule::Face(_) if is_filled_by_loader(graph, own) => {
+            ProgramModule::Facade(_) if is_filled_by_loader(graph, own) => {
                 record.synthetic_exports = self.build_synthetic_exports(index);
             }
-            ProgramModule::Face(_) => {
+            ProgramModule::Facade(_) => {
                 record.exports = self.build_exports(project, None, graph.exports_of(own));
             }
             ProgramModule::Inner { .. } | ProgramModule::Check(_) => {}
@@ -1267,11 +1267,11 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.may_be_mocked(ModuleRef::Runtime(module)) {
             flags |= ModuleFlags::MAY_BE_MOCKED;
         }
-        if graph.is_held_under_name_without_prefix(module) {
-            flags |= ModuleFlags::IS_HELD_UNDER_NAME_WITHOUT_PREFIX;
+        if graph.rejects_require_cache_override(module) {
+            flags |= ModuleFlags::REJECTS_REQUIRE_CACHE_OVERRIDE;
         }
-        if graph.is_handed_out_by_test_runner(module) {
-            flags |= ModuleFlags::IS_HANDED_OUT_BY_TEST_RUNNER;
+        if graph.is_exposed_by_test_runner(module) {
+            flags |= ModuleFlags::IS_EXPOSED_BY_TEST_RUNNER;
         }
         flags
     }
@@ -1279,8 +1279,8 @@ impl RecordBuilder<'_, '_, '_> {
     fn planned_flags(&self, project: ProjectId, module: ModuleRef) -> ModuleFlags {
         let graph = self.input.projects.get(project).graph;
         let mut flags = ModuleFlags::default();
-        if graph.keeps_error(module) {
-            flags |= ModuleFlags::KEEPS_ERROR;
+        if graph.caches_evaluation_error(module) {
+            flags |= ModuleFlags::CACHES_EVALUATION_ERROR;
         }
         if graph.is_loaded_by_loader(module) {
             flags |= ModuleFlags::IS_LOADED_BY_LOADER;
@@ -1288,11 +1288,11 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.is_required_during_load(module) {
             flags |= ModuleFlags::IS_REQUIRED_DURING_LOAD;
         }
-        if graph.may_be_imported_while_it_runs(module) {
-            flags |= ModuleFlags::MAY_BE_IMPORTED_WHILE_IT_RUNS;
+        if graph.is_importable_during_evaluation(module) {
+            flags |= ModuleFlags::IS_IMPORTABLE_DURING_EVALUATION;
         }
-        if graph.is_es_module_to_imports(module) {
-            flags |= ModuleFlags::IS_MODULE_TO_IMPORTS;
+        if graph.is_imported_as_es_module(module) {
+            flags |= ModuleFlags::IS_IMPORTED_AS_ES_MODULE;
         }
         if graph.is_imported_as_namespace(module) {
             flags |= ModuleFlags::IS_IMPORTED_AS_NAMESPACE;
@@ -1303,31 +1303,31 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.runs_tests() && graph.is_code_of_program(module) {
             flags |= ModuleFlags::IS_LISTED_IN_CACHE;
             if graph.reaches_entries_of_cache() {
-                flags |= ModuleFlags::IS_SHOWN_BY_ENTRY_OF_CACHE;
+                flags |= ModuleFlags::IS_EXPOSED_BY_REQUIRE_CACHE;
             }
         }
         if graph.may_be_evicted(module) && graph.is_code_of_program(module) {
             flags |= ModuleFlags::MAY_BE_EVICTED;
         }
-        if graph.is_reached_by(module, Spelling::WithoutExtension) {
-            flags |= ModuleFlags::IS_REACHED_WITHOUT_EXTENSION;
+        if graph.is_imported_by_alias(module, Spelling::WithoutExtension) {
+            flags |= ModuleFlags::IS_IMPORTED_WITHOUT_EXTENSION;
         }
-        if graph.is_reached_by(module, Spelling::WithOtherExtension) {
-            flags |= ModuleFlags::IS_REACHED_UNDER_ANOTHER_EXTENSION;
+        if graph.is_imported_by_alias(module, Spelling::WithOtherExtension) {
+            flags |= ModuleFlags::IS_IMPORTED_WITH_OTHER_EXTENSION;
         }
-        if graph.is_reached_by(module, Spelling::AsDirectory) {
-            flags |= ModuleFlags::IS_REACHED_AS_FOLDER;
+        if graph.is_imported_by_alias(module, Spelling::AsDirectory) {
+            flags |= ModuleFlags::IS_IMPORTED_AS_DIRECTORY;
         }
-        if matches!(module, ModuleRef::File(file) if graph.runs_again(file)) {
-            flags |= ModuleFlags::RUNS_AGAIN;
+        if matches!(module, ModuleRef::File(file) if graph.may_be_reevaluated(file)) {
+            flags |= ModuleFlags::MAY_BE_REEVALUATED;
         }
         let sources = self.input.projects.get(project).sources;
         if matches!(module, ModuleRef::File(file) if sources.depends_on_more_than_source(file)) {
             flags |= ModuleFlags::DEPENDS_ON_MORE_THAN_SOURCE;
         }
         flags |= crate::test_runs::flags_of_module(graph, module);
-        if graph.names_way_to_module_objects(module) {
-            flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
+        if graph.reaches_module_objects(module) {
+            flags |= ModuleFlags::REACHES_MODULE_OBJECTS;
         }
         let is_named_by_copies =
             graph.is_named_by_copies(module) && graph.is_code_of_program(module);
@@ -1470,7 +1470,7 @@ impl RecordBuilder<'_, '_, '_> {
             let whole = record.exports.iter().find(|it| it.name == default_name);
             let whole = whole.and_then(|it| it.variable);
             for export in &mut record.exports {
-                export.is_left_out =
+                export.is_omitted =
                     whole.is_some() && export.variable == whole && export.name != default_name;
             }
         }
@@ -1484,7 +1484,7 @@ impl RecordBuilder<'_, '_, '_> {
         let requests = graph.requests_of(ModuleRef::File(file));
         let is_requested = |module: ModuleRef| requests.iter().any(|it| it.target == module);
         let exporter_of = |required: &modules::RequiredName| match required.is_found_unless_mocked {
-            true => graph.face(required.module).unwrap_or(required.module),
+            true => graph.facade(required.module).unwrap_or(required.module),
             false => required.module,
         };
         let may_be_gone = |required: &modules::RequiredName| {
@@ -1502,7 +1502,7 @@ impl RecordBuilder<'_, '_, '_> {
                 export_name: (required.asked_by).map(|it| self.intern_atom(it.export_name)),
                 specifier: (required.asked_by).map(|it| self.intern_atom(it.specifier)),
                 drops_export_if_absent: required.drops_export_if_absent,
-                is_asked_for_by_star: required.is_asked_for_by_star,
+                is_requested_by_star_export: required.is_requested_by_star_export,
             })
             .collect();
         let default_of = |export: modules::SyntheticExportId| {
@@ -1527,7 +1527,7 @@ impl RecordBuilder<'_, '_, '_> {
         let mut asked_for_default: Vec<(FileId, Option<Atom>)> = Vec::new();
         for (exporter, export_name) in handed_on.chain(imported) {
             if let ModuleRef::File(exporter) = exporter
-                && (graph.may_be_imported_while_it_runs(ModuleRef::File(exporter))
+                && (graph.is_importable_during_evaluation(ModuleRef::File(exporter))
                     || graph.may_be_mocked(ModuleRef::File(exporter)))
                 && !asked_for_default.iter().any(|asked| asked.0 == exporter)
             {
@@ -1538,7 +1538,7 @@ impl RecordBuilder<'_, '_, '_> {
         for (file, export_name) in asked_for_default {
             let is_written = written.iter().any(|it| it.target == ModuleRef::File(file));
             let export_name = export_name.or_else(|| (!is_written).then_some(known::default));
-            let exporter = graph.face(ModuleRef::File(file));
+            let exporter = graph.facade(ModuleRef::File(file));
             let exporter = exporter.unwrap_or(ModuleRef::File(file));
             if !is_requested(exporter) {
                 continue;
@@ -1551,7 +1551,7 @@ impl RecordBuilder<'_, '_, '_> {
                 export_name: export_name.map(|name| self.intern_atom(name)),
                 specifier: export_name.map(|_| self.strings.intern(path)),
                 drops_export_if_absent: false,
-                is_asked_for_by_star: false,
+                is_requested_by_star_export: false,
             });
         }
     }
@@ -1595,14 +1595,14 @@ impl RecordBuilder<'_, '_, '_> {
                 let key = exported_variable_key(input.projects.get(project).graph, binding);
                 let key = key.expect("the binding is a variable");
                 let commonjs = input.projects.get(project).graph.commonjs();
-                let is_dropped_while_empty = match binding {
+                let is_hidden_until_initialized = match binding {
                     ExportBinding::Synthetic(copy) => commonjs.may_stay_empty(copy),
                     _ => false,
                 };
                 generated::ModuleExport {
                     kind: ModuleExportKind::Variable,
                     variable: Some(input.exported_variable(project, key)),
-                    is_dropped_while_empty,
+                    is_hidden_until_initialized,
                     ..unbound
                 }
             }
@@ -1679,7 +1679,7 @@ impl RecordBuilder<'_, '_, '_> {
                     specifier,
                     exporter: None,
                     export_specifier: None,
-                    ends_load_of: Some(module),
+                    failed_load_root: Some(module),
                 });
             }
         }
@@ -1721,7 +1721,7 @@ impl RecordBuilder<'_, '_, '_> {
             specifier,
             exporter: exporter.map(|exporter| self.input.id_of(project, exporter)),
             export_specifier,
-            ends_load_of: None,
+            failed_load_root: None,
         }
     }
 }

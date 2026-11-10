@@ -16,6 +16,6 @@
 # RUN: run-in-shell mechanisms=all
 # CHECK: 3 3,6,3
 # CHECK-NEXT: exited with 0
-# RUN(COUNT): compile LoopsBuiltTwice PurchasesOfLoopsThatFailed mechanisms=all
-# COUNT: statistic LoopsBuiltTwice 4
-# COUNT: statistic PurchasesOfLoopsThatFailed 0
+# RUN(COUNT): compile WalkLoopsVersioned LoopVersioningAttemptsFailed mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 4
+# COUNT: statistic LoopVersioningAttemptsFailed 0

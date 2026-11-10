@@ -1,4 +1,4 @@
-// STATISTIC: ListsNotListedThatCopiesOfCalleesStoreInto >= 1
+// STATISTIC: InlineeStoredArraysNotGuarded >= 1
 const rounds = +process.argv[2]! || 3;
 function swap(list: any, i: any, j: any): void { const kept = list[i]; list[i] = list[j]; list[j] = kept; }
 function turned(list: any, i: any, j: any): any { let s = 0; while (i < j) { swap(list, i, j); s += list[i]; i++; j--; } return s; }

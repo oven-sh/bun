@@ -1,5 +1,5 @@
 // `{ z: 1, ...o, a: 0.5 }`, where `o` holds `a: null` that a store has laid: the spread's copy lays null into the slot of `a` before the literal's own 0.5 comes. A build that called the fields of such a record
-// "filled at birth" leaned on what the literal itself writes there, and the executable stopped: "StoreOfOtherType .. the compiler has proven that it never happens". Each program says what plain Bun says.
+// "filled at birth" leaned on what the literal itself writes there, and the executable stopped: "StoreOfOtherType .. the compiler proved that this never happens". Each program says what plain Bun says.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";

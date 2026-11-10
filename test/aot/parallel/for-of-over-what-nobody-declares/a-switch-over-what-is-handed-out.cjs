@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: IterationsOverListsThatStepTextsBeside >= 1
+// STATISTIC: ArrayIterationsWithStringFallback >= 1
 const log = [];
 const outside = JSON.parse('["a,b,(c,d),e", "{x,{y}},z", "", "((", "\\ud83d\\ude00,(\\u4e2d)"]');
 const depth = input => { let deep = 0, parts = 1, odd = 0; for (const ch of input) { switch (ch) { case "(": case "{": deep++; break; case ")": case "}": deep--; break; case ",": if (!deep) parts++; break; default: odd++; } } return parts + "/" + deep + "/" + odd; };

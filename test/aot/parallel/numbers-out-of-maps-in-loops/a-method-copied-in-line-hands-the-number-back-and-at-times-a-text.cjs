@@ -1,5 +1,5 @@
 // The lookup stands in a method that is copied in line, so its only user there is the return: what the copy hands back is asked for a number in the frame of the caller, where the sum is.
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 1
+// STATISTIC: MapResultsGuardedAsNumbers >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.hits = 0; } look(k) { return this.get(k); } }
 class P { constructor() { this.x = 0; } }

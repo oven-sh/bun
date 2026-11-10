@@ -1,5 +1,5 @@
 // two makers make the objects of one family, so an interface names a member of each: factories store into fields that no maker fills, readers take members, strangers, frozen objects and objects that have lost a field
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function Made(kind, pos) { this.kind = kind; this.pos = pos; }
 const Maker = Made;

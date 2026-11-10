@@ -82,7 +82,7 @@ console.log(sum, vaults.map(x => x.history.length).join())
 
 // GENERATED: count isVault #next read Deep
 // CHECK-LABEL: function {{*}}name="count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="Vault"
@@ -109,7 +109,7 @@ console.log(sum, vaults.map(x => x.history.length).join())
 // CHECK-NEXT: Throw v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isVault"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v2 = PrivateHas v0, v1 layout=[[L_5]] field=3
@@ -117,7 +117,7 @@ console.log(sum, vaults.map(x => x.history.length).join())
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_6]]} results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_6]]} results=[{type=number}] {
 // CHECK-NEXT: b0(v0: [[L_6]]):
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_7]]
 // CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_6]] field=1
@@ -129,7 +129,7 @@ console.log(sum, vaults.map(x => x.history.length).join())
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_6]]} parameters=[{type=number}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_6]]} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[L_6]], v1: number):
 // CHECK-NEXT: v2 = Integer integer=2
 // CHECK-NEXT: v3 = Mul v1, v2
@@ -140,7 +140,7 @@ console.log(sum, vaults.map(x => x.history.length).join())
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_6]]):
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="Meter"
@@ -156,7 +156,7 @@ console.log(sum, vaults.map(x => x.history.length).join())
 // CHECK-NEXT: Throw v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Deep"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_12]]

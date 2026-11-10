@@ -7,15 +7,17 @@
 # print(caller([[], 2, 3]));
 # print("went on");
 # -- end of source
-# Math.max applied to a list, outside tail position.
-# What Link holds of the result of that call rests on the row of Math.max. Native code's answer is held to the row at its door; the answer of the function of the prelude that goes over the list in its place is held to the row too.
-# THE LIE: the row of Math.max writes null alone. It printed 0 for 0.5 and went on.
+# The program applies Math.max to an array, outside tail position.
+# What Link claims about the result of that call rests on the signature of Math.max. The result of native code is checked against the signature at its entry check.
+# The result of the prelude function that iterates over the array in place of native code is checked against the signature too.
+# Fault injection, testing=UnderstateEffects:Builtin/Math.max/KindOfResult: the signature of Math.max declares null as its only result.
+# The program used to print 0 instead of 0.5 and continue.
 # RUN: run-in-shell mechanisms=all
 # CHECK: 0.5
 # CHECK-NEXT: 0
 # CHECK-NEXT: went on
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Math.max/KindOfResult
-# LIE: the result of a call is not of the type that the compiler has proven of it. It is: number.
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Math.max/KindOfResult
+# LIE: found double in a call result
 # LIE-NOT: went on
 # LIE: crashed

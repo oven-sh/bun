@@ -1,5 +1,5 @@
 use bun_ast::Log;
-use bun_options_types::aot_options::ExplainSet;
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
@@ -55,9 +55,8 @@ linked_functions! {
     pub fn bun_aot_log_time_outside_stages(name: &str);
     pub fn bun_aot_log_part_outside_stages(name: &str);
     pub(crate) fn bun_aot_new_report_line(kind: ExplainSet, text: Vec<u8>) -> ReportEntry;
-    pub fn bun_aot_write_summary(input: &ReportInput<'_>, out: &mut Vec<u8>);
-    pub fn bun_aot_write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>);
-    pub fn bun_aot_write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>);
+    pub fn bun_aot_write_summary(input: &ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>);
+    pub fn bun_aot_write_developer_options(options: &AotOptions, out: &mut Vec<u8>);
     pub fn bun_aot_collect_report_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry>;
     pub fn bun_aot_report_entries_to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMessage>;
     pub fn bun_aot_write_obfuscation_map(engine: &EngineResult, texts: &SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Result<Vec<u8>, SourceChanged>;

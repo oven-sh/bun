@@ -1,4 +1,4 @@
-// STATISTIC: NumbersBesideCountersAskedInFrontOfLoops >= 1
+// STATISTIC: InvariantNumberGuardsHoisted >= 1
 const list = JSON.parse('[1,2,3,4,5,6,7,8,9,10]');
 let reads = 0;
 const holder = { get size() { reads++; return 10 - reads; }, list };

@@ -126,7 +126,9 @@ for (const name of kept().filter(name => !quiet.test(name))) {
   const file = readdirSync(folder).find(each => each.startsWith("program."));
   const report = readFileSync(join(folder, "report.txt"), "latin1").split("\n");
   const stem = name.replace(/\/\d+$/, "");
-  const flags = (/ --aot (.*)$/.exec(report[1] ?? "")?.[1] ?? "")
+  // run-alone.ts reports the whole command. The entry point and --outfile at its end are not flags of the test.
+  const command = (report[1] ?? "").replace(/ \.\/\S+(?: --outfile \S+)?$/, "");
+  const flags = (/ --aot (.*)$/.exec(command)?.[1] ?? "")
     .split(" ")
     .filter(flag => flag && flag !== "--aot-threads=1");
   const text = file ? readFileSync(join(folder, file), "latin1") : "";

@@ -7,8 +7,10 @@
 # print(kept.lid);
 # print("went on");
 # -- end of source
-# what is stored into a fresh object that nobody reads again may be dropped. Under the lie (testing=NoCalleeKeepsWhatItIsHanded) the keeper would read 1 for 101: no check of a value stands at that read. The cell is overwritten where make() returns, and the keeper stops.
-# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# A store into a fresh object that nothing reads again may be dropped.
+# With the fault injected (testing=AssumeCalleesRetainNothing), the code that retained the object would read 1 instead of 101, and no value check covers that read.
+# The cell is overwritten when make() returns, so that code crashes when it next accesses the cell.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
 # RUN(CALL): run-in-shell mechanisms=-Inlining
 # CALL-NOT: went on
 # CALL: crashed with

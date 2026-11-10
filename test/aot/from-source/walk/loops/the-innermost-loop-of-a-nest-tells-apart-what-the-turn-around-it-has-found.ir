@@ -22,7 +22,7 @@
 # a time, else k^depth"), and `r`, which the turn around finds, was read by key in every turn of the innermost loop: 24,240 > 60,261 instructions a call. The innermost loop holds no loop to multiply: it
 # tells apart what the turn around it has found; what stood in front of the loop around had its chance there.
 # f1 = between, f2 = nearest, f3 = nearestOfTwo
-# RUN(COUNT): compile InnermostLoopsToldApartInCopiesOfLoopsAround
-# COUNT-NOT: statistic InnermostLoopsToldApartInCopiesOfLoopsAround 0
+# RUN(COUNT): compile LoopsVersionedInsideOuterVersions
+# COUNT-NOT: statistic LoopsVersionedInsideOuterVersions 0
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 25 3 3 25 25 25 3 3 3 3 3 21 16 19 3 3 3 3 3 25 25 25 3 3 3 3 3 NaN NaN NaN 0 0 0 0 0 25 25 25 3 3 3 3 3 NaN NaN NaN 0 0 0 0 0 TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError 3

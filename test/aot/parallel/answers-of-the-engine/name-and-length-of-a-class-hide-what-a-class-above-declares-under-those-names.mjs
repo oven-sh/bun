@@ -1,7 +1,7 @@
 // A class object has a `name`, a `length` and a `prototype` of its own. No record lists them. They hide whatever a class above declares under those names: `static get name() {}`, a setter, a method, a static field.
 // A lookup through the row of classes went past them: `Below.name` gave what the getter of the class above returns, `Below.length` undefined below a setter.
 // classHolderIsMadeWithName(): LinkFlow::membersFoundUnder(), LinkTables::findMember() and the static fields in resolveOnClassObject() end at the first class.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Getters { static get name() { return "the getter"; } static get length() { return "the other getter"; } }
 class BelowGetters extends Getters { constructor(first, second) { super(); } }

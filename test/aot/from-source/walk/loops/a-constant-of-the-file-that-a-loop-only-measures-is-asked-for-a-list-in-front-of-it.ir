@@ -13,7 +13,7 @@
 # f1 = tally
 # RUN(WALK): walk f1 mechanisms=all
 # WALK: = GetArrayElement {{*}}level=Proven
-# RUN(COUNT): compile HoldersOnlyMeasuredByHeadsGuessedToBeLists mechanisms=all
-# COUNT: statistic HoldersOnlyMeasuredByHeadsGuessedToBeLists 8
+# RUN(COUNT): compile ArraysSpeculatedFromLoopBounds mechanisms=all
+# COUNT: statistic ArraysSpeculatedFromLoopBounds 8
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 161.5 161.5 168.5

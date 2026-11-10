@@ -1,9 +1,12 @@
-# A fence behind late stores of a new object. `Promise.resolve(v)` in line makes a promise by the stub, which has its fence, and then stores the value, which wants a fence of its own. THE LIE, testing=FencesBehindLateStoresAreLeftOut: the emitters leave that fence out. Every build asks for it, on every processor, so the build stops by name. Without the lie: promise-made-fulfilled-has-a-fence-behind-its-value.ir.
+# This test covers the fence after late stores to a new object. An inlined `Promise.resolve(v)` allocates a promise through the stub, which has its own fence.
+# It then stores the value, and that store needs a fence of its own.
+# Fault injection, testing=SkipFencesAfterLateStores: the emitters omit that fence. Every build requires it, on every processor, so the build fails with a named internal error.
+# Without the fault: promise-made-fulfilled-has-a-fence-behind-its-value.ir.
 # f1 = made
 # -- source: promise-made-fulfilled-and-no-fence-behind-its-value-stops-the-build-by-name.ts
 # declare function sink(...values: unknown[]): void;
 # function made(n: number) { return Promise.resolve({ n }); }
 # sink(made);
 # -- end of source
-# DIAGNOSTIC: NoFenceBehindLateStores
-# RUN: emit f1 mechanisms=all testing=FencesBehindLateStoresAreLeftOut
+# DIAGNOSTIC: MissingFenceAfterLateStores
+# RUN: emit f1 mechanisms=all testing=SkipFencesAfterLateStores

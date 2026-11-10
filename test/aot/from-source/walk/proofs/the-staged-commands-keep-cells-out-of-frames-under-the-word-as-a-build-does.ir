@@ -1,10 +1,10 @@
-# As built the object of `dist` lies in a frame. Under KeepsCellsOutOfFrames, one of the two words of --aot-harden=proof-checks, a build takes the mechanism CellsInFrames away (withoutMechanismsThatOptionsWithhold()).
+# As built the object of `dist` lies in a frame. Under DisableFrameCells, one of the two words of --aot-harden=proof-checks, a build takes the mechanism CellsInFrames away (withoutMechanismsThatOptionsWithhold()).
 # testaot's staged commands did not: `walk` laid the cell in a frame, the emitter refused it, and no unit was printed. They ask the same function now: what they print under the word is what a build compiles.
 # f0 = the file (dist and norm are copied in)
 # RUN(BUILT): walk f0 mechanisms=all
 # BUILT-LABEL: code f0:Body
 # BUILT: NewObject {{*}}storage=Frame
-# RUN(KEPT): walk f0 mechanisms=all testing=KeepsCellsOutOfFrames
+# RUN(KEPT): walk f0 mechanisms=all testing=DisableFrameCells
 # KEPT-LABEL: code f0:Body
 # KEPT: NewObject
 # KEPT-NOT: storage=Frame

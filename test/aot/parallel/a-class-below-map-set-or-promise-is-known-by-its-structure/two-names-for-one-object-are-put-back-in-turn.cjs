@@ -1,5 +1,5 @@
 // Two names hold one object and a turn stores through both: what each store found is put back in the reverse order.
-// STATISTIC: StoresPutBackWhereTurnsBeginAgain >= 1
+// STATISTIC: StoresUndoneAtIterationRestarts >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; this.m = 2; this.o = null; } two() { return this.n + 1; } }
 const far = v => [v][JSON.parse("0")];

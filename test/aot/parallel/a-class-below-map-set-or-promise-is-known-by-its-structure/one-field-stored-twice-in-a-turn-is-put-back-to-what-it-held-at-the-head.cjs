@@ -1,5 +1,5 @@
 // A turn stores one field twice: the newer store is put back first, so the field ends with what it held at the turn's head.
-// STATISTIC: StoresPutBackWhereTurnsBeginAgain >= 1
+// STATISTIC: StoresUndoneAtIterationRestarts >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; this.m = 2; this.o = null; } two() { return this.n + 1; } }
 const far = v => [v][JSON.parse("0")];

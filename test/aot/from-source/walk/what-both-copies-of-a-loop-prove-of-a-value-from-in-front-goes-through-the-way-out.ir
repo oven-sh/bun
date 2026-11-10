@@ -12,4 +12,4 @@
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = RequireObjectCoercible
-# FORM: = ReserveArrayRoom
+# FORM: = ReserveArrayCapacity

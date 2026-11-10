@@ -82,7 +82,7 @@ impl FileBinder<'_, '_> {
         let (hir, bound, context) = (self.hir, self.bound, self.context);
         if !hir.enums.is_empty()
             || !context.known_helpers.has_functions(self.file)
-            || context.modules.runs_again(self.file)
+            || context.modules.may_be_reevaluated(self.file)
         {
             return;
         }

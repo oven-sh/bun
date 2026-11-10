@@ -6,9 +6,9 @@
 # -- end of source
 # Nothing is known of what the list holds, and nothing but its truth is asked of an element. The typed copy's read names no storage. The turns are laid out once for whole numbers, once for doubles, and once without
 # the question. Behind the question the read is left to the branch on its truth: the word of a whole number is held against zero as it lies, a double against zero and NaN; the hole of either is as false as undefined.
-# RUN: compile LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked LoopsLaidOutForOneKindOfStorage mechanisms=all
-# CHECK: statistic LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked 1
-# CHECK: statistic LoopsLaidOutForOneKindOfStorage 2
+# RUN: compile UnrolledLoopsForInt32Truthiness UnrolledLoopsForIndexingType mechanisms=all
+# CHECK: statistic UnrolledLoopsForInt32Truthiness 1
+# CHECK: statistic UnrolledLoopsForIndexingType 2
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 6 5 5
 # RIGHT-NEXT: exited with 0

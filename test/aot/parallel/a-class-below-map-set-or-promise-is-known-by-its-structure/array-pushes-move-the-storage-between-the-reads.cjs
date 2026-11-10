@@ -1,6 +1,6 @@
 // A class below Array: pushes move the storage between the reads of the field: the field lies at the same distance in front of it.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
-// COUNT: counter:StructuresOfHeirsRefused = 0
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected = 0
 "use strict";
 class A extends Array { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + this.length; } }
 const one = new A();

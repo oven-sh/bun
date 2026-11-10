@@ -1,6 +1,6 @@
 // A name that a method first stores is listed among the class's fields and is not there at birth: the look asks nothing of it.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
-// COUNT: counter:StructuresOfHeirsRefused = 0
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected = 0
 class H extends Map { constructor(ttl) { super(); this.n = 1; } two() { return this.n + 1; } reset() { this.hits = 0; } }
 const one = new H(Number(process.argv[3] ?? 0));
 for (let k = 0; k < 9; k++) one.set(k, k);

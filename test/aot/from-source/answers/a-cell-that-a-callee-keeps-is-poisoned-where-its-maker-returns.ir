@@ -7,10 +7,13 @@
 # print(holder.inner!.lid);
 # print("went on");
 # -- end of source
-# testing=CheckProofsAtRunTime: what the walk has as fresh where a function returns is dead there by its own claim, so it is overwritten: EndLifeOfCell. Whoever holds it after all stops at his next look and says where it was made.
-# The lie, testing=NoCalleeKeepsWhatItIsHanded: the walk takes an argument of a direct call for one that the callee does not keep, so `o` stays fresh across keep(o). No value is wrong: without the net the program prints 3, 3 and goes on.
-# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# testing=CheckProofsAtRunTime: a cell that the walk still holds as fresh where a function returns is dead there by the walk's own claim, so it is overwritten (EndCellLifetime).
+# Code that holds the cell after all crashes the next time it looks into the cell, and the message says where the cell was allocated.
+# Fault injection, testing=AssumeCalleesRetainNothing: the walk assumes that the callee of a direct call does not retain an argument, so `o` stays fresh across keep(o).
+# No value is wrong: without the check the program prints 3, 3 and continues.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
 # RUN(CALL): run-in-shell mechanisms=-Inlining
-# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
 # CALL-NOT: went on
 # CALL: crashed with

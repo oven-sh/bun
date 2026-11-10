@@ -1,5 +1,5 @@
-// STATISTIC: LoopsLaidOutThatAreComeBackTo >= 2
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
+// STATISTIC: UnrolledLoopsWithReentry >= 2
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the turns are laid out as users build them, and every raw access asks its position at the run
 function count(list: number[], k: number): number { let n = 0; for (const v of list) if (k + v > 4) n++; return n; }
 function most(list: number[], k: number): number { let m = 0; for (let i = 0; i < list.length; i++) { const w = k * list[i]!; if (w > m) m = w; } return m; }
 const places: ((size: number) => number[])[] = [() => [], () => [0], () => [5], () => [7], () => [8], size => [size - 1], () => [3, 4, 5], () => [10, 30, 50, 70, 90], size => Array.from({ length: size >> 1 }, (_, i) => 2 * i), size => Array.from({ length: size }, (_, i) => i)];

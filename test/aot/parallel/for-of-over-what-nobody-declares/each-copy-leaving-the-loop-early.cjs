@@ -1,6 +1,6 @@
 "use strict";
-// STATISTIC: IterationsOverListsThatStepTextsBeside >= 1
-// STATISTIC: LoopsOfIterationsBuiltForTextsAndForLists >= 1
+// STATISTIC: ArrayIterationsWithStringFallback >= 1
+// STATISTIC: ForOfLoopsVersionedByIterable >= 1
 const log = [];
 const outside = JSON.parse('["a b;c", "k=v", "no end", "", ";", "ab!c|d", "x|y"]');
 const upTo = input => { let seen = ""; for (const ch of input) { if (ch === ";") break; if (ch === " ") continue; seen += ch; } return seen; };

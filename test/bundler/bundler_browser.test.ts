@@ -166,10 +166,15 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
-  // A browser has none of these globals. Bun has them, so a second run deletes them before it loads the bundle.
+  // A browser has none of these globals, and its getRandomValues rejects shared memory. A second run makes bun the same.
   const withoutNodeGlobals = {
     "/without-node-globals.js": /* js */ `
       for (const name of ["process", "Buffer", "global", "setImmediate", "clearImmediate"]) delete globalThis[name];
+      const getRandomValues = crypto.getRandomValues.bind(crypto);
+      crypto.getRandomValues = view => {
+        if (view.buffer instanceof SharedArrayBuffer) throw new TypeError("The view must not be shared.");
+        return getRandomValues(view);
+      };
       await import("./out.js");
     `,
   };
@@ -240,6 +245,7 @@ describe("bundler", () => {
     timingSafeEqual: [true, false],
     randomFillSync: [false, true, false],
     randomFillSyncOfElements: [false, true, false],
+    randomFillSyncOfSharedMemory: [false, true, false],
     randomFill: true,
     randomFillFromOffset: [false, true],
     randomBytes: 8,
@@ -256,6 +262,8 @@ describe("bundler", () => {
         crypto.randomFillSync(new Uint8Array(view.buffer, 16, 16));
         const elements = new Uint8Array(48);
         crypto.randomFillSync(new Uint16Array(elements.buffer, 16, 8), 2, 4);
+        const shared = new Uint8Array(new SharedArrayBuffer(48));
+        crypto.randomFillSync(new Uint8Array(shared.buffer, 16, 16));
         const codeOf = fn => {
           try {
             fn();
@@ -275,6 +283,7 @@ describe("bundler", () => {
           ],
           randomFillSync: [filled(view, 0, 16), filled(view, 16, 32), filled(view, 32, 48)],
           randomFillSyncOfElements: [filled(elements, 0, 20), filled(elements, 20, 28), filled(elements, 28, 48)],
+          randomFillSyncOfSharedMemory: [filled(shared, 0, 16), filled(shared, 16, 32), filled(shared, 32, 48)],
           randomFill: await new Promise(resolve => {
             crypto.randomFill(new Uint8Array(16), (error, bytes) => resolve(error ?? filled(bytes, 0, 16)));
           }),

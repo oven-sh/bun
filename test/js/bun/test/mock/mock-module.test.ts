@@ -2722,7 +2722,7 @@ describe.concurrent("resetModules", () => {
         "b.ts": `export const text = "v1";`,
         "b.cjs": `exports.text = "v1";`,
         "c.ts": `export {};`,
-        "alone.ts": `export {};`,
+        "alone.ts": `export const text = "v1";`,
         "earlier.test.ts": anEarlierTestFile,
         "reset.test.ts": `
           import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
@@ -2752,7 +2752,7 @@ describe.concurrent("resetModules", () => {
             expect(resetWhileLoading).toHaveBeenCalledTimes(1);
             expect([first.text, first.cjs]).toEqual([before, before]);
             write(after);
-            // The two transpiles came back after the reset. The next load reads both files, and does not get what they read.
+            // No reset has come after the two transpiles: a source that they left in a source cache would be served here, with the text they read.
             const again = await import("./a.ts");
             expect([again.text, again.cjs]).toEqual([after, after]);
           });
@@ -2765,6 +2765,10 @@ describe.concurrent("resetModules", () => {
             const alone = await loading;
             // The reset doesn't start that import again, so its module is the one that is loaded now.
             expect(await import("./alone.ts")).toBe(alone);
+            writeFileSync(path("alone.ts"), 'export const text = "v2";');
+            jest.resetModules();
+            // The next reset unloads that module. The load after it reads the file, and does not get what that transpile read.
+            expect([alone.text, (await import("./alone.ts")).text]).toEqual(["v1", "v2"]);
           });
         `,
       },

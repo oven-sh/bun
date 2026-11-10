@@ -486,7 +486,7 @@ impl EventLoop {
         Ok(self.vm_ref().has_pending_test_step.get())
     }
 
-    /// Runs the next test or hook before any other timer or I/O callback. One exception, which Jest and Vitest don't have: the runner declines while a rejected promise waits for its report.
+    /// Runs the next test or hook before any other timer or I/O callback.
     /// Jest and Vitest chain them with promises, so nothing runs in between.
     /// Out of line, so that `drain_microtasks_with_global` needs no larger frame for it in programs that are not `bun test`.
     #[cold]
@@ -505,13 +505,8 @@ impl EventLoop {
             };
             // `exit()` drains before it decrements the count. Reset it so each test callback still drains its microtasks.
             let entered = core::mem::replace(&mut self.entered_event_loop_count, 0);
-            let took_step = (hooks.run_pending_test_step)(vm.global());
+            (hooks.run_pending_test_step)(vm.global());
             self.entered_event_loop_count = entered;
-            if !took_step {
-                // The step stays pending, and the next drain asks for it again.
-                vm.has_pending_test_step.set(true);
-                return Ok(());
-            }
             if !self.drain_microtasks_once(vm, global_object, jsc_vm)? {
                 return Ok(());
             }

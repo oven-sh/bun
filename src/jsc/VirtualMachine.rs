@@ -56,7 +56,8 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // Type aliases
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
+/// The last argument is whose error it is: the owner that `unhandled_rejection_owned` got, or [`VirtualMachine::OWNER_IS_CURRENT`].
+pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue, JSValue);
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
@@ -399,7 +400,7 @@ pub struct VirtualMachine {
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
-    /// Set when a `bun test` test or hook finishes. The next microtask drain with no JS on the stack runs the next one, or keeps this set if the runner declines.
+    /// Set when a `bun test` test or hook finishes. The next microtask drain with no JS on the stack runs the next one.
     pub has_pending_test_step: core::cell::Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,
@@ -1922,6 +1923,7 @@ impl VirtualMachine {
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
         value: JSValue,
+        _owner: JSValue,
     ) {
         this.unhandled_error_counter += 1;
         value.ensure_still_alive();
@@ -1950,6 +1952,7 @@ impl VirtualMachine {
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
         value: JSValue,
+        _owner: JSValue,
     ) {
         // SAFETY: BORROW_PARAM ptr set by caller; outlives this call.
         let list = this
@@ -2260,7 +2263,7 @@ impl VirtualMachine {
                 }
             }
             self.unhandled_error_counter += 1;
-            (self.on_unhandled_rejection)(self, global_object, err);
+            (self.on_unhandled_rejection)(self, global_object, err, Self::OWNER_IS_CURRENT);
             return true;
         }
 
@@ -2273,7 +2276,7 @@ impl VirtualMachine {
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
                 self.exit_handler.exit_code = 1;
-                (self.on_unhandled_rejection)(self, global_object, err);
+                (self.on_unhandled_rejection)(self, global_object, err, Self::OWNER_IS_CURRENT);
                 return false;
             }
             self.run_error_handler(err, None);
@@ -2308,7 +2311,7 @@ impl VirtualMachine {
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
-            (self.on_unhandled_rejection)(self, global_object, err);
+            (self.on_unhandled_rejection)(self, global_object, err, Self::OWNER_IS_CURRENT);
         }
         // Note: this reset must cover BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
@@ -3015,8 +3018,8 @@ pub struct RuntimeHooks {
     /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
     /// idle — folding it into `auto_tick` would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
-    /// Runs the next `bun test` test or hook, or returns false to keep the step pending. See [`VirtualMachine::has_pending_test_step`].
-    pub run_pending_test_step: fn(global: &JSGlobalObject) -> bool,
+    /// Runs the next `bun test` test or hook. See [`VirtualMachine::has_pending_test_step`].
+    pub run_pending_test_step: fn(global: &JSGlobalObject),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
     /// High tier
@@ -4705,6 +4708,9 @@ impl VirtualMachine {
         }
     }
 
+    /// The owner of an error that is reported as it happens: the context that is current.
+    pub const OWNER_IS_CURRENT: JSValue = JSValue::NULL;
+
     /// Routes an unhandled promise rejection to the configured handler, bumping the unhandled-error counter.
     pub fn unhandled_rejection(
         &mut self,
@@ -4718,7 +4724,7 @@ impl VirtualMachine {
     }
 
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
-    /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
+    /// takes it), the int32 that `bun test` names its callbacks by, or null. The tracker queue reports after the fact, so it decided when it happened.
     pub fn unhandled_rejection_owned(
         &mut self,
         global_object: &JSGlobalObject,
@@ -4748,7 +4754,7 @@ impl VirtualMachine {
                 return;
             }
             self.unhandled_error_counter += 1;
-            (self.on_unhandled_rejection)(self, global_object, reason);
+            (self.on_unhandled_rejection)(self, global_object, reason, owner);
             return;
         }
 
@@ -4831,7 +4837,7 @@ impl VirtualMachine {
             }
         }
         self.unhandled_error_counter += 1;
-        (self.on_unhandled_rejection)(self, global_object, reason);
+        (self.on_unhandled_rejection)(self, global_object, reason, owner);
     }
 
     /// The promise of the latest load of the entry point. `--hot` looks at it on every tick,

@@ -885,14 +885,8 @@ pub(crate) enum Received {
 }
 
 unsafe extern "C" {
-    safe fn Bun__hasRejectedPromises(global: &JSGlobalObject) -> bool;
     safe fn Bun__holdRejectedPromises(global: &JSGlobalObject) -> usize;
     safe fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
-}
-
-/// Whether a rejected promise still waits for its report: one with no handler is queued, or the report of a batch is under way. Usually neither.
-pub(crate) fn has_unreported_rejections(global: &JSGlobalObject) -> bool {
-    Bun__hasRejectedPromises(global)
 }
 
 /// `toThrow()` takes a rejection that nothing handles during the call for what the function threw. What was rejected
@@ -2804,7 +2798,7 @@ struct FirstReport {
 }
 
 impl FirstReport {
-    fn take(vm: &mut VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    fn take(vm: &mut VirtualMachine, global: &JSGlobalObject, value: JSValue, owner: JSValue) {
         let Some(this) = vm.on_unhandled_rejection_ctx else { return };
         // SAFETY: `get_value_as_to_throw` points the ctx at its local only while this is the handler.
         let this = unsafe { &mut *this.cast::<FirstReport>() };
@@ -2817,7 +2811,7 @@ impl FirstReport {
         }
         let inner = vm.unhandled_rejection_scope();
         this.outer.apply(vm);
-        (vm.on_unhandled_rejection)(vm, global, value);
+        (vm.on_unhandled_rejection)(vm, global, value, owner);
         inner.apply(vm);
     }
 }

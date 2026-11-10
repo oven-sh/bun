@@ -368,10 +368,11 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 /// Reports an error that no `error()` handled. The server keeps running, so a
 /// Worker prints it like the main thread does. Its own handler ends the Worker.
 fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    let owner = jsc::VirtualMachine::OWNER_IS_CURRENT;
     if vm.worker.is_some() {
-        jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value);
+        jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value, owner);
     } else {
-        (vm.on_unhandled_rejection)(vm, global, value);
+        (vm.on_unhandled_rejection)(vm, global, value, owner);
     }
 }
 

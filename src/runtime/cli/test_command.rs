@@ -2798,6 +2798,7 @@ impl TestCommand {
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
+                rejection_owner: 0,
                 summary: Summary::default(),
                 node_test_used: false,
                 environment_is_left: false,
@@ -4094,13 +4095,12 @@ impl TestCommand {
                 bun_test::BunTest::run(&buntest_strong, vm.global())?;
 
                 // Process event loop while bun_test tests are running
-                buntest.in_wait_loop = true;
                 vm.event_loop_ref().tick();
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
                     // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
-                    if buntest.has_due_step() {
+                    if buntest.result_queue.readable_length() > 0 {
                         bun_test::BunTest::run_next_tick(
                             &std::rc::Rc::downgrade(&buntest_strong),
                             global,
@@ -4120,15 +4120,6 @@ impl TestCommand {
                         ));
                         vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
                         vm.event_loop_ref().tick();
-                        // A step that the report left to a task is taken before the runner looks.
-                        while buntest.has_due_step() {
-                            bun_test::BunTest::run_next_tick(
-                                &std::rc::Rc::downgrade(&buntest_strong),
-                                global,
-                                bun_test::ResultMsg::Start,
-                            );
-                            vm.event_loop_ref().tick();
-                        }
                         // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
                         if waits_for.is_none()
                             || waits_for == Self::what_runner_waits_for(buntest).1
@@ -4148,7 +4139,6 @@ impl TestCommand {
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
-                buntest.in_wait_loop = false;
 
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.

@@ -97,12 +97,6 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
-    /// When the time limit timer of the file last fired.
-    pub(crate) timer_fired_at: Timespec,
-    /// `run_pending_step` declined a step, and declines until a task has called `run`. That `run` judges an entry that already ran at `step_left_at` by `timer_fired_at`, not by its own clock.
-    pub(crate) step_was_left: bool,
-    /// When `step_was_left` was set.
-    pub(crate) step_left_at: Timespec,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -431,9 +425,6 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack: core::cell::Cell::new(None),
-            timer_fired_at: Timespec::EPOCH,
-            step_was_left: false,
-            step_left_at: Timespec::EPOCH,
         }
     }
 
@@ -1196,10 +1187,7 @@ fn step_sequence_one(
         };
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
-        // `timespec` is the start of the entry plus its timeout.
-        let ran_when_step_was_left = this.step_was_left && active_entry.timespec.order(&this.step_left_at.add_ms(i64::from(active_entry.timeout))).is_lt();
-        let judged_at = if ran_when_step_was_left { this.timer_fired_at } else { *now };
-        if active_entry.evaluate_timeout(sequence, &judged_at) {
+        if active_entry.evaluate_timeout(sequence, now) {
             if let Some(context) = sequence.context.as_ref().map(Strong::get) {
                 TestContext::abort_signal(context, global_this);
             }

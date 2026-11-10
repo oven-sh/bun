@@ -16,7 +16,7 @@ namespace Bun {
 // Zig::GlobalObject::m_aboutToBeNotifiedRejectedPromises. Only the JS thread writes, under owner->cellLock(); the GC thread visits.
 class RejectedPromiseQueue {
 public:
-    void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSObject* rejectionOwner);
+    void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSValue rejectionOwner);
     // The promise got its first handler. True if markReported() saw it: it is owed 'rejectionHandled'.
     bool didHandle(JSC::JSCell* owner, JSC::JSPromise*);
     // Move every entry that still has no handler out (index-aligned; jsNull() owner for the global object's) and clear.
@@ -29,14 +29,21 @@ public:
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
-    // Whether a promise still waits for its report: drainTo() has one to move out, or handleRejectedPromises() is in the middle of a batch.
-    bool hasUnreported() const;
-    bool& isReporting() { return m_isReporting; }
+    // Whether a rejection on this global can have an owner. promiseRejectionTracker asks nothing else when it can't.
+    bool hasOwners() const { return !!m_hostOwner; }
+    void noteModuleGraphs()
+    {
+        if (!m_hostOwner)
+            m_hostOwner = JSC::jsNull();
+    }
+    // What the host (`bun test`) owns a rejection by from now on, unless a Bun.ModuleGraph owns it.
+    void setHostOwner(int32_t hostOwner) { m_hostOwner = JSC::jsNumber(hostOwner); }
+    JSC::JSValue hostOwner() const { return m_hostOwner; }
 
 private:
     struct Entry {
         JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
-        JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
+        JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph, the host's int32 owner, or null
     };
     static bool isHandled(const Entry& entry) { return static_cast<JSC::JSPromise*>(entry.promise.get().asCell())->isHandled(); }
     bool wasReported(JSC::JSPromise*);
@@ -47,30 +54,19 @@ private:
     WTF::Vector<Entry> m_held;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;
-    // Set by handleRejectedPromises() for the time of a batch.
-    bool m_isReporting { false };
+    // Empty: no rejection has an owner. Null: only a Bun.ModuleGraph can own one. An int32: the host's owner. Never a cell.
+    JSC::JSValue m_hostOwner;
 };
 
 // Inlined into promiseRejectionTracker, their one caller.
-ALWAYS_INLINE void RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
+ALWAYS_INLINE void RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSValue rejectionOwner)
 {
     WTF::Locker locker { owner->cellLock() };
     if (m_entries.size() == m_entries.capacity()) [[unlikely]]
         makeRoom();
     m_entries.unsafeAppendWithoutCapacityCheck(Entry {});
     m_entries.last().promise.set(vm, owner, promise);
-    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSC::JSValue(rejectionOwner) : JSC::jsNull());
-}
-
-inline bool RejectedPromiseQueue::hasUnreported() const
-{
-    if (m_isReporting)
-        return true;
-    for (const Entry& entry : m_entries) {
-        if (!isHandled(entry))
-            return true;
-    }
-    return false;
+    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? rejectionOwner : JSC::jsNull());
 }
 
 ALWAYS_INLINE bool RejectedPromiseQueue::didHandle(JSC::JSCell* owner, JSC::JSPromise* promise)

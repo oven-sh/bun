@@ -76,8 +76,10 @@ JSModuleGraph* moduleGraphForFunction(JSObject* function)
 static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
 {
     auto& state = globalObject->m_moduleGraphs;
-    if (!state)
+    if (!state) {
         state = makeUnique<ModuleGraphState>(globalObject->vm());
+        globalObject->noteModuleGraphsForRejections();
+    }
     return *state;
 }
 

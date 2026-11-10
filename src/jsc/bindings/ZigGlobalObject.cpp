@@ -50,7 +50,6 @@
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include <wtf/BitVector.h>
-#include <wtf/SetForScope.h>
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSIteratorPrototype.h"
 #include "JavaScriptCore/JSObject.h"
@@ -1616,11 +1615,19 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         globalObj = defaultGlobalObject(obj->vm());
 
     switch (operation) {
-    case JSPromiseRejectionOperation::Reject:
-        // Whose rejection this is (a Bun.ModuleGraph's or the global object's) is
+    case JSPromiseRejectionOperation::Reject: {
+        // Whose rejection this is (a Bun.ModuleGraph's, the host's or the global object's) is
         // decided now, in the context it is rejected in, and travels with it.
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj));
+        auto& queue = globalObj->m_aboutToBeNotifiedRejectedPromises;
+        ASSERT(queue.hasOwners() || !globalObj->hasModuleGraphs());
+        JSC::JSValue rejectionOwner;
+        if (queue.hasOwners()) {
+            auto* graph = Bun::moduleGraphRejecting(globalObj);
+            rejectionOwner = graph ? JSC::JSValue(graph) : queue.hostOwner();
+        }
+        queue.append(obj->vm(), globalObj, promise, rejectionOwner);
         break;
+    }
     case JSPromiseRejectionOperation::Handle:
         // Reported as unhandled before it got this handler: queue the rejectionHandled event.
         if (globalObj->m_aboutToBeNotifiedRejectedPromises.didHandle(globalObj, promise))
@@ -4018,7 +4025,6 @@ void GlobalObject::handleRejectedPromises()
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
         return;
 
-    SetForScope reporting(m_aboutToBeNotifiedRejectedPromises.isReporting(), true);
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
     do {

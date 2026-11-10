@@ -192,6 +192,31 @@ note: unsettled top-level await in "/path/to/test.ts"
 
 The same applies to `--preload` scripts, async `describe()` callbacks, and tests or hooks with a timeout of `0`. An open timer, socket, subprocess or worker counts as something that could still settle the promise, even after `.unref()`.
 
+### Rejections Left by a Test
+
+`bun test` reports a rejected promise that nothing handles after the timer or I/O callback that rejected the promise has returned. If that callback also ended the test, the next test or hook has already started by then. `bun test` then fails neither test: the first test has already passed, and the next test didn't reject the promise. `bun test` reports the rejection as "Unhandled error between tests" and exits with code 1.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test("test 1", async () => {
+  await new Promise<void>(resolve => {
+    setTimeout(() => {
+      // Nothing handles this promise, and the same callback ends the test
+      Promise.reject(new Error("Unhandled rejection"));
+      resolve();
+    });
+  });
+});
+
+test("test 2", () => {});
+
+// bun test reports this as "Unhandled error between tests", passes both tests
+// (2 pass, 1 error), and exits with code 1
+```
+
+The stack trace of the error shows which test rejected the promise. To make the rejection fail that test, `await` the promise in the test.
+
 ### Custom Error Handling
 
 You can set up custom error handlers in your test setup:

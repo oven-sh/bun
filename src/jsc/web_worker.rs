@@ -1476,6 +1476,7 @@ fn on_unhandled_rejection(
     vm: &mut VirtualMachine,
     _: &JSGlobalObject,
     error_instance_or_exception: JSValue,
+    _owner: JSValue,
 ) {
     // Prevent recursion
     vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;

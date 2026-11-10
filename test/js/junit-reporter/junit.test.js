@@ -1202,8 +1202,9 @@ describe("only block", () => {
       },
     );
 
+    // The test that runs when the promise is reported didn't reject it, so it isn't that test's failure.
     it.each([[[]], [["--parallel=2", "--parallel-delay=600000"]]])(
-      "puts a rejection left by the callback that settles a test on that test %j",
+      "puts a promise that an earlier test rejected on no test %j",
       async args => {
         using dir = tempDir("junit-left", {
           "a.test.js": `
@@ -1230,7 +1231,8 @@ describe("only block", () => {
         const xml = await file(join(String(dir), "junit.xml")).text();
         expect(xml.match(/<testcase name="[^"]*"|<failure [^>]*>/g)).toEqual([
           `<testcase name="leaves"`,
-          `<failure type="Error" message="left" uncaught="true">`,
+          `<testcase name="(unhandled error)"`,
+          `<failure type="Error" message="left">`,
           `<testcase name="next"`,
           `<testcase name="passes"`,
         ]);

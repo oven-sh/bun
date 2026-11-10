@@ -145,6 +145,8 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) filter_regex: Option<&'a RegularExpression>,
 
     pub(crate) unhandled_errors_between_tests: u32,
+    /// Names the callback that started last, in any file: a promise that is rejected now is rejected under it.
+    pub(crate) rejection_owner: i32,
     pub(crate) summary: Summary,
 
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
@@ -156,7 +158,17 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
+unsafe extern "C" {
+    safe fn Bun__setRejectionOwner(global: &JSGlobalObject, owner: i32);
+}
+
 impl<'a> TestRunner<'a> {
+    /// A callback starts: from now on `global`'s queue of rejected promises keeps a new owner with each promise.
+    pub(crate) fn start_rejection_owner(&mut self, global: &JSGlobalObject) {
+        self.rejection_owner = self.rejection_owner.wrapping_add(1);
+        Bun__setRejectionOwner(global, self.rejection_owner);
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
@@ -676,6 +688,7 @@ pub(crate) mod on_unhandled_rejection {
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
         rejection: JSValue,
+        owner: JSValue,
     ) {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
             // `buntest_strong` released by Rc drop.
@@ -686,7 +699,12 @@ pub(crate) mod on_unhandled_rejection {
             if buntest.unclaimed.is_ended_error(rejection) {
                 return;
             }
-            // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
+            if owner.is_int32() && Jest::runner().is_some_and(|runner| runner.rejection_owner != owner.as_int32()) {
+                // Another callback has started since this promise was rejected. It isn't that callback's, and nothing ends.
+                buntest.on_uncaught_exception(global_object, Some(rejection), true, &RefDataValue::Start);
+                return;
+            }
+            // An error that is reported as it happens, or a promise that was rejected under the callback that runs now.
             let mut current_state_data = buntest.get_current_state_data();
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data

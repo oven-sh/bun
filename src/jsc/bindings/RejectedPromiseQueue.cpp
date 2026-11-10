@@ -87,7 +87,7 @@ template void RejectedPromiseQueue::visit(JSC::JSCell*, JSC::SlotVisitor&);
 
 } // namespace Bun
 
-extern "C" bool Bun__hasRejectedPromises(Zig::GlobalObject* globalObject)
+extern "C" void Bun__setRejectionOwner(Zig::GlobalObject* globalObject, int32_t owner)
 {
-    return globalObject->hasRejectedPromises();
+    globalObject->setRejectionOwner(owner);
 }

@@ -323,9 +323,10 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
-    bool hasRejectedPromises() const { return m_aboutToBeNotifiedRejectedPromises.hasUnreported(); }
     size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }
     void releaseRejectedPromises(size_t mark) { m_aboutToBeNotifiedRejectedPromises.release(this, mark); }
+    void setRejectionOwner(int32_t owner) { m_aboutToBeNotifiedRejectedPromises.setHostOwner(owner); }
+    void noteModuleGraphsForRejections() { m_aboutToBeNotifiedRejectedPromises.noteModuleGraphs(); }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
@@ -720,7 +721,7 @@ private:
 
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
-    // happened: a Bun.ModuleGraph, or null for the global object's own code.
+    // happened: a Bun.ModuleGraph, the host's owner, or null for the global object's own code.
     // Guarded by cellLock() (visited on the GC thread).
     Bun::RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
 };

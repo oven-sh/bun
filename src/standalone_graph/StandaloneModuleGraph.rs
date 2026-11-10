@@ -2762,8 +2762,8 @@ pub(crate) fn inject<'a>(
                 )
             };
 
-            additions.has_symbols = match written {
-                Ok(written) => written.has_symbols,
+            (additions.has_symbols, additions.has_pointer) = match written {
+                Ok(written) => (written.has_symbols, written.has_pointer),
                 Err(error) => {
                     match error {
                         ElfWriteError::Template(e) => {

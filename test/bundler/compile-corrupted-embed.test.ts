@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  readElf64ProgramHeaders,
+  tempDir,
+} from "harness";
 import {
   closeSync,
   copyFileSync,
@@ -13,7 +23,6 @@ import {
 } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
-import { test as aotTest } from "../aot/supported";
 
 // Huge, but adding small offsets to it doesn't overflow.
 const HUGE_LENGTH = 0x0000ffffffffffffn;
@@ -336,6 +345,12 @@ test.if(reportsTruncation)(
   TIMEOUT,
 );
 
+/// The word that holds the payload's address: the ".bun" section of bun itself, or ".bun.pointer" of a bun that is a compiled executable already.
+function elfFindPointerWord(fd: number): { fileOffset: number; vaddr: bigint } {
+  const pointer = elfSections(fd).find(section => section.name === ".bun.pointer");
+  return pointer ? { fileOffset: pointer.fileOffset, vaddr: pointer.vaddr } : elfFindBunSection(fd);
+}
+
 // GNU strip and objcopy write a new file from the section headers. Bytes that no section covers are lost. The word
 // that holds the payload's address stays where bun itself has its ".bun" section, which the compile points at the payload.
 test.skipIf(!isLinux)(
@@ -349,7 +364,7 @@ test.skipIf(!isLinux)(
     const bun = openSync(bunExe(), "r");
     const fd = openSync(exe, "r");
     try {
-      const word = elfFindBunSection(bun);
+      const word = elfFindPointerWord(bun);
       const payload = elfFindBunSection(fd);
       expect(readAt(fd, word.fileOffset, 8).readBigUInt64LE()).toBe(payload.vaddr);
 
@@ -383,6 +398,15 @@ const hasGnuStrip =
   Bun.spawnSync({ cmd: [gnuStrip, "--version"], stdout: "pipe" })
     .stdout.toString()
     .includes("GNU");
+
+/// An executable whose payload has segments of its own (`--aot`, `--trim`, or a bun that is such an executable) has its program header table
+/// inside a note. GNU strip refuses that layout: it exits with an error and leaves the file as it was.
+function hasOwnSegments(exe: string): boolean {
+  const PT_BUN_RESERVED = 0x6fb00001;
+  const PT_BUN_PAYLOAD = 0x6fb00002;
+  return readElf64ProgramHeaders(exe).some(ph => ph.type === PT_BUN_RESERVED || ph.type === PT_BUN_PAYLOAD);
+}
+
 test.if(hasGnuStrip)(
   "runs its program after GNU strip",
   async () => {
@@ -390,10 +414,13 @@ test.if(hasGnuStrip)(
       "app.js": `console.log("hello from standalone");`,
     });
     const exe = await compileApp(String(dir));
+    const stripAccepts = !hasOwnSegments(exe);
     const stripped = corruptedCopy(exe, "stripped", path => {
       const { stderr, exitCode } = Bun.spawnSync({ cmd: [gnuStrip!, path], stderr: "pipe" });
-      expect(stderr.toString()).toBe("");
-      expect(exitCode).toBe(0);
+      if (stripAccepts) {
+        expect(stderr.toString()).toBe("");
+        expect(exitCode).toBe(0);
+      }
     });
     expect(await run(stripped)).toEqual({ stdout: "hello from standalone\n", stderr: "", exitCode: 0 });
     rmSync(stripped);
@@ -401,9 +428,21 @@ test.if(hasGnuStrip)(
   TIMEOUT,
 );
 
-// An `--aot` executable has its program header table inside a note, and GNU strip refuses that layout: it exits with an
-// error and leaves the file as it was. Whatever a version of binutils does with the layout, the program stays.
-aotTest.if(hasGnuStrip)(
+// Not every build of Bun includes the compiler. One without it says so before it looks for the entry point.
+const hasAot =
+  hasGnuStrip &&
+  !/^error: --aot /m.test(
+    Bun.spawnSync({
+      cmd: [bunExe(), "build", "--compile", "--aot", "./no-such-file.ts"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    }).stderr.toString(),
+  );
+
+// Whatever a version of binutils does with the layout of an `--aot` executable, the program stays.
+// An `--aot` build takes a minute with a sanitizer, and the layout is the same there.
+test.if(hasAot && !isASAN)(
   "GNU strip never turns an --aot executable into the Bun CLI",
   async () => {
     using dir = tempDir("compile-aot-stripped", {

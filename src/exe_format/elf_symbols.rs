@@ -88,7 +88,13 @@ pub struct SectionTail {
     pub offset: u64,
     pub section_headers_offset: u64,
     pub number_of_sections: u16,
+    /// The table names `.bun.pointer`: the file had it, or the tail adds it.
+    pub names_pointer: bool,
 }
+
+/// Neither the writer nor the file says where the word that holds the payload's address is.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct NoPointerWord;
 
 const E_SHOFF_OFFSET: u64 = offset_of!(Elf64_Ehdr, e_shoff) as u64;
 const E_SHNUM_OFFSET: u64 = offset_of!(Elf64_Ehdr, e_shnum) as u64;
@@ -183,7 +189,8 @@ impl TailBuilder {
         tail
     }
 
-    /// Over the old names and table when they end the file, so that a re-compile writes the same bytes. Else behind it.
+    /// Over the old table when it ends the file, and over the old names too when only padding parts them from it,
+    /// so that a re-compile writes the same bytes. Else behind the file. Bytes that no section names stay.
     fn start(file_size: u64, ehdr: &Elf64_Ehdr, sections: &SectionTable) -> u64 {
         let headers = &sections.headers;
         let table_end = ehdr.e_shoff.saturating_add(headers.len() as u64);
@@ -201,7 +208,7 @@ impl TailBuilder {
                     && shdr.sh_offset.saturating_add(shdr.sh_size) > names.sh_offset
             });
         let names_end = names.sh_offset.saturating_add(names.sh_size);
-        if stands_behind_names || names_end > ehdr.e_shoff {
+        if stands_behind_names || align_up(names_end, 8) != ehdr.e_shoff {
             ehdr.e_shoff
         } else {
             names.sh_offset
@@ -216,7 +223,12 @@ impl TailBuilder {
     }
 
     /// The section header table ends the tail: the file's headers, then the new ones.
-    fn finish(mut self, headers: &[u8], new_sections: &[Elf64_Shdr]) -> SectionTail {
+    fn finish(
+        mut self,
+        headers: &[u8],
+        new_sections: &[Elf64_Shdr],
+        names_pointer: bool,
+    ) -> SectionTail {
         let section_headers_offset = self.next_aligned_offset();
         self.bytes.extend_from_slice(headers);
         for shdr in new_sections {
@@ -229,6 +241,7 @@ impl TailBuilder {
             offset: self.offset,
             section_headers_offset,
             number_of_sections: (headers.len() / SECTION_HEADER_SIZE + new_sections.len()) as u16,
+            names_pointer,
         }
     }
 }
@@ -372,20 +385,21 @@ fn find_pointer_word(
 }
 
 /// `.bun.pointer` names the word that `.bun` left when it moved onto the payload, so that GNU `strip` keeps it.
+/// `Ok(None)`: the file has the section.
 fn pointer_section(
     read: &mut impl FnMut(u64, &mut [u8]) -> bool,
     sections: &SectionTable,
     word: Option<PointerWord>,
     sh_name: u32,
-) -> Option<Elf64_Shdr> {
+) -> Result<Option<Elf64_Shdr>, NoPointerWord> {
     if sections.has_pointer {
-        return None;
+        return Ok(None);
     }
     let word = match word {
         Some(word) => word,
-        None => find_pointer_word(read, sections)?,
+        None => find_pointer_word(read, sections).ok_or(NoPointerWord)?,
     };
-    Some(Elf64_Shdr {
+    Ok(Some(Elf64_Shdr {
         sh_name,
         sh_type: SHT_PROGBITS,
         sh_flags: SHF_ALLOC | SHF_WRITE,
@@ -396,19 +410,22 @@ fn pointer_section(
         sh_info: 0,
         sh_addralign: 8,
         sh_entsize: 0,
-    })
+    }))
 }
 
-/// A tail that adds `.bun.pointer`. `None` when the file has it, or the word is not found.
+/// A tail that adds `.bun.pointer`. `Ok(None)` when the file has it. `Err` when the word is not found, or the
+/// file is not one that a tail can be made for.
 pub fn pointer_tail(
     file_size: u64,
     mut read: impl FnMut(u64, &mut [u8]) -> bool,
     word: Option<PointerWord>,
-) -> Option<SectionTail> {
-    let ehdr = read_file_header(&mut read)?;
-    let mut sections = read_section_table(file_size, &mut read, &ehdr)?;
+) -> Result<Option<SectionTail>, NoPointerWord> {
+    let ehdr = read_file_header(&mut read).ok_or(NoPointerWord)?;
+    let mut sections = read_section_table(file_size, &mut read, &ehdr).ok_or(NoPointerWord)?;
     let pointer_name = sections.names.len() as u32 + POINTER_NAME;
-    let pointer = pointer_section(&mut read, &sections, word, pointer_name)?;
+    let Some(pointer) = pointer_section(&mut read, &sections, word, pointer_name)? else {
+        return Ok(None);
+    };
     let capacity = sections.names.len()
         + POINTER_SECTION_NAMES.len()
         + sections.headers.len()
@@ -421,7 +438,7 @@ pub fn pointer_tail(
         POINTER_SECTION_NAMES,
         capacity,
     );
-    Some(tail.finish(&sections.headers, &[pointer]))
+    Ok(Some(tail.finish(&sections.headers, &[pointer], true)))
 }
 
 fn append_string_table(tail: &mut TailBuilder, sh_name: u32, symbol_names: &[u8]) -> Elf64_Shdr {
@@ -593,6 +610,7 @@ pub fn symbols_tail(
     let shnum = ehdr.e_shnum as usize;
     let first_new_name = sections.names.len() as u32;
     let pointer = pointer_section(&mut read, &sections, word, first_new_name + POINTER_NAME);
+    let names_pointer = sections.has_pointer || matches!(pointer, Ok(Some(_)));
     let (bun_index, bun_address) = (sections.bun_index, sections.bun_address);
 
     let symbols = SymbolTable::parse(table)?;
@@ -638,8 +656,8 @@ pub fn symbols_tail(
     new_sections.push(append_debug_frame(
         &mut tail, frame_name, registers, code, code_bytes,
     ));
-    new_sections.extend(pointer);
-    Some(tail.finish(headers, &new_sections))
+    new_sections.extend(pointer.ok().flatten());
+    Some(tail.finish(headers, &new_sections, names_pointer))
 }
 
 #[cfg(test)]
@@ -775,13 +793,16 @@ pub(crate) mod tests {
         }
     }
 
-    fn create_pointer_tail(elf: &[u8], word: Option<PointerWord>) -> Option<SectionTail> {
+    fn create_pointer_tail(
+        elf: &[u8],
+        word: Option<PointerWord>,
+    ) -> Result<Option<SectionTail>, NoPointerWord> {
         let read = |offset: u64, out: &mut [u8]| read_at(elf, offset, out);
         pointer_tail(elf.len() as u64, read, word)
     }
 
     fn with_pointer(elf: &[u8], word: Option<PointerWord>) -> Option<Vec<u8>> {
-        let tail = create_pointer_tail(elf, word)?;
+        let tail = create_pointer_tail(elf, word).unwrap()?;
         let mut with_pointer = elf.to_vec();
         tail.write(|offset, bytes| write_at(&mut with_pointer, offset, bytes))
             .unwrap();
@@ -1066,6 +1087,7 @@ pub(crate) mod tests {
                 }),
             ];
             for (index, file) in without_pointer.iter().enumerate() {
+                assert!(!create_tail(file, &toy_table()).unwrap().names_pointer);
                 let new = with_symbols(file, &toy_table()).unwrap();
                 let added_sections = read_ehdr(&new).e_shnum - read_ehdr(&old).e_shnum;
                 assert_eq!(added_sections, 3, "file {index}");
@@ -1084,8 +1106,9 @@ pub(crate) mod tests {
 
             // The writer says where the word is, or the tail finds it behind the section before `.bun`.
             for word in [Some(word), None] {
-                let tail = create_pointer_tail(&old, word).unwrap();
+                let tail = create_pointer_tail(&old, word).unwrap().unwrap();
                 assert_eq!(tail.offset, names_offset);
+                assert!(tail.names_pointer);
                 let new = with_pointer(&old, word).unwrap();
                 assert_eq!(new.len(), names_offset as usize + tail.bytes.len());
                 assert_eq!(read_ehdr(&new).e_shnum, read_ehdr(&old).e_shnum + 1);
@@ -1126,7 +1149,10 @@ pub(crate) mod tests {
             // Neither the writer nor the file says where the word is.
             let mut other_stored_address = old;
             other_stored_address[word.file_offset as usize] ^= 0xff;
-            assert!(create_pointer_tail(&other_stored_address, None).is_none());
+            assert_eq!(
+                create_pointer_tail(&other_stored_address, None).err(),
+                Some(NoPointerWord)
+            );
         }
     }
 
@@ -1151,8 +1177,32 @@ pub(crate) mod tests {
             );
 
             let aligned_to_8 = edit_section(&old, bun_index, |section| section.sh_addralign = 8);
-            assert!(create_pointer_tail(&aligned_to_8, None).is_none());
+            assert_eq!(
+                create_pointer_tail(&aligned_to_8, None).err(),
+                Some(NoPointerWord)
+            );
         }
+    }
+
+    #[test]
+    fn bytes_between_the_names_and_the_table_stay() {
+        // A carrier with bytes behind its section names, and the table moved behind them.
+        let old = executable_with_payload(Architecture::X86_64);
+        let ehdr = read_ehdr(&old);
+        let table =
+            old[ehdr.e_shoff as usize..][..ehdr.e_shnum as usize * SECTION_HEADER_SIZE].to_vec();
+        let mut moved = old[..ehdr.e_shoff as usize].to_vec();
+        moved.extend_from_slice(&[0xaa; 1000]);
+        let table_offset = align_up(moved.len() as u64, 8);
+        moved.resize(table_offset as usize, 0);
+        moved.extend_from_slice(&table);
+        let moved = edit_header(&moved, |ehdr| ehdr.e_shoff = table_offset);
+
+        let tail = create_pointer_tail(&moved, None).unwrap().unwrap();
+        assert_eq!(tail.offset, table_offset);
+        let new = with_pointer(&moved, None).unwrap();
+        assert!(new[64..table_offset as usize] == moved[64..table_offset as usize]);
+        assert!(section_index(&new, b".bun.pointer").is_some());
     }
 
     #[test]
@@ -1161,8 +1211,8 @@ pub(crate) mod tests {
             let linked = linked_executable(architecture);
             let word = Some(pointer_word(&linked));
             let with_pointer = with_pointer(&write_payload(&linked), word).unwrap();
-            assert!(create_pointer_tail(&with_pointer, word).is_none());
-            assert!(create_pointer_tail(&with_pointer, None).is_none());
+            assert!(create_pointer_tail(&with_pointer, word).unwrap().is_none());
+            assert!(create_pointer_tail(&with_pointer, None).unwrap().is_none());
 
             let with_symbols = with_symbols(&with_pointer, &toy_table()).unwrap();
             let added_sections =
@@ -1173,7 +1223,12 @@ pub(crate) mod tests {
                 .filter(|section| section_name(&with_symbols, section) == b".bun.pointer")
                 .count();
             assert_eq!(pointers, 1);
-            assert!(create_pointer_tail(&with_symbols, word).is_none());
+            assert!(create_pointer_tail(&with_symbols, word).unwrap().is_none());
+            assert!(
+                create_tail(&with_pointer, &toy_table())
+                    .unwrap()
+                    .names_pointer
+            );
         }
     }
 
@@ -1186,7 +1241,7 @@ pub(crate) mod tests {
             for payload in [&[0x91; 0x2800][..], &[0x92; 0x10][..]] {
                 // A compile into `first` keeps its pointer section. The tail it has is where a fresh one goes.
                 let second = write_payload_of(&first, payload);
-                assert!(create_pointer_tail(&second, None).is_none());
+                assert!(create_pointer_tail(&second, None).unwrap().is_none());
                 let direct = with_pointer(&write_payload_of(&linked, payload), word).unwrap();
                 assert!(second == direct);
             }
@@ -1320,6 +1375,7 @@ pub(crate) mod tests {
             offset: 0x1000,
             section_headers_offset: 0x1100,
             number_of_sections: 12,
+            names_pointer: true,
         };
         let expected_writes: [(u64, Vec<u8>); 3] = [
             (0x1000, vec![1, 2, 3]),

@@ -6,7 +6,7 @@ use bun_exe_format::builtins::Image;
 use bun_exe_format::elf::{self as bun_elf, ElfFile};
 use bun_exe_format::elf_payload::{Piece, PointerWord};
 use bun_exe_format::elf_ranges::reserve_payload_segments;
-use bun_exe_format::elf_symbols::{pointer_tail, symbols_tail};
+use bun_exe_format::elf_symbols::{NoPointerWord, pointer_tail, symbols_tail};
 use bun_exe_format::mapped_file::ReadOnce;
 pub(crate) use bun_exe_format::mapped_file::{MappedFile, TemplateBytes};
 use bun_sys::Fd;
@@ -122,6 +122,8 @@ pub(crate) enum ElfWriteError {
 
 pub(crate) struct ElfWritten {
     pub(crate) has_symbols: bool,
+    /// A section names the word that holds the payload's address, so that GNU `strip` keeps it.
+    pub(crate) has_pointer: bool,
 }
 
 /// The pages of a private mapping of a whole file that nothing has written to. They hold what the file holds.
@@ -437,13 +439,13 @@ fn write_pieces<'a>(
     Ok((size, size - bytes_kept))
 }
 
-/// Names the symbols, if there are any, and the word that holds the payload's address. Whether the file has the symbols.
+/// Names the symbols, if there are any, and the word that holds the payload's address.
 fn write_section_tail(
     file: &bun_sys::File,
     size: u64,
     symbols: Option<ImageSymbols<'_>>,
     word: Option<PointerWord>,
-) -> Result<bool, ElfWriteError> {
+) -> Result<ElfWritten, ElfWriteError> {
     let mut read_at = |offset: u64, out: &mut [u8]| matches!(file.pread_all(out, offset), Ok(count) if count == out.len());
     let symbols = symbols.and_then(|symbols| {
         symbols_tail(
@@ -454,15 +456,36 @@ fn write_section_tail(
             word,
         )
     });
-    let (tail, has_symbols) = match symbols {
-        Some(tail) => (Some(tail), true),
-        None => (pointer_tail(size, read_at, word), false),
+    let (tail, written) = match symbols {
+        Some(tail) => {
+            let has_pointer = tail.names_pointer;
+            (
+                Some(tail),
+                ElfWritten {
+                    has_symbols: true,
+                    has_pointer,
+                },
+            )
+        }
+        None => {
+            let (tail, has_pointer) = match pointer_tail(size, read_at, word) {
+                Ok(tail) => (tail, true),
+                Err(NoPointerWord) => (None, false),
+            };
+            (
+                tail,
+                ElfWritten {
+                    has_symbols: false,
+                    has_pointer,
+                },
+            )
+        }
     };
     if let Some(tail) = tail {
         tail.write(|offset, bytes| file.pwrite_all(bytes, offset as i64))
             .map_err(ElfWriteError::Write)?;
     }
-    Ok(has_symbols)
+    Ok(written)
 }
 
 /// What is executed. The data behind it belongs to the image's code part too, and is only read.
@@ -516,8 +539,7 @@ pub(crate) fn write_elf(
         payload.relocate_image(address);
     }
     let ((size, _), word) = written?;
-    let has_symbols = write_section_tail(file, size, symbols, word)?;
-    Ok(ElfWritten { has_symbols })
+    write_section_tail(file, size, symbols, word)
 }
 
 /// The loader puts the first byte of `image` at `address`. Bytes whose header says another size than they have are no image.

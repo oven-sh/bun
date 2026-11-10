@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it, mock, test } from "bun:test";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
@@ -1090,6 +1090,60 @@ Received: Instance {
     expect(messageOf(() => expect(1).toBe<unknown>(throws()))).toBe(
       `expect(received).toBe(expected)\n\nExpected: ${printed}\nReceived: 1\n`,
     );
+  });
+
+  // Jest reads the index of an array with a call. What the getter throws is the error of the matcher.
+  test("at an index of an array", () => {
+    const get = mock(() => "from the getter");
+    const list = () => Object.defineProperty<unknown[]>([1, 2, 3], 1, { get, enumerable: true });
+    const element = (children: unknown[]) => ({
+      $$typeof: Symbol.for("react.element"),
+      type: "div",
+      key: null,
+      props: { children },
+    });
+
+    expect(list()).toMatchInlineSnapshot(`
+      [
+        1,
+        "from the getter",
+        3,
+      ]
+    `);
+    expect(element(list())).toMatchInlineSnapshot(`<div>
+  1
+  from the getter
+  3
+</div>`);
+    expect(messageOf(() => expect(list()).toEqual([]))).toBe(
+      'expect(received).toEqual(expected)\n\n- []\n+ [\n+   1,\n+   "from the getter",\n+   3,\n+ ]\n\n- Expected  - 1\n+ Received  + 5\n',
+    );
+    expect(messageOf(() => expect(element(list())).toEqual({}))).toBe(
+      "expect(received).toEqual(expected)\n\n- {}\n+ <div>\n+   1\n+   from the getter\n+   3\n+ </div>\n\n- Expected  - 1\n+ Received  + 5\n",
+    );
+    expect(messageOf(() => expect(list()).toBeNull())).toBe(
+      'expect(received).toBeNull()\n\nReceived: [ 1, "from the getter", 3 ]\n',
+    );
+    expect(messageOf(() => expect(element(list())).toBeNull())).toBe(
+      "expect(received).toBeNull()\n\nReceived: <div>\n  1\n  from the getter\n  3\n</div>\n",
+    );
+    expect(get).toHaveBeenCalledTimes(6);
+    expect(element([1, , 3])).toMatchInlineSnapshot(`<div>
+  1
+  undefined
+  3
+</div>`);
+
+    const throws = () =>
+      Object.defineProperty<unknown[]>([1, 2, 3], 1, {
+        get() {
+          throw new Error("thrown by the getter");
+        },
+        enumerable: true,
+      });
+    expect(() => expect(throws()).toBeNull()).toThrow("thrown by the getter");
+    expect(() => expect(throws()).toEqual([])).toThrow("thrown by the getter");
+    expect(() => expect(element(throws())).toBeNull()).toThrow("thrown by the getter");
   });
 
   test("console.log() and Bun.inspect() do not call it", () => {

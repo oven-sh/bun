@@ -11,6 +11,7 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
+#include "JavaScriptCore/GetterSetter.h"
 
 namespace Bun {
 
@@ -71,6 +72,39 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
+}
+
+// Out of line: an element in plain storage does not pay for the frame of this lookup.
+static NEVER_INLINE JSC::EncodedJSValue getOwnIndexSlow(JSC::JSGlobalObject* globalObject, JSObject* object, uint32_t index)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    bool hasProperty = object->methodTable()->getOwnPropertySlotByIndex(object, globalObject, index, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasProperty)
+        return {};
+    if (slot.isAccessor()) {
+        GetterSetter* accessor = slot.getterSetter();
+        // `{ get: undefined, set: undefined }` has no label. Node.js prints `undefined` for it.
+        if (accessor->isGetterNull() && accessor->isSetterNull())
+            return JSValue::encode(jsUndefined());
+        return JSValue::encode(accessor);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, index)));
+}
+
+// The own element at `index`, read with no call: empty for a hole, and for an accessor its GetterSetter cell, which prints as the label of Node.js: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L2357-L2375
+extern "C" JSC::EncodedJSValue Bun__ConsoleFormatter__getOwnIndex(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint32_t index)
+{
+    JSObject* object = JSValue::decode(encodedValue).getObject();
+    ASSERT(object);
+    // Without indexed storage, tryGetIndexQuickly is only its typed array arm, whose calls need a frame.
+    if (hasIndexedProperties(object->indexingType())) [[likely]] {
+        if (JSValue quick = object->tryGetIndexQuickly(index))
+            return JSValue::encode(quick);
+    }
+    return getOwnIndexSlow(globalObject, object, index);
 }
 
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by

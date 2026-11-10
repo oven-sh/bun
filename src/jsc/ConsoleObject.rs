@@ -3439,6 +3439,18 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+        safe fn Bun__ConsoleFormatter__getOwnIndex(
+            global: &JSGlobalObject,
+            value: JSValue,
+            index: u32,
+        ) -> JSValue;
+    }
+
+    /// An own element, read with no call: a hole is empty, an accessor is its `GetterSetter` cell.
+    fn get_own_index(value: JSValue, global: &JSGlobalObject, index: u32) -> JsResult<JSValue> {
+        crate::call_check_slow(global, || {
+            Bun__ConsoleFormatter__getOwnIndex(global, value, index)
+        })
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -4664,13 +4676,17 @@ pub mod formatter {
             }
 
             // `is_snapshot` prints a hole as `undefined`.
+            // A `bun:test` matcher message prints the value of an index getter, as Jest does.
             let global_this = self.global_this;
             let is_snapshot = self.is_snapshot;
+            let call_own_getters = self.call_own_getters;
             let get_element = |i: u32| {
                 if is_snapshot {
                     Snapshot::element_of(global_this, value, i)
-                } else {
+                } else if call_own_getters {
                     value.get_direct_index(global_this, i)
+                } else {
+                    get_own_index(value, global_this, i)
                 }
             };
 
@@ -4698,8 +4714,9 @@ pub mod formatter {
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
+                    // `[Getter]` is as short as a primitive.
                     was_good_time = was_good_time
-                        || !tag.tag.is_primitive()
+                        || !(tag.tag.is_primitive() || matches!(tag.tag, TagPayload::GetterSetter))
                         || writer.good_time_for_a_new_line(self.indent);
 
                     if !self.single_line && (self.ordered_properties || was_good_time) {
@@ -5706,10 +5723,19 @@ pub mod formatter {
 
                                             let mut j: usize = 0;
                                             while (j as u64) < length {
-                                                let child = children.get_index(
-                                                    self.global_this,
-                                                    u32::try_from(j).expect("int cast"),
-                                                )?;
+                                                let index = u32::try_from(j).expect("int cast");
+                                                // A snapshot and a matcher message read a child as Jest does.
+                                                let child = if self.is_snapshot
+                                                    || self.call_own_getters
+                                                {
+                                                    children.get_index(self.global_this, index)?
+                                                } else {
+                                                    get_own_index(
+                                                        children,
+                                                        self.global_this,
+                                                        index,
+                                                    )?
+                                                };
                                                 if writer.failed {
                                                     self.failed = true;
                                                 }

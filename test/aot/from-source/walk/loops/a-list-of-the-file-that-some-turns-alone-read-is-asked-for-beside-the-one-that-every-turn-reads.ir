@@ -1,0 +1,15 @@
+# `for (..; place < marks.length; ..) { if (marks[place] < 100) continue; total = total + weights[place]; }`, both constants of the file of which nothing is known: the front of the loop tells `marks` apart; in the copy where that one is a list of numbers the other holders are asked for lists too,
+# and who fails there goes on to the copy where `marks` alone is a list. But only what EVERY turn reads was looked at, four times over: whether another holder may be a list at all, whether a read of a variable finds it, which holders are proven, and which element speaks for the question.
+# `weights[place]` stands behind the `continue`. Nothing was asked of `weights`, and in a typed copy no guess is opened in a turn: the first turn that came there boxed the sum and left for the closed copy without a test, and the rest of the turns ran there: 2,215 instructions a call for 16 turns, where the loop that reads both in every turn takes 388.
+# The same list in a `let` that is written again anywhere took 588: the front end expects something of that one; of a constant made by a call it expects nothing, and of a list of numbers nothing on purpose: "a loop asks in front of itself".
+# Now a list that the loop reckons with is asked for beside the one that every turn reads, though a turn may skip it. The question runs no code of the program.
+# -- source: main.cjs
+# const marks = JSON.parse("[0.25, 137.25, 24.25, 161.25]"), weights = JSON.parse("[0.5, 53.5, 106.5, 159.5]"), record = Object.assign({}, weights);
+# function tally(start) { let total = start; for (let place = 0; place < marks.length; place++) { if (marks[place] < 100) continue; total = total + weights[place]; } return total; }
+# function overRecord(start) { let total = start; for (let place = 0; place < marks.length; place++) { if (marks[place] < 100) continue; total = total + record[place]; } return total; }
+# print(tally([].length + 1), overRecord([].length + 1));
+# -- end of source
+# RUN(COUNT): compile ListsAskedForBesideListsInFrontOfLoops mechanisms=all
+# COUNT: statistic ListsAskedForBesideListsInFrontOfLoops 2
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 214 214

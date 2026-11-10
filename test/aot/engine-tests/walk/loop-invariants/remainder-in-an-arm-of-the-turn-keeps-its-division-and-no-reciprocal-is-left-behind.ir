@@ -1,0 +1,72 @@
+# The reciprocal is carried in front of a loop only where the remainder runs in every turn. Here it stands in an arm: the division stays, and the reciprocal that was tried in the turn is in nobody's way: the sweep drops it.
+# function inAnArm(d: number) { let s = 0; for (let j = 0; j < 1000; j++) { if (j & 1) s = (s + j % d) | 0; } return s; }
+# console.log(inAnArm(Number(process.argv[2] ?? "5")));
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: Reciprocal
+# CHECK: = Mod {{*}} form=Integers
+# CHECK-NOT: Reciprocal
+
+module m0 path="remainder-in-an-arm-of-the-turn-keeps-its-division-and-no-reciprocal-is-left-behind.ts" displayPath="remainder-in-an-arm-of-the-turn-keeps-its-division-and-no-reciprocal-is-left-behind.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @120
+    v3 = PropGet v2 key="console" [isFreeName] @120
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]} @120
+    v5 = PropGet v4 key="log" @120
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @120
+    v7 = Builtin builtin=Number @140
+    v8 = Builtin builtin=Process @147
+    v9 = PropGet v8 key="argv" @147
+    v10 = Convert v9 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @147
+    v11 = Integer integer=2 @147
+    v12 = ElemGet v10, v11 @155
+    v13 = TypeTest v12 testedType=undefined|null @147
+    Branch v13 -> taken b1(| 0), notTaken b2(| 0) @147
+  b1(v14):
+    v15 = String string="5" @166
+    Jump -> next b3(v15) @166
+  b2(v16):
+    Jump -> next b3(v16) @147
+  b3(v17):
+    v18 = Call v7, -, v17 calleeName="Number" @140
+    v19 = Convert v18 declared={type=number} illTypedCause=DeclarationWithoutBody @140
+    v20 = Call v1, -, v19 calleeName="inAnArm" @132
+    v21 = Call v6, v4, v20 calleeKey="log" calleeName="console.log" @128
+    v22 = Undefined @120
+    Return v22 @120
+}
+function f1 name="inAnArm" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @38
+    v2 = Convert v1 declared={type=number} @38
+    v3 = Integer @54
+    v4 = Convert v3 declared={type=number} @54
+    Jump -> next b1(v2, v4) @50
+  b1(v5: number, v6: number):
+    LoopHint @50
+    v8 = Integer integer=1000 @61
+    v9 = Less v6, v8 @61
+    Branch v9 -> taken b2(), notTaken b5() @61
+  b2():
+    v10 = Integer integer=1 @82
+    v11 = BitAnd v6, v10 @82
+    v12 = ToBoolean v11 @78
+    Branch v12 -> taken b3(| 0), notTaken b4(v5) @78
+  b3(v13):
+    v14 = Mod v6, v0 @98
+    v15 = Add v5, v14 @98
+    v16 = Integer @103
+    v17 = BitOr v15, v16 @103
+    v18 = Convert v17 declared={type=number} @85
+    Jump -> next b4(v18) @85
+  b4(v19: number):
+    v20 = Increment v6 @67
+    v21 = Convert v20 declared={type=number} @67
+    Jump -> next b1(v19, v21) @67
+  b5():
+    Return v5 @115
+}

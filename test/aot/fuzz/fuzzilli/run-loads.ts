@@ -2,6 +2,8 @@
 // run-alone.ts wraps a program in one test file and counts every difference of a program with files as an order of loads. Here the test files are the worlds, and none observes an order.
 //
 //   bun run-loads.ts --bun <the Bun that builds and runs> --work <folder> --finds <folder> [--seconds 3600] [--whole] [--share 1/8] [--rows 2,3] [--in-company 50] [--only <part of a name>]
+//   --row <deed>--<deed>--..   that row alone, of any length, once: for a fault whose shape is known
+//   --compiled-runs 40         so many compiled runs of each project, also where none parts: for an answer that comes once in many runs
 //
 // Without `--whole` it draws: a row of two or three deeds (`--rows`), 50 of 100 in company. `--whole` takes every row once, alone and in company, `--share 1/8` the first of eight equal parts of them.
 // THE ORACLE: compiled gives an answer that the reference gives. Where a world parts, both run twice more. Where the reference wavers, it runs 40 times in all, and a find is an answer that is none of its answers.
@@ -10,7 +12,7 @@
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
-import { rowsOfDeeds, writeProject, type Deed, type Project } from "./write-loads.ts";
+import { rowOfDeeds, rowsOfDeeds, writeProject, type Deed, type Project } from "./write-loads.ts";
 
 const { values: options } = parseArgs({
   // lane.ts hands every driver what run-batch.ts takes.
@@ -26,6 +28,8 @@ const { values: options } = parseArgs({
     rows: { type: "string", default: "2,3" },
     "in-company": { type: "string", default: "50" },
     only: { type: "string", default: "" },
+    row: { type: "string", default: "" },
+    "compiled-runs": { type: "string", default: "1" },
   },
 });
 const { bun, work, finds } = options as Record<string, string>;
@@ -36,7 +40,7 @@ mkdirSync(finds, { recursive: true });
 type Run = { worlds: Map<string, string>; end: string; stderr: string };
 async function run(more: string[]): Promise<Run> {
   const child = Bun.spawn({
-    cmd: [bun, "test", "--isolate", ...more, "./p"],
+    cmd: [bun, "test", "--no-install", "--isolate", ...more, "./p"],
     cwd: folder,
     env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", NO_COLOR: "1" },
     stdin: "ignore",
@@ -54,7 +58,8 @@ async function run(more: string[]): Promise<Run> {
   const worlds = new Map<string, string>();
   let lines: string[] = [];
   for (const line of stdout.split("\n")) {
-    if (line.startsWith("== END ")) {
+    if (line.startsWith("== BEGIN ")) lines = [];
+    else if (line.startsWith("== END ")) {
       worlds.set(line.slice(7), lines.join("\n"));
       lines = [];
     } else if (/^[1-9] /.test(line)) lines.push(line);
@@ -102,7 +107,9 @@ async function judge(project: Project) {
   const written = Object.keys(project.files).filter(path => path.includes("/main.test.")).map(path => path.split("/")[1]); // prettier-ignore
   counts.taken += written.length;
   const [plain, ours] = [await reference(), await compiled()];
-  const parts = (name: string) => plain.worlds.get(name) !== ours.worlds.get(name);
+  const all = [ours];
+  while (all.length < Number(options["compiled-runs"])) all.push(await compiled());
+  const parts = (name: string) => all.some(each => plain.worlds.get(name) !== each.worlds.get(name));
   const hasDied = /^SIG/.test(ours.end) || Number(ours.end) >= 128;
   add("neither comes to its end", written.filter(name => !plain.worlds.has(name) && !ours.worlds.has(name)).length);
   // A run that dies takes along the worlds behind the one that killed it. They are not judged: the files run in the order of the reference, and the first that lacks its end stands for the death.
@@ -113,7 +120,7 @@ async function judge(project: Project) {
   add("same", written.filter(name => !parts(name)).length);
   if (!parting.length) return;
   const references = [plain, await reference(), await reference()];
-  const again = [ours, await compiled(), await compiled()];
+  const again = [...all, await compiled(), await compiled()];
   const wavers = (runs: Run[], name: string) => runs.some(each => each.worlds.get(name) !== runs[0].worlds.get(name));
   if (parting.some(name => wavers(references, name))) while (references.length < 40) references.push(await reference());
   for (const name of parting) {
@@ -126,7 +133,7 @@ async function judge(project: Project) {
     const kind = name === killer ? "signal" : wavers(again, name) ? "unsteady" : "stdout";
     add(kind);
     const summary = firstDifference(isNoAnswerOfTheReference[0].worlds.get(name), plain.worlds.get(name));
-    const isOfTheWorld = (path: string) => path === "package.json" || path.startsWith(`p/${name}/`) || path.startsWith("p/zz-company/"); // prettier-ignore
+    const isOfTheWorld = (path: string) => /^(?:package\.json|bunfig\.toml|preload\.mjs)$/.test(path) || path.startsWith(`p/${name}/`) || path.startsWith("p/zz-company/"); // prettier-ignore
     const text = Object.entries(project.files).filter(([path]) => isOfTheWorld(path)).map(([path, text]) => `// @filename: ./${path}\n${text}`).join(""); // prettier-ignore
     // One find for a row of deeds and the deed at which it parts: the files beside it are many, and the cause is mostly one.
     const partsAt = /^bun test: (\d [a-z-]+)/m.exec(summary)?.[1] ?? "";
@@ -141,7 +148,7 @@ async function judge(project: Project) {
   }
 }
 
-const rows: Deed[][] = options.rows!.split(",").flatMap(count => [...rowsOfDeeds(Number(count) as 2 | 3)]); // prettier-ignore
+const rows: Deed[][] = options.row ? [rowOfDeeds(options.row.split("--"))] : options.rows!.split(",").flatMap(count => [...rowsOfDeeds(Number(count) as 2 | 3)]); // prettier-ignore
 const lastStart = Number(options.seconds) ? performance.now() + Number(options.seconds) * 1000 : Infinity;
 function* everyProject() {
   const [part, parts] = options.share!.split("/").map(Number);
@@ -152,7 +159,7 @@ function* drawnProjects() {
   for (;;) yield writeProject(rows[Math.floor(Math.random() * rows.length)], Math.random() * 100 < Number(options["in-company"])); // prettier-ignore
 }
 let judged = 0;
-for (const project of options.whole ? everyProject() : drawnProjects()) {
+for (const project of options.whole || options.row ? everyProject() : drawnProjects()) {
   if (performance.now() >= lastStart) break;
   if (!project || !project.name.includes(options.only!)) continue;
   await judge(project);

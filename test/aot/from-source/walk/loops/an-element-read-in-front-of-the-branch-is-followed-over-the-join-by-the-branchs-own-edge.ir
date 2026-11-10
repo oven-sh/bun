@@ -1,0 +1,19 @@
+# -- source: an-element-read-in-front-of-the-branch-is-followed-over-the-join-by-the-branchs-own-edge.cjs
+# "use strict";
+# const base = JSON.parse("[1,2,3,4,5,6]");
+# const holed = base.map((p) => p / 4), mixed = base.map((p) => p / 4);
+# delete holed[2]; mixed[2] = "9";
+# function sumHoled(k) { let total = k & 3; for (let i = 0; i < holed.length; i++) { const x = holed[i]; total += i & 1 ? 0 : x; } return total; }
+# function sumMixed(k) { let total = k & 3; for (let i = 0; i < mixed.length; i++) { const x = mixed[i]; total += i & 1 ? 0 : x; } return total; }
+# const shelf = { sumHoled, sumMixed }, words = JSON.parse('["sumHoled","sumMixed"]');
+# for (const word of words) print(word, shelf[word](1), shelf[word](2));
+# -- end of source
+# f1 = sumHoled. The element is read in front of the branch, and the front end hands it on as an argument of the branch itself: it comes into the join by the fork's own edge, beside
+# the written 0 of the other way. It is followed to the sum there too, and the holder is asked in front of the loop for a list of numbers. The hole makes the sum NaN, the text joins.
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Array<number>
+# CHECK: = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: sumHoled NaN NaN
+# ANSWER-NEXT: sumMixed 1.25901.250 2.25901.250
+# ANSWER-NEXT: exited with 0

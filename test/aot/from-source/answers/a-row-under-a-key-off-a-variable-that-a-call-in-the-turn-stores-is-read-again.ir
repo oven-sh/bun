@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# const box = JSON.parse('{"name":"rows","holder":{"rows":[1,2,3,4,5,6,7,8,9,10,11,12]},"spare":{"rows":[50,60,70,80,90,100]}}');
+# let data = box.holder, w = box.name, counted = 0;
+# const swaps = [(i) => { counted++; if (i === 3) data = box.spare; }];
+# function row() { let s = 0; for (let i = 0; i < data[w].length; i++) { s = s + data[w][i]; swaps[counted & 0](i); } return s; }
+# print(row(), counted, row(), counted);
+# -- end of source
+# A `let` of the file that the text of the loop does not store may still be stored by what a turn calls. What is known of the variable ends with the call, the read in the turn then names another holder, and the row in front is not taken for it.
+# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
+# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 200 6 450 12
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 200 6 450 12
+# HELD-NEXT: exited with 0

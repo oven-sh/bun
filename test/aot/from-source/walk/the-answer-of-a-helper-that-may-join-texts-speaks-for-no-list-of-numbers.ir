@@ -1,0 +1,13 @@
+# `(price, unit) => price * 0.5 + unit`: one side of the sum is a parameter of the helper, of which its text says nothing: the answer may be a text, and the store speaks for no list of numbers: the border.
+# LIBRARY: own
+# -- source: main.js
+# const prices = JSON.parse("[1.5,2.5,3.5,4.5]"), labelled = JSON.parse("[0,0,0,0]");
+# const label = (price, unit) => price * 0.5 + unit;
+# function run(count, unit) { for (let i = 0; i < count; i++) labelled[i] = label(prices[i], unit); return labelled.join(); }
+# publish(run);
+# -- end of source
+# RUN: compile ListsAskedForBesideListsInFrontOfLoops mechanisms=all
+# CHECK: statistic ListsAskedForBesideListsInFrontOfLoops 0
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(4, 1)); print(run(4, " kg")); };
+# SHELL: 1.75,2.25,2.75,3.25
+# SHELL-NEXT: 0.75 kg,1.25 kg,1.75 kg,2.25 kg

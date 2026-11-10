@@ -891,6 +891,35 @@ fn package_depth_is_lowest_of_all_ways() {
     assert_eq!(depth_of("/node_modules/pkg/c.js"), 0);
 }
 
+#[test]
+fn entry_point_that_is_only_evaluated_text_begins_where_a_package_does() {
+    let host = StatementsHost {
+        evaluated_texts: &["/node_modules/pkg/job.js"],
+        ..host_of(&[
+            (
+                "/main.ts",
+                "import \"pkg\"\nimport \"./node_modules/pkg/by_path.js\"",
+            ),
+            (
+                "/node_modules/pkg/job.js",
+                "import \"./alone.js\"\nimport \"./index.js\"\nimport \"./by_path.js\"\nimport \"nested\"",
+            ),
+            ("/node_modules/pkg/alone.js", ""),
+            ("/node_modules/pkg/index.js", ""),
+            ("/node_modules/pkg/by_path.js", ""),
+            ("/node_modules/nested/index.js", ""),
+        ])
+    };
+    let walked = walk(&host, &["/main.ts", "/node_modules/pkg/job.js"]);
+    let depth_of = |path: &str| walked.entry(path).package_depth;
+    assert_eq!(depth_of("/main.ts"), 0);
+    assert_eq!(depth_of("/node_modules/pkg/job.js"), 1);
+    assert_eq!(depth_of("/node_modules/pkg/alone.js"), 1);
+    assert_eq!(depth_of("/node_modules/pkg/index.js"), 1);
+    assert_eq!(depth_of("/node_modules/pkg/by_path.js"), 0);
+    assert_eq!(depth_of("/node_modules/nested/index.js"), 2);
+}
+
 fn entry_with_targets(targets: Vec<u32>) -> CodeEntry<'static, 'static> {
     CodeEntry {
         key: LoadKey {
@@ -921,7 +950,12 @@ fn package_depths(edges: &[&[(u32, bool)]], entry_points: &[u32]) -> Vec<u32> {
     let steps: Vec<Vec<bool>> = (edges.iter())
         .map(|edges| edges.iter().map(|edge| edge.1).collect())
         .collect();
-    compute_package_depths(&mut entries, entry_points, &steps);
+    compute_package_depths(
+        &StatementsHost::default(),
+        &mut entries,
+        entry_points,
+        &steps,
+    );
     entries.iter().map(|entry| entry.package_depth).collect()
 }
 

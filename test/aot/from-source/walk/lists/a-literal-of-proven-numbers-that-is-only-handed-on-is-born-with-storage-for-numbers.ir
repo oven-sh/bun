@@ -1,0 +1,30 @@
+# -- source: main.cjs
+# "use strict";
+# function whole(a, b) { return [a | 0, b | 0, 3]; }
+# function fractions(a, b) { return [a * 0.5, b * 0.5, 3]; }
+# function unknown(a, b) { return [a, b]; }
+# function usedHere(a) { const list = [a | 0, 2]; list[1] = a * 0.5; return list; }
+# function rows(a) { return [[a | 0, 1], [a * 0.5, 2]]; }
+# sink(whole, fractions, unknown, usedHere, rows);
+# -- end of source
+# A literal whose elements are computed named no kind of storage outside checked functions: it was born with storage for any value, its numbers boxed, where the engine bears it with storage for int32 or for
+# doubles. Every test for the kind of storage in front of a loop over such a list failed for good, in whatever function the loop stood.
+# Now a literal whose elements are all proven numbers, and that has one use in its function (it is returned, handed to a call, stored, or an element of another literal), names the kind: int32 where all are
+# proven int32, else doubles. One that its own function goes on using stays as it was: a store of a fraction or a text would convert it at once.
+# OPTIONS: check=Validate
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArray {{*}}arrayStorage=Int32
+# RUN(FRACTIONS): walk f2:Body mechanisms=all
+# FRACTIONS-LABEL: code f2:Body
+# FRACTIONS: = NewArray {{*}}arrayStorage=Double
+# RUN(UNKNOWN): walk f3:Body mechanisms=all
+# UNKNOWN-LABEL: code f3:Body
+# UNKNOWN-NOT: = NewArray {{*}}arrayStorage=
+# RUN(USED): walk f4:Body mechanisms=all
+# USED-LABEL: code f4:Body
+# USED-NOT: = NewArray {{*}}arrayStorage=
+# RUN(ROWS): walk f5:Body mechanisms=all
+# ROWS-LABEL: code f5:Body
+# ROWS: = NewArray {{*}}arrayStorage=Int32
+# ROWS: = NewArray {{*}}arrayStorage=Double

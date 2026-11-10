@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# "use strict";
+# function fill(t) { const b = globalThis.give(); for (let i = 0; i < 14; i++) b[i] = i + t; return b; }
+# const made = new Array(14).fill(0.5);
+# globalThis.give = () => made;
+# print(fill(3).join());
+# -- end of source
+# In front of the loop a list is told from the views. The list's own copy takes storage for whole numbers alone, so a list of fractions goes on into the loop as it is written.
+# There the holder is asked once more whether it is a list, the question is laid in front of the loop, and behind it stands the typed store, which asks the list itself for everything else.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: PutArrayElement {{*}} level=Expected [keyIsIntegral]
+# WALK: PutArrayElement {{*}} level=Expected [keyIsIntegral]
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 3,4,5,6,7,8,9,10,11,12,13,14,15,16
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime
+# HELD: 3,4,5,6,7,8,9,10,11,12,13,14,15,16
+# HELD-NEXT: exited with 0

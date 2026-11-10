@@ -17,17 +17,20 @@
 # -- end of source
 # `total` is reached from outside, so nothing is proven of `rows`: the tests of the helper's guard stand in front of its copy, and where one fails the slow version is called with the arrow.
 # That call only borrows the arrow (Link: the helper only calls what arrives there), and nobody has the scope of `sum` so far: so a scope is made there, out of what the state holds, the arrow over it, and `sum` is read back behind the call.
-# The first scope then has no reader on any way: no store is left in a turn, and the one allocation stands in the rare block. Behind the read nobody has that cell, by the proof that let it be lent: it is handed back there.
+# The first scope then has no reader on any way: no store is left in a turn, and the one allocation stands in the rare block. The arrow of a rare block is made in the heap
+# (answers/a-closure-made-on-a-rare-way-is-made-in-the-heap.ts): it marks the scope that it captures, and the release behind the read, which asks that mark, leaves the cell to the collector.
 # OPTIONS: check=Validate
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: Branch {{*}}notTaken [[slow]]()
 # CHECK: [[slow]]() frequency=Rare:
 # CHECK-NEXT: [[copy]]: {{*}} = NewObject {{*}}fields=[0]
-# CHECK-NEXT: [[lent]]: {{*}} = NewClosure [[copy]] {{*}}loan=ToFunctionEntered
+# CHECK-NEXT: [[lent]]: {{*}} = NewClosure [[copy]] function=
 # CHECK: = CallDirect {{*}}role=SlowBody
 # CHECK-NEXT: = GetEnvironmentField [[copy]]
 # CHECK-NEXT: ReleaseEnvironment [[copy]]
+# RUN(HEAP): walk f2 mechanisms=all
+# HEAP-NOT: loan=
 # RUN(STORES): walk f2 mechanisms=all
 # STORES-NOT: PutEnvironmentField
 # Whoever may keep the arrow shares the scope with what the maker writes later: a call by value of what nobody knows takes the arrow over the one scope, which is made and written as ever and read behind the call.

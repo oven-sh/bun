@@ -1,0 +1,115 @@
+export {};
+function counters(seed: number): { bump(which: number): void; tell(): string } {
+  let v0: number | undefined;
+  let v1: number | undefined;
+  let v2: number | undefined;
+  let v3: number | undefined;
+  let v4: number | undefined;
+  let v5: number | undefined;
+  let v6: number | undefined;
+  let v7: number | undefined;
+  let v8: number | undefined;
+  let v9: number | undefined;
+  let v10: number | undefined;
+  let v11: number | undefined;
+  let v12: number | undefined;
+  let v13: number | undefined;
+  let v14: number | undefined;
+  let v15: number | undefined;
+  let v16: number | undefined;
+  let v17: number | undefined;
+  let v18: number | undefined;
+  let v19: number | undefined;
+  let v20: number | undefined;
+  let v21: number | undefined;
+  let v22: number | undefined;
+  let v23: number | undefined;
+  let v24: number | undefined;
+  let v25: number | undefined;
+  let v26: number | undefined;
+  let v27: number | undefined;
+  let v28: number | undefined;
+  let v29: number | undefined;
+  let v30: number | undefined;
+  let v31: number | undefined;
+  let v32: number | undefined;
+  let v33: number | undefined;
+  let v34: number | undefined;
+  let v35: number | undefined;
+  let v36: number | undefined;
+  let v37: number | undefined;
+  let v38: number | undefined;
+  let v39: number | undefined;
+  let v40: number | undefined;
+  let v41: number | undefined;
+  let v42: number | undefined;
+  let v43: number | undefined;
+  let v44: number | undefined;
+  let v45: number | undefined;
+  let v46: number | undefined;
+  let v47: number | undefined;
+  function bump(which: number): void {
+    switch (which) {
+      case 0: v0 = (v0 === undefined ? seed : v0) + 0.5; break;
+      case 1: v1 = (v1 === undefined ? seed : v1) + 1.5; break;
+      case 2: v2 = (v2 === undefined ? seed : v2) + 2.5; break;
+      case 3: v3 = (v3 === undefined ? seed : v3) + 3.5; break;
+      case 4: v4 = (v4 === undefined ? seed : v4) + 4.5; break;
+      case 5: v5 = (v5 === undefined ? seed : v5) + 5.5; break;
+      case 6: v6 = (v6 === undefined ? seed : v6) + 6.5; break;
+      case 7: v7 = (v7 === undefined ? seed : v7) + 7.5; break;
+      case 8: v8 = (v8 === undefined ? seed : v8) + 8.5; break;
+      case 9: v9 = (v9 === undefined ? seed : v9) + 9.5; break;
+      case 10: v10 = (v10 === undefined ? seed : v10) + 10.5; break;
+      case 11: v11 = (v11 === undefined ? seed : v11) + 11.5; break;
+      case 12: v12 = (v12 === undefined ? seed : v12) + 12.5; break;
+      case 13: v13 = (v13 === undefined ? seed : v13) + 13.5; break;
+      case 14: v14 = (v14 === undefined ? seed : v14) + 14.5; break;
+      case 15: v15 = (v15 === undefined ? seed : v15) + 15.5; break;
+      case 16: v16 = (v16 === undefined ? seed : v16) + 16.5; break;
+      case 17: v17 = (v17 === undefined ? seed : v17) + 17.5; break;
+      case 18: v18 = (v18 === undefined ? seed : v18) + 18.5; break;
+      case 19: v19 = (v19 === undefined ? seed : v19) + 19.5; break;
+      case 20: v20 = (v20 === undefined ? seed : v20) + 20.5; break;
+      case 21: v21 = (v21 === undefined ? seed : v21) + 21.5; break;
+      case 22: v22 = (v22 === undefined ? seed : v22) + 22.5; break;
+      case 23: v23 = (v23 === undefined ? seed : v23) + 23.5; break;
+      case 24: v24 = (v24 === undefined ? seed : v24) + 24.5; break;
+      case 25: v25 = (v25 === undefined ? seed : v25) + 25.5; break;
+      case 26: v26 = (v26 === undefined ? seed : v26) + 26.5; break;
+      case 27: v27 = (v27 === undefined ? seed : v27) + 27.5; break;
+      case 28: v28 = (v28 === undefined ? seed : v28) + 28.5; break;
+      case 29: v29 = (v29 === undefined ? seed : v29) + 29.5; break;
+      case 30: v30 = (v30 === undefined ? seed : v30) + 30.5; break;
+      case 31: v31 = (v31 === undefined ? seed : v31) + 31.5; break;
+      case 32: v32 = (v32 === undefined ? seed : v32) + 32.5; break;
+      case 33: v33 = (v33 === undefined ? seed : v33) + 33.5; break;
+      case 34: v34 = (v34 === undefined ? seed : v34) + 34.5; break;
+      case 35: v35 = (v35 === undefined ? seed : v35) + 35.5; break;
+      case 36: v36 = (v36 === undefined ? seed : v36) + 36.5; break;
+      case 37: v37 = (v37 === undefined ? seed : v37) + 37.5; break;
+      case 38: v38 = (v38 === undefined ? seed : v38) + 38.5; break;
+      case 39: v39 = (v39 === undefined ? seed : v39) + 39.5; break;
+      case 40: v40 = (v40 === undefined ? seed : v40) + 40.5; break;
+      case 41: v41 = (v41 === undefined ? seed : v41) + 41.5; break;
+      case 42: v42 = (v42 === undefined ? seed : v42) + 42.5; break;
+      case 43: v43 = (v43 === undefined ? seed : v43) + 43.5; break;
+      case 44: v44 = (v44 === undefined ? seed : v44) + 44.5; break;
+      case 45: v45 = (v45 === undefined ? seed : v45) + 45.5; break;
+      case 46: v46 = (v46 === undefined ? seed : v46) + 46.5; break;
+      case 47: v47 = (v47 === undefined ? seed : v47) + 47.5; break;
+    }
+  }
+  function tell(): string { let absent = 0, sum = 0; if (v0 === undefined) absent++; else sum += v0; if (v1 === undefined) absent++; else sum += v1; if (v2 === undefined) absent++; else sum += v2; if (v3 === undefined) absent++; else sum += v3; if (v4 === undefined) absent++; else sum += v4; if (v5 === undefined) absent++; else sum += v5; if (v6 === undefined) absent++; else sum += v6; if (v7 === undefined) absent++; else sum += v7; if (v8 === undefined) absent++; else sum += v8; if (v9 === undefined) absent++; else sum += v9; if (v10 === undefined) absent++; else sum += v10; if (v11 === undefined) absent++; else sum += v11; if (v12 === undefined) absent++; else sum += v12; if (v13 === undefined) absent++; else sum += v13; if (v14 === undefined) absent++; else sum += v14; if (v15 === undefined) absent++; else sum += v15; if (v16 === undefined) absent++; else sum += v16; if (v17 === undefined) absent++; else sum += v17; if (v18 === undefined) absent++; else sum += v18; if (v19 === undefined) absent++; else sum += v19; if (v20 === undefined) absent++; else sum += v20; if (v21 === undefined) absent++; else sum += v21; if (v22 === undefined) absent++; else sum += v22; if (v23 === undefined) absent++; else sum += v23; if (v24 === undefined) absent++; else sum += v24; if (v25 === undefined) absent++; else sum += v25; if (v26 === undefined) absent++; else sum += v26; if (v27 === undefined) absent++; else sum += v27; if (v28 === undefined) absent++; else sum += v28; if (v29 === undefined) absent++; else sum += v29; if (v30 === undefined) absent++; else sum += v30; if (v31 === undefined) absent++; else sum += v31; if (v32 === undefined) absent++; else sum += v32; if (v33 === undefined) absent++; else sum += v33; if (v34 === undefined) absent++; else sum += v34; if (v35 === undefined) absent++; else sum += v35; if (v36 === undefined) absent++; else sum += v36; if (v37 === undefined) absent++; else sum += v37; if (v38 === undefined) absent++; else sum += v38; if (v39 === undefined) absent++; else sum += v39; if (v40 === undefined) absent++; else sum += v40; if (v41 === undefined) absent++; else sum += v41; if (v42 === undefined) absent++; else sum += v42; if (v43 === undefined) absent++; else sum += v43; if (v44 === undefined) absent++; else sum += v44; if (v45 === undefined) absent++; else sum += v45; if (v46 === undefined) absent++; else sum += v46; if (v47 === undefined) absent++; else sum += v47; return absent + ":" + sum; }
+  return { bump, tell };
+}
+function churn(): number { let kept = 0; for (let i = 0; i < 300; i++) { const made = counters(i); for (let which = 0; which < 48; which++) made.bump(which); kept += made.tell().length; } return kept; }
+function round(turn: number): void {
+  console.log(churn()); (globalThis as unknown as { Bun: { gc(force: boolean): void } }).Bun.gc(true);
+  const fresh = counters(turn); console.log(fresh.tell());
+  fresh.bump(0); fresh.bump(47); fresh.bump(24); fresh.bump(0); console.log(fresh.tell());
+}
+round(0);
+round(1);
+round(2);
+for (let turn = 3; turn < 5; turn++) round(turn);

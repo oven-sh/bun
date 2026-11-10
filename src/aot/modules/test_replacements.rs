@@ -14,10 +14,13 @@ use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{
-    BinOp, ExportSpecId, ExprId, ExprKind, File, Flags, FnKind, NodeData, PatId, PatKind, PropKey,
-    StmtKind, UnOp, VarDeclId,
+    BinOp, ExportSpecId, ExprId, ExprKind, File, Flags, FnKind, MemberKey, NodeData, PatId,
+    PatKind, PropKey, StmtKind, UnOp, VarDeclId,
 };
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_plugin};
+use bun_sema::import_sites::{
+    ImportSiteKind, ImportSpecifier, is_module_call_of_plugin, may_spell_word_that_mock_looks_for,
+    names_word_that_mock_looks_for,
+};
 use bun_sema::util::SharedSort;
 use core::ops::Range;
 use std::sync::OnceLock;
@@ -531,6 +534,7 @@ struct TestRunnerUses<'a, 's> {
     bound: &'a Bound<'s>,
     analysis: &'a FileAnalysis<'s>,
     builtins: &'a ResolvedBuiltins,
+    atoms: &'a Interner<'s>,
     is_test_runner: &'a dyn Fn(usize) -> bool,
 }
 
@@ -628,7 +632,12 @@ impl TestRunnerUses<'_, '_> {
 
     fn shows_use(&self, mention: ExprId, builtin: BuiltinId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
-        let value = find_outermost_type_assertion(hir, bound, mention);
+        let mut value = find_outermost_type_assertion(hir, bound, mention);
+        while let Some(choice) = find_user(bound, value)
+            && matches!(hir[choice].kind, ExprKind::Cond { test, .. } if test != value)
+        {
+            value = find_outermost_type_assertion(hir, bound, choice);
+        }
         if is_only_tested(hir, bound, value) {
             return true;
         }
@@ -640,8 +649,11 @@ impl TestRunnerUses<'_, '_> {
             if is_only_tested(hir, bound, read) || self.is_callee_of_mock_site(read) {
                 return true;
             }
-            let found = self.builtins.builtin_of_expression(member);
-            return found.is_some_and(|found| allows_member(builtin, table::canonical_id(found)));
+            if let Some(found) = self.builtins.builtin_of_expression(member) {
+                return allows_member(builtin, table::canonical_id(found));
+            }
+            let written = self.find_member_written(builtin, member);
+            return written.is_some_and(leaves_modules_alone);
         }
         if let Some(call) = find_call_of(hir, bound, value) {
             return !returns_test_runner_object(builtin)
@@ -651,6 +663,13 @@ impl TestRunnerUses<'_, '_> {
             Parent::VarInit(declaration) => self.takes_allowed_members(declaration, builtin),
             _ => false,
         }
+    }
+
+    fn find_member_written(&self, holder: BuiltinId, member: ExprId) -> Option<BuiltinId> {
+        let (_, MemberKey::Name(name)) = self.hir.member_key(member)? else {
+            return None;
+        };
+        table::own_member(holder, table::find_name(self.atoms.bytes(name))?)
     }
 
     fn is_callee_of_mock_site(&self, callee: ExprId) -> bool {
@@ -690,16 +709,16 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
     bound: &Bound<'s>,
     analysis: &FileAnalysis<'s>,
     builtins: &ResolvedBuiltins,
-    _atoms: &Interner<'s>,
+    atoms: &Interner<'s>,
     is_test_runner: &dyn Fn(usize) -> bool,
 ) -> bool {
+    let may_word_come_from_outside = names_word_that_mock_looks_for(&hir.text)
+        || (analysis.decisions)
+            .folds_text_that(|it| names_word_that_mock_looks_for(atoms.bytes(it)));
     let text_names_original = |factory: ExprId| {
         let written = hir[factory].pos as usize..hir[factory].end as usize;
-        hir.text.get(written).is_none_or(|text| {
-            [&b"importOriginal"[..], b"importActual", b"requireActual"]
-                .iter()
-                .any(|word| bun_core::strings::contains(text, word))
-        })
+        let text = hir.text.get(written);
+        may_word_come_from_outside || text.is_none_or(may_spell_word_that_mock_looks_for)
     };
     let takes_nothing = |factory: ExprId| {
         let factory = hir.skip_type_assertions(factory);
@@ -708,6 +727,7 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
         };
         hir[function].kind == FnKind::Arrow
             && hir[function].params.is_empty()
+            && !hir[function].flags.contains(Flags::ASYNC)
             && !text_names_original(factory)
     };
     for site in analysis.import_sites {
@@ -738,6 +758,7 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
         bound,
         analysis,
         builtins,
+        atoms,
         is_test_runner,
     };
     !uses.shows_every_use()

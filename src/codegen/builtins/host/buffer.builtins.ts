@@ -337,7 +337,8 @@ export default b.declarations(
           capability: "js",
           throws: true,
           runsOnlyOperandCode: true,
-          uses: { list: [b.readsContents(), readAsArrayLike] },
+          // An element that is no Uint8Array is refused, and the message reads its constructor's name.
+          uses: { list: [b.readsContents(), readAsArrayLike, b.contentsStoredIn(b.nativeMemory)] },
           reads: viewHeaps,
           implementation: b.hostCall,
         },

@@ -134,7 +134,7 @@ fn write_columns_line(out: &mut Vec<u8>, label: &str, costs: &CostCounts) {
     out.extend_from_slice(b")\n");
 }
 
-fn write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>) {
+pub fn write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>) {
     if option_words.is_empty() {
         return;
     }

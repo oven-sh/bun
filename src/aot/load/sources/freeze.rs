@@ -280,6 +280,7 @@ fn freeze_file(
         kind,
         loader,
         byte_count: payload.map_or(0, |payload| payload.byte_count as u64),
+        depends_on_more_than_source: payload.is_some_and(|it| it.depends_on_more_than_source),
         public_path,
         display_path,
         diagnostic_path,

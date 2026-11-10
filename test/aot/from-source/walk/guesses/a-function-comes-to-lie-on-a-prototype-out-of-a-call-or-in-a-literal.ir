@@ -1,0 +1,23 @@
+# One more way in which a function comes to lie on the prototype of a constructor function or class of its file, followed by binding, as `<name>.prototype.<member> = function ..` is.
+# `Reader.prototype.next = (function setup() { var last = 0; return function next() { .. }; })();`: the function is returned out of a function that is called where it stands. Because it stores into `this`, it was taken for a constructor of its own, and `this` was expected to be of a layout that nothing ever has (L1).
+# `Cursor.prototype = { constructor: Cursor, peek() { .. }, skip: function (by) { .. } };`: of `this` in a member of a literal that is stored as the prototype the front end says nothing: said, it cost a program whose instances lay methods of their own over the literal's (the answers alone are held here).
+# The first expects the instances now: one test of the shape, then the slots. A record that borrows the methods takes the closed arms (the last three answers).
+# f7 = next . L0 = Reader
+# -- source: a-function-comes-to-lie-on-a-prototype-out-of-a-call-or-in-a-literal.cjs
+# function Reader(bytes) { this.bytes = bytes; this.at = 0; }
+# Reader.prototype.next = (function setup() { var last = 0; return function next() { last = this.bytes[this.at]; this.at = this.at + 1; return last; }; })();
+# function Cursor(bytes) { this.bytes = bytes; this.at = 1; this.mark = 0; }
+# Cursor.prototype = { constructor: Cursor, peek() { return this.bytes[this.at]; }, skip: function (by) { this.at += by; return this; } };
+# const box = {};
+# box[String(['k0'])] = [new Reader([5, 6, 7]), new Cursor([8, 9, 10]), { bytes: 'xyz', at: 2, next: Reader.prototype.next, peek: Cursor.prototype.peek }];
+# function turn() { const [reader, cursor, other] = box.k0; return [reader.next(), reader.next(), cursor.skip(1).peek(), other.next(), other.at, other.peek()].join(); }
+# print(turn());
+# -- end of source
+# RUN: walk f7 mechanisms=all
+# CHECK-LABEL: code f7:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = GetSlot {{*}}key="bytes" receivers=[L0]
+# RUN(OWN): walk f7 mechanisms=all
+# OWN-NOT: receivers=[L1]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5,6,10,z,3,

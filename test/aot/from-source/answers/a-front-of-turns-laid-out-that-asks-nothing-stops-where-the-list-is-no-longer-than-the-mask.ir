@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# var key = JSON.parse('"go"');
+# var halves = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k + 0.5); return l; }, wholes = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k); return l; };
+# var T = { go(ring, n) { var s = 0; for (var i = 0; i < n; i++) s += ring[i & 15]; return s; } };
+# print(T[key](halves(globalThis.fails ? 10 : 16), 16));
+# -- end of source
+# What the front of the turns laid out has found is believed in every one of those turns. testing=CheckProofsAtRunTime and testing=TestsEveryPosition write checks into each turn in the walk, and a turn that holds
+# them is not laid out: so in those lanes no layout was ever run. Under testing=EmittersAloneTestEveryPosition the walk writes nothing more, the turns are laid out as in an executable, and each access holds what it
+# is told against memory. The front asks whether the list is longer than the mask. A list of ten under `i & 15`, sixteen turns: the layouts that ask each key run. The lie: the eleventh turn reads behind the list.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
+# RIGHT: NaN
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition globalThis.fails = true;
+# HELD: NaN
+# HELD-NEXT: exited with 0
+# Whoever would have passed the front is not harmed by the lie: so what stops below is this question and no other.
+# RUN(PASSES): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,QuestionsInFrontOfTurnsLaidOutAreTakenToHold
+# PASSES: 128
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,QuestionsInFrontOfTurnsLaidOutAreTakenToHold globalThis.fails = true;
+# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# LIE: crashed with

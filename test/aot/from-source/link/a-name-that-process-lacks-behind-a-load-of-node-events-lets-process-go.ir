@@ -5,6 +5,5 @@
 # A program may have laid an accessor under the name on EventEmitter.prototype, which stands above `process` once node:events is loaded. It gets `process` as `this`.
 # The files of the program say that they ask, the text of node:events is told, and it hands `process` to the native function that lays the prototype above it.
 # RUN: link lookups mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: lookup let-go Process
 # CHECK: lookup at-unseen Process

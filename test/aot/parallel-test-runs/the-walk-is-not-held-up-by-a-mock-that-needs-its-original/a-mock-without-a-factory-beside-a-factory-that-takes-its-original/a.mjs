@@ -1,0 +1,1 @@
+import "./front.mjs"; import { v } from "./auto.mjs"; import { x } from "./part.mjs"; import "./behind.mjs"; globalThis.runs = (globalThis.runs ?? "") + "a "; export const seen = x; export const kept = v;

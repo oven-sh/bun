@@ -1,5 +1,6 @@
 import assert from "assert";
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
+import { inspect } from "util";
 
 test("node async_hooks.AsyncLocalStorage enable disable", async done => {
   const asyncLocalStorage = new AsyncLocalStorage<Map<string, any>>();
@@ -68,6 +69,40 @@ test("node async_hooks.AsyncLocalStorage enable disable multiple times", async (
   });
 
   await promise;
+});
+
+test("node async_hooks.AsyncLocalStorage has no own keys and no method for util.inspect()", () => {
+  const asyncLocalStorage = new AsyncLocalStorage({ name: "storage", defaultValue: 1 });
+  expect({
+    ownKeys: Reflect.ownKeys(asyncLocalStorage),
+    inspected: inspect(asyncLocalStorage),
+    nested: inspect({ asyncLocalStorage }, { depth: 0 }),
+  }).toEqual({
+    ownKeys: [],
+    inspected: "AsyncLocalStorage {}",
+    nested: "{ asyncLocalStorage: AsyncLocalStorage {} }",
+  });
+});
+
+test("node async_hooks.AsyncLocalStorage disable() with a receiver that is no storage", () => {
+  assert.strictEqual(AsyncLocalStorage.prototype.disable.call(undefined), undefined);
+});
+
+test("AsyncLocalStorage and AsyncResource in a job that the factory of a module mock scheduled", async () => {
+  const asyncLocalStorage = new AsyncLocalStorage<number>();
+  let job!: Promise<unknown[]>;
+  // The job runs in the async context of the factory. The storage of its innermost frame is the mock, and
+  // a mock of vi.doMock() throws when an export that its factory did not return is read.
+  using _ = vi.doMock("./module-of-a-mock-factory.ts", () => {
+    job = Promise.resolve().then(() => [
+      asyncLocalStorage.getStore(),
+      asyncLocalStorage.run(2, () => new AsyncResource("x")).runInAsyncScope(() => asyncLocalStorage.getStore()),
+      AsyncLocalStorage.snapshot()(() => asyncLocalStorage.getStore()),
+    ]);
+    return { value: "mocked" };
+  });
+  const { value } = await import("./module-of-a-mock-factory.ts" as string);
+  expect({ value, job: await job }).toEqual({ value: "mocked", job: [undefined, 2, undefined] });
 });
 
 test("AsyncResource.prototype.bind", () => {

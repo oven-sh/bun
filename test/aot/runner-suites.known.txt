@@ -71,6 +71,7 @@ test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, cached mod
 # --isolate=modules runs like --isolate in a compiled run, as docs/compiler/debugging.mdx says: each test file gets a global object and builtin modules of its own.
 # One of them also writes to members that stay read-only, and one asks how often the JIT has compiled a function.
 test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the code that was compiled for the files before it
+test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds expect as the first one did, whatever the files before it did to it
 test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file

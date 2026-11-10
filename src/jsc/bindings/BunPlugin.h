@@ -158,6 +158,23 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // A record that the end of a test file, the end of a mock, or a mock laid over an earlier test file's module took out of the registry. Whatever got it
+        // by a call (a module that keeps what import() returned) is no importer and stays linked to it, so a mock that patches the key patches it too.
+        struct ModuleThatLeftRegistry {
+            // Weak: only its holders keep the record alive.
+            JSC::Weak<JSC::JSCell> record;
+            // The first test file whose mocks patch it. See ModulesToEvict::remembersWhatLeavesFrom.
+            unsigned mockedFromTestFile;
+        };
+        // Bun.plugin.clearAll() keeps both: they say what the registry held, not what a plugin asked for. They go with the modules of the registry.
+        WTF::UncheckedKeyHashMap<String, Vector<ModuleThatLeftRegistry>> modulesThatLeftRegistry = {};
+        // The keys of modulesToEvictOnceLoaded whose record goes there once it leaves, with that number.
+        WTF::UncheckedKeyHashMap<String, unsigned> modulesToRememberOnceEvicted = {};
+        void forgetModulesThatLeftRegistry()
+        {
+            modulesThatLeftRegistry.clear();
+            modulesToRememberOnceEvicted.clear();
+        }
 
         struct Matches {
             JSC::JSString* path { nullptr };

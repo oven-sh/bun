@@ -30,6 +30,8 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSTypeInfo.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
@@ -513,6 +515,14 @@ public:
     // These outlive the patched module's eviction, so unmocking still restores it for whatever stays linked to it (a preload, say).
     WriteBarrier<JSC::JSModuleNamespaceObject> patchedNamespace;
     WriteBarrier<JSObject> originalExportsOfEvictedModule;
+    // From the namespace object of each module of modulesThatLeftRegistry that the mock has patched to what the patch replaced there: an object like
+    // `originalExports`, or for a module that was loaded as an earlier mock, what its exports were read from. The keys are weak: the mock keeps none of
+    // those modules alive.
+    WriteBarrier<JSC::JSWeakMap> replacedInModulesThatLeftRegistry;
+    // Set at the mock call: the mock patches the modules of modulesThatLeftRegistry like the module that is loaded.
+    bool patchesModulesThatLeftRegistry { false };
+    // No mock call patches with what the factory returns, because an import calls it: its settle patches them.
+    bool patchesThemOnceSettled { false };
     // Patches are undone newest first: two modules can export one variable (`export *`), and each patch saved what it found there.
     unsigned patchOrder { 0 };
     State state { State::NotCalled };
@@ -2085,6 +2095,8 @@ static bool readsExportsOfModule(JSC::JSGlobalObject* globalObject, JSObject* ob
     return false;
 }
 
+static void overrideLoadedModuleExports(Zig::GlobalObject*, JSModuleMock*, const LoadedModule&);
+
 void JSModuleMock::settle(Zig::GlobalObject* globalObject, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2135,7 +2147,11 @@ void JSModuleMock::settle(Zig::GlobalObject* globalObject, JSValue value)
     state = State::Settled;
     result.set(vm, this, object);
     exports.set(vm, this, esmExports);
-    RELEASE_AND_RETURN(scope, didStopRunning(globalObject, this));
+    didStopRunning(globalObject, this);
+    RETURN_IF_EXCEPTION(scope, );
+    // A mock that is no longer registered would never be undone.
+    if (std::exchange(patchesThemOnceSettled, false) && registeredModuleMock(globalObject, key) == this)
+        RELEASE_AND_RETURN(scope, overrideLoadedModuleExports(globalObject, this, LoadedModule()));
 }
 
 #if ENABLE(AOT)
@@ -2859,6 +2875,68 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
     return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
 }
 
+// Saves in `overwritten` what the module holds under each name that it has not saved yet. `ownOnly` leaves out what the module exports of another module.
+static void saveExportsToOverride(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, JSObject* overwritten, const Vector<JSC::Identifier, 4>& names, bool ownOnly)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (auto& name : names) {
+        bool isSaved = overwritten->hasProperty(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, );
+        if (isSaved)
+            continue;
+        // Read the variable directly, because the namespace object would force a builtin's lazy export.
+        ExportVariable variable = findExportVariable(globalObject, moduleNamespace, name);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!variable.record || (ownOnly && variable.record != moduleNamespace->moduleRecord()))
+            continue;
+        JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);
+        overwritten->putDirectMayBeIndex(globalObject, name, original ? original : JSValue(overwritten));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+// What a plain object holds as values, read without running any code. What it holds as a getter is left out.
+static void appendValuesOfPlainObject(Zig::GlobalObject* globalObject, JSObject* object, Vector<JSC::Identifier, 4>& names, MarkedArgumentBuffer& values)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (object->type() != JSC::FinalObjectType)
+        return;
+    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    for (auto& name : properties) {
+        JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool isOwn = JSObject::getOwnPropertySlot(object, globalObject, name, slot);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!isOwn || !slot.isValue())
+            continue;
+        names.append(name);
+        values.append(slot.getValue(globalObject, name));
+    }
+}
+
+// The namespace objects of the modulesThatLeftRegistry of `key` that something still holds and that a mock of the running test file patches.
+static void appendModulesThatLeftRegistry(Zig::GlobalObject* globalObject, const String& key, MarkedArgumentBuffer& namespaces)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto& plugins = globalObject->onLoadPlugins;
+    auto left = plugins.modulesThatLeftRegistry.find(key);
+    if (left == plugins.modulesThatLeftRegistry.end())
+        return;
+    MarkedArgumentBuffer records;
+    for (auto& module : left->value) {
+        if (JSC::JSCell* alive = module.mockedFromTestFile <= plugins.testFile ? module.record.get() : nullptr)
+            records.append(alive);
+    }
+    for (size_t i = 0; i < records.size(); ++i) {
+        auto* moduleNamespace = uncheckedDowncast<JSC::AbstractModuleRecord>(records.at(i))->getModuleNamespace(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        namespaces.append(moduleNamespace);
+    }
+}
+
 __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2913,11 +2991,36 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
         moduleNamespaceObject->moduleRecord()->setLiveExportsSource(vm, mock);
         moduleNamespaceObject = nullptr;
     }
-    if (moduleNamespaceObject || loaded.compiledModule) {
+    // What left the registry under the key and is still held is patched like what is loaded under it.
+    MarkedArgumentBuffer modulesThatLeft;
+    if (mock->patchesModulesThatLeftRegistry) {
+        appendModulesThatLeftRegistry(globalObject, specifier, modulesThatLeft);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    JSC::JSWeakMap* replaced = mock->replacedInModulesThatLeftRegistry.get();
+    if (!replaced && !modulesThatLeft.isEmpty()) {
+        replaced = JSC::JSWeakMap::create(vm, globalObject->weakMapStructure());
+        mock->replacedInModulesThatLeftRegistry.set(vm, mock, replaced);
+    }
+    // Where the mock saves what it replaces in such a module. The one that this mock, or the mock it replaced, patched while it was loaded has
+    // originalExportsOfEvictedModule, which patchedNamespace is restored from.
+    auto savedExportsOf = [&](JSC::JSModuleNamespaceObject* moduleNamespace) -> JSObject* {
+        if (moduleNamespace == mock->patchedNamespace.get())
+            return mock->originalExportsOfEvictedModule.get();
+        return replaced->get(moduleNamespace).getObject();
+    };
+    bool overridesModuleThatLeft = false;
+    for (size_t i = 0; i < modulesThatLeft.size(); ++i) {
+        auto* moduleNamespace = uncheckedDowncast<JSC::JSModuleNamespaceObject>(modulesThatLeft.at(i));
+        if (!moduleNamespace->moduleRecord()->hasLiveExports())
+            overridesModuleThatLeft |= moduleNamespace != mock->patchedNamespace.get() || savedExportsOf(moduleNamespace);
+    }
+    bool overridesLoadedModule = moduleNamespaceObject || loaded.compiledModule;
+    Vector<JSC::Identifier, 4> names;
+    MarkedArgumentBuffer values;
+    if (overridesLoadedModule) {
         // Read every export before overriding any, so a throwing getter leaves the
         // namespace untouched.
-        Vector<JSC::Identifier, 4> names;
-        MarkedArgumentBuffer values;
         if (commonJSExports) {
             commonJSExports->toSyntheticSource(globalObject, JSC::Identifier(), names, values);
             RETURN_IF_EXCEPTION(scope, );
@@ -2933,32 +3036,59 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 values.append(value);
             }
         }
-        if (values.hasOverflowed()) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return;
-        }
         // A getter above may have re-mocked or unmocked the module, and that wins.
-        if (!isStillRegisteredModuleMock(globalObject, specifier, registered))
+        if (!values.hasOverflowed() && !isStillRegisteredModuleMock(globalObject, specifier, registered))
             return;
-
+    } else if (overridesModuleThatLeft) {
+        // Whether a module that left the registry is still alive is for the collector to know. So what is done for those modules alone runs no code
+        // of the test: a getter is not called, and nothing is read from an object that is not a plain one.
+        appendValuesOfPlainObject(globalObject, exports, names, values);
+        RETURN_IF_EXCEPTION(scope, );
+        overridesModuleThatLeft = !names.isEmpty();
+    }
+    if (values.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    // Behind the reads: a mock call that throws above is not registered, so nothing would undo it.
+    for (size_t i = 0; i < modulesThatLeft.size(); ++i) {
+        auto* moduleNamespace = uncheckedDowncast<JSC::JSModuleNamespaceObject>(modulesThatLeft.at(i));
+        auto* record = moduleNamespace->moduleRecord();
+        // One that was loaded as an earlier mock reads from that mock again once this one ends. Without a source it has no mock to go back to.
+        JSObject* source = record->hasLiveExports() ? record->liveExportsSource() : nullptr;
+        if (!source)
+            continue;
+        if (source != mock && !replaced->has(moduleNamespace))
+            replaced->set(vm, moduleNamespace, source);
+        record->setLiveExportsSource(vm, mock);
+    }
+    if (overridesLoadedModule || overridesModuleThatLeft) {
         static std::atomic<unsigned> patches { 0 };
         if (JSObject* overwritten = moduleNamespaceObject ? mock->originalExports.get() : nullptr) {
             if (!mock->patchOrder)
                 mock->patchOrder = ++patches;
-            for (auto& name : names) {
-                bool isSaved = overwritten->hasProperty(globalObject, name);
-                RETURN_IF_EXCEPTION(scope, );
-                if (isSaved)
+            saveExportsToOverride(globalObject, moduleNamespaceObject, overwritten, names, false);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        // Only the variables of the module itself, unless the mock holds the module. What it exports of another module is that module's, and a module
+        // that the mock does not hold may die before the mock ends: such a variable would stay overridden for good. Nor may a module that nothing
+        // holds, and that the collector has yet to free, decide what the holders of another module read.
+        for (size_t i = 0; overridesModuleThatLeft && i < modulesThatLeft.size(); ++i) {
+            auto* moduleNamespace = uncheckedDowncast<JSC::JSModuleNamespaceObject>(modulesThatLeft.at(i));
+            if (moduleNamespace->moduleRecord()->hasLiveExports())
+                continue;
+            bool isHeldByMock = moduleNamespace == mock->patchedNamespace.get();
+            JSObject* overwritten = savedExportsOf(moduleNamespace);
+            if (!overwritten) {
+                if (isHeldByMock)
                     continue;
-                // Read the variable directly, because the namespace object would force a builtin's lazy export.
-                ExportVariable variable = findExportVariable(globalObject, moduleNamespaceObject, name);
-                RETURN_IF_EXCEPTION(scope, );
-                if (!variable.record)
-                    continue;
-                JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);
-                overwritten->putDirectMayBeIndex(globalObject, name, original ? original : JSValue(overwritten));
-                RETURN_IF_EXCEPTION(scope, );
+                overwritten = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+                replaced->set(vm, moduleNamespace, overwritten);
             }
+            if (!mock->patchOrder)
+                mock->patchOrder = ++patches;
+            saveExportsToOverride(globalObject, moduleNamespace, overwritten, names, !isHeldByMock);
+            RETURN_IF_EXCEPTION(scope, );
         }
 
         if (moduleNamespaceObject && mock->originalExports && !mock->originalExportsOfEvictedModule)
@@ -3004,6 +3134,20 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             RETURN_IF_EXCEPTION(scope, );
         }
 #endif
+        for (size_t i = 0; i < modulesThatLeft.size(); ++i) {
+            auto* moduleNamespace = uncheckedDowncast<JSC::JSModuleNamespaceObject>(modulesThatLeft.at(i));
+            JSObject* overwritten = moduleNamespace->moduleRecord()->hasLiveExports() ? nullptr : savedExportsOf(moduleNamespace);
+            if (!overwritten)
+                continue;
+            for (size_t name = 0; name < names.size(); ++name) {
+                bool isSaved = overwritten->hasProperty(globalObject, names[name]);
+                RETURN_IF_EXCEPTION(scope, );
+                if (!isSaved)
+                    continue;
+                moduleNamespace->overrideExportValue(globalObject, names[name], values.at(name));
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        }
     }
 
     if (auto* moduleObject = loaded.commonJSModule) {
@@ -3096,6 +3240,10 @@ struct ModulesToEvict {
     // Packages that vi.mock() is about to mock.
     Vector<String> packagesSetAside;
     bool onlyImportersFromEarlierTestFiles { false };
+    // Set if what the pass takes out goes to modulesThatLeftRegistry: the first test file whose mocks patch it. 0 for the end of a test file and for a mock laid
+    // over what an earlier test file loaded. The next test file for the end of one mock: in its own test file, whoever holds the module keeps what it had.
+    // Never set for vi.resetModules() and jest.resetModules(): existing imports keep their values.
+    std::optional<unsigned> remembersWhatLeavesFrom;
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
     bool hasLoadSettled { false };
@@ -3238,6 +3386,20 @@ static void forgetFailuresKeptByCompiledProgram(Zig::GlobalObject* globalObject)
     JSC::AOT::evictFailedModules(globalObject);
 }
 #endif
+
+// Only what a test file loaded and ran: a preload's module is never loaded a second time, and one that failed is held by nobody.
+// Not under --aot: a mock patches no record of a compiled file.
+static void rememberModuleThatLeavesRegistry(Zig::GlobalObject* globalObject, const String& key, JSC::ModuleRegistryEntry* entry, unsigned mockedFromTestFile)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    auto* record = entry ? entry->record() : nullptr;
+    if (!Bun::isBunTest || globalObject->vm().hasCompiledCode() || !record || !plugins.testFileOfModule.get(key))
+        return;
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    if (cyclic && (cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluated || cyclic->evaluationError()))
+        return;
+    plugins.modulesThatLeftRegistry.ensure(key, [] { return Vector<BunPlugin::OnLoad::ModuleThatLeftRegistry>(); }).iterator->value.append({ JSC::Weak<JSC::JSCell> { record }, mockedFromTestFile });
+}
 
 __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, ModulesToEvict&& evict)
 {
@@ -3441,14 +3603,23 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         if (JSC::JSPromise* pendingLoad = loading.get(key)) {
             stay.add(key);
             awaited.add(pendingLoad);
+            if (evict.remembersWhatLeavesFrom) {
+                auto& lowest = plugins.modulesToRememberOnceEvicted.add(key, *evict.remembersWhatLeavesFrom).iterator->value;
+                lowest = std::min(lowest, *evict.remembersWhatLeavesFrom);
+            }
             continue;
         }
+        std::optional<unsigned> mockedFromTestFile = plugins.modulesToRememberOnceEvicted.takeOptional(key);
+        if (evict.remembersWhatLeavesFrom)
+            mockedFromTestFile = std::min(mockedFromTestFile.value_or(*evict.remembersWhatLeavesFrom), *evict.remembersWhatLeavesFrom);
         bool leavesRegistry = !staysInRegistry.contains(key), leavesRequireCache = !staysInRequireCache.contains(key);
         if (leavesRegistry && !clearsRegistry) {
             auto identifier = JSC::Identifier::fromString(vm, key);
             ASSERT(!loader->registryEntry(identifier) || neverLoads.contains(key) || !pendingLoadOf(globalObject, loader->registryEntry(identifier)));
             giveLoadedModuleBackToPreloadModuleMock(globalObject, key);
             keepPreloadModule(key, loader->getRegisteredMayBeNull(identifier, JSC::ScriptFetchParameters::Type::JavaScript));
+            if (mockedFromTestFile)
+                rememberModuleThatLeavesRegistry(globalObject, key, loader->registryEntry(identifier), *mockedFromTestFile);
             loader->removeEntry(identifier);
             plugins.ranksAreStale = true;
         }
@@ -3561,6 +3732,29 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
         original = builtin.getObject()->get(globalObject, variable.localName);
         RETURN_IF_EXCEPTION(scope, );
         moduleNamespace->overrideExportValue(globalObject, name, original);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+// Those of them that are still alive.
+static void restoreModulesThatLeftRegistry(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSWeakMap* replaced = mock->replacedInModulesThatLeftRegistry.get();
+    if (!replaced)
+        return;
+    mock->replacedInModulesThatLeftRegistry.clear();
+    MarkedArgumentBuffer patched;
+    replaced->takeSnapshot(patched);
+    for (size_t i = 0; i + 1 < patched.size(); i += 2) {
+        auto* moduleNamespace = uncheckedDowncast<JSC::JSModuleNamespaceObject>(patched.at(i));
+        JSObject* was = patched.at(i + 1).getObject();
+        if (auto* record = moduleNamespace->moduleRecord(); record->hasLiveExports()) {
+            record->setLiveExportsSource(vm, was);
+            continue;
+        }
+        restoreOverwrittenExports(globalObject, moduleNamespace, was);
         RETURN_IF_EXCEPTION(scope, );
     }
 }
@@ -3739,6 +3933,8 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
         restoreOverwrittenExports(globalObject, patched, saved);
         RETURN_IF_EXCEPTION(scope, );
     }
+    restoreModulesThatLeftRegistry(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, );
     // A record with live exports was loaded as a mock, so it isn't the module that was patched.
     JSObject* overwritten = loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports() ? nullptr : mock->originalExports.get();
 
@@ -3763,6 +3959,7 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, co
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ModulesToEvict evict;
+    evict.remembersWhatLeavesFrom = globalObject->onLoadPlugins.testFile + 1;
 #if ENABLE(AOT)
     // What the other unmockModule() asks for packagesToBringBack.
     bool bringsBack = bringsBackCompiledFile(mock, specifier) || endsPatchOfPreloadOverPackage(mock, specifier);
@@ -5370,6 +5567,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (loadedByTestFile != globalObject->onLoadPlugins.testFile) {
             ModulesToEvict evict;
             evict.onlyImportersFromEarlierTestFiles = true;
+            evict.remembersWhatLeavesFrom = 0;
             evict.patchedESModules.append(specifier);
             evict.patchedCommonJSModules.append(specifier);
             evict.packagesSetAside.append(specifier);
@@ -5399,6 +5597,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         loaded.staleESMEntry |= !!std::exchange(loaded.esmNamespace, nullptr);
         loaded.staleCommonJSEntry |= !!std::exchange(loaded.commonJSModule, nullptr);
     }
+    // A mock that patches what is loaded also patches what left the registry under the key and something still holds.
+    mock->patchesModulesThatLeftRegistry = !leavesLoadedModuleAlone;
 
     // Left for later, the body of a linked module would assign over the patch. It can't run ahead of an import whose own body is up the stack, though.
     using Status = JSC::CyclicModuleRecord::Status;
@@ -5439,6 +5639,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         mock->originalNamespace.setMayBeNull(vm, mock, previous->originalNamespace.get());
         mock->patchedNamespace.setMayBeNull(vm, mock, previous->patchedNamespace.get());
         mock->originalExportsOfEvictedModule.setMayBeNull(vm, mock, previous->originalExportsOfEvictedModule.get());
+        mock->replacedInModulesThatLeftRegistry.setMayBeNull(vm, mock, previous->replacedInModulesThatLeftRegistry.get());
         mock->patchOrder = previous->patchOrder;
         if (JSValue exports = previous->originalCommonJSExports.get())
             mock->originalCommonJSExports.set(vm, mock, exports);
@@ -5634,6 +5835,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     JSC::JSPromise* pendingFactory = nullptr;
     // False once the factory itself has re-mocked or unmocked the module, which wins.
     bool isCurrent = true;
+    // Over a module that is not loaded the factory waits for the first import, and what it returns then patches the modules that left the registry.
+    mock->patchesThemOnceSettled = mock->patchesModulesThatLeftRegistry && !loaded.esmNamespace && !loaded.compiledModule && !loaded.commonJSModule;
     if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
 #if ENABLE(AOT)
         pendingFactory = mock->run(globalObject, placeOfMockThatEnds && !mock->factory.get());
@@ -5687,8 +5890,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             mock->originalNamespace.clear();
             mock->patchedNamespace.clear();
             mock->originalExportsOfEvictedModule.clear();
+            mock->replacedInModulesThatLeftRegistry.clear();
             mock->originalCommonJSExports.clear();
             mock->patchOrder = 0;
+            // What was loaded leaves the registry below, and whatever holds it reads the mock once the first import has called the factory.
+            mock->patchesThemOnceSettled = mock->patchesModulesThatLeftRegistry;
             bodyYetToRun = nullptr;
         }
         RETURN_IF_EXCEPTION(scope, {});
@@ -5791,6 +5997,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (wasLoadedByEarlierTestFile || loaded.staleESMEntry || loaded.staleCommonJSEntry) {
             ModulesToEvict evict;
             evict.onlyImportersFromEarlierTestFiles = true;
+            evict.remembersWhatLeavesFrom = 0;
             if (loaded.esmNamespace)
                 evict.patchedESModules.append(specifier);
             if (loaded.commonJSModule)
@@ -6258,6 +6465,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             again->importsOriginal = mock->importsOriginal;
             again->patchedNamespace.setMayBeNull(vm, again, mock->patchedNamespace.get());
             again->originalExportsOfEvictedModule.setMayBeNull(vm, again, mock->originalExportsOfEvictedModule.get());
+            again->replacedInModulesThatLeftRegistry.setMayBeNull(vm, again, mock->replacedInModulesThatLeftRegistry.get());
             again->patchOrder = mock->patchOrder;
 #if ENABLE(AOT)
             again->lostCommonJSExportsToReset = true;
@@ -6475,6 +6683,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     }
 #endif
     plugins.loadedByImportActual.clear();
+    plugins.modulesThatLeftRegistry.removeIf([](auto& left) {
+        left.value.removeAllMatching([](auto& module) { return !module.record; });
+        return left.value.isEmpty();
+    });
     ModulesToEvict evict;
 #if ENABLE(AOT)
     plugins.fetchesThatStandForWaitingMocks.clear();
@@ -6677,6 +6889,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     for (auto& module : plugins.moduleMocksBeingLoaded.keys())
         evict.modules.append(module);
     evict.isEndOfTestFile = plugins.hasVirtualModules();
+    evict.remembersWhatLeavesFrom = 0;
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
@@ -6708,7 +6921,9 @@ static void replaceModuleWithItsExports(Zig::GlobalObject* globalObject, JSC::Ab
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    evictModulesAndTheirImporters(globalObject, Vector<String> { key.string() });
+    ModulesToEvict evict { Vector<String> { key.string() } };
+    evict.remembersWhatLeavesFrom = 0;
+    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     RETURN_IF_EXCEPTION(scope, );
     auto* loader = Bun::testFileModuleLoader(globalObject);
     if (!loader->registryEntry(key))
@@ -6743,10 +6958,11 @@ extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::Gl
     }
 
     // Their mocks are undone, so the next file that imports them has to run them again. Nothing loads a preload's modules again.
-    Vector<String> modulesToRunAgain;
+    ModulesToEvict modulesToRunAgain;
+    modulesToRunAgain.remembersWhatLeavesFrom = 0;
     for (auto& key : modulesThatMocked) {
         if (key != testFile && plugins.testFileOfModule.get(key))
-            modulesToRunAgain.append(key);
+            modulesToRunAgain.modules.append(key);
     }
     evictModulesAndTheirImporters(globalObject, WTF::move(modulesToRunAgain));
     if (scope.exception()) [[unlikely]]
@@ -7078,6 +7294,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->originalNamespace);
     visitor.append(mock->patchedNamespace);
     visitor.append(mock->originalExportsOfEvictedModule);
+    visitor.append(mock->replacedInModulesThatLeftRegistry);
 #if ENABLE(AOT)
     visitor.append(mock->errorOfLateFailure);
     visitor.append(mock->errorOwedToImports);

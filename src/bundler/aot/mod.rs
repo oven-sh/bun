@@ -34,6 +34,7 @@ use core::ptr::NonNull;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
 pub use options::expand_entry_points;
 use options::{OptionsInput, options_from_bundler};
+pub use paths::FileIdentity;
 pub use services::FileFinder;
 pub use services::FilesForFileSystem;
 use services::{BundlerServices, NamesWanted, is_at_or_below};

@@ -5,7 +5,7 @@ use bun_aot::engine::{
 use bun_aot::statistics::{log_part_outside_stages, log_time_outside_stages};
 use bun_ast::Loader;
 use bun_bundler::aot::{
-    AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint, FilesForFileSystem,
+    AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint, FileIdentity, FilesForFileSystem,
 };
 use bun_bundler::options::{self, OutputFile};
 use bun_core::{CodeGenerationFromStrings, ZBox};
@@ -155,20 +155,25 @@ pub(crate) fn check_entry_points_are_kept<'a>(
     let (Ok(place), Ok(target)) = (bun_sys::lstat(&path), bun_sys::stat(&path)) else {
         return Ok(());
     };
-    let is_same =
-        |a: &bun_sys::Stat, b: &bun_sys::Stat| a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+    let target_identity = identify(&target, || real_path(outfile));
     let source = sources.find(|path| {
-        bun_sys::stat(&ZBox::from_bytes(path)).is_ok_and(|found| is_same(&found, &target))
+        bun_sys::stat(&ZBox::from_bytes(path))
+            .is_ok_and(|found| identify(&found, || real_path(path)).is_same_file(&target_identity))
     });
     let Some(source) = source else {
         return Ok(());
     };
-    let is_overwritten = match is_same(&place, &target) {
+    let is_overwritten = match bun_sys::S::ISLNK(place.st_mode as _) {
         // Of a file with several hard links, one is replaced and the others stay.
-        true => target.st_nlink == 1 || real_path(outfile) == real_path(source),
-        false => written.any(|path| {
-            bun_sys::lstat(&ZBox::from_bytes(path)).is_ok_and(|found| is_same(&found, &place))
-        }),
+        false => target.st_nlink == 1 || real_path(outfile) == real_path(source),
+        true => {
+            let link = identify(&place, || real_path_of_link(outfile));
+            written.any(|path| {
+                bun_sys::lstat(&ZBox::from_bytes(path)).is_ok_and(|found| {
+                    identify(&found, || real_path_of_link(path)).is_same_file(&link)
+                })
+            })
+        }
     };
     match is_overwritten {
         true => Err(CompileFailure::OverwritesEntryPoint {
@@ -178,6 +183,16 @@ pub(crate) fn check_entry_points_are_kept<'a>(
     }
 }
 
+fn identify(stat: &bun_sys::Stat, find_path: impl FnOnce() -> Option<Vec<u8>>) -> FileIdentity {
+    FileIdentity::new(stat.st_dev as u64, stat.st_ino as u64, find_path)
+}
+
+/// The path of the link itself.
+fn real_path_of_link(path: &[u8]) -> Option<Vec<u8>> {
+    let folder = bun_paths::dirname(path).filter(|folder| !folder.is_empty());
+    let folder = real_path(folder.unwrap_or(b"."))?;
+    Some([&folder[..], b"/", bun_paths::basename(path)].concat())
+}
 fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut buffer = bun_paths::path_buffer_pool::get();
     let found = bun_sys::realpath(&ZBox::from_bytes(path), &mut buffer).ok()?;
@@ -1006,9 +1021,10 @@ fn add_assets_under_root(
         }
         // A folder outside the root directory was embedded under its base name before it kept its path.
         let folder_given = from_root.as_deref().map(|it| graph_path(it, b""));
-        let is_folder = files
-            .iter()
-            .all(|file| file.dest_path[..] != asset_name[..]);
+        let is_folder = !files.is_empty()
+            && files
+                .iter()
+                .all(|file| file.dest_path[..] != asset_name[..]);
         if let Some(folder) = folder_given.filter(|it| is_folder && it.starts_with(b"../")) {
             outside_folders.push(folder.into_boxed_slice());
         }

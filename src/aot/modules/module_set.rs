@@ -522,8 +522,13 @@ fn answer_require_with_what_the_loader_holds(
         }
     }
     let mut checked_first: Vec<(FileId, FileId)> = Vec::new();
+    let mut code_checked_first: Vec<(FileId, FileId)> = Vec::new();
     for &(file, form) in forms {
         let Some(interop) = interops[file.idx()].filter(|it| it.kind == ModuleKind::Data) else {
+            // Once the code at the path has been required, require() of a typed form answers with its exports.
+            if interops[file.idx()].is_some() && (is_any_required || is_required[form.idx()]) {
+                code_checked_first.push((form, file));
+            }
             continue;
         };
         let is_read_by_require =
@@ -547,6 +552,7 @@ fn answer_require_with_what_the_loader_holds(
             interop.require_result = RequireResult::NamespaceIfImported;
         }
     }
+    checked_first.extend(code_checked_first);
     let is_read_as_json =
         |form: FileId| parsed_source(input.files, form).is_some_and(|it| it.loader == Loader::Json);
     checked_first.shared_sort_unstable_by_key(|&(file, form)| {

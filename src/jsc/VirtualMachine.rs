@@ -6247,9 +6247,11 @@ impl VirtualMachine {
 
     #[inline]
     fn resolver_reads(&self) -> ResolverReads {
+        use core::sync::atomic::Ordering::Relaxed;
+        let resolver = &self.transpiler.resolver;
         ResolverReads {
-            disk: self.transpiler.resolver.disk_reads.get(),
-            unrecorded: self.transpiler.resolver.unrecorded_reads.get(),
+            disk: resolver.disk_reads.load(Relaxed),
+            unrecorded: resolver.unrecorded_reads.load(Relaxed),
         }
     }
 

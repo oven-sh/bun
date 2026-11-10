@@ -8,6 +8,7 @@
 use crate::{is_package_path, is_package_path_not_absolute};
 
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -660,9 +661,9 @@ pub struct Resolver<'a> {
     pub esm_failure: Option<crate::package_json::Status>,
 
     /// How often this resolver went to the disk: past the directory cache, or for the first stat of an entry.
-    pub disk_reads: core::cell::Cell<u32>,
+    pub disk_reads: AtomicU32,
     /// In builds with assertions: how many of those reads left nothing that the same call finds the next time.
-    pub unrecorded_reads: core::cell::Cell<u32>,
+    pub unrecorded_reads: AtomicU32,
 }
 
 /// For `Entry::kind` and `Entry::symlink`, which stat at their first call: the resolver counts those stats.
@@ -674,14 +675,13 @@ impl Fs::EntryKindResolver for Resolver<'_> {
         existing_fd: FD,
         store_fd: bool,
     ) -> crate::CrateResult<Fs::EntryCache> {
-        self.disk_reads.set(self.disk_reads.get().wrapping_add(1));
+        self.disk_reads.fetch_add(1, Ordering::Relaxed);
         let cache = self
             .rfs_ref()
             .resolve_kind(dir, base, existing_fd, store_fd);
         // `Entry::symlink` answers "no link" for a stat that fails, once: its next call answers from the entry.
         if bun_core::Environment::CI_ASSERT && cache.is_err() {
-            let unrecorded = self.unrecorded_reads.get().wrapping_add(1);
-            self.unrecorded_reads.set(unrecorded);
+            self.unrecorded_reads.fetch_add(1, Ordering::Relaxed);
         }
         cache
     }
@@ -753,8 +753,8 @@ impl<'a> Resolver<'a> {
             // never carried across worker init.
             custom_dir_paths: None,
             esm_failure: None,
-            disk_reads: core::cell::Cell::new(0),
-            unrecorded_reads: core::cell::Cell::new(0),
+            disk_reads: AtomicU32::new(0),
+            unrecorded_reads: AtomicU32::new(0),
         }
     }
 
@@ -1111,8 +1111,8 @@ impl<'a> Resolver<'a> {
             prefer_module_field: true,
             custom_dir_paths: None,
             esm_failure: None,
-            disk_reads: core::cell::Cell::new(0),
-            unrecorded_reads: core::cell::Cell::new(0),
+            disk_reads: AtomicU32::new(0),
+            unrecorded_reads: AtomicU32::new(0),
         }
     }
 
@@ -4755,12 +4755,11 @@ impl<'a> Resolver<'a> {
         input_path: &[u8],
         top_result: allocators::Result,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.disk_reads.set(self.disk_reads.get().wrapping_add(1));
+        self.disk_reads.fetch_add(1, Ordering::Relaxed);
         let is_recorded = core::cell::Cell::new(true);
         let found = self.dir_info_from_disk(enable_logging, input_path, top_result, &is_recorded);
         if bun_core::Environment::CI_ASSERT && !is_recorded.get() {
-            let unrecorded = self.unrecorded_reads.get().wrapping_add(1);
-            self.unrecorded_reads.set(unrecorded);
+            self.unrecorded_reads.fetch_add(1, Ordering::Relaxed);
         }
         found
     }

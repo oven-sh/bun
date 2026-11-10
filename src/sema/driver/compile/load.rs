@@ -4,11 +4,10 @@ use super::{
     WithoutBunTypes,
 };
 use crate::{
-    Libs, default_compiler_options, diagnostic_from_config_error, give_pool_stack_for_lowering,
-    host, use_dedicated_pool,
+    Libs, default_compiler_options, diagnostic_from_config_error, host, use_pool_for_lowering,
 };
-use bun_sema::check::Program;
 use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
+use bun_sema::check::{NodeCounts, Program};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -34,8 +33,7 @@ pub fn load_program<'s>(
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
-    give_pool_stack_for_lowering();
-    use_dedicated_pool("Bun Compile");
+    use_pool_for_lowering("Bun Compile");
     let mut steps = LoggedSteps::begin(host);
     let entry_paths = match request.entry_points {
         EntryPoints::Written(specifiers) | EntryPoints::WrittenAndFound(specifiers, ..) => {
@@ -82,11 +80,15 @@ pub fn load_program<'s>(
         .custom_conditions
         .extend_from_slice(&request.code.custom_conditions);
     let has_bun_types_installed = choose_libraries(host, options, request.libs);
-    let names_bun_types_by_itself = options.names_bun_types_by_itself;
     let is_application = request.project_origin != FileOrigin::Runtime;
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
+    let is_read_as_after_bun_init =
+        is_application && has_bun_types && project.config_path.is_empty();
+    if is_read_as_after_bun_init && !options.specifies_lib {
+        options.libs = vec![b"esnext".to_vec()];
+    }
     options.orders_files_as_listed = !is_application;
     if is_application && has_bun_types {
         last_files.append(&mut host.declarations_beside_bun_types(has_bun_types_installed));
@@ -109,6 +111,7 @@ pub fn load_program<'s>(
     let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
     let config_path = project.config_path.clone();
     let found_entry_paths: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let guessed_entry_paths: Guarded<FxHashSet<Vec<u8>>> = Guarded::new(FxHashSet::default());
     let list_with_found = || {
         let found = found_entry_paths.lock();
         if !config_path.is_empty() || !found.iter().any(|path| is_typescript_file_name(path)) {
@@ -139,16 +142,32 @@ pub fn load_program<'s>(
     let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
         EntryPoints::WrittenAndFound(_, find) => {
             let found = find(code);
+            let sure = found.named_by.iter();
+            let sure = sure.filter(|(_, load)| !load.is_some_and(|load| load.may_be_left_out));
+            let sure: FxHashSet<&[u8]> = sure.map(|(path, _)| &path[..]).collect();
+            let named: FxHashSet<&[u8]> = found.named_by.iter().map(|it| &it.0[..]).collect();
             let mut paths = found_entry_paths.lock();
+            let mut guessed = guessed_entry_paths.lock();
             paths.retain(|path| !found.dropped.contains(path));
-            paths.extend_from_slice(&found.paths);
+            for path in &found.paths {
+                match named.contains(&path[..]) && !sure.contains(&path[..]) {
+                    true => drop(guessed.insert(path.clone())),
+                    false => paths.push(path.clone()),
+                }
+            }
+            for (path, _) in &found.named_by {
+                if sure.contains(&path[..]) && guessed.remove(path) {
+                    paths.push(path.clone());
+                }
+            }
+            drop(guessed);
             drop(paths);
             found
         }
         _ => EntryPointsFound::default(),
     };
     steps.end("entry points, project, libraries");
-    let files = Files::load_for_compile(
+    let mut files = Files::load_for_compile(
         session,
         host,
         project.options,
@@ -161,6 +180,12 @@ pub fn load_program<'s>(
             atoms: request.atoms,
         },
     );
+    files.note_types_that_program_leads_to(
+        &|path| match &roots_with_and_without_what_is_excluded {
+            Some((_, kept)) => kept.has(&config::SplitFilePath::new(path), &|it| host.is_file(it)),
+            None => entry_paths.iter().any(|it| it == path),
+        },
+    );
     steps.end("the files: the sum of the lines above, from the walk on");
     host.loaded();
     let files: &'s Files<'s> = session.arena().alloc(files);
@@ -168,16 +193,14 @@ pub fn load_program<'s>(
     steps.end("free the leaves that nothing reads, settle the texts");
     let checker_session = session.keep(SessionSlot::new());
     let node_counts = Program::count_nodes(files);
-    let program = Program::with_node_counts(checker_session.session(), files, &node_counts);
-    program.find_symbols_of_compiler();
-    let program = &*session.arena().alloc(UnsafeCell::new(program));
+    let program = make_checker(session, checker_session, files, &node_counts);
     steps.end("count nodes, make the checker");
     let config_path = &project.config_path;
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
     let errors = project.errors.iter().chain(&problems);
     let origins = compute_origins(files, host, request.project_origin);
     steps.end("origins of the files");
-    let bun_types = if has_bun_types_installed && names_bun_types_by_itself && is_application {
+    let bun_types = if has_bun_types_installed && files.brings_declarations() && is_application {
         BunTypes::InstalledAndNotNamed
     } else if !is_application || has_bun_types_installed {
         BunTypes::Installed
@@ -219,6 +242,7 @@ pub fn load_program<'s>(
         is_checker_freed: AtomicBool::new(false),
         cycles_entered: Default::default(),
         origins,
+        origins_behind_reach: Default::default(),
         project_origin: request.project_origin,
         diagnostics,
         bun_types,
@@ -226,6 +250,19 @@ pub fn load_program<'s>(
         files_that_project_excludes,
         files_left_to_loader: Default::default(),
     })
+}
+
+#[inline(never)]
+fn make_checker<'s>(
+    session: &'s Session,
+    checker_session: &'s SessionSlot,
+    files: &'s Files<'s>,
+    node_counts: &NodeCounts,
+) -> &'s UnsafeCell<Program<'s>> {
+    let program = Program::with_node_counts(checker_session.session(), files, node_counts);
+    let program = session.arena().alloc(program);
+    program.find_symbols_of_compiler();
+    UnsafeCell::from_mut(program)
 }
 
 fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Vec<FileId> {

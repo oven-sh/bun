@@ -1,0 +1,26 @@
+# -- source: a-loop-whose-turn-calls-what-is-no-built-in-is-not-built-twice-for-the-sites-of-its-reads.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# const rows = JSON.parse('[{"price":0.5},{"price":1.5},{"price":2.5}]');
+# let seen = 0;
+# const each = id((row: any) => { seen++; });
+# function told(): number { let sum = 0; for (const row of rows) { sum += row.price; each(row); } return sum; }
+# function paid(): number { let sum = 0; for (const row of rows) sum += row.price; return sum; }
+# print(id(told)());
+# print(id(paid)());
+# print(seen);
+# -- end of source
+# LIBRARY: own
+# f2 = told, f3 = paid. A call of what is no built-in closes the turn anyhow: a second copy of the loop for the sites of its reads buys nothing there and costs its operations once more: that loop is walked once.
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-LABEL: code f2:Body
+# ONCE-NOT: = GetValueAtSiteOrAbsent
+# RUN(TWICE): walk f3 mechanisms=all
+# TWICE-LABEL: code f3:Body
+# TWICE: = GetValueAtSiteOrAbsent {{*}}key="price"
+# TWICE: = Add {{*}}form=Numbers
+# RUN: run-in-shell mechanisms=all
+# CHECK: 4.5
+# CHECK-NEXT: 4.5
+# CHECK-NEXT: 3
+# CHECK-NEXT: exited with 0

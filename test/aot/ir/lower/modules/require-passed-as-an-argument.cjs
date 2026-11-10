@@ -1,6 +1,7 @@
 // The call tests that the parameter holds the require of this file. Any other function in its place is called.
 // Whoever is handed a require finds the main module there, so the file keeps its module object and its calls of require are recorded.
 // RUN(CALLED): lower
+// DIAGNOSTIC: TS100093 2
 // CALLED-LABEL: function {{*}}name="called"
 // CALLED: [[own]] = ModuleBuiltin builtin=ModuleRequire
 // CALLED: [[same]] = StrictEq v0, [[own]]

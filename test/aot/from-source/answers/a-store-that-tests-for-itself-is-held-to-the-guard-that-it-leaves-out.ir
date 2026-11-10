@@ -1,0 +1,40 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { declare fragile?: boolean; weight: number; constructor(weight: number) { this.weight = weight; } }
+# function mark(given: unknown) { (given as Parcel).fragile = true; }
+# let seen = 0;
+# const parcels: Parcel[] = [];
+# for (let i = 0; i < 4; i++) { const parcel = new Parcel(i); if (i === 3) parcel.fragile = true; parcels.push(parcel); }
+# (globalThis as any).parcels = parcels;
+# const marks = id(mark);
+# marks(parcels[0]);
+# print(Object.hasOwn(parcels[0], "fragile"), seen);
+# Object.defineProperty(Parcel.prototype, "fragile", { set(value: boolean) { seen++; }, configurable: true });
+# marks(parcels[1]);
+# print(Object.hasOwn(parcels[1], "fragile"), seen);
+# -- end of source
+# LIBRARY: own
+# A store that tests for itself and may create its field leaves out each guard of stores that is taken for held. A setter laid above must be called.
+# The lie, testing=GuardsAndFactsAreTakenToHold: the planner of typed accesses takes every guard of a class for held and every fact of a cell for seen, and the state is not touched. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) what the access leans on is asked where nobody has answered it: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: true 0
+# RIGHT-NEXT: false 1
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: true 0
+# HARDENED-NEXT: false 1
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold
+# LIE: true 0
+# LIE-NEXT: AOT: f1 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE: crashed with
+# Under testing=CheckWalkAtRunTime the object itself is asked in front of the store, by an inquiry that reads no guard.
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime
+# ASKED: true 0
+# ASKED-NEXT: false 1
+# ASKED-NEXT: exited with 0
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold
+# ASKEDLIE: true 0
+# ASKEDLIE-NEXT: AOT: a store by name that is laid into a slot takes the name fragile to find nothing that stands in its way, and the object, asked in front of the store, answers an accessor. This is a bug in Bun.
+# ASKEDLIE: crashed with

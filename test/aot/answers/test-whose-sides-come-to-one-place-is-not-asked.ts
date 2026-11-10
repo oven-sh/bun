@@ -5,7 +5,7 @@
 // # FORM-NOT: Branch
 // # RUN(WRITTEN): walk f5 mechanisms=none
 // # WRITTEN-LABEL: code f5:Body
-// # WRITTEN: Branch
+// # WRITTEN-NOT: Branch
 // # RUN(KEPT): walk f2 mechanisms=none+Folding
 // # KEPT-LABEL: code f2:Body
 // # KEPT: Branch

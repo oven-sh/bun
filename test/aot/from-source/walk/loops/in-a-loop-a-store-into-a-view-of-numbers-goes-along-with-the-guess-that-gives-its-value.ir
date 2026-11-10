@@ -1,0 +1,20 @@
+# -- source: in-a-loop-a-store-into-a-view-of-numbers-goes-along-with-the-guess-that-gives-its-value.cjs
+# "use strict";
+# const numbers = new Float64Array(8).map((_, i) => i * 1.5), pane = new DataView(numbers.buffer), target = new Float64Array(8);
+# function copy(t) { for (let i = 0; i < 8; i++) target[i] = pane.getFloat64(i * 8, true); return t & 1; }
+# const rounds = +JSON.parse('"3"'); let all = 0; for (let t = 0; t < rounds; t++) all += copy(t);
+# print(all, target.join());
+# pane.getFloat64 = (at) => (at === 16 ? "7.5" : { valueOf() { return at + 0.25; } });
+# print(copy(1), target.join());
+# -- end of source
+# f1 = copy. The guess whether the DataView is as made ended at the call; its rare arm, which calls whatever is found under the name, came back at a join with anything, and the store
+# behind the join took a boxed key and any value. A view of numbers converts what is stored, so the store leans on the number that the typed run knows: in a loop it goes along with
+# the stretch: the typed run stores a raw number under a raw key, the rare arm keeps the store that converts. The second print runs the rare arm: a text and objects are converted.
+# RUN: walk f1 mechanisms=all
+# CHECK: = IsPristine {{*}} builtinClass=DataView
+# CHECK: = PutTypedArrayElement {{*}} level=Expected
+# CHECK: = PutTypedArrayElement {{*}} level=Proven
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 1 0,1.5,3,4.5,6,7.5,9,10.5
+# ANSWER-NEXT: 1 0.25,8.25,7.5,24.25,32.25,40.25,48.25,56.25
+# ANSWER-NEXT: exited with 0

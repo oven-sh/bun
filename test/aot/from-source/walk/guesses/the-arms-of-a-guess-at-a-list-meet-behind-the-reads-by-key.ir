@@ -1,0 +1,83 @@
+# f1 = ends, f2 = endsOfWhatIsFetched, f3 = endsOf
+# -- source: the-arms-of-a-guess-at-a-list-meet-behind-the-reads-by-key.ts
+# // `texts.length - 1`, then `texts[0]` and `texts[last]`: the guess that `texts` is a list was opened for the length alone, its arms met in front of the reads, and each read asked a stub what it reads off.
+# declare function print(...values: unknown[]): void;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# function ends(texts: string[], mark: string): string {
+#   const last = texts.length - 1;
+#   const first = texts[0];
+#   const final = texts[last];
+#   return first + mark + final + mark + last;
+# }
+# // No guard at the entry can prove what a call of unknown code gives.
+# function endsOfWhatIsFetched(fetch: () => unknown, mark: string): string {
+#   const texts = fetch() as string[];
+#   const last = texts.length - 1;
+#   const first = texts[0];
+#   const final = texts[last];
+#   return first + mark + final + mark + last;
+# }
+# class Pattern {
+#   texts: string[];
+#   constructor(texts: string[]) { this.texts = texts; }
+# }
+# function endsOf(pattern: Pattern, keep: (last: number) => void): string {
+#   const texts = pattern.texts;
+#   const last = texts.length - 1;
+#   keep(last);
+#   return texts[0] + "~" + texts[last];
+# }
+# const handedOut: (texts: unknown, mark: string) => unknown = unseen(ends);
+# const handedOutToo: (pattern: unknown, keep: (last: number) => void) => unknown = unseen(endsOf);
+# const fetched: (fetch: () => unknown, mark: string) => unknown = unseen(endsOfWhatIsFetched);
+# const said: string[] = [];
+# function attempt(name: string, run: () => unknown): void {
+#   let answer: string;
+#   try { answer = String(run()); } catch (error) { answer = (error as Error).constructor.name; }
+#   said.push(name + " " + answer);
+# }
+# for (let round = 0; round < 3; round++) {
+#   attempt("three", () => handedOut(["a", "b", "c"], "|"));
+#   attempt("one", () => handedOut(["only"], "|"));
+#   attempt("none", () => handedOut([], "|"));
+#   attempt("holes", () => handedOut([, "b", ,], "|"));
+#   attempt("numbers", () => handedOut([1, 2.5, 3], "|"));
+#   attempt("whole numbers", () => handedOut([1, 2, 3], "|"));
+#   attempt("a text", () => handedOut("text", "|"));
+#   attempt("bytes", () => handedOut(Uint8Array.of(7, 8, 9), "|"));
+#   attempt("a record like a list", () => handedOut({ length: 2, 0: "x", 1: "y" }, "|"));
+#   attempt("a record with an odd length", () => handedOut({ length: "2", 0: "x", 1: "y" }, "|"));
+#   attempt("arguments", () => (function (..._rest: unknown[]) { return handedOut(arguments, "|"); })("p", "q"));
+#   attempt("a proxy", () => handedOut(new Proxy(["a", "b"], { get(target, key, receiver) { return key === "1" ? "trapped" : Reflect.get(target, key, receiver); } }), "|"));
+#   attempt("a list of a class below", () => handedOut(new (class Longer extends Array<string> { get 0() { return "own"; } })(), "|"));
+#   attempt("a sparse list", () => { const list: string[] = []; list[100000] = "far"; return handedOut(list, "|"); });
+#   attempt("a frozen list", () => handedOut(Object.freeze(["f", "g"]), "|"));
+#   attempt("nothing", () => handedOut(null, "|"));
+#   attempt("undefined", () => handedOut(undefined, "|"));
+#   attempt("a number", () => handedOut(5, "|"));
+#   for (const what of [["a", "b", "c"], [], [, "b", ,], [1, 2.5], [1, 2], "text", Uint8Array.of(7, 8), { length: 2, 0: "x", 1: "y" }, null, undefined, 5])
+#     attempt("fetched " + (what === null ? "null" : typeof what), () => fetched(() => what, "/"));
+#   attempt("off a field", () => handedOutToo(new Pattern(["a", "b", "c"]), () => {}));
+#   attempt("off a field, shortened between", () => { const pattern = new Pattern(["a", "b", "c"]); return handedOutToo(pattern, () => { pattern.texts.length = 1; }); });
+#   attempt("off a field, stored between", () => { const pattern = new Pattern(["a", "b", "c"]); return handedOutToo(pattern, last => { pattern.texts[last] = "new"; pattern.texts[0] = "first"; }); });
+#   attempt("off a field, another kind between", () => { const pattern = new Pattern(["a", "b", "c"]); return handedOutToo(pattern, last => { (pattern.texts as unknown[])[last] = 0.5; }); });
+#   attempt("off a record", () => handedOutToo({ texts: ["r"] }, () => {}));
+#   attempt("off nothing", () => handedOutToo({ texts: undefined }, () => {}));
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# The guess that `texts` is a list was opened for `length` and the difference alone: a read by key off a list that a test has proven has a form that still asks the list for its storage, and such a form counted for nothing outside loops.
+# So the arms met in front of the reads, `texts` was anything again, and each read called the stub that asks what it reads off. The reads count: the arms meet behind them: two reads off a proven list in the typed run, two closed ones in the arm.
+# (`ends` may have a guard at its entry, which proves the list for the whole body: it is there for its answers.)
+# RUN(READS): walk f2 mechanisms=all
+# READS-COUNT-2: = GetArrayElement {{*}} arrayStorage=Contiguous level=Expected
+# RUN(CLOSED): walk f2 mechanisms=all
+# CLOSED-COUNT-2: = ElemGet
+# A call between the length and the reads ends the stretch as ever.
+# RUN(CALL): walk f3 mechanisms=all
+# CALL-NOT: = ElemGet
+# Lists of every storage, with holes, sparse, frozen, of a class below with an accessor; a text, bytes, records like lists, arguments, a proxy, nothing.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 105 lines 2545958754

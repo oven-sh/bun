@@ -1,0 +1,28 @@
+# -- source: in-an-untyped-file-a-record-inferred-from-names-is-no-word-of-a-guard.js
+# function weighUnseen(request) {
+#   return request.method.length + request.path.length + request.method.length * request.path.length;
+# }
+# function weighSeen(request) {
+#   return request.method.length + request.path.length + request.method.length * request.path.length;
+# }
+# const written = [{ method: "GET", path: "/users" }, { method: "POST", path: "/users/7" }];
+# const parsed = JSON.parse(JSON.stringify(written));
+# sink(weighUnseen, weighSeen);
+# let sum = 0;
+# for (const request of parsed) sum += weighUnseen(request);
+# print(sum, weighSeen({ method: "GET", path: "/users" }), weighSeen({ method: "POST", path: "/users/7" }));
+# -- end of source
+# Nobody has written a type in this file. The two names read off `request` are those of one record of the program, and that inferred word stood in the guard of both functions. What arrives at the first
+# has been through JSON: an ordinary object with the same names, which is no record of the program: the guard failed at every call and every call ran the slow version. A record that only the names
+# suggest is no word for a guard: the body asks where it reads and has its other way. It goes by the function's own text: at the second function the record itself is seen to arrive, and it is compiled as
+# the first is: what the callers in sight happen to hand over decides nothing.
+# f1 = weighUnseen, f2 = weighSeen
+# RUN: plan units mechanisms=all
+# CHECK-NOT: unit f1:ParameterGuard
+# RUN(SEEN): plan units mechanisms=all
+# SEEN-NOT: unit f2:ParameterGuard
+# RUN(ASKS): walk f2 mechanisms=all
+# ASKS-LABEL: code f2:Body
+# ASKS: = ShapeTest
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 71 27 44

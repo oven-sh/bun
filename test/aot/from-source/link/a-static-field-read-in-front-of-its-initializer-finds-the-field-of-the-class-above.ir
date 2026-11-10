@@ -1,0 +1,10 @@
+# A static field counts as laid only behind its initializer. In front of it a read of the name goes on above: `early` holds the object of Base, not the text of Heir alone.
+# -- source: main.js
+# class Peg { constructor(v) { this.v = v; } }
+# class Base { static x = new Peg(1); }
+# class Heir extends Base { static early = Heir.x; static x = "text"; }
+# function same(value) { return value; }
+# print(typeof same(Heir.early));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=undefined|string|L0

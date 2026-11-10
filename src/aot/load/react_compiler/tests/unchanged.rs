@@ -3,6 +3,7 @@ use bun_ast::{Loader, Log};
 use bun_sema::hir::{ExprTag, FnBody};
 use bun_sema::hir_from_data::{DataValue, HostValue};
 use bun_sema::resolve::TreeChange;
+use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
 use super::{
     COMPILER_RUNTIME, HELLO, MAIN_PATH, RULE, Tree, UNTYPED_HELLO, with_compiled_tree,
@@ -10,7 +11,8 @@ use super::{
 };
 use crate::compile::testing::default_settings;
 use crate::diagnostics::{Diagnostics, LoadMessages};
-use crate::load::react_compiler::ReactCompiler;
+use crate::load::react_compiler::names_bound_again::find_name_bound_elsewhere;
+use crate::load::react_compiler::{ReactCompiler, may_hold_component_or_hook};
 use crate::load::source_provider::WithoutServices;
 
 struct NodeShapes {
@@ -33,6 +35,54 @@ fn node_shapes(text: &str, mode: ReactCompilerMode) -> NodeShapes {
             function_count: hir.fns.len(),
         }
     })
+}
+
+#[test]
+fn only_a_file_that_may_hold_a_component_or_a_hook_is_parsed_a_second_time() {
+    for (text, expected) in [
+        (
+            "export function add(a: number, b: number) { return a + b; }",
+            false,
+        ),
+        ("export function Label() { return null; }", false),
+        (
+            "export function Label() { used(); user.useless(); use(); return 'use'; }",
+            false,
+        ),
+        ("export function Label() { return <b />; }", true),
+        ("export function Label() { return <></>; }", true),
+        ("export function Label() { useThing(); return null; }", true),
+        ("export function Label() { use1(); return null; }", true),
+        (
+            "export function Label() { (useThing as any)!(); return null; }",
+            true,
+        ),
+        (
+            "export function Label() { Things.useThing(); return null; }",
+            true,
+        ),
+        (
+            "export function Label() { Things['useThing'](); return null; }",
+            true,
+        ),
+        (
+            "import { useThing as thing } from 'things'; export function Label() { thing(); return null; }",
+            true,
+        ),
+        (
+            "export function add(a: number, b: number) { 'use memo'; return a + b; }",
+            true,
+        ),
+        (
+            "export const add = (a: number, b: number) => { 'use forget'; return a + b; };",
+            true,
+        ),
+    ] {
+        let found = with_workbench(text, |bench| {
+            may_hold_component_or_hook(&bench.tree, &bench.atoms)
+        });
+        assert_eq!(found, expected, "{text}");
+    }
 }
 
 fn write_messages(messages: &LoadMessages) -> (Log, bool) {
@@ -250,6 +300,41 @@ fn existing_ids_keep_their_nodes() {
         written.type_ranges[..]
     );
     assert_eq!(compiled.function_count, written.function_count);
+}
+
+#[test]
+fn name_that_binds_to_another_declaration_behind_the_writer_is_found() {
+    let written = "const rate = 100;\n\
+                   {\n\
+                   let rate = 3;\n\
+                   function Listed({ items }: { items: number[] }) {\n\
+                   return <p>{items.map(n => n * rate)}</p>;\n\
+                   }\n\
+                   console.log(Listed);\n\
+                   }\n";
+    let twin = written.replace("let rate", "let late");
+    with_workbench(&twin, |bench| {
+        let (change, _) = bench.transform(ReactCompilerMode::Client);
+        assert_eq!(change, TreeChange::Changed);
+        let (arena, atoms, compiled) = (bench.arena, &bench.atoms, &bench.tree);
+        let parse = |text: &str| {
+            let options = CompileParseOptions {
+                path: MAIN_PATH,
+                script_kind: None,
+                experimental_decorators: false,
+                every_file_is_a_module: true,
+                reads_jsdoc: true,
+                ignores_pure_comments: false,
+            };
+            parse_for_compile(arena, &options, text.as_bytes(), atoms)
+        };
+        let of_its_own_text = find_name_bound_elsewhere(&parse(&twin), compiled, atoms, arena);
+        assert_eq!(of_its_own_text, None);
+        let found = find_name_bound_elsewhere(&parse(written), compiled, atoms, arena);
+        let (position, name) = found.expect("the name binds to the outer declaration");
+        assert_eq!(atoms.bytes(name), b"rate");
+        assert_eq!(position as usize, written.find("* rate").unwrap() + 2);
+    });
 }
 
 #[test]

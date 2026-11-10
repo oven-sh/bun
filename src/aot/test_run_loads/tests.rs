@@ -215,7 +215,7 @@ fn path_that_is_spelled_in_part_marks_the_files_that_fit() {
 
 #[test]
 fn file_leaves_by_its_key() {
-    let uses: [(&str, &[&str], bool); 11] = [
+    let uses: [(&str, &[&str], bool); 14] = [
         (
             r#"delete require.cache[require.resolve("./a.cjs")];"#,
             &["a.cjs"],
@@ -249,8 +249,23 @@ fn file_leaves_by_its_key() {
         (r#"delete require.cache["/nowhere.js"];"#, &[], false),
         (
             r#"module.exports = require.cache[require.resolve("./a.cjs")];"#,
+            &["a.cjs"],
+            false,
+        ),
+        (
+            r#"module.exports = require.cache[require.resolve("./a.cjs")].exports;"#,
             &[],
             false,
+        ),
+        (
+            "exports.f = key => { const entry = require.cache[key]; return entry.exports; };",
+            &[],
+            false,
+        ),
+        (
+            "exports.f = key => { const entry = require.cache[key]; delete entry.exports; };",
+            &[],
+            true,
         ),
         (
             r#"if (false) delete require.cache[require.resolve("./a.cjs")];"#,
@@ -598,6 +613,41 @@ fn original_beside_a_mock_names_what_the_mocked_file_imports() {
             let name = name_of(files, file);
             assert!(!graph.may_be_evicted(ModuleRef::File(file)), "{name}");
         }
+    });
+}
+
+#[test]
+fn file_that_the_test_runner_is_asked_for_names_what_it_imports() {
+    let files = [
+        (
+            "a.test.js",
+            "import { test, vi } from \"bun:test\";\ntest(\"t\", async () => {\n  await import(\"./state.js\");\n  vi.doMock(\"./state.js\", async () => ({ x: (await vi.importActual(\"./asked.js\")).sees() }));\n  await import(\"./state.js\");\n  await import(\"./far.js\");\n});\n",
+        ),
+        ("state.js", "export const x = 1;\n"),
+        (
+            "asked.js",
+            "import { through } from \"./between.js\";\nexport const sees = () => through();\n",
+        ),
+        (
+            "between.js",
+            "import \"./state.js\";\nexport * from \"./handed-on.js\";\n",
+        ),
+        (
+            "handed-on.js",
+            "export const through = () => 1;\nexport const unread = 1;\n",
+        ),
+        (
+            "far.js",
+            "export const far = 1;\nexport const unread = 2;\n",
+        ),
+    ];
+    with_graph(&files, |files, graph| {
+        let module = |name: &str| ModuleRef::File(file_named(files, name));
+        for name in ["between.js", "handed-on.js"] {
+            assert!(graph.is_named_by_copies(module(name)), "{name}");
+            assert!(graph.is_every_export_asked_for(module(name)), "{name}");
+        }
+        assert!(!graph.is_every_export_asked_for(module("far.js")));
     });
 }
 

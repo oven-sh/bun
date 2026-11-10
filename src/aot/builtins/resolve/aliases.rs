@@ -323,6 +323,30 @@ impl Resolver<'_, '_> {
         paths
     }
 
+    pub(super) fn collect_paths_read_by_patterns(&self) -> Vec<(SymbolId, BuiltinPath)> {
+        let mut paths = Vec::new();
+        for (&symbol, source) in &self.aliases {
+            let AliasSource::Initializer {
+                initializer,
+                members,
+            } = source
+            else {
+                continue;
+            };
+            let (Some(holder), false) = (self.value_of(*initializer), members.is_empty()) else {
+                continue;
+            };
+            let read = members.iter().try_fold(holder, |holder, &name| {
+                self.find_member(holder, name).map(ResolvedValue::object)
+            });
+            if let Some(read) = read {
+                paths.push((symbol, read.path));
+            }
+        }
+        paths.shared_sort_unstable_by_key(|entry| entry.0);
+        paths
+    }
+
     pub(super) fn is_local_alias(&self, name: PatId) -> bool {
         let bound = self.input.bound;
         let symbol = match bound.initialized_binding(name) {

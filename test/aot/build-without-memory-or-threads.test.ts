@@ -330,11 +330,11 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
       return { name, first, later: distinct(later) };
     });
     expect(endsByThread).toEqual([
+      ...threads
+        .filter(({ name }) => name === "")
+        .map(({ name }) => ({ name, first: "it runs\n", later: ["it runs\n"] })),
       { name: "AOT build", first: noCompilerThread, later: ["it runs\n"] },
       { name: "Bun Compile", first: noPoolThread, later: ["it runs\n"] },
-      ...threads
-        .filter(({ name }) => name === "Bun Parallel")
-        .map(({ name }) => ({ name, first: "it runs\n", later: ["it runs\n"] })),
       { name: "mi-scavenger", first: "it runs\n", later: ["it runs\n"] },
     ]);
   }

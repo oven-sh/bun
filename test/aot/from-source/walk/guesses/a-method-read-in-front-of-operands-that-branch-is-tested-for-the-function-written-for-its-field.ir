@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# namespace Checks { export function check(passes: unknown, message?: string): void { if (!passes) print("failed: " + message); } }
+# function never(passes: unknown): void { print("never " + passes); }
+# const numbers: number[] = JSON.parse("[0, 5, 12]");
+# if (numbers.length > 9) (Checks as any).check = never;
+# function inRange(value: number): void { Checks.check(value >= 1 && value <= 9, "out of range"); }
+# (globalThis as any).kept = inRange;
+# for (let index = 0; index < numbers.length; index++) inRange(numbers[index]);
+# -- end of source
+# `Checks.check` is read in front of operands that branch, so its call stands in another block than the read, and two functions are seen to arrive in the field. One function is written for the field:
+# what was read is tested for it at the call. Behind the test that function is copied: the answer of the operands is branched on as it is. The failing side calls what was read.
+
+# RUN: walk f2 mechanisms=all
+# CHECK: [[callee]]: {{*}} = GetSlotOrUndefined {{*}} key="check"
+# CHECK: [[test]]: boolean @Boolean = TypeTest [[callee]] testedType=f3
+# CHECK: Branch [[test]] ->
+# CHECK: Call [[callee]],
+# CHECK-NOT: Call [[callee]],

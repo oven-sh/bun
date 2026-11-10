@@ -1,0 +1,24 @@
+# `this.items = items || []; this.marks = marks ?? new Map();` in a file without types: of `items || []` the checker says `any`, because the parameter is; the text says more: what stands behind `||` or `??` is what the field holds when nothing is handed in, and what is handed in is likely to be of its kind. Where the checker says nothing of the stored value, what it says of that default is expected of the field (built-in classes alone, in loops alone, as for every field stored through `this`).
+# An empty literal is typed never[]: of what the list will hold that says nothing. Taken at its word, an element was expected to be undefined, and the read off the true element stood on a rare road.
+# A record in the place of the list and a Set in the place of the Map take the closed builds (the second answer).
+# f3 = longest, f4 = seen
+# -- source: the-default-of-a-store-speaks-for-the-field-where-the-checker-says-nothing.cjs
+# class Bag { constructor(items, marks) { this.items = items || []; this.marks = marks ?? new Map(); this.name = items && 'bag'; } longest(count) { const items = this.items; let most = 0; for (let i = 0; i < count; i++) if (items[i].length > most) most = items[i].length; return most; } seen(count) { const marks = this.marks; let sum = 0; for (let i = 0; i < count; i++) if (marks.has(i)) sum += i; return sum; } }
+# const box = {};
+# box[String(['k0'])] = [new Bag(['a', 'bcd', 'ef'], new Map([[1, 1], [2, 2]])), new Bag({ 0: 'ghij', 1: '', 2: 'k' }, new Set([2])), new Bag(['', '', ''])];
+# function turn(at) { const bag = box.k0[at]; return bag.longest(box.k0.length) + ':' + bag.seen(box.k0.length); }
+# print(turn(0), turn(1), turn(2));
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = TypeTest {{*}}testedType=Array
+# CHECK: = GetArrayElement {{*}}level=Expected
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: testedType=undefined
+# RUN(NOLIST): walk f3 mechanisms=all
+# NOLIST-NOT: Array<never>
+# RUN(SEEN): walk f4 mechanisms=all
+# SEEN-LABEL: code f4:Body
+# SEEN: = TypeTest {{*}}testedType=Map
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3:3 4:2 0:0

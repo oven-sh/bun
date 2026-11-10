@@ -1,0 +1,1 @@
+const view = new Float64Array(8); for (let i = 0; i < 8; i++) view[i] = i * 1.5; function sum(v) { let t = 0; for (let i = 0; i < 8; i++) t += v[i]; return t; } console.log(sum(view), sum(new Float64Array(4)));

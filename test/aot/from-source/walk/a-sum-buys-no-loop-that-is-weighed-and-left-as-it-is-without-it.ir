@@ -1,0 +1,18 @@
+# `while (!r.done) { s += r.value; r = it.next(); }`: an iteration stepped by hand. Without a sum a typed copy of this loop is weighed and refused: nothing leaves its turns. A sum among the counters counted as a test in front,
+# and `counters.isEmpty()` no longer held: the loop was bought for the sum, its turns, which run other code, left the typed copy, and a list of a hundred cost 12,700 for 10,300.
+# A sum changes no decision that a typed copy built for another reason hangs on; it rides along, and buys alone only where there is nothing else to weigh.
+# f1 = total
+# LIBRARY: own
+# -- source: main.js
+# const made = Array.from({ length: 100 }, (_, i) => i);
+# const kept = made.slice();
+# function total(t) { const it = kept.values(); let s = 0, r = it.next(); while (!r.done) { s += r.value; r = it.next(); } return s + t; }
+# publish(total);
+# -- end of source
+# RUN: compile SumsAskedForNumbersInFrontOfLoops mechanisms=all
+# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 1
+# RUN(LOOP): walk f1 mechanisms=all
+# LOOP: code f1:Body
+# LOOP-NOT: : number @Double, v{{*}}: L(IteratorResult) @Cell) isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.publish = (total) => { print(total(0), total(1), total(0.5), total("x")); };
+# SHELL: 4950 4951 4950.5 4950x

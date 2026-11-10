@@ -41,6 +41,7 @@ const ObjectKeys = Object.keys;
 const ObjectValues = Object.values;
 const ObjectHasOwn = Object.hasOwn;
 const ArrayIsArray = Array.isArray;
+const ArrayPrototype = Array.prototype;
 const MathFloor = Math.floor;
 
 // kOutHeaders is keyed by the lowercased header name, so every setHeader /
@@ -910,6 +911,9 @@ const kMaxShapedHeaders = 31;
 const kMaxHeaderShapes = 512;
 let headerShapeCount = 0;
 
+// What a shape without a next expects: no value of a program equals it.
+const noName = Symbol("noName");
+
 class HeaderShape {
   count: number;
   bits: number;
@@ -918,7 +922,7 @@ class HeaderShape {
   parent: HeaderShape;
   checkedValue: string;
   checkedAgainValue: string;
-  nextName: string;
+  nextName: string | symbol;
   next: HeaderShape;
   children: HeaderShape[];
   againName: string;
@@ -943,7 +947,7 @@ class HeaderShape {
     this.parent = parent === null ? this : parent;
     this.checkedValue = "";
     this.checkedAgainValue = "";
-    this.nextName = "";
+    this.nextName = noName;
     this.next = this;
     this.children = [];
     this.againName = "";
@@ -977,22 +981,12 @@ interface Exchange {
   value3: number | string;
   value4: number | string;
   value5: number | string;
-  statusCode: number;
-  statusMessage: string;
-  bytesBuffered: number;
-  isFrozenChunked: boolean;
-  isImplicitFromEnd: boolean;
-  /** The socket the dispatcher already detached a synchronously-finished response from. */
-  detachedFrom: $Node.HttpServerSocket | null;
   isReplaying: boolean;
-  isFlushScheduled: boolean;
-  mustClose: boolean;
   response: $Node.ServerResponse;
   connection: $Node.HttpServerSocket | null;
   endCallback: $Node.HttpWriteCallback | null;
   queuedTick: import("internal/process/tick_ring").Tick | null;
   events: ResponseEvents;
-  pendingFinish: $Node.HttpWriteCallback | null | undefined;
   holdsNumber: boolean;
   onWritable: (() => void) | null;
   awaitsClose: boolean;
@@ -1018,6 +1012,7 @@ declare global {
 
 const noHeadersShape = new HeaderShape(null, "", "", 0);
 const spilledHeadersShape = new HeaderShape(null, "", "", 0);
+// A response without a header is handed it as long as it is empty: what somebody has put into it goes out with no response.
 const noHeaders: unknown[] = [];
 
 function makeExchange(
@@ -1037,21 +1032,12 @@ function makeExchange(
     value3: 0,
     value4: 0,
     value5: 0,
-    statusCode: 0,
-    statusMessage: "",
-    bytesBuffered: 0,
-    isFrozenChunked: false,
-    isImplicitFromEnd: false,
-    detachedFrom: null,
     isReplaying: false,
-    isFlushScheduled: false,
-    mustClose: false,
     response,
     connection,
     endCallback: null,
     queuedTick: null,
     events,
-    pendingFinish: undefined,
     holdsNumber: false,
     onWritable: null,
     awaitsClose: false,
@@ -1230,15 +1216,18 @@ function removeShapedHeader(exchange: Exchange, name: string, key: string): void
   if (last === 0) exchange.wasEmptied = true;
 }
 
-// A text, a number and a list of those are written without any code of the program. Anything else is turned to text by a toString(), which may set and remove headers.
+// A text, a number and a plain list of those are written without any code of the program. Anything else is turned to text by a toString(), a join() or a trap, which may set and remove headers.
 function runsCodeWhenWritten(exchange: Exchange): boolean {
   const odd = exchange.oddValues!;
   for (let index = 0, mask = exchange.oddMask; mask !== 0; index++, mask >>>= 1) {
     if ((mask & 1) === 0) continue;
     const value = odd[index];
-    if (!$isArray(value)) return true;
+    if (!$isJSArray(value) || Object.$getPrototypeOf(value) !== ArrayPrototype || ObjectHasOwn(value, "join"))
+      return true;
     for (let i = 0; i < value.length; i++) {
-      const kind = typeof value[i];
+      const element = Object.$getOwnPropertyDescriptor(value, i);
+      if (element === undefined || !ObjectHasOwn(element, "value")) return true;
+      const kind = typeof element.value;
       if (kind !== "string" && kind !== "number") return true;
     }
   }
@@ -1298,6 +1287,7 @@ function spillHeadersOf(message: $Node.OutgoingMessage): void {
 function spillHeadersReachedThrough(receiver: $Node.OutgoingMessage): void {
   const exchange = receiver.$exchange;
   if (exchange === undefined) return;
+  if (exchange.shape === spilledHeadersShape) return;
   const response = exchange.response;
   if (response !== receiver && (exchange.shape.count !== 0 || exchange.wasEmptied === true)) {
     ("unlikely");
@@ -1306,15 +1296,13 @@ function spillHeadersReachedThrough(receiver: $Node.OutgoingMessage): void {
   }
 }
 
-// The headers of a response lie in its exchange, and nobody has asked about leniency. Whoever looks under the symbol of the map of headers or of that answer, with a key that is a value, finds what setHeader() would have left there.
+// The headers of a response lie in its exchange. Whoever looks under the symbol of the map of headers, with a key that is a value, finds what setHeader() would have left there. This runs in front of that look, where no code of the program may run.
 function showHeadersInMap(this: $Node.OutgoingMessage): void {
   const exchange = this.$exchange;
   if (exchange === undefined) return;
   const response = exchange.response;
   if (response !== this) return;
-  const hasSetHeader = exchange.shape.count !== 0 || exchange.wasEmptied;
   spillHeaders(exchange);
-  if (hasSetHeader) outgoingIsLenientHeaderValidation.$call(response);
 }
 
 if (IS_COMPILED_AHEAD_OF_TIME) {
@@ -1393,6 +1381,12 @@ function storeUnexpectedHeader(
       return;
     }
   }
+  // The table of names that have been looked at takes no longer one: it is looked at every time.
+  if (name.length > kMaxValidatedHeaderNameLength) {
+    ("unlikely");
+    putSpilledHeader(exchange, key, name, value);
+    return;
+  }
   const index = indexInShape(shape, key);
   if (index >= 0) {
     if (shapeAt(shape, index).name !== name) {
@@ -1450,8 +1444,7 @@ function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHe
     return;
   }
   const shape = exchange.shape;
-  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (shape.nextName === name && shape.next !== shape) {
+  if (shape.nextName === name) {
     const next = shape.next;
     if (typeof value === "string") {
       if (next.checkedValue !== value && isStrictlyValidValue(exchange.response, name, value)) {
@@ -1565,7 +1558,7 @@ function textOf(value: number | string): string {
 function flatHeadersWithNumbers(exchange: Exchange, shape: HeaderShape): unknown[] {
   switch (shape.count) {
     case 0:
-      return noHeaders;
+      return noHeaders.length === 0 ? noHeaders : [];
     case 1:
       return [shape.name, textOf(exchange.value0)];
     case 2:
@@ -1645,7 +1638,7 @@ function flatHeadersOf(exchange: Exchange): unknown[] | null {
   if (exchange.holdsNumber === true || shape.count > kInlineHeaderValues) return flatHeadersWithCare(exchange);
   switch (shape.count) {
     case 0:
-      return noHeaders;
+      return noHeaders.length === 0 ? noHeaders : [];
     case 1:
       return [shape.name, exchange.value0];
     case 2:

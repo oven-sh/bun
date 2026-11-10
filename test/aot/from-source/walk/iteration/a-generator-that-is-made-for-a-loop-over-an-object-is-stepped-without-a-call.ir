@@ -1,0 +1,19 @@
+# The method under Symbol.iterator of a proven object is a generator function, and somebody else makes generators of it by hand, so the loop makes one too.
+# Its steps expect a generator: `next` is asked whether it is the engine's and the generator is stepped where the loop stands, without a call and without a result object. The call by the protocol stays beside it.
+# f1 = total, f3 = the method
+# -- source: a-generator-that-is-made-for-a-loop-over-an-object-is-stepped-without-a-call.ts
+# declare function sink(...values: unknown[]): number;
+# class Shelf { constructor(private books: number[]) {} *[Symbol.iterator]() { for (const book of this.books) yield book; } }
+# function total(shelf: Shelf): number { let sum = 0; for (const book of shelf) sum += book; return sum; }
+# const shelf = new Shelf([1, 2, 3]);
+# sink(shelf[Symbol.iterator]().next());
+# sink(total(shelf));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: callee=f3
+# CHECK: = TypeTest {{*}}testedType=builtin(GeneratorPrototypeNext)
+# CHECK: = StepGenerator {{*}}check=IsGenerator
+# RUN(WITHHELD): walk f1:Body mechanisms=all-Guesses
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-NOT: StepGenerator

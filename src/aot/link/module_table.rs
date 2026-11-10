@@ -3,6 +3,7 @@ use super::state::ModuleTable;
 use super::tables::LinkTables;
 use super::unit::LinkUnit;
 use super::{LinkProject, is_unit_optional, key_context};
+use crate::builtins::table::{ModuleFlags, module_data};
 use crate::load::{PerProject, ProgramFile, ProjectId};
 use bun_sema::util::SharedSort;
 use rustc_hash::FxHashSet;
@@ -40,6 +41,12 @@ pub(super) fn collect_modules(
         let context = key_context(projects, project);
         for &module in context.graph.other_modules() {
             add_named_module(context.module(module));
+        }
+        let sources = projects.get(project).sources;
+        for &module in sources.modules_named_at_run_time() {
+            if !module_data(module).flags.contains(ModuleFlags::HAS_SOURCE) {
+                add_named_module(ProgramModule::Runtime(module));
+            }
         }
     }
     for named in tables {
@@ -163,6 +170,18 @@ mod tests {
             assert_eq!(count_of(&table, source), 1);
             let without_source = ProgramModule::Runtime(RuntimeModule::NodePath);
             assert_eq!(count_of(&table, without_source), 0);
+        });
+    }
+
+    #[test]
+    fn native_module_written_as_a_value_is_listed_where_a_loader_takes_unknown_names() {
+        let native = ProgramModule::Runtime(RuntimeModule::BunJsc);
+        let handed_on = "const load = [require][Number(process.argv[2])]; load('bun:jsc');";
+        with_projects(&[("index.cjs", handed_on)], |projects| {
+            assert_eq!(count_of(&collect_modules(projects, &[], &[]), native), 1);
+        });
+        with_projects(&[("index.cjs", "console.log('bun:jsc');")], |projects| {
+            assert_eq!(count_of(&collect_modules(projects, &[], &[]), native), 0);
         });
     }
 

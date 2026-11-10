@@ -1,0 +1,24 @@
+# Bun.serve({ app: 0 }); Date.now();
+# A control of options-written-for-the-call-without-the-option-that-runs-code-leave-the-locks.ir
+# RUN: locks open
+# CHECK-NOT: locked
+# CHECK: open DateNow no-lock-is-laid
+
+layout L0 module=m0 fields=[{key="app" declared={type=anything}}, {key="port" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Bun
+    v2 = PropGet v1 key="serve"
+    v3 = NewObject layout=L0
+    v4 = Integer
+    PropDefine v3, v4 key="app"
+    v6 = FinishObject v3
+    v7 = Call v2, v1, v6 calleeKey="serve"
+    v8 = PropGet v0 key="Date" [isFreeName]
+    v9 = PropGet v8 key="now"
+    v10 = Call v9, v8 calleeKey="now"
+    Return v10
+}

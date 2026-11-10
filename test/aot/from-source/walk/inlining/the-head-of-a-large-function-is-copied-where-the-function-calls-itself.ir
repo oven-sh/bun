@@ -1,0 +1,27 @@
+# f1 = measure
+# -- source: the-head-of-a-large-function-is-copied-where-the-function-calls-itself.js
+# function measure(node, level) {
+#   if (node.done) return node.size;
+#   let sum = node.size * 3 + node.weight;
+#   sum = (sum * 31 + level) % 1009; sum = (sum ^ (sum >> 3)) + node.size; sum = (sum * 17 + node.weight * level) % 2003; sum = (sum ^ (sum >> 5)) + level * 2;
+#   sum = (sum * 13 + node.size * node.weight) % 4001; sum = (sum ^ (sum >> 2)) + node.weight; sum = (sum * 11 + level * level) % 8009; sum = (sum ^ (sum >> 7)) + node.size * 5;
+#   const whole = (sum + measure(node.left, level + 1) * 3 + measure(node.right, level + 1) * 5) % 1000003;
+#   node.size = whole; node.done = true;
+#   return whole;
+# }
+# const leaf = size => ({ done: true, size, weight: 0, left: null, right: null });
+# const tree = { done: false, size: 2, weight: 3, left: { done: false, size: 5, weight: 7, left: leaf(1), right: leaf(4) }, right: leaf(9) };
+# print(measure(tree, 0), measure(tree, 0), tree.left.size);
+# -- end of source
+# `measure` is too large to be copied. Its head asks a field and returns what is kept there: such a head is copied in front of a call, and the rest goes by the call.
+# A call of itself is a call like any other: the head stands in front of both, and where the answer is kept no call is made. What stands behind the head is called, so there is one level.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f1
+# CHECK: = CallDirect {{*}}function=f1 [isNeverInlined]
+# CHECK: = CallDirect {{*}}function=f1 [isNeverInlined]
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-NOT: frame 3
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

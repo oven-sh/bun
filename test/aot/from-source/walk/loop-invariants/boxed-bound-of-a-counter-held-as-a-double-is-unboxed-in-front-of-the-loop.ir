@@ -5,7 +5,6 @@
 # console.log(count([0, 0, "3.5"]), count([0, 0, {}]), count([]));
 # -- end of source
 # RUN: walk f1 mechanisms=all-Inlining
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[boxed]]: number @JSValue =
 # CHECK: [[bound]]: number @Double = Unbox [[boxed]]

@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function kinds(o: object): string { let said = ""; Object.keys(o).forEach(key => { said += typeof key; }); return said; }
+# print(kinds(JSON.parse('{"abc":1}')));
+# print("went on");
+# -- end of source
+# THE LIE: Object.keys() is taken to make a list that holds null alone, so Link types the parameter of the callback null. Whoever calls it comes through an entry that asks.
+# RUN: run-in-shell mechanisms=all
+# CHECK: string
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Object.keys/ContentsOfResult
+# LIE: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# LIE-NOT: went on
+# LIE: crashed

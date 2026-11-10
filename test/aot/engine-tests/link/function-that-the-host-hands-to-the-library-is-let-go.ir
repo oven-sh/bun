@@ -1,0 +1,40 @@
+# process.stdout.on("drain", f)
+# Native code makes process.stdout with getLightStdioWriteStreams(.., needsWholeStream, ..): needsWholeStream is a function of its own, out of a cell, and a call of it calls getStdioWriteStream().
+# A function of the library that is entered from outside has `anything` for every parameter, so nobody sees it call needsWholeStream. If what lies in the cell were not let go with the entry,
+# getStdioWriteStream() would stay out of a program that is closed, which then stopped with "A built-in function was not compiled into this executable".
+# `createElement` shows that the program is closed.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+# CHECK: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsGetStdioWriteStream function=f2
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+runtimefunction id=DecoratorsCreateElement function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="stdout"
+    v2 = PropGet v1 key="on"
+    v3 = String string="drain"
+    v4 = Call v2, v1, v3 calleeKey="on"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    v7 = Call v4, -
+    Return v7
+}
+function f2 name="getStdioWriteStream" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsGetStdioWriteStream thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f3 name="createElement" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=DecoratorsCreateElement thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

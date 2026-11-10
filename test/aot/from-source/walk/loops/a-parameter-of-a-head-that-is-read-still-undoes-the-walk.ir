@@ -1,0 +1,10 @@
+# The control of its two neighbors: the turn reads the variable before it assigns it: what comes round is wider than what entered, and the walk is made again.
+# -- source: a-parameter-of-a-head-that-is-read-still-undoes-the-walk.cjs
+# function count(rows) { var row; let sum = 0; for (let i = 0; i < rows.length; i++) { if (row) sum = (sum + row.size()) | 0; row = rows[i]; } return sum; }
+# print(count([{ size() { return 2; } }, { size() { return 3; } }]), count([]));
+# -- end of source
+# STATISTIC: WalksOfLoopsUndone >= 1
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 2 0

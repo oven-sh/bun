@@ -1,5 +1,5 @@
 // Sockets, requests, responses, servers and streams are frozen, sealed or closed to new properties, themselves or through Proxies with and without traps, are asked what they hold, and are then used to the end. Closing an object through a Proxy must do what closing the object does.
-// Collections: not forced: it runs for over a minute so, longer than the 60 s after which its sockets time out
+// Collections: not forced: it runs for over a minute so
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -179,7 +179,8 @@ for (const target of ["socket", "request", "response"] as const) {
         try {
           if (moment === "before") closeChosen();
           request.resume();
-          socket.setTimeout(60_000);
+          // No run lasts that long: a socket of one case that times out would speak into the cases behind it.
+          socket.setTimeout(3_600_000);
           response.setHeader("x-a", "1");
           response.end("answer");
           if (moment === "after") closeChosen();

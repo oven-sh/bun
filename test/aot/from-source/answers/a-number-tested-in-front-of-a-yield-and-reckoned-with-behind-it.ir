@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# function* doubled(rows) { for (const row of rows) { const cost = row.cost; if (typeof cost === "number") { yield 0; yield cost * 2; } } }
+# async function halved(rows) { let sum = 0; for (const row of rows) { const cost = row.cost; if (typeof cost === "number") { await null; sum += cost / 2; } } return sum; }
+# function* atOnce(rows) { for (const row of rows) { const cost = row.cost; if (typeof cost === "number") yield cost * 2; } }
+# const first = doubled(JSON.parse('[{"cost":1.5},{"cost":2},{"cost":"no"},{"cost":-0}]')), second = doubled(JSON.parse('[{"cost":10.5},{"cost":20.5},{"cost":1e300}]'));
+# const said = [];
+# for (let turn = 0; turn < 3; turn++) { first.next(); second.next(); const a = first.next().value, b = second.next().value; said.push(Object.is(a, -0) ? "-0" : a, b); }
+# said.push(...atOnce(JSON.parse('[{"cost":0.25},{"cost":7},{"cost":null}]')));
+# halved(JSON.parse('[{"cost":3},{"cost":0.5},{"cost":"x"}]')).then(sum => print(said.join(" "), sum));
+# -- end of source
+# The test for a number hands the unboxed double on to the one place that opens the box. Between the test and that place may lie a `yield` or an `await`: behind it the code is entered anew, the values of the walk come out of
+# the heap frame, and a word that the machine alone knows does not: the build ended (the machine's operations did not hold together). Behind a suspension the box that comes out of the frame is opened.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 3 21 4 41 -0 2e+300 0.5 14 1.75
+# CHECK-NEXT: exited with 0

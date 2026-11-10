@@ -42,16 +42,13 @@ pub enum FieldType {
 }
 
 impl FieldType {
-    // `from_js` is provided as an extension-trait method in the
-    // `bun_sql_jsc` crate; the base type carries no JSC dependency.
-
     /// Decode a raw protocol byte. On the wire any byte is possible; this
     /// Rust enum is
     /// exhaustive, so unknown bytes return `None` instead of producing an
     /// invalid discriminant. LLVM folds the contiguous arms to two range
     /// checks.
     #[inline]
-    pub const fn from_raw(b: u8) -> Option<Self> {
+    pub(crate) const fn from_raw(b: u8) -> Option<Self> {
         Some(match b {
             0x00 => FieldType::MYSQL_TYPE_DECIMAL,
             0x01 => FieldType::MYSQL_TYPE_TINY,
@@ -87,29 +84,10 @@ impl FieldType {
             _ => return None,
         })
     }
-
-    pub fn is_binary_format_supported(self) -> bool {
-        matches!(
-            self,
-            FieldType::MYSQL_TYPE_TINY
-                | FieldType::MYSQL_TYPE_SHORT
-                | FieldType::MYSQL_TYPE_LONG
-                | FieldType::MYSQL_TYPE_LONGLONG
-                | FieldType::MYSQL_TYPE_FLOAT
-                | FieldType::MYSQL_TYPE_DOUBLE
-                | FieldType::MYSQL_TYPE_TIME
-                | FieldType::MYSQL_TYPE_DATE
-                | FieldType::MYSQL_TYPE_DATETIME
-                | FieldType::MYSQL_TYPE_TIMESTAMP
-        )
-    }
 }
 
 // Callers import `bun_sql_jsc::mysql::mysql_value::Value` directly.
 
 pub(crate) type MySQLInt32 = Int4;
-pub(crate) type MySQLInt64 = Int8;
 // encode/decode sites must mask/read exactly 3 bytes. Verify all Int3 users do so.
-pub type Int3 = u32;
-pub type Int4 = u32;
-pub type Int8 = u64;
+pub(crate) type Int4 = u32;

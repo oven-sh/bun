@@ -3,6 +3,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -10,6 +11,7 @@
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <wtf/Stopwatch.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/JSONValues.h>
 #include <wtf/HashMap.h>
@@ -30,10 +32,10 @@ void Bun__setSamplingInterval(int intervalMicroseconds)
 namespace Bun {
 
 // Store the profiling start time in microseconds since Unix epoch
-static double s_profilingStartTime = 0.0;
+static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
-static int s_samplingInterval = 1000;
-static bool s_isProfilerRunning = false;
+static thread_local int s_samplingInterval = 1000;
+static thread_local bool s_isProfilerRunning = false;
 
 void setSamplingInterval(int intervalMicroseconds)
 {
@@ -128,8 +130,11 @@ static WTF::String formatLocation(const WTF::String& url, int lineNumber)
     // Extract path from file:// URL using WTF::URL
     WTF::String path = url;
     WTF::URL parsedUrl { url };
-    if (parsedUrl.isValid() && parsedUrl.protocolIsFile())
-        path = parsedUrl.fileSystemPath();
+    if (parsedUrl.isValid() && parsedUrl.protocolIsFile()) {
+        // fileSystemPath() returns null if the percent-decoded path isn't valid UTF-8.
+        if (auto decoded = parsedUrl.fileSystemPath(); !decoded.isNull())
+            path = WTF::move(decoded);
+    }
 
     if (lineNumber >= 0) {
         WTF::StringBuilder sb;
@@ -139,6 +144,25 @@ static WTF::String formatLocation(const WTF::String& url, int lineNumber)
         return sb.toString();
     }
     return path;
+}
+
+// Absolute file path → `file://` URL.
+static void normalizeURL(WTF::String& u)
+{
+    if (u.isEmpty())
+        return;
+    bool isAbsolutePath = false;
+    if (u[0] == '/') {
+        isAbsolutePath = true;
+    } else if (u.length() >= 2 && u[1] == ':') {
+        char firstChar = u[0];
+        if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+            isAbsolutePath = true;
+    } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
+        isAbsolutePath = true;
+    }
+    if (isAbsolutePath)
+        u = WTF::URL::fileURLWithFileSystemPath(u).string();
 }
 
 // Helper to format time in human-readable form
@@ -393,31 +417,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         scriptId = static_cast<int>(provider->asID());
                     }
 
-                    // Absolute file path → `file://` URL. Chrome DevTools
-                    // expects `callFrame.url` to be a proper URL; leaving
-                    // the raw path breaks source-view resolution. We run
-                    // this AFTER the sourcemap callbacks below because the
-                    // callback (see FormatStackTraceForJS.cpp) unconditionally
-                    // rewrites its out-param back to the raw provider URL when
-                    // no sourcemap is found, which would undo an earlier
-                    // normalization. See #29240.
-                    auto normalizeURL = [](WTF::String& u) {
-                        if (u.isEmpty())
-                            return;
-                        bool isAbsolutePath = false;
-                        if (u[0] == '/') {
-                            isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[1] == ':') {
-                            char firstChar = u[0];
-                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
-                            isAbsolutePath = true;
-                        }
-                        if (isAbsolutePath)
-                            u = WTF::URL::fileURLWithFileSystemPath(u).string();
-                    };
-
                     // Function definition location. JSC returns these 1-based;
                     // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
                     // The definition (not the sample position) is remapped
@@ -485,6 +484,18 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
+                } else if (frame.isCompiledFrame()) {
+                    url = frame.url();
+                    normalizeURL(url);
+                    scriptId = static_cast<int>(std::get<1>(frame.sourceProviderAndID()));
+                    int definitionLine = frame.functionStartLine();
+                    unsigned definitionColumn = frame.functionStartColumn();
+                    if (definitionLine > 0 && definitionColumn != std::numeric_limits<unsigned>::max()) {
+                        functionDefLine = definitionLine - 1;
+                        functionDefColumn = definitionColumn > 0 ? static_cast<int>(definitionColumn) - 1 : 0;
+                    }
+                    if (frame.hasExpressionInfo())
+                        sampleLine = static_cast<int>(frame.semanticLocation.lineColumn.line);
                 }
 
                 // line/column here identify the function's DEFINITION, so all
@@ -680,6 +691,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         }
                         lineNumber = static_cast<int>(sourceMappedLineColumn.line);
                     }
+                } else if (frame.isCompiledFrame()) {
+                    url = frame.url();
+                    normalizeURL(url);
+                    lineNumber = frame.hasExpressionInfo() ? static_cast<int>(frame.semanticLocation.lineColumn.line) : frame.functionStartLine();
                 }
 
                 WTF::String location = formatLocation(url, lineNumber);
@@ -944,4 +959,22 @@ extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString*
         *outJSON = Bun::toStringRef(jsonResult);
     if (outText)
         *outText = Bun::toStringRef(textResult);
+}
+
+// Returns the sampling profiler's text report: top functions, then top bytecodes.
+extern "C" void Bun__SamplingProfiler__report(JSC::VM* vm, BunString* out)
+{
+    JSC::SamplingProfiler* profiler = vm->samplingProfiler();
+    if (!profiler)
+        return;
+
+    WTF::StringPrintStream report;
+    {
+        JSC::JSLockHolder locker(*vm);
+        // A terminated Worker has a pending termination exception, and the report's DeferTermination asserts there isn't one.
+        JSC::SuspendExceptionScope suspendExceptions(*vm);
+        profiler->reportTopFunctions(report);
+        profiler->reportTopBytecodes(report);
+    }
+    *out = Bun::toStringRef(report.toString());
 }

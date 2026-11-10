@@ -1,0 +1,10 @@
+{
+  "name": "xml-benchmark",
+  "version": "1.0.0",
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.10",
+    "fast-xml-parser": "^5.2.5",
+    "txml": "^6.0.0",
+    "xml2js": "^0.6.2"
+  }
+}

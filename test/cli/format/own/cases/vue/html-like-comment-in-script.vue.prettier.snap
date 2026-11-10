@@ -1,0 +1,28 @@
+------------------
+{ printWidth: 40 }
+------------------
+<template>
+  <script>
+    console.log('hello')<!-- a comment to a script only -->;
+  </script>
+</template>
+
+------------------
+{ printWidth: 80 }
+------------------
+<template>
+  <script>
+    console.log('hello')<!-- a comment to a script only -->;
+  </script>
+</template>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<template>
+  <script>
+    console.log('hello')<!-- a comment to a script only -->;
+  </script>
+</template>
+
+===================== End =====================

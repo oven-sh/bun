@@ -2,9 +2,7 @@ use crate::StoreRef;
 use crate::base::Ref;
 use crate::binding::Binding;
 use crate::expr::Expr;
-use crate::{ExprNodeIndex, flags};
-// Re-exported so callers can spell `js_ast::b::ArrayBinding`.
-pub use crate::ArrayBinding;
+use crate::{ArrayBinding, ExprNodeIndex, flags};
 
 /// B is for Binding! Bindings are on the left side of variable
 /// declarations (s_local), which is how destructuring assignments
@@ -77,9 +75,10 @@ pub struct Property {
 pub struct Object {
     pub properties: crate::StoreSlice<Property>,
     pub is_single_line: bool,
+    pub close_brace_loc: crate::Loc,
 }
-// No `impl Default` on purpose: only `is_single_line` has a sensible default;
-// `properties` does not, so every constructor must supply it.
+// No `impl Default` on purpose: only `is_single_line`/`close_brace_loc` have
+// sensible defaults; `properties` does not, so every constructor must supply it.
 
 pub struct Array {
     pub items: crate::StoreSlice<ArrayBinding>,
@@ -126,17 +125,8 @@ impl B {
         // `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
         // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
-        // Local mirror of `bun.writeAnyToHasher`. Rust tuples have
-        // *uninitialized* padding bytes (e.g. `(Tag /*u8*/, usize)` has 7 on
-        // 64-bit), so forming a `&[u8]` over them is UB. Instead we feed each
-        // scalar field individually and bound on `NoUninit` so the compiler
-        // proves every byte is initialized — same pattern as
-        // `expr::Data::write_to_hasher`. The hash is only used in-process for
-        // React Fast Refresh.
-        #[inline(always)]
-        fn raw<H: bun_core::Hasher + ?Sized, T: bun_core::NoUninit>(h: &mut H, v: T) {
-            h.update(bun_core::bytes_of(&v));
-        }
+        // Each scalar is fed on its own: a tuple of them would have padding.
+        use bun_core::write_any_to_hasher as raw;
         match self {
             B::BIdentifier(id) => {
                 let ref_ = id.r#ref;
@@ -145,6 +135,7 @@ impl B {
                 let original_name = ref_.get_symbol(symbol_table).original_name.slice();
                 raw(hasher, self.tag() as u8);
                 raw(hasher, original_name.len());
+                hasher.update(original_name);
             }
             B::BArray(array) => {
                 raw(hasher, self.tag() as u8);
@@ -175,8 +166,3 @@ impl B {
         }
     }
 }
-
-// Keep `Binding` referenced (it's the conceptual tag-host of `B`).
-type _BindingTagHost = Binding;
-
-pub use crate::g::Class;

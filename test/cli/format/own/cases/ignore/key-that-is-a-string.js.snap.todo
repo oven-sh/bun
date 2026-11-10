@@ -1,0 +1,24 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  static "a-b" = /* prettier-ignore */ 1;
+  static c = /* prettier-ignore */ 1;
+}
+
+x = {
+  async "a-b"/* prettier-ignore */ () {},
+  async c/* prettier-ignore */ () {},
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  static "a-b" = /* prettier-ignore */ 1;
+  static c = /* prettier-ignore */ 1;
+}
+
+x = { async "a-b"/* prettier-ignore */ () {}, async c/* prettier-ignore */ () {} };
+
+===================== End =====================

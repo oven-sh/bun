@@ -56,8 +56,10 @@ test("should reject HEADERS frame with Pad Length >= payload length", async () =
   });
   try {
     expect(err).toBeDefined();
-    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-    expect(err.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+    // Node's nghttp2 surfaces locally-detected connection errors as NghttpError
+    // (ERR_HTTP2_ERROR, message = nghttp2_strerror(NGHTTP2_ERR_PROTO)).
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    expect(err.message).toBe("Protocol error");
   } finally {
     close();
   }
@@ -72,8 +74,8 @@ test("should reject zero-length HEADERS frame with PADDED flag", async () => {
   });
   try {
     expect(err).toBeDefined();
-    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-    expect(err.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    expect(err.message).toBe("Protocol error");
   } finally {
     close();
   }
@@ -89,8 +91,8 @@ test("should reject HEADERS frame with truncated priority fields", async () => {
   });
   try {
     expect(err).toBeDefined();
-    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-    expect(err.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    expect(err.message).toBe("Protocol error");
   } finally {
     close();
   }
@@ -111,8 +113,8 @@ test("should reject DATA frame with Pad Length >= payload length", async () => {
   });
   try {
     expect(err).toBeDefined();
-    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-    expect(err.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    expect(err.message).toBe("Protocol error");
   } finally {
     close();
   }
@@ -237,7 +239,7 @@ test("should zero-fill padding octets in padded DATA frames sent by the client",
     socket.setNoDelay(true);
     // Acknowledge the client's SETTINGS so the session emits `connect`.
     socket.write(new http2utils.SettingsFrame(true).data);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       received = Buffer.concat([received, chunk]);
       if (!sawPreface) {
         if (received.length < http2utils.kClientMagic.length) return;
@@ -277,7 +279,7 @@ test("should zero-fill padding octets in padded DATA frames sent by the client",
   try {
     await new Promise<void>(resolve => client.on("connect", () => resolve()));
 
-    const requestOptions = { paddingStrategy: http2.constants.PADDING_STRATEGY_MAX };
+    const requestOptions: any = { paddingStrategy: http2.constants.PADDING_STRATEGY_MAX };
 
     // First request: a longer body, so the scratch buffer used to assemble
     // padded DATA frames has held known payload bytes well past the region

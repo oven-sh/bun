@@ -30,7 +30,8 @@ import { Picker } from "@grpc/grpc-js/build/src/picker";
 import { Endpoint, subchannelAddressToString } from "@grpc/grpc-js/build/src/subchannel-address";
 import { MockSubchannel, TestClient, TestServer } from "./common";
 
-function updateStateCallBackForExpectedStateSequence(expectedStateSequence: ConnectivityState[], done: Mocha.Done) {
+type Done = (err?: unknown) => void;
+function updateStateCallBackForExpectedStateSequence(expectedStateSequence: ConnectivityState[], done: Done) {
   const actualStateSequence: ConnectivityState[] = [];
   let lastPicker: Picker | null = null;
   let finished = false;

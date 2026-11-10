@@ -26,6 +26,11 @@ const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
+const isStandardOutputStream: (value: unknown) => boolean | undefined = $newCppFunction(
+  "BunProcess.cpp",
+  "jsFunctionIsStandardOutputStream",
+  1,
+);
 
 const ObjectDefineProperties = Object.defineProperties;
 const SymbolAsyncDispose = Symbol.asyncDispose;
@@ -530,6 +535,7 @@ Readable.prototype.setEncoding = function (enc) {
   for (const data of state.buffer.slice(state.bufferIndex)) {
     content += decoder.write(data);
   }
+  if ((state[kState] & kEnded) !== 0) content += decoder.end();
   state.buffer.length = 0;
   state.bufferIndex = 0;
 
@@ -557,6 +563,13 @@ function computeNewHighWaterMark(n) {
   return n;
 }
 
+// `state.length` is the sum of the lengths of what is buffered.
+function firstChunkLength(state) {
+  const buffer = state.buffer;
+  const index = state.bufferIndex;
+  return buffer.length - index === 1 ? state.length : buffer[index].length;
+}
+
 // This function is designed to be inlinable, so please take care when making
 // changes to the function body.
 function howMuchToRead(n, state) {
@@ -564,10 +577,10 @@ function howMuchToRead(n, state) {
   if ((state[kState] & kObjectMode) !== 0) return 1;
   if (NumberIsNaN(n)) {
     // Fast path for buffers.
-    if ((state[kState] & kDecoder) === 0 && state.length) return state.buffer[state.bufferIndex].length;
+    if ((state[kState] & kDecoder) === 0 && state.length) return firstChunkLength(state);
 
     // Only flow one buffer at a time.
-    if ((state[kState] & kFlowing) !== 0 && state.length) return state.buffer[state.bufferIndex].length;
+    if ((state[kState] & kFlowing) !== 0 && state.length) return firstChunkLength(state);
 
     return state.length;
   }
@@ -841,7 +854,13 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   state.pipes.push(dest);
   $debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts);
 
-  const doEnd = (!pipeOpts || pipeOpts.end !== false) && dest !== process.stdout && dest !== process.stderr;
+  let doEnd = !pipeOpts || pipeOpts.end !== false;
+  if (doEnd) {
+    const isStandardOutput = isStandardOutputStream(dest);
+    // Making process.stdout or process.stderr would have loaded all of node:stream.
+    if (isStandardOutput === undefined) require("internal/stream");
+    doEnd = !isStandardOutput;
+  }
 
   const endFn = doEnd ? onend : unpipe;
   if ((state[kState] & kEndEmitted) !== 0) process.nextTick(endFn);
@@ -1135,13 +1154,15 @@ function nReadingNextTick(self) {
 // If the user uses them, then switch into old mode.
 Readable.prototype.resume = function () {
   const state = this._readableState;
-  // Deliberate divergence from Node 26: upstream early-returns here (and in
-  // pause()) when the stream is destroyed. Legacy Readable subclasses like
-  // fd-slicer assign `this.destroyed = true` (the prototype setter) right
-  // before push(null), so with the guard a piped destination's drain can no
-  // longer resume the source and the final buffered chunk is never delivered —
-  // silently truncating yauzl/extract-zip/puppeteer downloads. Keep the
-  // Node 24 behavior of letting destroyed streams flush their buffer.
+  // Node 26 (nodejs/node#62557) early-returns on kDestroyed. We narrow it to
+  // kDestroyed && kEndEmitted: fd-slicer-style readables set `destroyed` right
+  // before push(null), and the full guard strands their buffered tail when a
+  // piped dest drains (yauzl/extract-zip). Once 'end' has fired there is
+  // nothing left to flush, so becoming a no-op restores readableFlowing /
+  // isPaused() parity for consumers that resume() past EOF (Readable.toWeb).
+  if ((state[kState] & (kDestroyed | kEndEmitted)) === (kDestroyed | kEndEmitted)) {
+    return this;
+  }
   if ((state[kState] & kFlowing) === 0) {
     $debug("resume");
     // We flow only if there is no one listening
@@ -1181,7 +1202,9 @@ function resume_(stream, state) {
 
 Readable.prototype.pause = function () {
   const state = this._readableState;
-  // No destroyed early-return: see the comment in resume() above.
+  if ((state[kState] & kDestroyed) !== 0) {
+    return this;
+  }
   $debug("call pause");
   if ((state[kState] & (kHasFlowing | kFlowing)) !== kHasFlowing) {
     $debug("pause");
@@ -1312,12 +1335,16 @@ Readable.prototype.compose = function compose(stream, options) {
   return composedStream;
 };
 
+interface StreamAsyncIterator extends AsyncGenerator<any, void, unknown> {
+  stream?: import("node:stream").Readable;
+}
+
 function streamToAsyncIterator(stream, options?) {
   if (typeof stream.read !== "function") {
     stream = Readable.wrap(stream, { objectMode: true });
   }
 
-  const iter = createAsyncIterator(stream, options);
+  const iter: StreamAsyncIterator = createAsyncIterator(stream, options);
   iter.stream = stream;
   return iter;
 }
@@ -1336,7 +1363,7 @@ async function* createAsyncIterator(stream, options) {
 
   stream.on("readable", next);
 
-  let error: Error | null;
+  let error: Error | null | undefined;
   const cleanup = eos(stream, { writable: false }, err => {
     error = err ? aggregateTwoErrors(error as Error, err) : null;
     callback();
@@ -1709,7 +1736,7 @@ Readable.toWeb = function (streamReadable, options) {
   return lazyWebStreams().newReadableStreamFromStreamReadable(streamReadable, options);
 };
 
-Readable.wrap = function (src, options) {
+Readable.wrap = function (src, options?) {
   return new Readable({
     objectMode: src.readableObjectMode ?? src.objectMode ?? true,
     ...options,
@@ -1720,4 +1747,7 @@ Readable.wrap = function (src, options) {
   }).wrap(src);
 };
 
-export default Readable as unknown as typeof import("node:stream").Readable;
+export default Readable as unknown as typeof import("node:stream").Readable & {
+  ReadableState: typeof ReadableState;
+  wrap: typeof Readable.wrap;
+};

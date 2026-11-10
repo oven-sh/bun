@@ -1,0 +1,4 @@
+export {foo as bar} // 1
+// 2
+;/* 3 */
+export {foo}

@@ -21,10 +21,10 @@ server.on('connection', mustCall((socket) => {
   }));
 }));
 
-server.listen(0, () => {
+server.listen(0, mustCall(() => {
   const chunks = [];
   const socket = createConnection({
-    allowHalfOpen: false,
+    allowHalfOpen: true,
     port: server.address().port
   });
 
@@ -44,4 +44,4 @@ server.listen(0, () => {
 
     server.close();
   }));
-});
+}));

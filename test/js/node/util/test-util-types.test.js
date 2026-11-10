@@ -1,6 +1,7 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
 import def, * as ns from "util/types";
+import vm from "vm";
 const req = require("util/types");
 const types = def;
 
@@ -73,11 +74,70 @@ for (const [value, _method] of [
   });
 }
 
+test("isProxy is false for a global object", () => {
+  expect({
+    globalThis: types.isProxy(globalThis),
+    contextified: types.isProxy(vm.runInNewContext("this")),
+    notContextified: types.isProxy(vm.createContext(vm.constants.DONT_CONTEXTIFY)),
+    proxyOfGlobalThis: types.isProxy(new Proxy(globalThis, {})),
+  }).toEqual({
+    globalThis: false,
+    contextified: false,
+    notContextified: false,
+    proxyOfGlobalThis: true,
+  });
+});
+
 // Check boxed primitives.
 test("isBoxedPrimitive", () => {
   [new Boolean(), new Number(), new String(), Object(Symbol()), Object(BigInt(0))].forEach(entry =>
     assert(types.isBoxedPrimitive(entry)),
   );
+});
+
+test("isBigIntObject/isSymbolObject/isBoxedPrimitive survive structure and prototype changes", () => {
+  const cases = [
+    ["isBigIntObject", () => Object(1n)],
+    ["isSymbolObject", () => Object(Symbol())],
+  ];
+  for (const [method, make] of cases) {
+    const withProp = make();
+    withProp.foo = "bar";
+    const nullProto = Object.setPrototypeOf(make(), null);
+    const arrayProto = Object.setPrototypeOf(make(), Array.prototype);
+
+    expect({
+      [method]: {
+        plain: types[method](make()),
+        withProp: types[method](withProp),
+        nullProto: types[method](nullProto),
+        arrayProto: types[method](arrayProto),
+        primitive: types[method](make().valueOf()),
+        plainObject: types[method]({}),
+      },
+      isBoxedPrimitive: {
+        plain: types.isBoxedPrimitive(make()),
+        withProp: types.isBoxedPrimitive(withProp),
+        nullProto: types.isBoxedPrimitive(nullProto),
+        arrayProto: types.isBoxedPrimitive(arrayProto),
+      },
+    }).toEqual({
+      [method]: {
+        plain: true,
+        withProp: true,
+        nullProto: true,
+        arrayProto: true,
+        primitive: false,
+        plainObject: false,
+      },
+      isBoxedPrimitive: {
+        plain: true,
+        withProp: true,
+        nullProto: true,
+        arrayProto: true,
+      },
+    });
+  }
 });
 
 {
@@ -317,4 +377,13 @@ export default /BADD~!!!!;
   }
   expect(types.isNativeError(buildError)).toBeTrue();
   expect(buildError.constructor.name).toBe("BuildMessage");
+});
+
+test("util/types functions aren't constructors", () => {
+  for (const [name, fn] of Object.entries(types)) {
+    if (typeof fn !== "function") continue;
+    expect(() => Reflect.construct(fn, [new Date()])).toThrow(TypeError);
+    expect(Bun.inspect(fn)).toBe(`[Function: ${name}]`);
+  }
+  expect(Array.of.call(types.isDate, 1, 2, 3)).toEqual([1, 2, 3]);
 });

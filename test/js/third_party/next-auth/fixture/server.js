@@ -1,5 +1,4 @@
 import net from "net";
-import { parse } from "url";
 import http from "http";
 import next from "next";
 import { expect } from "bun:test";
@@ -47,14 +46,20 @@ function test(port) {
   });
 }
 
+// The dev server asks the npm registry for the latest version of Next.js and waits for the answer. It ignores a failure.
+const { fetch } = globalThis;
+globalThis.fetch = (input, init) =>
+  String(input?.url ?? input).startsWith("https://registry.npmjs.org/")
+    ? Promise.reject(new Error("offline"))
+    : fetch(input, init);
+
 const app = next({ dev: true, dir: import.meta.dirname, quiet: true });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
   const server = http
     .createServer((req, res) => {
-      const parsedUrl = parse(req.url, true);
-      handle(req, res, parsedUrl);
+      handle(req, res);
     })
     .listen(0, "127.0.0.1", () => {
       console.log("server listening", server.address().port);

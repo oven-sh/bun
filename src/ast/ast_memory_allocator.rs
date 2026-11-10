@@ -183,24 +183,6 @@ impl ASTMemoryAllocator {
         }
     }
 
-    /// Take this allocator's `AstAlloc` state (if any) and recycle it. For
-    /// owners that are arena-allocated and never run `Drop`. Call only once
-    /// nothing reads `AstVec`s allocated under this allocator's scope.
-    pub fn release_ast_state(&mut self) {
-        debug_assert!(
-            !self.ast_pushed,
-            "release_ast_state while the AstAllocState is still installed"
-        );
-        if self.ast_pushed {
-            // Still installed in the thread-local; releasing here would let the
-            // next scope reuse storage the current scope still writes to.
-            return;
-        }
-        if let Some(state) = self.ast_state.take() {
-            ast_alloc::release_state(state);
-        }
-    }
-
     /// Take this allocator's `AstAlloc` state without recycling it. The caller
     /// keeps the box alive for as long as `AstVec`s allocated under this
     /// allocator's scope are read, then drops it.
@@ -341,12 +323,6 @@ impl ASTMemoryAllocator {
         // SAFETY: bumpalo never returns null.
         crate::StoreRef::from_bump(self.arena().alloc(value))
     }
-
-    /// Returns the single `Arena` backing this allocator.
-    #[inline]
-    pub fn stack_allocator(&self) -> &Arena {
-        self.arena()
-    }
 }
 
 pub struct Scope<'a> {
@@ -415,7 +391,7 @@ impl<'a> Scope<'a> {
         }
     }
 
-    pub fn exit(&mut self) {
+    pub(crate) fn exit(&mut self) {
         if !self.entered {
             return;
         }

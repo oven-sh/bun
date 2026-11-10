@@ -239,6 +239,76 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
   });
 });
 
+describe("Valkey: RESP line-terminated replies (>512KB)", () => {
+  // The Zig parser scanned for CRLF over the whole buffer. A later hardening
+  // pass capped the scan window at 512KB, which rejects valid RESP simple
+  // strings and error replies that a real server emits (Lua
+  // redis.status_reply(...) / redis.error_reply(...) with a long payload).
+  // https://redis.io/docs/latest/develop/reference/protocol-spec/ places no
+  // length limit on `+` / `-` lines.
+
+  async function roundtrip(payload: Buffer): Promise<any> {
+    const { server, port } = await createMockRedisServer([payload, Buffer.from("+PONG\r\n")]);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+      });
+      try {
+        const reply = await client.send("PING", []);
+        // The client must still be usable for the next command: a parse
+        // failure here used to latch `failed` and reject forever.
+        const pong = await client.send("PING", []);
+        return { reply, pong };
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  test("accepts a simple string (`+`) reply longer than 512KB", async () => {
+    const body = Buffer.alloc(600_000, "x").toString();
+    const { reply, pong } = await roundtrip(Buffer.from(`+${body}\r\n`));
+    expect(typeof reply).toBe("string");
+    expect(reply.length).toBe(600_000);
+    expect(pong).toBe("PONG");
+  });
+
+  test("accepts a simple string at exactly 512KB + 1 bytes", async () => {
+    // 524288 worked, 524289 was rejected by an off-by-one in the scan window.
+    const body = Buffer.alloc(512 * 1024 + 1, "y").toString();
+    const { reply, pong } = await roundtrip(Buffer.from(`+${body}\r\n`));
+    expect(reply.length).toBe(512 * 1024 + 1);
+    expect(pong).toBe("PONG");
+  });
+
+  test("surfaces an error (`-`) reply longer than 512KB with its original text", async () => {
+    const body = "ERR user_script:1: " + Buffer.alloc(600_000, "e").toString();
+    const { server, port } = await createMockRedisServer([Buffer.from(`-${body}\r\n`), Buffer.from("+PONG\r\n")]);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+      });
+      try {
+        const rejection = await client.send("EVAL", ["script", "0"]).then(
+          () => null,
+          (e: any) => e,
+        );
+        expect(rejection?.message).toBe(body);
+        // Client must survive and serve the next command.
+        expect(await client.send("PING", [])).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("Valkey: RESP push frame routing", () => {
   test("resolves a pending command with its own reply when an out-of-band push frame precedes it", async () => {
     const payload = Buffer.from(
@@ -275,7 +345,7 @@ describe("Valkey: RESP push frame routing", () => {
       });
 
       try {
-        const psubscribed = client.psubscribe("news.*");
+        const psubscribed = (client as any).psubscribe("news.*");
         const pinged = client.send("PING", []);
 
         expect(await psubscribed).toEqual({ type: "psubscribe", data: ["news.*", 1] });
@@ -286,5 +356,50 @@ describe("Valkey: RESP push frame routing", () => {
     } finally {
       server.close();
     }
+  });
+
+  describe("an unsubscribe ack that arrives outside subscriber mode", () => {
+    const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
+    const ack = (kind: string, subject: string, remaining: number) =>
+      Buffer.from(`>3\r\n${bulk(kind)}${bulk(subject)}:${remaining}\r\n`);
+    const ok = Buffer.from("+OK\r\n");
+
+    async function withMockClient(payloads: Buffer[], body: (client: Bun.RedisClient) => Promise<void>) {
+      const { server, port } = await createMockRedisServer(payloads);
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 2000,
+      });
+      try {
+        await body(client);
+      } finally {
+        client.close();
+        server.close();
+      }
+    }
+
+    test("resolves the second of two in-flight UNSUBSCRIBEs", async () => {
+      // unsubscribe() drops the channel's handlers immediately, so the first ack already exits subscriber mode.
+      const payloads = [
+        ack("subscribe", "a", 1),
+        ack("subscribe", "b", 2),
+        ack("unsubscribe", "a", 1),
+        ack("unsubscribe", "b", 0),
+        ok,
+      ];
+      await withMockClient(payloads, async client => {
+        await client.subscribe("a", () => {});
+        await client.subscribe("b", () => {});
+        expect(await Promise.all([client.unsubscribe("a"), client.unsubscribe("b")])).toEqual([undefined, undefined]);
+        expect(await client.set("key", "value")).toBe("OK");
+      });
+    });
+
+    test("resolves punsubscribe() on a client that never subscribed", async () => {
+      await withMockClient([ack("punsubscribe", "news.*", 0), ok], async client => {
+        expect(await client.punsubscribe("news.*")).toEqual({ type: "punsubscribe", data: ["news.*", 0] });
+        expect(await client.set("key", "value")).toBe("OK");
+      });
+    });
   });
 });

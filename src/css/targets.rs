@@ -17,15 +17,17 @@ pub struct Targets {
 
 impl Targets {
     /// Set a sane default for bundler
-    pub fn browser_default() -> Targets {
+    pub(crate) fn browser_default() -> Targets {
         Targets {
             browsers: Some(*BROWSER_DEFAULT),
+            // The light-dark() polyfill is invalid where no compiled `color-scheme` covers the element.
+            exclude: Features::LIGHT_DARK,
             ..Default::default()
         }
     }
 
     /// Set a sane default for bundler
-    pub fn runtime_default() -> Targets {
+    pub(crate) fn runtime_default() -> Targets {
         Targets {
             browsers: None,
             ..Default::default()
@@ -108,7 +110,11 @@ impl Targets {
         }
     }
 
-    pub fn prefixes(&self, prefix: VendorPrefix, feature: css::prefixes::Feature) -> VendorPrefix {
+    pub(crate) fn prefixes(
+        &self,
+        prefix: VendorPrefix,
+        feature: css::prefixes::Feature,
+    ) -> VendorPrefix {
         if prefix.contains(VendorPrefix::NONE) && !self.exclude.contains(Features::VENDOR_PREFIXES)
         {
             if self.include.contains(Features::VENDOR_PREFIXES) {
@@ -125,28 +131,28 @@ impl Targets {
         }
     }
 
-    pub fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
+    pub(crate) fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
         self.should_compile(feature, Features::LOGICAL_PROPERTIES)
     }
 
-    pub fn should_compile(&self, feature: css::compat::Feature, flag: Features) -> bool {
+    pub(crate) fn should_compile(&self, feature: css::compat::Feature, flag: Features) -> bool {
         self.include.contains(flag)
             || (!self.exclude.contains(flag) && !self.is_compatible(feature))
     }
 
-    pub fn should_compile_same(&self, compat_feature: css::compat::Feature) -> bool {
+    pub(crate) fn should_compile_same(&self, compat_feature: css::compat::Feature) -> bool {
         // PERF: runtime dispatch (a const-generic param
         // would need #[derive(ConstParamTy)] on compat::Feature).
         let target_feature: Features = Features::from_compat(compat_feature);
         self.should_compile(compat_feature, target_feature)
     }
 
-    pub fn should_compile_selectors(&self) -> bool {
+    pub(crate) fn should_compile_selectors(&self) -> bool {
         self.include.intersects(Features::SELECTORS)
             || (!self.exclude.intersects(Features::SELECTORS) && self.browsers.is_some())
     }
 
-    pub fn is_compatible(&self, feature: css::compat::Feature) -> bool {
+    pub(crate) fn is_compatible(&self, feature: css::compat::Feature) -> bool {
         if let Some(targets) = &self.browsers {
             return feature.is_compatible(targets);
         }
@@ -197,7 +203,7 @@ static BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new
 impl Browsers {
     /// Ported from here:
     /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
-    pub fn convert_from_string(esbuild_target: &[&[u8]]) -> Result<Browsers, bun_core::Error> {
+    pub(crate) fn convert_from_string(esbuild_target: &[&[u8]]) -> crate::CrateResult<Browsers> {
         let mut browsers = Browsers::default();
 
         for &str in esbuild_target {
@@ -212,10 +218,8 @@ impl Browsers {
                 // Propagates InvalidCharacter / Overflow. Preserve the tag for
                 // error-name snapshot compat (do NOT collapse to UnsupportedCSSTarget).
                 let year = strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
-                    strings::ParseIntError::Overflow => bun_core::err!("Overflow"),
-                    strings::ParseIntError::InvalidCharacter => {
-                        bun_core::err!("InvalidCharacter")
-                    }
+                    strings::ParseIntError::Overflow => crate::CrateError::Overflow,
+                    strings::ParseIntError::InvalidCharacter => crate::CrateError::InvalidCharacter,
                 })?;
                 match year {
                     // https://caniuse.com/?search=es2015
@@ -317,7 +321,7 @@ impl Browsers {
                         break 'entries_without_es &entries_buf[0..4];
                     }
                     _ => {
-                        return Err(bun_core::err!("UnsupportedCSSTarget"));
+                        return Err(crate::CrateError::UnsupportedCSSTarget);
                     }
                 }
             };
@@ -369,9 +373,7 @@ impl Browsers {
 
                     let (major, minor) = 'major_minor: {
                         let version_str = &entry[idx..];
-                        let dot_index = version_str
-                            .iter()
-                            .position(|&b| b == b'.')
+                        let dot_index = strings::index_of_char_usize(version_str, b'.')
                             .unwrap_or(version_str.len());
                         let Some(major) =
                             strings::parse_int::<u16>(&version_str[0..dot_index], 10).ok()
@@ -435,6 +437,7 @@ bitflags::bitflags! {
         const DOUBLE_POSITION_GRADIENTS         = 1 << 17;
         const VENDOR_PREFIXES                   = 1 << 18;
         const LOGICAL_PROPERTIES                = 1 << 19;
+        const LIGHT_DARK                        = 1 << 20;
 
         const SELECTORS = Self::NESTING.bits()
             | Self::NOT_SELECTOR_LIST.bits()
@@ -451,7 +454,8 @@ bitflags::bitflags! {
             | Self::LAB_COLORS.bits()
             | Self::P3_COLORS.bits()
             | Self::HEX_ALPHA_COLORS.bits()
-            | Self::SPACE_SEPARATED_COLOR_NOTATION.bits();
+            | Self::SPACE_SEPARATED_COLOR_NOTATION.bits()
+            | Self::LIGHT_DARK.bits();
     }
 }
 
@@ -467,7 +471,7 @@ impl Features {
     /// The variant is taken at runtime, so the table is
     /// hand-written: every `compat::Feature` whose snake_case tag matches a
     /// `Features` field gets an arm; any other variant is a programmer error.
-    pub fn from_compat(compat_feature: css::compat::Feature) -> Features {
+    pub(crate) fn from_compat(compat_feature: css::compat::Feature) -> Features {
         use css::compat::Feature;
         match compat_feature {
             Feature::Nesting => Features::NESTING,
@@ -488,6 +492,7 @@ impl Features {
             Feature::SpaceSeparatedColorNotation => Features::SPACE_SEPARATED_COLOR_NOTATION,
             Feature::FontFamilySystemUi => Features::FONT_FAMILY_SYSTEM_UI,
             Feature::DoublePositionGradients => Features::DOUBLE_POSITION_GRADIENTS,
+            Feature::LightDark => Features::LIGHT_DARK,
             // A tag with no matching `Features` field is a programmer error,
             // guarded by a runtime unreachable.
             _ => unreachable!(

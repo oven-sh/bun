@@ -2,13 +2,13 @@
 // fs.watch on a directory should emit 'change' events for files created after the watch is established
 
 import { describe, expect, test } from "bun:test";
-import { isLinux, tempDirWithFiles } from "harness";
+import { isLinux, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
 describe.skipIf(!isLinux)("GitHub Issue #3657", () => {
   test("fs.watch on directory emits 'change' events for files created after watch starts", async () => {
-    const testDir = tempDirWithFiles("issue-3657", {});
+    await using testDir = tempDir("issue-3657", {});
     const testFile = path.join(testDir, "test.txt");
 
     const events: Array<{ eventType: string; filename: string | null }> = [];
@@ -57,7 +57,7 @@ describe.skipIf(!isLinux)("GitHub Issue #3657", () => {
   });
 
   test("fs.watch emits multiple 'change' events for repeated modifications", async () => {
-    const testDir = tempDirWithFiles("issue-3657-multi", {});
+    await using testDir = tempDir("issue-3657-multi", {});
     const testFile = path.join(testDir, "multi.txt");
 
     const events: Array<{ eventType: string; filename: string | null }> = [];

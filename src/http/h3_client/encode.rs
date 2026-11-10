@@ -2,7 +2,6 @@
 //! from `HTTPClient.buildRequest` and drain the request body (inline bytes or
 //! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.rs`.
 
-use bun_core::err;
 use bun_core::strings;
 use bun_uws::quic;
 use bun_uws::quic::Qpack;
@@ -15,20 +14,20 @@ use crate::internal_state::HTTPStage;
 use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
-/// body transmission. Called from `callbacks.on_stream_open` once lsquic hands
-/// us a stream for a pending request.
-pub fn write_request(
+/// body transmission. Called from the first `callbacks.on_stream_writable`
+/// for this stream (not `on_stream_open`; see the comment there for why no
+/// `lsquic_stream_write` may happen before lsquic's priority iterator has
+/// served the HSK crypto stream).
+pub(crate) fn write_request(
     session: &ClientSession,
     stream: &mut Stream,
     qs: &mut quic::Stream,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let Some(client_ptr) = stream.client else {
-        return Err(err!(Aborted));
+        return Err(crate::Error::Aborted);
     };
     // `stream.client` is a live backref while attached — see `client_mut` doc.
     let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
-    // `build_request` returns a `Request<'_>`
-    // that mutably borrows `client`; capture every field we need first.
     let verbose = client.verbose;
     let href: &[u8] = client.url.href;
     let host: &[u8] = client.url.host;
@@ -112,7 +111,7 @@ pub fn write_request(
 
     let end_stream = !has_inline_body && !is_streaming;
     if qs.send_headers(&headers, end_stream) != 0 {
-        return Err(err!(HTTP3HeaderEncodingError));
+        return Err(crate::Error::HTTP3HeaderEncodingError);
     }
 
     // Keep `lower` alive until after send_headers (header pointers borrow it).
@@ -162,10 +161,11 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             unreachable!()
         };
         let ended = body.ended;
-        let Some(sb) = body.buffer_mut() else {
+        let Some(sb) = body.buffer_ref() else {
             return;
         };
-        let buffer = sb.acquire();
+        let mut locked = sb.lock();
+        let buffer = &mut locked.buffer;
         let data_len = buffer.slice().len();
         let mut written: usize = 0;
         while written < data_len {
@@ -187,9 +187,9 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         } else if !drained {
             qs.want_write(true);
         } else if data_len > 0 {
-            sb.report_drain();
+            locked.report_drain();
         }
-        sb.release();
+        drop(locked);
         if stream.request_body_done {
             body.detach();
         }

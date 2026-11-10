@@ -49,13 +49,6 @@ struct H3App {
         cb(http3Context->listen(host.empty() ? nullptr : host.c_str(), port, options));
         return std::move(*this);
     }
-    H3App &&listen(const std::string &host, int port,
-                   MoveOnlyFunction<void(us_quic_listen_socket_t *)> &&cb) {
-        return listen(host, port, 0, std::move(cb));
-    }
-    H3App &&listen(int port, MoveOnlyFunction<void(us_quic_listen_socket_t *)> &&cb) {
-        return listen({}, port, 0, std::move(cb));
-    }
 
     void clearRoutes() {
         http3Context->getContextData()->router = decltype(http3Context->getContextData()->router){};

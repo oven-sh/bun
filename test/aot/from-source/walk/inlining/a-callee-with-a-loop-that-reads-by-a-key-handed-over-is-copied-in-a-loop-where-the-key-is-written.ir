@@ -1,0 +1,32 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# type Signals = { opened: number; closed: number; moved: number };
+# class Board {
+#   count = 0;
+#   private readonly listeners: { [K in keyof Signals]: Set<(value: Signals[K]) => void> } = { opened: new Set(), closed: new Set(), moved: new Set() };
+#   listen<K extends keyof Signals>(name: K, listener: (value: Signals[K]) => void): void { this.listeners[name].add(listener); }
+#   tell<K extends keyof Signals>(name: K, value: Signals[K]): void { for (const listener of this.listeners[name]) listener(value); }
+# }
+# function inTheTurn(board: Board, values: number[]): void { for (let i = 0; i < values.length; i++) { board.tell("opened", values[i]!); board.tell("moved", values[i]!); } }
+# function once(board: Board, value: number): void { board.tell("closed", value); }
+# function byAName(board: Board, names: (keyof Signals)[], value: number): void { for (let i = 0; i < names.length; i++) board.tell(names[i]!, value); }
+# sink(Board, inTheTurn, once, byAName);
+# -- end of source
+# f1 = inTheTurn, f2 = once, f3 = byAName, f6 = tell
+# tell() reads its table by a key that it is handed: in its own body that is a read by any key, through a stub, and three names in turn find nothing remembered there. A call IN A LOOP of the unit's own function
+# that hands over a WRITTEN text gets a copy, though the callee holds a loop: in the copy the key is a name and the read is a read of a field.
+# RUN(WRITTEN): walk f1 mechanisms=all
+# WRITTEN: frame 1 callee=f6
+# WRITTEN: = GetSlot {{*}} key="opened"
+# WRITTEN: = GetSlot {{*}} key="moved"
+# RUN(NOKEY): walk f1 mechanisms=all
+# NOKEY-NOT: = ElemGet
+# (Calls of tell() are left on the rare ways alone, where a guard of the copy fails.)
+# Outside of loops no bytes are paid for time: the call stays.
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-NOT: callee=f6
+# ONCE: CallDirect {{*}} function=f6
+# A key that is not written tells the copy nothing: the call stays.
+# RUN(NAME): walk f3 mechanisms=all
+# NAME-NOT: callee=f6
+# NAME: CallDirect {{*}} function=f6

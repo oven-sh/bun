@@ -21,6 +21,7 @@
 #include "config.h"
 #include "JSAddEventListenerOptions.h"
 
+#include "BunClientData.h"
 #include "JSAbortSignal.h"
 #include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertInterface.h"
@@ -85,6 +86,16 @@ template<> AddEventListenerOptions convertDictionary<AddEventListenerOptions>(JS
     if (!signalValue.isUndefined()) {
         result.signal = convert<IDLInterface<AbortSignal>>(lexicalGlobalObject, signalValue);
         RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    // Bun extension, keyed off a private symbol that only internal modules can
+    // reach. See AddEventListenerOptions::resistStopPropagation.
+    if (!isNullOrUndefined) {
+        JSValue resistStopPropagationValue = object->get(&lexicalGlobalObject, builtinNames(vm).kResistStopPropagationPrivateName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!resistStopPropagationValue.isUndefined()) {
+            result.resistStopPropagation = convert<IDLBoolean>(lexicalGlobalObject, resistStopPropagationValue);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
     }
     return result;
 }

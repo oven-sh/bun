@@ -5,9 +5,6 @@
 //! only spawns/watches the child.
 
 #[path = "ChromeProcess.rs"]
-pub mod chrome_process;
+pub(crate) mod chrome_process;
 #[path = "HostProcess.rs"]
-pub mod host_process;
-
-pub use chrome_process::ChromeProcess;
-pub use host_process::HostProcess;
+pub(crate) mod host_process;

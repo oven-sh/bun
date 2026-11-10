@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 let testEnv: NodeJS.Dict<string>;
 
@@ -10,7 +10,7 @@ beforeAll(() => {
 });
 
 test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
-  const dir = tempDirWithFiles("claudecode-test-quiet", {
+  await using dir = tempDir("claudecode-test-quiet", {
     "test2.test.js": `
       import { test, expect } from "bun:test";
 
@@ -47,7 +47,7 @@ test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
 });
 
 test("CLAUDECODE=1 vs CLAUDECODE=0 comparison", async () => {
-  const dir = tempDirWithFiles("claudecode-test-compare", {
+  await using dir = tempDir("claudecode-test-compare", {
     "test3.test.js": `
       import { test, expect } from "bun:test";
 
@@ -112,7 +112,7 @@ test("CLAUDECODE=1 vs CLAUDECODE=0 comparison", async () => {
 });
 
 test("CLAUDECODE flag handles no test files found", () => {
-  const dir = tempDirWithFiles("empty-project", {
+  using dir = tempDir("empty-project", {
     "package.json": `{
       "name": "empty-project",
       "version": "1.0.0"

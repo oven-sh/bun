@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("CSS logical properties should not be stripped when nested rules are present", async () => {
   // Test for regression of issue #25794: CSS logical properties (e.g., inset-inline-end)
   // are stripped from bundler output when they appear in a nested selector that also
   // contains further nested rules (like pseudo-elements).
 
-  const dir = tempDirWithFiles("css-logical-properties-nested", {
+  await using dir = tempDir("css-logical-properties-nested", {
     "input.css": `.test-longform {
   background-color: teal;
 
@@ -56,19 +56,11 @@ test("CSS logical properties should not be stripped when nested rules are presen
       right: 20px;
     }
 
-    .test-longform.test-longform--end:not(:-moz-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
-      right: 20px;
-    }
-
     .test-longform.test-longform--end:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
       right: 20px;
     }
 
     .test-longform.test-longform--end:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
-      left: 20px;
-    }
-
-    .test-longform.test-longform--end:-moz-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
       left: 20px;
     }
 

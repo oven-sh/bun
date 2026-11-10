@@ -27,6 +27,7 @@
 
 #include "CryptoAlgorithmIdentifier.h"
 #include "OpenSSLCryptoUniquePtr.h"
+#include "VectorSizeLimit.h"
 #include <openssl/aes.h>
 #include <openssl/evp.h>
 #include <stdint.h>
@@ -37,9 +38,22 @@
 
 namespace WebCore {
 
+// Use this for output sizes derived from user data. Vector(size_t) CRASH()es above the cap.
+[[nodiscard]] inline bool tryAllocateOutputBuffer(Vector<uint8_t>& buffer, size_t size)
+{
+    ASSERT(buffer.isEmpty());
+    if (size > Bun::maxVectorSize<uint8_t>()) [[unlikely]]
+        return false;
+    return buffer.tryGrow(size);
+}
+
 const EVP_MD* digestAlgorithm(CryptoAlgorithmIdentifier hashFunction);
 
 std::optional<Vector<uint8_t>> calculateDigest(const EVP_MD* algorithm, const Vector<uint8_t>& message);
+
+// DER-marshals a key (SPKI for public, PKCS#8 for private). Uses the CBB C
+// API because bssl::ScopedCBB is unavailable under BORINGSSL_NO_CXX (Windows).
+std::optional<Vector<uint8_t>> marshalEVPKey(EVP_PKEY*, bool isPublic);
 
 Vector<uint8_t> convertToBytes(const BIGNUM*);
 

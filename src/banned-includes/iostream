@@ -1,0 +1,27 @@
+// This directory is placed first on the -I search path for Bun's C++ compile
+// (release profile), so `#include <iostream>` resolves here instead of the
+// toolchain header.
+//
+// <iostream> is unlike <ostream>/<istream>/<sstream>/<fstream>: on libstdc++
+// it emits a reference to std::ios_base_library_init (or, on configurations
+// without the init-priority attribute, a static `std::ios_base::Init __ioinit`
+// object) in every translation unit that includes it. One such reference
+// anywhere in the link pulls libstdc++'s globals_io.o in, whose
+// _GLOBAL__sub_I.00090_globals_io.cc static initializer constructs
+// cin/cout/cerr/clog and their wchar_t siblings before main. That in turn
+// references the full std::locale facet set (ctype / numpunct / moneypunct /
+// timepunct / messages, for both char and wchar_t), so roughly fifty libstdc++
+// functions run on every Bun process start.
+//
+// Bun never touches C++ iostreams at runtime. Use fputs/fprintf for error
+// output, or WTF's dataLog()/PrintStream in JSC-adjacent code.
+//
+// Because Bun's own headers include wtf/SIMDUTF.h (and others) from the
+// WebKit prebuilt, this shim also catches a WebKit header that starts
+// including <iostream>: it will fail Bun's release build rather than silently
+// regressing startup.
+#ifndef BUN_ALLOW_IOSTREAM
+#error "<iostream> is banned in Bun release builds: it drags std::ios_base::Init and the full std::locale facet set into pre-main startup. Use <cstdio> fputs/fprintf for stderr output. See src/banned-includes/iostream."
+#else
+#include_next <iostream>
+#endif

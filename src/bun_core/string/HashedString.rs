@@ -7,7 +7,7 @@ use bun_wyhash::hash;
 pub struct HashedString {
     pub ptr: *const u8,
     pub len: u32,
-    pub hash: u32,
+    pub(crate) hash: u32,
 }
 
 impl HashedString {
@@ -31,11 +31,6 @@ impl HashedString {
             len: buf.len() as u32,
             hash: 0,
         }
-    }
-
-    pub fn eql(&self, other: &HashedString) -> bool {
-        ((self.hash.max(other.hash) > 0 && self.hash == other.hash) || (self.ptr == other.ptr))
-            && self.len == other.len
     }
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {

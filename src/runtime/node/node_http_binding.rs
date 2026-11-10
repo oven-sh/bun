@@ -1,70 +1,102 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `{get,set}MaxHTTPHeaderSize`.
+//! `getBunServerOpenCount`, and the `ws` package's native server
+//! transport: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{JSValue, JsResult};
+use bun_uws_sys::Opcode;
+use bun_uws_sys::response::PerMessageDeflateParams;
 
-use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
+use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams};
+use crate::server::{NodeHTTPResponse, ServerWebSocket};
 
-pub(crate) fn get_bun_server_all_closed_promise(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
-    if arguments.is_empty() {
-        return Err(global.throw_not_enough_arguments(
-            "getBunServerAllClosePromise",
-            1,
-            arguments.len(),
-        ));
+pub(crate) fn get_bun_server_all_closed_promise<'a>(
+    cx: &mut JsScope<'a>,
+    server: BunServer<'a>,
+) -> JSValue {
+    let global = cx.global();
+    match server {
+        BunServer::Http(server) => server.get_all_closed_promise(global),
+        BunServer::Https(server) => server.get_all_closed_promise(global),
+        BunServer::DebugHttp(server) => server.get_all_closed_promise(global),
+        BunServer::DebugHttps(server) => server.get_all_closed_promise(global),
     }
+}
 
-    let value = arguments[0];
-
-    // Try each heterogeneous server type in turn.
-    macro_rules! try_server {
-        ($ty:ty) => {
-            if let Some(server) = value.as_::<$ty>() {
-                // SAFETY: `JSValue::as_` returns a non-null pointer to the live
-                // JS-owned server instance; we hold the JS thread for the duration
-                // of this call so the GC cannot collect it under us.
-                return Ok(unsafe { &mut *server }.get_all_closed_promise(global));
-            }
+/// What keeps the server open besides its listener: the connections (counted from accept), WebSockets and requests.
+pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
+    macro_rules! open_count {
+        ($server:expr) => {
+            f64::from($server.pending_requests.get())
+                + f64::from($server.active_sockets_count())
+                + f64::from($server.active_connection_count.get())
         };
     }
-    try_server!(HTTPServer);
-    try_server!(HTTPSServer);
-    try_server!(DebugHTTPServer);
-    try_server!(DebugHTTPSServer);
-
-    Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
+    match server {
+        BunServer::Http(server) => open_count!(server),
+        BunServer::Https(server) => open_count!(server),
+        BunServer::DebugHttp(server) => open_count!(server),
+        BunServer::DebugHttps(server) => open_count!(server),
+    }
 }
 
-pub(crate) fn get_max_http_header_size(
-    _global: &JSGlobalObject,
-    _frame: &CallFrame,
+/// `(response, websocket, handlers, handshake, maxPayload, flags, deflate)`: upgrades
+/// `response`'s connection to a WebSocket and writes `handshake` as the response head. `deflate` is
+/// the negotiated permessage-deflate parameters, or `undefined`. Returns the `ServerWebSocket`.
+/// Returns `undefined` without writing anything if `response` isn't a native response or can no
+/// longer be upgraded.
+pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
+    cx: &mut JsScope<'a>,
+    response: Option<&NodeHTTPResponse>,
+    websocket: JsLocal<'a>,
+    handlers: JsLocal<'a>,
+    handshake: &[u8],
+    max_payload: u32,
+    flags: i32,
+    deflate: Option<&DeflateParams>,
 ) -> JsResult<JSValue> {
-    Ok(JSValue::from(bun_http::max_http_header_size()))
+    const AUTO_PONG: i32 = 1 << 0;
+    const SKIP_UTF8_VALIDATION: i32 = 1 << 1;
+
+    let Some(response) = response else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let global = cx.global();
+
+    if !handshake.ends_with(b"\r\n\r\n") {
+        return Err(global
+            .throw_invalid_arguments(format_args!("handshake must be a complete response head")));
+    }
+    let deflate_params = deflate.map(|deflate| PerMessageDeflateParams {
+        server_max_window_bits: deflate.server_max_window_bits as i32,
+        client_max_window_bits: deflate.client_max_window_bits as i32,
+        server_no_context_takeover: deflate.server_no_context_takeover,
+        client_no_context_takeover: deflate.client_no_context_takeover,
+    });
+
+    Ok(response
+        .upgrade_for_ws_package(
+            global,
+            websocket.to_js(),
+            handlers.to_js(),
+            handshake,
+            max_payload,
+            flags & AUTO_PONG != 0,
+            flags & SKIP_UTF8_VALIDATION != 0,
+            deflate_params.as_ref(),
+        )?
+        .unwrap_or(JSValue::UNDEFINED))
 }
 
-pub(crate) fn set_max_http_header_size(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
+/// `(handle, data, opcode, fin, compress)`: sends one frame on a `ServerWebSocket`. `opcode` is
+/// 1 (text), 2 (binary) or 0 (continuation). Returns the same status as `ServerWebSocket.send`.
+pub(crate) fn send_web_socket_frame<'a>(
+    cx: &mut JsScope<'a>,
+    handle: &'a ServerWebSocket,
+    data: JsLocal<'a>,
+    opcode: i32,
+    fin: bool,
+    compress: bool,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
-    if arguments.is_empty() {
-        return Err(global.throw_not_enough_arguments("setMaxHTTPHeaderSize", 1, arguments.len()));
-    }
-    let value = arguments[0];
-    let num = value.coerce_to_int64(global)?;
-    if num <= 0 {
-        return Err(global.throw_invalid_argument_type_value(
-            "maxHeaderSize",
-            "non-negative integer",
-            value,
-        ));
-    }
-    bun_http::set_max_http_header_size(num as usize);
-    Ok(JSValue::from(bun_http::max_http_header_size()))
+    handle.send_frame(cx.global(), data.to_js(), Opcode(opcode), fin, compress)
 }

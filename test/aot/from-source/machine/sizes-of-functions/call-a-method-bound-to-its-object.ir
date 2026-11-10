@@ -1,0 +1,24 @@
+# f1 = addBoth
+# -- source: call-a-method-bound-to-its-object.ts
+# class Counter {
+#   total: number;
+#   constructor(total: number) {
+#     this.total = total;
+#   }
+#   add(amount: number): number {
+#     return this.total + amount;
+#   }
+# }
+# function addBoth(counter: Counter, first: number, second: number): number {
+#   const add = counter.add.bind(counter);
+#   return add(first) + add(second);
+# }
+# declare const input: any;
+# (globalThis as any).answer = addBoth(new Counter(+input), +input, +input);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 42, patches 6, moves 14, unlikely or rare 4.
+# RUN(X64): steps most:56 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 56

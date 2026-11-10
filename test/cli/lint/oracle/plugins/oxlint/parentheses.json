@@ -1,0 +1,213 @@
+[
+ {
+  "name": "parentheses/await-thenable/default",
+  "about": "await-thenable: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/await-thenable": "error"
+   }
+  },
+  "files": {
+   "agg-paren-array-elements.ts": "// GO: await_thenable.go:151,176-183: a parenthesized array literal takes the non-literal branch: one report, on the whole argument, starting at its `(`\n// RUST: await_thenable.rs:133-142: parentheses are not nodes: the array literal branch reports each never-awaitable element at the element\n// EXPECT: oxlint reports once at line 5; bun lint reports at line 7 (the element `1`)\ndeclare const p: Promise<number>;\nexport const r = Promise.all((\n  [\n    1,\n    p,\n  ]\n));\n",
+   "agg-paren-array-union-element.ts": "// GO: await_thenable.go:151,176: the argument is a ParenthesizedExpression, not an array literal: the whole argument is tested with containsNonAwaitableType (Some) on its element type number | Promise<number>\n// RUST: await_thenable.rs:133: the AST has no node for parentheses, so argument.kind() is ExprKind::Array: each element is tested with is_always_non_awaitable_type (Every)\n// EXPECT: oxlint reports line 5 (the argument); bun lint reports nothing\ndeclare const maybe: number | Promise<number>;\nexport const r = Promise.all(([maybe]));\n"
+  }
+ },
+ {
+  "name": "parentheses/consistent-return/option-treatUndefinedAsUnspecified",
+  "about": "consistent-return: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/consistent-return": [
+     "error",
+     {
+      "treatUndefinedAsUnspecified": true
+     }
+    ]
+   }
+  },
+  "files": {
+   "shadowed-undefined-paren.ts": "// GO: consistent_return.go:129: utils.IsUndefinedLiteral(node.Expression): the expression is a ParenthesizedExpression, not an Identifier, and its type is `number` (line 125): it is a value\n// RUST: consistent_return.rs:120: ast_utils::is_specific_id(value, \"undefined\"): parentheses are not nodes, the identifier `undefined` is found: no value\n// EXPECT: oxlint reports missingReturnValue on line 8; bun lint reports nothing\nfunction shadowed(undefined: number, flag: boolean) {\n  if (flag) {\n    return (undefined);\n  }\n  return;\n}\nexport { shadowed };\n"
+  }
+ },
+ {
+  "name": "parentheses/dot-notation/default",
+  "about": "dot-notation: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/dot-notation": "error"
+   }
+  },
+  "files": {
+   "paren-null.ts": "// GO: dot_notation.go:77: only a bare NullKeyword / TrueKeyword argument has a value; `(null)` and `(true)` are ParenthesizedExpression\n// RUST: eslint/rules/dot_notation.rs:38: parentheses are not nodes, ExprKind::Null / True are reported\n// EXPECT: oxlint nothing; bun lint reports lines 5 and 6\ndeclare const a: any;\na[(null)];\na[(true)];\nexport {};\n",
+   "paren-string.ts": "// GO: dot_notation.go:69: getComputedPropertyValue switches on the Kind of ArgumentExpression; `('b')` is a ParenthesizedExpression, so nothing is reported\n// RUST: eslint/rules/dot_notation.rs:36: parentheses are not nodes, the index is an ExprKind::String and is reported\n// EXPECT: oxlint nothing; bun lint reports line 5\ndeclare const a: { b: number };\na[('b')];\nexport {};\n"
+  }
+ },
+ {
+  "name": "parentheses/no-implied-eval/default",
+  "about": "no-implied-eval: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/no-implied-eval": "error"
+   }
+  },
+  "files": {
+   "paren-bind-call.ts": "// GO: no_implied_eval.go:75-86: the handler is a ParenthesizedExpression, not a CallExpression: isBind is never asked, isFunctionType(string) is false\n// RUST: no_implied_eval.rs:70: the handler is ExprKind::Call, is_bind(callee \"bind\") is true: a function\n// EXPECT: oxlint reports the handler on line 5; bun lint nothing\ndeclare function bind(code: string): string;\nsetTimeout((bind(\"alert(1)\")), 0);\nexport {};\n",
+   "paren-callee.ts": "// GO: no_implied_eval.go:32-50: getCalleeName tests ast.IsIdentifier on node.Expression() itself; a ParenthesizedExpression is a node, so the name is \"\" and nothing is checked\n// RUST: no_implied_eval.rs:25-27: parentheses are no node; the callee is ExprKind::Ident, so the name is setTimeout\n// EXPECT: oxlint nothing; bun lint reports the string on lines 4 and 5\n(setTimeout)(\"alert(1)\", 0);\n(setInterval)(\"alert(2)\", 0);\nexport {};\n",
+   "paren-function-ctor.ts": "// GO: no_implied_eval.go:91-96: the callee (Function) is a ParenthesizedExpression: calleeName is \"\", return before the Function branch\n// RUST: no_implied_eval.rs:99-108: callee is ExprKind::Ident \"Function\", type FunctionConstructor: reported\n// EXPECT: oxlint nothing; bun lint reports the calls on lines 4, 5 and 6\nexport const a = (Function)(\"return 1\");\nexport const b = new (Function)(\"return 2\");\nexport const c = (window.Function)(\"return 3\");\n",
+   "paren-object.ts": "// GO: no_implied_eval.go:37: ast.IsIdentifier(node.Expression()) of the access is false for the ParenthesizedExpression (window)\n// RUST: no_implied_eval.rs:21-23,30,33: is_global_candidate(obj) sees the identifier through the parentheses\n// EXPECT: oxlint nothing; bun lint reports the string on lines 4 and 5\n(window).setTimeout(\"alert(1)\", 0);\n(globalThis)[\"setInterval\"](\"alert(2)\", 0);\nexport {};\n"
+  }
+ },
+ {
+  "name": "parentheses/no-unsafe-argument/default",
+  "about": "no-unsafe-argument: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/no-unsafe-argument": "error"
+   }
+  },
+  "files": {
+   "new-map-parenthesized-callee.ts": "// GO: ts_eslint.go:363: the `new Map()` exception needs ast.IsIdentifier(senderNode.Expression()); `(Map)` is a ParenthesizedExpression, so there is no exception\n// RUST: types/utils/is_unsafe_assignment.rs:95: call.callee().is_ident(\"Map\") sees through the parentheses and excepts it\n// EXPECT: oxlint reports line 5 (Map<any, any> to Map<string, string>); bun lint reports nothing\ndeclare function acceptsMap(arg: Map<string, string>): void;\nacceptsMap(new (Map)());\nexport {};\n",
+   "new-map-parenthesized.ts": "// GO: ts_eslint.go:363: the `new Map()` exception tests ast.IsNewExpression(senderNode); the argument node here is a ParenthesizedExpression, so there is no exception\n// RUST: types/utils/is_unsafe_assignment.rs:92-98: parentheses are not nodes in the port's AST (ast/expr.rs:12), the sender is the New expression and is excepted\n// EXPECT: oxlint reports line 5 (Map<any, any> to Map<string, string>); bun lint reports nothing\ndeclare function acceptsMap(arg: Map<string, string>): void;\nacceptsMap((new Map()));\nexport {};\n"
+  }
+ },
+ {
+  "name": "parentheses/no-unsafe-return/default",
+  "about": "no-unsafe-return: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/no-unsafe-return": "error"
+   }
+  },
+  "files": {
+   "paren-new-map-arrow.ts": "// GO: no_unsafe_return.go:214 + ts_eslint.go:363: the body of the arrow function is the ParenthesizedExpression, which is not a NewExpression: no `new Map()` exception, reported\n// RUST: no_unsafe_return.rs:157 + is_unsafe_assignment.rs:91: FnBody::Expr is the `new Map()` itself, the exception applies\n// EXPECT: oxlint reports line 4 (unsafeReturnAssignment); bun lint reports nothing\nexport const f = (): Map<string, string> => (new Map());\n",
+   "paren-new-map-return.ts": "// GO: ts_eslint.go:363: the `new Map()` exception tests ast.IsNewExpression(senderNode); senderNode is the argument of the return statement, here a ParenthesizedExpression, so the exception does not apply and Map<any, any> into Map<string, string> is reported\n// RUST: is_unsafe_assignment.rs:69,91: the Expr has no node for parentheses, `sender_node.kind()` is ExprKind::New and the exception applies\n// EXPECT: oxlint reports line 5 (unsafeReturnAssignment); bun lint reports nothing\nexport function f(): Map<string, string> {\n  return (new Map());\n}\n"
+  }
+ },
+ {
+  "name": "parentheses/no-unsafe-type-assertion/default",
+  "about": "no-unsafe-type-assertion: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/no-unsafe-type-assertion": "error"
+   }
+  },
+  "files": {
+   "paren-callee-new-map.ts": "// GO: utils/ts_eslint.go:363: the exemption needs ast.IsIdentifier(senderNode.Expression()); the callee `(Map)` is a ParenthesizedExpression, so the assertion is unsafe\n// RUST: types/utils/is_unsafe_assignment.rs:95: `call.callee().is_ident(\"Map\")` sees through the parentheses and exempts it\n// EXPECT: oxlint reports line 4 (unsafeOfAnyTypeAssertion); bun lint reports nothing\nexport const cache = new (Map)() as Map<string, number>;\n",
+   "paren-new-map.ts": "// GO: utils/ts_eslint.go:363: the `new Map()` exemption asks ast.IsNewExpression(senderNode); the operand here is a ParenthesizedExpression, so Map<any, any> to Map<string, number> is unsafe\n// RUST: types/utils/is_unsafe_assignment.rs:68,92: parentheses are not nodes, so the operand is the `new` expression itself and is exempt\n// EXPECT: oxlint reports line 4 (unsafeOfAnyTypeAssertion) and nothing on line 5; bun lint reports nothing\nexport const wrapped = (new Map()) as Map<string, number>;\nexport const bare = new Map() as Map<string, number>;\n"
+  }
+ },
+ {
+  "name": "parentheses/prefer-reduce-type-parameter/default",
+  "about": "prefer-reduce-type-parameter: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/prefer-reduce-type-parameter": "error"
+   }
+  },
+  "files": {
+   "paren-callee.ts": "// GO: prefer_reduce_type_parameter.go:34: the callee of `(arr.reduce)(..)` is a ParenthesizedExpression, ast.IsAccessExpression is false, return\n// RUST: prefer_reduce_type_parameter.rs:49-56: call.callee() looks through parentheses (only is_chain_root is excluded), the Dot is matched\n// EXPECT: oxlint: nothing. bun lint: line 6\ntype Rec = Record<string, number>;\ndeclare const arr: number[];\n(arr.reduce)((acc, n) => acc, {} as Rec);\nexport {};\n",
+   "paren-second-arg.ts": "// GO: prefer_reduce_type_parameter.go:29: secondArg.Kind is ParenthesizedExpression, neither AsExpression nor TypeAssertionExpression, return\n// RUST: prefer_reduce_type_parameter.rs:41: second_arg.kind() of `({} as Rec)` is ExprKind::As if parentheses are not nodes\n// EXPECT: oxlint: nothing. bun lint: line 6\ntype Rec = Record<string, number>;\ndeclare const arr: number[];\narr.reduce((acc, n) => acc, ({} as Rec));\nexport {};\n"
+  }
+ },
+ {
+  "name": "parentheses/require-array-sort-compare/default",
+  "about": "require-array-sort-compare: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/require-array-sort-compare": "error"
+   }
+  },
+  "files": {
+   "paren-callee.ts": "// GO: tsgolint/internal/rules/require_array_sort_compare/require_array_sort_compare.go:30: the callee `(a.sort)` is a ParenthesizedExpression, ast.IsAccessExpression is false, return\n// RUST: src/lint/typescript/rules/require_array_sort_compare.rs:32: parentheses are not a node; the callee is ExprKind::Dot and not a chain root, so the call is checked\n// EXPECT: oxlint reports nothing; bun lint reports lines 5 and 6\ndeclare const a: number[];\n(a.sort)();\n(a.toSorted)();\nexport {};\n"
+  }
+ },
+ {
+  "name": "parentheses/strict-boolean-expressions/default",
+  "about": "strict-boolean-expressions: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/strict-boolean-expressions": "error"
+   }
+  },
+  "files": {
+   "predicate-parenthesized-callee.ts": "// GO: utils/ts_eslint.go:231: IsArrayMethodCallWithPredicate wants ast.IsAccessExpression(node.Expression); `(items.filter)` is a ParenthesizedExpression, so the call is no array predicate call\n// RUST: utils/ts_utils/member_access.rs:89: object_of_called_method sees the member access itself (parentheses are no node) and only rejects a chain root, so the predicate is checked\n// EXPECT: oxlint reports nothing; bun lint reports line 5 (conditionErrorObject at the call)\ndeclare const items: { a: number }[];\n(items.filter)((item) => item);\nexport {};\n"
+  }
+ },
+ {
+  "name": "parentheses/use-unknown-in-catch-callback-variable/default",
+  "about": "use-unknown-in-catch-callback-variable: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/use-unknown-in-catch-callback-variable": "error"
+   }
+  },
+  "files": {
+   "parenthesized-callee.ts": "// GO: use_unknown_in_catch_callback_variable.go:120: the callee is a ParenthesizedExpression, not an access expression: returns\n// RUST: use_unknown_in_catch_callback_variable.rs:123-129: parentheses are not nodes, the callee is a Dot and not a chain root: goes on\n// EXPECT: oxlint reports nothing; bun lint reports line 5\ndeclare const p: Promise<number>;\n(p.catch)((e: any) => {});\nexport {};\n"
+  }
+ },
+ {
+  "name": "parentheses/no-unnecessary-template-expression/default",
+  "about": "no-unnecessary-template-expression: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/no-unnecessary-template-expression": "error"
+   }
+  },
+  "files": {
+   "paren-literal-type.ts": "// GO: no_unnecessary_template_expression.go:138: only a LiteralTypeNode is unwrapped; a ParenthesizedType is not a literal and not KindUndefinedKeyword\n// RUST: no_unnecessary_template_expression.rs:93: interpolation_of_type sees the type in the parentheses (parentheses are not nodes)\n// EXPECT: oxlint: nothing. bun lint: lines 4, 5, 6, 7\ntype A = `a${('b')}`;\ntype B = `${(1)}`;\ntype C = `a${(null)}`;\ntype D = `a${(undefined)}b`;\nexport { A, B, C, D };\n",
+   "paren-literal-value.ts": "// GO: no_unnecessary_template_expression.go:138-158: isUnnecessaryValueInterpolation sees a ParenthesizedExpression, which is neither isFixableIdentifier, IsStringLiteralLike, isAnyLiteral nor a TemplateExpression: false\n// RUST: no_unnecessary_template_expression.rs:74: parentheses are not nodes, interpolation_of_expression sees the literal in them\n// EXPECT: oxlint: nothing. bun lint: lines 4, 5, 6, 7, 8\nconst a = `${(1)}`;\nconst b = `a${('b')}`;\nconst c = `a${(undefined)}`;\nconst d = `a${(null)}`;\nconst e = `a${(true)}b`;\nexport { a, b, c, d, e };\n",
+   "paren-template-value.ts": "// GO: no_unnecessary_template_expression.go:158: ast.IsTemplateExpression(expression) is false for a ParenthesizedExpression around a template; :146 IsStringLiteralLike likewise\n// RUST: no_unnecessary_template_expression.rs:84: ExprKind::Template is seen through the parentheses\n// EXPECT: oxlint: nothing. bun lint: lines 5, 6\ndeclare const x: number;\nconst a = `a${(`b${x}`)}`;\nconst b = `a${(`b`)}c`;\nexport { a, b };\n"
+  }
+ },
+ {
+  "name": "parentheses/restrict-template-expressions/default",
+  "about": "restrict-template-expressions: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/restrict-template-expressions": "error"
+   }
+  },
+  "files": {
+   "paren-template-as-tag.ts": "// GO: restrict_template_expressions.go:70: only `ast.IsTaggedTemplateExpression(node.Parent)` is skipped; here node.Parent is a ParenthesizedExpression, so the template is checked\n// RUST: restrict_template_expressions.rs:95: node.parent() is the TaggedTemplate if parentheses are not nodes of the Expr tree, and the template is skipped\n// EXPECT: oxlint reports line 7 (`obj`); bun lint reports nothing. (The error \"not callable\" is the point.)\ndeclare const obj: { a: number };\nexport const s =\n  // @ts-expect-error a string is not callable\n  (`${obj}`)`x`;\n"
+  }
+ }
+]

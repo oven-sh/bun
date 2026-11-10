@@ -106,17 +106,19 @@ test("database test", async () => {
 | **PostgreSQL** | | | |
 | `postgres_plain` | Basic PostgreSQL | 5432 | No auth required |
 | `postgres_tls` | PostgreSQL with TLS | 5432 | SSL certificates included |
-| `postgres_auth` | PostgreSQL with auth | 5432 | Username/password required |
+| `postgres_auth` | PostgreSQL with password auth | 5432 | One role per method: md5, cleartext, scram-sha-256 (`config/pg_hba_auth.conf`) |
 | **MySQL** | | | |
 | `mysql_plain` | Basic MySQL | 3306 | Root user, no password |
 | `mysql_native_password` | MySQL with legacy auth | 3306 | For compatibility testing |
 | `mysql_tls` | MySQL with TLS | 3306 | SSL certificates included |
+| `mariadb_plain` | Basic MariaDB | 3306 | Root user, no password |
 | **Redis/Valkey** | | | |
 | `redis_unified` | Redis with all features | 6379 (TCP), 6380 (TLS) | Persistence, Unix sockets, ACLs |
-| **S3/MinIO** | | | |
-| `minio` | S3-compatible storage | 9000 (API), 9001 (Console) | AWS S3 API testing |
 | **WebSocket** | | | |
 | `autobahn` | WebSocket test suite | 9002 | 517 conformance tests |
+
+The S3 tests use no container. They start the S3 server in
+`test/packages/s3-server`, which runs on `Bun.serve`.
 
 ## Usage Examples
 
@@ -171,12 +173,14 @@ test("wait for service to be healthy", async () => {
 ```
 test/docker/
 ├── docker-compose.yml       # Service definitions
-├── Dockerfile.postgres-plain # postgres_plain image (bakes in init-scripts)
-├── Dockerfile.postgres-auth  # postgres_auth image (init-scripts + pg_hba)
+├── Dockerfile.postgres-plain # postgres_plain image (baked PGDATA + init-scripts)
+├── Dockerfile.postgres-auth  # postgres_auth image (baked PGDATA + init-scripts + pg_hba)
+├── Dockerfile.mysql-plain           # mysql_plain image (baked data dir)
+├── Dockerfile.mysql-native-password # mysql_native_password image (baked data dir, legacy auth)
 ├── Dockerfile.autobahn       # autobahn image (fuzzingserver.json)
 ├── Dockerfile.squid          # squid image (squid.conf)
 ├── index.ts                # TypeScript API
-├── prepare-ci.sh          # CI/CD setup script
+├── prepare-ci.ts          # CI/CD setup script
 ├── README.md              # This file
 ├── config/                # Service configurations
 │   ├── fuzzingserver.json # Autobahn config
@@ -253,6 +257,24 @@ Some services use volumes to persist data across container restarts:
 Control behavior with environment variables:
 - `COMPOSE_PROJECT_NAME`: Prefix for container names (default: "bun-test-services")
 - `BUN_DOCKER_COMPOSE_PATH`: Override docker-compose.yml location
+- `BUN_TEST_SERVICE_<service>` (for example `BUN_TEST_SERVICE_postgres_plain=127.0.0.1:5432`): `ensure()` returns this address instead of starting a container. Docker is not needed.
+
+### Skipping When No Service Is Available
+
+`describeWithContainer()` from `harness` skips itself when the service cannot be provided. Do not wrap it in a gate. A suite that calls `ensure()` directly uses `isDockerServiceEnabled("<service>")` from `harness`:
+
+```typescript
+if (isDockerServiceEnabled("postgres_plain")) {
+  const pg = await dockerCompose.ensure("postgres_plain");
+  // ... define tests
+}
+```
+
+`isDockerEnabled()` only checks for a docker daemon. It ignores `BUN_TEST_SERVICE_*` and the CI coordinator. Use it only for tests that run docker themselves.
+
+### Prestart Map
+
+Every test file that uses a service has a line in `prestart-map.mjs`, so that CI starts the container before the file runs. `test/internal/prestart-map.test.ts` fails when the line is missing. It finds services by name, so write the name as a plain string (`image: "postgres_plain"`), not as a computed one.
 
 ## Migration Guide
 

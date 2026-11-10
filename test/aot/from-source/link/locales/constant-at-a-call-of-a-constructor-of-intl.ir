@@ -1,0 +1,13 @@
+# Intl.DateTimeFormat is called without `new`, on Intl: the first row of the call takes it, so Intl stays in sight and the written tag is read
+# -- source: constant-at-a-call-of-a-constructor-of-intl.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# Intl.DateTimeFormat("es"); Intl.NumberFormat("it");
+# -- end of source
+# RUN: locales
+# CHECK: locale constant "es" IntlDateTimeFormat at f0
+# RUN(IT): locales
+# IT: locale constant "it" IntlNumberFormat at f0
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault

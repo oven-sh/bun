@@ -1,0 +1,72 @@
+The original of a module that was LOADED before it was mocked is the loaded module itself: vi.importActual(), the parameter of a factory and jest.requireActual() answer its own function objects and its own `module.exports`, and its body does not run again. Each test file has a realm of its own.
+#### actual.test.js
+import { mock, test, vi } from "bun:test";
+test("vi.importActual()", async () => {
+  const mod = await import("./mod.js");
+  const { fn, handedOn } = mod;
+  mock.module("./mod.js", () => ({ value: "mocked", fn: () => "mocked-fn", handedOn: () => "mocked-inner", added: 1 }));
+  const actual = await vi.importActual("./mod.js");
+  console.log("| CASE", mod.value, mod.fn(), mod.handedOn(), "|", actual.value, actual.fn === fn, actual.handedOn === handedOn, Object.keys(actual).sort().join());
+  vi.doUnmock("./mod.js");
+  console.log("| CASE", mod.value, mod.fn === fn, (await import("./mod.js")) === mod);
+});
+#### commonjs.test.js
+import { jest, mock, test, vi } from "bun:test";
+test("a CommonJS file", async () => {
+  const lib = import.meta.require("./lib.cjs");
+  const { hello } = lib;
+  mock.module("./lib.cjs", () => ({ hello: () => "mocked-hello" }));
+  const actual = await vi.importActual("./lib.cjs");
+  console.log("| CASE", import.meta.require("./lib.cjs").hello(), actual.hello === hello, actual.default === lib, jest.requireActual("./lib.cjs") === lib);
+});
+#### never-loaded.test.js
+import { mock, test, vi } from "bun:test";
+test("a module that nothing had loaded is loaded for the original", async () => {
+  mock.module("./mod.js", () => ({ value: "mocked" }));
+  const actual = await vi.importActual("./mod.js");
+  console.log("| CASE", (await import("./mod.js")).value, actual.value, actual.fn());
+});
+#### parameter.test.js
+import { mock, test } from "bun:test";
+test("the parameter of a factory", async () => {
+  const mod = await import("./mod.js");
+  const { fn } = mod;
+  let same;
+  await mock.module("./mod.js", async importOriginal => {
+    const original = await importOriginal();
+    same = original.fn === fn;
+    return { ...original, value: "mocked" };
+  });
+  console.log("| CASE", mod.value, same, mod.fn === fn);
+});
+#### required.test.js
+import { jest, mock, test } from "bun:test";
+test("jest.requireActual() of an ES module", async () => {
+  const mod = await import("./mod.js");
+  const { fn } = mod;
+  mock.module("./mod.js", () => ({ fn: () => "mocked-fn" }));
+  const actual = jest.requireActual("./mod.js");
+  console.log("| CASE", mod.fn(), actual.fn === fn, actual.value);
+});
+#### second-mock.test.js
+import { mock, test, vi } from "bun:test";
+test("behind a second mock the original is still the file's own", async () => {
+  const mod = await import("./mod.js");
+  const { fn } = mod;
+  mock.module("./mod.js", () => ({ fn: () => "first" }));
+  mock.module("./mod.js", () => ({ fn: () => "second" }));
+  const actual = await vi.importActual("./mod.js");
+  console.log("| CASE", mod.fn(), actual.fn === fn, actual.value);
+});
+#### inner.js
+export function inner() { return "inner"; }
+#### lib.cjs
+console.log("| CASE runs lib");
+exports.hello = () => "real-hello";
+#### mod.js
+console.log("| CASE runs mod");
+export const value = "real";
+export function fn() { return "real-fn"; }
+export { inner as handedOn } from "./inner.js";
+#### package.json
+{ "name": "mock-original-loaded", "type": "module" }

@@ -14,13 +14,13 @@ use crate::values::protocol::{IsCompatible, Parse, ToCss};
 /// there are duplicate values.
 pub struct Rect<T> {
     /// The top component.
-    pub top: T,
+    pub(crate) top: T,
     /// The right component.
-    pub right: T,
+    pub(crate) right: T,
     /// The bottom component.
-    pub bottom: T,
+    pub(crate) bottom: T,
     /// The left component.
-    pub left: T,
+    pub(crate) left: T,
 }
 
 impl<T> Rect<T> {
@@ -142,7 +142,7 @@ impl<T> Rect<T> {
         self.left.to_css(dest)
     }
 
-    pub(crate) fn val_parse(i: &mut css::Parser) -> Result<T>
+    fn val_parse(i: &mut css::Parser) -> Result<T>
     where
         T: Parse,
     {

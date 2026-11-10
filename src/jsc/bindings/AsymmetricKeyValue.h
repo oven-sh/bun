@@ -18,7 +18,6 @@ public:
     bool operator!() const { return !key; }
 
     ~AsymmetricKeyValue();
-    AsymmetricKeyValue(EVP_PKEY* key, bool owned);
     AsymmetricKeyValue(CryptoKey&);
 };
 

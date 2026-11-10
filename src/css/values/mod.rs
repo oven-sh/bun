@@ -1,13 +1,3 @@
-pub use crate::css_parser as css;
-
-pub mod css_modules {
-    // Back-compat re-export. Canonical home is `properties::css_modules::Specifier`;
-    // all in-tree callers (`values::ident`, `properties::custom`) now reference
-    // that path directly. Kept so out-of-tree / gated code that still spells
-    // `values::css_modules::Specifier` resolves to the same single type.
-    pub use crate::properties::css_modules::Specifier;
-}
-
 // Value types form a deep dependency lattice rooted at `calc.rs`:
 //   number→calc, angle→{calc,percentage}, alpha→percentage, time→calc,
 //   percentage→{calc,length}, length→{calc,percentage},

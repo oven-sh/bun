@@ -1,4 +1,5 @@
 #include "NodeVMModule.h"
+#include "BunClientData.h"
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
 
@@ -8,9 +9,8 @@
 #include "JavaScriptCore/Exception.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
-#include "JavaScriptCore/Watchdog.h"
 
-#include "../vm/SigintWatcher.h"
+#include "../vm/NodeVMRunTermination.h"
 
 namespace Bun {
 
@@ -18,11 +18,6 @@ NodeVMModuleRequest::NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF
     : m_specifier(WTF::move(specifier))
     , m_importAttributes(WTF::move(importAttributes))
 {
-}
-
-void NodeVMModuleRequest::addImportAttribute(WTF::String key, WTF::String value)
-{
-    m_importAttributes.set(WTF::move(key), WTF::move(value));
 }
 
 JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
@@ -40,17 +35,22 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     RETURN_IF_EXCEPTION(scope, {});
 
     for (const auto& [key, value] : m_importAttributes) {
-        attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
-            PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
-        RETURN_IF_EXCEPTION(scope, {});
+        constexpr unsigned propertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
+        JSC::Identifier identifier = JSC::Identifier::fromString(vm, key);
+        JSValue attributeValue = JSC::jsString(vm, value);
+        // An attribute key can be any string literal, including an array index.
+        if (auto index = parseIndex(identifier)) {
+            attributes->putDirectIndex(globalObject, *index, attributeValue, propertyAttributes, PutDirectIndexLikePutDirect);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            attributes->putDirect(vm, identifier, attributeValue, propertyAttributes);
+        }
     }
     array->putDirectIndex(globalObject, 1, attributes);
     RETURN_IF_EXCEPTION(scope, {});
 
     return array;
 }
-
-void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
@@ -78,6 +78,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    std::optional<Seconds> timeoutSeconds = timeout ? std::optional { Seconds::fromMilliseconds(timeout) } : std::nullopt;
 
     reconcileEvaluationState(vm);
 
@@ -93,29 +94,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
         RETURN_IF_EXCEPTION(scope, {});
         if (nodeVmGlobalObject && nodeVmGlobalObject->hasOwnMicrotaskQueue()) {
-            std::optional<double> oldLimit;
-            if (timeout != 0)
-                setupWatchdog(vm, timeout, &oldLimit.emplace(), nullptr);
-            nodeVmGlobalObject->drainOwnMicrotasks();
-            if (timeout != 0)
-                vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-            // The drain may legitimately leave the termination exception
-            // pending (watchdog fired mid-checkpoint); observe it so the
-            // exception-check validator is satisfied before the TOP scope
-            // below, then convert it to ERR_SCRIPT_EXECUTION_*.
-            std::ignore = scope.exception();
-            if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-                vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-                vm.clearHasTerminationRequest();
-                if (getSigintReceived()) {
-                    setSigintReceived(false);
-                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-                } else {
-                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-                }
-                return {};
+            {
+                NodeVMRunTermination termination(nodeVmGlobalObject, timeoutSeconds, breakOnSigint);
+                nodeVmGlobalObject->drainOwnMicrotasks();
+                termination.finish(scope);
             }
+            RETURN_IF_EXCEPTION(scope, {});
         }
         return m_evaluationResult.get();
     }
@@ -132,13 +116,17 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         }
     }
 
-#define VM_RETURN_IF_EXCEPTION(scope__, value__)               \
-    do {                                                       \
-        if (JSC::Exception* exception = scope__.exception()) { \
-            status(Status::Errored);                           \
-            m_evaluationException.set(vm, this, exception);    \
-            return value__;                                    \
-        }                                                      \
+// A termination that unwound the evaluation is not the module's error (an enclosing vm run's timeout, or the
+// VM being stopped): leave the status to reconcileEvaluationState() and let it propagate.
+#define VM_RETURN_IF_EXCEPTION(scope__, value__)                \
+    do {                                                        \
+        if (JSC::Exception* exception = scope__.exception()) {  \
+            if (!vm.isTerminationException(exception)) {        \
+                status(Status::Errored);                        \
+                m_evaluationException.set(vm, this, exception); \
+            }                                                   \
+            return value__;                                     \
+        }                                                       \
     } while (false);
 
     AbstractModuleRecord* record {};
@@ -188,7 +176,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // (awaiting it from the outer context would enqueue the thenable job on
     // the inner queue, which is not drained automatically). Wrap the result
     // in an outer-context promise and checkpoint the inner queue — still
-    // inside the watchdog scope so `timeout` bounds the microtask drain too.
+    // inside the timeout scope so `timeout` bounds the microtask drain too.
     auto drainAfterEvaluate = [&] {
         if (scope.exception() || vm.hasTerminationRequest())
             return;
@@ -207,10 +195,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             switch (innerPromise->status()) {
             case JSPromise::Status::Fulfilled:
                 result = JSPromise::resolvedPromise(callerGlobalObject, innerPromise->settlementValue());
+                RETURN_IF_EXCEPTION(scope, );
                 break;
             case JSPromise::Status::Rejected:
                 innerPromise->markAsHandled();
                 result = JSPromise::rejectedPromise(callerGlobalObject, innerPromise->settlementValue());
+                RETURN_IF_EXCEPTION(scope, );
                 break;
             case JSPromise::Status::Pending:
                 break;
@@ -218,46 +208,22 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         }
     };
 
-    setSigintReceived(false);
-
-    std::optional<double> oldLimit, newLimit;
-
-    if (timeout != 0) {
-        setupWatchdog(vm, timeout, &oldLimit.emplace(), &newLimit.emplace());
-    }
-
-    if (breakOnSigint) {
-        auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
+    {
+        // SIGINT interrupts the realm being evaluated (the context's, else the caller's).
+        NodeVMRunTermination termination(globalObject, timeoutSeconds, breakOnSigint);
         run();
         drainAfterEvaluate();
-    } else {
-        run();
-        drainAfterEvaluate();
-    }
-
-    if (timeout != 0) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
-
-    // Evaluation (or the afterEvaluate drain) may leave an exception pending
-    // — a regular one is rethrown by VM_RETURN_IF_EXCEPTION below, a
-    // termination one is converted to ERR_SCRIPT_EXECUTION_* here. Observe it
-    // so the exception-check validator is satisfied before the TOP scope.
-    std::ignore = scope.exception();
-    if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (getSigintReceived()) {
-            setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout != 0) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
+        // This run's own termination becomes ERR_SCRIPT_EXECUTION_* here; that error, like a regular one,
+        // marks the module errored and is rethrown by VM_RETURN_IF_EXCEPTION below.
+        termination.finish(scope);
+        // Unwound by the timeout / SIGINT of a module this one is a dependency of (evaluateDependencies runs
+        // each in its own scope): that termination keeps propagating to it, but this module's evaluation is
+        // over too — errored with the same kind of error, rather than left "evaluating" for good.
+        if (JSObject* error = termination.errorForEnclosingRunCutShort()) {
+            status(Status::Errored);
+            m_evaluationException.set(vm, this, JSC::Exception::create(vm, error));
+            return {};
         }
-    } else {
-        setSigintReceived(false);
     }
 
     VM_RETURN_IF_EXCEPTION(scope, {});
@@ -387,9 +353,18 @@ JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* glob
 
     AbstractModuleRecord* amr = this->moduleRecord(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    // link() can still change the modules that the exports of this one come from.
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(amr); cyclic && cyclic->status() < JSC::CyclicModuleRecord::Status::Linked) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module status must not be unlinked or linking"_s);
+        return {};
+    }
     object = amr->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (object) {
+        // The shared module namespace structure carries an __esModule accessor for
+        // CJS interop, but a Module Namespace Exotic Object is specified to have a
+        // null [[Prototype]], which is what vm modules must expose.
+        object->setPrototypeDirect(vm, jsNull());
         namespaceObject(vm, object);
     }
     RETURN_IF_EXCEPTION(scope, {});
@@ -438,7 +413,7 @@ NodeVMModulePrototype* NodeVMModulePrototype::create(VM& vm, Structure* structur
 
 Structure* NodeVMModulePrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 NodeVMModulePrototype::NodeVMModulePrototype(VM& vm, Structure* structure)
@@ -450,7 +425,7 @@ void NodeVMModulePrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    reifyStaticProperties(vm, info(), NodeVMModulePrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), NodeVMModulePrototypeTableValues, *this);
     this->structure()->setMayBePrototype(true);
 }
 
@@ -566,7 +541,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject *
     RETURN_IF_EXCEPTION(scope, {});
 
     for (unsigned i = 0; const NodeVMModuleRequest& request : requests) {
-        array->putDirectIndex(globalObject, i++, request.toJS(globalObject));
+        // toJS's RETURN_IF_EXCEPTION services VM traps, so termination can surface there as a null return.
+        auto* requestValue = request.toJS(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        array->putDirectIndex(globalObject, i++, requestValue);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -578,10 +556,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // vm.ts validated the timeout by value (or passes -1 for none); the number may still be boxed
+    // as a double, which isUInt32() rejects.
     JSValue timeoutValue = callFrame->argument(0);
     uint32_t timeout = 0;
-    if (timeoutValue.isUInt32()) {
-        timeout = timeoutValue.asUInt32();
+    if (timeoutValue.isUInt32AsAnyInt()) {
+        timeout = timeoutValue.asUInt32AsAnyInt();
     }
 
     JSValue breakOnSigintValue = callFrame->argument(1);
@@ -651,7 +631,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalO
             return {};
         }
         JSValue exportValue = callFrame->argument(1);
-        thisObject->setExport(globalObject, nameValue.toWTFString(globalObject), exportValue);
+        WTF::String exportName = nameValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        thisObject->setExport(globalObject, exportName, exportValue);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         throwTypeError(globalObject, scope, "This function must be called on a SyntheticModule"_s);
@@ -717,6 +699,13 @@ void NodeVMModule::propagateLinked()
         NodeVMModule* module = worklist.takeLast();
         if (!visited.add(module).isNewEntry)
             continue;
+
+        // An importer that got its modules before replaceUnlinkedRecords() links the replaced records, not this one.
+        if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
+            JSC::JSModuleRecord* record = sourceTextModule->moduleRecordIfExists();
+            if (!record || record->status() < JSC::CyclicModuleRecord::Status::Linked)
+                continue;
+        }
 
         if (module->status() == Status::Unlinked)
             module->status(Status::Linked);
@@ -824,7 +813,7 @@ NodeVMModuleConstructor::NodeVMModuleConstructor(VM& vm, Structure* structure)
 
 JSC::Structure* NodeVMModuleConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
 }
 
 void NodeVMModuleConstructor::finishCreation(VM& vm, JSObject* prototype)
@@ -837,5 +826,13 @@ void NodeVMModuleConstructor::finishCreation(VM& vm, JSObject* prototype)
 const JSC::ClassInfo NodeVMModule::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModule) };
 const JSC::ClassInfo NodeVMModulePrototype::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModulePrototype) };
 const JSC::ClassInfo NodeVMModuleConstructor::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModuleConstructor) };
+
+JSC::JSModuleLoader* NodeVMModule::moduleLoader(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    NodeVMGlobalObject* contextGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return (contextGlobalObject ? contextGlobalObject : globalObject)->moduleLoader();
+}
 
 } // namespace Bun

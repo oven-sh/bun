@@ -1,0 +1,1 @@
+{ "name": "made-up", "type": "module", "sideEffects": ["./main.mjs", "./main.cjs", "./reader.mjs", "./reader.cjs", "./late.mjs"] }

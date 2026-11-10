@@ -29,6 +29,7 @@ public:
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_stream, m_closedPromise, m_readyPromise, m_pipeOperation.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -43,8 +44,10 @@ public:
     JSC::WriteBarrier<JSWritableStream> m_stream;
     // [[closedPromise]] — spec-required at construction; NOT lazy. Replaced on release.
     JSC::WriteBarrier<JSC::JSPromise> m_closedPromise;
-    // [[readyPromise]] — replaced on backpressure changes / erroring.
+    // [[readyPromise]] — replaced on backpressure changes / erroring. Cleared (lazy) when
+    // backpressure goes true; readyPromise() materializes a pending one on first access.
     JSC::WriteBarrier<JSC::JSPromise> m_readyPromise;
+    JSC::JSPromise* readyPromise(JSC::JSGlobalObject*);
     // The writer→pipe-operation liveness back-edge, set when a pipe acquires this writer and
     // cleared in the pipe's "finalize". Visited.
     JSC::WriteBarrier<JSStreamPipeToOperation> m_pipeOperation;

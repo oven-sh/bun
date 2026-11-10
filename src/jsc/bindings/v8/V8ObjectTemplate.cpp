@@ -10,12 +10,13 @@ namespace v8 {
 
 Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTemplate> constructor)
 {
-    RELEASE_ASSERT(constructor.IsEmpty());
+    // The constructor argument is accepted and ignored; Bun's shim doesn't yet
+    // link ObjectTemplates created this way back to their FunctionTemplate.
+    (void)constructor;
     auto* globalObject = isolate->globalObject();
     auto& vm = JSC::getVM(globalObject);
     auto* globalInternals = globalObject->V8GlobalInternals();
     auto* structure = globalInternals->objectTemplateStructure(globalObject);
-    // TODO pass constructor
     auto* objectTemplate = shim::ObjectTemplate::create(vm, structure);
     return globalInternals->currentHandleScope()->createLocal<ObjectTemplate>(vm, objectTemplate);
 }

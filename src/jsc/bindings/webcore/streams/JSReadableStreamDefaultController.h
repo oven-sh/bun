@@ -34,6 +34,7 @@ public:
     // m_queue.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope taken by THIS
     // visitChildrenImpl — cellLock() is non-recursive; see StreamQueue.h).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -53,13 +54,13 @@ public:
     // [[strategyHWM]]
     double m_strategyHWM { 1 };
     // [[started]]
-    bool m_started { false };
+    bool m_started : 1 { false };
     // [[pulling]]
-    bool m_pulling { false };
+    bool m_pulling : 1 { false };
     // [[pullAgain]]
-    bool m_pullAgain { false };
+    bool m_pullAgain : 1 { false };
     // [[closeRequested]]
-    bool m_closeRequested { false };
+    bool m_closeRequested : 1 { false };
 
     // The algorithm machinery — replaces [[pullAlgorithm]] and [[cancelAlgorithm]]; the
     // start algorithm is never stored. See SourceAlgorithmSlots (StreamQueue.h).

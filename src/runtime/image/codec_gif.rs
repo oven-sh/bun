@@ -12,6 +12,8 @@
 //! transparency index. Animated/disposal/NETSCAPE loop are skipped — Sharp's
 //! default `pages:1` does the same.
 
+use core::mem::MaybeUninit;
+
 use super::codecs;
 
 /// Sub-block-aware bit reader. GIF wraps the LZW bitstream in length-
@@ -95,10 +97,15 @@ struct Dict {
 unsafe impl bun_core::Zeroable for Dict {}
 
 impl Dict {
-    /// Walk the prefix chain into `scratch` (reversed), then copy forwards
-    /// into `out`. Returns bytes written and the FIRST byte of the string
-    /// (needed for the K-ω-K case where the new code refers to itself).
-    fn emit(&self, code_: u16, clear: u16, out: &mut [u8], scratch: &mut [u8]) -> (usize, u8) {
+    /// Appends `code_`'s string to `out` (never past `npix` entries) and returns its FIRST byte, which the K-ω-K case needs.
+    fn emit(
+        &self,
+        code_: u16,
+        clear: u16,
+        out: &mut Vec<u8>,
+        npix: usize,
+        scratch: &mut [u8],
+    ) -> u8 {
         let mut code = code_;
         let mut n: usize = 0;
         while code >= clear {
@@ -116,15 +123,24 @@ impl Dict {
         scratch[n] = code as u8; // root: literal byte
         n += 1;
         let first: u8 = scratch[n - 1];
-        let cap = n.min(out.len());
-        for k in 0..cap {
-            out[k] = scratch[n - 1 - k];
-        }
-        (cap, first)
+        let take = n.min(npix - out.len());
+        out.extend(scratch[n - take..n].iter().rev());
+        first
     }
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+/// Everything in front of the first frame's LZW data.
+pub(crate) struct Frame<'a> {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    interlace: bool,
+    color_table: &'a [u8],
+    min_code: u8,
+    transparent: Option<u8>,
+    lzw_off: usize,
+}
+
+pub(crate) fn first_frame(bytes: &[u8]) -> Result<Frame<'_>, codecs::Error> {
     // ── header + LSD ───────────────────────────────────────────────────────
     if bytes.len() < 13 || !(&bytes[0..6] == b"GIF89a" || &bytes[0..6] == b"GIF87a") {
         return Err(codecs::Error::DecodeFailed);
@@ -198,7 +214,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                 if w == 0 || h == 0 {
                     return Err(codecs::Error::DecodeFailed);
                 }
-                codecs::guard(w, h, max_pixels)?;
                 let ct: &[u8] = if has_lct {
                     if i + lct_size * 3 > bytes.len() {
                         return Err(codecs::Error::DecodeFailed);
@@ -218,12 +233,35 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                 }
                 let min_code: u8 = bytes[i].clamp(2, 11);
                 i += 1;
-                return decode_frame(bytes, i, w, h, interlace, ct, min_code, trns);
+                return Ok(Frame {
+                    width: w,
+                    height: h,
+                    interlace,
+                    color_table: ct,
+                    min_code,
+                    transparent: trns,
+                    lzw_off: i,
+                });
             }
             _ => return Err(codecs::Error::DecodeFailed),
         }
     }
     Err(codecs::Error::DecodeFailed)
+}
+
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+    let frame = first_frame(bytes)?;
+    codecs::guard(frame.width, frame.height, max_pixels)?;
+    decode_frame(
+        bytes,
+        frame.lzw_off,
+        frame.width,
+        frame.height,
+        frame.interlace,
+        frame.color_table,
+        frame.min_code,
+        frame.transparent,
+    )
 }
 
 fn decode_frame(
@@ -251,9 +289,7 @@ fn decode_frame(
     let mut dict: Box<Dict> = bun_core::boxed_zeroed();
     let mut scratch = [0u8; 4096];
 
-    // PERF: zero-init for safety; uninitialized would be faster if hot.
-    let mut idx = vec![0u8; npix];
-    let mut written: usize = 0;
+    let mut idx: Vec<u8> = Vec::with_capacity(npix);
 
     let mut bits = Bits {
         src: bytes,
@@ -263,7 +299,7 @@ fn decode_frame(
         nbits: 0,
         eof: false,
     };
-    while written < npix {
+    while idx.len() < npix {
         let code = bits.read(size);
         if bits.eof && code == 0 {
             break;
@@ -284,16 +320,11 @@ fn decode_frame(
         // its own first byte.
         let first: u8;
         if code < avail {
-            let r = dict.emit(code, clear, &mut idx[written..], &mut scratch);
-            written += r.0;
-            first = r.1;
+            first = dict.emit(code, clear, &mut idx, npix, &mut scratch);
         } else if code == avail && prev.is_some() {
-            let r = dict.emit(prev.unwrap(), clear, &mut idx[written..], &mut scratch);
-            written += r.0;
-            first = r.1;
-            if written < npix {
-                idx[written] = first;
-                written += 1;
+            first = dict.emit(prev.unwrap(), clear, &mut idx, npix, &mut scratch);
+            if idx.len() < npix {
+                idx.push(first);
             }
         } else {
             return Err(codecs::Error::DecodeFailed); // out-of-range code
@@ -316,21 +347,16 @@ fn decode_frame(
         prev = Some(code);
     }
     bits.drain();
-    // A short or truncated stream (early EOI/eof) leaves `idx[written..]` as
-    // raw mimalloc bytes. Those would be mapped through an attacker-controlled
-    // palette into the output — a heap-memory disclosure. Filling with the
-    // transparent index (or 0) makes the unfilled region transparent/background
-    // instead, which is what browsers do for short frames.
-    if written < npix {
-        idx[written..].fill(trns.unwrap_or(0));
-    }
+    // Short/truncated stream: pad the tail with the transparent index (or 0), as browsers do.
+    idx.resize(npix, trns.unwrap_or(0));
 
     // ── interlace reorder ──────────────────────────────────────────────────
     // GIF interlacing writes rows in 4 passes (every 8th from 0, every 8th
     // from 4, every 4th from 2, every 2nd from 1). The decoded `idx` is in
     // pass order; remap to scan order while expanding so we don't allocate a
     // second index buffer.
-    let mut out = vec![0u8; npix * 4].into_boxed_slice();
+    let mut out: Vec<u8> = Vec::with_capacity(npix * 4);
+    let (pixels, _) = out.spare_capacity_mut().as_chunks_mut::<4>();
 
     let mut pal: [[u8; 4]; 256] = [[0, 0, 0, 255]; 256];
     for c in 0..ct.len() / 3 {
@@ -348,7 +374,7 @@ fn decode_frame(
             while y < h {
                 expand_row(
                     &idx[(src_y as usize) * (w as usize)..][..w as usize],
-                    &mut out[(y as usize) * (w as usize) * 4..],
+                    &mut pixels[(y as usize) * (w as usize)..][..w as usize],
                     &pal,
                 );
                 y += p[1];
@@ -360,25 +386,27 @@ fn decode_frame(
         while y < h {
             expand_row(
                 &idx[(y as usize) * (w as usize)..][..w as usize],
-                &mut out[(y as usize) * (w as usize) * 4..],
+                &mut pixels[(y as usize) * (w as usize)..][..w as usize],
                 &pal,
             );
             y += 1;
         }
     }
+    // SAFETY: every row in 0..h was expanded above (the passes partition 0..h): all npix slots set.
+    unsafe { bun_core::vec::commit_spare(&mut out, npix * 4) };
     Ok(codecs::Decoded {
-        rgba: out.into_vec(),
+        rgba: out,
         width: w,
         height: h,
         icc_profile: None,
     })
 }
 
-/// One row of palette indices → RGBA. Scalar 4-byte copy per pixel — see file
+/// One row of palette indices → RGBA slots. Scalar 4-byte copy per pixel — see file
 /// comment for why this isn't a Highway kernel.
 #[inline]
-fn expand_row(idx: &[u8], out: &mut [u8], pal: &[[u8; 4]; 256]) {
+fn expand_row(idx: &[u8], out: &mut [[MaybeUninit<u8>; 4]], pal: &[[u8; 4]; 256]) {
     for (x, &c) in idx.iter().enumerate() {
-        out[x * 4..][..4].copy_from_slice(&pal[c as usize]);
+        out[x] = pal[c as usize].map(MaybeUninit::new);
     }
 }

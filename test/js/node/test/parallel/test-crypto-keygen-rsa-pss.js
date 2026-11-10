@@ -4,6 +4,9 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
+if (process.features.openssl_is_boringssl)
+  common.skip('BoringSSL does not support RSA-PSS key pair generation');
+
 const assert = require('assert');
 const {
   constants,
@@ -15,9 +18,7 @@ const {
 } = require('../common/crypto');
 
 // Test RSA-PSS.
-
-// BoringSSL does not support RSA-PSS key generation.
-if (!common.openSSLIsBoringSSL) {
+{
   generateKeyPair('rsa-pss', {
     modulusLength: 512,
     saltLength: 16,

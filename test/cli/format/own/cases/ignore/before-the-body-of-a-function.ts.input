@@ -1,0 +1,20 @@
+function a() /* prettier-ignore */ { b( ) }
+function c()
+// prettier-ignore
+{ d( ) }
+const e = function ()
+// prettier-ignore
+{ f( ) };
+class A {
+  g() /* prettier-ignore */ { h( ) }
+  i()
+  // prettier-ignore
+  { j( ) }
+  k(): void /* prettier-ignore */ { l( ) }
+}
+const m = {
+  n() /* prettier-ignore */ { o( ) },
+  p()
+  // prettier-ignore
+  { q( ) },
+};

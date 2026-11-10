@@ -1,5 +1,8 @@
 name: Packages CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
@@ -29,11 +32,15 @@ jobs:
   bun-plugin-svelte:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          # The action's default bucket can be many commits behind for canary.
+          download-url: https://github.com/oven-sh/bun/releases/download
 
       - name: Install dependencies
         run: |
@@ -42,8 +49,8 @@ jobs:
 
       - name: Lint
         run: |
-          bunx oxlint@0.15 --format github --deny-warnings
-          bunx prettier --config ../../.prettierrc --check .
+          bun lint --format=github --deny-warnings
+          bun fmt --config ../../.prettierrc --check .
         working-directory: ./packages/bun-plugin-svelte
 
       - name: Check types

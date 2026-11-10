@@ -26,22 +26,17 @@ impl CSSNumberFns {
         if number != 0.0 && number.abs() < 1.0 {
             let mut dtoa_buf: [u8; 129] = [0; 129];
             let (str, _) = css::dtoa_short(&mut dtoa_buf, number, 6);
-            if number < 0.0 {
-                dest.write_char(b'-')?;
-                dest.write_str(bun_core::strings::trim_leading_pattern2(str, b'-', b'0'))
-            } else {
-                dest.write_str(bun_core::trim_leading_char(str, b'0'))
-            }
+            css::serializer::write_without_leading_zero(str, dest)
         } else {
             css::to_css::float32(number, dest)
         }
     }
 
-    pub fn try_from_angle(_: Angle) -> Option<CSSNumber> {
+    pub(crate) fn try_from_angle(_: Angle) -> Option<CSSNumber> {
         None
     }
 
-    pub fn sign(this: CSSNumber) -> f32 {
+    pub(crate) fn sign(this: CSSNumber) -> f32 {
         if this == 0.0 {
             // Spec-faithful: ±0.0 both map to +0.0 — do NOT
             // collapse with `signfns::sign_f32` / `calc::std_math_sign`.

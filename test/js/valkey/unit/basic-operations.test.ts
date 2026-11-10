@@ -51,8 +51,8 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
     test("SET with expiry option", async () => {
       const key = ctx.generateKey("expiry-set-test");
 
-      // Set with expiry (EX option)
-      await ctx.redis.send("SET", [key, "expires-soon", "EX", "1"]);
+      // Set with expiry (PX option, in milliseconds so the test doesn't wait a full second)
+      await ctx.redis.send("SET", [key, "expires-soon", "PX", "500"]);
 
       // Key should exist immediately
       const existsNow = await ctx.redis.exists(key);

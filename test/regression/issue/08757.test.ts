@@ -12,7 +12,7 @@ if (process.env.IS_SUBPROCESS) {
   process.exit(0);
 }
 
-test("absolute path to a file that is symlinked has import.meta.main", () => {
+test.concurrent("absolute path to a file that is symlinked has import.meta.main", async () => {
   const root = tmpdirSync();
   try {
     symlinkSync(process.argv[1], root + "/main.js");
@@ -24,10 +24,11 @@ test("absolute path to a file that is symlinked has import.meta.main", () => {
     throw e;
   }
 
-  const result = bunRun(root + "/main.js", {
+  const result = await bunRun(root + "/main.js", {
     IS_SUBPROCESS: "1",
   });
-  expect(result.stdout.trim()).toBe(
+  expect(result).toSpawn();
+  expect(result.stdout).toBe(
     [
       //
       import.meta.path,

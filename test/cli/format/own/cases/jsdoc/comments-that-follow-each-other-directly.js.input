@@ -1,0 +1,25 @@
+class A {
+    /**
+     * @constructor
+     * @overload
+     * @param {string}   a
+     *//**
+     * @constructor
+     * @param {number | string}   a   the thing
+     */
+    constructor(a, b) {}
+}
+
+/**
+ * @overload
+ * @param {string}  a
+ * @returns {void}
+ *//**
+ * @overload
+ * @param {number}  a
+ * @returns {void}
+ *//**
+ * @param {string | number}  a
+ * @returns {void}
+ */
+function f(a) {}

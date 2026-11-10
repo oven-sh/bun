@@ -81,7 +81,7 @@ pub fn is_identifier_utf16(text: &[u16]) -> bool {
 // out-of-range indexes panic.
 
 /// isIDStartESNext checks if a codepoint is valid in the isIDStartESNext category
-pub(crate) fn is_id_start_es_next(cp: u32) -> bool {
+fn is_id_start_es_next(cp: u32) -> bool {
     let high = (cp >> 8) as usize;
     let low = cp & 0xFF;
     let stage2_idx = id_start_es_next::STAGE1[high] as u32;
@@ -856,7 +856,7 @@ mod id_start_es_next {
 }
 
 /// isIDContinueESNext checks if a codepoint is valid in the isIDContinueESNext category
-pub(crate) fn is_id_continue_es_next(cp: u32) -> bool {
+fn is_id_continue_es_next(cp: u32) -> bool {
     let high = (cp >> 8) as usize;
     let low = cp & 0xFF;
     let stage2_idx = id_continue_es_next::STAGE1[high] as u32;

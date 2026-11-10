@@ -1,0 +1,10 @@
+vi.importActual() by a relative name in a helper of another folder.
+#### sub/dep.js
+export const x = "real";
+#### sub/helper.js
+import { vi } from "bun:test";
+export const load = () => vi.importActual("./dep.js");
+#### x.test.js
+import { expect, test } from "bun:test";
+import { load } from "./sub/helper.js";
+test("t", async () => expect((await load()).x).toBe("real"));

@@ -11,8 +11,8 @@ pub(crate) fn is_list_item_mark(c: u8) -> bool {
 
 #[derive(Copy, Clone)]
 pub struct Autolink {
-    pub beg: usize,
-    pub end: usize,
+    pub(crate) beg: usize,
+    pub(crate) end: usize,
 }
 
 pub(crate) type AutolinkResult = Option<Autolink>;
@@ -78,7 +78,7 @@ pub(crate) struct ScanResult {
 }
 
 /// Scan a URL component (host, path, query, or fragment) following md4c's URL_MAP.
-pub(crate) fn scan_url_component(
+fn scan_url_component(
     content: &[u8],
     start: usize,
     start_char: u8,
@@ -149,7 +149,7 @@ pub(crate) fn scan_url_component(
     ScanResult { end: pos, ok: true }
 }
 
-pub(crate) fn is_in_set(c: u8, set: &[u8]) -> bool {
+fn is_in_set(c: u8, set: &[u8]) -> bool {
     for &s in set {
         if c == s {
             return true;
@@ -158,33 +158,49 @@ pub(crate) fn is_in_set(c: u8, set: &[u8]) -> bool {
     false
 }
 
+/// 256-bit membership set over bytes; keeps the boundary checks below to a
+/// couple of loads instead of per-call-site `match` jump tables.
+struct ByteSet([u64; 4]);
+
+impl ByteSet {
+    const fn of(bytes: &[u8]) -> ByteSet {
+        let mut words = [0u64; 4];
+        let mut i = 0;
+        while i < bytes.len() {
+            words[(bytes[i] >> 6) as usize] |= 1 << (bytes[i] & 63);
+            i += 1;
+        }
+        ByteSet(words)
+    }
+
+    #[inline]
+    fn contains(&self, c: u8) -> bool {
+        self.0[(c >> 6) as usize] & (1 << (c & 63)) != 0
+    }
+}
+
+const EMPH_DELIMS: ByteSet = ByteSet::of(b"*_~");
+const LEFT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C({[");
+const RIGHT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C)}]<.!?,;&");
+
 /// Check left boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-pub(crate) fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
     if pos == 0 {
         return true;
     }
-    match content[pos - 1] {
-        b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => true,
-        b'(' | b'{' | b'[' => true,
-        b'*' | b'_' | b'~' => allow_emph,
-        _ => false,
-    }
+    let c = content[pos - 1];
+    LEFT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
 }
 
 /// Check right boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-pub(crate) fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
     if pos >= content.len() {
         return true;
     }
-    match content[pos] {
-        b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => true,
-        b')' | b'}' | b']' | b'<' => true,
-        b'.' | b'!' | b'?' | b',' | b';' | b'&' => true,
-        b'*' | b'_' | b'~' => allow_emph,
-        _ => false,
-    }
+    let c = content[pos];
+    RIGHT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
 }
 
 struct Scheme {

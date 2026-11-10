@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::collections::FxHashMap as HashMap;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerError;
@@ -46,13 +46,19 @@ pub struct Environment {
     next_mutable_range_id_counter: u32,
 
     // Arenas (use direct field access for sliced borrows)
-    pub identifiers: HirVec<Identifier>,
-    pub types: HirVec<Type>,
+    pub identifiers: Vec<Identifier>,
+    pub types: Vec<Type>,
     pub scopes: HirVec<ReactiveScope>,
     pub functions: HirVec<HirFunction>,
 
     // Error accumulation
     pub errors: CompilerError,
+
+    /// For what calls itself along the nesting of the source: [`Environment::has_stack`].
+    /// It keeps to a thread's usual stack: a thread that has more has it for what cannot ask,
+    /// `Drop`, `Clone` and `==` of what was built.
+    stack: bun_core::StackCheck,
+    is_out_of_stack: std::cell::Cell<bool>,
 
     // Function type classification (Component, Hook, Other)
     pub fn_type: ReactFunctionType,
@@ -75,6 +81,9 @@ pub struct Environment {
     // Renames: tracks variable renames from lowering (original_name → new_name)
     // keyed by binding declaration position, for applying back to the Babel AST.
     pub renames: HirVec<BindingRename>,
+
+    // Binding name -> next `_N` to try. Valid because an error in a nested function ends all lowering.
+    pub(crate) binding_names: HashMap<StoreStr, u32>,
 
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
@@ -164,7 +173,7 @@ impl Environment {
         }
 
         // Register reanimated module type when enabled
-        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::new();
+        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::default();
         if config.enable_custom_type_definition_for_reanimated {
             let reanimated_module_type = globals::get_reanimated_module_type(&mut shapes);
             module_types.insert(
@@ -177,11 +186,14 @@ impl Environment {
             next_block_id_counter: 0,
             next_scope_id_counter: 0,
             next_mutable_range_id_counter: 0,
-            identifiers: AstAlloc::vec(),
-            types: AstAlloc::vec(),
+            identifiers: Vec::new(),
+            types: Vec::new(),
             scopes: AstAlloc::vec(),
             functions: AstAlloc::vec(),
             errors: CompilerError::new(),
+            stack: bun_core::StackCheck::init()
+                .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
+            is_out_of_stack: std::cell::Cell::new(false),
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
             code: None,
@@ -190,8 +202,9 @@ impl Environment {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: AstAlloc::vec(),
-            reference_node_ids: HashSet::new(),
-            hoisted_identifiers: HashSet::new(),
+            binding_names: HashMap::default(),
+            reference_node_ids: HashSet::default(),
+            hoisted_identifiers: HashSet::default(),
             validate_preserve_existing_memoization_guarantees: config
                 .validate_preserve_existing_memoization_guarantees,
             validate_no_set_state_in_render: config.validate_no_set_state_in_render,
@@ -200,7 +213,7 @@ impl Environment {
             globals: global_registry,
             shapes,
             module_types,
-            module_type_errors: HashMap::new(),
+            module_type_errors: HashMap::default(),
             default_nonmutating_hook: None,
             default_mutating_hook: None,
             outlined_functions: AstAlloc::vec(),
@@ -209,50 +222,30 @@ impl Environment {
         }
     }
 
-    /// Create a child Environment for compiling an outlined function.
-    ///
-    /// The child shares the same config, globals, and shapes, and receives copies of
-    /// all arenas (identifiers, types, scopes, functions) so that references from
-    /// the outlined HIR remain valid. Block/scope counters start past the cloned
-    /// data to avoid ID conflicts.
-    pub fn for_outlined_fn(&self, fn_type: ReactFunctionType) -> Self {
-        Self {
-            // Start block counter past any existing blocks in the outlined function.
-            // The outlined function has BlockId(0), parent may have more. Use parent's
-            // counter which is guaranteed to be > any block ID in the outlined function.
-            next_block_id_counter: self.next_block_id_counter,
-            // Scope counter must be consistent with scopes vec length
-            next_scope_id_counter: self.scopes.len() as u32,
-            next_mutable_range_id_counter: self.next_mutable_range_id_counter,
-            identifiers: self.identifiers.clone(),
-            types: self.types.clone(),
-            scopes: self.scopes.clone(),
-            functions: self.functions.clone(),
-            errors: CompilerError::new(),
-            fn_type,
-            output_mode: self.output_mode,
-            code: self.code,
-            filename: self.filename,
-            instrument_fn_name: self.instrument_fn_name,
-            instrument_gating_name: self.instrument_gating_name,
-            hook_guard_name: self.hook_guard_name,
-            renames: AstAlloc::vec(),
-            reference_node_ids: HashSet::new(),
-            hoisted_identifiers: HashSet::new(),
-            validate_preserve_existing_memoization_guarantees: self
-                .validate_preserve_existing_memoization_guarantees,
-            validate_no_set_state_in_render: self.validate_no_set_state_in_render,
-            enable_preserve_existing_memoization_guarantees: self
-                .enable_preserve_existing_memoization_guarantees,
-            globals: self.globals.clone(),
-            shapes: self.shapes.clone(),
-            module_types: self.module_types.clone(),
-            module_type_errors: self.module_type_errors.clone(),
-            config: self.config.clone(),
-            default_nonmutating_hook: self.default_nonmutating_hook.clone(),
-            default_mutating_hook: self.default_mutating_hook.clone(),
-            outlined_functions: AstAlloc::vec(),
-            uid_known_names: self.uid_known_names.clone(),
+    /// Whether the thread has the stack for one more level of the source. Once it had not, the
+    /// answer stays no: something was left out, and `lower` fails.
+    pub(crate) fn has_stack(&self) -> bool {
+        if !self.stack.is_safe_to_recurse() {
+            self.is_out_of_stack.set(true);
+        }
+        !self.is_out_of_stack.get()
+    }
+
+    /// For a pass that asks the stack by itself.
+    pub(crate) fn stack(&self) -> bun_core::StackCheck {
+        self.stack
+    }
+
+    /// From such a pass.
+    pub(crate) fn ran_out_of_stack(&self) {
+        self.is_out_of_stack.set(true);
+    }
+
+    /// Fails if a pass had not the stack to go on, and left something out.
+    pub(crate) fn stack_held(&self) -> Result<(), CompilerError> {
+        match self.is_out_of_stack.get() {
+            true => Err(crate::lowering::nested_too_deeply().into()),
+            false => Ok(()),
         }
     }
 
@@ -291,6 +284,21 @@ impl Environment {
             loc: None,
         });
         id
+    }
+
+    /// Name the temporary `#t<declaration id>` so it survives as a variable.
+    pub fn promote_temporary(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b't');
+    }
+
+    /// `#T<declaration id>`: a JSX tag must start with a capital letter.
+    pub fn promote_temporary_jsx_tag(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b'T');
+    }
+
+    fn promote_temporary_with_kind(&mut self, identifier_id: IdentifierId, kind: u8) {
+        let identifier = &mut self.identifiers[identifier_id.0 as usize];
+        identifier.name = Some(IdentifierName::promoted(kind, identifier.declaration_id.0));
     }
 
     /// Allocate a new ReactiveScope in the arena, returns its ScopeId.
@@ -349,19 +357,11 @@ impl Environment {
         self.errors.has_any_errors()
     }
 
-    pub fn error_count(&self) -> usize {
-        self.errors.details.len()
-    }
-
     /// Check if any recorded errors have Invariant category.
     /// In TS, Invariant errors throw immediately from recordError(),
     /// which aborts the current operation.
     pub fn has_invariant_errors(&self) -> bool {
         self.errors.has_invariant_errors()
-    }
-
-    pub fn errors(&self) -> &CompilerError {
-        &self.errors
     }
 
     pub fn take_errors(&mut self) -> CompilerError {
@@ -370,16 +370,6 @@ impl Environment {
         // of the pipeline, not errors thrown by a pass.
         errors.is_thrown = false;
         errors
-    }
-
-    /// Take errors added after position `since_count`, leaving earlier errors in place.
-    /// Used to detect new errors added by a specific pass.
-    pub fn take_errors_since(&mut self, since_count: usize) -> CompilerError {
-        let mut taken = CompilerError::new();
-        if self.errors.details.len() > since_count {
-            taken.details = self.errors.details.split_off(since_count);
-        }
-        taken
     }
 
     /// Take only the Invariant errors, leaving non-Invariant errors in place.
@@ -406,46 +396,6 @@ impl Environment {
         }
         self.errors = remaining;
         invariant
-    }
-
-    /// Check if any recorded errors have Todo category.
-    /// In TS, Todo errors throw immediately via CompilerError.throwTodo().
-    pub fn has_todo_errors(&self) -> bool {
-        self.errors.details.iter().any(|d| match d {
-            crate::diagnostics::CompilerErrorOrDiagnostic::Diagnostic(d) => {
-                d.category == crate::diagnostics::ErrorCategory::Todo
-            }
-            crate::diagnostics::CompilerErrorOrDiagnostic::ErrorDetail(d) => {
-                d.category == crate::diagnostics::ErrorCategory::Todo
-            }
-        })
-    }
-
-    /// Take errors that would have been thrown in TS (Invariant and Todo),
-    /// leaving other accumulated errors in place.
-    pub fn take_thrown_errors(&mut self) -> CompilerError {
-        let mut thrown = CompilerError::new();
-        let mut remaining = CompilerError::new();
-        let old = std::mem::take(&mut self.errors);
-        for detail in old.details {
-            let is_thrown = match &detail {
-                crate::diagnostics::CompilerErrorOrDiagnostic::Diagnostic(d) => {
-                    d.category == crate::diagnostics::ErrorCategory::Invariant
-                        || d.category == crate::diagnostics::ErrorCategory::Todo
-                }
-                crate::diagnostics::CompilerErrorOrDiagnostic::ErrorDetail(d) => {
-                    d.category == crate::diagnostics::ErrorCategory::Invariant
-                        || d.category == crate::diagnostics::ErrorCategory::Todo
-                }
-            };
-            if is_thrown {
-                thrown.details.push(detail);
-            } else {
-                remaining.details.push(detail);
-            }
-        }
-        self.errors = remaining;
-        thrown
     }
 
     /// Check if a binding has been hoisted (via DeclareContext) already.
@@ -686,46 +636,6 @@ impl Environment {
         Ok(None)
     }
 
-    /// Get the type of a numeric property on a receiver type.
-    /// Ported from the numeric branch of TS `getPropertyType`.
-    pub fn get_property_type_numeric(
-        &self,
-        receiver: &Type,
-    ) -> Result<Option<Type>, CompilerDiagnostic> {
-        let shape_id = match receiver {
-            Type::Object { shape_id } | Type::Function { shape_id, .. } => shape_id.as_deref(),
-            _ => None,
-        };
-        if let Some(shape_id) = shape_id {
-            let shape = self
-                .shapes
-                .get(shape_id)
-                .ok_or_else(|| shape_not_found(shape_id))?;
-            return Ok(shape.properties.get("*").cloned());
-        }
-        Ok(None)
-    }
-
-    /// Get the fallthrough (wildcard `*`) property type for computed property access.
-    /// Ported from TS `getFallthroughPropertyType`.
-    pub fn get_fallthrough_property_type(
-        &self,
-        receiver: &Type,
-    ) -> Result<Option<Type>, CompilerDiagnostic> {
-        let shape_id = match receiver {
-            Type::Object { shape_id } | Type::Function { shape_id, .. } => shape_id.as_deref(),
-            _ => None,
-        };
-        if let Some(shape_id) = shape_id {
-            let shape = self
-                .shapes
-                .get(shape_id)
-                .ok_or_else(|| shape_not_found(shape_id))?;
-            return Ok(shape.properties.get("*").cloned());
-        }
-        Ok(None)
-    }
-
     /// Get the function signature for a function type.
     /// Ported from TS `getFunctionSignature`.
     pub fn get_function_signature(
@@ -821,11 +731,6 @@ impl Environment {
         Some(self.get_custom_hook_type())
     }
 
-    /// Get a reference to the shapes registry.
-    pub fn shapes(&self) -> &ShapeRegistry {
-        &self.shapes
-    }
-
     /// Get a reference to the globals registry.
     pub fn globals(&self) -> &GlobalRegistry {
         &self.globals
@@ -891,7 +796,7 @@ impl Environment {
         // Lazily build the set of known names from existing identifiers.
         // This approximates Babel's hasBinding/hasGlobal/hasReference checks.
         if self.uid_known_names.is_none() {
-            let mut known = HashSet::new();
+            let mut known = HashSet::default();
             for id in &self.identifiers {
                 if let Some(name) = &id.name {
                     known.insert(StoreStr::new(name.value()));
@@ -958,11 +863,6 @@ impl Environment {
         &self.outlined_functions
     }
 
-    /// Take the outlined functions, leaving the vec empty.
-    pub fn take_outlined_functions(&mut self) -> HirVec<OutlinedFunctionEntry> {
-        AstAlloc::take(&mut self.outlined_functions)
-    }
-
     /// Whether memoization is enabled for this compilation.
     /// Ported from TS `get enableMemoization()` in Environment.ts.
     /// Returns true for client/lint modes, false for SSR.
@@ -979,36 +879,6 @@ impl Environment {
         match self.output_mode {
             OutputMode::Client | OutputMode::Lint | OutputMode::Ssr => true,
         }
-    }
-
-    // =========================================================================
-    // Name resolution helpers
-    // =========================================================================
-
-    /// Get the user-visible name for an identifier.
-    ///
-    /// First checks the identifier's own name. If None, looks for another
-    /// identifier with the same `declaration_id` that has a name. This handles
-    /// SSA identifiers that don't carry names but share a declaration_id with
-    /// the original named identifier from lowering.
-    ///
-    /// This is analogous to `identifierName` on Babel's SourceLocation,
-    /// which the parser sets on every identifier node.
-    pub fn identifier_name_for_id(&self, id: IdentifierId) -> Option<StoreStr> {
-        let ident = &self.identifiers[id.0 as usize];
-        if let Some(name) = &ident.name {
-            return Some(StoreStr::new(name.value()));
-        }
-        // Fall back: find another identifier with the same declaration_id that has a Named name
-        let decl_id = ident.declaration_id;
-        for other in &self.identifiers {
-            if other.declaration_id == decl_id {
-                if let Some(IdentifierName::Named(name)) = &other.name {
-                    return Some(*name);
-                }
-            }
-        }
-        None
     }
 
     // =========================================================================
@@ -1036,12 +906,6 @@ impl Environment {
     }
 }
 
-impl Default for Environment {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cold]
 #[inline(never)]
 fn shape_not_found(shape_id: &str) -> CompilerDiagnostic {
@@ -1066,19 +930,6 @@ pub fn is_hook_name(name: &[u8]) -> bool {
     }
     let fourth_char = name[3];
     fourth_char.is_ascii_uppercase() || fourth_char.is_ascii_digit()
-}
-
-/// Returns true if the name follows React naming conventions (component or hook).
-/// Components start with an uppercase letter; hooks match `use[A-Z0-9]`.
-pub fn is_react_like_name(name: &[u8]) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let first_char = name[0];
-    if first_char.is_ascii_uppercase() {
-        return true;
-    }
-    is_hook_name(name)
 }
 
 #[cfg(test)]

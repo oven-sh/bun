@@ -7,8 +7,8 @@ use bun_alloc::ArenaVecExt as _;
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
 #[derive(Default)]
 pub struct FallbackHandler {
-    pub color: Option<usize>,
-    pub text_shadow: Option<usize>,
+    pub(crate) color: Option<usize>,
+    pub(crate) text_shadow: Option<usize>,
     // The remaining fallback fields are not implemented yet.
     // filter: Option<usize>,
     // backdrop_filter: Option<usize>,
@@ -55,6 +55,7 @@ impl FallbackHandler {
                         *$self_field = Some(dest.len());
                         dest.push(Property::$Variant(val));
                     } else if let Some(index) = *$self_field {
+                        context.remove_conditional_property(property.property_id());
                         dest[index] = Property::$Variant(val);
                     } else {
                         // val dropped — Drop handles cleanup

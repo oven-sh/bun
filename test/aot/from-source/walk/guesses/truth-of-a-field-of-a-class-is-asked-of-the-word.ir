@@ -1,0 +1,14 @@
+# as the front end writes `if (item.next)`: the guard at the entry proves the parameter, the slot is held to what is written of the field, and the truth of what it holds is whether the word is a cell. Each arm of the look at the slot ends with the Branch
+# f1 = weigh, f2 = Item
+# -- source: truth-of-a-field-of-a-class-is-asked-of-the-word.ts
+# declare function sink(...values: unknown[]): void;
+# class Item { next: Item | undefined; label: string; constructor(label: string, next: Item | undefined) { this.label = label; this.next = next; } }
+# function weigh(item: Item) { const size = item.label.length; if (item.next) return size + 1; return size; }
+# const last = new Item("a", undefined);
+# sink(last, weigh, weigh(last), weigh(new Item("bc", last)));
+# -- end of source
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="next"
+# CHECK: = ToBoolean {{*}}form=Bits
+# CHECK: Branch

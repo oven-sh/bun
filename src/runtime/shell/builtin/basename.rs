@@ -4,7 +4,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Basename {
+pub(crate) struct Basename {
     state: State,
     buf: Vec<u8>,
 }
@@ -57,8 +57,7 @@ impl Basename {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = err {
-            e.deref();
+        if let Some(_err) = err {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

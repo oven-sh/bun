@@ -4,14 +4,14 @@ pub enum PortalOrPreparedStatement<'a> {
 }
 
 impl<'a> PortalOrPreparedStatement<'a> {
-    pub fn slice(&self) -> &'a [u8] {
+    pub(crate) fn slice(&self) -> &'a [u8] {
         match self {
             PortalOrPreparedStatement::Portal(s) => s,
             PortalOrPreparedStatement::PreparedStatement(s) => s,
         }
     }
 
-    pub fn tag(&self) -> u8 {
+    pub(crate) fn tag(&self) -> u8 {
         match self {
             PortalOrPreparedStatement::Portal(_) => b'P',
             PortalOrPreparedStatement::PreparedStatement(_) => b'S',

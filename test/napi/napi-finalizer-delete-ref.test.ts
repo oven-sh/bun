@@ -4,7 +4,9 @@ import { existsSync } from "fs";
 import { bunEnv, bunExe, canBuildNodeAddons } from "harness";
 import { join } from "path";
 
-const addonPath = join(__dirname, "napi-app/build/Debug/test_delete_ref_in_finalizer_experimental.node");
+const napiAppDir = join(__dirname, "napi-app");
+const addonName = "test_delete_ref_in_finalizer_experimental";
+const addonPath = join(napiAppDir, `build/Debug/${addonName}.node`);
 
 beforeAll(() => {
   if (!canBuildNodeAddons()) return;
@@ -16,10 +18,38 @@ beforeAll(() => {
   if (existsSync(addonPath)) {
     return;
   }
+  // Fast path: `bun install` runs napi-app's install script, a full
+  // `node-gyp rebuild` of every addon target in binding.gyp. This test needs
+  // exactly one single-source-file target, so install the toolchain without
+  // running that script and ask node-gyp to build only this target.
+  if (!existsSync(join(napiAppDir, "node_modules/node-gyp"))) {
+    spawnSync({
+      cmd: [bunExe(), "install", "--ignore-scripts", "--verbose"],
+      cwd: napiAppDir,
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+  }
+  spawnSync({
+    // Same invocation as napi-app's install script, minus `clean` and scoped
+    // to one target (node-gyp forwards trailing args as make/msbuild targets).
+    cmd: [bunExe(), "--bun", "node-gyp", "configure", "build", "--debug", "-j", "max", addonName],
+    cwd: napiAppDir,
+    stderr: "inherit",
+    env: bunEnv,
+    stdout: "inherit",
+    stdin: "inherit",
+  });
+  if (existsSync(addonPath)) {
+    return;
+  }
+  // Fallback: the full install + rebuild of everything, retried once.
   for (let attempt = 0; ; attempt++) {
     const install = spawnSync({
       cmd: [bunExe(), "install", "--verbose"],
-      cwd: join(__dirname, "napi-app"),
+      cwd: napiAppDir,
       stderr: "inherit",
       env: bunEnv,
       stdout: "inherit",
@@ -47,9 +77,7 @@ it.skipIf(!canBuildNodeAddons())(
     // does exactly this). Bun used to abort with a "napi_reference_unref"
     // panic.
     const code = `
-      const addon = require(${JSON.stringify(
-        join(__dirname, "napi-app/build/Debug/test_delete_ref_in_finalizer_experimental.node"),
-      )});
+      const addon = require(${JSON.stringify(addonPath)});
       function makeGarbage() {
         addon.createWrapped(50);
         addon.createWithFinalizer(50);

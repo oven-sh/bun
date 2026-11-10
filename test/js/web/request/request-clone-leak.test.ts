@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
-import { isASAN } from "harness";
+import { expect } from "bun:test";
+import { isASAN, rss, testThatMeasuresOwnMemory } from "harness";
 
+const test = testThatMeasuresOwnMemory(import.meta.path);
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
 
-const constructorArgs = [
+const constructorArgs: [any, RequestInit?][] = [
   [
     new Request("http://foo/", {
       body: "ahoyhoy",
@@ -64,7 +65,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     }
 
     Bun.gc(true);
-    const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+    const baseline = (rss() / 1024 / 1024) | 0;
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500; j++) {
         new Request(...args);
@@ -73,7 +74,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     }
     Bun.gc(true);
 
-    const memory = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+    const memory = (rss() / 1024 / 1024) | 0;
     const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
     console.log("RSS delta: ", delta, "MB");
     // ASAN's quarantine and redzones retain freed pages so RSS over-reports
@@ -92,7 +93,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     }
 
     Bun.gc(true);
-    const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+    const baseline = (rss() / 1024 / 1024) | 0;
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
         const request = new Request(...args);
@@ -102,7 +103,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     }
     Bun.gc(true);
 
-    const memory = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+    const memory = (rss() / 1024 / 1024) | 0;
     const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
     console.log("RSS delta: ", delta, "MB");
     // ASAN's quarantine and redzones retain freed pages so RSS over-reports

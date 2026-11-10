@@ -1,6 +1,6 @@
 import type { S3Options } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, getSecret, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, getSecret, tempDir } from "harness";
 import path from "path";
 const s3Options: S3Options = {
   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
@@ -15,7 +15,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     it(
       "s3().stream() should not leak",
       async () => {
-        const dir = tempDirWithFiles("s3-stream-leak-fixture", {
+        await using dir = tempDir("s3-stream-leak-fixture", {
           "s3-stream-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-stream-leak-fixture.js")).text(),
           "out.bin": "here",
         });
@@ -45,7 +45,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     it(
       "s3().text() should not leak",
       async () => {
-        const dir = tempDirWithFiles("s3-text-leak-fixture", {
+        await using dir = tempDir("s3-text-leak-fixture", {
           "s3-text-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-text-leak-fixture.js")).text(),
           "out.bin": "here",
         });
@@ -76,7 +76,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     it(
       "s3().writer().write() should not leak",
       async () => {
-        const dir = tempDirWithFiles("s3-writer-leak-fixture", {
+        await using dir = tempDir("s3-writer-leak-fixture", {
           "s3-writer-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-writer-leak-fixture.js")).text(),
           "out.bin": "here",
         });
@@ -107,7 +107,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     it(
       "s3().write() should not leak",
       async () => {
-        const dir = tempDirWithFiles("s3-write-leak-fixture", {
+        await using dir = tempDir("s3-write-leak-fixture", {
           "s3-write-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-write-leak-fixture.js")).text(),
           "out.bin": "here",
         });
@@ -139,7 +139,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
     it(
       "Bun.write should not leak",
       async () => {
-        const dir = tempDirWithFiles("bun-write-leak-fixture", {
+        await using dir = tempDir("bun-write-leak-fixture", {
           "bun-write-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "bun-write-leak-fixture.js")).text(),
           "out.bin": "here",
         });

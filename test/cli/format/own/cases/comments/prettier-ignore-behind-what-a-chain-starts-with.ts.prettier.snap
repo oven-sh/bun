@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+const x0 = ([[1,   2]] as const) // prettier-ignore
+  .map((a) => a);
+
+const x1 = (y   as T) // prettier-ignore
+  .foo();
+
+const x2 = (y   satisfies T) // prettier-ignore
+  .foo();
+
+const x3 = (<T>   y) // prettier-ignore
+  .foo();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const x0 = ([[1,   2]] as const) // prettier-ignore
+  .map((a) => a);
+
+const x1 = (y   as T) // prettier-ignore
+  .foo();
+
+const x2 = (y   satisfies T) // prettier-ignore
+  .foo();
+
+const x3 = (<T>   y) // prettier-ignore
+  .foo();
+
+===================== End =====================

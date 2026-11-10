@@ -1,0 +1,16 @@
+# -- source: main.js
+# class Hub {
+#   constructor() { this.handlers = {}; }
+#   on(name, fn) { (this.handlers[name] || (this.handlers[name] = [])).push(fn); }
+#   fire(name, a, b) { const list = this.handlers[name]; if (list) for (const handler of list) handler(a, b); }
+# }
+# const hub = new Hub(); let total = 0;
+# hub.on('tick', (item, by) => { total = (total + item.size * by) | 0; });
+# function turn(t) { for (let i = 0; i < 100; i++) hub.fire('tick', { size: i + t }, 2); return total; }
+# print(turn(1)); print(turn(2));
+# -- end of source
+# The table is born empty and is filled under a key that nobody knows. What is stored so is found again by a read under such a key of the same layout: of both reads Link holds the list.
+# f3 = on, f4 = fire
+# RUN(HELD): link held accesses mechanisms=all
+# HELD: read f3 v4 proven=undefined|null|Array
+# HELD: read f4 v5 proven=undefined|null|Array

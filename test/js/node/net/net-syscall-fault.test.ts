@@ -75,7 +75,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     // and the application must still observe the full payload.
     fault.set({ syscall: "recv", action: "short", bytes: 1, repeat: -1 });
     const chunks: Buffer[] = [];
-    p.client.on("data", c => chunks.push(c));
+    p.client.on("data", (c: Buffer) => chunks.push(c));
     const payload = Buffer.from(Array.from({ length: 256 }, (_, i) => i & 0xff));
     p.serverSock.write(payload);
     p.serverSock.end();
@@ -86,7 +86,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("send → EAGAIN forever: data is buffered, then flushed after disarm", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1 });
     p.client.write(Buffer.alloc(256, "x"));
@@ -99,7 +99,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("send → short writes still deliver complete payload to peer", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
     const payload = Buffer.alloc(512, "b");
@@ -110,6 +110,170 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect(received.length).toBe(payload.length);
     expect(received.equals(payload)).toBe(true);
   });
+
+  // A short send leaves the remainder in the native buffered_data_for_node_net;
+  // the next writable event drives internal_flush(), and if that retry's send()
+  // fails with a transient errno (ENOBUFS/ENOMEM on a healthy connection) the
+  // bytes must stay buffered and be retried, not dropped. Dropping them fired
+  // 'drain' on a socket that had silently lost a span of the application's
+  // byte stream. SocketBody is shared by connecting and accepted sockets, so
+  // both the client writer and the net.createServer response writer are
+  // exercised.
+  for (const side of ["client", "server"] as const) {
+    test.each(["ENOBUFS", "ENOMEM"] as const)(
+      `send → %s on the drain-path flush of buffered data does not drop bytes (${side} writer)`,
+      async errno => {
+        using p = await connectedPair();
+        const writer = side === "client" ? p.client : p.serverSock;
+        const reader = side === "client" ? p.serverSock : p.client;
+        let received = Buffer.alloc(0);
+        reader.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
+
+        const writerFd = (writer as any)._handle.fd as number;
+        expect(writerFd).toBeGreaterThanOrEqual(0);
+
+        const head = Buffer.from(Array.from({ length: 200 }, (_, i) => i & 0xff));
+        const body = Buffer.alloc(4096, 0xee);
+
+        // send #0: clamp to 1 byte so the other 199 bytes of `head` land in
+        // buffered_data_for_node_net and the writable poll is armed.
+        fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd: writerFd });
+        const headWritten = new Promise<void>((resolve, reject) =>
+          writer.write(head, err => (err ? reject(err) : resolve())),
+        );
+
+        // send #1: the drain-path flush of the buffered remainder. Inject a
+        // one-shot transient errno; once it fires the rule self-disarms and the
+        // next retry must deliver the bytes.
+        fault.set({ syscall: "send", action: "errno", errno, repeat: 1, fd: writerFd });
+
+        // A follow-up write on the same connection after the first write's
+        // callback fires lets the peer observe a mid-stream gap (head[0]
+        // followed by body) if the buffered remainder was dropped.
+        await headWritten;
+        writer.write(body);
+        writer.end();
+        await once(reader, "end");
+        fault.clear();
+
+        const expected = Buffer.concat([head, body]);
+        expect({ length: received.length, intact: received.equals(expected) }).toEqual({
+          length: expected.length,
+          intact: true,
+        });
+      },
+    );
+  }
+
+  // us_socket_write_check_error gives send() errnos that are neither
+  // would-block/transient nor known peer-gone (EPROTOTYPE: macOS returns it
+  // racily from send() on healthy sockets) a bounded retry through the
+  // writable rearm machinery instead of failing the first write.
+  test("send → EPROTOTYPE burst: bytes are retried and delivered intact", async () => {
+    let received = Buffer.alloc(0);
+    using p = await connectedPair(s => {
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
+    });
+    const fd = (p.client as any)._handle.fd as number;
+    expect(fd).toBeGreaterThanOrEqual(0);
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, repeat: 8, fd });
+    const payload = Buffer.alloc(256, "p");
+    p.client.write(payload);
+    p.client.end();
+    await once(p.serverSock, "end");
+    fault.clear();
+    expect(received.equals(payload)).toBe(true);
+  });
+
+  // A sustained unclassified errno exhausts the bounded retry and must fail
+  // like a dead transport: 'error' carrying the real errno on the write
+  // syscall, then close. Before the fix the buffered bytes were silently
+  // dropped, the write was acknowledged as flushed and the peer saw a clean
+  // FIN terminating a truncated stream.
+  test("send → sustained EPROTOTYPE surfaces as 'error' + close, not silent truncation", async () => {
+    using p = await connectedPair();
+    const fd = (p.client as any)._handle.fd as number;
+    expect(fd).toBeGreaterThanOrEqual(0);
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, repeat: -1, fd });
+    const errP = once(p.client, "error") as Promise<[NodeJS.ErrnoException]>;
+    // Not events.once(): that helper rejects its promise when 'error' fires
+    // first, and 'error' arriving before 'close' is exactly this contract.
+    const closeP = new Promise<void>(resolve => p.client.once("close", () => resolve()));
+    p.client.write(Buffer.alloc(64, "x"));
+    const [err] = await errP;
+    fault.clear();
+    expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPROTOTYPE", syscall: "write" });
+    await closeP;
+    expect(p.client.destroyed).toBe(true);
+  });
+
+  // Server-side twin of the above. On kqueue the fatal flush from on_writable
+  // runs before the read dispatch (EV_EOF sets eof, not error), and its close
+  // short-circuits the read-error path, so ServerHandlers.error is the only
+  // place the errno is visible. With the plain-TCP delegation swallowing it,
+  // the server socket's 'error' never fired and 'close' was stuck behind an
+  // un-failed pending write (test-net-stream.js timeout on darwin).
+  test("server: send → sustained fatal flush surfaces 'error' + 'close' on the accepted socket", async () => {
+    using p = await connectedPair();
+    const fd = (p.serverSock as any)._handle.fd as number;
+    expect(fd).toBeGreaterThanOrEqual(0);
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, repeat: -1, fd });
+    const errP = once(p.serverSock, "error") as Promise<[NodeJS.ErrnoException]>;
+    const closeP = new Promise<void>(resolve => p.serverSock.once("close", () => resolve()));
+    p.serverSock.write(Buffer.alloc(64, "s"));
+    const [err] = await errP;
+    fault.clear();
+    expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPROTOTYPE", syscall: "write" });
+    await closeP;
+    expect(p.serverSock.destroyed).toBe(true);
+  });
+
+  // Node hands a send the kernel rejects at once to the stream inside write()
+  // itself, so write() returns false and the socket is errored in the same
+  // call. The stream runs the write callbacks and destroys it on the next tick.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
+  for (const side of ["client", "server"] as const) {
+    test.each([
+      { result: "ECONNRESET", rule: { action: "errno", errno: "ECONNRESET" }, code: "ECONNRESET" },
+      { result: "EPIPE", rule: { action: "errno", errno: "EPIPE" }, code: "EPIPE" },
+      { result: "more bytes than it was given", rule: { action: "excess" }, code: "ECONNABORTED" },
+    ] as const)(
+      `send → $result on the first attempt: write() returns false and the socket is errored in the same call (${side} writer)`,
+      async ({ rule, code }) => {
+        using p = await connectedPair();
+        const writer = side === "client" ? p.client : p.serverSock;
+        const fd = (writer as any)._handle.fd as number;
+        expect(fd).toBeGreaterThanOrEqual(0);
+        fault.set({ syscall: "send", ...rule, repeat: 1, fd });
+
+        const events: string[] = [];
+        writer.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code} ${e.syscall}`));
+        const closed = new Promise<void>(resolve => {
+          writer.on("close", hadError => {
+            events.push(`close ${hadError}`);
+            resolve();
+          });
+        });
+        const first = writer.write("x", e => events.push(`write#1 ${(e as NodeJS.ErrnoException)?.code}`));
+        const afterFirst = {
+          destroyed: writer.destroyed,
+          errored: (writer.errored as NodeJS.ErrnoException | null)?.code,
+          writable: writer.writable,
+          writableLength: writer.writableLength,
+        };
+        // The stream is errored, so this write never reaches send().
+        const second = writer.write("y", e => events.push(`write#2 ${(e as NodeJS.ErrnoException)?.code}`));
+        await closed;
+
+        expect({ first, afterFirst, second, events }).toEqual({
+          first: false,
+          afterFirst: { destroyed: false, errored: code, writable: false, writableLength: 0 },
+          second: false,
+          events: [`write#1 ${code}`, `write#2 ${code}`, `error ${code} write`, "close true"],
+        });
+      },
+    );
+  }
 
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {
     const server = net.createServer();
@@ -181,7 +345,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("two rules can be armed simultaneously (recv short + send short)", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "recv", action: "short", bytes: 3, repeat: -1 });
     fault.set({ syscall: "send", action: "short", bytes: 3, repeat: -1 });
@@ -195,7 +359,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("send → short writes deliver a payload larger than the kernel send buffer", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1 });
     const payload = Buffer.alloc(128 * 1024, 0x41);
@@ -211,7 +375,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     // Skip the first recv (the readable notification arms one), fail the second.
     fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", after: 1, repeat: 1 });
     let firstChunk: Buffer | null = null;
-    p.client.once("data", c => (firstChunk = c));
+    p.client.once("data", (c: Buffer) => (firstChunk = c));
     const errP = once(p.client, "error");
     p.serverSock.write("first");
     await new Promise<void>(r => p.client.once("data", () => r()));
@@ -231,7 +395,7 @@ describe.skipIf(skip)("node:net torture loop (exhaustive Nth-call failure)", () 
     for (let i = 0; i < 10; i++) {
       using p = await connectedPair(s => s.on("error", () => {}));
       let received = Buffer.alloc(0);
-      p.client.on("data", c => (received = Buffer.concat([received, c])));
+      p.client.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
       fault.set({ syscall: "recv", action: "short", bytes: 1, after: i, repeat: -1 });
       p.serverSock.write(payload);
       p.serverSock.end();
@@ -281,7 +445,7 @@ describe.skipIf(skip)("node:net seeded syscall fuzz", () => {
         s.on("error", () => {});
       });
       p.client.on("error", () => {});
-      p.client.on("data", c => (echoed = Buffer.concat([echoed, c])));
+      p.client.on("data", (c: Buffer) => (echoed = Buffer.concat([echoed, c])));
 
       fault.set({ ...plan, after, repeat: -1 } as any);
 

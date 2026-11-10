@@ -3,19 +3,42 @@ import type * as SqliteTypes from "bun:sqlite";
 
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
+const kOwnedByDatabaseFlag = 1 << 3;
+const kPrepareOwned = Symbol("prepareOwned");
+
+const enum UpdateHook {
+  SQLITE_DELETE = 9,
+  SQLITE_INSERT = 18,
+  SQLITE_UPDATE = 23,
+}
 
 const defineProperties = Object.defineProperties;
 const toStringTag = Symbol.toStringTag;
-const isArray = Array.isArray;
 const isTypedArray = ArrayBuffer.isView;
+const isInteger = Number.isInteger;
 
-let internalFieldTuple;
+type SQLQueryBinding = string | bigint | ArrayBufferView | ArrayBufferLike | number | boolean | null;
+type SQLQueryBindings = SQLQueryBinding | Record<string, SQLQueryBinding>;
 
-function initializeSQL() {
-  ({ 0: SQL, 1: internalFieldTuple } = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor"));
+interface Changes {
+  changes: number;
+  lastInsertRowid: number | bigint;
 }
 
-function createChangesObject() {
+interface DatabaseOptions {
+  readonly?: boolean;
+  create?: boolean;
+  readwrite?: boolean;
+  safeIntegers?: boolean;
+  strict?: boolean;
+}
+
+const { 0: SQL, 1: internalFieldTuple }: { 0: CppSQL; 1: $Node.SQLChangesTuple } = $cpp(
+  "JSSQLStatement.cpp",
+  "createJSSQLStatementConstructor",
+);
+
+function createChangesObject(): Changes {
   return {
     changes: $getInternalField(internalFieldTuple, 0),
     lastInsertRowid: $getInternalField(internalFieldTuple, 1),
@@ -94,41 +117,60 @@ const constants = {
   SQLITE_FCNTL_RESET_CACHE: 42,
 };
 
-// This is interface is the JS equivalent of what JSSQLStatement.cpp defines
-interface CppSQLStatement {
-  run: (...args: TODO[]) => TODO;
-  get: (...args: TODO[]) => TODO;
-  all: (...args: TODO[]) => TODO;
-  iterate: (...args: TODO[]) => TODO;
-  as: (...args: TODO[]) => TODO;
-  values: (...args: TODO[]) => TODO;
-  raw: (...args: TODO[]) => TODO;
-  finalize: (...args: TODO[]) => TODO;
-  toString: (...args: TODO[]) => TODO;
-  columns: string[];
-  columnsCount: number;
-  paramsCount: number;
-  columnTypes: string[];
-  declaredTypes: (string | null)[];
-  safeIntegers: boolean;
+// What JSSQLStatement.cpp defines.
+type CppSQLStatement<Row> = $Node.SQLStatement<Row>;
+type CppSQL = $Node.SQLStatementConstructor;
+type UserFunction = (...args: any[]) => unknown;
+
+interface TransactionFunction<A extends any[], T> {
+  (...args: A): T;
+  deferred: (...args: A) => T;
+  immediate: (...args: A) => T;
+  exclusive: (...args: A) => T;
 }
 
-interface CppSQL {
-  open(filename: string, flags: number, db: Database): TODO;
-  isInTransaction(handle: TODO): boolean;
-  loadExtension(handle: TODO, name: string, entryPoint: string): void;
-  serialize(handle: TODO, name: string): Buffer;
-  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): TODO;
-  fcntl(handle: TODO, ...args: TODO[]): TODO;
-  close(handle: TODO, throwOnError: boolean): void;
-  setCustomSQLite(path: string): void;
+function booleanOption(options, key: string, fallback = false): boolean {
+  const value = options[key];
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") throw new TypeError(`Expected the "${key}" option to be a boolean`);
+  return value;
 }
 
-let SQL: CppSQL;
-let controllers: WeakMap<Database, any> | undefined;
+function functionOption(options, key: string): UserFunction | undefined {
+  const value = options[key];
+  if (value == null) return undefined;
+  if (typeof value !== "function") throw new TypeError(`Expected the "${key}" option to be a function`);
+  return value;
+}
 
-class Statement {
-  constructor(raw: CppSQLStatement) {
+function parameterCount(fn: UserFunction): number {
+  const length = fn.length;
+  if (!isInteger(length) || length < 0) throw new TypeError("Expected function.length to be a positive integer");
+  return length;
+}
+
+// SQLITE_DETERMINISTIC | SQLITE_DIRECTONLY
+function functionFlags(options): number {
+  return (booleanOption(options, "deterministic") ? 0x800 : 0) | (booleanOption(options, "directOnly") ? 0x80000 : 0);
+}
+interface TransactionStatements {
+  begin: Statement;
+  commit: Statement;
+  rollback: Statement;
+  savepoint: Statement;
+  release: Statement;
+  rollbackTo: Statement;
+}
+interface TransactionController {
+  default: TransactionStatements;
+  deferred: TransactionStatements;
+  immediate: TransactionStatements;
+  exclusive: TransactionStatements;
+}
+let controllers: WeakMap<Database, TransactionController> | undefined;
+
+class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings[] = any[]> {
+  constructor(raw: CppSQLStatement<ReturnType>) {
     this.#raw = raw;
 
     switch (raw.paramsCount) {
@@ -153,15 +195,17 @@ class Statement {
     }
   }
 
-  #raw: CppSQLStatement;
+  #raw: CppSQLStatement<ReturnType>;
 
-  get: SqliteTypes.Statement["get"];
-  all: SqliteTypes.Statement["all"];
-  iterate: SqliteTypes.Statement["iterate"];
-  values: SqliteTypes.Statement["values"];
-  raw: SqliteTypes.Statement["raw"];
-  run: SqliteTypes.Statement["run"];
-  isFinalized = false;
+  get: (...params: ParamsType) => ReturnType | null;
+  all: (...params: ParamsType) => ReturnType[];
+  iterate: (...params: ParamsType) => IterableIterator<ReturnType>;
+  values: (...params: ParamsType) => $Node.SQLValue[][];
+  raw: (...params: ParamsType) => (Uint8Array | null)[][];
+  run: (...params: ParamsType) => Changes;
+  get isFinalized() {
+    return this.#raw.isFinalized;
+  }
 
   toJSON() {
     return {
@@ -192,10 +236,8 @@ class Statement {
     return this.#raw.all();
   }
 
-  *#iterateNoArgs() {
-    for (let res = this.#raw.iterate(); res; res = this.#raw.iterate()) {
-      yield res;
-    }
+  #iterateNoArgs() {
+    return this.#iterate();
   }
 
   #valuesNoArgs() {
@@ -212,6 +254,8 @@ class Statement {
     return createChangesObject();
   }
 
+  safeIntegers(updatedValue: boolean): this;
+  safeIntegers(): boolean;
   safeIntegers(updatedValue?: boolean) {
     if (updatedValue !== undefined) {
       this.#raw.safeIntegers = !!updatedValue;
@@ -221,90 +265,43 @@ class Statement {
     return this.#raw.safeIntegers;
   }
 
-  as(ClassType: any) {
+  as<T = unknown>(ClassType: new (...args: any[]) => T): Statement<T, ParamsType>;
+  as(ClassType: new (...args: any[]) => unknown): Statement<unknown, ParamsType> {
     this.#raw.as(ClassType);
 
     return this;
   }
 
-  #get(...args) {
-    if (args.length === 0) return this.#getNoArgs();
-    var arg0 = args[0];
-    // ["foo"] => ["foo"]
-    // ("foo") => ["foo"]
-    // (Uint8Array(1024)) => [Uint8Array]
-    // (123) => [123]
-    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? this.#raw.get(args)
-      : this.#raw.get(...args);
+  // The native methods take the array of arguments: SQLiteBinder::bind decides what they are.
+  #get(...args: ParamsType) {
+    return this.#raw.get(args);
   }
 
-  #all(...args) {
-    if (args.length === 0) return this.#allNoArgs();
-    var arg0 = args[0];
-    // ["foo"] => ["foo"]
-    // ("foo") => ["foo"]
-    // (Uint8Array(1024)) => [Uint8Array]
-    // (123) => [123]
-    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? this.#raw.all(args)
-      : this.#raw.all(...args);
+  #all(...args: ParamsType) {
+    return this.#raw.all(args);
   }
 
-  *#iterate(...args) {
-    if (args.length === 0) return yield* this.#iterateNoArgs();
-    var arg0 = args[0];
-    // ["foo"] => ["foo"]
-    // ("foo") => ["foo"]
-    // (Uint8Array(1024)) => [Uint8Array]
-    // (123) => [123]
-    let res =
-      !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-        ? this.#raw.iterate(args)
-        : this.#raw.iterate(...args);
-    for (; res; res = this.#raw.iterate()) {
-      yield res;
+  *#iterate(...args: ParamsType | []) {
+    const raw = this.#raw;
+    let row = raw.iterate(args);
+    const run = raw.runCount;
+    try {
+      for (; row; row = raw.iterateNext(run)) yield row;
+    } finally {
+      raw.iterateEnd(run);
     }
   }
 
-  #values(...args) {
-    if (args.length === 0) return this.#valuesNoArgs();
-    var arg0 = args[0];
-    // ["foo"] => ["foo"]
-    // ("foo") => ["foo"]
-    // (Uint8Array(1024)) => [Uint8Array]
-    // (123) => [123]
-    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? this.#raw.values(args)
-      : this.#raw.values(...args);
+  #values(...args: ParamsType) {
+    return this.#raw.values(args);
   }
 
-  #rawValues(...args) {
-    if (args.length === 0) return this.#rawNoArgs();
-    var arg0 = args[0];
-    // ["foo"] => ["foo"]
-    // ("foo") => ["foo"]
-    // (Uint8Array(1024)) => [Uint8Array]
-    // (123) => [123]
-    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? this.#raw.raw(args)
-      : this.#raw.raw(...args);
+  #rawValues(...args: ParamsType) {
+    return this.#raw.raw(args);
   }
 
-  #run(...args) {
-    if (args.length === 0) {
-      this.#runNoArgs();
-      return createChangesObject();
-    }
-
-    var arg0 = args[0];
-
-    if (!isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))) {
-      this.#raw.run(internalFieldTuple, args);
-    } else {
-      this.#raw.run(internalFieldTuple, ...args);
-    }
-
+  #run(...args: ParamsType) {
+    this.#raw.run(internalFieldTuple, args);
     return createChangesObject();
   }
 
@@ -324,13 +321,20 @@ class Statement {
     return this.#raw.paramsCount;
   }
 
-  finalize(...args) {
-    this.isFinalized = true;
+  get reader() {
+    return this.#raw.columnsCount > 0;
+  }
+
+  get readonly() {
+    return this.#raw.readonly;
+  }
+
+  finalize(...args: []) {
     return this.#raw.finalize(...args);
   }
 
-  *[Symbol.iterator]() {
-    yield* this.#iterateNoArgs();
+  [Symbol.iterator]() {
+    return this.#iterate();
   }
 
   [Symbol.dispose]() {
@@ -343,9 +347,11 @@ class Statement {
 const cachedCount = Symbol.for("Bun.Database.cache.count");
 
 class Database implements SqliteTypes.Database {
+  declare exec: Database["run"];
+
   constructor(
     filenameGiven: string | undefined | NodeJS.TypedArray | Buffer<ArrayBufferLike>,
-    options?: SqliteTypes.DatabaseOptions | number,
+    options?: DatabaseOptions | number,
   ) {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
@@ -365,7 +371,7 @@ class Database implements SqliteTypes.Database {
           }
         }
 
-        this.#handle = Database.#deserialize(filenameGiven, this.#internalFlags, deserializeFlags);
+        this.#handle = SQL.deserialize(filenameGiven, deserializeFlags);
         this.filename = ":memory:";
 
         return;
@@ -377,35 +383,27 @@ class Database implements SqliteTypes.Database {
     var filename = typeof filenameGiven === "string" ? filenameGiven.trim() : ":memory:";
     var flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
     if (typeof options === "object" && options) {
-      flags = 0;
-
-      if (options.readonly) {
-        flags = constants.SQLITE_OPEN_READONLY;
-      }
-
       if ("readOnly" in options) throw new TypeError('Misspelled option "readOnly" should be "readonly"');
 
-      if (options.create) {
-        flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
+      // `undefined` is an option that was not given. Any other falsy value turns the option off.
+      const { readonly, create, readwrite } = options;
+      if (readonly || (readwrite !== undefined && !readwrite)) {
+        if (create || readwrite) {
+          throw new TypeError(
+            'A read-only database ("readonly: true" or "readwrite: false") cannot have "create: true" or "readwrite: true"',
+          );
+        }
+        flags = constants.SQLITE_OPEN_READONLY;
+      } else if (!create && (create !== undefined || readwrite)) {
+        flags = constants.SQLITE_OPEN_READWRITE;
       }
 
-      if (options.readwrite) {
-        flags |= constants.SQLITE_OPEN_READWRITE;
+      if (options.safeIntegers) {
+        this.#internalFlags |= kSafeIntegersFlag;
       }
 
-      if ("strict" in options || "safeIntegers" in options) {
-        if (options.safeIntegers) {
-          this.#internalFlags |= kSafeIntegersFlag;
-        }
-
-        if (options.strict) {
-          this.#internalFlags |= kStrictFlag;
-        }
-
-        // If they only set strict: true, reset it back.
-        if (flags === 0) {
-          flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
-        }
+      if (options.strict) {
+        this.#internalFlags |= kStrictFlag;
       }
     } else if (typeof options === "number") {
       flags = options;
@@ -416,23 +414,16 @@ class Database implements SqliteTypes.Database {
       throw new Error("Cannot open an anonymous database in read-only mode.");
     }
 
-    if (!SQL) {
-      initializeSQL();
-    }
-
-    this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags, this);
+    this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
     this.filename = filename;
   }
 
   #internalFlags = 0;
-  #handle;
-  #cachedQueriesKeys: string[] = [];
-  #cachedQueriesLengths: number[] = [];
-  #cachedQueriesValues: Statement[] = [];
+  #handle: $Node.SQLDatabase;
+  #queryCache: Map<string, Statement> = new Map();
   filename;
-  #hasClosed = false;
   get handle() {
-    return this.#handle;
+    return SQL.handleNumber(this.#handle);
   }
 
   get inTransaction() {
@@ -451,107 +442,135 @@ class Database implements SqliteTypes.Database {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number) {
-    if (!SQL) {
-      initializeSQL();
-    }
-
-    return SQL.deserialize(serialized, openFlags, deserializeFlags);
-  }
-
   static deserialize(
     serialized: NodeJS.TypedArray | ArrayBufferLike,
     options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
   ) {
+    const bytes: NodeJS.TypedArray = require("node:util/types").isAnyArrayBuffer(serialized)
+      ? new Uint8Array(serialized as ArrayBufferLike)
+      : (serialized as NodeJS.TypedArray);
+    if (!isTypedArray(bytes)) {
+      throw new TypeError(`Expected 'serialized' to be a TypedArray or ArrayBuffer, got '${typeof serialized}'`);
+    }
     if (typeof options === "boolean") {
       // Maintain backward compatibility with existing API
-      return new Database(serialized, { readonly: options });
+      return new Database(bytes, { readonly: options });
     } else if (options && typeof options === "object") {
-      return new Database(serialized, options);
+      return new Database(bytes, options);
     } else {
-      return new Database(serialized, 0);
+      return new Database(bytes, 0);
     }
   }
 
   [Symbol.dispose]() {
-    if (!this.#hasClosed) {
-      this.close(true);
-    }
+    this.close(true);
   }
 
   static setCustomSQLite(path) {
-    if (!SQL) {
-      initializeSQL();
-    }
-
     return SQL.setCustomSQLite(path);
   }
 
-  fileControl(_cmd, _arg) {
-    const handle = this.#handle;
-
-    if (arguments.length <= 2) {
-      return SQL.fcntl(handle, null, arguments[0], arguments[1]);
-    }
-
-    return SQL.fcntl(handle, ...arguments);
+  fileControl(zDbName, op?, arg?) {
+    if (typeof zDbName === "string" || arguments.length > 2) return SQL.fcntl(this.#handle, zDbName, op, arg);
+    return SQL.fcntl(this.#handle, null, zDbName, op);
   }
 
   close(throwOnError = false) {
-    this.clearQueryCache();
-    // Finalize any prepared statements created by db.transaction()
-    if (controllers) {
-      const controller = controllers.get(this);
-      if (controller) {
-        controllers.delete(this);
-        const seen = new Set();
-        for (const ctrl of [controller.default, controller.deferred, controller.immediate, controller.exclusive]) {
-          if (!ctrl) continue;
-          for (const stmt of [ctrl.begin, ctrl.commit, ctrl.rollback, ctrl.savepoint, ctrl.release, ctrl.rollbackTo]) {
-            if (stmt && !seen.has(stmt)) {
-              seen.add(stmt);
-              stmt.finalize?.();
-            }
-          }
-        }
-      }
-    }
-    this.#hasClosed = true;
+    // native close finalizes every kOwnedByDatabaseFlag statement (query cache + transaction controller)
+    this.#queryCache.$clear();
+    controllers?.delete(this);
     return SQL.close(this.#handle, throwOnError);
   }
   clearQueryCache() {
-    for (let item of this.#cachedQueriesValues) {
-      item?.finalize?.();
-    }
-    this.#cachedQueriesKeys.length = 0;
-    this.#cachedQueriesValues.length = 0;
-    this.#cachedQueriesLengths.length = 0;
+    this.#queryCache.$forEach(stmt => stmt.finalize());
+    this.#queryCache.$clear();
   }
 
   run(query, ...params) {
-    if (params.length === 0) {
-      SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query);
-      return createChangesObject();
-    }
-
-    var arg0 = params[0];
-    if (!isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))) {
-      SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, params);
-    } else {
-      SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, ...params);
-    }
-
+    SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, params);
     return createChangesObject();
   }
 
-  prepare(query: string, params: any[] | undefined, flags: number = 0) {
-    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
+  function(name, options, fn?) {
+    if (typeof options === "function") {
+      fn = options;
+      options = undefined;
+    }
+    options ??= {};
+    if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
+    if (typeof fn !== "function") throw new TypeError("Expected last argument to be a function");
+    if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
+    if (!name) throw new TypeError("User-defined function name cannot be an empty string");
+
+    const safeIntegers = booleanOption(options, "safeIntegers", (this.#internalFlags & kSafeIntegersFlag) !== 0);
+    const flags = functionFlags(options);
+    const argumentCount = booleanOption(options, "varargs") ? -1 : parameterCount(fn);
+    SQL.defineFunction(this.#handle, name, argumentCount, flags, safeIntegers, fn);
+    return this;
+  }
+
+  aggregate(name, options) {
+    if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
+    if (typeof options !== "object" || !options)
+      throw new TypeError("Expected second argument to be an options object");
+    if (!name) throw new TypeError("User-defined function name cannot be an empty string");
+
+    const start = options.start;
+    const step = functionOption(options, "step");
+    if (!step) throw new TypeError('Missing required option "step"');
+    const inverse = functionOption(options, "inverse");
+    const result = functionOption(options, "result");
+    const safeIntegers = booleanOption(options, "safeIntegers", (this.#internalFlags & kSafeIntegersFlag) !== 0);
+    const flags = functionFlags(options);
+    // The first parameter of `step` and `inverse` is the accumulator.
+    const argumentCount = booleanOption(options, "varargs")
+      ? -1
+      : Math.max(parameterCount(step), inverse ? parameterCount(inverse) : 0, 1) - 1;
+    SQL.defineFunction(this.#handle, name, argumentCount, flags, safeIntegers, start ?? null, step, inverse, result);
+    return this;
+  }
+
+  get onInsert() {
+    return SQL.updateHook(this.#handle, UpdateHook.SQLITE_INSERT);
+  }
+  set onInsert(hook) {
+    SQL.setUpdateHook(this.#handle, UpdateHook.SQLITE_INSERT, hook, this, this.#internalFlags);
+  }
+
+  get onUpdate() {
+    return SQL.updateHook(this.#handle, UpdateHook.SQLITE_UPDATE);
+  }
+  set onUpdate(hook) {
+    SQL.setUpdateHook(this.#handle, UpdateHook.SQLITE_UPDATE, hook, this, this.#internalFlags);
+  }
+
+  get onDelete() {
+    return SQL.updateHook(this.#handle, UpdateHook.SQLITE_DELETE);
+  }
+  set onDelete(hook) {
+    SQL.setUpdateHook(this.#handle, UpdateHook.SQLITE_DELETE, hook, this, this.#internalFlags);
+  }
+
+  prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
+    query: string,
+    params?: ParamsType,
+    flags: number = 0,
+  ) {
+    return new Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>(
+      SQL.prepare(this.#handle, query, params == null ? undefined : [params], flags || 0, this.#internalFlags),
+    );
+  }
+
+  [kPrepareOwned](query: string, flags: number) {
+    return new Statement(
+      SQL.prepare(this.#handle, query, undefined, flags, this.#internalFlags | kOwnedByDatabaseFlag),
+    );
   }
 
   static MAX_QUERY_CACHE_SIZE = 20;
 
   get [cachedCount]() {
-    return this.#cachedQueriesKeys.length;
+    return this.#queryCache.$size;
   }
 
   query(query) {
@@ -563,42 +582,31 @@ class Database implements SqliteTypes.Database {
       throw new Error("SQL query cannot be empty.");
     }
 
-    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
-
-    // this list should be pretty small
-    let index = this.#cachedQueriesLengths.indexOf(query.length);
-    while (index !== -1) {
-      if (this.#cachedQueriesKeys[index] !== query) {
-        index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
-        continue;
-      }
-
-      const stmt = this.#cachedQueriesValues[index];
-      if (stmt.isFinalized) {
-        return (this.#cachedQueriesValues[index] = this.prepare(
-          query,
-          undefined,
-          willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0,
-        ));
-      }
+    const cache = this.#queryCache;
+    let stmt: Statement<any> | undefined = cache.$get(query);
+    if (stmt !== undefined) {
+      // LRU: re-insert so the most recently used key is last
+      cache.$delete(query);
+      if (stmt.isFinalized) stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
+      cache.$set(query, stmt);
       return stmt;
     }
 
-    var stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
-
-    if (willCache) {
-      this.#cachedQueriesKeys.push(query);
-      this.#cachedQueriesLengths.push(query.length);
-      this.#cachedQueriesValues.push(stmt);
+    stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
+    const max = Database.MAX_QUERY_CACHE_SIZE;
+    // A compiled statement is several times the size of its text.
+    if (max > 0 && query.length <= 64 * 1024) {
+      // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
+      if (cache.$size >= max) cache.$delete(cache.$keys().next().value!);
+      cache.$set(query, stmt);
     }
-
     return stmt;
   }
 
   // Code for transactions is largely copied from better-sqlite3
   // https://github.com/JoshuaWise/better-sqlite3/blob/master/lib/methods/transaction.js
   // thank you @JoshuaWise!
-  transaction(fn, self) {
+  transaction<A extends any[], T>(fn: (...args: A) => T, self?) {
     if (typeof fn !== "function") throw new TypeError("Expected first argument to be a function");
 
     const db = this;
@@ -623,42 +631,54 @@ class Database implements SqliteTypes.Database {
     defineProperties(properties.exclusive.value, properties);
 
     // Return the default version of the transaction function
-    return properties.default.value;
+    return properties.default.value as TransactionFunction<A, T>;
   }
 }
 
-// @ts-expect-error
 Database.prototype.exec = Database.prototype.run;
+// How a library tells the SQLite modules of the runtimes apart. node:sqlite has it too.
+Database.prototype[Symbol.for("sqlite-type")] = "bun:sqlite";
 
 // Return the database's cached transaction controller, or create a new one
-const getController = (db, _self) => {
+const getController = (db: Database, _self: unknown): TransactionController => {
   let controller = (controllers ||= new WeakMap()).get(db);
   if (!controller) {
     const shared = {
-      commit: db.prepare("COMMIT", undefined, 0),
-      rollback: db.prepare("ROLLBACK", undefined, 0),
-      savepoint: db.prepare("SAVEPOINT `\t_bs3.\t`", undefined, 0),
-      release: db.prepare("RELEASE `\t_bs3.\t`", undefined, 0),
-      rollbackTo: db.prepare("ROLLBACK TO `\t_bs3.\t`", undefined, 0),
+      commit: db[kPrepareOwned]("COMMIT", 0),
+      rollback: db[kPrepareOwned]("ROLLBACK", 0),
+      savepoint: db[kPrepareOwned]("SAVEPOINT `\t_bs3.\t`", 0),
+      release: db[kPrepareOwned]("RELEASE `\t_bs3.\t`", 0),
+      rollbackTo: db[kPrepareOwned]("ROLLBACK TO `\t_bs3.\t`", 0),
     };
 
     controllers.set(
       db,
       (controller = {
-        default: Object.assign({ begin: db.prepare("BEGIN", undefined, 0) }, shared),
-        deferred: Object.assign({ begin: db.prepare("BEGIN DEFERRED", undefined, 0) }, shared),
-        immediate: Object.assign({ begin: db.prepare("BEGIN IMMEDIATE", undefined, 0) }, shared),
-        exclusive: Object.assign({ begin: db.prepare("BEGIN EXCLUSIVE", undefined, 0) }, shared),
+        default: Object.assign({ begin: db[kPrepareOwned]("BEGIN", 0) }, shared),
+        deferred: Object.assign({ begin: db[kPrepareOwned]("BEGIN DEFERRED", 0) }, shared),
+        immediate: Object.assign({ begin: db[kPrepareOwned]("BEGIN IMMEDIATE", 0) }, shared),
+        exclusive: Object.assign({ begin: db[kPrepareOwned]("BEGIN EXCLUSIVE", 0) }, shared),
       }),
     );
   }
   return controller;
 };
 
+function undoTransaction(db: Database, undo: Statement, after: Statement, rollback: Statement) {
+  if (db.inTransaction) {
+    undo.run();
+    if (undo !== rollback) after.run();
+  }
+}
+
 // Return a new transaction function by wrapping the given function
-const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, rollbackTo }) =>
-  function transaction(this, ...args) {
-    let before, after, undo;
+const wrapTransaction = <A extends any[], T>(
+  fn: (...args: A) => T,
+  db: Database,
+  { begin, commit, rollback, savepoint, release, rollbackTo }: TransactionStatements,
+) =>
+  function transaction(this: unknown, ...args: A) {
+    let before: Statement, after: Statement, undo: Statement;
     if (db.inTransaction) {
       before = savepoint;
       after = release;
@@ -671,13 +691,15 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     try {
       before.run();
       const result = fn.$apply(this, args);
-      after.run();
+      // 2 is rejected: an async function that threw before its first `await` returns this instead of throwing.
+      if ($isPromise(result) && $peekPromiseStatus(result) === 2) {
+        undoTransaction(db, undo, after, rollback);
+      } else {
+        after.run();
+      }
       return result;
     } catch (ex) {
-      if (db.inTransaction) {
-        undo.run();
-        if (undo !== rollback) after.run();
-      }
+      undoTransaction(db, undo, after, rollback);
       throw ex;
     }
   };

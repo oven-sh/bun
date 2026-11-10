@@ -25,35 +25,3 @@
 
 #include "config.h"
 #include "ServerTiming.h"
-
-namespace WebCore {
-
-void ServerTiming::setParameter(const String& name, const String& value)
-{
-    if (equalLettersIgnoringASCIICase(name, "dur"_s)) {
-        if (!durationSet) {
-            duration = value.toDouble();
-            durationSet = true;
-        }
-        return;
-    }
-    if (equalLettersIgnoringASCIICase(name, "desc"_s)) {
-        if (!descriptionSet) {
-            description = value;
-            descriptionSet = true;
-        }
-        return;
-    }
-}
-
-ServerTiming ServerTiming::isolatedCopy() const&
-{
-    return ServerTiming { name.isolatedCopy(), duration, description.isolatedCopy(), durationSet, descriptionSet };
-}
-
-ServerTiming ServerTiming::isolatedCopy() &&
-{
-    return ServerTiming { WTF::move(name).isolatedCopy(), duration, WTF::move(description).isolatedCopy(), durationSet, descriptionSet };
-}
-
-} // namespace WebCore

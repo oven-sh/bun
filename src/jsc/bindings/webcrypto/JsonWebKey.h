@@ -37,7 +37,10 @@ struct JsonWebKey {
     String kty;
     String use;
     // FIXME: Consider merging key_ops and usages.
+    // Without the operations that are not a CryptoKeyUsage, which are skipped.
     std::optional<Vector<CryptoKeyUsage>> key_ops;
+    // Counts those too.
+    bool hasDuplicateKeyOps { false };
     CryptoKeyUsageBitmap usages;
     String alg;
 
@@ -56,7 +59,16 @@ struct JsonWebKey {
     String qi;
     std::optional<Vector<RsaOtherPrimesInfo>> oth;
     String k;
+    // JWK "AKP" key type (ML-DSA / ML-KEM), RFC draft-ietf-cose-dilithium.
+    String pub;
+    String priv;
 };
+
+// Whether `key_ops`, if the key has any, is well formed and covers `usages`.
+inline bool jwkKeyOpsAllow(const JsonWebKey& jwk, CryptoKeyUsageBitmap usages)
+{
+    return !jwk.key_ops || (!jwk.hasDuplicateKeyOps && (jwk.usages & usages) == usages);
+}
 
 } // namespace WebCore
 

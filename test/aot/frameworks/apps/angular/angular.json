@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "cli": { "analytics": false },
+  "projects": {
+    "site": {
+      "projectType": "application",
+      "root": "",
+      "sourceRoot": "src",
+      "prefix": "app",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "src/main.ts",
+            "tsConfig": "tsconfig.app.json",
+            "assets": [{ "glob": "**/*", "input": "public" }],
+            "server": "src/main.server.ts",
+            "outputMode": "server",
+            "security": { "allowedHosts": ["127.0.0.1", "localhost"] },
+            "ssr": { "entry": "src/server.ts" },
+            "outputHashing": "all"
+          }
+        }
+      }
+    }
+  }
+}

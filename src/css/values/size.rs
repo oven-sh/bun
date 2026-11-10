@@ -6,8 +6,8 @@ use bun_alloc::Arena;
 ///
 /// When serialized, only a single component will be written if both are equal.
 pub struct Size2D<T> {
-    pub a: T,
-    pub b: T,
+    pub(crate) a: T,
+    pub(crate) b: T,
 }
 
 // Per-type dispatch is expressed via trait bounds — `f32` and
@@ -17,23 +17,19 @@ impl<T> Size2D<T>
 where
     T: Clone + PartialEq,
 {
-    fn parse_val(input: &mut Parser) -> Result<T>
-    where
-        T: Parse,
-    {
-        // f32 → CSSNumberFns::parse, LengthPercentage → LengthPercentage::parse,
-        // else → T::parse — all unified under the `Parse` trait in Rust.
-        T::parse(input)
-    }
-
     pub(crate) fn parse(input: &mut Parser) -> Result<Size2D<T>>
     where
         T: Parse,
     {
-        let first = Self::parse_val(input)?;
-        let second = input
-            .try_parse(Self::parse_val)
-            .unwrap_or_else(|_| first.clone());
+        Self::parse_with(input, T::parse)
+    }
+
+    pub(crate) fn parse_with(
+        input: &mut Parser,
+        parse_fn: fn(&mut Parser) -> Result<T>,
+    ) -> Result<Size2D<T>> {
+        let first = parse_fn(input)?;
+        let second = input.try_parse(parse_fn).unwrap_or_else(|_| first.clone());
         Ok(Size2D {
             a: first,
             b: second,
@@ -52,7 +48,7 @@ where
         Ok(())
     }
 
-    pub(crate) fn val_to_css(val: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    fn val_to_css(val: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr>
     where
         T: ToCss,
     {
@@ -69,15 +65,14 @@ where
     }
 
     #[inline]
-    pub(crate) fn val_eql(lhs: &T, rhs: &T) -> bool {
+    fn val_eql(lhs: &T, rhs: &T) -> bool {
         // f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under PartialEq.
         lhs == rhs
     }
 
     #[inline]
     pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // Note: compares lhs.a against rhs.b only (not a/a && b/b).
-        lhs.a == rhs.b
+        lhs.a == rhs.a && lhs.b == rhs.b
     }
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
@@ -50,7 +50,7 @@ const hasLaunchctl =
   (() => {
     try {
       const r = Bun.spawnSync({
-        cmd: ["launchctl", "print", "gui/" + String(process.getuid())],
+        cmd: ["launchctl", "print", "gui/" + String(process.getuid!())],
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -1153,12 +1153,15 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       "e2e-job.ts": `
         export default {
           scheduled(controller) {
-            require("node:fs").writeFileSync("${markerPath}", JSON.stringify({
+            const fs = require("node:fs");
+            fs.writeFileSync("${markerPath}.tmp", JSON.stringify({
               type: controller.type,
               cron: controller.cron,
               scheduledTime: controller.scheduledTime,
               keys: Object.keys(controller).sort(),
             }));
+            // The test reads the marker as soon as it exists, so it appears with its content.
+            fs.renameSync("${markerPath}.tmp", "${markerPath}");
           }
         };
       `,
@@ -1388,6 +1391,14 @@ function nextN(expr: string, from: number, n: number): number[] {
 }
 
 describe("Bun.cron.parse", () => {
+  // parse() walks the system's local time zone; pin it so the Date.UTC(...)
+  // fixtures below are host-independent. `delete process.env.TZ` would remove
+  // the accessor without clearing the WTF::setTimeZoneOverride, so restore via
+  // assignment (empty string reverts to the system zone).
+  const oldTZ = process.env.TZ;
+  beforeAll(() => void (process.env.TZ = "Etc/UTC"));
+  afterAll(() => void (process.env.TZ = oldTZ ?? ""));
+
   test("is a function that returns a Date", () => {
     expect(typeof Bun.cron.parse).toBe("function");
     const result = Bun.cron.parse("* * * * *", Date.UTC(2025, 0, 15, 10, 30, 0));

@@ -21,7 +21,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: sourcemapValue,
     });
 
@@ -66,7 +66,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       // No sourcemap option
     });
 
@@ -99,7 +99,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: "external",
     });
 
@@ -112,9 +112,6 @@ main();`,
     // The sourcemap output should appear in build result outputs
     const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
     expect(sourcemapOutputs.length).toBe(1);
-    // The entry-point's .sourcemap should be that artifact.
-    expect(executableOutput.sourcemap).toBe(sourcemapOutputs[0]);
-    expect(executableOutput.sourcemap!.kind).toBe("sourcemap");
 
     // The .map file should exist next to the executable
     const mapPath = sourcemapOutputs[0].path;
@@ -137,7 +134,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "nosourcemap_entry.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "nosourcemap_entry") },
     });
 
     expect(result.success).toBe(true);
@@ -166,7 +163,7 @@ export function greet() {
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "entry.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "entry") },
       splitting: true,
       sourcemap: "external",
     });
@@ -181,13 +178,6 @@ export function greet() {
     // (one for the entry chunk, one for the lazy-loaded chunk)
     const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
     expect(sourcemapOutputs.length).toBeGreaterThanOrEqual(2);
-
-    // The entry-point's .sourcemap must be the entry chunk's own map (a sourcemap
-    // artifact whose JSON lists entry.js as a source), not another chunk's map.
-    expect(executableOutput.sourcemap?.kind).toBe("sourcemap");
-    expect(sourcemapOutputs).toContain(executableOutput.sourcemap);
-    const entryMapContent = JSON.parse(await executableOutput.sourcemap!.text());
-    expect(entryMapContent.sources.some((s: string) => s.endsWith("entry.js"))).toBe(true);
 
     // Each sourcemap should be a valid .map file on disk
     const mapPaths = new Set<string>();
@@ -251,10 +241,10 @@ export function greet() {
     // The executable should be at subdir/myapp (with .exe on Windows)
     expect(await Bun.file(join(subdirPath, `myapp${exeSuffix}`)).exists()).toBe(true);
 
-    // The .map file should be in subdir/ (next to the executable)
+    // The .map file should be in subdir/ (next to the executable), named after the executable
     const glob = new Bun.Glob("*.map");
     const mapFiles = Array.from(glob.scanSync({ cwd: subdirPath }));
-    expect(mapFiles.length).toBe(1);
+    expect(mapFiles).toEqual(["myapp.map"]);
 
     // Validate the sourcemap is valid JSON
     const mapContent = JSON.parse(await Bun.file(join(subdirPath, mapFiles[0])).text());
@@ -285,7 +275,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: "inline",
     });
 

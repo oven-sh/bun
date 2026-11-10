@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -991,6 +991,13 @@ describe("parseArgs extra tests", () => {
     expect(result.positionals).toHaveLength(2);
   });
 
+  test("a bare --no- with allowNegative stores an empty key", () => {
+    expect(parseArgs({ args: ["--no-"], allowNegative: true, strict: false })).toEqual({
+      values: { __proto__: null, "": false },
+      positionals: [],
+    });
+  });
+
   describe("unicode support", () => {
     // node allows characters of 1/2 bytes as short option names, but not 3/4
     const U1 = "$"; // 1 byte
@@ -1129,4 +1136,36 @@ describe("parseArgs extra tests", () => {
     expect(parseArgs({ allowPositionals: undefined })).toEqual({ values: { __proto__: null }, positionals: [] });
     expect(parseArgs({ allowPositionals: null })).toEqual({ values: { __proto__: null }, positionals: [] });
   });
+
+  test("classifies UTF-16 and Latin-1 positional tokens correctly", () => {
+    for (const p of ["x\u0100y", "x\u00e9y"]) {
+      expect(
+        parseArgs({
+          args: ["--flag", p, "-a"],
+          options: { flag: { type: "boolean" }, a: { type: "boolean", short: "a" } },
+          allowPositionals: true,
+        }),
+      ).toEqual({ values: { __proto__: null, flag: true, a: true }, positionals: [p] });
+    }
+  });
+});
+
+test("parseArgs does not leak argv strings", async () => {
+  const code = /* js */ `
+    const { parseArgs } = require("util");
+    const base = Buffer.alloc(256 * 1024, "a").toString();
+    function once(i) {
+      const s = base + i;
+      parseArgs({ args: [s, "--foo", s, "-b", s], options: { foo: { type: "string" }, b: { type: "string" } }, allowPositionals: true, strict: false });
+    }
+    for (let i = 0; i < 20; i++) once(i);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 400; i++) once(i);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: ~100 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
 });

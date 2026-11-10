@@ -10,7 +10,6 @@ use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, 
 /// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
 /// re-export the enum + set type here.
 pub use crate::flags::Function as FnFlags;
-pub use crate::flags::FunctionSet as FnFlagsSet;
 
 // All `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
@@ -64,6 +63,13 @@ pub struct Class {
     pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
+    /// `useDefineForClassFields: false` turned the instance fields into
+    /// assignments in the constructor.
+    pub assigns_fields_in_constructor: bool,
+    /// What the body reads the class name as when standard (TC39) class
+    /// decorators are lowered: the lowering assigns the decorated class to it.
+    /// `Ref::NONE` otherwise, including for TypeScript experimental decorators.
+    pub inner_class_ref: Ref,
 }
 
 impl Default for Class {
@@ -78,6 +84,8 @@ impl Default for Class {
             properties: StoreSlice::EMPTY,
             has_decorators: false,
             should_lower_standard_decorators: false,
+            assigns_fields_in_constructor: false,
+            inner_class_ref: Ref::NONE,
         }
     }
 }
@@ -102,7 +110,10 @@ impl Class {
                 return false;
             }
 
-            if property.kind == PropertyKind::Normal && f.contains(flags::Property::IsStatic) {
+            if (property.kind == PropertyKind::Normal
+                || property.kind == PropertyKind::AutoAccessor)
+                && f.contains(flags::Property::IsStatic)
+            {
                 for val in [property.value, property.initializer].into_iter().flatten() {
                     match val.data {
                         ExprData::EArrow(..) | ExprData::EFunction(..) => {}
@@ -129,15 +140,6 @@ pub struct Comment {
 pub struct ClassStaticBlock {
     pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
     pub loc: crate::Loc,
-}
-
-impl Default for ClassStaticBlock {
-    fn default() -> Self {
-        Self {
-            stmts: bun_alloc::AstAlloc::vec(),
-            loc: crate::Loc::default(),
-        }
-    }
 }
 
 pub struct Property {
@@ -202,10 +204,25 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
-    pub fn deep_clone(
+    /// Copies the property. The copy's expressions and static block still point to `self`'s nodes.
+    pub fn shallow_clone(&self) -> Property {
+        Property {
+            initializer: self.initializer,
+            kind: self.kind,
+            flags: self.flags,
+            class_static_block: self.class_static_block,
+            ts_decorators: bun_alloc::AstAlloc::vec_from_slice(self.ts_decorators.slice()),
+            key: self.key,
+            value: self.value,
+            ts_metadata: self.ts_metadata.clone(),
+        }
+    }
+
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Property, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> crate::Result<Property> {
         let mut class_static_block: Option<crate::StoreRef<ClassStaticBlock>> = None;
         if let Some(csb_ref) = self.class_static_block_ref() {
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
@@ -216,7 +233,7 @@ impl Property {
         }
         Ok(Property {
             initializer: match self.initializer {
-                Some(init) => Some(init.deep_clone(bump)?),
+                Some(init) => Some(init.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             kind: self.kind,
@@ -225,13 +242,13 @@ impl Property {
             // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone(bump))?,
+                .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
             key: match self.key {
-                Some(key) => Some(key.deep_clone(bump)?),
+                Some(key) => Some(key.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             value: match self.value {
-                Some(value) => Some(value.deep_clone(bump)?),
+                Some(value) => Some(value.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             ts_metadata: self.ts_metadata.clone(),
@@ -305,14 +322,15 @@ impl Default for Fn {
 }
 
 impl Fn {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Fn, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> crate::Result<Fn> {
         let src_args: &[Arg] = self.args.slice();
         let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
-            args[i] = src_args[i].deep_clone(bump)?;
+            args[i] = src_args[i].deep_clone(bump, stack_check)?;
         }
         Ok(Fn {
             name: self.name,
@@ -353,18 +371,19 @@ impl Default for Arg {
 }
 
 impl Arg {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Arg, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> crate::Result<Arg> {
         Ok(Arg {
             // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone(bump))?,
+                .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
             binding: self.binding,
             default: match self.default {
-                Some(d) => Some(d.deep_clone(bump)?),
+                Some(d) => Some(d.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,

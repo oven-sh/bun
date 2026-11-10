@@ -43,6 +43,20 @@ enum us_fault_syscall {
      * us_internal_init_loop_ssl_data. Only US_FAULT_ERRNO applies — there is
      * no byte count to clamp and no zero return to fake. */
     US_FAULT_SSL_LOOP_BUFFER,
+    /* Not a syscall: poll registration in us_poll_start_rc (uv_poll_init_socket
+     * on Windows/libuv, EPOLL_CTL_ADD / kevent on epoll/kqueue). The fd is
+     * always fresh from the kernel here, so the failure path is unreachable
+     * without fault injection. Only US_FAULT_ERRNO applies. */
+    US_FAULT_POLL_START,
+    /* Not a syscall: the JS Buffer allocated for a TLS session/keylog payload
+     * in the Rust on_session/on_keylog dispatch. It only fails on JSC heap
+     * OOM, so the failure path is unreachable without injection. Only
+     * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
+     * failure is a thrown JS out-of-memory error, not an errno. */
+    US_FAULT_SESSION_BUFFER,
+    /* Not a syscall: one SSL_write call in us_internal_ssl_writev fails with a fatal SSL
+     * error. Only US_FAULT_ERRNO applies, and the errno value is ignored. */
+    US_FAULT_SSL_WRITE,
     US_FAULT_COUNT
 };
 
@@ -50,12 +64,15 @@ enum us_fault_action {
     US_FAULT_NONE,
     /* return -1 and set errno = errno_value */
     US_FAULT_ERRNO,
-    /* recv/send: clamp the length to clamp_bytes, then run the real syscall.
+    /* recv/send/writev: clamp the length to clamp_bytes, then run the real syscall.
      * Other syscalls have no length to clamp; the JS setter rejects them. */
     US_FAULT_SHORT,
     /* recv/recvmsg: return 0 (peer closed); send/sendmsg/writev: return 0
      * (treated as backpressure). The JS setter rejects other syscalls. */
     US_FAULT_ZERO,
+    /* send/writev: send nothing and return more than the call was given (length + 1; INT_MAX + 1
+     * for writev). The JS setter rejects other syscalls. */
+    US_FAULT_EXCESS,
 };
 
 struct us_fault_rule {

@@ -6585,7 +6585,7 @@ impl VirtualMachine {
             {
                 return Err(err);
             }
-            Err(err) => Some(global.take_exception(err)),
+            Err(err) => Some(global.take_error(err)),
         };
         self.test_isolation_state.has_globals_snapshot = true;
         self.test_isolation_state.file_context =

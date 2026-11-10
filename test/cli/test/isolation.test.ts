@@ -1607,10 +1607,17 @@ describe.concurrent("bun test --isolate=modules", () => {
       {
         results: stderr.match(/^\((?:pass|fail)\) [ab]/gm),
         errors: stderr.match(/^error: .*$/gm),
+        // The error is the file's own, so its stack names the file.
+        framesInTheFile: stderr.match(/^\s+at .*a\.test\.js:\d+:\d+\)?$/gm)?.length,
         exitCode,
       },
       stderr,
-    ).toEqual({ results: ["(pass) a", "(pass) b"], errors: ["error: the getter that a left ran"], exitCode: 1 });
+    ).toEqual({
+      results: ["(pass) a", "(pass) b"],
+      errors: ["error: the getter that a left ran"],
+      framesInTheFile: 1,
+      exitCode: 1,
+    });
   });
 
   // The stack is too small for the walk over the globals. Linux only: the size that the walk needs was measured there.

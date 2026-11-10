@@ -346,6 +346,15 @@ fn cannot_break<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
         })
 }
 
+/// `set a(b,) {}`: a setter takes one `FormalParameter`, and JavaScriptCore rejects the comma. Prettier prints it.
+/// A signature is never run, and a setter with another list is an error either way: both keep Prettier's comma.
+fn is_setter_parameter_list(func: Func<'_>) -> bool {
+    func.kind() == FnKind::Setter
+        && func.has_body()
+        && func.params().len() == 1
+        && func.this_param().is_none()
+}
+
 struct ParameterList<'a> {
     func: Func<'a>,
     layout: ParameterLayout,
@@ -377,13 +386,9 @@ impl<'a> Format<'a> for ParameterList<'a> {
         let params = self.func.params_with_this();
         match self.layout {
             ParameterLayout::Default => {
-                // Nothing can follow a rest parameter, not even a comma. A setter takes one `FormalParameter`, with
-                // no trailing comma form: JavaScriptCore rejects `set a(b,) {}`. Prettier prints the comma. A setter
-                // with another list is an error with or without it, and is printed as Prettier prints it.
+                // Nothing can follow a rest parameter, not even a comma.
                 let trailing_separator = match self.func.params().last().is_some_and(Param::is_rest)
-                    || self.func.kind() == FnKind::Setter
-                        && self.func.params().len() == 1
-                        && self.func.this_param().is_none()
+                    || is_setter_parameter_list(self.func)
                 {
                     true => TrailingSeparator::Disallowed,
                     false => FormatTrailingCommas::Arguments.trailing_separator(f.options()),

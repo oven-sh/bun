@@ -1636,13 +1636,8 @@ describe.concurrent("bun fmt", () => {
       ],
       [
         "ts",
-        `interface Settings {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters);\n}\n`,
-        `interface Settings {\n  set timeout${broken("  ", `milliseconds: ${value}AndThenSomeMoreCharacters`)};\n}\n`,
-      ],
-      [
-        "ts",
-        `declare class Settings {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters);\n}\n`,
-        `declare class Settings {\n  set timeout${broken("  ", `milliseconds: ${value}AndThenSomeMoreCharacters`)};\n}\n`,
+        `class Settings {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters) {}\n}\n`,
+        `class Settings {\n  set timeout${broken("  ", `milliseconds: ${value}AndThenSomeMoreCharacters`)} {}\n}\n`,
       ],
     ])("%s: %j", async (extension, text, printed) => {
       const name = `a.${extension}`;
@@ -1672,20 +1667,32 @@ describe.concurrent("bun fmt", () => {
       expect(result).toMatchObject({ stderr: "", files: { "a.js": printed }, exitCode: 0 });
     });
 
-    // A method, and a setter whose list is not the one parameter of the grammar (an error with or without the comma).
+    // A method, a setter whose list is not the one parameter of the grammar (an error with or without the comma), and
+    // a setter signature, which no engine runs. TypeScript accepts the comma in all of them.
     test.each([
-      ["js", `class Settings {\n  timeout(milliseconds = ${value}AndThenSomeMore) {}\n}\n`],
-      ["ts", `class Settings {\n  set timeout(milliseconds: ${value}, b: ${value}) {}\n}\n`],
+      ["js", `class Settings {\n  timeout(milliseconds = ${value}AndThenSomeMore) {}\n}\n`, " {}\n}\n"],
+      ["ts", `class Settings {\n  set timeout(milliseconds: ${value}, b: ${value}) {}\n}\n`, " {}\n}\n"],
       [
         "ts",
         `class Settings {\n  set timeout(this: Settings, milliseconds: ${value}AndThenSomeMoreCharacters) {}\n}\n`,
+        " {}\n}\n",
       ],
-    ])("keeps the comma where the list is not one setter parameter: %s %j", async (extension, text) => {
-      const name = `a.${extension}`;
-      const result = await formatChecked({ [name]: text }, [], { reads: [name] });
-      expect(result.files[name]).toEndWith(",\n  ) {}\n}\n");
-      expect(result).toMatchObject({ stderr: "", exitCode: 0 });
-    });
+      ["ts", `interface Settings {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters);\n}\n`, ";\n}\n"],
+      [
+        "ts",
+        `declare class Settings {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters);\n}\n`,
+        ";\n}\n",
+      ],
+      ["ts", `type Settings = {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters);\n};\n`, ";\n};\n"],
+    ])(
+      "keeps the comma where the list is not one setter parameter with a body: %s %j",
+      async (extension, text, end) => {
+        const name = `a.${extension}`;
+        const result = await formatChecked({ [name]: text }, [], { reads: [name] });
+        expect(result.files[name]).toEndWith(`,\n  )${end}`);
+        expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+      },
+    );
   });
 
   // Prettier 3.9.9 prints `yield // comment⏎(a as any).b;`, and so on, which yields nothing.

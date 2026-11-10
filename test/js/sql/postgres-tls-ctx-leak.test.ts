@@ -7,6 +7,7 @@
 import { SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
+import { expectRssDeltaBelow } from "harness";
 import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgSSLResponse } from "./wire-frames";
 
 // PostgresSQLConnection.deinit() must free the per-connection SSL SocketContext
@@ -113,4 +114,52 @@ test("Postgres connections that fail TLS negotiation are finalized", async () =>
   } finally {
     server.close();
   }
+}, 60_000);
+
+// Every connection kept its own copy of the parsed `tls` options, `ca` included, until the GC
+// finalized it. The connections stay pending here (the server never answers the SSLRequest), so
+// what they hold is measured while they are alive.
+test("Postgres connections do not keep their own copy of the tls options", async () => {
+  await expectRssDeltaBelow(
+    [
+      "-e",
+      `
+      import { SQL } from "bun";
+      import { rootCertificates } from "node:tls";
+
+      // About 700 KB of PEM text.
+      const ca = Array.from({ length: 4 }, () => rootCertificates).flat();
+      let requests = 0;
+      let onRequest = () => {};
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data() { requests++; onRequest(); } },
+      });
+      const requested = n => new Promise(resolve => {
+        onRequest = () => requests >= n && resolve();
+        onRequest();
+      });
+      const connect = () => {
+        const sql = new SQL({ url: "postgres://u@127.0.0.1:" + server.port + "/db", tls: { ca }, max: 1, connectionTimeout: 60 });
+        sql\`select 1\`.catch(() => {});
+        return sql;
+      };
+
+      // The first connection builds the SSL_CTX that the others share.
+      const clients = [connect()];
+      await requested(1);
+      Bun.gc(true);
+      const rssBefore = process.memoryUsage.rss();
+      for (let i = 0; i < 32; i++) clients.push(connect());
+      await requested(33);
+      const deltaMiB = (process.memoryUsage.rss() - rssBefore) / 1024 / 1024;
+      for (const sql of clients) sql.close({ timeout: 0 }).catch(() => {});
+      server.stop(true);
+      console.log(JSON.stringify({ deltaMiB }));
+      process.exit(0);
+      `,
+    ],
+    { release: 10, debug: 12 },
+  );
 }, 60_000);

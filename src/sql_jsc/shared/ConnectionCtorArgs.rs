@@ -90,6 +90,8 @@ impl ConnectionCtorArgs {
                     )),
                 );
             }
+            // The certificates, keys and CAs are in the `SSL_CTX` now.
+            tls_config.retain_verification_only();
         }
 
         Ok(Some(Self {

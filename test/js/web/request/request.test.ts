@@ -175,3 +175,196 @@ describe("RequestInit signal presence", () => {
     });
   });
 });
+
+// WebIDL converts every RequestInit member before the body is extracted. A body that is read by
+// reference (URLSearchParams, FormData, a typed array) sees a getter on another member that mutates
+// it. A body that converts to a string is converted when `body` is read.
+describe("RequestInit body is extracted after the other members are read (#48468)", () => {
+  function requestWithMutatingGetter(body: BodyInit, mutate: () => void) {
+    return new Request("https://example.com/", {
+      body,
+      get method() {
+        mutate();
+        return "POST";
+      },
+    });
+  }
+
+  test("URLSearchParams", async () => {
+    const params = new URLSearchParams("a=1");
+    const request = requestWithMutatingGetter(params, () => params.append("b", "2"));
+    expect(request.method).toBe("POST");
+    expect(await request.text()).toBe("a=1&b=2");
+  });
+
+  test("FormData", async () => {
+    const form = new FormData();
+    form.append("a", "1");
+    const request = requestWithMutatingGetter(form, () => form.append("b", "2"));
+    expect([...(await request.formData()).keys()]).toEqual(["a", "b"]);
+  });
+
+  test("Uint8Array", async () => {
+    const bytes = new TextEncoder().encode("a=1");
+    const request = requestWithMutatingGetter(bytes, () => {
+      bytes[2] = "2".charCodeAt(0);
+    });
+    expect(await request.text()).toBe("a=2");
+  });
+
+  test("a detached Uint8Array is empty", async () => {
+    const bytes = new TextEncoder().encode("a=1");
+    const request = requestWithMutatingGetter(bytes, () => {
+      structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+    });
+    expect(await request.text()).toBe("");
+  });
+
+  test("an Array of parts", async () => {
+    const bytes = new TextEncoder().encode("a=1");
+    const request = requestWithMutatingGetter([bytes] as unknown as BodyInit, () => {
+      bytes[2] = "2".charCodeAt(0);
+    });
+    expect(await request.text()).toBe("a=2");
+  });
+
+  test("headers getter", async () => {
+    const params = new URLSearchParams("a=1");
+    const request = new Request("https://example.com/", {
+      body: params,
+      get headers() {
+        params.append("b", "2");
+        return { "x-test": "1" };
+      },
+    });
+    expect(request.headers.get("x-test")).toBe("1");
+    expect(await request.text()).toBe("a=1&b=2");
+  });
+
+  test("an object body is converted to a string when `body` is read", async () => {
+    let text = "a=1";
+    const request = new Request("https://example.com/", {
+      body: { toString: () => text } as unknown as BodyInit,
+      get method() {
+        text = "mutated";
+        return "POST";
+      },
+    });
+    expect(await request.text()).toBe("a=1");
+  });
+
+  test("init body still overrides the input request body", async () => {
+    const input = new Request("https://example.com/", { method: "POST", body: "old" });
+    const params = new URLSearchParams("a=1");
+    const request = new Request(input, {
+      body: params,
+      get redirect() {
+        params.append("b", "2");
+        return "manual" as const;
+      },
+    });
+    expect(request.redirect).toBe("manual");
+    expect(await request.text()).toBe("a=1&b=2");
+    expect(await input.text()).toBe("old");
+  });
+
+  test("keepalive with a ReadableStream body throws after the other members are read", () => {
+    let methodReads = 0;
+    expect(
+      () =>
+        new Request("https://example.com/", {
+          get method() {
+            methodReads++;
+            return "POST";
+          },
+          body: new ReadableStream(),
+          keepalive: true,
+        }),
+    ).toThrow("keepalive");
+    expect(methodReads).toBe(1);
+  });
+
+  test("an invalid URL throws before the body is extracted", () => {
+    expect(() => new Request("not a url", { method: "POST", body: new ReadableStream(), keepalive: true })).toThrow(
+      /Invalid URL/,
+    );
+  });
+
+  test("an invalid header throws before a locked stream body is checked", () => {
+    const stream = new ReadableStream();
+    stream.getReader();
+    expect(
+      () => new Request("https://example.com/", { method: "POST", body: stream, headers: { "a b": "1" } }),
+    ).toThrow(/header/i);
+  });
+
+  describe("fetch()", () => {
+    async function echo(fn: (url: string) => Promise<Response>) {
+      using server = Bun.serve({
+        port: 0,
+        fetch: async req => new Response(await req.text()),
+      });
+      return await (await fn(server.url.href)).text();
+    }
+
+    test("reads init.headers before it extracts a URLSearchParams body", async () => {
+      const params = new URLSearchParams("a=1");
+      const text = await echo(url =>
+        fetch(url, {
+          method: "POST",
+          body: params,
+          get headers() {
+            params.append("b", "2");
+            return {};
+          },
+        }),
+      );
+      expect(text).toBe("a=1&b=2");
+    });
+
+    test("reads init.headers before it extracts the body of an init object input", async () => {
+      const params = new URLSearchParams("a=1");
+      const text = await echo(url =>
+        fetch({
+          url,
+          method: "POST",
+          body: params,
+          get headers() {
+            params.append("b", "2");
+            return {};
+          },
+        } as unknown as Request),
+      );
+      expect(text).toBe("a=1&b=2");
+    });
+
+    test("converts an object body to a string when `body` is read", async () => {
+      let value = "a=1";
+      const order: string[] = [];
+      const text = await echo(url =>
+        fetch(url, {
+          method: "POST",
+          get body() {
+            order.push("body");
+            return { toString: () => value } as unknown as BodyInit;
+          },
+          get headers() {
+            order.push("headers");
+            value = "mutated";
+            return {};
+          },
+        }),
+      );
+      expect(order).toEqual(["body", "headers"]);
+      expect(text).toBe("a=1");
+    });
+
+    test("an invalid header rejects before a locked stream body is checked", async () => {
+      const stream = new ReadableStream();
+      stream.getReader();
+      await expect(
+        fetch("http://127.0.0.1:1/", { method: "POST", body: stream, headers: { "a b": "1" } }),
+      ).rejects.toThrow(/header/i);
+    });
+  });
+});

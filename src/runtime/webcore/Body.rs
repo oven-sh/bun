@@ -910,6 +910,34 @@ impl Value {
         Ok(stream_value)
     }
 
+    /// A `body` init value that [`from_js`](Self::from_js) reads by reference:
+    /// ReadableStream, ArrayBuffer(View), FormData, URLSearchParams, Blob, Bun's
+    /// Image, and an Array of Blob parts. The fetch spec extracts such a body
+    /// after every other init member is converted, so a getter on a later
+    /// member that mutates the object is part of the body. Any other value
+    /// is converted when the member is read (WebIDL converts it to a string).
+    pub fn is_extracted_by_reference(value: JSValue) -> bool {
+        if !value.is_cell() || value.is_string() {
+            return false;
+        }
+        let js_type = value.js_type();
+        if js_type.is_typed_array_or_array_buffer()
+            || matches!(js_type, jsc::JSType::Array | jsc::JSType::DerivedArray)
+        {
+            return true;
+        }
+        if DOMFormData::from_js(value).is_some() || URLSearchParams::from_js(value).is_some() {
+            return true;
+        }
+        if js_type == jsc::JSType::DOMWrapper
+            && (value.as_class_ref::<Blob>().is_some()
+                || value.as_class_ref::<crate::image::Image>().is_some())
+        {
+            return true;
+        }
+        ReadableStream::is_readable_stream(value)
+    }
+
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
         value.ensure_still_alive();
 

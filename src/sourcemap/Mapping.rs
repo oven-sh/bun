@@ -383,8 +383,8 @@ impl Lookup {
             }
 
             let name: &[u8] = &source_map.external_source_names[index];
-            // A `blob:` module has no directory to resolve the name from.
-            if !bun_paths::is_absolute(base_filename) {
+            // A source with no name is not a file. Joined to a module URL that has no directory, it is an empty path.
+            if name.is_empty() {
                 return None;
             }
 

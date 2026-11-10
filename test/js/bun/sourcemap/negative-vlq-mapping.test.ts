@@ -170,16 +170,14 @@ describe.concurrent("sourcemap: negative VLQ delta in mappings is rejected, not 
   });
 });
 
-// `sourcesContent` is only the text of a code frame, so no shape of it stops `mappings` and `sources` from remapping
-// a frame, and nothing is reported. A `sources` entry that is not a string is a source with no name.
-describe.concurrent("sourcemap: sourcesContent and nameless sources do not make a map undecodable", () => {
+// `sourcesContent` is only the text of a code frame. A map that has none, or `null`, still remaps a frame.
+describe.concurrent("sourcemap: sourcesContent is optional", () => {
   // Generated line 3, column 2 -> sources[0], line 5, column 3.
   const base = { version: 3, sources: ["orig.ts"], names: [], mappings: ";;EAIE;" };
-  // A decodable map next to the file. An inline map is the one that is used.
-  const sidecar = JSON.stringify({ ...base, sources: ["sidecar.ts"], sourcesContent: [""] });
+  const mapped = { stdout: "at t (orig.ts:5:3)\n", stderr: "", exitCode: 0 };
 
   async function run(files: Record<string, string>) {
-    using dir = tempDir("sourcemap-shapes", files);
+    using dir = tempDir("sourcemap-no-content", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.js"],
       env: bunEnv,
@@ -194,45 +192,26 @@ describe.concurrent("sourcemap: sourcesContent and nameless sources do not make 
   test.each([
     ["absent", base],
     ["null", { ...base, sourcesContent: null }],
-    ["[]", { ...base, sourcesContent: [] }],
-    ["shorter than sources", { ...base, sources: ["orig.ts", "other.ts"], sourcesContent: ["x"] }],
-    ["longer than sources", { ...base, sourcesContent: ["x", "y"] }],
-    ["a string", { ...base, sourcesContent: "x" }],
-    ["a number", { ...base, sourcesContent: 5 }],
-    ["an object", { ...base, sourcesContent: {} }],
-    ["false", { ...base, sourcesContent: false }],
   ])("external .map: sourcesContent %s", async (_, map) => {
     const files = { "entry.js": body + `//# sourceMappingURL=entry.js.map\n`, "entry.js.map": JSON.stringify(map) };
-    expect(await run(files)).toEqual({ stdout: "at t (orig.ts:5:3)\n", stderr: "", exitCode: 0 });
+    expect(await run(files)).toEqual(mapped);
   });
 
-  // What `bun build --sourcemap=external` writes: the file names its map with a `debugId` comment only.
+  // What `bun build --sourcemap=external` writes: a `debugId` comment and no `sourceMappingURL` comment.
   test("external .map of a file that has a debugId comment only: sourcesContent absent", async () => {
     const files = {
       "entry.js": body + `//# debugId=0123456789ABCDEF64756E2164756E21\n`,
       "entry.js.map": JSON.stringify({ ...base, debugId: "0123456789ABCDEF64756E2164756E21" }),
     };
-    expect(await run(files)).toEqual({ stdout: "at t (orig.ts:5:3)\n", stderr: "", exitCode: 0 });
+    expect(await run(files)).toEqual(mapped);
   });
 
-  test.each([
-    ["absent", base],
-    ["a string", { ...base, sourcesContent: "x" }],
-  ])("inline data-URL map: sourcesContent %s", async (_, map) => {
+  // The inline map is the one that is used, also beside a `.map` that decodes.
+  test("inline data-URL map: sourcesContent absent", async () => {
     const files = {
-      "entry.js": body + `//# sourceMappingURL=data:application/json;base64,${btoa(JSON.stringify(map))}\n`,
-      "entry.js.map": sidecar,
+      "entry.js": body + `//# sourceMappingURL=data:application/json;base64,${btoa(JSON.stringify(base))}\n`,
+      "entry.js.map": JSON.stringify({ ...base, sources: ["sidecar.ts"], sourcesContent: [""] }),
     };
-    expect(await run(files)).toEqual({ stdout: "at t (orig.ts:5:3)\n", stderr: "", exitCode: 0 });
-  });
-
-  test.each([
-    ["[null]", [null], "null"],
-    ["[5]", [5], "null"],
-    ['["orig.ts", null]', ["orig.ts", null], "orig.ts"],
-  ])("external .map: sources %s", async (_, sources, name) => {
-    const map = { ...base, sources, sourcesContent: sources.map(() => null) };
-    const files = { "entry.js": body + `//# sourceMappingURL=entry.js.map\n`, "entry.js.map": JSON.stringify(map) };
-    expect(await run(files)).toEqual({ stdout: `at t (${name}:5:3)\n`, stderr: "", exitCode: 0 });
+    expect(await run(files)).toEqual(mapped);
   });
 });

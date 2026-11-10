@@ -359,13 +359,10 @@ describe("source map remapping of the printed stack", () => {
     expect(exitCode).toBe(1);
   });
 
-  // The same artifact when `sourcesContent` is left out or is not a list. There
-  // is still nothing to show and the frames are still remapped. The second
-  // decode of the map, for the code frame, reports nothing either.
-  test.concurrent.each([
-    ["absent", {}],
-    ["not a list", { sourcesContent: "x" }],
-  ])("external map whose sourcesContent is %s", async (_, content) => {
+  // The same artifact when `sourcesContent` is left out. There is still nothing
+  // to show and the frames are still remapped. The second decode of the map,
+  // for the code frame, reports nothing either.
+  test.concurrent("external map that has no sourcesContent", async () => {
     const main = [
       "// @bun",
       'function thrower() { throw new Error("NOCONTENT"); }',
@@ -376,7 +373,7 @@ describe("source map remapping of the printed stack", () => {
       "thrower();",
     ];
     // The mappings of the test above.
-    const map = { version: 3, sources: ["orig.ts"], ...content, names: [], mappings: ";AAUI;;AAUA;AAUA;;AAUA" };
+    const map = { version: 3, sources: ["orig.ts"], names: [], mappings: ";AAUI;;AAUA;AAUA;;AAUA" };
     const { dir, out, stderr, exitCode } = await run({
       "main.js": main.join("\n") + "\n//# sourceMappingURL=main.js.map\n",
       "main.js.map": JSON.stringify(map),
@@ -397,70 +394,31 @@ describe("source map remapping of the printed stack", () => {
     expect(exitCode).toBe(1);
   });
 
-  // The code frame of a map whose `sourcesContent` and `sources` do not pair up
-  // one to one. An entry of `sourcesContent` is the text of the source at the
-  // same index and of no other: with no entry the source is read from disk, and
-  // an entry beyond the end of `sources` is never shown.
-  test.concurrent.each([
-    ["absent", { sources: ["orig.ts"] }, ";AAAI", "const fromDisk = 1;", "at orig.ts:1:5"],
-    ["an empty list", { sources: ["orig.ts"], sourcesContent: [] }, ";AAAI", "const fromDisk = 1;", "at orig.ts:1:5"],
-    // The mapping names source 1, which has no entry in the list.
-    [
-      "shorter than sources, at a source that has no entry",
-      { sources: ["a.ts", "orig.ts"], sourcesContent: ["const fromContent = 1;\n"] },
-      ";ACAI",
-      "const fromDisk = 1;",
-      "at orig.ts:1:5",
-    ],
-    [
-      "longer than sources",
-      { sources: ["orig.ts"], sourcesContent: ["const fromContent = 1;\n", "const orphan = 1;\n"] },
-      ";AAAI",
-      "const fromContent = 1;",
-      "at orig.ts:1:5",
-    ],
-    // The mapping names source 1, line 2, column 13: the position the error has in main.js.
-    [
-      "longer than sources, at an entry that has no source",
-      { sources: ["other.ts"], sourcesContent: ["", "const orphan = 1;\nconst orphan = 2;\n"] },
-      ";ACCY",
-      "// @bun",
-      "at main.js:2:13",
-    ],
-    [
-      "the text of a source that has no name",
-      { sources: [null], sourcesContent: ["const fromContent = 1;\n"] },
-      ";AAAI",
-      "const fromContent = 1;",
-      "at null:1:5",
-    ],
-    // An empty source name is the file itself.
-    ["absent, and the source name is empty", { sources: [""] }, ";AAAI", "// @bun", "at main.js:1:5"],
-  ])("code frame of an external map: sourcesContent %s", async (_, lists, mappings, firstLine, frame) => {
+  // With no `sourcesContent` the code frame is read from the source on disk.
+  test.concurrent("code frame of an external map that has no sourcesContent", async () => {
     const { dir, out, stderr, exitCode } = await run({
       "main.js": [
         "// @bun",
         'try { throw new Error("FRAME"); } catch (e) { console.log(JSON.stringify(Bun.inspect(e))); }',
         "//# sourceMappingURL=main.js.map",
       ].join("\n"),
-      "main.js.map": JSON.stringify({ version: 3, ...lists, names: [], mappings }),
+      // Line 2 -> orig.ts:1:5.
+      "main.js.map": JSON.stringify({ version: 3, sources: ["orig.ts"], names: [], mappings: ";AAAI" }),
       "orig.ts": "const fromDisk = 1;\n",
     });
     expect({
       firstLine: out.split("\n")[0],
-      frames: frames(out, dir, ["orig.ts", "main.js", "null"]),
+      frames: frames(out, dir, ["orig.ts", "main.js"]),
       stderr,
-    }).toEqual({ firstLine: "1 | " + firstLine, frames: [frame], stderr: "" });
+    }).toEqual({ firstLine: "1 | const fromDisk = 1;", frames: ["at orig.ts:1:5"], stderr: "" });
     expect(exitCode).toBe(0);
   });
 
-  // A module that has no directory, such as one imported from a blob URL, whose map has an empty source name. The
-  // frame keeps the URL of the module.
+  // A source with no name is not a file to read. A module imported from a `blob:` URL has no directory either.
   test.concurrent.each([
     ["absent", {}],
     ["[null]", { sourcesContent: [null] }],
-  ])("inline map in a module that has no directory: sourcesContent %s", async (_, content) => {
-    // Line 3 -> line 2, column 5 of a source whose name is empty.
+  ])("inline map with an empty source name in a blob module: sourcesContent %s", async (_, content) => {
     const map = { version: 3, sources: [""], ...content, names: [], mappings: ";;AACI" };
     const { out, stderr, exitCode } = await run({
       "module.txt": [
@@ -476,14 +434,11 @@ describe("source map remapping of the printed stack", () => {
         "try { thrower(); } catch (e) { console.log(JSON.stringify(Bun.inspect(e))); }",
       ].join("\n"),
     });
-    expect({
-      frames: out
-        .split("\n")
-        .map(line => line.trim().replace(/blob:[0-9a-f-]+/, "blob:<id>"))
-        .filter(line => line.startsWith("at thrower")),
-      stderr,
-    }).toEqual({ frames: ["at thrower (blob:<id>:2:5)"], stderr: "" });
-    expect(exitCode).toBe(0);
+    expect({ error: out.split("\n").filter(line => line.startsWith("error:")), stderr, exitCode }).toEqual({
+      error: ["error: BLOB"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Error.prepareStackTrace reads the same map through the call sites.

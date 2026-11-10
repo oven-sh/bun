@@ -3800,6 +3800,599 @@ describe("bundler", () => {
     });
   }
 
+  // A store through a local changes one of the objects that the local can hold, so each of them has to be in the memo
+  // block of the store. InferMutationAliasingRanges walks from the local to those objects, and `AliasingState::mutate`
+  // passes over an object that the walk has come to before. The second arrival can have more to do than the first:
+  // go on to what an object or an array holds, or to the other values of a join. The object that the walk then does
+  // not come to gets a memo block of its own, and each render runs the store again on the object of an earlier render.
+  //
+  // Each component renders several times on one memo cache, and has to render what the plain build renders. The
+  // compiled runs are `todo`. babel-plugin-react-compiler 1.0.0 renders what Bun renders for each component but one:
+  // `react-compiler/StoreReachesWhatAPushKeepsCached` says which.
+  const storeThroughAJoin = (name: string, files: Record<string, string>, stdout: string) => {
+    for (const reactCompiler of [false, true]) {
+      itBundled(`react-compiler/${name}-${reactCompiler ? "compiled" : "plain"}`, {
+        todo: reactCompiler,
+        files: {
+          ...files,
+          // One memo cache per component, kept between renders, as a fiber keeps it.
+          "/node_modules/react/index.js": /* js */ `
+            const fibers = new Map();
+            let current;
+            exports.render = (Component, props) => {
+              current = fibers.get(Component);
+              if (!current) fibers.set(Component, (current = { cache: null }));
+              return Component(props);
+            };
+            exports.memoCache = size =>
+              (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+            exports.useMemo = make => make();
+            exports.useState = value => [value, () => {}];
+          `,
+          "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+          "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+          "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        },
+        reactCompiler,
+        target: "browser",
+        backend: "cli",
+        run: { stdout },
+      });
+    }
+  };
+  // Each entry ends with this: run prints what the renders of a component give to the element.
+  const rendersOfAStoreThroughAJoin = /* js */ `
+    const sameThenOther = [{ n: 1 }, { n: 1 }, { n: 200 }, { n: 200 }];
+    const otherK = [{ n: 1, k: 1 }, { n: 1, k: 2 }, { n: 1, k: 3 }];
+    function run(Component, renders = sameThenOther) {
+      console.log(
+        Component.name + " " + renders.map(props => JSON.stringify(render(Component, props).children)).join(" "),
+      );
+    }
+  `;
+
+  // The store is in the component. 20 of the 22 render wrong.
+  storeThroughAJoin(
+    "StoreReachesEachValueOfAJoin",
+    {
+      "/entry.jsx": /* jsx */ `
+        import { render, useMemo, useState } from "react";
+        import { same } from "./helpers";
+
+        // In the first eight the local holds an object, or an array or an object that holds that object.
+        function ElementOrArray({ n }) {
+          const x = { n };
+          const w = [x];
+          const first = w[0];
+          const y = n < 100 ? first : w;
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        // The operands the other way round. The walk comes to the array from its element first, and this one is right.
+        function ArrayOrElement({ n }) {
+          const x = { n };
+          const w = [x];
+          const first = w[0];
+          const y = n > 100 ? w : first;
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        function NullishElementOrArray({ n }) {
+          const x = { n };
+          const w = [x];
+          const a = w;
+          const y = a[0] ?? a;
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        function DestructuredOrArray({ n }) {
+          const x = { n };
+          const w = [x];
+          const [first] = w;
+          const y = n < 100 ? first : w;
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        function ChildOrTree({ n }) {
+          const leaf = { n };
+          const tree = { child: leaf };
+          const node = tree.child || tree;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        function ChildIfAsked({ n }) {
+          const leaf = { n };
+          const tree = { child: leaf };
+          let node = tree;
+          if (n < 100) node = node.child;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        function LastOfAList({ n }) {
+          const leaf = { n };
+          const list = { next: { next: leaf } };
+          let node = list;
+          while (node.next) node = node.next;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        function PathIntoATree({ n }) {
+          const leaf = { n };
+          const tree = { a: { b: leaf } };
+          let node = tree;
+          for (const key of ["a", "b"]) node = node[key];
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        // In the next seven one of the values of the join is a join itself.
+        function JoinOfAJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          z.n = z.n + 1;
+          return <b>{b.n}</b>;
+        }
+
+        // The operands the other way round. The walk comes to the inner join before it comes to a, and this one is
+        // right.
+        function JoinOfAJoinOtherOrder({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n > 100 ? a : p;
+          z.n = z.n + 1;
+          return <b>{b.n}</b>;
+        }
+
+        function NestedJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          let chosen = a;
+          if (n < 100) {
+            chosen = n > 100 ? a : b;
+          }
+          chosen.n = chosen.n + 1;
+          return <b>{b.n}</b>;
+        }
+
+        function TwoJoins({ n }) {
+          const b = { n };
+          const a = { n };
+          let best = a;
+          if (n < 100) best = b;
+          let chosen = a;
+          if (n < 100) chosen = best;
+          chosen.n = chosen.n + 1;
+          return <b>{b.n}</b>;
+        }
+
+        function OneOfTwoLists({ n, side }) {
+          const errors = [];
+          const warnings = [];
+          let target = errors;
+          if (n < 100) target = side === "l" ? errors : warnings;
+          target.push(n);
+          return <b>{errors.length + "/" + warnings.length}</b>;
+        }
+
+        function ListFromNestedIfs({ n, a, b }) {
+          let tags = [];
+          if (a) {
+            if (b) tags = ["new"];
+          }
+          tags.push(n);
+          return <b>{tags.join(" ")}</b>;
+        }
+
+        function ObjectFromNestedIfs({ n, k, h, measured }) {
+          let box = null;
+          if (measured) box = { n: n - measured, h };
+          if (k != null) {
+            if (!measured) box = { n: n - k, h };
+          }
+          if (box?.n === 0) box.n = n;
+          return <b>{box && box.n}</b>;
+        }
+
+        // In the next three the store is behind a call. What same returns can be its argument. The two functions tell
+        // their callers that they store into the parameter, or into what it holds.
+        function ResultOfACallWithAJoinOfAJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          const result = same(z);
+          result.n = result.n + 1;
+          return <b>{b.n}</b>;
+        }
+
+        function FunctionWithAJoinOfAJoin({ n, k }) {
+          const b = { n };
+          const a = { n };
+          const calls = { k };
+          const store = value => {
+            calls.count = 1;
+            value.n = value.n + 1;
+          };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          store(z);
+          return <b>{b.n}</b>;
+        }
+
+        function ElementStoreOfAFunction({ n, k }) {
+          const b = { n };
+          const a = { n };
+          const listOfB = [b];
+          const listOfA = [a];
+          const calls = { k };
+          const store = list => {
+            calls.count = 1;
+            const first = list[0];
+            first.n = first.n + 1;
+          };
+          const p = n > 100 ? listOfA : listOfB;
+          const z = n < 100 ? p : listOfA;
+          store(z);
+          return <b>{b.n}</b>;
+        }
+
+        // In the next three the store is in the callback of useMemo, or in a function that is called where it stands.
+        // The compiler makes both a part of the component before it looks at the stores.
+        function StoreInAMemo({ n }) {
+          const x = useMemo(() => {
+            const x = { n };
+            const w = [x];
+            const first = w[0];
+            const y = n < 100 ? first : w;
+            y.n = y.n + 1;
+            return x;
+          }, [n]);
+          return <b>{x.n}</b>;
+        }
+
+        function GroupedInAMemo({ items, strict }) {
+          const grouped = useMemo(() => {
+            const errors = [];
+            const warnings = [];
+            for (const item of items) {
+              let target = errors;
+              if (!strict) target = item.level === "error" ? errors : warnings;
+              target.push(item.text);
+            }
+            return { errors, warnings };
+          }, [items, strict]);
+          return <b>{grouped.errors.length + "/" + grouped.warnings.length}</b>;
+        }
+
+        function StoreInACalledFunction({ n }) {
+          const x = (() => {
+            const x = { n };
+            const w = [x];
+            const first = w[0];
+            const y = n < 100 ? first : w;
+            y.n = y.n + 1;
+            return x;
+          })();
+          return <b>{x.n}</b>;
+        }
+
+        // A hook is called between the array and the store, so one memo block cannot hold both.
+        function StateBetween({ n }) {
+          const x = { n };
+          const w = [x];
+          const [step] = useState(1);
+          const first = w[0];
+          const y = n < 100 ? first : w;
+          y.n = y.n + step;
+          return <b>{x.n}</b>;
+        }
+
+        ${rendersOfAStoreThroughAJoin}
+        run(ElementOrArray);
+        run(ArrayOrElement);
+        run(NullishElementOrArray);
+        run(DestructuredOrArray);
+        run(ChildOrTree);
+        run(ChildIfAsked);
+        run(LastOfAList);
+        run(PathIntoATree);
+        run(JoinOfAJoin);
+        run(JoinOfAJoinOtherOrder);
+        run(NestedJoin);
+        run(TwoJoins);
+        run(OneOfTwoLists, [1, 2, 3].map(n => ({ n, side: "r" })));
+        run(ListFromNestedIfs, [1, 2, 3].map(n => ({ n, a: true, b: true })));
+        run(ObjectFromNestedIfs, [100, 200, 300].map(n => ({ n, k: n, h: 50 })));
+        run(ResultOfACallWithAJoinOfAJoin);
+        run(FunctionWithAJoinOfAJoin, otherK);
+        run(ElementStoreOfAFunction, otherK);
+        run(StoreInAMemo);
+        const error = { level: "error", text: "e" };
+        const warning = { level: "warning", text: "w" };
+        // Each render gets a new array, as after a fetch.
+        const lists = [2, 3, 3].map(length => [error, warning, warning].slice(0, length));
+        run(GroupedInAMemo, lists.map(items => ({ items, strict: false })));
+        run(StoreInACalledFunction);
+        run(StateBetween);
+      `,
+      "/helpers.js": /* js */ `
+        export function same(value) {
+          return value;
+        }
+      `,
+    },
+    `
+      ElementOrArray 2 2 200 200
+      ArrayOrElement 2 2 200 200
+      NullishElementOrArray 2 2 201 201
+      DestructuredOrArray 2 2 200 200
+      ChildOrTree 2 2 201 201
+      ChildIfAsked 2 2 200 200
+      LastOfAList 2 2 201 201
+      PathIntoATree 2 2 201 201
+      JoinOfAJoin 2 2 200 200
+      JoinOfAJoinOtherOrder 2 2 200 200
+      NestedJoin 2 2 200 200
+      TwoJoins 2 2 200 200
+      OneOfTwoLists "0/1" "0/1" "0/1"
+      ListFromNestedIfs "new 1" "new 2" "new 3"
+      ObjectFromNestedIfs 100 200 300
+      ResultOfACallWithAJoinOfAJoin 2 2 200 200
+      FunctionWithAJoinOfAJoin 2 2 2
+      ElementStoreOfAFunction 2 2 2
+      StoreInAMemo 2 2 200 200
+      GroupedInAMemo "1/1" "1/2" "1/2"
+      StoreInACalledFunction 2 2 200 200
+      StateBetween 2 2 200 200
+    `,
+  );
+
+  // The same joins, with a call in place of the store. Nothing is known of what the other file has: bump can store
+  // into its argument, bumpHeld into what its argument holds, and a Counter into what it was made with. The walk from
+  // such a call passes over an object as the walk from a store does.
+  storeThroughAJoin(
+    "CallThatMayStoreThroughAJoin",
+    {
+      "/entry.jsx": /* jsx */ `
+        import { render } from "react";
+        import { bump, Counter, tools } from "./helpers";
+
+        function CallWithAJoinOfAJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          bump(z);
+          return <b>{b.n}</b>;
+        }
+
+        function MethodWithAHolderOfAJoinOfAJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          tools.bumpHeld({ held: z });
+          return <b>{b.n}</b>;
+        }
+
+        function NewWithAJoinOfAJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          const counter = new Counter(z);
+          counter.count();
+          return <b>{b.n}</b>;
+        }
+
+        ${rendersOfAStoreThroughAJoin}
+        run(CallWithAJoinOfAJoin);
+        run(MethodWithAHolderOfAJoinOfAJoin);
+        run(NewWithAJoinOfAJoin);
+      `,
+      "/helpers.js": /* js */ `
+        export function bump(value) {
+          value.n = value.n + 1;
+        }
+        export const tools = {
+          bumpHeld(holder) {
+            holder.held.n = holder.held.n + 1;
+          },
+        };
+        export class Counter {
+          constructor(value) {
+            this.value = value;
+          }
+          count() {
+            this.value.n = this.value.n + 1;
+          }
+        }
+      `,
+    },
+    `
+      CallWithAJoinOfAJoin 2 2 200 200
+      MethodWithAHolderOfAJoinOfAJoin 2 2 200 200
+      NewWithAJoinOfAJoin 2 2 200 200
+    `,
+  );
+
+  // The same joins in a function expression that the component calls. The walk of a function expression says what the
+  // function tells its callers, and here that is too little: that store changes b, that a store through the parameter
+  // reaches what the parameter holds, and that choose can return its second parameter.
+  storeThroughAJoin(
+    "StoreThroughAJoinInAFunction",
+    {
+      "/entry.jsx": /* jsx */ `
+        import { render } from "react";
+
+        function JoinOfAJoinInAFunction({ n }) {
+          const b = { n };
+          const a = { n };
+          const store = () => {
+            const p = n > 100 ? a : b;
+            const z = n < 100 ? p : a;
+            z.n = z.n + 1;
+          };
+          store();
+          return <b>{b.n}</b>;
+        }
+
+        function ParameterOrElement({ n, k }) {
+          const x = { n };
+          const w = [x];
+          const calls = { k };
+          const store = list => {
+            calls.count = 1;
+            const first = list[0];
+            const y = n < 100 ? first : list;
+            y.n = y.n + 1;
+          };
+          store(w);
+          return <b>{x.n}</b>;
+        }
+
+        function ReturnedJoinOfAJoin({ n, k }) {
+          const b = { n };
+          const a = { n };
+          const calls = { k };
+          const choose = (first, second) => {
+            calls.count = 1;
+            const p = n > 100 ? first : second;
+            return n < 100 ? p : first;
+          };
+          const z = choose(a, b);
+          z.n = z.n + 1;
+          return <b>{b.n}</b>;
+        }
+
+        ${rendersOfAStoreThroughAJoin}
+        run(JoinOfAJoinInAFunction);
+        run(ParameterOrElement, otherK);
+        run(ReturnedJoinOfAJoin, otherK);
+      `,
+    },
+    `
+      JoinOfAJoinInAFunction 2 2 200 200
+      ParameterOrElement 2 2 2
+      ReturnedJoinOfAJoin 2 2 2
+    `,
+  );
+
+  // The same store, where the array or the object got the other object in a statement of its own. The first two are
+  // right with the operands of the join the other way round.
+  storeThroughAJoin(
+    "StoreReachesWhatAJoinWasGiven",
+    {
+      "/entry.jsx": /* jsx */ `
+        import { render } from "react";
+
+        function PushedElementOrArray({ n }) {
+          const x = { n };
+          const w = [];
+          w.push(x);
+          const first = w[0];
+          const y = n < 100 ? first : w;
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        function AssignedChildOrTree({ n }) {
+          const leaf = { n };
+          const tree = {};
+          tree.child = leaf;
+          const node = tree.child ?? tree;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        function LastOfAnAssignedList({ n }) {
+          const leaf = { n };
+          const list = { next: null };
+          list.next = leaf;
+          let node = list;
+          while (node.next) node = node.next;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        function PushedJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const chosen = n < 100 ? a : b;
+          const list = [a];
+          list.push(chosen);
+          const last = list[list.length - 1];
+          last.n = last.n + 1;
+          return <b>{b.n}</b>;
+        }
+
+        ${rendersOfAStoreThroughAJoin}
+        run(PushedElementOrArray);
+        run(AssignedChildOrTree);
+        run(LastOfAnAssignedList);
+        run(PushedJoin);
+      `,
+    },
+    `
+      PushedElementOrArray 2 2 200 200
+      AssignedChildOrTree 2 2 201 201
+      LastOfAnAssignedList 2 2 201 201
+      PushedJoin 1 1 201 201
+    `,
+  );
+
+  // Here babel-plugin-react-compiler 1.0.0 renders right, and Bun does not. The element reads the object in the test
+  // of a conditional alone, so upstream gives the object no memo block and makes it again in each render. Bun keeps
+  // the block: to its PruneNonEscapingScopes, what a method of a mutable array is given escapes by the array. The
+  // second component has no push and is right.
+  storeThroughAJoin(
+    "StoreReachesWhatAPushKeepsCached",
+    {
+      "/entry.jsx": /* jsx */ `
+        import { render } from "react";
+
+        function PushedThenReadInATest({ n }) {
+          const x = { n };
+          const w = [];
+          w.push(x);
+          const first = w[0];
+          const y = n < 100 ? first : w;
+          y.n = y.n + 1;
+          return <b>{x.n > 2 ? "big" : "small"}</b>;
+        }
+
+        function ArrayLiteralThenReadInATest({ n }) {
+          const x = { n };
+          const w = [x];
+          const first = w[0];
+          const y = n < 100 ? first : w;
+          y.n = y.n + 1;
+          return <b>{x.n > 2 ? "big" : "small"}</b>;
+        }
+
+        ${rendersOfAStoreThroughAJoin}
+        const small = [1, 1, 1, 200, 200].map(n => ({ n }));
+        run(PushedThenReadInATest, small);
+        run(ArrayLiteralThenReadInATest, small);
+      `,
+    },
+    `
+      PushedThenReadInATest "small" "small" "small" "big" "big"
+      ArrayLiteralThenReadInATest "small" "small" "small" "big" "big"
+    `,
+  );
+
   // Codegen prints an instruction with an unnamed result inside the statement
   // that uses it, and every other instruction as a statement where it stands.
   // So a statement in the middle of an expression (the body of an inlined

@@ -346,8 +346,7 @@ fn cannot_break<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
         })
 }
 
-/// `set a(b,) {}`: a setter takes one `FormalParameter`, and JavaScriptCore rejects the comma. Prettier prints it.
-/// A signature is never run, and a setter with another list is an error either way: both keep Prettier's comma.
+/// Prettier prints `set a(⏎b,⏎) {}`. JavaScriptCore rejects the comma: a setter takes one `FormalParameter`.
 fn is_setter_parameter_list(func: Func<'_>) -> bool {
     func.kind() == FnKind::Setter
         && func.has_body()

@@ -12,10 +12,12 @@
 #include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/JSArrayBufferPrototype.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/JSPromisePrototype.h>
+#include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -29,6 +31,7 @@
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/ArrayConstructor.h>
+#include <JavaScriptCore/ArrayPrototype.h>
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <JavaScriptCore/RegExpPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
@@ -2537,7 +2540,7 @@ enum class AutomockRole : uint8_t {
     Exports,
     // The `prototype` of a function.
     Prototype,
-    // The `prototype` of a class, which holds the methods of the instances. It is mocked whatever its Symbol.toStringTag says.
+    // The `prototype` of a class, which holds the methods of the instances. It is mocked whatever Object.prototype.toString() says of it.
     ClassPrototype,
 };
 
@@ -2562,6 +2565,17 @@ __attribute__((minsize)) NEVER_INLINE JSString* objectPrototypeToStringOutOfLine
     return JSC::objectPrototypeToString(globalObject, value);
 }
 
+// Whether the object is, or inherits from, the `prototype` of one of these built-in classes. Calls no Proxy trap.
+template<typename... Prototypes>
+static bool inheritsFromPrototype(JSObject* object)
+{
+    for (; object; object = object->getPrototypeDirect().getObject()) {
+        if ((object->inherits<Prototypes>() || ...))
+            return true;
+    }
+    return false;
+}
+
 AutomockKind Automocker::kindOf(JSValue value, AutomockRole role)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -2571,9 +2585,13 @@ AutomockKind Automocker::kindOf(JSValue value, AutomockRole role)
     // A global object has no Symbol.toStringTag that would make the check below keep it.
     if (asObject(value)->isGlobalObject() || asObject(value)->type() == JSC::GlobalProxyType)
         return AutomockKind::Keep;
-    // Array.isArray() and the Symbol.toStringTag (own, or of a base class such as Map) of a class's `prototype` describe the instances.
-    if (role == AutomockRole::ClassPrototype && !value.isCallable())
-        return AutomockKind::Object;
+    if (role == AutomockRole::ClassPrototype) {
+        // A function, and the `prototype` of a class of functions such as AsyncFunction, go by their tag like any other value.
+        bool isOfFunctions = value.isCallable() || inheritsFromPrototype<JSC::FunctionPrototype>(asObject(value));
+        // Any other `prototype` of a class holds the methods of the instances, whatever it is itself: an array, an Error, an object with the tag of Map.
+        if (!isOfFunctions)
+            return AutomockKind::Object;
+    }
 
     bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, AutomockKind::Keep);
@@ -2739,6 +2757,12 @@ static bool ownsPrototype(JSC::VM& vm, JSObject* constructor, JSValue prototype)
     return isUserFunction(owner ? owner : constructor);
 }
 
+// Methods of these classes, such as `then` and `map`, construct through `this.constructor[Symbol.species]`. A spy on the prototype makes that the mock of the class.
+static bool constructsThroughSpecies(JSObject* prototype)
+{
+    return inheritsFromPrototype<JSC::JSPromisePrototype, JSC::JSArrayBufferPrototype, JSC::ArrayPrototype, JSC::JSTypedArrayViewPrototype, JSC::RegExpPrototype>(prototype);
+}
+
 __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObject* replacement, AutomockKind kind)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2768,8 +2792,8 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
                 continue;
             if (kind == AutomockKind::Module && key == vm.propertyNames->toStringTagSymbol)
                 continue;
-            // With a mock of Promise.prototype.then, an `await` of an instance of the mocked class never settles.
-            if (key == vm.propertyNames->then && holder == globalObject->promisePrototype())
+            // An automock of a promise class has no `then`: with a mock of it, an `await` of an instance never settles.
+            if (!spy && key == vm.propertyNames->then && inheritsFromPrototype<JSC::JSPromisePrototype>(original))
                 continue;
 
             JSC::PropertyDescriptor descriptor;
@@ -2793,10 +2817,6 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
                     descriptor.setGetter(accessor);
                     if (descriptor.setter().isObject())
                         descriptor.setSetter(accessor);
-                } else if (isFunction && key == vm.propertyNames->speciesSymbol) {
-                    // What a method of a spied class constructs through Symbol.species is the class, not the mock that records `new`.
-                    descriptor.setGetter(JSC::JSBoundFunction::create(vm, globalObject, asObject(descriptor.getter()), original, ArgList(), 0, nullptr, makeSource(String(), SourceOrigin(), SourceTaintedOrigin::Untainted)));
-                    RETURN_IF_EXCEPTION(scope, );
                 }
                 putOwnProperty(globalObject, replacement, key, descriptor);
                 RETURN_IF_EXCEPTION(scope, );
@@ -2807,9 +2827,9 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
             if (isFunction && key == vm.propertyNames->prototype) {
                 // Only a constructor makes instances from its `prototype`: a generator function does not.
                 bool isOfClass = original->isConstructor();
-                // With `spy`, the tag still keeps a spy off a prototype that the tested code does not own, such as Map.prototype.
+                // With `spy`, the tag still decides for a prototype that the tested code does not own, and for one that constructs through Symbol.species.
                 if (isOfClass && spy)
-                    isOfClass = ownsPrototype(vm, original, value);
+                    isOfClass = ownsPrototype(vm, original, value) && !constructsThroughSpecies(asObject(value));
                 role = isOfClass ? AutomockRole::ClassPrototype : AutomockRole::Prototype;
             }
             JSValue mocked = replacementFor(value, role);

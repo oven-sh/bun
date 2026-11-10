@@ -5683,7 +5683,7 @@ bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String
 }
 
 // A module that Vitest externalizes gets the original of what vi.mock() mocked. Jest's mocks reach packages too.
-String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+static ALWAYS_INLINE String keyOfImportByPackageInline(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     if (!Zig::isInNodeModules(importer) || Zig::isBuiltinModuleKey(key))
         return key;
@@ -5695,21 +5695,29 @@ String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, 
     return Zig::originalModuleKey(key);
 }
 
+String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+{
+    return keyOfImportByPackageInline(globalObject, key, importer, isESM);
+}
+
 // A mock with two paths stands for two files of one package, and one of them may load the other: an ES module that wraps the CommonJS one.
 // Each gets the other as it is on disk. Any other import of the path that require() resolves the name to gets the mock's one ES module.
-String keyOfImportOfModuleMock(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+__attribute__((minsize)) static NEVER_INLINE String keyOfImportWithTwoPaths(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
-    if (!globalObject->onLoadPlugins.hasModuleMockWithTwoPaths()) [[likely]]
-        return keyOfImportByPackage(globalObject, key, importer, isESM);
-    String given = keyOfImportByPackage(globalObject, key, importer, isESM);
-    if (given != key)
-        return given;
-    auto* mock = Zig::registeredModuleMock(globalObject, key);
+    String given = keyOfImportByPackageInline(globalObject, key, importer, isESM);
+    auto* mock = given == key ? Zig::registeredModuleMock(globalObject, key) : nullptr;
     if (!mock || !mock->requireKey)
-        return key;
+        return given;
     if (mock->hasKey(Zig::withoutOriginalModuleQuery(importer)))
         return Zig::originalModuleKey(key);
     return isESM ? String(mock->importKey->tryGetValue().data) : key;
+}
+
+String keyOfImportOfModuleMock(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+{
+    if (globalObject->onLoadPlugins.hasModuleMockWithTwoPaths()) [[unlikely]]
+        return keyOfImportWithTwoPaths(globalObject, key, importer, isESM);
+    return keyOfImportByPackageInline(globalObject, key, importer, isESM);
 }
 
 // Whether some unfinished module imports both, directly or through other modules. The factories of two loads run at the same time.

@@ -1,5 +1,4 @@
-// Implementation for `require('node:module')._initPaths`. Exists only as a
-// compatibility stub. Calling this does not affect the actual CommonJS loader.
+// Implementation for `require('node:module')._initPaths`.
 export function _initPaths() {
   const homeDir: string | undefined = process.platform === "win32" ? process.env.USERPROFILE : Bun.env.HOME;
   const nodePath: string | undefined = process.platform === "win32" ? process.env.NODE_PATH : Bun.env.NODE_PATH;
@@ -17,9 +16,10 @@ export function _initPaths() {
     paths.unshift(path.resolve(homeDir, ".node_modules"));
   }
 
-  if (nodePath) {
-    paths.unshift(...nodePath.split(path.delimiter).filter(Boolean));
-  }
+  const nodePaths = nodePath ? nodePath.split(path.delimiter).filter(Boolean) : [];
+  // CommonJS searches these from now on. The folders of `$HOME` and `$PREFIX` are listed, not searched.
+  $bindgen("NodeModuleModule.bind.ts", "setGlobalFolders")(nodePaths);
+  paths.unshift(...nodePaths);
 
   const M = require("node:module");
   M.globalPaths = paths;

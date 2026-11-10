@@ -268,6 +268,8 @@ NODE_PATH=./packages:./lib bun run src/index.js  # Unix/macOS
 NODE_PATH="./packages;./lib" bun run src/index.js  # Windows
 ```
 
+To add directories while the program runs, set `process.env.NODE_PATH` and call `require("node:module")._initPaths()`, as in Node.js. `require()` then searches the new directories first. `import` keeps the directories from when the program started.
+
 ### Custom conditions
 
 The `--conditions` flag specifies the conditions to use when resolving packages from `package.json` `"exports"`.

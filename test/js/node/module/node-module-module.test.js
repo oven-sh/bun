@@ -1479,4 +1479,233 @@ console.log("survived", require("./late.js"));`,
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/5630
+  describe("Module._initPaths()", () => {
+    const packages = {
+      "lib-start/pkg-start/index.js": `module.exports = "start";`,
+      "lib-start/pkg-start-only/index.js": `module.exports = "start only";`,
+      "lib-a/pkg-a/index.js": `module.exports = "a";`,
+      "lib-a/pkg-both/index.js": `module.exports = "both, of lib-a";`,
+      "lib-b/pkg-b/index.js": `module.exports = "b";`,
+      "home/.node_modules/pkg-home/index.js": `module.exports = "home";`,
+      "app/package.json": JSON.stringify({ name: "app" }),
+      "app/node_modules/pkg-both/index.js": `module.exports = "both, of node_modules";`,
+    };
+    const run = async (dir, args) => {
+      const root = String(dir);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: {
+          ...bunEnv,
+          NODE_PATH: path.join(root, "lib-start"),
+          HOME: path.join(root, "home"),
+          USERPROFILE: path.join(root, "home"),
+        },
+        cwd: path.join(root, "app"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    test("the program of the issue", async () => {
+      using dir = tempDir("module-init-paths-5630", {
+        ...packages,
+        "app/src/index.js": `process.env.NODE_PATH = __dirname;
+// Initialize the module search path to include the current directory
+require('module').Module._initPaths()
+
+// now it's possible require modules by absolute path from root folder,
+// using 'lib/logger', not '../../../lib/logger' here:
+const logger = require('lib/logger');
+console.log(logger, require('./deep/er/user'));
+`,
+        "app/src/lib/logger.js": `module.exports = "logger";`,
+        "app/src/deep/er/user.js": `module.exports = require('lib/logger') + " again";`,
+      });
+      expect(await run(dir, ["--no-install", "src/index.js"])).toEqual({
+        stdout: "logger logger again\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("require() searches the directories of the last call", async () => {
+      using dir = tempDir("module-init-paths", {
+        ...packages,
+        "app/main.cjs": `
+          const Module = require("node:module");
+          const path = require("node:path");
+          const root = path.dirname(__dirname);
+          const lib = name => path.join(root, name);
+          const attempt = fn => { try { return fn(); } catch (error) { return error.code; } };
+          const importOf = name => import(name).then(namespace => namespace.default, error => error.code);
+          const below = paths => paths.filter(entry => entry.startsWith(root)).map(entry => path.relative(root, entry).replaceAll(path.sep, "/"));
+          (async () => {
+            const out = {};
+            // A write to process.env alone changes nothing.
+            process.env.NODE_PATH = lib("lib-a");
+            const loadedFromTheStart = require("pkg-start");
+            out.beforeTheCall = [attempt(() => require("pkg-a")), loadedFromTheStart];
+
+            Module._initPaths();
+            out.afterTheCall = {
+              require: require("pkg-a"),
+              moduleRequire: module.require("pkg-a"),
+              prototypeRequire: Module.prototype.require.call(module, "pkg-a"),
+              resolve: below([require.resolve("pkg-a")]),
+              resolveFilename: below([Module._resolveFilename("pkg-a", module)]),
+              createRequire: Module.createRequire(__filename)("pkg-a"),
+              loadedFromTheStart: require("pkg-start") === loadedFromTheStart,
+              nodeModulesFirst: require("pkg-both"),
+              home: attempt(() => require("pkg-home")),
+              imports: [await importOf("pkg-start"), await importOf("pkg-a")],
+              globalPaths: below(Module.globalPaths),
+            };
+
+            // The array is a copy.
+            Module.globalPaths.unshift(lib("lib-b"));
+            out.arrayChanged = attempt(() => require("pkg-b"));
+
+            process.env.NODE_PATH = [lib("lib-b"), lib("lib-a"), lib("lib-start")].join(path.delimiter);
+            Module._initPaths();
+            out.secondCall = [require("pkg-b"), below([require.resolve("pkg-a"), require.resolve("pkg-start")])];
+            out.importAfterTheSecondCall = await importOf("pkg-start-only");
+
+            delete process.env.NODE_PATH;
+            const { _initPaths } = Module;
+            _initPaths();
+            out.withoutNodePath = [attempt(() => require.resolve("pkg-b")), below(Module.globalPaths)];
+            out.dot = attempt(() => require("."));
+            console.log(JSON.stringify(out));
+          })();
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(dir, ["--no-install", "main.cjs"]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        beforeTheCall: ["MODULE_NOT_FOUND", "start"],
+        afterTheCall: {
+          require: "a",
+          moduleRequire: "a",
+          prototypeRequire: "a",
+          resolve: ["lib-a/pkg-a/index.js"],
+          resolveFilename: ["lib-a/pkg-a/index.js"],
+          createRequire: "a",
+          // Node answers this from the modules it has loaded. Bun resolves again, so it keeps the directories of the start.
+          loadedFromTheStart: true,
+          nodeModulesFirst: "both, of node_modules",
+          // Node searches this folder of $HOME from the start. Bun lists it and does not search it.
+          home: "MODULE_NOT_FOUND",
+          // Node never searches these directories for an import. Bun keeps those of the start for it.
+          imports: ["start", "ERR_MODULE_NOT_FOUND"],
+          globalPaths: ["lib-a", "home/.node_modules", "home/.node_libraries"],
+        },
+        arrayChanged: "MODULE_NOT_FOUND",
+        secondCall: ["b", ["lib-a/pkg-a/index.js", "lib-start/pkg-start/index.js"]],
+        importAfterTheSecondCall: "start only",
+        withoutNodePath: ["MODULE_NOT_FOUND", ["home/.node_modules", "home/.node_libraries"]],
+        dot: "MODULE_NOT_FOUND",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a require function of an ES module searches them too", async () => {
+      using dir = tempDir("module-init-paths-esm", {
+        ...packages,
+        "app/main.mjs": `
+          import Module, { createRequire } from "node:module";
+          import path from "node:path";
+          const require = createRequire(import.meta.url);
+          process.env.NODE_PATH = path.join(import.meta.dirname, "..", "lib-a");
+          Module._initPaths();
+          const imported = await import("pkg-a").then(namespace => namespace.default, error => error.code);
+          console.log(JSON.stringify([require("pkg-a"), import.meta.require("pkg-a"), imported]));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(dir, ["--no-install", "main.mjs"]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["a", "a", "ERR_MODULE_NOT_FOUND"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("a Worker has its own directories", async () => {
+      using dir = tempDir("module-init-paths-worker", {
+        ...packages,
+        "app/main.cjs": `
+          const { Worker } = require("node:worker_threads");
+          const Module = require("node:module");
+          const path = require("node:path");
+          const lib = name => path.join(__dirname, "..", name);
+          const attempt = name => { try { return require(name); } catch (error) { return error.code; } };
+          // The Worker answers a message, so what it allocates is not behind the frames of a module that loads.
+          const worker = (answer, options) => new Promise((resolve, reject) => {
+            let message;
+            new Worker(\`
+              const { parentPort } = require("node:worker_threads");
+              const attempt = \${attempt};
+              parentPort.once("message", () => parentPort.postMessage((\${answer})()));
+            \`, { eval: true, ...options })
+              .on("message", value => { message = value; })
+              .on("error", reject)
+              .on("exit", () => resolve(message))
+              .postMessage("go");
+          });
+          (async () => {
+            const out = {};
+            out.workerThatCalls = await worker(\`() => {
+              process.env.NODE_PATH = \${JSON.stringify(lib("lib-a"))};
+              require("node:module")._initPaths();
+              return attempt("pkg-a");
+            }\`);
+            out.parentOfThatWorker = attempt("pkg-a");
+
+            process.env.NODE_PATH = lib("lib-b");
+            Module._initPaths();
+            out.parentThatCalls = require("pkg-b");
+            out.workerOfThatParent = await worker('() => attempt("pkg-b")', { env: {} });
+            console.log(JSON.stringify(out));
+          })();
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(dir, ["--no-install", "main.cjs"]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        workerThatCalls: "a",
+        parentOfThatWorker: "MODULE_NOT_FOUND",
+        parentThatCalls: "b",
+        workerOfThatParent: "MODULE_NOT_FOUND",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("the directories of one test file do not reach the next under --isolate", async () => {
+      using dir = tempDir("module-init-paths-isolate", {
+        ...packages,
+        "app/1-lists.test.js": `
+          const path = require("node:path");
+          test("lists lib-a", () => {
+            process.env.NODE_PATH = path.join(__dirname, "..", "lib-a");
+            require("node:module")._initPaths();
+            expect(require("pkg-a")).toBe("a");
+          });
+        `,
+        "app/2-finds-nothing.test.js": `
+          test("finds nothing of lib-a", () => {
+            expect(() => require.resolve("pkg-a")).toThrow(expect.objectContaining({ code: "MODULE_NOT_FOUND" }));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(dir, [
+        "test",
+        "--isolate",
+        "./1-lists.test.js",
+        "./2-finds-nothing.test.js",
+      ]);
+      expect(stdout + stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

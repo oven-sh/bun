@@ -21,7 +21,7 @@ use bun_paths::fs as bun_fs;
 use bun_paths::{self as path, PathBuffer, strings};
 use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
 use bun_resolver::compiled_program::{
-    CompiledEntryPoint, CompiledProgram, ImageFile, join_public_path,
+    CompiledEntryPoint, CompiledProgram, ImageFile, join_public_file_path,
 };
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
@@ -1695,7 +1695,7 @@ fn key_above_root(
 ) -> Option<Vec<u8>> {
     let dest_path = module_dest_path(output_file);
     let program = program.filter(|_| dest_path.starts_with(b"../"))?;
-    join_public_path(
+    join_public_file_path(
         prefix,
         program.levels_above_root as usize,
         prefix,

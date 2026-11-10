@@ -813,16 +813,29 @@ fn is_normalized_posix_path(name: &[u8]) -> bool {
     name.is_empty() || (!name.ends_with(b"/") && bun_highway::index_of_untidy_slash(name).is_none())
 }
 
-/// A backslash parts names on Windows alone. `split_path` takes it for a separator on every host, as a module specifier needs; a path of the file system does not.
-fn holds_foreign_separator(name: &[u8]) -> bool {
-    !cfg!(windows) && strings::contains_char(name, b'\\')
-}
-
 /// `a.json/`, `a.json/.` and `a.json/..`: no file answers to them.
 fn asks_for_folder(name: &[u8]) -> bool {
     let without_dots = name.strip_suffix(b"..").or_else(|| name.strip_suffix(b"."));
     let last = without_dots.unwrap_or(name).last();
     last.is_some_and(|&byte| byte == b'/' || (cfg!(windows) && byte == b'\\'))
+}
+
+/// Writes `path.resolve(base, name)` without a trailing `/` and returns its length. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a name.
+fn join_posix_key(base: &[u8], name: &[u8], buffer: &mut PathBuffer) -> Option<usize> {
+    let mut length = 0;
+    for part in strings::split(base, b"/").chain(strings::split(name, b"/")) {
+        match part {
+            b"" | b"." => {}
+            b".." => length = strings::last_index_of_char(&buffer[..length], b'/').unwrap_or(0),
+            _ => {
+                let end = length + 1 + part.len();
+                buffer.get_mut(length + 1..end)?.copy_from_slice(part);
+                buffer[length] = b'/';
+                length = end;
+            }
+        }
+    }
+    (length < buffer.len()).then_some(length)
 }
 
 /// `name` as a key of `files` and `dirs`: absolute, normalized, posix-separated, without trailing separators.
@@ -846,6 +859,11 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     } else {
         b"/"
     };
+    if cfg!(not(windows)) {
+        let length = join_posix_key(base, name, buffer)?;
+        buffer[length] = 0;
+        return Some(ZStr::from_buf(&buffer[..], length));
+    }
     let joined = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
         base,
         &mut buffer[..],
@@ -1315,12 +1333,12 @@ impl StandaloneModuleGraph {
         paths.peek()?;
         // The graph has no file for a compiled module that is no entry point.
         let is_taken = program.holds_module_at(name) || program.holds_module_below(name);
-        if is_taken || holds_foreign_separator(name) || self.climbs_out_of_what_is_no_folder(name) {
+        if is_taken || self.climbs_out_of_what_is_no_folder(name) {
             return None;
         }
         let may_be_file = !asks_for_folder(name);
         let keys = paths.filter_map(move |path| match path.starts_with(b"../") {
-            true => program.join_public_path(root, root, &[path, below_asset].concat()),
+            true => program.join_public_asset_path(root, &[path, below_asset].concat()),
             false => below_asset.is_empty().then(|| [root, path].concat()),
         });
         let is_file = move |key: &Vec<u8>| may_be_file && self.files.contains(key);
@@ -1332,7 +1350,7 @@ impl StandaloneModuleGraph {
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
         let paths = program.paths_named_at_root();
         paths.filter(|it| it.starts_with(b"../")).find_map(|path| {
-            let asset = program.join_public_path(root, root, path)?;
+            let asset = program.join_public_asset_path(root, path)?;
             let below = key.strip_prefix(&asset[..])?;
             if !matches!(below, [] | [b'/', ..]) {
                 return None;
@@ -1357,7 +1375,7 @@ impl StandaloneModuleGraph {
         let mut listed: Vec<(Box<[u8]>, bool)> = Vec::new();
         let paths = program.paths_named_at_root();
         for path in paths.filter(|it| it.starts_with(b"../")) {
-            let Some(key) = program.join_public_path(root, root, path) else {
+            let Some(key) = program.join_public_asset_path(root, path) else {
                 continue;
             };
             let base_name = bun_paths::basename(path);
@@ -1410,13 +1428,13 @@ impl StandaloneModuleGraph {
         if is_below_root && is_normalized_posix_path(name) {
             return None;
         }
-        if asks_for_folder(name) || holds_foreign_separator(name) {
+        if asks_for_folder(name) || self.climbs_out_of_what_is_no_folder(name) {
             return None;
         }
-        if self.climbs_out_of_what_is_no_folder(name) {
-            return None;
-        }
-        Self::key_under_own_root(program, name)
+        let key = Self::key_under_own_root(program, name)?;
+        let named_at_root = || self.key_of_asset_named_at_root(&key);
+        let is_file = self.files.contains(&key);
+        Some((!is_file).then(named_at_root).flatten().unwrap_or(key))
     }
 
     /// `File::display_name`, with `_.._` for each folder above the root directory.
@@ -2091,6 +2109,11 @@ pub(crate) mod tests {
             assert_eq!(listed, [(Box::from(&b"data.txt"[..]), false)]);
             let file = graph.find_ref(key).unwrap();
             assert_eq!(&graph.display_name_of(file)[..], b"data.txt");
+            for untidy in [&b"/$bunfs/root/./data.txt"[..], b"/$bunfs/root//data.txt"] {
+                let file = graph.find_ref(untidy);
+                assert_eq!(file.map(|file| file.name), Some(key), "{levels}");
+            }
+            assert!(graph.find_ref(b"/$bunfs/root/./data.txt/").is_none());
             assert!(graph.find_ref(b"/$bunfs/root/data.txt/").is_none());
             let climbs = &b"/$bunfs/root/data.txt/../data.txt"[..];
             assert!(graph.find_ref(climbs).is_none());

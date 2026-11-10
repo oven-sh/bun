@@ -194,10 +194,25 @@ fn find_name_of_package_with_exports(specifier: &[u8]) -> Option<&[u8]> {
     is_name.then_some(name)
 }
 
-fn split_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+#[derive(Copy, Clone)]
+enum PathKind {
+    /// `bun run` takes a backslash for a separator on every host.
+    Specifier,
+    /// Off Windows a backslash is part of a name.
+    File,
+}
+
+fn split_path_as(kind: PathKind, path: &[u8]) -> impl Iterator<Item = &[u8]> {
     let path = bun_paths::string_paths::without_nt_prefix::<u8>(path);
-    // `bun run` takes a backslash for a separator on every host.
-    path.split(|&byte| bun_paths::is_sep_any(byte))
+    let is_separator: fn(u8) -> bool = match kind {
+        PathKind::Specifier => bun_paths::is_sep_any,
+        PathKind::File => bun_paths::is_sep_native,
+    };
+    path.split(move |&byte| is_separator(byte))
+}
+
+fn split_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+    split_path_as(PathKind::Specifier, path)
 }
 
 /// `..` removes the segment before it. Where there is none it stays.
@@ -223,12 +238,13 @@ fn count_levels_above_root(segments: &[&[u8]]) -> usize {
 
 /// The way from the root directory of the build to what a public path names: a `..` for each folder that it lies above the root directory, then names.
 fn segments_below_public_root<'p>(
+    kind: PathKind,
     root: &[u8],
     levels_above_root: usize,
     base: &'p [u8],
     written: &'p [u8],
 ) -> Option<Vec<&'p [u8]>> {
-    let mut segments = split_path(base);
+    let mut segments = split_path_as(kind, base);
     let root = root.strip_suffix(b"/").unwrap_or(root);
     let (above_root, name_of_root) =
         root.split_at(bun_core::strings::last_index_of_char(root, b'/')? + 1);
@@ -258,7 +274,7 @@ fn segments_below_public_root<'p>(
         };
         kept.extend(core::iter::repeat_n(&b".."[..], level));
     }
-    push_segments(&mut kept, segments.chain(split_path(written)));
+    push_segments(&mut kept, segments.chain(split_path_as(kind, written)));
     Some(kept)
 }
 
@@ -297,7 +313,8 @@ pub fn name_in_plain_executable(
     levels_above_root: usize,
     path: &[u8],
 ) -> Option<Vec<u8>> {
-    let kept = segments_below_public_root(public_root, levels_above_root, path, b"")?;
+    let kept =
+        segments_below_public_root(PathKind::File, public_root, levels_above_root, path, b"")?;
     let spelled = spell_public_path(public_root, 0, &kept);
     Some(spelled[spelled.len().min(public_root.len())..].to_vec())
 }
@@ -309,11 +326,25 @@ pub fn join_public_path(
     source_dir: &[u8],
     specifier: &[u8],
 ) -> Option<Vec<u8>> {
-    let kept = join_below_public_root(public_root, levels_above_root, source_dir, specifier)?;
+    let kind = PathKind::Specifier;
+    let kept = join_below_public_root(kind, public_root, levels_above_root, source_dir, specifier)?;
+    Some(spell_public_path(public_root, levels_above_root, &kept))
+}
+
+/// `join_public_path` of the path of a file.
+pub fn join_public_file_path(
+    public_root: &[u8],
+    levels_above_root: usize,
+    folder: &[u8],
+    path: &[u8],
+) -> Option<Vec<u8>> {
+    let kind = PathKind::File;
+    let kept = join_below_public_root(kind, public_root, levels_above_root, folder, path)?;
     Some(spell_public_path(public_root, levels_above_root, &kept))
 }
 
 fn join_below_public_root<'p>(
+    kind: PathKind,
     public_root: &[u8],
     levels_above_root: usize,
     source_dir: &'p [u8],
@@ -335,7 +366,7 @@ fn join_below_public_root<'p>(
     {
         return None;
     }
-    segments_below_public_root(public_root, levels_above_root, base, written)
+    segments_below_public_root(kind, public_root, levels_above_root, base, written)
 }
 
 fn is_name_of_root(public_root: &[u8], name: &[u8]) -> bool {
@@ -365,7 +396,9 @@ pub fn directories_of_importer(
     base: &[u8],
 ) -> Vec<Vec<u8>> {
     use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-    let segments = segments_below_public_root(public_root, levels_above_root, source_dir, b"");
+    let kind = PathKind::Specifier;
+    let segments =
+        segments_below_public_root(kind, public_root, levels_above_root, source_dir, b"");
     let segments = segments.unwrap_or_default();
     let join = |count: usize| {
         let mut buffer = bun_paths::path_buffer_pool::get();
@@ -691,6 +724,11 @@ impl CompiledProgram {
         specifier: &[u8],
     ) -> Option<Vec<u8>> {
         join_public_path(public_root, self.levels_above_root, source_dir, specifier)
+    }
+
+    /// The key under which an asset is mounted. `path` leads to it from the root directory.
+    pub fn join_public_asset_path(&self, public_root: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+        join_public_file_path(public_root, self.levels_above_root, public_root, path)
     }
 
     pub fn with_further_package_names(
@@ -1037,7 +1075,8 @@ impl CompiledProgram {
 
     /// Removes `..` steps that the next name undoes: `../app/note.txt` is `note.txt` in the root directory `app`.
     fn cancel_root_folders<'p>(&self, parts: &[&'p [u8]]) -> Vec<&'p [u8]> {
-        let folders: Vec<&[u8]> = split_path(self.root_folders_spelled).collect();
+        let folders = split_path_as(PathKind::File, self.root_folders_spelled);
+        let folders: Vec<&[u8]> = folders.collect();
         let mut above = count_levels_above_root(parts);
         let mut rest = &parts[above..];
         while above > 0
@@ -1053,7 +1092,7 @@ impl CompiledProgram {
     /// `join_public_path` of a path that `node:fs` is given.
     pub fn join_public_file_path(&self, public_root: &[u8], path: &[u8]) -> Option<Vec<u8>> {
         let levels = self.levels_above_root;
-        let parts = join_below_public_root(public_root, levels, public_root, path)?;
+        let parts = join_below_public_root(PathKind::File, public_root, levels, public_root, path)?;
         let parts = self.cancel_root_folders(&parts);
         Some(spell_public_path(public_root, levels, &parts))
     }
@@ -1071,7 +1110,8 @@ impl CompiledProgram {
             return None;
         }
         let levels = self.levels_above_root;
-        let parts = join_below_public_root(public_root, levels, source_dir, specifier)?;
+        let kind = PathKind::Specifier;
+        let parts = join_below_public_root(kind, public_root, levels, source_dir, specifier)?;
         let above = count_levels_above_root(&parts);
         let folders: Vec<&[u8]> = split_path(self.root_folders_spelled).collect();
         let spelled = &folders[folders.len().checked_sub(above)?..];
@@ -1318,7 +1358,9 @@ impl CompiledProgram {
         };
         let package = find_name_of_package_with_exports(specifier);
         let levels = self.levels_above_root;
-        let Some(mut folders) = segments_below_public_root(public_root, levels, source_dir, b"")
+        let kind = PathKind::Specifier;
+        let Some(mut folders) =
+            segments_below_public_root(kind, public_root, levels, source_dir, b"")
         else {
             return Unknown;
         };
@@ -1472,7 +1514,8 @@ impl CompiledProgram {
             return None;
         }
         let levels = self.levels_above_root;
-        let segments = join_below_public_root(public_root, levels, public_root, specifier)?;
+        let kind = PathKind::Specifier;
+        let segments = join_below_public_root(kind, public_root, levels, public_root, specifier)?;
         let name = [b"./", &segments.join(&b"/"[..])[..]].concat();
         self.entry_point_by_module_path(self.find_package_name(&name, false)??)
     }

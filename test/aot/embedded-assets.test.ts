@@ -305,31 +305,38 @@ console.log(read("pub", "same.txt"), read("pub", "only.txt"));
   }, 120_000);
 
   const namedAtRoot = [
-    ["a folder", ["--asset", "../lib/pub"], "pub", "pub/a.txt", ["pub/a.txt", "pub/deep/c.txt"]],
-    ["a file", ["--asset", "../lib/note.txt"], "note.txt", "note.txt", ["note.txt"]],
+    ["a folder", ["--asset", "../lib/pub"], "pub", "pub/a.txt", "../lib", ["pub/a.txt", "pub/deep/c.txt"]],
+    ["a file", ["--asset", "../lib/note.txt"], "note.txt", "note.txt", "../lib", ["note.txt"]],
     [
       "two folders",
       ["--asset", "../lib/pub", "--asset", "../more/pub"],
       "pub",
       "pub/b.txt",
+      "../more",
       ["pub/a.txt", "pub/b.txt", "pub/deep/c.txt"],
     ],
   ] as const;
   test.each(namedAtRoot.flatMap(row => (["mjs", "cjs"] as const).map(kind => [kind, ...row] as const)))(
     "in %s the base name of %s from outside answers as a path does",
-    async (kind, _, flags, top, file, all) => {
+    async (kind, _, flags, top, file, place, all) => {
       const head =
         kind === "mjs"
           ? `import fs from "node:fs"; import path from "node:path"; const here = import.meta.dirname;`
           : `const fs = require("node:fs"), path = require("node:path"), here = __dirname;`;
       using dir = tempDir("aot-base-names-at-root", {
         [`app/server/main.${kind}`]: `${head}
-const names = ${JSON.stringify(file.split("/"))};
-const file = path.join(here, ...names), folder = path.dirname(file), base = path.basename(file);
 const tidy = it => it.replaceAll("\\\\", "/");
-const ask = async at => [fs.existsSync(at), fs.statSync(at, { throwIfNoEntry: false })?.isFile() ?? null, await Bun.file(at).exists()];
-(async () => {
-  const spelled = {
+const isFile = at => {
+  try {
+    return fs.statSync(at, { throwIfNoEntry: false })?.isFile() ?? null;
+  } catch {
+    return null;
+  }
+};
+const ask = async at => [fs.existsSync(at), isFile(at), await Bun.file(at).exists()];
+const spell = names => {
+  const file = path.join(here, ...names), folder = path.dirname(file), base = path.basename(file);
+  return {
     tidy: file,
     untidy: folder + "/./" + base,
     doubled: folder + "//" + base,
@@ -342,7 +349,11 @@ const ask = async at => [fs.existsSync(at), fs.statSync(at, { throwIfNoEntry: fa
     lower: file[0].toLowerCase() + file.slice(1),
     upper: file[0].toUpperCase() + file.slice(1),
   };
-  for (const [name, at] of Object.entries(spelled)) console.log(name, JSON.stringify(await ask(at)));
+};
+(async () => {
+  const names = ${JSON.stringify(file.split("/"))};
+  for (const [way, from] of [["short", []], ["own", ${JSON.stringify(place.split("/"))}]])
+    for (const [name, at] of Object.entries(spell([...from, ...names]))) console.log(way, name, JSON.stringify(await ask(at)));
   console.log("embedded", Bun.embeddedFiles.map(it => tidy(it.name)).filter(it => !it.startsWith("main")).sort().join());
   console.log("root", fs.readdirSync(here).sort().join());
   console.log("glob", [...new Bun.Glob("**/*.txt").scanSync({ cwd: here })].map(tidy).sort().join());
@@ -354,28 +365,76 @@ const ask = async at => [fs.existsSync(at), fs.statSync(at, { throwIfNoEntry: fa
         "app/lib/note.txt": "n",
         "app/more/pub/b.txt": "b",
       });
-      const { compiled } = await bothWaysIn(String(dir), "app/server", `./main.${kind}`, ...flags);
+      const { plain, compiled } = await bothWaysIn(String(dir), "app/server", `./main.${kind}`, ...flags);
+      const linesOf = (ran: typeof plain) => ran.stdout.split("\n");
+      const rowsOf = (ran: typeof plain, way: string) =>
+        linesOf(ran)
+          .filter(line => line.startsWith(way + " "))
+          .map(line => line.slice(way.length + 1));
+      // The platform decides what an untidy spelling names. Under plain Bun the asset lies at its own place alone: what is said of it there, the executable says by either name.
+      const asPlain = rowsOf(plain, "own");
       const found = "[true,true,true]";
       const absent = "[false,null,false]";
-      // Not found yet, as on main: the lookup takes the first name below the root for the base name, and that is "." or "".
-      const untidy = kind === "mjs" && top === file ? absent : found;
-      expect(compiled).toEqual({
-        stdout: `tidy ${found}
-untidy ${untidy}
-doubled ${untidy}
-slash ${absent}
-separator ${absent}
-backslash ${absent}
-climbs ${absent}
-backslashes ${isWindows ? found : absent}
-forward ${found}
-lower ${found}
-upper ${found}
-embedded ${all.join()}
+      const onPosix = {
+        tidy: found,
+        untidy: found,
+        doubled: found,
+        slash: absent,
+        separator: absent,
+        backslash: absent,
+      };
+      const alsoOnPosix = { climbs: absent, backslashes: absent, forward: found, lower: found, upper: found };
+      const said = Object.entries({ ...onPosix, ...alsoOnPosix }).map(([name, answer]) => `${name} ${answer}`);
+      expect(isWindows ? asPlain.slice(0, 1) : asPlain).toEqual(isWindows ? said.slice(0, 1) : said);
+      // CI cuts the middle out of a long failure, so only the rows that differ are shown, each with both answers.
+      const differing = ["short", "own"].flatMap(way => {
+        const rows = rowsOf(compiled, way);
+        const missing = rows.length === asPlain.length ? [] : [`${way}: ${rows.length} rows of ${asPlain.length}`];
+        return [...missing, ...rows.filter((row, at) => row !== asPlain[at]).map(row => `${way} ${row}`)];
+      });
+      const differingInPlain = asPlain.filter(row => differing.some(it => it.split(" ")[1] === row.split(" ")[0]));
+      expect({ executable: differing, plain: differingInPlain }).toEqual({ executable: [], plain: [] });
+      const rest = linesOf(compiled).filter(line => !/^(short|own) /.test(line));
+      expect({ ...compiled, stdout: rest.join("\n") }).toEqual({
+        stdout: `embedded ${all.join()}
 root ${[`main.${kind}`, top].sort().join()}
 glob ${all.join()}
 globSync ${all.join()}
 `,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
+  test.skipIf(isWindows)(
+    "a backslash in an asset's name stays in it",
+    async () => {
+      using dir = tempDir("aot-backslash-in-asset-names", {
+        "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const read = (...names) => {
+  try {
+    return fs.readFileSync(path.join(import.meta.dirname, ...names), "utf8");
+  } catch (error) {
+    return error.code;
+  }
+};
+console.log(read("..", "lib", "pub\\\\x", "a.txt"), read("in\\\\y", "b.txt"), read("..", "lib", "f\\\\g.txt"));
+console.log(read("pub\\\\x", "a.txt"), read("f\\\\g.txt"), read("pub", "x", "a.txt"), read("in", "y", "b.txt"), read("g.txt"));
+console.log(Bun.embeddedFiles.map(it => it.name).filter(it => !it.startsWith("main")).sort().join());
+`,
+        "app/lib/pub\\x/a.txt": "a",
+        "app/server/in\\y/b.txt": "b",
+        "app/lib/f\\g.txt": "g",
+      });
+      const flags = ["--asset", "../lib/pub\\x", "--asset", "in\\y", "--asset", "../lib/f\\g.txt"];
+      const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+      const byOwnPlace = "a b g\n";
+      expect(plain).toEqual({ stdout: `${byOwnPlace}ENOENT ENOENT ENOENT ENOENT ENOENT\n\n`, stderr: "", exitCode: 0 });
+      expect(compiled).toEqual({
+        stdout: `${byOwnPlace}a g ENOENT ENOENT ENOENT\nf\\g.txt,in\\y/b.txt,pub\\x/a.txt\n`,
         stderr: "",
         exitCode: 0,
       });

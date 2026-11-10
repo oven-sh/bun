@@ -1086,8 +1086,7 @@ fn path_from_root(
     working_directory: &[u8],
     asset_path: &[u8],
 ) -> Option<Vec<u8>> {
-    let written_path =
-        resolve_path::join_abs_string::<platform::Auto>(working_directory, &[asset_path]).to_vec();
+    let written_path = join_file_path(working_directory, asset_path);
     let written_folder = bun_paths::dirname(&written_path)?;
     let mut real_path_buffer = bun_paths::path_buffer_pool::get();
     let real_folder =
@@ -1100,16 +1099,49 @@ fn path_from_root(
         _ => None,
     };
     let folders_above_root = |folder: &'_ [u8]| {
-        let relative = resolve_path::relative(root_directory, folder);
+        let relative = relative_file_path(root_directory, folder);
         relative
             .starts_with(b"..")
-            .then(|| [relative, b"/"].concat())
+            .then(|| [&relative[..], b"/"].concat())
     };
     let folders = real_folder
         .and_then(folders_below_root)
         .or_else(|| folders_below_root(written_folder))
         .or_else(|| folders_above_root(real_folder.unwrap_or(written_folder)))?;
     Some([&folders[..], bun_paths::basename(&written_path)].concat())
+}
+
+fn split_file_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+    bun_core::strings::split(path, b"/").filter(|name| !name.is_empty() && *name != b".")
+}
+
+/// `path.resolve(folder, path)`. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a file's name.
+fn join_file_path(folder: &[u8], path: &[u8]) -> Vec<u8> {
+    if cfg!(windows) {
+        return resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec();
+    }
+    let folder = split_file_path(folder).filter(|_| !path.starts_with(b"/"));
+    let mut names: Vec<&[u8]> = Vec::new();
+    for name in folder.chain(split_file_path(path)) {
+        match name {
+            b".." => drop(names.pop()),
+            _ => names.push(name),
+        }
+    }
+    [b"/", &names.join(&b"/"[..])[..]].concat()
+}
+
+/// `path.relative(from, to)` of two absolute paths, by the same rule.
+fn relative_file_path(from: &[u8], to: &[u8]) -> Vec<u8> {
+    if cfg!(windows) {
+        return resolve_path::relative(from, to).to_vec();
+    }
+    let from: Vec<&[u8]> = split_file_path(from).collect();
+    let to: Vec<&[u8]> = split_file_path(to).collect();
+    let shared = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let up = core::iter::repeat_n(&b".."[..], from.len() - shared);
+    let names: Vec<&[u8]> = up.chain(to[shared..].iter().copied()).collect();
+    names.join(&b"/"[..])
 }
 
 fn add_assets_in_place(

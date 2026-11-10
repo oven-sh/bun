@@ -1,10 +1,7 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { isDebug, tempDir, tempDirWithBunTypes } from "harness";
+import { tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
-
-// In a debug build each of these builds takes seconds.
-if (isDebug) setDefaultTimeout(60_000);
 
 const project = {
   "tsconfig.json": JSON.stringify({

@@ -1,0 +1,17 @@
+# -- source: main.js
+# function make() {
+#   var current = null;
+#   function Item() { this.flags = 0; this.other = null; }
+#   function note(item, first, second) { item.flags |= 2; item = { first: first, second: second }; return item; }
+#   function visit(item) { current = item; note(current, 1, 2); return current.other; }
+#   function leave() { current = null; }
+#   return { Item, visit, leave };
+# }
+# var made = make();
+# publish(made);
+# print(made.visit(new made.Item()));
+# -- end of source
+# `visit` hands `current` to `note`, and how `note` uses its parameter says how `current` is used. But `note` stores a record of its own over the parameter, and that record is no word on what was handed in:
+# `current` never holds one. It used to be written as what `current` is expected to hold, and every read off `current` was tested for a record that never came.
+# RUN(TEXT): print
+# TEXT: |bigint flags=[IsExpected]} flags=[IsRequired] variableName="current"

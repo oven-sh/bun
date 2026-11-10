@@ -168,7 +168,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) {
             const auto& compiledFrame = frame.compiledFrame();
-            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.calleeLiesInFrame ? 2 : 0) | 1;
+            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.hasCalleeInFrame ? 2 : 0) | 1;
         }
 #endif
         auto& functionWithOtherName = functionsWithOtherNames[((std::bit_cast<uintptr_t>(function.callee) >> 4) + (function.code >> 2)) % functionsWithOtherNames.size()];
@@ -176,7 +176,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             return false;
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) {
-            JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
             if (JSC::AOT::isClosureOf(callerObject, frame.compiledFrame().function))
                 return true;
         }
@@ -517,9 +516,8 @@ String sourceURL(const JSC::AOT::SourcePosition& position)
 
 String sourceURL(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosition& position)
 {
-    JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame);
     if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
-        return JSC::AOT::moduleOfCompilerHelpers;
+        return JSC::AOT::compilerHelpersModule;
     return sourceURL(position);
 }
 #endif
@@ -646,12 +644,11 @@ static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
     JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
     if (frame.isAsyncFrame() || frame.compiledFrame().isAtFailedTailCall)
         return description.name(vm);
-    return description.nameInFrames(vm, frame.callee(), frame.compiledFrame().calleeLiesInFrame);
+    return description.stackTraceName(vm, frame.callee(), frame.compiledFrame().hasCalleeInFrame);
 }
 
 static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
 {
-    JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
     if (!frame.hasLineAndColumnInfo())
         return compiledFunctionName(vm, frame);
 

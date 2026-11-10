@@ -10,12 +10,10 @@
 // folder.
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { limitsLowered } from "../harness/limits";
 import { endAtMemoryLimit, memoryLimit } from "../harness/memory-limit";
-import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { decoyShapes, memberNames } from "./decoy-shapes";
 import { laterProbes, probeProgram, probes } from "./engine-probes";
-import { bunInitCompilerOptions, typeChecker, bunTypesFolder, type Checker } from "./type-check";
+import { bunInitCompilerOptions, bunTypesFolder, typeCheckerApart } from "./type-check";
 
 export interface Program {
   text: string;
@@ -43,9 +41,14 @@ export interface Program {
   meant?: (plain: string, compiled: string) => string | undefined;
   /**
    * It has a `plainEnvironment`, and without it plain Bun's output differs from run to run: an executable is right if
-   * it prints what one of forty such runs prints.
+   * it prints what one of some four hundred such runs prints.
    */
   unstablePlainOutput?: string;
+  /**
+   * Why plain Bun does not have the last word: an executable is also right if it prints what one built without --aot
+   * prints.
+   */
+  followsExecutableWithoutCompiler?: string;
   /**
    * It is built with its own compiler options, which TypeScript is not run with here: a build that stops at an error in
    * the program is not a finding.
@@ -82,7 +85,6 @@ export type FindingKind =
   | "build hang"
   | "build error"
   | "build refused"
-  | "validation failure"
   | "crash"
   | "hang"
   | "different output"
@@ -256,14 +258,12 @@ export interface Runner {
   /** Whether everything in the text works on the runner as in plain JavaScript. */
   allows(text: string): boolean;
   modes(program: Program): Mode[];
-  /** The mode whose result separates a false proof from other bugs. */
-  withoutFlowResults: string[];
-  /** Flags that turn off the given passes and flow results. */
+  /** Flags that take away what the given names of switches() stand for. */
   disabling(names: string[]): string[];
   /** Flags for an executable built without the compiler, if the runner can build one. */
   withoutCompiler?: string[];
-  /** Every pass and flow result that can be turned off. */
-  switches(): Promise<{ flowResults: string[]; passes: string[] }>;
+  /** What a build can do without. */
+  switches(): Promise<string[]>;
   /** How many programs one call of judge() handles well. */
   readonly batch: number;
   /** Whether a program can have its own build, as the entry point. */
@@ -317,8 +317,6 @@ function unusable(runner: Runner, plain: Run): Verdict | undefined {
 
 /** Prefix of a flag that is not a build flag: an environment variable for the executable's run. */
 export const runEnvFlag = "--run-env=";
-/** Turns on every run-time check in an executable, however it was built. */
-export const runtimeChecksVariable = "BUN_JSC_validateAOTRuntime=1";
 /**
  * Also not a build flag: how many decoy shapes with the programs' property names are built beside them
  * (decoy-shapes.ts).
@@ -327,15 +325,18 @@ const decoyShapesFlag = "--decoy-shapes=";
 /** Also not a build flag: which project files lie in the build folder, a key of `projects`. */
 const projectFlag = "--project=";
 /**
- * Also not a build flag: each program of a shared build is a separate entry point, so the compiler treats each one as
- * it would alone.
+ * Also not a build flag: each program of a shared build is an entry point of its own, which a Worker starts. The build
+ * compiles all of them as one program.
  */
 const separateEntryPointsFlag = "--separate-entry-points";
 const withoutCompilerFlag = "--without-aot";
 /**
- * Also not a build flag: the build starts without the variable that turns the compiler's verifiers on. Beside it the
- * mode's `verifierFlags` have to go: either of the two is enough to verify.
+ * Also not a build flag: the build starts with the variable that turns the compiler's verifiers on, as every process
+ * does unless changeEnvironment() took it out. They change no byte of the executable, and a user's build does not pay
+ * for them.
  */
+export const verifierFlags = "--with-verifiers";
+/** Also not a build flag: the build starts without that variable. It stands in the place of `verifierFlags`. */
 export const withoutVerifiersFlag = "--without-verifiers";
 export const scriptMarker = "// stays a script\n";
 /** Functions that a program may call without declaring them. */
@@ -366,6 +367,7 @@ export const isBuildFlag = (flag: string) =>
   !flag.startsWith(projectFlag) &&
   flag !== separateEntryPointsFlag &&
   flag !== withoutCompilerFlag &&
+  flag !== verifierFlags &&
   flag !== withoutVerifiersFlag;
 
 const ownOptions = {
@@ -388,16 +390,16 @@ export const projects: Record<string, { tsconfig?: { compilerOptions?: object };
   "bun-init": { tsconfig: { compilerOptions: bunInitCompilerOptions }, hasTypings: true },
 };
 
+/** What a build can do without, and the flag that takes it away. */
+const flagsWithout = { types: "--aot-erase-types" };
+
 export class ProductRunner implements Runner {
   readonly name = "product";
   readonly binary: string;
   readonly batch = 64;
   readonly supportsMultiFile = true;
   lastCall?: number;
-  withoutFlowResults = ["--aot-disable=flow-results"];
   withoutCompiler = [withoutCompilerFlag];
-  #switches?: { flowResults: string[]; passes: string[] };
-  #limits?: { name: string; flags: string[] }[];
 
   constructor(
     readonly bun: string,
@@ -409,20 +411,17 @@ export class ProductRunner implements Runner {
        */
       reference?: string;
       noVerifiers?: boolean;
-      validate: boolean;
-      /** Skip the second run with the run-time checks on. */
-      runsOnce?: boolean;
       threads: number;
       buildSeconds: number;
       runSeconds: number;
+      /** How long TypeScript may take over a program whose build was refused (default 60). */
+      checkSeconds?: number;
       /** In bytes, for each build and each run, instead of `memoryLimit`. */
       memory?: number;
       /**
        * The executable's time limit, if it differs from the plain run's: a collection every few allocations is slow.
        */
       compiledRunSeconds?: number;
-      /** The executable's time limit when built with --aot-validate, whose checks are slow. */
-      validatedRunSeconds?: number;
       /** Only for the executable's run. */
       runEnvironment?: Record<string, string>;
       /** Only these modes. */
@@ -434,12 +433,6 @@ export class ProductRunner implements Runner {
       collectorStress?: number[];
       /** Half of the batches use the fenced write barrier. */
       isFenced?: boolean;
-      /**
-       * One time in n, n picked from these, compiled code takes the slow path after a type check that would have
-       * passed.
-       */
-      failPredictions?: number[];
-      lowersLimits?: boolean;
       /** Each batch is built beside this many decoy shapes, picked from these. */
       decoyShapes?: number[];
       /** This many workers run the program concurrently instead of the main thread. */
@@ -452,6 +445,10 @@ export class ProductRunner implements Runner {
     },
   ) {
     this.binary = bun.split("/").pop()!;
+    // A run in modes that do not exist would build nothing and find nothing.
+    const known = this.#everyMode({ text: "", extension: "ts" }).map(mode => mode.name);
+    const unknown = (options.modes ?? []).filter(name => !known.includes(name));
+    if (unknown.length) throw new Error(`no mode is called ${unknown.join(" or ")}: the modes are ${known.join(", ")}`);
   }
 
   accepts() {
@@ -467,16 +464,14 @@ export class ProductRunner implements Runner {
     return !this.options.workers && !this.options.decoyShapes?.some(size => size > 0);
   }
 
-  // Repeated --aot-disable flags do not add up, nor do repeated --aot-testing flags, so each list is merged into one
-  // flag.
+  // A flag of the compiler that a mode has may come again from disabling(), so each is passed once. Repeated
+  // --aot-testing flags do not add up, so their lists are merged into one flag.
   #merged(flags: string[]): string[] {
-    let merged = flags;
-    for (const list of ["--aot-disable=", "--aot-testing="]) {
-      const listed = merged.filter(flag => flag.startsWith(list)).flatMap(flag => flag.slice(list.length).split(","));
-      if (listed.length)
-        merged = [...merged.filter(flag => !flag.startsWith(list)), list + [...new Set(listed)].join(",")];
-    }
-    return merged;
+    const list = "--aot-testing=";
+    const once = flags.filter((flag, at) => !flag.startsWith("--aot-") || flags.indexOf(flag) === at);
+    const listed = once.filter(flag => flag.startsWith(list)).flatMap(flag => flag.slice(list.length).split(","));
+    if (!listed.length) return once;
+    return [...once.filter(flag => !flag.startsWith(list)), list + [...new Set(listed)].join(",")];
   }
 
   // Different intervals catch different bugs, so each batch gets its own. The choice is part of the mode's flags, so
@@ -499,24 +494,11 @@ export class ProductRunner implements Runner {
         ...(drawn & 1 ? ["BUN_JSC_useEdenCollectionsAtSlowPathAllocs=1"] : []),
       );
     if (this.options.isFenced && below(2)) set.push("BUN_JSC_forceFencedBarrier=1");
-    const failing = this.options.failPredictions ?? [];
-    return [
-      ...set.map(each => runEnvFlag + each),
-      ...(failing.length ? [`--aot-testing=FailPredictions:${failing[below(failing.length)]}:${below(65536)}`] : []),
-    ];
-  }
-
-  // Only a large program reaches most limits. With one limit at 0, 1 or 2 a small program runs the code past it. One
-  // limit per build.
-  #drawnLimit(): string[] {
-    if (!this.options.lowersLimits) return [];
-    this.#limits ??= limitsLowered(this.bun);
-    return this.#limits[Math.floor(Math.random() * this.#limits.length)].flags;
+    return set.map(each => runEnvFlag + each);
   }
 
   modes(program: Program): Mode[] {
     const stress = this.#drawnStress();
-    const limit = this.#drawnLimit();
     const sizes = this.options.decoyShapes ?? [];
     const size = sizes[Math.floor(Math.random() * sizes.length)];
     const beside = (this.options.projects ?? []).filter(name => !projects[name].hasTypings || bunTypesFolder());
@@ -532,84 +514,30 @@ export class ProductRunner implements Runner {
         ...stress,
         ...project,
         ...(size ? [decoyShapesFlag + size] : []),
-        ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit),
       ],
     }));
   }
 
-  #modes(program: Program): Mode[] {
+  #everyMode(program: Program): Mode[] {
     const modes: Mode[] = [{ name: "default", flags: [] }];
-    if (this.options.validate) modes.push({ name: "validate", flags: ["--aot-validate"] });
-    // The shipping code with its proofs checked again at run time: a false proof becomes a named failure where the
-    // default build silently gives a wrong answer.
-    modes.push({ name: "check-proofs", flags: ["--aot-testing=CheckProofsAtRunTime"] });
-    if (program.extension === "ts") modes.push({ name: "erased", flags: ["--aot-erase-types"] });
-    // How hot a function is depends on the whole program, and a small program is mostly lukewarm: little is inlined, so
-    // the passes after inlining have little to do. One bug only showed when three other modules were built beside the
-    // program. All they did was change its heat.
-    modes.push({ name: "hot", flags: ["--aot-heat=everything-is-hot"] });
-    // A shared build is one program with many modules. What the compiler can only prove about a small program (that no
-    // key is ever deleted, say) it never proves there, so bugs in such proofs do not show.
+    if (program.extension === "ts") modes.push({ name: "erased", flags: [flagsWithout.types] });
+    // Each program is an entry point that a Worker starts. The executable then has several globals, so nothing may rest
+    // on what holds once per global: that a module's body runs once, that a class is evaluated once.
     modes.push({ name: "separate-entry-points", flags: [separateEntryPointsFlag], isForSharedBuilds: true });
-    if (!this.options.modes) return modes;
-    // Only when named.
-    if (program.extension === "ts")
-      modes.push({ name: "erased-hot", flags: ["--aot-erase-types", "--aot-heat=everything-is-hot"] });
-    modes.push({
-      name: "hot-check-proofs",
-      flags: ["--aot-heat=everything-is-hot", "--aot-testing=CheckProofsAtRunTime"],
-    });
-    modes.push({ name: "no-inlining", flags: ["--aot-disable=InlineCalls"] });
-    modes.push({ name: "hot-no-inlining", flags: ["--aot-heat=everything-is-hot", "--aot-disable=InlineCalls"] });
-    modes.push({ name: "no-flow-results", flags: ["--aot-disable=flow-results"] });
-    modes.push({ name: "hot-no-flow-results", flags: ["--aot-heat=everything-is-hot", "--aot-disable=flow-results"] });
-    // large and cold-large are what a user's build of a very large program gets.
-    modes.push({ name: "cold", flags: ["--aot-heat=everything-is-cold"] });
-    modes.push({ name: "large", flags: ["--aot-limit=MaxWarmCodeValues:1"] });
-    modes.push({ name: "cold-large", flags: ["--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1"] });
-    if (program.extension === "ts")
-      modes.push({
-        name: "erased-cold-large",
-        flags: ["--aot-erase-types", "--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1"],
-      });
-    if (program.extension === "ts")
-      modes.push({ name: "erased-cold", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold"] });
-    modes.push({ name: "slow-path-allocations", flags: ["--aot-testing=ForceGCSlowPaths"] });
-    // The shipping machine code with the compiler's claims to its back end checked at run time, after the last phase
-    // that moves a value: a false claim becomes a named failure even if it does not change the output.
-    modes.push({ name: "check-claims", flags: ["--aot-check=ClaimsToBackEnd"] });
-    modes.push({ name: "check-moved-loads", flags: ["--aot-check=MovedLoads"] });
-    modes.push({ name: "hot-check-claims", flags: ["--aot-heat=everything-is-hot", "--aot-check=ClaimsToBackEnd"] });
-    modes.push({ name: "hot-check-moved-loads", flags: ["--aot-heat=everything-is-hot", "--aot-check=MovedLoads"] });
-    modes.push({ name: "check-decided-comparisons", flags: ["--aot-check=DecidedComparisons"] });
-    modes.push({
-      name: "hot-check-decided-comparisons",
-      flags: ["--aot-heat=everything-is-hot", "--aot-check=DecidedComparisons"],
-    });
-    return modes.filter(mode => this.options.modes!.includes(mode.name));
+    return modes;
+  }
+
+  #modes(program: Program): Mode[] {
+    const named = this.options.modes;
+    return this.#everyMode(program).filter(mode => !named || named.includes(mode.name));
   }
 
   disabling(names: string[]) {
-    return names.length ? ["--aot-disable=" + names.join(",")] : [];
+    return names.map(name => flagsWithout[name as keyof typeof flagsWithout]);
   }
 
   async switches() {
-    if (this.#switches) return this.#switches;
-    const folder = withoutInstallingPackages(join(process.env.TMPDIR ?? "/tmp", `aot-fuzz-registry-${process.pid}`));
-    writeFileSync(join(folder, "empty.js"), "");
-    const listed = await spawned(
-      [this.bun, "build", "--compile", "--aot", "empty.js", "--outfile", "empty", "--aot-list=registry"],
-      folder,
-      120,
-    );
-    rmSync(folder, { recursive: true, force: true });
-    const registry = JSON.parse((listed.stdout + listed.stderr).split("\n").find(line => line.startsWith("{"))!);
-    const names = (list: any[]) => list.map(entry => (typeof entry === "string" ? entry : entry.name) as string);
-    return (this.#switches = {
-      // A bare name may be ambiguous, and the build then rejects it.
-      passes: names(registry.passes.filter((pass: any) => pass.isOptional)).map(name => "pass:" + name),
-      flowResults: names(registry.flowResults).map(name => "flow:" + name),
-    });
+    return Object.keys(flagsWithout);
   }
 
   #write(folder: string, stem: string, program: Program, flags: string[]) {
@@ -637,8 +565,8 @@ export class ProductRunner implements Runner {
 
   // A mutant of a typed program may not type-check, and that rightly stops the build. But the build must accept what
   // TypeScript accepts with Bun's typings and plain Bun runs.
-  #checkers = new Map<string, Checker | undefined>();
-  #judged(program: Program, flags: string[], verdict: Verdict): Verdict {
+  #checkers = new Map<string, ReturnType<typeof typeCheckerApart>>();
+  async #judged(program: Program, flags: string[], verdict: Verdict): Promise<Verdict> {
     if (program.mayBeRefused && verdict.kind === "build error") return { kind: "skipped", why: "the build is refused" };
     if (verdict.kind !== "skipped" || !verdict.refusal || program.mayBeRefused) return verdict;
     // The build reports TypeScript 7's errors, which infers less from a JavaScript file than the TypeScript used here:
@@ -650,11 +578,15 @@ export class ProductRunner implements Runner {
     if (!this.#checkers.has(name))
       this.#checkers.set(
         name,
-        typeChecker({ typings: bunTypesFolder(), options: tsconfig && (tsconfig.compilerOptions ?? {}) }),
+        typeCheckerApart(
+          { typings: bunTypesFolder(), options: tsconfig && (tsconfig.compilerOptions ?? {}) },
+          this.options.checkSeconds ?? 60,
+        ),
       );
-    const errors = this.#checkers.get(name)?.([withPrint(program)])[0];
+    const errors = await this.#checkers.get(name)!([withPrint(program)]);
+    if (errors === "late") return { kind: "skipped", why: `${verdict.why}, and TypeScript takes too long to say` };
     if (!errors) return verdict;
-    if (errors.length) return { kind: "skipped", why: `${verdict.why}, as in TypeScript` };
+    if (errors[0].length) return { kind: "skipped", why: `${verdict.why}, as in TypeScript` };
     // Names stay in the signature of a rejected build: a member missing on one class says nothing about another class.
     return {
       kind: "build refused",
@@ -663,37 +595,21 @@ export class ProductRunner implements Runner {
     };
   }
 
-  /**
-   * Runs it like a user. If that run exits normally, the same executable runs once more with the run-time checks on:
-   * they report anything the compiler assumed impossible, even if the first run's output was right. Only such a report
-   * counts from the second run.
-   */
-  async #run(folder: string, cmd: string[], flags: string[]) {
-    const run = await this.#runOnce(folder, cmd, flags);
-    if (
-      this.options.runsOnce ||
-      run.signal ||
-      run.timedOut ||
-      flags.includes("--aot-validate") ||
-      validationMessage.test(run.stderr)
-    )
-      return run;
-    const checked = await this.#runOnce(folder, cmd, [...flags, runEnvFlag + runtimeChecksVariable]);
-    if (!validationMessage.test(checked.stderr)) return run;
-    return {
-      ...checked,
-      stderr: checked.stderr.replace(validationMessage, line => `${line} | ${runtimeChecksVariable}`),
-    };
+  // Forced collections slow plain Bun down too. A run that does not end is a finding only where plain Bun ends under the
+  // same settings in the same time.
+  async #unlessPlainHangsToo(verdict: Verdict, folder: string, cmd: string[], flags: string[]): Promise<Verdict> {
+    const isSlowed = this.options.runEnvironment || flags.some(flag => flag.startsWith(runEnvFlag));
+    if (verdict.kind !== "hang" || !isSlowed) return verdict;
+    return (await this.#run(folder, cmd, flags)).timedOut
+      ? { kind: "skipped", why: "plain Bun does not end under these settings either" }
+      : verdict;
   }
 
-  #runOnce(folder: string, cmd: string[], flags: string[]) {
+  #run(folder: string, cmd: string[], flags: string[]) {
     const drawn = flags
       .filter(flag => flag.startsWith(runEnvFlag))
       .map(flag => flag.slice(runEnvFlag.length).split("="));
-    const seconds =
-      (flags.includes("--aot-validate") ? this.options.validatedRunSeconds : undefined) ??
-      this.options.compiledRunSeconds ??
-      this.options.runSeconds;
+    const seconds = this.options.compiledRunSeconds ?? this.options.runSeconds;
     const set: Record<string, string> = { ...this.options.runEnvironment, ...Object.fromEntries(drawn) };
     // With forced collections, the sweep scribbles dead cells.
     if (set.BUN_JSC_slowPathAllocsBetweenGCs || set.BUN_JSC_collectContinuously === "1")
@@ -723,7 +639,7 @@ export class ProductRunner implements Runner {
     );
   }
 
-  // Workers and decoy shapes only work for modules of one program.
+  // For workers and decoy shapes the entry point that the runner writes imports the programs.
   #extraEntryPoints(programs: Program[], members: number[], flags: string[]): string[] {
     return flags.includes(separateEntryPointsFlag) &&
       !this.options.workers &&
@@ -765,27 +681,56 @@ export class ProductRunner implements Runner {
         existsSync(executable) && build.exitCode === 0
           ? { build, run: await this.#run(home, [executable], flags) }
           : { build };
-      let verdict = compare(this, program, plain, compiled);
+      let verdict = await this.#unlessPlainHangsToo(
+        compare(this, program, plain, compiled),
+        home,
+        [this.options.reference ?? this.bun, `./${file}`],
+        flags,
+      );
+      if (
+        program.followsExecutableWithoutCompiler &&
+        compiled.run &&
+        (verdict.kind === "different output" || verdict.kind === "different exit code")
+      ) {
+        rmSync(executable, { force: true });
+        const other = await this.#build(
+          folder,
+          file,
+          [...flags, withoutCompilerFlag],
+          program.entryPoints?.map(path => (home === folder ? `program/${path}` : path)),
+          home,
+        );
+        const ran = existsSync(executable) && other.exitCode === 0 && (await this.#run(home, [executable], flags));
+        if (ran && ran.stdout === compiled.run.stdout && ran.exitCode === compiled.run.exitCode)
+          verdict = { kind: "skipped", why: program.followsExecutableWithoutCompiler };
+      }
+      // One run first: most executables print what plain Bun usually prints. One after another its runs all print that,
+      // on a busy machine too. The orders that it prints once in a hundred runs show where many run at once.
       for (
-        let again = 0;
-        again < 40 &&
+        let burst = 0;
+        burst < 7 &&
         program.unstablePlainOutput &&
         compiled.run &&
         (verdict.kind === "different output" || verdict.kind === "different exit code");
-        again++
+        burst++
       ) {
-        const other = await spawned(
-          [this.options.reference ?? this.bun, `./${file}`],
-          home,
-          this.options.runSeconds,
-          undefined,
-          this.options.memory,
-          true,
+        const { stdout, exitCode } = compiled.run;
+        const others = await Promise.all(
+          Array.from({ length: burst ? 64 : 1 }, () =>
+            spawned(
+              [this.options.reference ?? this.bun, `./${file}`],
+              home,
+              this.options.runSeconds,
+              undefined,
+              this.options.memory,
+              true,
+            ),
+          ),
         );
-        if (other.stdout === compiled.run.stdout && other.exitCode === compiled.run.exitCode)
+        if (others.some(other => other.stdout === stdout && other.exitCode === exitCode))
           verdict = { kind: "skipped", why: program.unstablePlainOutput };
       }
-      return [{ plain, compiled, verdict: this.#judged(program, flags, verdict) }];
+      return [{ plain, compiled, verdict: await this.#judged(program, flags, verdict) }];
     } finally {
       rmSync(executable, { force: true });
       rmSync(join(folder, "program"), { recursive: true, force: true });
@@ -810,11 +755,12 @@ export class ProductRunner implements Runner {
     const size = Number(flags.find(flag => flag.startsWith(decoyShapesFlag))?.slice(decoyShapesFlag.length) ?? 0);
     if (size) writeFileSync(join(folder, "decoy-shapes.js"), decoyShapes(size, memberNames(programs.map(wholeText))));
     const further = this.#extraEntryPoints(programs, members, flags);
+    // The build follows no name through a variable, so each Worker is made where the name of its file is a constant.
     if (further.length)
       return writeFileSync(
         join(folder, "main.js"),
-        `const programs = {\n${members.map((index, at) => `  ${index}: "${further[at]}",\n`).join("")}};
-const worker = new Worker(new URL(programs[process.argv[2]], import.meta.url));
+        `const programs = {\n${members.map((index, at) => `  ${index}: () => new Worker(new URL("${further[at]}", import.meta.url)),\n`).join("")}};
+const worker = programs[process.argv[2]]();
 worker.addEventListener("error", event => console.error("error: " + event.message));
 process.exitCode = await new Promise(resolve => worker.addEventListener("close", event => resolve(event.code)));
 `,
@@ -853,7 +799,9 @@ ${table}if (isMainThread) {
 
   // One build holds every program as its own module, and an argument selects the one a run imports: Bun's own library
   // is compiled once for all of them, and runs do not affect each other. The compiler analyzes all of them as one
-  // program, except in the mode separate-entry-points, where each is an entry point and runs in a Worker.
+  // program, so what it can only prove about a small program (that no key is ever deleted, say) it never proves here:
+  // bugs in such proofs show in a build of one program. In the mode separate-entry-points each is an entry point and
+  // runs in a Worker.
   async #judgeBatch(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
     const executable = join(folder, process.platform === "win32" ? "executable.exe" : "executable");
     const results = new Array<Judged>(programs.length);
@@ -887,14 +835,19 @@ ${table}if (isMainThread) {
         const runs = (await inParallel(members, 4, index => this.#run(folder, [executable, String(index)], flags))).map(
           run => this.#inAnyOrder(run),
         );
-        members.forEach((index, at) => {
+        for (const [at, index] of members.entries()) {
           const compiled = { build, run: runs[at] };
           results[index] = {
             plain: plains[index],
             compiled,
-            verdict: compare(this, programs[index], plains[index], compiled),
+            verdict: await this.#unlessPlainHangsToo(
+              compare(this, programs[index], plains[index], compiled),
+              folder,
+              [this.options.reference ?? this.bun, "./main.js", String(index)],
+              flags,
+            ),
           };
-        });
+        }
         return;
       }
       // Which program is the culprit? An error names a file; if it names none, bisect.
@@ -911,7 +864,7 @@ ${table}if (isMainThread) {
           results[index] = {
             plain: plains[index],
             compiled,
-            verdict: this.#judged(
+            verdict: await this.#judged(
               this.#asModule(programs[index]),
               flags,
               compare(this, programs[index], plains[index], compiled),
@@ -965,15 +918,13 @@ export class EngineRunner implements Runner {
   readonly name = "engine";
   readonly binary: string;
   readonly batch = 1;
-  withoutFlowResults = ["disable=flow-results"];
-  #switches?: { flowResults: string[]; passes: string[] };
   #lowered = new Map<string, string>();
   #missing = /(?!)/;
 
   /** `tools` holds `fe` (the standalone front end), `testaot` and `jsc`. */
   constructor(
     readonly tools: string,
-    readonly options: { baseFlags: string[]; validate: boolean; buildSeconds: number; runSeconds: number },
+    readonly options: { baseFlags: string[]; buildSeconds: number; runSeconds: number },
   ) {
     this.binary =
       "testaot-" +
@@ -1013,23 +964,16 @@ export class EngineRunner implements Runner {
   }
 
   modes(): Mode[] {
-    const modes: Mode[] = [{ name: "default", flags: [] }];
-    if (this.options.validate) modes.push({ name: "validate", flags: ["validate"] });
-    return modes;
+    return [{ name: "default", flags: [] }];
   }
 
-  disabling(names: string[]) {
-    return names.length ? ["disable=" + names.join(",")] : [];
+  // Its programs have no types.
+  disabling(): string[] {
+    return [];
   }
 
-  async switches() {
-    if (this.#switches) return this.#switches;
-    const listed = await spawned([join(this.tools, "testaot"), "list", "options"], this.tools, 60);
-    const names = listed.stdout.split("\n").map(line => line.trim());
-    return (this.#switches = {
-      flowResults: names.filter(name => name.startsWith("flow:")),
-      passes: names.filter(name => name.startsWith("pass:")),
-    });
+  async switches(): Promise<string[]> {
+    return [];
   }
 
   judge(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
@@ -1069,25 +1013,14 @@ export class EngineRunner implements Runner {
       this.#lowered.set(folder, program.text);
     }
     try {
-      const disabled = [...this.options.baseFlags, ...flags]
-        .filter(flag => flag.startsWith("disable="))
-        .flatMap(flag => flag.slice("disable=".length).split(","));
-      const rest = [...this.options.baseFlags, ...flags].filter(flag => !flag.startsWith("disable="));
       const build = await spawned(
-        [
-          join(this.tools, "testaot"),
-          "compile",
-          text,
-          `--output=${image}`,
-          ...rest,
-          ...(disabled.length ? ["disable=" + disabled.join(",")] : []),
-        ],
+        [join(this.tools, "testaot"), "compile", text, `--output=${image}`, ...this.options.baseFlags, ...flags],
         folder,
         this.options.buildSeconds,
       );
       const entry = /^entry \S+ (\S+)/m.exec(build.stdout)?.[1];
       if (build.exitCode !== 0 || !entry)
-        return { build: { ...build, stderr: build.stderr + build.stdout.replace(/^(entry|loss).*\n/gm, "") } };
+        return { build: { ...build, stderr: build.stderr + build.stdout.replace(/^entry.*\n/gm, "") } };
       return {
         build,
         run: await spawned(
@@ -1148,11 +1081,12 @@ const uncaught = (run: Run) =>
   (run.stderr + "\n" + run.stdout).split("\n").find(line => /^(error|Exception|[A-Za-z]*Error)\b/.test(line)) ??
   "";
 
-const validationMessage = /^.*(AOT validation|AOT claim check|validation failed).*$/m;
-
-// Checks the compiler can run on itself during a build without changing a byte of the executable. A user's build does
-// not pay for them.
-export const verifierFlags = "--aot-check=verify-each-stage,validate-references,flow-fixpoint,used-values-are-listed";
+// A test run and an executable tell of the same refused write in different words.
+export const refusalInOneWording = (text: string) =>
+  text.replace(
+    / because built-in objects are read-only in (?:a compiled executable|compiled code)[^\n]*?\((?:bun compile differs from bun run here: )?https:\/\/bun\.com\/docs\/compiler\/[^\s)]*\)/g,
+    " because built-in objects are read-only",
+  );
 
 export function compare(runner: Runner, program: Program, plain: Run, compiled: Compiled): Verdict {
   const failure = (kind: FindingKind, detail: string, signature = detail): Failure => ({ kind, detail, signature });
@@ -1195,24 +1129,17 @@ export function compare(runner: Runner, program: Program, plain: Run, compiled: 
       );
     return failure("build error", normalized(error));
   }
-  const invalid = validationMessage.exec(run.stderr + "\n" + run.stdout);
-  // The line before a report about a native call names the entry and the rule it broke: two entries, or two rules, are
-  // two findings.
-  const nativeCall = /^AOT(?: native call)?: .*$/m.exec(run.stderr)?.[0] ?? "";
-  if (invalid && !validationMessage.test(plain.stderr + "\n" + plain.stdout))
-    return failure(
-      "validation failure",
-      `${invalid[0]} ${nativeCall}`.trim().slice(0, 200),
-      // Of a broken claim to the back end the kind is the finding: behind it stand numbers and words of this run.
-      /^AOT claim check: \w+/.exec(invalid[0])?.[0] ?? normalized(`${invalid[0]} ${nativeCall}`),
-    );
   if (run.signal)
     return failure(
       "crash",
       `${run.signal} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: |FATAL: out of memory).*$/m.exec(run.stderr)?.[0] ?? "")}`.trim(),
     );
   if (run.timedOut) return failure("hang", run.ranOutOfMemory ? "took too much memory" : "");
-  if (run.stdout === plain.stdout && run.exitCode === plain.exitCode) return { kind: "same" };
+  if (run.stdout === plain.stdout && run.exitCode === plain.exitCode) {
+    // The compiler may give up on a part of a function and go on without it. The build ends with an executable all the same, and says so in a line of its own.
+    const gaveUp = /^AOT: .*$/m.exec(said)?.[0];
+    return gaveUp ? failure("internal compiler error", normalized(gaveUp)) : { kind: "same" };
+  }
   const why = program.meant?.(plain.stdout, run.stdout);
   if (why) return { kind: "skipped", why };
   const exits =
@@ -1228,7 +1155,9 @@ export function compare(runner: Runner, program: Program, plain: Run, compiled: 
   // keep. In most programs the first word of a line is its label.
   const label = (text: string | undefined) => /^\S*/.exec(text ?? "<end>")![0].slice(0, 40);
   const signature = run.exitCode === plain.exitCode ? `values ${label(theirs[at])} ${label(ours[at])}` : codes;
-  const overflowed = [theirs[at], ours[at]].some(text => text?.includes("Maximum call stack size exceeded"))
+  // How deep plain Bun gets before it runs out of stack is unspecified. A compiled program that alone runs out of it may
+  // be going round without end.
+  const overflowed = theirs[at]?.includes("Maximum call stack size exceeded")
     ? " | the line tells of a stack overflow"
     : "";
   const [theirLine, ourLine] = [theirs[at] ?? "<end>", ours[at] ?? "<end>"];

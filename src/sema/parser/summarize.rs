@@ -4,7 +4,7 @@
 
 mod compile;
 
-pub use compile::{CompileParseOptions, parse_for_compile};
+pub use compile::{CompileParseOptions, parse_for_compile, parse_for_compile_in};
 
 use crate::{Options, Part, Rejection, Scratch};
 use bun_alloc::Arena;
@@ -89,8 +89,8 @@ struct ParseSettings<'a> {
     compiles: bool,
     /// `Options::reads_as_bun_run`
     reads_as_bun_run: bool,
-    /// `Options::keeps_function_directives`
-    keeps_function_directives: bool,
+    /// `Options::ignores_pure_comments`
+    ignores_pure_comments: bool,
     /// `Options::skips_function_blocks`
     skips_function_blocks: bool,
     /// `Options::reads_module_statements_alone`
@@ -269,7 +269,7 @@ fn parse_file_as(
         attach_comments: how.attach_comments,
         compiles: how.compiles,
         reads_as_bun_run: how.reads_as_bun_run,
-        keeps_function_directives: how.keeps_function_directives,
+        ignores_pure_comments: how.ignores_pure_comments,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
     };
@@ -452,7 +452,7 @@ pub fn summarize<'s>(
         attach_comments: false,
         compiles: false,
         reads_as_bun_run,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };
@@ -480,33 +480,27 @@ pub fn summarize_top_level<'s>(
     {
         return None;
     }
-    for reads_module_statements_alone in [true, false] {
-        let how = ParseSettings {
-            dialect: Dialect::default(),
-            path,
-            script_kind,
-            experimental_decorators,
-            every_file_is_a_module,
-            jsdoc: JsDoc::Read,
-            attach_comments: false,
-            compiles: false,
-            reads_as_bun_run,
-            keeps_function_directives: false,
-            skips_function_blocks: true,
-            reads_module_statements_alone,
-        };
-        let file = SCRATCH.with_borrow_mut(|all| {
-            let scratch = all[0].get_or_insert_default();
-            parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
-        });
-        if !file.has_errors
-            && !file.has_parse_diagnostics
-            && !file.has_parse_or_grammar_diagnostics()
-        {
-            return Some(file);
-        }
-    }
-    None
+    let how = ParseSettings {
+        dialect: Dialect::default(),
+        path,
+        script_kind,
+        experimental_decorators,
+        every_file_is_a_module,
+        jsdoc: JsDoc::Read,
+        attach_comments: false,
+        compiles: false,
+        reads_as_bun_run,
+        ignores_pure_comments: false,
+        skips_function_blocks: true,
+        reads_module_statements_alone: true,
+    };
+    let file = SCRATCH.with_borrow_mut(|all| {
+        let scratch = all[0].get_or_insert_default();
+        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
+    });
+    let is_sound =
+        !file.has_errors && !file.has_parse_diagnostics && !file.has_parse_or_grammar_diagnostics();
+    is_sound.then_some(file)
 }
 
 /// [`summarize`] for a tool that follows a parser other than `tsc`'s and doesn't read types from JSDoc comments.
@@ -554,7 +548,7 @@ pub fn summarize_in<'s>(
         attach_comments: false,
         compiles: false,
         reads_as_bun_run: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };
@@ -576,8 +570,7 @@ impl<'s> Summary<'_, 's> {
         match self {
             Summary::InArena(file) => *file,
             Summary::InPlace(file) => {
-                let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
-                *file = emptied;
+                let mut in_arena = file.move_to_arena(arena, session);
                 in_arena.finish_nodes();
                 in_arena
             }
@@ -649,7 +642,7 @@ pub fn with_summary_in_place<'s, R>(
         attach_comments,
         compiles: false,
         reads_as_bun_run: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };

@@ -5,8 +5,10 @@ use bun_trim::{
 };
 
 use super::{
-    EngineResult, FeatureUseRecord, LocaleUseRecord, TextRange, UnseenCodeRecord, feature_of,
+    EngineResult, FeatureUseRecord, LocaleUseRecord, TextRange, UnseenCodeRecord, builtin_of,
+    feature_of,
 };
+use crate::builtins::id::{BuiltinId, Feature};
 use crate::ir::generated::{FeatureUseKind, LocaleUseKind, UnseenCodeCause as EngineCause};
 
 pub fn used_features(result: &EngineResult) -> UsedFeatures {
@@ -32,11 +34,16 @@ fn from_records(
     let mut named = FeatureSet::EMPTY;
     let mut used = Vec::new();
     for (index, record) in features.iter().enumerate() {
-        // An undeclared word can stand for any feature, so nothing may be removed.
         let Some(feature) = feature_of(record.feature) else {
             return UsedFeatures::default();
         };
-        let is_named = record.kind == FeatureUseKind::Named;
+        if record.kind == FeatureUseKind::NamedAtRunTime || is_entered_by_bun_build(record) {
+            continue;
+        }
+        let is_named = matches!(
+            record.kind,
+            FeatureUseKind::Named | FeatureUseKind::FoundByName
+        );
         if is_named {
             named.insert(feature);
         }
@@ -62,7 +69,21 @@ fn from_records(
         causes: causes.collect(),
         locales: used_locales(locales, text_of),
         starts_workers_from_unseen_code: true,
+        names_bun_build: features.iter().any(names_bun_build),
     }
+}
+
+fn is_entered_by_bun_build(record: &FeatureUseRecord) -> bool {
+    let stands_outside_programs =
+        |feature| Feature::all_outside_compiled_programs().contains(feature);
+    builtin_of(record.builtin).is_none_or(|builtin| builtin == BuiltinId::BunBuild)
+        && feature_of(record.feature).is_some_and(stands_outside_programs)
+}
+
+fn names_bun_build(record: &FeatureUseRecord) -> bool {
+    record.kind == FeatureUseKind::Named
+        && builtin_of(record.builtin).is_some()
+        && is_entered_by_bun_build(record)
 }
 
 fn cause_of(cause: EngineCause) -> UnseenCodeCause {

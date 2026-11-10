@@ -1,10 +1,9 @@
-// The helpers of TypeScript, Babel, SWC, esbuild, rolldown and Bun that the compiler reads, in every form that was published.
-
 use super::{PublishedFunction, Reference};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Helper {
     ExportStar,
+    ExportStarInLine,
     CreateBinding,
     ClassPrivateFieldGet,
     ClassPrivateFieldSet,
@@ -25,11 +24,17 @@ pub enum Helper {
     ImportDefault,
     DefineProperties,
     CreateClass,
+    ToPropertyKey,
+    ToPrimitive,
+    Typeof,
+    DefineNormalProperty,
+    PublicField,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Shape {
     ExportStarBindsNamesTheTargetLacks,
+    ExportStarInLineDefinesGettersForNamesThatDiffer,
     CreateBindingDefinesGetter,
     CreateBindingReusesDescriptor,
     CreateBindingCopiesValue,
@@ -68,17 +73,46 @@ pub enum Shape {
     ImportStarAnswersMarkedValueOrBindsItsOwnNames,
     ImportDefaultAnswersMarkedValueOrWrapsIt,
     DefinePropertiesOfDescriptors,
+    DefinePropertiesOfDescriptorsUnderConvertedKeys,
     CreateClassDefinesBothSides,
     CreateClassDefinesBothSidesAndLocksPrototype,
+    ToPropertyKeyAnswersSymbolOrText,
+    ToPrimitiveAsksMethodOfObject,
+    TypeofAnswersSymbolForSymbols,
+    DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
+    PublicFieldAnswersValue,
+    PublicFieldAnswersWhatDefiningAnswers,
 }
 
 impl Shape {
     pub const fn helper(self) -> Helper {
         match self {
             Shape::ExportStarBindsNamesTheTargetLacks => Helper::ExportStar,
+            Shape::ExportStarInLineDefinesGettersForNamesThatDiffer => Helper::ExportStarInLine,
             Shape::DefinePropertiesOfDescriptors => Helper::DefineProperties,
+            Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys => Helper::DefineProperties,
+            Shape::ToPropertyKeyAnswersSymbolOrText => Helper::ToPropertyKey,
+            Shape::ToPrimitiveAsksMethodOfObject => Helper::ToPrimitive,
+            Shape::TypeofAnswersSymbolForSymbols => Helper::Typeof,
+            Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot => {
+                Helper::DefineNormalProperty
+            }
+            Shape::PublicFieldAnswersValue => Helper::PublicField,
+            Shape::PublicFieldAnswersWhatDefiningAnswers => Helper::PublicField,
             Shape::CreateClassDefinesBothSides => Helper::CreateClass,
             Shape::CreateClassDefinesBothSidesAndLocksPrototype => Helper::CreateClass,
+            Shape::CommonJsRunsCallbackOnce => Helper::CommonJs,
+            Shape::CommonJsRunsCallbackOnceThenDropsIt => Helper::CommonJs,
+            Shape::CommonJsRunsFirstKeyOnce => Helper::CommonJs,
+            Shape::CommonJsRunsFirstOwnNameOnce => Helper::CommonJs,
+            Shape::CommonJsRunsFirstOwnNameOnceThenDropsIt => Helper::CommonJs,
+            Shape::CommonJsRunsFirstOwnNameAgainAfterThrow => Helper::CommonJs,
+            Shape::EsmRunsFunctionOnce => Helper::Esm,
+            Shape::EsmRunsFunctionOnceRethrows => Helper::Esm,
+            Shape::EsmRunsFirstKeyOnce => Helper::Esm,
+            Shape::EsmRunsFirstOwnNameOnce => Helper::Esm,
+            Shape::EsmRunsFirstOwnNameOnceRethrows => Helper::Esm,
+            Shape::RequireFactoryPrefersRequire => Helper::Require,
             Shape::CreateBindingDefinesGetter => Helper::CreateBinding,
             Shape::CreateBindingReusesDescriptor => Helper::CreateBinding,
             Shape::CreateBindingCopiesValue => Helper::CreateBinding,
@@ -94,18 +128,6 @@ impl Shape {
             Shape::ExportDefinesGettersAndBoundSetters => Helper::Export,
             Shape::ExportSetterStoresBoundReturnValue => Helper::ExportSetter,
             Shape::ReturnValueReturnsArgument => Helper::ReturnValue,
-            Shape::CommonJsRunsCallbackOnce => Helper::CommonJs,
-            Shape::CommonJsRunsCallbackOnceThenDropsIt => Helper::CommonJs,
-            Shape::CommonJsRunsFirstKeyOnce => Helper::CommonJs,
-            Shape::CommonJsRunsFirstOwnNameOnce => Helper::CommonJs,
-            Shape::CommonJsRunsFirstOwnNameOnceThenDropsIt => Helper::CommonJs,
-            Shape::CommonJsRunsFirstOwnNameAgainAfterThrow => Helper::CommonJs,
-            Shape::EsmRunsFunctionOnce => Helper::Esm,
-            Shape::EsmRunsFunctionOnceRethrows => Helper::Esm,
-            Shape::EsmRunsFirstKeyOnce => Helper::Esm,
-            Shape::EsmRunsFirstOwnNameOnce => Helper::Esm,
-            Shape::EsmRunsFirstOwnNameOnceRethrows => Helper::Esm,
-            Shape::RequireFactoryPrefersRequire => Helper::Require,
             Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks => Helper::CopyProperties,
             Shape::ToCommonJsCopiesOntoNewMarkedObject => Helper::ToCommonJs,
             Shape::ToEsModuleShowsUnmarkedValueAsDefault => Helper::ToEsModule,
@@ -150,7 +172,30 @@ const GET_PROTOTYPE_OF: (&str, Reference) = (
 const COPY_PROPERTIES: (&str, Reference) =
     ("__copyProps", Reference::Helper(Helper::CopyProperties));
 
+const DEFINE_NORMAL_PROPERTY: (&str, Reference) = (
+    "__defNormalProp",
+    Reference::Helper(Helper::DefineNormalProperty),
+);
+
 pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
+    PublishedFunction {
+        shape: Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
+        text: "(obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value",
+        references: &[DEFINE_PROPERTY],
+        origin: "esbuild 0.11 and after; bun",
+    },
+    PublishedFunction {
+        shape: Shape::PublicFieldAnswersValue,
+        text: "(obj, key, value) => {\n__defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value);\nreturn value;\n}",
+        references: &[DEFINE_NORMAL_PROPERTY],
+        origin: "esbuild 0.11 to 0.20",
+    },
+    PublishedFunction {
+        shape: Shape::PublicFieldAnswersWhatDefiningAnswers,
+        text: "(obj, key, value) => __defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value)",
+        references: &[DEFINE_NORMAL_PROPERTY],
+        origin: "esbuild 0.21 and after; bun",
+    },
     PublishedFunction {
         shape: Shape::DefinePropertiesOfDescriptors,
         text: "function(target, props) {\nfor (var i = 0; i < props.length; i++) {\nvar descriptor = props[i];\ndescriptor.enumerable = descriptor.enumerable || false;\ndescriptor.configurable = true;\nif (\"value\" in descriptor) descriptor.writable = true;\nObject.defineProperty(target, descriptor.key, descriptor);\n}\n}",
@@ -176,10 +221,124 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         origin: "babel 7.18 and after",
     },
     PublishedFunction {
+        shape: Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys,
+        text: "function(target, props) {\nfor (var i = 0; i < props.length; i++) {\nvar descriptor = props[i];\ndescriptor.enumerable = descriptor.enumerable || false;\ndescriptor.configurable = true;\nif (\"value\" in descriptor) descriptor.writable = true;\nObject.defineProperty(target, _toPropertyKey(descriptor.key), descriptor);\n}\n}",
+        references: &[("_toPropertyKey", Reference::Helper(Helper::ToPropertyKey))],
+        origin: "babel 7.20.6 to 7.24.5",
+    },
+    PublishedFunction {
+        shape: Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys,
+        text: "function(e, r) {\nfor (var t = 0; t < r.length; t++) {\nvar o = r[t];\no.enumerable = o.enumerable || !1, o.configurable = !0, \"value\" in o && (o.writable = !0), Object.defineProperty(e, _toPropertyKey(o.key), o);\n}\n}",
+        references: &[("_toPropertyKey", Reference::Helper(Helper::ToPropertyKey))],
+        origin: "babel 7.24.6 and after",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesBothSidesAndLocksPrototype,
+        text: "function(e, r, t) {\nreturn r && _defineProperties(e.prototype, r), t && _defineProperties(e, t), Object.defineProperty(e, \"prototype\", { writable: !1 }), e;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7.24.6 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ToPropertyKeyAnswersSymbolOrText,
+        text: "function(arg) {\nvar key = _toPrimitive(arg, \"string\");\nreturn _typeof(key) === \"symbol\" ? key : String(key);\n}",
+        references: &[
+            ("_toPrimitive", Reference::Helper(Helper::ToPrimitive)),
+            ("_typeof", Reference::Helper(Helper::Typeof)),
+        ],
+        origin: "babel 7.20.6 to 7.23",
+    },
+    PublishedFunction {
+        shape: Shape::ToPropertyKeyAnswersSymbolOrText,
+        text: "function(t) {\nvar i = _toPrimitive(t, \"string\");\nreturn \"symbol\" == _typeof(i) ? i : String(i);\n}",
+        references: &[
+            ("_toPrimitive", Reference::Helper(Helper::ToPrimitive)),
+            ("_typeof", Reference::Helper(Helper::Typeof)),
+        ],
+        origin: "babel 7.24.0 to 7.24.4",
+    },
+    PublishedFunction {
+        shape: Shape::ToPropertyKeyAnswersSymbolOrText,
+        text: "function(t) {\nvar i = _toPrimitive(t, \"string\");\nreturn \"symbol\" == _typeof(i) ? i : i + \"\";\n}",
+        references: &[
+            ("_toPrimitive", Reference::Helper(Helper::ToPrimitive)),
+            ("_typeof", Reference::Helper(Helper::Typeof)),
+        ],
+        origin: "babel 7.24.5 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(input, hint) {\nif (_typeof(input) !== \"object\" || input === null) return input;\nvar prim = input[Symbol.toPrimitive];\nif (prim !== undefined) {\nvar res = prim.call(input, hint || \"default\");\nif (_typeof(res) !== \"object\") return res;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (hint === \"string\" ? String : Number)(input);\n}",
+        references: &[("_typeof", Reference::Helper(Helper::Typeof))],
+        origin: "babel 7.20.6 to 7.23",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(t, r) {\nif (\"object\" != _typeof(t) || !t) return t;\nvar e = t[Symbol.toPrimitive];\nif (void 0 !== e) {\nvar i = e.call(t, r || \"default\");\nif (\"object\" != _typeof(i)) return i;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (\"string\" === r ? String : Number)(t);\n}",
+        references: &[("_typeof", Reference::Helper(Helper::Typeof))],
+        origin: "babel 7.24.0 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ToPropertyKeyAnswersSymbolOrText,
+        text: "function(arg) {\nvar key = _toPrimitive(arg, \"string\");\nreturn typeof key === \"symbol\" ? key : String(key);\n}",
+        references: &[("_toPrimitive", Reference::Helper(Helper::ToPrimitive))],
+        origin: "babel 7.20.6 to 7.23, where typeof is not transformed: luxon 3",
+    },
+    PublishedFunction {
+        shape: Shape::ToPropertyKeyAnswersSymbolOrText,
+        text: "function(t) {\nvar i = _toPrimitive(t, \"string\");\nreturn \"symbol\" == typeof i ? i : i + \"\";\n}",
+        references: &[("_toPrimitive", Reference::Helper(Helper::ToPrimitive))],
+        origin: "babel 7.24.5 and after, where typeof is not transformed: validator 13",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(input, hint) {\nif (typeof input !== \"object\" || input === null) return input;\nvar prim = input[Symbol.toPrimitive];\nif (prim !== undefined) {\nvar res = prim.call(input, hint || \"default\");\nif (typeof res !== \"object\") return res;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (hint === \"string\" ? String : Number)(input);\n}",
+        references: &[],
+        origin: "babel 7.20.6 to 7.23, where typeof is not transformed: luxon 3",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(t, r) {\nif (\"object\" != typeof t || !t) return t;\nvar e = t[Symbol.toPrimitive];\nif (void 0 !== e) {\nvar i = e.call(t, r || \"default\");\nif (\"object\" != typeof i) return i;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (\"string\" === r ? String : Number)(t);\n}",
+        references: &[],
+        origin: "babel 7.24.0 and after, where typeof is not transformed: validator 13",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(t, e) {\nif (\"object\" != _typeof(t) || !t) return t;\nvar r;\nif (\"undefined\" != typeof Symbol && void 0 !== (r = t[Symbol.toPrimitive])) {\nvar i = r.call(t, e || \"default\");\nif (\"object\" != _typeof(i)) return i;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (\"string\" === e ? String : Number)(t);\n}",
+        references: &[("_typeof", Reference::Helper(Helper::Typeof))],
+        origin: "@babel/runtime 7.29",
+    },
+    PublishedFunction {
+        shape: Shape::TypeofAnswersSymbolForSymbols,
+        text: "function _typeof(o) {\n\"@babel/helpers - typeof\";\nreturn _typeof = \"function\" == typeof Symbol && \"symbol\" == typeof Symbol.iterator ? function (o) {\nreturn typeof o;\n} : function (o) {\nreturn o && \"function\" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? \"symbol\" : typeof o;\n}, _typeof(o);\n}",
+        references: &[],
+        origin: "babel 7.16 and after",
+    },
+    PublishedFunction {
+        shape: Shape::TypeofAnswersSymbolForSymbols,
+        text: "function _typeof(obj) {\nif (typeof Symbol === \"function\" && typeof Symbol.iterator === \"symbol\") {\n_typeof = function _typeof(obj) {\nreturn typeof obj;\n};\n} else {\n_typeof = function _typeof(obj) {\nreturn obj && typeof Symbol === \"function\" && obj.constructor === Symbol && obj !== Symbol.prototype ? \"symbol\" : typeof obj;\n};\n}\nreturn _typeof(obj);\n}",
+        references: &[],
+        origin: "babel 7.0 to 7.7: debug 4, @webassemblyjs 1.11",
+    },
+    PublishedFunction {
+        shape: Shape::TypeofAnswersSymbolForSymbols,
+        text: "function _typeof(obj) {\n\"@babel/helpers - typeof\";\nif (typeof Symbol === \"function\" && typeof Symbol.iterator === \"symbol\") {\n_typeof = function _typeof(obj) {\nreturn typeof obj;\n};\n} else {\n_typeof = function _typeof(obj) {\nreturn obj && typeof Symbol === \"function\" && obj.constructor === Symbol && obj !== Symbol.prototype ? \"symbol\" : typeof obj;\n};\n}\nreturn _typeof(obj);\n}",
+        references: &[],
+        origin: "babel 7.8 to 7.15",
+    },
+    PublishedFunction {
         shape: Shape::ExportStarBindsNamesTheTargetLacks,
         text: "function(m, o) {\nfor (var p in m) if (p !== \"default\" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);\n}",
         references: &[("__createBinding", Reference::Helper(Helper::CreateBinding))],
         origin: "tslib 2.0.1 to 2.8.1; typescript 4.0 to 6.0",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInLineDefinesGettersForNamesThatDiffer,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nif (key in exports && exports[key] === _x[key]) return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function () {\nreturn _x[key];\n}\n});\n}",
+        references: &[("_x", Reference::Holder)],
+        origin: "babel 7.9 and after, a file without names of its own",
     },
     PublishedFunction {
         shape: Shape::CreateBindingDefinesGetter,

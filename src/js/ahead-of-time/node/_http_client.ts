@@ -270,6 +270,11 @@ declare global {
   }
 }
 
+// Compiled ahead of time, a store that names the property makes it a field of the class, and every read of the name on another message first takes that message for a request of a client.
+function storeUnderName(request: $Node.ClientRequest, name: string, value: unknown) {
+  (request as any)[name] = value;
+}
+
 function ClientRequest(
   this: $Node.ClientRequest,
   input?: string | URL | $Node.ClientRequestOptions | ReturnType<typeof urlToHttpOptions> | null,
@@ -397,7 +402,7 @@ function ClientRequest(
     validateBoolean(insecureHTTPParser, "options.insecureHTTPParser");
   }
 
-  this.insecureHTTPParser = insecureHTTPParser;
+  storeUnderName(this, "insecureHTTPParser", insecureHTTPParser);
 
   const httpValidation = options.httpValidation;
   if (httpValidation !== undefined) {
@@ -411,7 +416,7 @@ function ClientRequest(
     }
   }
 
-  this.httpValidation = httpValidation;
+  storeUnderName(this, "httpValidation", httpValidation);
 
   const joinDuplicateHeaders = options.joinDuplicateHeaders;
   if (joinDuplicateHeaders !== undefined) {

@@ -1,0 +1,253 @@
+# In a file without types a literal that begins with the spread of a parameter, of which the callers' text lets one written literal be expected, and that ADDS a name behind
+# the spread is born with a layout that lists the names of that literal and the names written. A literal that only writes over names of the source stays a copy of the source.
+# Wherever else a parameter is spread into a literal that has a layout, behind names that are written or behind another spread, the names of the literal expected of it are
+# listed too: `{ kind: "plain", ...props }` and `{ ...defaults, ...props }` hold what the callers write in slots.
+# All of it holds for a function whose name stands nowhere but where it is called: `loose` is also handed on as a value, so somebody that the text does not show may call it
+# with anything, and its literal stays the copy that it was.
+# -- source: main.js
+# function step(state, i) { return { ...state, busy: i > 1, more: i }; }
+# function same(state, i) { return { ...state, count: i }; }
+# function lead(state, i) { return { ahead: i, ...state }; }
+# function twice(state, rest, i) { return { ...state, busy: i, ...rest }; }
+# function loose(state, i) { return { ...state, busy: i > 1, more: i }; }
+# var sum = 0; for (var i = 0; i < 4; i++) sum += step({ id: i, text: "t", count: 2, open: true }, i).more + same({ id: i, text: "t", count: 2, open: true }, i).count;
+# var other = Reflect.apply(loose, undefined, [JSON.parse('{"more":5,"zeta":1,"count":2}'), 9]);
+# print(sum, Object.keys(step({ id: 1, text: "t", count: 2, open: true }, 1)).join(), Object.keys(other).join(), other.more, Object.keys(same({ id: 1, text: "t", count: 2, open: true }, 1)).join());
+# print(Object.keys(lead({ id: 1, text: "t", count: 2, open: true }, 1)).join(), Object.keys(twice({ id: 1, text: "t", count: 2, open: true }, { wide: 1, busy: 2, tall: 3 }, 1)).join(), Object.keys(loose({ id: 1, text: "t", count: 2, open: true }, 1)).join());
+# -- end of source
+# RUN(LITERAL): print f1
+# LITERAL: = NewObject layout=L{{*}}
+# LITERAL: CopyDataProperties
+# LITERAL: PropDefine {{*}} key="busy"
+# LITERAL: PropDefine {{*}} key="more"
+# LITERAL: = FinishObject
+# RUN(OUT): print f1
+# OUT-NOT: = CopyObject
+# RUN(SAME): print f2
+# SAME: = CopyObject
+# SAME: PropDefine {{*}} key="count"
+# RUN(LOOSE): print f5
+# LOOSE: = CopyObject
+# LOOSE: PropDefine {{*}} key="busy"
+# LOOSE: PropDefine {{*}} key="more"
+# RUN(LISTED): print
+# LISTED: layout L{{*}}key="busy"{{*}}key="count"{{*}}key="id"{{*}}key="more"{{*}}key="open"{{*}}key="text"
+# RUN(AHEAD): print
+# AHEAD: layout L{{*}}key="ahead"{{*}}key="count"{{*}}key="id"{{*}}key="open"{{*}}key="text"
+# RUN(SECOND): print
+# SECOND: layout L{{*}}key="busy"{{*}}key="count"{{*}}key="id"{{*}}key="open"{{*}}key="tall"{{*}}key="text"{{*}}key="wide"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 12 id,text,count,open,busy,more more,zeta,count,busy 9 id,text,count,open
+# ANSWERS-NEXT: ahead,id,text,count,open id,text,count,open,busy,wide,tall id,text,count,open,busy,more
+# ANSWERS-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/ReflectObject.ts" displayPath="/$bun/js/engine/ReflectObject.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 module=m0 position=388 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired]}, {key="open" declared={type=anything} flags=[IsRequired]}, {key="text" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 3, 0, 2] place=388 ownFieldCount=4
+layout L1 module=m0 position=934 fields=[{key="busy" declared={type=anything} flags=[IsRequired]}, {key="tall" declared={type=anything} flags=[IsRequired]}, {key="wide" declared={type=anything} flags=[IsRequired]}] declaredOrder=[2, 0, 1] place=934 ownFieldCount=3
+layout L2 module=m0 flags=[IsNeverAllocated] place=0
+layout L3 module=m0 fields=[{key="ahead" declared={type=anything}}, {key="count" declared={type=anything}}, {key="id" declared={type=anything}}, {key="open" declared={type=anything}}, {key="text" declared={type=anything}}] declaredOrder=[0, 2, 4, 1, 3] place=0 ownFieldCount=5
+layout L4 module=m0 fields=[{key="busy" declared={type=anything}}, {key="count" declared={type=anything}}, {key="id" declared={type=anything}}, {key="open" declared={type=anything}}, {key="tall" declared={type=anything}}, {key="text" declared={type=anything}}, {key="wide" declared={type=anything}}] declaredOrder=[2, 5, 1, 3, 0, 6, 4] place=0 ownFieldCount=7
+layout L5 module=m0 fields=[{key="busy" declared={type=anything}}, {key="count" declared={type=anything}}, {key="id" declared={type=anything}}, {key="more" declared={type=anything}}, {key="open" declared={type=anything}}, {key="text" declared={type=anything}}] declaredOrder=[2, 5, 1, 4, 0, 3] place=0 ownFieldCount=6
+data d0 root=Object{layout=L0 members=[{key="id" value=Number{value=1}}, {key="text" value=String{value="t"}}, {key="count" value=Number{value=2}}, {key="open" value=Boolean{value=true}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="id" value=Number{value=1}}, {key="text" value=String{value="t"}}, {key="count" value=Number{value=2}}, {key="open" value=Boolean{value=true}}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="id" value=Number{value=1}}, {key="text" value=String{value="t"}}, {key="count" value=Number{value=2}}, {key="open" value=Boolean{value=true}}]} module=m0
+data d3 root=Object{layout=L0 members=[{key="id" value=Number{value=1}}, {key="text" value=String{value="t"}}, {key="count" value=Number{value=2}}, {key="open" value=Boolean{value=true}}]} module=m0
+data d4 root=Object{layout=L1 members=[{key="wide" value=Number{value=1}}, {key="busy" value=Number{value=2}}, {key="tall" value=Number{value=3}}]} module=m0
+data d5 root=Object{layout=L0 members=[{key="id" value=Number{value=1}}, {key="text" value=String{value="t"}}, {key="count" value=Number{value=2}}, {key="open" value=Boolean{value=true}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @0
+    v1 = NewClosure function=f1 @0
+    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} @0
+    v3 = NewClosure function=f2 @0
+    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f3 @0
+    v6 = Convert v5 declared={type=f3 flags=[IsFromCompiler]} @0
+    v7 = NewClosure function=f4 @0
+    v8 = Convert v7 declared={type=f4 flags=[IsFromCompiler]} @0
+    v9 = NewClosure function=f5 @0
+    v10 = Convert v9 declared={type=f5 flags=[IsFromCompiler]} @0
+    v11 = Integer @345
+    v12 = Convert v11 declared={type=undefined|number flags=[IsExpected]} @345
+    v13 = Integer @361
+    v14 = Convert v13 declared={type=undefined|number flags=[IsExpected]} @361
+    Jump -> next b1(v12, v14) @357
+  b1(v15, v16):
+    LoopHint @357
+    v18 = Integer integer=4 @368
+    v19 = Less v16, v18 @368
+    Branch v19 -> taken b2(), notTaken b3() @368
+  b2():
+    v20 = String string="t" @403
+    v21 = Integer integer=2 @415
+    v22 = Boolean boolean=true @424
+    v23 = NewObject -, v16, v20, v21, v22 layout=L0 fields=[1, 3, 0, 2] @388
+    v24 = FinishObject v23 @388
+    v25 = Call v2, -, v24, v16 calleeName="step" @383
+    v26 = PropGet v25 key="more" @433
+    v27 = String string="t" @462
+    v28 = Integer integer=2 @474
+    v29 = Boolean boolean=true @483
+    v30 = NewObject -, v16, v27, v28, v29 layout=L0 fields=[1, 3, 0, 2] @447
+    v31 = FinishObject v30 @447
+    v32 = Call v4, -, v31, v16 calleeName="same" @442
+    v33 = PropGet v32 key="count" @492
+    v34 = Add v26, v33 @442
+    v35 = Add v15, v34 @442
+    v36 = Convert v35 declared={type=undefined|number flags=[IsExpected]} @376
+    v37 = Increment v16 @371
+    v38 = Convert v37 declared={type=undefined|number flags=[IsExpected]} @371
+    Jump -> next b1(v36, v38) @371
+  b3():
+    v39 = Builtin builtin=Reflect @513
+    v40 = Builtin builtin=ReflectApply @513
+    v41 = Undefined @534
+    v42 = Builtin builtin=JSON @546
+    v43 = PropGet v42 key="parse" @546
+    v44 = Convert v43 declared={type=builtin(JSONParse) flags=[IsExpected]} @546
+    v45 = String string="{\"more\":5,\"zeta\":1,\"count\":2}" @557
+    v46 = Call v44, v42, v45 calleeKey="parse" calleeName="JSON.parse" @551
+    v47 = Integer integer=9 @591
+    v48 = NewArray v46, v47 contents=anything @545
+    v49 = Call v40, v39, v10, v41, v48 calleeName="Reflect.apply" @521
+    v50 = Builtin builtin=GlobalThis @596
+    v51 = PropGet v50 key="print" [isFreeName] @596
+    v52 = Builtin builtin=Object @607
+    v53 = Builtin builtin=ObjectKeys @607
+    v54 = Data data=d0 @624
+    v55 = Integer integer=1 @668
+    v56 = Call v2, -, v54, v55 calleeName="step" @619
+    v57 = Call v53, v52, v56 calleeName="Object.keys" @614
+    v58 = PropGet v57 key="join" @670
+    v59 = Call v58, v57 calleeKey="join" calleeName="join" @672
+    v60 = Builtin builtin=Object @680
+    v61 = Builtin builtin=ObjectKeys @680
+    v62 = Call v61, v60, v49 calleeName="Object.keys" @687
+    v63 = PropGet v62 key="join" @697
+    v64 = Call v63, v62 calleeKey="join" calleeName="join" @699
+    v65 = PropGet v49 key="more" @707
+    v66 = Builtin builtin=Object @719
+    v67 = Builtin builtin=ObjectKeys @719
+    v68 = Data data=d1 @736
+    v69 = Integer integer=1 @780
+    v70 = Call v4, -, v68, v69 calleeName="same" @731
+    v71 = Call v67, v66, v70 calleeName="Object.keys" @726
+    v72 = PropGet v71 key="join" @782
+    v73 = Call v72, v71 calleeKey="join" calleeName="join" @784
+    v74 = Call v51, -, v15, v59, v64, v65, v73 calleeName="print" @596
+    v75 = Builtin builtin=GlobalThis @793
+    v76 = PropGet v75 key="print" [isFreeName] @793
+    v77 = Builtin builtin=Object @799
+    v78 = Builtin builtin=ObjectKeys @799
+    v79 = Data data=d2 @816
+    v80 = Integer integer=1 @860
+    v81 = Call v6, -, v79, v80 calleeName="lead" @811
+    v82 = Call v78, v77, v81 calleeName="Object.keys" @806
+    v83 = PropGet v82 key="join" @862
+    v84 = Call v83, v82 calleeKey="join" calleeName="join" @864
+    v85 = Builtin builtin=Object @872
+    v86 = Builtin builtin=ObjectKeys @872
+    v87 = Data data=d3 @890
+    v88 = Data data=d4 @934
+    v89 = Integer integer=1 @965
+    v90 = Call v8, -, v87, v88, v89 calleeName="twice" @884
+    v91 = Call v86, v85, v90 calleeName="Object.keys" @879
+    v92 = PropGet v91 key="join" @967
+    v93 = Call v92, v91 calleeKey="join" calleeName="join" @969
+    v94 = Builtin builtin=Object @977
+    v95 = Builtin builtin=ObjectKeys @977
+    v96 = Data data=d5 @995
+    v97 = Integer integer=1 @1039
+    v98 = Call v10, -, v96, v97 calleeName="loose" @989
+    v99 = Call v95, v94, v98 calleeName="Object.keys" @984
+    v100 = PropGet v99 key="join" @1041
+    v101 = Call v100, v99 calleeKey="join" calleeName="join" @1043
+    v102 = Call v76, -, v84, v93, v101 calleeName="print" @793
+    v103 = Undefined @793
+    Return v103 @793
+}
+function f1 name="step" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = NewObject layout=L5 @38
+    CopyDataProperties v2, v0 @38
+    v4 = Integer integer=1 @55
+    v5 = Greater v1, v4 @55
+    PropDefine v2, v5 key="busy" @45
+    PropDefine v2, v1 key="more" @58
+    v8 = FinishObject v2 @33
+    Return v8 @33
+}
+function f2 name="same" module=m0 position=71 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = CopyObject v0 @104
+    PropDefine v2, v1 key="count" @116
+    Return v2 @104
+}
+function f3 name="lead" module=m0 position=130 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = NewObject -, v1 layout=L3 fields=[0] @178
+    CopyDataProperties v2, v0 @178
+    v4 = FinishObject v2 @163
+    Return v4 @163
+}
+function f4 name="twice" module=m0 position=189 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L1, v2: anything):
+    v3 = NewObject layout=L4 @234
+    CopyDataProperties v3, v0 @234
+    PropDefine v3, v2 key="busy" @241
+    CopyDataProperties v3, v1 @253
+    v7 = FinishObject v3 @229
+    Return v7 @229
+}
+function f5 name="loose" module=m0 position=263 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = CopyObject v0 @297
+    v3 = Integer integer=1 @319
+    v4 = Greater v1, v3 @319
+    PropDefine v2, v4 key="busy" @309
+    PropDefine v2, v1 key="more" @322
+    Return v2 @297
+}
+function f6 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1248
+    Branch v4 -> taken b2(), notTaken b1() @1248
+  b1():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1283
+    Branch v6 -> taken b2(), notTaken b3() @1283
+  b2():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    ReturnCall v8 @1333
+  b3():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+function f7 name="apply" module=m2 position=1385 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=ReflectObjectApply thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=function @1474
+    Branch v3 -> taken b1(| 0), notTaken b4(| 0) @1474
+  b1(v4):
+    v5 = NarrowByTest v0, v4 @1474
+    v6 = TypeTest v2 testedType=object @1589
+    Branch v6 -> taken b2(| 0), notTaken b3(| 0) @1589
+  b2(v7):
+    v8 = NarrowByTest v2, v7 @1589
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1710
+    v10 = Call v9, v5, v1, v8 [isDoneInPlace] @1710
+    ReturnCall v10 @1710
+  b3(v11):
+    v12 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the third argument be an object" @1623
+    Unreachable @1623
+  b4(v13):
+    v14 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the first argument be a function" @1503
+    Unreachable @1503
+}
+runtimefunction id=FunctionPrototypeApply function=f6
+runtimefunction id=ReflectObjectApply function=f7

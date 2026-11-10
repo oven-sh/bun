@@ -1,0 +1,16 @@
+# `{ check: "least", [name]: 1, least: value }`: the definition under a computed key ends what the walk knows of the cell, as a spread does: no store can finish the birth behind it, and the object bore the mark for life. A record that is
+# filled under computed keys takes no part in the mark's protocol: no mark, nothing to finish; a read asks the slot. f1 = least
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function pick(make: unknown): any[];
+# function least(value: number, name: string) { return { check: "least", [name]: 1, least: value }; }
+# function sum(defs: any[]) { let n = 0; for (const d of defs) n += d.least + (d.abort ? 100 : 0); return n; }
+# print(sum(pick(least)));
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L
+# PLAN-NOT: "check"{{*}}filled-at-birth
+# PLAN-NOT: "least"{{*}}filled-at-birth
+# RUN(ANSWERS): run-in-shell globalThis.pick = least => [least(1, "x"), least(2, "abort"), least(3, "y")];
+# ANSWERS: 106
+# ANSWERS-NEXT: exited with 0

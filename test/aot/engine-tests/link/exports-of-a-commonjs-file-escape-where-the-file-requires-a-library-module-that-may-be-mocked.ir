@@ -1,0 +1,35 @@
+# parse.cjs: module.exports = { parse }; require("node:fs"), over which the program lays a mock.
+# The mock is asked of the host, which is handed the module object of the file that asks.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions variables mechanisms=all
+# CHECK-NOT: function f2 callers-known
+# CHECK-NOT: variable g0 {{*}}writers-known
+
+layout L0 module=m1 fields=[{key="parse" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="node:fs" displayPath="node:fs" kind=Runtime flags=[MayBeMocked] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeFs
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isCallOfRequire]
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="parse"
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3 calleeKey="parse" calleeName="parse"
+    Return
+}
+function f1 name="file" module=m1 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = RequireModule module=m2 referrer=m1 specifier="node:fs"
+    Return
+}
+function f2 name="parse" module=m1 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

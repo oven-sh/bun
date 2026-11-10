@@ -140,7 +140,7 @@ fn index_link_hides_value_where_path_ends_with_it() {
     assert_eq!(value_at(&[("b", INDEX), ("c", PLAIN)]), Some(number(2.0)));
 
     let minifying = FoldInputs {
-        minifies_syntax: true,
+        has_names_for_brackets: true,
         ..inputs
     };
     let b = workspace.follow(&minifying, a, &[("b", INDEX)]).unwrap();

@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# "use strict";
+# function add(out, a, b) { out[0] = a[0] + b[0]; return out; }
+# function twice(out, a) { out[0] = a[0] * 2; return out; }
+# function dot(a, b) { return a[0] * b[0]; }
+# const N = { add: undefined, twice: undefined, dot: undefined }; N.add = add; N.twice = twice; N.dot = dot; Object.defineProperty(N, "dot", { value: dot });
+# const o = new Float64Array(1), p = new Float64Array([1.5]), q = new Float64Array([0.5]);
+# function f(t) { p[0] = t & 7; let s = 0; for (let i = 0; i < 100; i++) { N.add(o, p, q); N.twice(o, o); s += N.dot(o, p); } return s; }
+# print(f(1), f(2));
+# -- end of source
+# f4 = f
+# A listed name of `N` is defined again, which leaves the layout a possible change, so a method is read behind a test of its slot. `N.add` stores into `o`: behind that store the turn cannot begin again in the
+# closed copy, and the arm where a later test fails stayed in the turn: it runs other code, so the walk of the typed copy was cut short and the sum came round boxed: 117 instructions a turn | 52.
+# The test reads what no turn writes and stands in front of the loop already: it is branched on there. Behind the copy of `twice` in line the turn still knows that no other code has run in it, so `dot` is asked there too.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: ({{*}}: number @Double, {{*}}) isInLoop=true isLoopHead=true:
+# CHECK-NOT: PropGet
+# CHECK: Return
+# RUN(ANSWER): run-in-shell
+# ANSWER: 300 1000
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 300 1000
+# CHECKED-NEXT: exited with 0

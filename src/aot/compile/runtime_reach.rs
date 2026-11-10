@@ -3,12 +3,14 @@ use core::ops::Range;
 use std::sync::{Arc, OnceLock};
 
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, FunctionFlags, Parent, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, Bound, Decl, FnOwner, FunctionFlags, Parent, SymbolId,
+};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{
     self, CallId, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, MemberKind,
-    ModifierKind, PatId, PatKind, PropKey, PropKind, StmtKind, VarDeclId,
+    ModifierKind, PatId, PatKind, PropKey, PropKind, StmtKind, VarDeclId, VarKind,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::evaluates_own_this;
@@ -21,17 +23,19 @@ use super::program_reach::{TOP_LEVEL, find_parent_past_casts, is_only_read};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self};
 use crate::builtins::{
-    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ReplacedMembersSought,
-    ResolveInput, Resolved, RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect,
-    resolve_within,
+    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved,
+    RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
 };
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
-use crate::load::named_loads::find_library_modules_that_unknown_names_may_stand_for;
+use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
+use crate::load::runtime_roots::uses_of_what_start_reads;
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
-use crate::lower::collect_library_functions;
+use crate::lower::{LeftOutDeclarations, collect_library_functions};
 use crate::modules::{Candidates, ModuleGraph, ModuleRef, SiteAnswer};
 
+#[cfg(test)]
+mod known_regions_tests;
 mod while_loading;
 pub(crate) use while_loading::{LoadInput, ReachWhileLoading};
 
@@ -46,26 +50,19 @@ pub(crate) struct LibraryTree<'a, 's> {
 pub(crate) enum SiteTarget {
     Module(ModuleRef),
     OneOf(Vec<ModuleRef>),
-    /// The run time refuses a module that no code names.
     AnyModule,
     Nothing,
 }
 
-/// Bun's own code as the walk reads it: a program that is loaded, or the files that its load has parsed so far.
 pub(crate) trait Library<'s>: Sync {
     fn file_count(&self) -> usize;
-    /// The files with code that are read.
     fn code_files(&self) -> &[FileId];
     fn atoms(&self) -> &Interner<'s>;
-    /// `None`: the file is not read yet.
     fn tree(&self, file: FileId) -> Option<LibraryTree<'_, 's>>;
-    /// It differs from what it was if the tree does.
     fn version(&self, file: FileId) -> u32;
     fn kind(&self, file: FileId) -> SourceKind;
-    /// `None`: no import is written there.
     fn find_site_target(&self, file: FileId, site: ImportSiteKind) -> Option<SiteTarget>;
     fn find_module_file(&self, module: RuntimeModule) -> Option<FileId>;
-    /// Also where the file is not read yet.
     fn find_function_file(&self, function: RuntimeFunction) -> Option<FileId>;
     fn runtime_module(&self, file: FileId) -> Option<RuntimeModule>;
     fn runtime_function(&self, file: FileId, export_name: &[u8]) -> Option<RuntimeFunction>;
@@ -135,14 +132,12 @@ impl<'s> Library<'s> for LoadedLibrary<'_, 's> {
     }
 }
 
-/// Who asks for Bun's own code.
 #[derive(Copy, Clone)]
 pub(crate) enum Application<'a, 's> {
     Bound {
         files: &'a Files<'s>,
         graph: &'a ModuleGraph,
     },
-    /// All that its files ask for. Which exports an import reads is known once its modules are bound.
     Asks(&'a RuntimeUses),
 }
 
@@ -151,65 +146,152 @@ pub(crate) struct ReachInput<'a, 's> {
     pub library: &'a dyn Library<'s>,
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
+    pub used_at_start: &'a [BuiltinId],
+    pub holds_what_unseen_code_finds: bool,
     pub can_load_code_at_run_time: bool,
-    /// What the program holds beside what its code names.
-    pub further: &'a RuntimeUses,
-    pub keeps_code_without_names: bool,
-    pub holds_guessed_code: bool,
-    /// `FurtherLibraryCode::holds_test_files_alone`. So does Bun's own code that comes along.
-    pub holds_test_files_alone: bool,
+    pub uses_of_kept_code: Option<&'a UsesOfKeptCode>,
 }
 
-/// The part of Bun's own code that the program can run, found the way a bundler finds it: by bindings, never by what a value is.
+pub(crate) type UsesOfKeptCode = FxHashMap<FileId, RuntimeUses>;
+
+pub(crate) struct KeptCodeInput<'a, 's> {
+    pub application: &'a Files<'s>,
+    pub graph: &'a ModuleGraph,
+    pub left_out_functions: &'a FxHashSet<FunctionRef>,
+    pub left_out_declarations: &'a LeftOutDeclarations,
+    pub names: &'a BuiltinNames,
+    pub platform: Platforms,
+    pub replaced: &'a [u32],
+    pub runs_tests: bool,
+}
+
+fn find_texts_left_out(input: &KeptCodeInput<'_, '_>) -> FxHashMap<FileId, Vec<Range<u32>>> {
+    let mut texts: FxHashMap<FileId, Vec<Range<u32>>> = FxHashMap::default();
+    for &FunctionRef { file, function } in input.left_out_functions {
+        let hir = input.application.hir(file);
+        let end = match input.application.bound(file).fns[function.idx()].owner {
+            FnOwner::Expr(expression) => hir[expression].end,
+            FnOwner::Stmt(statement) => hir[statement].loc.end,
+            FnOwner::Member(member) => hir[member].loc.end,
+            FnOwner::Type(_) | FnOwner::None => continue,
+        };
+        let mut modifiers =
+            (hir[function].params.iter()).flat_map(|it| hir.param_modifiers(it).iter());
+        if modifiers.any(|it| matches!(hir[it].kind, ModifierKind::Decorator(_))) {
+            continue;
+        }
+        let start = match hir[function].kind {
+            FnKind::Arrow => hir[function].text_start,
+            _ => hir[function].anchor,
+        };
+        texts.entry(file).or_default().push(start..end);
+    }
+    for (file, declarator) in input.left_out_declarations.declarators_left_out() {
+        let hir = input.application.hir(file);
+        let kind = hir[declarator].kind;
+        if !matches!(kind, VarKind::Var | VarKind::Let | VarKind::Const) {
+            continue;
+        }
+        let Some(initializer) = hir[declarator].init.some() else {
+            continue;
+        };
+        if !matches!(hir[initializer].kind, ExprKind::Class(_)) {
+            let text = hir[initializer].pos..hir[initializer].end;
+            texts.entry(file).or_default().push(text);
+        }
+    }
+    texts
+}
+
+fn find_texts_kept(mut left_out: Vec<Range<u32>>) -> Vec<Range<u32>> {
+    left_out.shared_sort_unstable_by_key(|text| (text.start, text.end));
+    let mut kept = Vec::with_capacity(left_out.len() + 1);
+    let mut start = 0;
+    for text in left_out {
+        if start < text.start {
+            kept.push(start..text.start);
+        }
+        start = start.max(text.end);
+    }
+    kept.push(start..u32::MAX);
+    kept
+}
+
+fn resolve_kept_code(
+    input: &KeptCodeInput<'_, '_>,
+    file: FileId,
+    source: &ParsedSource,
+    kept: &[Range<u32>],
+) -> RuntimeUses {
+    let application = input.application;
+    let analysis = application.analysis(file);
+    let answers = application
+        .compiled(file)
+        .map_or(&[][..], |it| it.code_answers);
+    let mut targets: Vec<(ImportSiteKind, Option<RuntimeModule>)> = analysis
+        .import_sites
+        .iter()
+        .zip(answers)
+        .map(|(site, answer)| {
+            let module = match *answer {
+                CodeAnswer::HostModule(id) => RuntimeModule::from_registry_id(id.0),
+                _ => None,
+            };
+            (site.kind, module)
+        })
+        .collect();
+    targets.shared_sort_unstable_by_key(|target| target.0);
+    let resolve_input = ResolveInput {
+        hir: application.hir(file),
+        bound: application.bound(file),
+        decisions: &analysis.decisions,
+        atoms: &application.atoms,
+        module_format: analysis.module_format,
+        targets: &ImportTargets::new(&targets),
+        names: input.names,
+        platform: input.platform,
+        dialect: SourceDialect::Program,
+        replaced: input.replaced,
+        runs_tests: input.runs_tests,
+        holds_language: false,
+        is_text_asked: true,
+    };
+    let resolved = resolve_within(&resolve_input, kept, &FileFacts::new(&resolve_input));
+    if source.builtins.is_told_that_hooks_of_instanceof_may_exist() {
+        resolved.note_that_hooks_of_instanceof_may_exist();
+    }
+    if source.builtins.is_told_that_tests_lay_names_above() {
+        resolved.note_that_tests_lay_names_above();
+    }
+    resolved.uses().clone()
+}
+
+pub(crate) fn find_uses_of_kept_code(input: &KeptCodeInput<'_, '_>) -> Option<UsesOfKeptCode> {
+    let application = input.application;
+    let asking = application.compiled_files().iter().copied();
+    let asking = asking.filter(|&file| !asks_nothing_of_library(application, input.graph, file));
+    let asking = asking.filter_map(|file| Some((file, parsed_source(application, file)?)));
+    let (letting_in, others): (Vec<_>, Vec<_>) =
+        asking.partition(|(_, source)| source.builtins.uses().lets_in_what_nobody_names);
+    let mut left_out = find_texts_left_out(input);
+    if letting_in.is_empty() || !(letting_in.iter()).all(|(file, _)| left_out.contains_key(file)) {
+        return None;
+    }
+    let mut found = UsesOfKeptCode::default();
+    for (file, source) in letting_in.into_iter().chain(others) {
+        let kept = find_texts_kept(left_out.remove(&file).unwrap_or_default());
+        let uses = resolve_kept_code(input, file, source, &kept);
+        if uses.lets_in_what_nobody_names {
+            return None;
+        }
+        found.insert(file, uses);
+    }
+    Some(found)
+}
+
 pub(crate) struct ReachedRuntimeCode {
     is_file_reached: Vec<bool>,
     pub left_out_functions: FxHashSet<FunctionRef>,
-    pub held: HeldLibraryCode,
-}
-
-/// The modules that a program evaluates and the numbered functions that it holds. Both ascend.
-#[derive(Default)]
-pub(crate) struct HeldLibraryCode {
-    modules: Vec<RuntimeModule>,
-    functions: Vec<RuntimeFunction>,
-    /// `MentionedUses::guessed` of the files of a program that does not hold it.
-    left_to_engine: RuntimeUses,
-}
-
-impl HeldLibraryCode {
-    pub(crate) fn holds_module(&self, module: RuntimeModule) -> bool {
-        self.modules.binary_search(&module).is_ok()
-    }
-
-    /// What was left to the engine of the modules whose objects it has found to be read: it says so of a module that a program lacks.
-    pub(crate) fn find_modules_left_out(&self, used: &[BuiltinId]) -> RuntimeUses {
-        self.left_to_engine.of_modules(|module| {
-            (table::module_data(module).flags).contains(table::ModuleFlags::HAS_SOURCE)
-                && used.contains(&table::canonical_id(table::namespace_of(module)))
-        })
-    }
-
-    pub(crate) fn is_left_to_engine(&self, function: RuntimeFunction) -> bool {
-        self.left_to_engine.functions.contains(&function)
-    }
-
-    /// What of `needed` the program lacks.
-    pub(crate) fn find_lacked(&self, needed: &RuntimeUses) -> RuntimeUses {
-        let is_lacked = |module: &RuntimeModule| self.modules.binary_search(module).is_err();
-        let lacked =
-            |modules: &[RuntimeModule]| modules.iter().copied().filter(is_lacked).collect();
-        let functions = needed.functions.iter().copied();
-        let exports_read = needed.exports_read.iter().copied();
-        RuntimeUses {
-            modules: lacked(&needed.modules),
-            modules_read_whole: lacked(&needed.modules_read_whole),
-            exports_read: exports_read
-                .filter(|(module, _)| is_lacked(module))
-                .collect(),
-            functions: (functions.filter(|it| self.functions.binary_search(it).is_err())).collect(),
-            linked_functions: Box::default(),
-        }
-    }
 }
 
 impl ReachedRuntimeCode {
@@ -218,7 +300,6 @@ impl ReachedRuntimeCode {
     }
 }
 
-// A function, or the methods, the accessors and the constructor of a class.
 #[derive(Clone)]
 struct Unit {
     functions: SmallVec<[FnId; 1]>,
@@ -254,7 +335,6 @@ enum HolderUse {
     Other,
 }
 
-// The regions of a file: the code at its top level, then its units in the order they are written in.
 #[derive(Clone)]
 struct FileUnits {
     is_library: bool,
@@ -296,11 +376,9 @@ struct FileScan<'a, 's> {
     classes: FxHashMap<SymbolId, SymbolClass>,
     export_object: Option<ExportObject>,
     exported_functions: Vec<(Atom, u32)>,
-    // `{ a, b: c }`: the names under which the object that is exported holds what a binding of the file holds.
     names_of_exported_bindings: FxHashMap<ExprId, Atom>,
 }
 
-// `export default { .. }`, or `const exports = { .. }; export default exports;`
 #[derive(Copy, Clone)]
 struct ExportObject {
     literal: ExprId,
@@ -341,7 +419,6 @@ impl<'a, 's> FileScan<'a, 's> {
         });
     }
 
-    // What runs when the class is defined stays with the code around it: the class it extends, a computed key, a static field or block.
     fn add_class_unit(&mut self, class: ClassId) {
         let hir = self.hir;
         let unit = self.units.len() as u32;
@@ -462,7 +539,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // Whether the expression calls nothing and reads no member but `.prototype` of a name.
     fn is_evaluated_without_calls(
         &self,
         expression: ExprId,
@@ -505,7 +581,6 @@ impl<'a, 's> FileScan<'a, 's> {
     fn find_called_builtin(&self, callee: ExprId) -> Option<BuiltinId> {
         let source = self.source?;
         match source.builtins.of_expr(callee)? {
-            // `$toClass`: a function of the run time that Bun's own code finds under a private name.
             Resolved::Intrinsic(Intrinsic::PrivateGlobal) => {
                 let ExprKind::Ident(spelling) = self.hir[callee].kind else {
                     return None;
@@ -513,7 +588,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 let name = self.input.names.get_private(spelling)?;
                 table::own_member(BuiltinId::PrivateGlobals, name)
             }
-            // `Object.$defineProperty`: the member of a built-in that Bun's own code finds under a private name.
             Resolved::Intrinsic(Intrinsic::PrivateName) => {
                 let (holder, MemberKey::Name(spelling)) = self.hir.member_key(callee)? else {
                     return None;
@@ -570,7 +644,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `F.prototype.name = function () {}`, `F.name = value`, `Object.defineProperty(F.prototype, ..)`, `$toClass(F, "F", Base)` at the top level of a module give `F` its methods.
     fn add_statements_that_set_up_units(&mut self) {
         let hir = self.hir;
         for statement in hir.ids(hir.body) {
@@ -778,7 +851,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // The first operand of a built-in that lists its keys or defines a property of it.
     fn is_only_looked_at(&self, call: CallId, operand: ExprId) -> bool {
         let hir = self.hir;
         let callee = hir.skip_type_assertions(hir[call].callee);
@@ -797,7 +869,6 @@ impl<'a, 's> FileScan<'a, 's> {
             )
     }
 
-    // `setName(f, "f")`, where `setName` is a function of the file that only defines a property of what it is handed, and `if (f)`: nothing enters the function.
     fn is_function_only_looked_at(&self, reference: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let call = match bound.parent_of_expr(reference) {
@@ -855,7 +926,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // A name that is bound once to the object, or to a property of it, is followed where it is referred to.
     fn add_initialized_names(
         &mut self,
         declaration: VarDeclId,
@@ -915,7 +985,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `export { a, b as c }`: what `require` returns holds each binding under the name it is exported by.
     fn add_named_exports(&mut self, named_exports: &mut Vec<(Atom, Interest)>) {
         let (hir, bound) = (self.hir, self.bound);
         for statement in hir.ids(hir.body) {
@@ -943,7 +1012,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // What the literal holds under any other name that is written in it is made by code at the top level.
     fn add_names_made_by_evaluation(&self, named_exports: &mut Vec<(Atom, Interest)>) {
         let hir = self.hir;
         let Some(ExprKind::Object(properties)) = self.export_object.map(|it| hir[it.literal].kind)
@@ -1051,15 +1119,18 @@ struct KnownFile {
     facts: Arc<OnceLock<FileFacts>>,
 }
 
-/// What earlier walks have read off the files.
 #[derive(Default)]
 pub(crate) struct KnownRegions {
     files: FxHashMap<FileId, KnownFile>,
 }
 
 impl KnownRegions {
-    /// The same for the program that the load has made, in which `find` answers the number of a file. A file without one was never read, and an import of it is as if it were not written.
-    fn renumbered(&self, find: &dyn Fn(FileId) -> Option<FileId>) -> KnownRegions {
+    fn forget_files_laid_again(&mut self, version_of: &dyn Fn(FileId) -> u32) {
+        self.files
+            .retain(|&file, known| known.version == version_of(file));
+    }
+
+    fn renumbered(self, find: &dyn Fn(FileId) -> Option<FileId>) -> KnownRegions {
         let find_module = |module: ModuleRef| match module {
             ModuleRef::File(file) => find(file).map(ModuleRef::File),
             _ => Some(module),
@@ -1070,22 +1141,16 @@ impl KnownRegions {
             Interest::Export(file, name) => find(file).map(|file| Interest::Export(file, name)),
             Interest::EveryExport(module) => find_module(module).map(Interest::EveryExport),
         };
-        let files = self.files.iter().filter_map(|(&file, known)| {
+        let files = self.files.into_iter().filter_map(|(file, mut known)| {
             let file = find(file)?;
             let evaluation = Interest::Evaluation(ModuleRef::File(file));
-            let mut units = known.units.clone();
-            for interests in &mut units.interests {
+            for interests in &mut known.units.interests {
                 *interests = interests.iter().filter_map(|&it| renumber(it)).collect();
             }
-            for (_, interest) in &mut units.named_exports {
+            for (_, interest) in &mut known.units.named_exports {
                 *interest = renumber(*interest).unwrap_or(evaluation);
             }
-            let known = KnownFile {
-                version: 0,
-                units,
-                uses: known.uses.clone(),
-                facts: Arc::clone(&known.facts),
-            };
+            known.version = 0;
             Some((file, known))
         });
         KnownRegions {
@@ -1104,11 +1169,8 @@ struct Walk<'a, 's> {
     reads_imports_by_name: bool,
     pending: Vec<(FileId, u32)>,
     notes_imports: bool,
-    /// The file whose code asks for what is being reached.
     asking_file: Option<FileId>,
-    /// Each file with a file that its reached code imports.
     imports: Vec<(FileId, FileId)>,
-    left_to_engine: RuntimeUses,
 }
 
 struct RegionText {
@@ -1118,24 +1180,41 @@ struct RegionText {
     targets: Vec<(ImportSiteKind, Option<RuntimeModule>)>,
 }
 
-// A load under a name that is put together at run time finds every module that the program holds, whole.
+fn never_runs(graph: &ModuleGraph, file: FileId) -> bool {
+    graph.is_left_out(ModuleRef::File(file)) && !graph.is_placeholder(file)
+}
+
+fn asks_nothing_of_library(application: &Files<'_>, graph: &ModuleGraph, file: FileId) -> bool {
+    never_runs(graph, file)
+        && application.compiled(file).is_some_and(|compiled| {
+            let mut answers = compiled.code_answers.iter();
+            answers.all(|answer| matches!(answer, CodeAnswer::File(_) | CodeAnswer::Erased))
+        })
+}
+
 pub(super) fn loads_modules_by_computed_names(
     application: &Files<'_>,
     graph: &ModuleGraph,
 ) -> bool {
-    application.compiled_files().iter().any(|&file| {
+    let files = application.compiled_files().iter();
+    let mut files = files.filter(|&&file| !never_runs(graph, file));
+    files.any(|&file| {
+        let analysis = application.analysis(file);
         !graph.has_record(file)
             || parsed_source(application, file).is_none_or(|it| it.builtins.loads_unknown_modules())
-            || application.analysis(file).import_sites.iter().any(|site| {
+            || analysis.import_sites.iter().any(|site| {
                 matches!(
                     graph.find_site_answer(file, site.kind),
-                    Some(SiteAnswer::Computed(_))
+                    Some(SiteAnswer::Computed(candidates))
+                        if !candidates.hold_every_name(analysis, &site.specifier)
+                            && (graph)
+                                .find_why_name_is_path_alone(application, file, site.specifier_node)
+                                .is_none()
                 )
             })
     })
 }
 
-/// `known`: of the load that has read the files.
 pub(crate) fn find_reached_runtime_code(
     input: &ReachInput<'_, '_>,
     mut known: Option<KnownRegions>,
@@ -1161,7 +1240,6 @@ impl<'a, 's> Walk<'a, 's> {
             notes_imports: false,
             asking_file: None,
             imports: Vec::new(),
-            left_to_engine: RuntimeUses::default(),
         };
         for &file in input.library.code_files() {
             if input.library.kind(file) != SourceKind::RuntimeFunctions {
@@ -1213,7 +1291,8 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn units_of(&mut self, file: FileId) -> &mut FileUnits {
         if self.files[file.idx()].is_none() {
-            self.files[file.idx()] = Some(Box::new(self.scan(file)));
+            let units = self.scan(file);
+            self.files[file.idx()] = Some(Box::new(units));
         }
         self.files[file.idx()]
             .as_mut()
@@ -1221,28 +1300,22 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn note_import(&mut self, imported: Option<FileId>) {
-        if let (true, Some(importer), Some(imported)) =
-            (self.notes_imports, self.asking_file, imported)
-        {
+        if let (Some(importer), Some(imported)) = (self.asking_file, imported) {
             self.imports.push((importer, imported));
         }
     }
 
-    // Native code reads what it likes from a module that it loads.
     fn reach_uses(&mut self, uses: &RuntimeUses) {
-        if self.input.holds_test_files_alone {
-            for function in uses.functions_held_with_caller() {
-                self.note_import(self.input.library.find_function_file(function));
-                self.reach_function(function);
+        if self.notes_imports {
+            for &module in &uses.modules {
+                self.note_import(self.input.library.find_module_file(module));
             }
-            return;
+            for &function in &uses.functions {
+                self.note_import(self.input.library.find_function_file(function));
+            }
         }
         for &module in &uses.modules {
-            self.note_import(self.input.library.find_module_file(module));
             self.evaluate(ModuleRef::Runtime(module));
-        }
-        for &function in &uses.functions {
-            self.note_import(self.input.library.find_function_file(function));
         }
         for &module in &uses.modules_read_whole {
             self.reach_every_export(ModuleRef::Runtime(module));
@@ -1255,7 +1328,6 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else. So does `export { a, b } from "node:x"`.
     fn reach_named_imports(
         &mut self,
         application: &Files<'_>,
@@ -1315,34 +1387,37 @@ impl<'a, 's> Walk<'a, 's> {
             Application::Bound { files, graph } => !loads_modules_by_computed_names(files, graph),
             Application::Asks(_) => false,
         };
-        let keeps_code_without_names =
-            self.input.keeps_code_without_names || self.input.can_load_code_at_run_time;
-        if keeps_code_without_names {
+        if self.input.holds_what_unseen_code_finds || self.input.can_load_code_at_run_time {
             self.reach_uses(&RuntimeUses::of_unseen_code(self.input.platform));
         }
-        self.reach_uses(self.input.further);
         match self.input.application {
             Application::Bound { files, graph } => self.reach_what_application_asks(files, graph),
             Application::Asks(uses) => self.reach_uses(uses),
+        }
+        if self.input.can_load_code_at_run_time
+            && let Some(threads) = table::module_by_specifier(b"node:worker_threads")
+        {
+            self.evaluate(ModuleRef::Runtime(threads));
         }
         for &file in self.input.library.code_files() {
             if self.input.library.kind(file) != SourceKind::RuntimeFunctions {
                 continue;
             }
             let mut units = self.units_of(file).units.iter();
-            // Only other library functions name the functions of a file without numbers, by names that are theirs alone.
-            let has_numbers = units.any(|unit| unit.id.is_some());
-            self.reach_units(file, |unit| {
-                !has_numbers
-                    || unit
-                        .id
-                        .is_some_and(|id| table::runtime_function(id).is_none())
-            });
+            if !units.any(|unit| unit.id.is_some()) {
+                self.reach_units(file, |_| true);
+            }
         }
     }
 
     fn reach_what_application_asks(&mut self, application: &Files<'_>, graph: &ModuleGraph) {
-        for &file in application.compiled_files() {
+        let input = self.input;
+        let used_at_start = uses_of_what_start_reads(input.used_at_start, input.platform);
+        self.reach_uses(&used_at_start);
+        let files = application.compiled_files().iter();
+        let mut asks = used_at_start.asks;
+        let mut bound_by_no_site: Vec<RuntimeModule> = Vec::new();
+        for &file in files.filter(|&&file| !asks_nothing_of_library(application, graph, file)) {
             let read_by_name = self.reach_named_imports(application, graph, file);
             let compiled = application.compiled(file);
             let answers = compiled.map_or(&[][..], |it| it.code_answers);
@@ -1355,19 +1430,28 @@ impl<'a, 's> Walk<'a, 's> {
                 }
             }
             if let Some(source) = parsed_source(application, file) {
-                self.reach_uses(source.builtins.uses());
-                match self.input.holds_guessed_code {
-                    true => self.reach_uses(source.builtins.guessed_uses()),
-                    false => self.left_to_engine.add(source.builtins.guessed_uses()),
-                }
+                let of_kept_code = input.uses_of_kept_code.and_then(|it| it.get(&file));
+                let uses = of_kept_code.unwrap_or_else(|| source.builtins.uses());
+                self.reach_uses(uses);
+                asks.add(&uses.asks);
                 for named in source.named_modules() {
                     self.reach_every_export(ModuleRef::Runtime(named.module));
+                    bound_by_no_site.push(named.module);
                 }
             }
         }
+        if !(self.input.holds_what_unseen_code_finds || self.input.can_load_code_at_run_time) {
+            self.reach_uses(&RuntimeUses::of_asks(&asks, self.input.platform));
+        }
         for module in find_library_modules_that_unknown_names_may_stand_for(application) {
             self.reach_every_export(ModuleRef::Runtime(module));
+            bound_by_no_site.push(module);
         }
+        let platform = self.input.platform;
+        self.reach_uses(&RuntimeUses::of_native_modules_handed_out(
+            &bound_by_no_site,
+            platform,
+        ));
     }
 
     fn find_file(&self, module: ModuleRef) -> Option<FileId> {
@@ -1397,11 +1481,9 @@ impl<'a, 's> Walk<'a, 's> {
         }
         self.pending.push((file, region));
         let is_first_of_file = !replace(&mut self.is_file_reached[file.idx()], true);
-        // `require(name)` finds every public module in the executable, also one that only Bun's own modules import.
         if region == TOP_LEVEL && !self.reads_imports_by_name && self.is_public_module(file) {
             self.reach_every_export(ModuleRef::File(file));
         }
-        // Code that the build does not see finds the modules of the image under their names, and may use all that they hold.
         if is_first_of_file && self.input.can_load_code_at_run_time {
             self.reach_units(file, |_| true);
         }
@@ -1422,14 +1504,13 @@ impl<'a, 's> Walk<'a, 's> {
             self.reach_region(file, TOP_LEVEL);
             return;
         }
-        // A library function without a number of its own is there for the others of its file.
         if is_first_of_file {
             self.reach_units(file, |unit| unit.id.is_none());
         }
     }
 
     fn reach_function(&mut self, function: RuntimeFunction) {
-        if let Some(&(file, unit)) = self.function_by_id.get(&function) {
+        if let Some((file, unit)) = self.function_by_id.remove(&function) {
             self.reach_unit(file, unit);
         }
     }
@@ -1444,12 +1525,12 @@ impl<'a, 's> Walk<'a, 's> {
         self.reach_region(file, TOP_LEVEL);
     }
 
-    // Called as a member of the object that the module exports, a function finds every other member in `this`.
     fn reads_this(&self, file: FileId, function: FnId) -> bool {
         let tree = self.input.library.tree(file);
         tree.is_some_and(|LibraryTree { hir, bound, .. }| {
             hir.runtime_function_kind(function) != FnKind::Arrow
-                && (bound.fns[function.idx()].contains_this || evaluates_own_this(hir, function))
+                && (bound.fns[function.idx()].contains_this
+                    || evaluates_own_this(hir, function, false))
         })
     }
 
@@ -1517,17 +1598,13 @@ impl<'a, 's> Walk<'a, 's> {
     fn find_target_module(&self, file: FileId, site: ImportSiteKind) -> Option<RuntimeModule> {
         match self.input.library.find_site_target(file, site)? {
             SiteTarget::Module(
-                ModuleRef::File(target)
-                | ModuleRef::Inner { file: target, .. }
-                | ModuleRef::Face(target)
-                | ModuleRef::Check(target),
+                ModuleRef::File(target) | ModuleRef::Face(target) | ModuleRef::Check(target),
             ) => self.input.library.runtime_module(target),
             SiteTarget::Module(ModuleRef::Runtime(module)) => Some(module),
             _ => None,
         }
     }
 
-    // What a region asks for is read off its text alone, and a region that is reached stays reached.
     fn visit_pending_regions(&mut self, in_parallel: InParallel<'_>) {
         let pending = take(&mut self.pending).into_iter();
         let texts = pending.filter_map(|(file, region)| self.enter_region(file, region));
@@ -1542,6 +1619,7 @@ impl<'a, 's> Walk<'a, 's> {
             .collect();
         let input = self.input;
         let (library, names, platform) = (input.library, input.names, input.platform);
+        let holds_language = input.holds_what_unseen_code_finds || input.can_load_code_at_run_time;
         let facts = &self.facts;
         for_each_mut(&mut regions, in_parallel, &|(text, uses)| {
             let Some(LibraryTree {
@@ -1557,19 +1635,22 @@ impl<'a, 's> Walk<'a, 's> {
                 hir,
                 bound,
                 decisions: &analysis.decisions,
+                atoms: library.atoms(),
                 module_format: analysis.module_format,
                 targets: &ImportTargets::new(&text.targets),
                 names,
                 platform,
                 dialect: SourceDialect::Runtime,
                 replaced: &[],
-                replaced_members_sought: ReplacedMembersSought::None,
+                runs_tests: false,
+                holds_language,
+                is_text_asked: !holds_language,
             };
             let facts = facts[text.file.idx()]
                 .as_ref()
                 .expect("the file was scanned");
             let facts = facts.get_or_init(|| FileFacts::new(&input));
-            *uses = Some(resolve_within(&input, &text.ranges, facts).uses().clone());
+            *uses = Some(resolve_within(&input, &text.ranges, facts).into_uses());
         });
         for (text, uses) in regions {
             let uses = uses.unwrap_or_default();
@@ -1625,7 +1706,6 @@ impl<'a, 's> Walk<'a, 's> {
         for &site in &sites {
             self.note_imports_of_site(file, site);
         }
-
         self.input.library.tree(file)?.source?;
         let mut targets: Vec<(ImportSiteKind, Option<RuntimeModule>)> = sites
             .iter()
@@ -1642,34 +1722,22 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn finish(self) -> ReachedRuntimeCode {
         let mut left_out_functions = FxHashSet::default();
-        let mut held = HeldLibraryCode {
-            left_to_engine: self.left_to_engine,
-            ..HeldLibraryCode::default()
-        };
         for (index, units) in self.files.iter().enumerate() {
             let Some(units) = units else {
                 continue;
             };
             let file = FileId(index as u32);
-            if units.is_region_reached[TOP_LEVEL as usize] {
-                held.modules.extend(self.input.library.runtime_module(file));
-            }
             for (unit, &is_reached) in units.units.iter().zip(&units.is_region_reached[1..]) {
                 if !is_reached {
                     let functions = unit.functions.iter();
                     left_out_functions
                         .extend(functions.map(|&function| FunctionRef { file, function }));
-                } else {
-                    held.functions.extend(unit.id);
                 }
             }
         }
-        held.modules.sort_unstable();
-        held.functions.sort_unstable();
         ReachedRuntimeCode {
             is_file_reached: self.is_file_reached,
             left_out_functions,
-            held,
         }
     }
 }

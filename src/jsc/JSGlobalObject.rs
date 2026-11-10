@@ -9,8 +9,8 @@ use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
+    MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
 
@@ -690,15 +690,32 @@ impl JSGlobalObject {
         namespace_: &BunString,
         path: &BunString,
         source: &BunString,
+        source_namespace: &BunString,
+        resolve_dir: &BunString,
+        mode: crate::virtual_machine::ResolveMode,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result =
-            crate::from_js_host_call(self, || Bun__runOnResolvePlugins(self, ns, path, source))?;
+        let result = crate::from_js_host_call(self, || {
+            Bun__runOnResolvePlugins(
+                self,
+                ns,
+                path,
+                source,
+                source_namespace,
+                resolve_dir,
+                mode as u8,
+            )
+        })?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
         Ok(Some(result))
+    }
+
+    /// Whether a module is loaded under `key`, as ESM or as CommonJS.
+    pub(crate) fn is_key_of_loaded_module(&self, key: &BunString) -> JsResult<bool> {
+        crate::from_js_host_call_generic(self, || Bun__isKeyOfLoadedModule(self, key))
     }
 
     /// Whether an `onResolve` or `onLoad` is registered.
@@ -1117,12 +1134,6 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    pub fn readable_stream_to_json_source(&self, value: JSValue) -> JsResult<JSValue> {
-        crate::call_zero_is_throw(self, || {
-            ZigGlobalObject__readableStreamToJSONSource(self, value)
-        })
-    }
-
     pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
     }
@@ -1137,10 +1148,9 @@ impl JSGlobalObject {
         })
     }
 
-    /// Returns a freshly-created `napi_env` owned by this global, for use by
+    /// Returns a freshly-created `napi_env` on which C++ leaks a ref, for use by
     /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
-    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
-    /// callers in `bun_runtime` cast to `*mut NapiEnv`.
+    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
@@ -1373,7 +1383,17 @@ extern "C" fn Bun__importMetaResolve(
         source,
         specifier
     );
-    Zig__GlobalObject__resolve(res, global, specifier, source, query)
+    match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
+        global,
+        specifier,
+        source,
+        Some(query),
+        crate::virtual_machine::ResolveMode::EsmResolve,
+    ) {
+        Ok(Ok(path)) => *res = ErrorableString::ok(path),
+        Ok(Err(value)) => *res = ErrorableString::err(value),
+        Err(_) => debug_assert!(global.has_exception()),
+    }
 }
 
 /// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.
@@ -1402,7 +1422,7 @@ extern "C" fn Bun__resolveWithOnResolve(
         specifier_path.as_ref().unwrap_or(specifier),
         source_path.as_ref().unwrap_or(source),
         Some(query),
-        crate::virtual_machine::ResolveMode::Esm,
+        crate::virtual_machine::ResolveMode::EsmResolve,
         true,
     ) {
         Ok(None) => return false,
@@ -1411,16 +1431,6 @@ extern "C" fn Bun__resolveWithOnResolve(
         Err(_) => debug_assert!(global.has_exception()),
     }
     true
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
-    global: *const JSGlobalObject,
-    exception: *mut Exception,
-) -> JSValue {
-    crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
 }
 
 #[unsafe(no_mangle)]
@@ -1470,8 +1480,12 @@ unsafe extern "C" {
         namespace_: Option<&BunString>,
         path: &BunString,
         source: &BunString,
+        source_namespace: &BunString,
+        resolve_dir: &BunString,
+        mode: u8,
     ) -> JSValue;
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
+    safe fn Bun__isKeyOfLoadedModule(global: &JSGlobalObject, key: &BunString) -> bool;
     safe fn Bun__onResolveNamespaces(global: &JSGlobalObject) -> u8;
     safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,
@@ -1527,10 +1541,6 @@ unsafe extern "C" {
     -> JSValue;
     safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToJSONSource(
-        this: &JSGlobalObject,
-        value: JSValue,
-    ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToFormData(
         this: &JSGlobalObject,
         value: JSValue,

@@ -1202,7 +1202,7 @@ impl Checker<'_, '_> {
         // declaration doesn't.
         let declares_this = hir[func].this_ty(hir).is_some();
         let has_this = match self.types().sig(sig) {
-            SigData::Synth { this, .. } => this.is_some(),
+            SigData::Synth(SynthSig { this, .. }) => this.is_some(),
             _ => declares_this,
         };
         let Some(param) = (actual + usize::from(has_this))

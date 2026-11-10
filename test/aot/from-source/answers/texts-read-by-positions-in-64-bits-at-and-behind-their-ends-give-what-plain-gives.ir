@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# function starts(text) { const result = []; let pos = 0; let lineStart = 0; while (pos < text.length) { const ch = text.charCodeAt(pos); pos++; switch (ch) { case 13: if (text.charCodeAt(pos) === 10) pos++; case 10: result.push(lineStart); lineStart = pos; break; default: if (ch > 127 && (ch === 0x2028 || ch === 0x2029)) { result.push(lineStart); lineStart = pos; } break; } } result.push(lineStart); return result; }
+# function from(text, begin) { let pos = begin, sum = 0; while (pos < text.length) { const ch = text.charCodeAt(pos); pos += 1; sum = (sum * 31 + (ch === ch ? ch : -1)) % 1000003; if (ch === 59) pos += 2; } return sum; }
+# function back(text) { let pos = text.length, sum = 0; while (pos > 0) { pos--; sum = (sum * 7 + text.charCodeAt(pos)) % 1000003; if (text.charCodeAt(pos - 1) === 32) pos--; } return sum; }
+# const part = JSON.parse('"ab;\\r\\ncd\\r;e\\n\\n"');
+# const texts = ["", "\r", "\n", "\r\n", "a", "a\r", "a\r\nb", part, part + part + part, (part + "xyz").substring(1), (part + part).substring(3, 9), " ", "wā ;\r", "x".repeat(70) + "\r\n" + "y".repeat(9) + "\r", "z".repeat(8), "z".repeat(16) + "\n", "q;".repeat(40)];
+# const said = [];
+# for (let round = 0; round < 3; round++) for (const text of texts) said.push(starts(text).join(","), String(from(text, 0)), String(from(text, 1)), String(from(text, text.length)), String(from(text, text.length + 3)), String(from(text, -0)), String(back(text)), String(from(text, -2)), String(from(text, 0.5)), String(from(text, 2 ** 31)), String(from(text, 2 ** 32 + 1)), String(from(text, NaN)));
+# let h = 0; for (const s of said) for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+# print(said.length, h, said.slice(84, 108).join(" "));
+# -- end of source
+# f1 = starts
+# Three loops over texts by charCodeAt, the position counted in 64 bits in the first (`pos++` stands twice in its turn, and its turns are laid out): narrow and wide texts, ropes and windows of ropes, texts that end in the
+# middle of a row of eight; positions that begin at, behind and far behind the end, below nothing, at a half, at 2^31, at 2^32 + 1 and at NaN; a walk backwards: 612 answers, held by a sum over their texts and by 24 written out.
+# RUN(COUNT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all
+# COUNT-NOT: statistic LoopsWhoseTurnsAreLaidOut 0
+# RUN: run-in-shell mechanisms=all
+# CHECK: 612 -441659295 0,5,8,11,12 199003 636384 0 0 199003 943370 -121816 199003 0 0 0 0,5,8,11,12,17,20,23,24,29,32,35,36 871004 590130 0 0 871004 637620 -22052 871004 0 0 0
+# CHECK-NEXT: exited with 0
+# RUN(PROOFS): run-in-shell testing=CheckProofsAtRunTime mechanisms=all
+# PROOFS: 612 -441659295 0,5,8,11,12 199003 636384 0 0 199003 943370 -121816 199003 0 0 0 0,5,8,11,12,17,20,23,24,29,32,35,36 871004 590130 0 0 871004 637620 -22052 871004 0 0 0
+# PROOFS-NEXT: exited with 0

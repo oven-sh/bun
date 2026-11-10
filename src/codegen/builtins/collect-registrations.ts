@@ -63,6 +63,8 @@ const offsetType = b.f64.optional;
 const maximumBufferLength = b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE");
 
 const requireMacro = "BUN_REQUIRE_INTERNAL_MODULE";
+// It answers nothing, so its site reads no export.
+const loadMacro = "BUN_LOAD_INTERNAL_MODULE";
 const privateRequire = "requireId";
 const registryFiles: ReadonlySet<string> = new Set([
   "src/jsc/bindings/InternalModuleRegistry.h",
@@ -73,7 +75,7 @@ const cppTokenPattern =
   /\/\/(?:[^\\\n]|\\[^])*|\/\*[^]*?(?:\*\/|$)|(?:u8|[uUL])?R"([^\s()\\]{0,16})\([^]*?\)\1"|"(?:[^"\\\n]|\\[^])*"?|'(?:[^'\\\n]|\\[^])*'?|\d(?:[eEpP][+-]|[\w.'])*|[A-Za-z_$][\w$]*/g;
 const rustTokenPattern =
   /\/\/[^\n]*|\/\*[^]*?(?:\*\/|$)|b?r(#*)"[^]*?"\1|b?"(?:[^"\\]|\\[^])*"?|b?'(?:[^'\\\n]|\\(?:[^u\n]|u\{[\da-fA-F_]*\}))'/g;
-const macroUsePattern = new RegExp(`(#[ \\t]*define[ \\t]+)?\\b${requireMacro}\\b\\s*\\(`, "g");
+const macroUsePattern = new RegExp(`(#[ \\t]*define[ \\t]+)?\\b(${requireMacro}|${loadMacro})\\b\\s*\\(`, "g");
 const directRequirePattern = new RegExp(`\\b${privateRequire}\\s*\\(`, "g");
 const identifierPattern = /^[A-Za-z_]\w*$/;
 const plainLiteralPattern = /^"([^"\\\n]+)"$/;
@@ -264,30 +266,35 @@ function textOfArgument(text: string, code: string, { start, end }: Span): strin
 }
 
 function parseLoadArguments(
+  macro: string,
   written: readonly string[],
   report: Report,
 ): Pick<NativeLoadSite, "registryField" | "onBehalfOf" | "exports"> | null {
   if (written.length < 3) {
-    report(`${requireMacro} takes a global object, a field of InternalModuleRegistry and a path or "Startup"`);
+    report(`${macro} takes a global object, a field of InternalModuleRegistry and a path or "Startup"`);
     return null;
   }
   const [, registryField, writtenPath, ...writtenExports] = written;
   const isField = identifierPattern.test(registryField);
-  if (!isField) report(`${requireMacro}: ${registryField} is not the name of a field of InternalModuleRegistry`);
+  if (!isField) report(`${macro}: ${registryField} is not the name of a field of InternalModuleRegistry`);
   const onBehalfOf = plainLiteralPattern.exec(writtenPath)?.[1] ?? null;
-  if (onBehalfOf === null) report(`${requireMacro}: ${writtenPath} is not a string literal with a path or "Startup"`);
+  if (onBehalfOf === null) report(`${macro}: ${writtenPath} is not a string literal with a path or "Startup"`);
   const exports: string[] = [];
   for (const writtenExport of writtenExports) {
     const name = asciiLiteralPattern.exec(writtenExport)?.[1];
-    if (name === undefined) report(`${requireMacro}: ${writtenExport} is not an export written as "name"_s`);
+    if (name === undefined) report(`${macro}: ${writtenExport} is not an export written as "name"_s`);
     else exports.push(name);
   }
   if (!isField || onBehalfOf === null || exports.length < writtenExports.length) return null;
+  if (macro === loadMacro) {
+    if (exports.length > 0) report(`${loadMacro} answers nothing, so it reads no export`);
+    return exports.length > 0 ? null : { registryField, onBehalfOf, exports };
+  }
   return { registryField, onBehalfOf, exports: exports.length === 0 ? null : exports };
 }
 
 export function parseNativeLoads(text: string, file: string, problems: Problems): NativeLoadSite[] {
-  if (!text.includes(requireMacro) && !text.includes(privateRequire)) return [];
+  if (!text.includes(requireMacro) && !text.includes(loadMacro) && !text.includes(privateRequire)) return [];
   const code = blankCommentsAndStrings(text);
   const reportAt =
     (offset: number): Report =>
@@ -306,10 +313,11 @@ export function parseNativeLoads(text: string, file: string, problems: Problems)
     const report = reportAt(match.index);
     const spans = splitArguments(code, match.index + match[0].length);
     if (spans === null) {
-      report(`${requireMacro} has no closing parenthesis`);
+      report(`${match[2]} has no closing parenthesis`);
       continue;
     }
     const load = parseLoadArguments(
+      match[2],
       spans.map(span => textOfArgument(text, code, span)),
       report,
     );

@@ -1,22 +1,21 @@
-//! What a file does with the table of loaded modules, `require.cache` and `Module._cache`: which entries it takes out, and whether the table goes
-//! where somebody else may take one out. Whoever reads the table takes nothing out.
-
+use super::SourceDialect;
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::resolver::Resolver;
+use super::written_members::holder_of;
 use crate::builtins::table::{self, BuiltinId};
 use bun_sema::atom::Atom;
-use bun_sema::bind::Parent;
-use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, StmtKind};
+use bun_sema::bind::{Binding, Parent, SymbolId};
+use bun_sema::hir::{ExprId, ExprKind, MemberKey};
+use bun_sema::util::FxHashSet;
 
-/// `delete require.cache[key]`, `require.cache[key] = undefined`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum KeyOfModuleCache {
     Text(Atom),
     Computed(ExprId),
 }
 
-pub(super) fn is_module_cache(id: BuiltinId) -> bool {
+pub fn is_module_cache(id: BuiltinId) -> bool {
     let tables = [
         BuiltinId::ModuleRequireCache,
         BuiltinId::ModuleRequirePrototypeCache,
@@ -25,7 +24,7 @@ pub(super) fn is_module_cache(id: BuiltinId) -> bool {
     (tables.map(table::canonical_id)).contains(&table::canonical_id(id))
 }
 
-pub(super) fn is_table_of_loaders(id: BuiltinId) -> bool {
+pub fn is_table_of_loaders(id: BuiltinId) -> bool {
     let tables = [
         BuiltinId::ModuleRequireExtensions,
         BuiltinId::ModuleRequirePrototypeExtensions,
@@ -34,57 +33,57 @@ pub(super) fn is_table_of_loaders(id: BuiltinId) -> bool {
     (tables.map(table::canonical_id)).contains(&table::canonical_id(id))
 }
 
+pub(super) fn is_function_that_loader_calls(id: BuiltinId) -> bool {
+    let functions = [
+        BuiltinId::NodeModule_resolveFilename,
+        BuiltinId::NodeModulePrototypeRequire,
+    ];
+    (functions.map(table::canonical_id)).contains(&table::canonical_id(id))
+}
+
 impl Resolver<'_, '_> {
-    /// `require.extensions[".js"] = loader`: the next `require()` of such a file hands it to the loader, as if the file had been taken out of the table of
-    /// loaded modules. Whoever reads a loader changes none.
-    pub(super) fn note_use_of_table_of_loaders(&mut self, table: ExprId, id: BuiltinId) {
-        self.output.loses_sight_of_module_cache |= match self.find_member_of(table) {
+    pub(super) fn note_use_of_function_that_loader_calls(&mut self, function: ExprId) {
+        if self.is_stored_to(function) {
+            self.expose(BuiltinId::NodeModule);
+            self.expose(BuiltinId::ModuleObject);
+        }
+    }
+
+    pub(super) fn note_use_of_table_of_loaders(&mut self, table: ExprId) {
+        let may_be_written = match self.find_member_of(table) {
             Some(loader) => self.is_deleted(loader) || self.is_stored_to(loader),
             None => match self.classify_use(table) {
                 MentionUse::Inspected
                 | MentionUse::Holder
                 | MentionUse::ReadByComputedKey
-                | MentionUse::Aliased
-                | MentionUse::SearchedFor(_)
-                | MentionUse::SearchedForKeysOf(_) => false,
-                MentionUse::StoredInto(symbol) => !self.holds(symbol, id),
+                | MentionUse::Aliased => false,
                 MentionUse::Called(_) | MentionUse::Destructured(_) | MentionUse::Exposed => true,
             },
         };
+        if may_be_written && self.input.dialect == SourceDialect::Program {
+            self.output.tables_of_loaders_written.push(table);
+        }
+        self.output.loses_sight_of_module_cache |= may_be_written;
     }
 
-    // `Object.values(require.cache ?? {})`, `for (const path in require.cache)`
-    fn is_only_listed(&self, table: ExprId) -> bool {
-        let (hir, bound) = (self.input.hir, self.input.bound);
-        let mut node = table;
-        loop {
-            let parent = match bound.parent_of_expr(node) {
-                Parent::Expr(parent) => parent,
-                Parent::Stmt(statement) => {
-                    return matches!(hir[statement].kind, StmtKind::ForIn { .. });
-                }
-                _ => return false,
-            };
-            match hir[parent].kind {
-                _ if hir.type_assertion_operand(parent) == Some(node) => {}
-                ExprKind::Binary {
-                    op: BinOp::Or | BinOp::Nullish,
-                    ..
-                } => {}
-                ExprKind::Call(call) if hir.ids(hir[call].args).next() == Some(node) => {
-                    let callee = hir.skip_type_assertions(hir[call].callee);
-                    return matches!(
-                        mentioned_id(self.state(callee)).map(table::canonical_id),
-                        Some(BuiltinId::ObjectValues | BuiltinId::ObjectEntries)
-                    );
-                }
-                _ => return false,
-            }
-            node = parent;
+    pub(super) fn note_holder_of_loader_functions_out_of_sight(
+        &mut self,
+        holder: ExprId,
+        id: BuiltinId,
+    ) {
+        let mut members = table::members(holder_of(id)).iter();
+        if self.input.dialect == SourceDialect::Program
+            && members.any(|&it| is_function_that_loader_calls(it) || is_table_of_loaders(it))
+        {
+            self.output.tables_of_loaders_written.push(holder);
+        }
+        if self.input.dialect == SourceDialect::Program
+            && (table::members(holder_of(id)).iter()).any(|&it| is_module_cache(it))
+        {
+            self.output.places_that_hand_module_cache_on.push(holder);
         }
     }
 
-    // `Reflect.deleteProperty(require.cache, key)`
     fn find_key_that_call_deletes(&self, table: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut operand = table;
@@ -107,7 +106,6 @@ impl Resolver<'_, '_> {
         key.filter(|&key: &ExprId| is_deletion && !matches!(hir[key].kind, ExprKind::Spread(_)))
     }
 
-    // `require.cache[key] = undefined`, `[require.cache[key]] = []`, `(require.cache[key] as unknown) &&= null`
     fn is_stored_to(&self, entry: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut target = entry;
@@ -119,13 +117,70 @@ impl Resolver<'_, '_> {
         bound.get_assignment_target(hir, target).is_some()
     }
 
-    /// `table`: an expression that stands for the table, under the id `id`.
-    pub(super) fn note_use_of_module_cache(&mut self, table: ExprId, id: BuiltinId) {
+    fn is_let_out_of_sight(&self, object: ExprId) -> bool {
+        match self.classify_use(object) {
+            MentionUse::Inspected
+            | MentionUse::Holder
+            | MentionUse::ReadByComputedKey
+            | MentionUse::Destructured(_) => false,
+            MentionUse::Called(_) | MentionUse::Aliased | MentionUse::Exposed => true,
+        }
+    }
+
+    fn find_variables_let_out_of_sight(&self) -> FxHashSet<SymbolId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let names = (0..hir.exprs.len() as u32).map(ExprId);
+        let names = names.filter(|&name| matches!(hir[name].kind, ExprKind::Ident(_)));
+        let variables = names.filter_map(|name| match bound.binding(name) {
+            Binding::Symbol(variable) if self.is_let_out_of_sight(name) => Some(variable),
+            _ => None,
+        });
+        variables.collect()
+    }
+
+    fn find_variable_initialized_by(&self, entry: ExprId) -> Option<SymbolId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut initializer = entry;
+        while let Parent::Expr(parent) = bound.parent_of_expr(initializer)
+            && hir.type_assertion_operand(parent) == Some(initializer)
+        {
+            initializer = parent;
+        }
+        let Parent::VarInit(declarator) = bound.parent_of_expr(initializer) else {
+            return None;
+        };
+        match bound.initialized_binding(hir[declarator].pat) {
+            Binding::Symbol(variable) => Some(variable),
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
+        }
+    }
+
+    fn is_entry_handed_on(&self, entry: ExprId) -> bool {
+        if !matches!(self.classify_use(entry), MentionUse::Aliased) {
+            return self.is_let_out_of_sight(entry);
+        }
+        let Some(variable) = self.find_variable_initialized_by(entry) else {
+            return true;
+        };
+        let let_out = &self.variables_let_out_of_sight;
+        (let_out.get_or_init(|| self.find_variables_let_out_of_sight())).contains(&variable)
+    }
+
+    pub(super) fn note_use_of_module_cache(&mut self, table: ExprId) {
         let hir = self.input.hir;
         if let Some(entry) = self.find_member_of(table) {
-            // `require()` takes a falsy entry for none, so a store takes the entry out as a deletion does. Whoever reads an entry takes none out.
+            let is_deleted = self.is_deleted(entry);
+            if is_deleted {
+                self.output.entries_deleted_from_module_cache.push(entry);
+            }
             let is_stored_to = self.is_stored_to(entry);
-            if self.is_deleted(entry) || is_stored_to {
+            if is_stored_to {
+                self.output.entries_stored_in_module_cache.push(entry);
+            }
+            let is_taken_out = is_deleted || is_stored_to;
+            let is_handed_on =
+                !is_taken_out && self.input.runs_tests && self.is_entry_handed_on(entry);
+            if is_taken_out || is_handed_on {
                 let key = match hir.member_key(entry) {
                     Some((_, MemberKey::Name(text) | MemberKey::PrivateName(text))) => {
                         KeyOfModuleCache::Text(text)
@@ -133,11 +188,12 @@ impl Resolver<'_, '_> {
                     Some((_, MemberKey::Computed(key))) => KeyOfModuleCache::Computed(key),
                     None => unreachable!("find_member_of answers with an access"),
                 };
-                self.output.keys_taken_out_of_module_cache.push(key);
-                if is_stored_to {
-                    self.output.keys_stored_in_module_cache.push(key);
+                match is_taken_out {
+                    true => self.output.keys_taken_out_of_module_cache.push(key),
+                    false => self.output.keys_of_entries_handed_on.push(key),
                 }
             }
+            self.output.gets_at_entries_of_module_cache = true;
             return;
         }
         if let Some(key) = self.find_key_that_call_deletes(table) {
@@ -147,21 +203,23 @@ impl Resolver<'_, '_> {
                 }
                 MemberKey::Computed(key) => KeyOfModuleCache::Computed(key),
             };
+            self.output.gets_at_entries_of_module_cache = true;
             return self.output.keys_taken_out_of_module_cache.push(key);
         }
-        let is_handed_on = match self.classify_use(table) {
+        let mention_use = self.classify_use(table);
+        let gets_at_entries = !matches!(mention_use, MentionUse::Aliased);
+        self.output.gets_at_entries_of_module_cache |= gets_at_entries;
+        let is_handed_on = match mention_use {
             MentionUse::Inspected
             | MentionUse::Holder
             | MentionUse::ReadByComputedKey
-            | MentionUse::Aliased
-            | MentionUse::SearchedFor(_)
-            | MentionUse::SearchedForKeysOf(_) => false,
-            MentionUse::StoredInto(symbol) => !self.holds(symbol, id),
-            MentionUse::Called(_) | MentionUse::Destructured(_) | MentionUse::Exposed => {
-                !self.is_only_listed(table)
-            }
+            | MentionUse::Aliased => false,
+            MentionUse::Called(_) | MentionUse::Destructured(_) | MentionUse::Exposed => true,
         };
-        self.output.hands_module_cache_on |= is_handed_on;
         self.output.loses_sight_of_module_cache |= is_handed_on;
+        self.output.hands_module_cache_on |= is_handed_on;
+        if is_handed_on && self.input.dialect == SourceDialect::Program {
+            self.output.places_that_hand_module_cache_on.push(table);
+        }
     }
 }

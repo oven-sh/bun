@@ -1,4 +1,5 @@
 // run-parallel.ts says which signal ended a program, with what the program had printed, and does not wait for its time limit to say so.
+// No `// Todo` stands for that: a mark says that a program answers otherwise than its reference, not that it dies.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -42,6 +43,18 @@ test.skipIf(isWindows || !isCanary)(
     using dir = tempDir("a-program-that-a-signal-ends", {
       "tsconfig.json": "{}",
       "aborts.js": `console.error("said before the end");\nprocess.abort();\n`,
+      "aborts-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.abort();\n`,
+      "aborts-under-a-todo-of-one-way.js": [
+        `// Under: --define DIES=true: the build whose executable dies`,
+        `// Todo under --define DIES=true: "true" | "false": some day`,
+        `if (typeof DIES !== "undefined") process.abort();`,
+        `console.log(true);`,
+        `/* Output:`,
+        `true`,
+        `*/\n`,
+      ].join("\n"),
+      "faults-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(200_000);\n`,
+      "answers-otherwise-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.log(true);\n/* Output:\nfalse\n*/\n`,
       // The command outlives the time limit of a run, in the group of the program and with its pipe for errors.
       "leaves-a-command-behind.js": [
         `Bun.spawnSync({ cmd: ["sh", "-c", "sleep 200 &"], stdio: ["ignore", "ignore", "inherit"] });`,
@@ -61,9 +74,17 @@ test.skipIf(isWindows || !isCanary)(
       ].join("\n"),
     });
     const root = String(dir);
-    const files = ["aborts.js", "leaves-a-command-behind.js", "says-what-it-may-do.js"].map(name => join(root, name));
+    const files = [
+      "aborts.js",
+      "aborts-under-a-todo.js",
+      "aborts-under-a-todo-of-one-way.js",
+      "faults-under-a-todo.js",
+      "answers-otherwise-under-a-todo.js",
+      "leaves-a-command-behind.js",
+      "says-what-it-may-do.js",
+    ].map(name => join(root, name));
     const { stdout, exitCode } = await run(
-      [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", ...files],
+      [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", "--seconds=180", ...files],
       root,
       { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: undefined },
     );
@@ -80,12 +101,25 @@ test.skipIf(isWindows || !isCanary)(
         said: actual?.stderr.includes("said before the end"),
       }))
       .sort((a, b) => a.file.localeCompare(b.file));
+    const ofOneWay = "under --define DIES=true: it ended by SIGABRT";
     expect(verdicts).toEqual([
+      { file: "aborts-under-a-todo-of-one-way.js", state: "fail", stage: "run", message: ofOneWay, said: false },
+      { file: "aborts-under-a-todo.js", state: "fail", stage: "run", message: "it ended by SIGABRT", said: true },
       { file: "aborts.js", state: "fail", stage: "run", message: "it ended by SIGABRT", said: true },
+      {
+        file: "answers-otherwise-under-a-todo.js",
+        state: "skip",
+        stage: undefined,
+        message: 'todo: "true" | "false": some day',
+        said: undefined,
+      },
+      { file: "faults-under-a-todo.js", state: "fail", stage: "run", message: "it ended by SIGSEGV", said: true },
       { file: "leaves-a-command-behind.js", state: "fail", stage: "run", message: "it ended by SIGKILL", said: true },
       { file: "says-what-it-may-do.js", state: "pass", stage: undefined, message: undefined, said: undefined },
     ]);
     expect(exitCode).toBe(1);
   },
-  80_000,
+  // Less than the limit of a run that the driver is given above, which is less than what the programs sleep.
+  // The nine builds take 4 s on an arm64 Mac and 52 to 80 s on an Intel Mac.
+  170_000,
 );

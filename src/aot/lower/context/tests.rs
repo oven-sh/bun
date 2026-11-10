@@ -4,20 +4,20 @@ use bun_sema::program::FileId;
 use super::SourceKind;
 use crate::builtins::SourceDialect;
 use crate::builtins::id::{BuiltinId, RuntimeModule};
-use crate::compile::testing::{lower_program, lower_program_with_limits};
+use crate::compile::testing::lower_program;
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::Diagnostic;
 use crate::ir::generated::{
     BlockRole, ECMAMode, EntryParameter, Function, FunctionFlags, FunctionRole, SourceRange,
-    TerminatorKind, Variable, VariableFlags, VariableInitialization, visit_value_fields,
+    Variable, VariableFlags, VariableInitialization, visit_value_fields,
 };
 use crate::ir::{
     BlockId, BlockView, DeclaredType, EntryPosition, FieldWord, FunctionId, FunctionKey, Id,
-    Mapped, Opcode, PositionFlags, Primitives, PropertyKeyId, TypeTable, ValueId, ValueView,
+    LayoutKey, Mapped, Opcode, PositionFlags, Primitives, PropertyKeyId, Reference, StringId,
+    TypeTable, ValueId, ValueView, VariableId, VariableKey,
 };
 use crate::load::host_platform;
-use crate::lower::{Fragment, LoweredFile, LoweringOptions};
-use crate::statistics::{LimitId, LimitValues, Loss};
+use crate::lower::{Fragment, LoweredFile, LoweringOptions, UnitTables};
 
 const VARIED_PROGRAM: &str = "interface Shape { side: number }
 export class Square implements Shape {
@@ -40,7 +40,7 @@ export function repeat(count: number, action: () => void) {
 
 const LIBRARY_MODULE_PATH: &str = "/$bun/js/node/os.ts";
 
-const KEYED_STATE: &str = "const kState = Symbol(\"kState\");
+const KEYED_STATE: &str = "const kState: symbol = Symbol(\"kState\");
 export function setState(holder: any, state: number): number {
   holder[kState] = state;
   return state;
@@ -51,11 +51,12 @@ fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
     LoweringOptions {
         platform: host_platform(),
         embeds_function_text,
-        reports_type_mismatches: false,
+        reads_function_texts_back: embeds_function_text,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
         counts_executions: false,
+        runs_tests: false,
     }
 }
 
@@ -103,9 +104,21 @@ fn offset_of(source: &str, text: &str) -> u32 {
     offset.expect("the source has the text") as u32
 }
 
+fn with_tables<R>(fragment: &Fragment, read: impl FnOnce(&UnitTables) -> R) -> R {
+    let tables = fragment.tables.take();
+    let answer = read(&tables);
+    fragment.tables.put_back(tables);
+    answer
+}
+
+fn holds_text(fragment: &Fragment, string: Option<StringId>, text: &str) -> bool {
+    with_tables(fragment, |tables| {
+        string.map(|string| tables.strings.get(string)) == Some(text.as_bytes())
+    })
+}
+
 fn has_name(fragment: &Fragment, function: &Function, name: &str) -> bool {
-    let text = function.name.map(|name| fragment.strings.get(name));
-    text == Some(name.as_bytes())
+    holds_text(fragment, function.name, name)
 }
 
 #[track_caller]
@@ -115,7 +128,6 @@ fn find_function<'a>(fragment: &'a Fragment, name: &str) -> &'a Function {
     function.expect("the fragment defines the function")
 }
 
-// The application's definition comes first.
 #[track_caller]
 fn find_definitions<'a>(
     lowered: &'a [(FileId, LoweredFile)],
@@ -149,15 +161,39 @@ fn find_module_body(fragment: &Fragment) -> &Function {
 #[track_caller]
 fn find_variable<'a>(fragment: &'a Fragment, name: &str) -> &'a Variable {
     let mut variables = fragment.variables.iter().map(|(_, variable)| variable);
-    let variable = variables.find(|variable| {
-        let text = variable.name.map(|name| fragment.strings.get(name));
-        text == Some(name.as_bytes())
-    });
+    let variable = variables.find(|variable| holds_text(fragment, variable.name, name));
     variable.expect("the fragment defines the variable")
 }
 
 fn key_of(fragment: &Fragment, function: FunctionId) -> FunctionKey {
-    fragment.function_keys[function.index()]
+    with_tables(fragment, |tables| tables.function_keys[function.index()])
+}
+
+fn function_keys(fragment: &Fragment) -> Vec<FunctionKey> {
+    let count = fragment.lengths.functions as usize;
+    with_tables(fragment, |tables| tables.function_keys[..count].to_vec())
+}
+
+fn layout_keys(fragment: &Fragment) -> Vec<LayoutKey> {
+    let count = fragment.lengths.layouts as usize;
+    with_tables(fragment, |tables| tables.layout_keys[..count].to_vec())
+}
+
+fn variable_keys(fragment: &Fragment) -> Vec<VariableKey> {
+    let count = fragment.lengths.variables as usize;
+    with_tables(fragment, |tables| tables.variable_keys[..count].to_vec())
+}
+
+fn variables_named_by_code(fragment: &Fragment) -> Vec<VariableId> {
+    let mut variables = Vec::new();
+    for (_, function) in &fragment.functions {
+        function.body.for_each_reference(&mut |reference| {
+            if let Reference::Variable(variable) = reference {
+                variables.push(variable);
+            }
+        });
+    }
+    variables
 }
 
 fn parameter(function: &Function, index: u32) -> ValueId {
@@ -247,11 +283,9 @@ fn find_store_mode(fragment: &Fragment, function: &Function, property: &str) -> 
         let (Opcode::PropSet, &[_, _, key, mode, _]) = (value.opcode, value.fields) else {
             return None;
         };
-        let text = fragment
-            .property_keys
-            .get(PropertyKeyId::from_word(key))
-            .text?;
-        let is_matching_store = fragment.strings.get(text) == property.as_bytes();
+        let key = PropertyKeyId::from_word(key);
+        let text = with_tables(fragment, |tables| tables.property_keys.get(key).text);
+        let is_matching_store = holds_text(fragment, text, property);
         is_matching_store
             .then(|| ECMAMode::from_wire(mode))
             .flatten()
@@ -271,11 +305,6 @@ fn nesting_reports(lowered: &LoweredFile) -> Vec<&Diagnostic> {
     reports
         .filter(|diagnostic| diagnostic.code == Code::NestedTooDeeply)
         .collect()
-}
-
-fn find_loss(lowered: &LoweredFile, limit: LimitId) -> Option<Loss> {
-    let mut losses = lowered.counters.losses().iter();
-    losses.find(|loss| loss.limit == limit).copied()
 }
 
 #[test]
@@ -303,7 +332,6 @@ fn source_kind_decides_dialect_and_role() {
     }
 }
 
-// Bun's own sources are lowered with their types, as the program's are.
 #[test]
 fn library_module_checks_types_as_application_code_does() {
     let lowered = lower_in_both_projects(KEYED_STATE);
@@ -320,12 +348,10 @@ fn library_module_checks_types_as_application_code_does() {
         for position in [state, function.results[0]] {
             assert_eq!(position.ty, TypeTable::NUMBER, "{role:?}");
             assert!(!position.is_expected(), "{role:?}");
-            assert!(position.site.is_some(), "{role:?}");
         }
     }
 }
 
-// A module of Bun's hoists its top-level variables, so none of them has a dead zone.
 #[test]
 fn library_module_has_operations_of_application_code_without_dead_zones() {
     let lowered = lower_in_both_projects(KEYED_STATE);
@@ -351,7 +377,8 @@ fn constant_of_library_module_is_module_variable() {
         assert_eq!(variable.initialization, initialization, "{role:?}");
         assert_eq!(variable.flags, VariableFlags::IS_IMMUTABLE, "{role:?}");
         assert!(!variable.declared.is_expected(), "{role:?}");
-        let primitives = fragment.types.get(variable.declared.ty).primitives;
+        let declared = variable.declared.ty;
+        let primitives = with_tables(fragment, |tables| tables.types.get(declared).primitives);
         assert_eq!(
             primitives.contains(Primitives::ABSENT),
             has_dead_zone,
@@ -394,8 +421,8 @@ fn symbol_of_library_module_is_created_by_call_of_builtin() {
 }
 
 #[test]
-fn library_module_with_type_error_has_expected_positions() {
-    let source = [KEYED_STATE, "const mismatch: number = \"text\";\n"].concat();
+fn library_module_with_unverified_types_has_expected_parameters_alone() {
+    let source = ["// @ts-nocheck\n", KEYED_STATE].concat();
     let fragment = lower_library_module(&source).fragment;
     let function = find_function(&fragment, "setState");
     assert_eq!(function.role, FunctionRole::Library);
@@ -403,8 +430,11 @@ fn library_module_with_type_error_has_expected_positions() {
     let number = Mapped::expected(TypeTable::NUMBER);
     let expected = DeclaredType::new(number, None, PositionFlags::default());
     assert_eq!(function.parameters, [DeclaredType::untyped(), expected]);
-    assert_eq!(function.results, [expected]);
-    assert!(find_variable(&fragment, "kState").declared.is_expected());
+    assert_eq!(function.results, [DeclaredType::untyped()]);
+    assert_eq!(
+        find_variable(&fragment, "kState").declared,
+        DeclaredType::untyped()
+    );
 }
 
 #[test]
@@ -439,7 +469,8 @@ fn function_mentioned_twice_is_defined_once() {
 #[test]
 fn every_declared_function_of_file_is_defined() {
     let fragment = lower_file("main.ts", VARIED_PROGRAM).fragment;
-    let keys = fragment.function_keys.iter().enumerate();
+    let declared = function_keys(&fragment);
+    let keys = declared.iter().enumerate();
     let own_keys: Vec<(usize, &FunctionKey)> = keys
         .filter(|(_, key)| key.home_file() == fragment.file)
         .collect();
@@ -465,18 +496,20 @@ fn imported_function_is_not_defined() {
         for &(function, _) in &fragment.functions {
             assert_eq!(key_of(fragment, function).home_file(), *file);
         }
+        let keys = variable_keys(fragment);
         for &(variable, _) in &fragment.variables {
-            let key = fragment.variable_keys[variable.index()];
+            let key = keys[variable.index()];
             assert_eq!(key.home_file(), Some(*file), "{key:?}");
         }
-        let mut homes = fragment.variable_keys.iter().map(|key| key.home_file());
+        let named = variables_named_by_code(fragment).into_iter();
+        let mut homes = named.map(|variable| keys[variable.index()].home_file());
         mentions_other_file |= homes.any(|home| home.is_some_and(|home| home != *file));
     }
     assert!(mentions_other_file);
 }
 
 #[test]
-fn entry_block_ends_in_jump() {
+fn nothing_leads_to_entry_block() {
     let fragment = lower_file("main.ts", VARIED_PROGRAM).fragment;
     let entry = BlockId::new(0);
     let functions = fragment.functions.iter();
@@ -488,7 +521,6 @@ fn entry_block_ends_in_jump() {
             .next()
             .expect("a function has an entry block");
         assert_eq!(first.id, entry);
-        assert_eq!(first.terminator().kind, TerminatorKind::Jump, "{id}");
         for block in function.body.blocks() {
             let targets = block.terminator().targets().chain(block.handler());
             for target in targets {
@@ -525,29 +557,15 @@ fn deep_code_is_not_reported() {
 }
 
 #[test]
-fn lowered_limit_replaces_value() {
-    let files = [("main.ts", "export let v: number[] = [];\n")];
-    let mut lowered_limits = LimitValues::for_host();
-    lowered_limits.lower(LimitId::MaxTypeNodes, 1);
-    let limited = take_only_file(lower_program_with_limits(&files, lowered_limits));
-    assert!(find_loss(&limited, LimitId::MaxTypeNodes).is_some());
-
-    let unlimited = take_only_file(lower_program_with_limits(&files, LimitValues::for_host()));
-    assert_eq!(find_loss(&unlimited, LimitId::MaxTypeNodes), None);
-}
-
-#[test]
 fn lowering_twice_gives_equal_fragments() {
     let first = lower_file("main.ts", VARIED_PROGRAM).fragment;
     let second = lower_file("main.ts", VARIED_PROGRAM).fragment;
-    assert_eq!(first.function_keys, second.function_keys);
-    assert_eq!(first.layout_keys, second.layout_keys);
-    assert_eq!(first.variable_keys, second.variable_keys);
+    assert_eq!(function_keys(&first), function_keys(&second));
+    assert_eq!(layout_keys(&first), layout_keys(&second));
+    assert_eq!(variable_keys(&first), variable_keys(&second));
     assert_eq!(first.functions, second.functions);
     assert_eq!(first.layouts, second.layouts);
     assert_eq!(first.variables, second.variables);
-    assert_eq!(first.type_sites, second.type_sites);
-    assert_eq!(first.expected_results, second.expected_results);
     assert_eq!(first.supertype_edges, second.supertype_edges);
     assert_eq!(first.function_type_edges, second.function_type_edges);
     assert_eq!(first.builtin_members, second.builtin_members);
@@ -606,4 +624,69 @@ fn store_mode_is_strictness_of_innermost_scope() {
         find_store_mode(&fragment, probe, "inside"),
         ECMAMode::Strict
     );
+}
+
+fn refers_to_string(fragment: &Fragment, function: &Function, text: &str) -> bool {
+    let mut strings = Vec::new();
+    function.body.for_each_reference(&mut |reference| {
+        if let Reference::String(string) = reference {
+            strings.push(string);
+        }
+    });
+    let mut strings = strings.into_iter();
+    strings.any(|string| holds_text(fragment, Some(string), text))
+}
+
+#[test]
+fn class_with_class_decorators_shows_its_written_name_where_bindings_are_shortened() {
+    let source = "declare function keep(...values: unknown[]): void;
+function on(target: Function, context: ClassDecoratorContext): void {}
+@on class Declared { constructor() {} }
+@on class Implicit {}
+const Stored = @on class {};
+let Assigned; Assigned = @on class {};
+const [Defaulted = @on class {}] = [];
+const Asserted = (@on class {}) as Function;
+const Plain = class {};
+class Undecorated {}
+function make() { const Returned = @on class {}; return Returned; }
+keep(Declared, Implicit, Stored, Assigned, Defaulted, Asserted, Plain, Undecorated, make);
+";
+    let options = LoweringOptions {
+        minifies_identifiers: true,
+        ..lowering_options(false)
+    };
+    let fragment = take_only_file(lower_program(&[("main.ts", source)], options)).fragment;
+    let is_implicit_constructor = |function: FunctionId| {
+        matches!(
+            key_of(&fragment, function),
+            FunctionKey::ImplicitConstructor(_)
+        )
+    };
+    let functions = fragment.functions.iter();
+    let implicit_constructors = functions.filter(|entry| is_implicit_constructor(entry.0));
+    assert_eq!(implicit_constructors.count(), 8);
+    let is_function_named = |name: &str| {
+        let mut functions = fragment.functions.iter();
+        functions.any(|(_, function)| has_name(&fragment, function, name))
+    };
+    let body = find_module_body(&fragment);
+    let written = [
+        "Declared",
+        "Implicit",
+        "Stored",
+        "Assigned",
+        "Defaulted",
+        "Asserted",
+    ];
+    for name in written {
+        assert!(is_function_named(name), "{name}");
+        assert!(refers_to_string(&fragment, body, name), "{name}");
+    }
+    assert!(is_function_named("Returned"));
+    let mut functions = fragment.functions.iter();
+    assert!(functions.any(|(_, function)| refers_to_string(&fragment, function, "Returned")));
+    for name in ["Plain", "Undecorated"] {
+        assert!(!is_function_named(name), "{name}");
+    }
 }

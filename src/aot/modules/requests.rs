@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use super::bindings::{ModuleRequest, SpelledModule};
+use super::bindings::{ModuleRequest, NO_STAR_PLACE, SpelledModule};
 use super::exports::ExportTables;
 use super::failures::{
     FailureEffect, FailureOrder, ModuleFailureKind, NumberedFailures, PendingFailure, SitePart,
@@ -9,25 +9,26 @@ use super::failures::{
 };
 use super::graph::StoredSiteAnswer;
 use super::interop::{ImportPhase, Interop, ModuleKind, file_interop};
-use super::module_set::ModuleSet;
+use super::module_set::{ImportTypeKind, ModuleSet};
 use super::order::{EvaluationOrder, PlannedSites};
 use super::{BindInput, ModuleRef};
 use crate::builtins::{RuntimeModule, table};
-use crate::diagnostics::{Span, range_of_node};
+use crate::diagnostics::range_of_node;
 use crate::ir::for_each_mut;
 use crate::load::Sources;
-use crate::load::named_loads::{NamedModule, is_path_that_program_may_write, modules_named_in};
-use crate::load::sources::parsed_source;
-use crate::options::ReplacedModule;
-use crate::statistics::ComputedImport;
+use crate::load::contents::load_names::{
+    NamedModule, is_followed_further_than_bundler, mentions_plugin, modules_named_in, names_plugin,
+};
+use crate::load::plugin_modules::FOLDER_OF_DATABASE_NAMESPACE;
+use crate::load::sources::{SourceKind, parsed_source};
+use crate::module_keys::DATABASE_NAMESPACE;
 use bun_core::strings;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Atom;
 use bun_sema::components::strongly_connected_components;
-use bun_sema::hir::{self, ExportId, ImportId, NodeData, StmtId, StmtKind};
+use bun_sema::hir::{self, ExportId, ExprId, ExprKind, ImportId, NodeData, StmtId, StmtKind};
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, is_module_call_of_plugin,
-    is_name_read_by_transpiler,
+    ImportSite, ImportSiteKind, ImportSpecifier, find_names_read_by_transpiler,
 };
 use bun_sema::program::{
     CodeAnswer, CompiledModule, ComputedTarget, ComputedTargets, FileId, Files,
@@ -44,7 +45,6 @@ pub(super) enum ScannedSite {
     Module(ModuleRef),
     Unresolved,
     AllModules,
-    /// A range of `FileScan::spellings`.
     Candidates(Range<u32>),
     Erased,
 }
@@ -54,6 +54,7 @@ pub(super) struct RequestDraft {
     pub target: ModuleRef,
     pub phase: ImportPhase,
     pub is_star_export: bool,
+    pub star_place: u32,
 }
 
 pub(super) struct FileScan {
@@ -62,15 +63,12 @@ pub(super) struct FileScan {
     pub candidates: Vec<ModuleRef>,
     pub spellings: Vec<SpelledModule>,
     pub externals: Vec<(Atom, ExternalKind)>,
-    /// The compiled files behind specifiers that the loader of the run time answers for: `leave_imports_of_test_files_to_loader`.
     pub left_to_loader: Vec<(Atom, FileId)>,
     pub requests: Vec<RequestDraft>,
     pub failures: Vec<PendingFailure>,
-    pub computed_imports: Vec<ComputedImport<Span>>,
 }
 
 impl FileScan {
-    /// What a site that is `ScannedSite::Candidates` may name.
     pub(super) fn modules_spelled_in(&self, range: &Range<u32>) -> impl Iterator<Item = ModuleRef> {
         let spelled = &self.spellings[range.start as usize..range.end as usize];
         spelled.iter().map(|spelled| spelled.module)
@@ -100,17 +98,12 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
     let compiled_files = files.compiled_files().iter();
     let mut slots: Vec<(FileId, Option<FileScan>)> =
         compiled_files.map(|&file| (file, None)).collect();
-    let mut mocked_paths = find_paths_only_mocks_answer(files, sources);
-    // The test file that holds the mock may lie in another program than the file that imports the name.
-    let told = input.mocked_modules.iter();
-    mocked_paths.extend(told.filter_map(ReplacedModule::file_path).cloned());
     let program = Program {
         runs_tests: input.runs_tests,
-        loads_code_from_disk: input.loads_code_from_disk,
-        mocks_any_module: input.mocks_any_module,
+        asks_loader_where_bundler_does: !input.runs_tests && names_plugin(input.files),
     };
     for_each_mut(&mut slots, input.in_parallel, &|(file, scan)| {
-        *scan = Some(scan_file(files, sources, &mocked_paths, program, *file));
+        *scan = Some(scan_file(files, sources, program, *file));
     });
     let mut by_file = Vec::new();
     by_file.resize_with(files.modules.len(), || None);
@@ -120,17 +113,119 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
     Scans { by_file }
 }
 
-/// The runner starts a test file after the test files before it, and one of those may have taken a file out of `require.cache`. An import statement
-/// is bound to the instance that the loader holds when the importer is linked: behind `delete require.cache[path]` that is one from disk, and code that reads the
-/// variables of the compiled instance would see another module than `require(path)` answers. So the loader of the run time links such a statement of a test file,
-/// as it links an import of code that the build has not seen. It answers with the compiled module as long as nothing has taken that out.
-/// Modules on a cycle are linked together: by the time one of them can be taken out, the test file is bound to it.
-/// Returns whether there is such a statement.
+pub(super) fn request_folders_of_databases_first(
+    input: &BindInput<'_, '_>,
+    scans: &mut Scans,
+) -> Vec<FileId> {
+    let files = input.files;
+    let namespace_of = |file: FileId| {
+        let module = parsed_source(files, file)?.plugin_module.as_ref()?;
+        Some(&*module.namespace)
+    };
+    let mut folders = Vec::new();
+    for &database in files.compiled_files() {
+        if namespace_of(database) != Some(DATABASE_NAMESPACE) {
+            continue;
+        }
+        let sites = scans.find(database).map_or(&[][..], |scan| &scan.sites);
+        let folder = sites.iter().find_map(|site| match *site {
+            ScannedSite::Module(ModuleRef::File(file))
+                if namespace_of(file) == Some(FOLDER_OF_DATABASE_NAMESPACE) =>
+            {
+                Some(file)
+            }
+            _ => None,
+        });
+        let Some(folder) = folder else {
+            continue;
+        };
+        let is_imported_by_statement = files.compiled_files().iter().any(|&importer| {
+            let requests = scans.find(importer).map_or(&[][..], |scan| &scan.requests);
+            (requests.iter()).any(|request| request.target == ModuleRef::File(database))
+        });
+        folders.push((folder, is_imported_by_statement));
+    }
+    for entry_point in input.sources.entry_points() {
+        let Some(scan) = scans.find_mut(entry_point.file) else {
+            continue;
+        };
+        if !matches!(
+            scan.interop.kind,
+            ModuleKind::SourceText | ModuleKind::CommonJs
+        ) {
+            continue;
+        }
+        let run_first = folders.iter().filter(|folder| folder.1);
+        let first = run_first.map(|&(folder, _)| RequestDraft {
+            target: ModuleRef::File(folder),
+            phase: ImportPhase::Evaluation,
+            is_star_export: false,
+            star_place: NO_STAR_PLACE,
+        });
+        scan.requests.splice(0..0, first);
+    }
+    folders.iter().map(|folder| folder.0).collect()
+}
+
+fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scans) {
+    let files = input.files;
+    if !mentions_plugin(files) {
+        return;
+    }
+    let is_asked_of_plugins = |spelling: Atom, module: ModuleRef| match module {
+        ModuleRef::File(_) => true,
+        ModuleRef::Runtime(RuntimeModule::BunTest) => false,
+        ModuleRef::Runtime(_) => {
+            !is_replaced_by_object(module)
+                && strings::contains_char(files.atoms.bytes(spelling), b':')
+        }
+        _ => false,
+    };
+    for &file in files.compiled_files() {
+        let Some(scan) = scans.find_mut(file) else {
+            continue;
+        };
+        let FileScan {
+            sites,
+            spellings,
+            candidates,
+            ..
+        } = scan;
+        for spelled in spellings.iter_mut() {
+            spelled.is_left_to_loader |= is_asked_of_plugins(spelled.spelling, spelled.module);
+        }
+        for (site, answer) in files.analysis(file).import_sites.iter().zip(sites) {
+            let is_call = matches!(
+                site.kind,
+                ImportSiteKind::ImportCall(_)
+                    | ImportSiteKind::Require(_)
+                    | ImportSiteKind::ImportMetaRequire(_)
+                    | ImportSiteKind::ImportEquals(_)
+                    | ImportSiteKind::RequireResolve(_)
+                    | ImportSiteKind::ImportMetaResolve(_)
+            );
+            if let (true, ImportSpecifier::Constant(spelling), &mut ScannedSite::Module(module)) =
+                (is_call, site.specifier, &mut *answer)
+                && is_asked_of_plugins(spelling, module)
+            {
+                let at = spellings.len() as u32;
+                spellings.push(SpelledModule {
+                    spelling,
+                    module,
+                    is_left_to_loader: true,
+                });
+                candidates.push(module);
+                *answer = ScannedSite::Candidates(at..at + 1);
+            }
+        }
+    }
+}
+
 pub(super) fn leave_imports_of_test_files_to_loader(
     input: &BindInput<'_, '_>,
     scans: &mut Scans,
     may_load_again: &dyn Fn(FileId) -> bool,
-) -> bool {
+) {
     struct Statement {
         importer: FileId,
         site: usize,
@@ -138,24 +233,25 @@ pub(super) fn leave_imports_of_test_files_to_loader(
         type_attribute: Option<bun_ast::Loader>,
         target: FileId,
     }
-    // The entry points of a program that test files are built upon are all of its files.
-    if input.application.is_none() && !input.runner_starts_entry_points {
-        return false;
+    if !input.runner_starts_entry_points {
+        return;
     }
-    // A test file under a tsconfig.json of its own is lowered as a program of its own, by the application's word: both have to say the same of each statement.
-    let is_left = |importer: FileId, specifier: Atom, target: FileId| match input.application {
-        Some(application) => (application.to_application)(importer).is_some_and(|file| {
-            application
-                .graph
-                .leaves_statement_to_loader(file, specifier)
-        }),
-        None => may_load_again(target),
+    let given_to_several_types = match input.runs_in_several_realms {
+        true => find_forms_given_to_several_types(input, scans),
+        false => FxHashSet::default(),
+    };
+    leave_calls_of_test_run_to_loader(input, scans);
+    let importers = match given_to_several_types.is_empty() {
+        true => input.files.entry_points(),
+        false => input.files.compiled_files(),
     };
     let mut statements = Vec::new();
-    for &importer in input.files.entry_points() {
+    for &importer in importers {
         let Some(scan) = scans.find(importer) else {
             continue;
         };
+        let is_test_file =
+            given_to_several_types.is_empty() || input.files.entry_points().contains(&importer);
         let sites = input.files.analysis(importer).import_sites.iter();
         for (index, (site, answer)) in sites.zip(&scan.sites).enumerate() {
             let is_statement = matches!(site_form(site.kind), SiteForm::Declaration);
@@ -164,7 +260,8 @@ pub(super) fn leave_imports_of_test_files_to_loader(
                 ImportSpecifier::Constant(specifier),
                 &ScannedSite::Module(ModuleRef::File(target)),
             ) = (is_statement, site.specifier, answer)
-                && is_left(importer, specifier, target)
+                && ((is_test_file && may_load_again(target))
+                    || given_to_several_types.contains(&target))
             {
                 let hir = input.files.hir(importer);
                 statements.push(Statement {
@@ -178,7 +275,7 @@ pub(super) fn leave_imports_of_test_files_to_loader(
         }
     }
     if statements.is_empty() {
-        return false;
+        return;
     }
     let imported_files = |file: u32| -> Vec<u32> {
         let requests = scans
@@ -205,8 +302,6 @@ pub(super) fn leave_imports_of_test_files_to_loader(
             target,
         } = statement;
         let scan = scans.find_mut(importer).expect("the file was scanned");
-        // The loader has one module under two spellings of its path, and under two types: `with { type: "yaml" }` and `with { type: "text" }` of one
-        // file get what the first of them loaded. So has the importer: the first statement stands for all.
         let first = first_statements.entry((importer, target));
         let is_new = matches!(first, Entry::Vacant(_));
         let left = *first.or_insert(ModuleRef::External {
@@ -229,19 +324,72 @@ pub(super) fn leave_imports_of_test_files_to_loader(
         scan.externals
             .push((specifier, ExternalKind::UncompiledCode));
     }
-    !statements.is_empty()
 }
 
-// What `specifier` names from the file: the path of a relative one, else its text.
-fn path_named(sources: &Sources, file: FileId, specifier: &[u8]) -> Vec<u8> {
-    // `mock.module("file:./a.ts", ..)`
-    let specifier = match specifier.strip_prefix(b"file:") {
-        Some(path) if path.starts_with(b"./") || path.starts_with(b"../") => path,
-        _ => specifier,
-    };
-    if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
-        return specifier.to_vec();
+fn find_forms_given_to_several_types(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+) -> FxHashSet<FileId> {
+    let mut first_types: FxHashMap<FileId, bun_ast::Loader> = FxHashMap::default();
+    let mut found = FxHashSet::default();
+    for &importer in input.files.compiled_files() {
+        let Some(scan) = scans.find(importer) else {
+            continue;
+        };
+        let sites = input.files.analysis(importer).import_sites.iter();
+        for (site, answer) in sites.zip(&scan.sites) {
+            if let &ScannedSite::Module(ModuleRef::File(target)) = answer
+                && let Some(asked) =
+                    find_type_attribute(input.files, input.files.hir(importer), site)
+                && *first_types.entry(target).or_insert(asked) != asked
+                && input.sources.kind(target) == SourceKind::Data
+            {
+                found.insert(target);
+            }
+        }
     }
+    found
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Spelling {
+    WithoutExtension,
+    WithOtherExtension,
+    AsDirectory,
+}
+
+fn without_extension_of_file(path: &[u8]) -> &[u8] {
+    let start_of_name = strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
+    match strings::last_index_of_char(path, b'.') {
+        Some(dot) if dot > start_of_name => &path[..dot],
+        _ => path,
+    }
+}
+
+pub(super) fn find_spelling(
+    sources: &Sources,
+    importer: FileId,
+    specifier: &[u8],
+    target: FileId,
+) -> Option<Spelling> {
+    if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
+        return None;
+    }
+    let written = path_named(sources, importer, specifier);
+    let path = sources.public_path(target);
+    let folder = strings::last_index_of_char(path, b'/').map(|slash| &path[..slash]);
+    match &written[..] {
+        written if written == path => None,
+        written if written == without_extension_of_file(path) => Some(Spelling::WithoutExtension),
+        written if Some(written) == folder => Some(Spelling::AsDirectory),
+        written if without_extension_of_file(written) == without_extension_of_file(path) => {
+            Some(Spelling::WithOtherExtension)
+        }
+        _ => None,
+    }
+}
+
+fn path_named(sources: &Sources, file: FileId, specifier: &[u8]) -> Vec<u8> {
     let importer = sources.public_path(file);
     let end_of_folder = strings::last_index_of_char(importer, b'/').unwrap_or(0);
     let mut parts: Vec<&[u8]> = strings::split(&importer[..end_of_folder], b"/").collect();
@@ -257,51 +405,20 @@ fn path_named(sources: &Sources, file: FileId, specifier: &[u8]) -> Vec<u8> {
     parts.join(&b'/')
 }
 
-// A test may mock a module that exists nowhere. Whoever imports that path gets the mock from the loader at run time.
-// `build.module("dep", ..)` in the `setup` of a plugin: from then on the loader answers for the name as it is written, also where a package has the name.
-fn find_paths_only_mocks_answer(files: &Files<'_>, sources: &Sources) -> FxHashSet<Vec<u8>> {
-    let mut paths = FxHashSet::default();
-    for &file in files.compiled_files() {
-        let Some(compiled) = files.compiled(file) else {
-            continue;
-        };
-        let sites = compiled.analysis.import_sites.iter();
-        for (site, answer) in sites.zip(compiled.code_answers) {
-            if let (ImportSiteKind::MockModule(call), ImportSpecifier::Constant(specifier)) =
-                (site.kind, site.specifier)
-                && (matches!(answer, CodeAnswer::NotFound(_))
-                    || is_module_call_of_plugin(files.hir(file), files.bound(file), call))
-            {
-                paths.insert(path_named(sources, file, files.atoms.bytes(specifier)));
-            }
-        }
-    }
-    paths
-}
-
 #[derive(Copy, Clone)]
 struct Program {
     runs_tests: bool,
-    loads_code_from_disk: bool,
-    mocks_any_module: bool,
+    asks_loader_where_bundler_does: bool,
 }
 
-fn scan_file(
-    files: &Files<'_>,
-    sources: &Sources,
-    mocked_paths: &FxHashSet<Vec<u8>>,
-    program: Program,
-    file: FileId,
-) -> FileScan {
+fn scan_file(files: &Files<'_>, sources: &Sources, program: Program, file: FileId) -> FileScan {
     let compiled = files.compiled(file);
     let mut scanner = FileScanner {
         file,
         files,
         sources,
-        mocked_paths,
         runs_tests: program.runs_tests,
-        loads_code_from_disk: program.loads_code_from_disk,
-        mocks_any_module: program.mocks_any_module,
+        asks_loader_where_bundler_does: program.asks_loader_where_bundler_does,
         hir: files.hir(file),
         compiled: compiled.expect("the loader analyzes every compiled file"),
         named_in_choices: parsed_source(files, file)
@@ -310,7 +427,6 @@ fn scan_file(
         spellings: Vec::new(),
         externals: Vec::new(),
         failures: Vec::new(),
-        computed_imports: Vec::new(),
     };
     let sites = scanner.scan_sites();
     if parsed_source(files, file).is_some_and(|source| source.parse_failure.is_some()) {
@@ -327,15 +443,10 @@ fn scan_file(
     let named_modules = named.map(|it| ModuleRef::Runtime(it.module));
     scanner.candidates.extend(named_modules);
     let interop = file_interop(files, sources, file);
-    let mut requests = match interop.kind {
+    let requests = match interop.kind {
         ModuleKind::SourceText => scanner.collect_requests(&sites),
         _ => Vec::new(),
     };
-    for request in &mut requests {
-        if let ModuleRef::File(target) = request.target {
-            request.phase = phase_towards(file_interop(files, sources, target).kind, request.phase);
-        }
-    }
     FileScan {
         interop,
         sites,
@@ -345,7 +456,6 @@ fn scan_file(
         left_to_loader: Vec::new(),
         requests,
         failures: scanner.failures,
-        computed_imports: scanner.computed_imports,
     }
 }
 
@@ -353,10 +463,8 @@ struct FileScanner<'a, 's> {
     file: FileId,
     files: &'a Files<'s>,
     sources: &'a Sources,
-    mocked_paths: &'a FxHashSet<Vec<u8>>,
     runs_tests: bool,
-    loads_code_from_disk: bool,
-    mocks_any_module: bool,
+    asks_loader_where_bundler_does: bool,
     hir: &'a hir::File<'s>,
     compiled: &'a CompiledModule<'s>,
     named_in_choices: &'a [NamedModule],
@@ -364,7 +472,6 @@ struct FileScanner<'a, 's> {
     spellings: Vec<SpelledModule>,
     externals: Vec<(Atom, ExternalKind)>,
     failures: Vec<PendingFailure>,
-    computed_imports: Vec<ComputedImport<Span>>,
 }
 
 impl FileScanner<'_, '_> {
@@ -379,6 +486,22 @@ impl FileScanner<'_, '_> {
     }
 
     fn scan_site(&mut self, index: u32, site: &ImportSite, answer: CodeAnswer<'_>) -> ScannedSite {
+        let finds_nothing = matches!(site.kind, ImportSiteKind::ImportCall(_))
+            && matches!(answer, CodeAnswer::NotFound(_));
+        let is_followed_further = is_followed_further_than_bundler(self.files, self.file, site);
+        let asks_loader =
+            self.asks_loader_where_bundler_does && (finds_nothing || is_followed_further);
+        if asks_loader && let Some(scanned) = self.leave_site_to_loader(site, answer) {
+            if let (false, ImportSpecifier::Constant(specifier), CodeAnswer::NotFound(reason)) =
+                (is_followed_further, site.specifier, answer)
+            {
+                self.say_name_is_not_found(index, site, specifier, reason);
+            }
+            return scanned;
+        }
+        if let Some(scanned) = self.leave_library_name_to_loader(site, answer) {
+            return scanned;
+        }
         match site.specifier {
             ImportSpecifier::Constant(specifier) => {
                 let scanned = self.scan_constant_site(index, site, specifier, answer);
@@ -386,12 +509,43 @@ impl FileScanner<'_, '_> {
             }
             ImportSpecifier::Pattern { .. }
             | ImportSpecifier::OneOf(_)
-            | ImportSpecifier::Unknown => self.scan_computed_site(site, answer),
+            | ImportSpecifier::Unknown => self.scan_computed_site(site, answer, asks_loader),
         }
     }
 
-    // `import data from "./data.txt" with { type: "toml" }` of a file outside the program. `bun run` hands the loader the types that it knows, of import statements alone.
-    // An import() hands over its options when it runs.
+    fn leave_site_to_loader(
+        &mut self,
+        site: &ImportSite,
+        answer: CodeAnswer<'_>,
+    ) -> Option<ScannedSite> {
+        let at = self.spellings.len() as u32;
+        let target = match answer {
+            CodeAnswer::File(target) => target,
+            CodeAnswer::NotFound(_) => return Some(ScannedSite::Candidates(at..at)),
+            CodeAnswer::HostModule(_)
+            | CodeAnswer::External { .. }
+            | CodeAnswer::Erased
+            | CodeAnswer::Computed(_) => return None,
+        };
+        let is_found_by_loader = match self.sources.kind(target) {
+            SourceKind::Program => self.files.entry_points().contains(&target),
+            SourceKind::Data => true,
+            _ => false,
+        };
+        if !is_found_by_loader {
+            return None;
+        }
+        self.candidates.push(ModuleRef::File(target));
+        if let ImportSpecifier::Constant(spelling) = site.specifier {
+            self.spellings.push(SpelledModule {
+                spelling,
+                module: ModuleRef::File(target),
+                is_left_to_loader: true,
+            });
+        }
+        Some(ScannedSite::Candidates(at..self.spellings.len() as u32))
+    }
+
     fn with_type_attribute(&self, site: &ImportSite, scanned: ScannedSite) -> ScannedSite {
         let ScannedSite::Module(ModuleRef::External {
             importer,
@@ -408,7 +562,63 @@ impl FileScanner<'_, '_> {
         })
     }
 
-    fn scan_computed_site(&mut self, site: &ImportSite, answer: CodeAnswer<'_>) -> ScannedSite {
+    fn is_library_name_asked_of_plugins(&self, site: &ImportSite, spelled: SpelledModule) -> bool {
+        let loads = matches!(
+            site.kind,
+            ImportSiteKind::ImportCall(_)
+                | ImportSiteKind::Require(_)
+                | ImportSiteKind::ImportMetaRequire(_)
+        );
+        let name = self.files.atoms.bytes(spelled.spelling);
+        self.asks_loader_where_bundler_does
+            && loads
+            && matches!(spelled.module, ModuleRef::Runtime(_))
+            && match is_followed_further_than_bundler(self.files, self.file, site) {
+                true => strings::contains_char(name, b':'),
+                false => name.starts_with(b"bun:"),
+            }
+    }
+
+    fn leave_library_name_to_loader(
+        &mut self,
+        site: &ImportSite,
+        answer: CodeAnswer<'_>,
+    ) -> Option<ScannedSite> {
+        let (CodeAnswer::HostModule(id), ImportSpecifier::Constant(spelling)) =
+            (answer, site.specifier)
+        else {
+            return None;
+        };
+        let spelled = SpelledModule {
+            spelling,
+            module: ModuleRef::Runtime(RuntimeModule::from_registry_id(id.0)?),
+            is_left_to_loader: true,
+        };
+        if !self.is_library_name_asked_of_plugins(site, spelled) {
+            return None;
+        }
+        let at = self.spellings.len() as u32;
+        self.candidates.push(spelled.module);
+        self.spellings.push(spelled);
+        Some(ScannedSite::Candidates(at..at + 1))
+    }
+
+    fn is_file_that_loader_finds(&self, spelled: SpelledModule) -> bool {
+        let is_held = |target: FileId| {
+            matches!(
+                self.sources.kind(target),
+                SourceKind::Program | SourceKind::Data
+            )
+        };
+        matches!(spelled.module, ModuleRef::File(target) if is_held(target))
+    }
+
+    fn scan_computed_site(
+        &mut self,
+        site: &ImportSite,
+        answer: CodeAnswer<'_>,
+        asks_loader: bool,
+    ) -> ScannedSite {
         let targets = match answer {
             CodeAnswer::Computed(targets) => targets,
             _ => {
@@ -422,17 +632,6 @@ impl FileScanner<'_, '_> {
                 host_modules,
                 spellings,
             } => {
-                if !files.is_empty() {
-                    let node = diagnostic_node(self.hir, site);
-                    let texts = files
-                        .iter()
-                        .map(|&file| self.files.hir(file).text.len() as u64);
-                    self.computed_imports.push(ComputedImport {
-                        site: Span::of_node(self.hir, self.file, node),
-                        files: files.len() as u32,
-                        bytes: texts.sum(),
-                    });
-                }
                 let files = files.iter().map(|&file| ModuleRef::File(file));
                 self.candidates.extend(files);
                 let runtime_modules = host_modules
@@ -441,10 +640,20 @@ impl FileScanner<'_, '_> {
                 self.candidates
                     .extend(runtime_modules.map(ModuleRef::Runtime));
                 let start = self.spellings.len() as u32;
-                // A value that stands in no list is resolved when the call runs.
-                let spelled: Vec<SpelledModule> = (spellings.iter())
-                    .filter(|(spelling, _)| !self.is_package_that_loader_answers_for(*spelling))
-                    .filter_map(find_spelled_module)
+                let spelled = spellings.iter().filter_map(find_spelled_module);
+                let prefixed = spelled.clone().map(|it| it.spelling);
+                let prefixed = prefixed.filter(|&name| self.is_name_for_transpiler_alone(name));
+                let unread = self.find_names_for_transpiler_alone_that_it_does_not_read(
+                    site,
+                    prefixed.collect(),
+                );
+                let spelled: Vec<SpelledModule> = spelled
+                    .filter(|it| !unread.contains(&it.spelling))
+                    .map(|spelled| SpelledModule {
+                        is_left_to_loader: (asks_loader && self.is_file_that_loader_finds(spelled))
+                            || self.is_library_name_asked_of_plugins(site, spelled),
+                        ..spelled
+                    })
                     .collect();
                 self.spellings.extend(spelled);
                 self.add_spellings_named_in(site, start);
@@ -461,24 +670,46 @@ impl FileScanner<'_, '_> {
         }
     }
 
-    /// The spellings of the site begin at `start`. Each stands there once.
+    fn is_name_for_transpiler_alone(&self, name: Atom) -> bool {
+        Alias::bun_prefixed_builtin(self.files.atoms.bytes(name)).is_some()
+    }
+
+    fn find_names_for_transpiler_alone_that_it_does_not_read(
+        &self,
+        site: &ImportSite,
+        mut prefixed: Vec<Atom>,
+    ) -> Vec<Atom> {
+        if !prefixed.is_empty() {
+            let (bound, decisions) = (
+                self.files.bound(self.file),
+                &self.compiled.analysis.decisions,
+            );
+            let read = find_names_read_by_transpiler(self.hir, bound, decisions, site);
+            prefixed.retain(|name| !read.contains(name));
+        }
+        prefixed
+    }
+
     fn add_spellings_named_in(&mut self, site: &ImportSite, start: u32) {
-        let (bound, decisions) = (
-            self.files.bound(self.file),
-            &self.compiled.analysis.decisions,
-        );
-        let is_read = is_name_read_by_transpiler(self.hir, bound, decisions, site.kind);
-        for named in modules_named_in(self.named_in_choices, site.specifier_node) {
-            // `import.meta.require(quiet ? "bun:os" : "bun:fs")` asks the loader, which knows neither.
-            let name = self.files.atoms.bytes(named.name);
-            if !is_read && Alias::bun_prefixed_builtin(name).is_some() {
+        let named = modules_named_in(self.named_in_choices, site.specifier_node);
+        let prefixed = named.iter().map(|it| it.name);
+        let prefixed = prefixed.filter(|&name| self.is_name_for_transpiler_alone(name));
+        let unread =
+            self.find_names_for_transpiler_alone_that_it_does_not_read(site, prefixed.collect());
+        for named in named {
+            if unread.contains(&named.name) {
                 continue;
             }
             let mut spelled = self.spellings[start as usize..].iter();
             if !spelled.any(|it| it.spelling == named.name) {
-                self.spellings.push(SpelledModule {
+                let spelled = SpelledModule {
                     spelling: named.name,
                     module: ModuleRef::Runtime(named.module),
+                    is_left_to_loader: false,
+                };
+                self.spellings.push(SpelledModule {
+                    is_left_to_loader: self.is_library_name_asked_of_plugins(site, spelled),
+                    ..spelled
                 });
             }
         }
@@ -491,42 +722,7 @@ impl FileScanner<'_, '_> {
         specifier: Atom,
         answer: CodeAnswer<'_>,
     ) -> ScannedSite {
-        // Which of the two answers shows when the file is linked or the call runs, so the loader of the run time is asked. It finds the file of the package in its image.
-        if matches!(site_form(site.kind), SiteForm::Declaration | SiteForm::Load)
-            && matches!(answer, CodeAnswer::File(_) | CodeAnswer::External { .. })
-            && self.is_package_that_loader_answers_for(specifier)
-        {
-            self.externals
-                .push((specifier, ExternalKind::UncompiledCode));
-            return ScannedSite::Module(ModuleRef::External {
-                importer: self.file,
-                specifier,
-                type_attribute: None,
-            });
-        }
         let reason = match (self.answer_of(answer), site_form(site.kind)) {
-            (Ok(ScannedSite::Erased) | Err(CodeFailure::ModuleNotFound), SiteForm::Load)
-                if self.may_be_written_by_program(site, specifier) =>
-            {
-                self.externals
-                    .push((specifier, ExternalKind::UncompiledCode));
-                return ScannedSite::Module(ModuleRef::External {
-                    importer: self.file,
-                    specifier,
-                    type_attribute: None,
-                });
-            }
-            (Err(CodeFailure::ModuleNotFound), SiteForm::Declaration)
-                if self.may_be_written_by_program(site, specifier) =>
-            {
-                self.externals
-                    .push((specifier, ExternalKind::UncompiledCode));
-                return ScannedSite::Module(ModuleRef::External {
-                    importer: self.file,
-                    specifier,
-                    type_attribute: None,
-                });
-            }
             (Ok(ScannedSite::Erased), SiteForm::Load) => CodeFailure::ModuleNotFound,
             (Ok(ScannedSite::Erased), SiteForm::Declaration) if is_jsx_site(site.kind) => {
                 CodeFailure::ModuleNotFound
@@ -534,9 +730,7 @@ impl FileScanner<'_, '_> {
             (Ok(ScannedSite::Erased) | Err(_), SiteForm::Resolve) => {
                 return ScannedSite::AllModules;
             }
-            // A test may mock a module that no file stands for.
             (Err(_), SiteForm::GetBuiltinModule | SiteForm::Mock) => return ScannedSite::Erased,
-            // It answers with the modules of the registry, and none of those is an ES module.
             (Ok(ScannedSite::Module(ModuleRef::Runtime(module))), SiteForm::GetBuiltinModule)
                 if table::is_es_module(module) =>
             {
@@ -550,11 +744,8 @@ impl FileScanner<'_, '_> {
                 | SiteForm::GetBuiltinModule
                 | SiteForm::Mock,
             ) => return answer,
-            // `virtual:config`: no file and no package has such a name, so only a plugin answers for it, and a preload or a test may bring one. The loader of the run time is asked. A name that may be a package stays a failure: code that nobody has seen costs the whole program, and an optional dependency that is absent is common.
             (Err(_), SiteForm::Declaration | SiteForm::Load)
-                if (self.runs_tests && self.has_scheme_of_its_own(specifier))
-                    || (!self.mocked_paths.is_empty() && self.is_answered_by_mock(specifier))
-                    || self.may_be_answered_by_mock_out_of_sight() =>
+                if self.runs_tests || self.names_file_missing_at_build(index) =>
             {
                 let kind = ExternalKind::UncompiledCode;
                 self.externals.push((specifier, kind));
@@ -566,68 +757,30 @@ impl FileScanner<'_, '_> {
             }
             (Err(reason), SiteForm::Declaration | SiteForm::Load) => reason,
         };
+        self.say_name_is_not_found(index, site, specifier, reason);
+        ScannedSite::Unresolved
+    }
+
+    fn say_name_is_not_found(
+        &mut self,
+        index: u32,
+        site: &ImportSite,
+        specifier: Atom,
+        reason: CodeFailure,
+    ) {
         let (start, end) = range_of_node(self.hir, diagnostic_node(self.hir, site));
         let written = WrittenPart::new(index as usize, SitePart::Specifier, site.kind, start..end);
         let kind = ModuleFailureKind::Unresolved { specifier, reason };
         self.failures.push(written.fail(self.file, kind));
-        ScannedSite::Unresolved
     }
 
-    // `writeFileSync(join(import.meta.dirname, "made.mjs"), text); await import(join(import.meta.dirname, "made.mjs"))`: the build knows the path, and the file is not
-    // there yet. The loader of the run time is asked when the call runs, and fails as in plain Bun where the file is still missing.
-    fn may_be_written_by_program(&self, site: &ImportSite, specifier: Atom) -> bool {
-        let specifier = self.files.atoms.bytes(specifier);
-        let is_asked_behind_other_code = match site.kind {
-            ImportSiteKind::ImportCall(_)
-            | ImportSiteKind::Require(_)
-            | ImportSiteKind::ImportMetaRequire(_) => true,
-            // A test file is loaded behind the test files in front of it, and what one of those writes is there by then.
-            ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_) => self.runs_tests,
-            _ => false,
-        };
-        self.loads_code_from_disk
-            && is_asked_behind_other_code
-            && is_path_that_program_may_write(self.sources.public_path(self.file), specifier)
-    }
-
-    fn has_scheme_of_its_own(&self, specifier: Atom) -> bool {
-        let specifier = self.files.atoms.bytes(specifier);
-        let Some(colon) = strings::index_of_char_usize(specifier, b':') else {
-            return false;
-        };
-        let scheme = &specifier[..colon];
-        // One letter is a drive.
-        scheme.len() > 1
-            && scheme[0].is_ascii_alphabetic()
-            && (scheme.iter()).all(|byte| byte.is_ascii_alphanumeric() || b"+-.".contains(byte))
-            && !matches!(
-                scheme,
-                b"node" | b"bun" | b"file" | b"data" | b"blob" | b"http" | b"https"
-            )
-    }
-
-    // The name of a package stands in the list only as it is written. A path there may be that of a file that a mock is laid over.
-    // An executable runs where no disk has the package, so nobody there could say what the name stands for without the plugin.
-    fn is_package_that_loader_answers_for(&self, specifier: Atom) -> bool {
-        let name = self.files.atoms.bytes(specifier);
-        self.runs_tests
-            && !self.mocked_paths.is_empty()
-            && !matches!(name.first(), None | Some(b'.' | b'/'))
-            && strings::index_of_char_usize(name, b':').is_none()
-            && self.mocked_paths.contains(name)
-    }
-
-    // `const { mock } = require("bun:test"); mock.module("made-up", ..)`, `fake("made-up")` where `fake` calls `mock.module(name, ..)`: no site says which
-    // names such a program mocks. The loader of the run time is asked, and fails as in plain Bun where nobody has mocked the name by then.
-    fn may_be_answered_by_mock_out_of_sight(&self) -> bool {
-        self.runs_tests && self.mocks_any_module
-    }
-
-    fn is_answered_by_mock(&self, specifier: Atom) -> bool {
-        let specifier = self.files.atoms.bytes(specifier);
-        (self.mocked_paths).contains(&path_named(self.sources, self.file, specifier))
+    fn names_file_missing_at_build(&self, index: u32) -> bool {
+        parsed_source(self.files, self.file).is_some_and(|source| {
+            let names = &source.contents.names;
+            let is_listed = |sites: &[u32]| sites.binary_search(&index).is_ok();
+            is_listed(&names.files_missing_at_build_at)
+                || is_listed(&names.data_missing_at_build_at)
+        })
     }
 
     fn answer_of(&mut self, answer: CodeAnswer<'_>) -> Result<ScannedSite, CodeFailure> {
@@ -674,10 +827,17 @@ impl FileScanner<'_, '_> {
                 ),
                 _ => continue,
             };
+            let phase = match target {
+                ModuleRef::File(file) => {
+                    phase_of_request(file_interop(self.files, self.sources, file).kind, phase)
+                }
+                _ => phase,
+            };
             requests.add(RequestDraft {
                 target,
                 phase,
                 is_star_export,
+                star_place: NO_STAR_PLACE,
             });
         }
         requests.drafts
@@ -689,7 +849,11 @@ fn find_type_attribute(
     hir: &hir::File<'_>,
     site: &ImportSite,
 ) -> Option<bun_ast::Loader> {
-    let (ImportSiteKind::Import(_), Some(attributes)) = (site.kind, site.attributes.some()) else {
+    let is_statement = matches!(
+        site.kind,
+        ImportSiteKind::Import(_) | ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+    );
+    let (true, Some(attributes)) = (is_statement, site.attributes.some()) else {
         return None;
     };
     let written = hir.import_attribute(attributes, bun_sema::atom::known::r#type);
@@ -697,7 +861,6 @@ fn find_type_attribute(
     written.and_then(bun_ast::Loader::from_string)
 }
 
-/// `import .. from "bun"` runs as `var .. = Bun` and loads no module.
 pub(super) fn is_replaced_by_object(target: ModuleRef) -> bool {
     match target {
         ModuleRef::Runtime(module) => table::object_replacing_namespace(module).is_some(),
@@ -712,7 +875,11 @@ fn find_spelled_module(&(spelling, target): &(Atom, ComputedTarget)) -> Option<S
             ModuleRef::Runtime(RuntimeModule::from_registry_id(id.0)?)
         }
     };
-    Some(SpelledModule { spelling, module })
+    Some(SpelledModule {
+        spelling,
+        module,
+        is_left_to_loader: false,
+    })
 }
 
 #[derive(Copy, Clone)]
@@ -738,7 +905,7 @@ pub(super) fn site_form(site: ImportSiteKind) -> SiteForm {
     }
 }
 
-fn is_jsx_site(site: ImportSiteKind) -> bool {
+pub(super) fn is_jsx_site(site: ImportSiteKind) -> bool {
     matches!(
         site,
         ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage
@@ -761,7 +928,9 @@ fn diagnostic_node(hir: &hir::File<'_>, site: &ImportSite) -> NodeData {
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
         | ImportSiteKind::GetBuiltinModule(call)
-        | ImportSiteKind::MockModule(call) => NodeData::Expr(call),
+        | ImportSiteKind::MockModule(call)
+        | ImportSiteKind::ImportByTestRunner(call)
+        | ImportSiteKind::RequireByTestRunner(call) => NodeData::Expr(call),
     }
 }
 
@@ -772,8 +941,27 @@ pub(super) fn import_phase(hir: &hir::File<'_>, import: ImportId) -> ImportPhase
     }
 }
 
-/// An imported CommonJS file runs while its importer is linked, whether the import is deferred or not.
-pub(super) fn phase_towards(target: ModuleKind, written: ImportPhase) -> ImportPhase {
+pub(super) fn import_call_type_kind(
+    files: &Files<'_>,
+    hir: &hir::File<'_>,
+    site: &ImportSite,
+    call: ExprId,
+) -> Option<ImportTypeKind> {
+    let has_options = match hir[call].kind {
+        ExprKind::ImportCall { args } => args.len() > 1,
+        _ => true,
+    };
+    if !has_options {
+        return Some(ImportTypeKind::None);
+    }
+    let written = hir.import_attribute(site.attributes.some()?, bun_sema::atom::known::r#type)?;
+    Some(match files.atoms.bytes(written) {
+        b"json" => ImportTypeKind::Json,
+        _ => ImportTypeKind::HostDefined,
+    })
+}
+
+fn phase_of_request(target: ModuleKind, written: ImportPhase) -> ImportPhase {
     match target {
         ModuleKind::CommonJs => ImportPhase::Evaluation,
         _ => written,
@@ -788,13 +976,26 @@ fn is_star_export_entry(hir: &hir::File<'_>, statement: StmtId) -> bool {
 struct RequestList {
     drafts: Vec<RequestDraft>,
     positions: FxHashMap<(ModuleRef, ImportPhase), u32>,
+    stars: u32,
 }
 
 impl RequestList {
     fn add(&mut self, draft: RequestDraft) {
-        match self.find(draft.target, draft.phase) {
-            Some(position) => self.drafts[position].is_star_export |= draft.is_star_export,
-            None => self.push(draft),
+        let position = match self.find(draft.target, draft.phase) {
+            Some(position) => position,
+            None => {
+                self.push(RequestDraft {
+                    is_star_export: false,
+                    ..draft
+                });
+                self.drafts.len() - 1
+            }
+        };
+        let listed = &mut self.drafts[position];
+        if draft.is_star_export && !listed.is_star_export {
+            listed.is_star_export = true;
+            listed.star_place = self.stars;
+            self.stars += 1;
         }
     }
 
@@ -820,24 +1021,72 @@ impl RequestList {
 }
 
 pub(super) struct FinishedRequests {
-    /// By record file.
     pub files: Vec<Vec<ModuleRequest>>,
-    /// In the order of `ModuleSet::inner_modules`.
     pub inner_modules: Vec<(ModuleRef, Vec<ModuleRequest>)>,
+    pub files_with_late_stars: Vec<FileId>,
 }
 
-/// What a module imports, which runs in front of its body, and then what its sites evaluate, in the order of the text.
+fn find_modules_with_names_of_mocks(
+    scans: &Scans,
+    modules: &ModuleSet,
+    mocked_modules: &FxHashSet<ModuleRef>,
+) -> FxHashSet<ModuleRef> {
+    let mut found = mocked_modules.clone();
+    if found.is_empty() {
+        return found;
+    }
+    let mut files_with_star_over: FxHashMap<ModuleRef, Vec<FileId>> = FxHashMap::default();
+    for &file in &modules.record_files {
+        let requests = scans.find(file).map_or(&[][..], |scan| &scan.requests[..]);
+        for draft in requests.iter().filter(|draft| draft.is_star_export) {
+            files_with_star_over
+                .entry(draft.target)
+                .or_default()
+                .push(file);
+        }
+    }
+    let mut pending: Vec<ModuleRef> = found.iter().copied().collect();
+    while let Some(module) = pending.pop() {
+        for &file in files_with_star_over
+            .get(&module)
+            .map_or(&[][..], |files| &files[..])
+        {
+            if found.insert(ModuleRef::File(file)) {
+                pending.push(ModuleRef::File(file));
+            }
+        }
+    }
+    found
+}
+
 pub(super) fn finish_requests(
     scans: &Scans,
     modules: &ModuleSet,
     tables: &ExportTables,
     order: &EvaluationOrder,
     sites: &PlannedSites,
+    mocked_modules: &FxHashSet<ModuleRef>,
 ) -> FinishedRequests {
+    let modules_with_names_of_mock =
+        find_modules_with_names_of_mocks(scans, modules, mocked_modules);
     let finish_file = |&file: &FileId| {
-        let follows_every_star = tables.follows_every_star(file);
+        let is_any_mock_named = !modules_with_names_of_mock.is_empty();
+        let has_names_of_mock = modules_with_names_of_mock.contains(&ModuleRef::File(file));
+        let reaches_another_mock = || {
+            let stars = scans.find(file).into_iter().flat_map(|scan| &scan.requests);
+            let mut stars = stars.filter(|draft| draft.is_star_export);
+            stars.any(|draft| modules_with_names_of_mock.contains(&draft.target))
+        };
+        let follows_every_star = tables.follows_every_star(file)
+            || (has_names_of_mock
+                && (!mocked_modules.contains(&ModuleRef::File(file)) || reaches_another_mock()));
         let finish_request = |draft: &RequestDraft| ModuleRequest {
             phase: draft.phase,
+            is_star_export: draft.is_star_export,
+            star_place: match is_any_mock_named {
+                true => draft.star_place,
+                false => NO_STAR_PLACE,
+            },
             is_dynamic_star_export: draft.is_star_export
                 && (follows_every_star || tables.has_dynamic_names(draft.target)),
             ..ModuleRequest::import(draft.target)
@@ -853,7 +1102,18 @@ pub(super) fn finish_requests(
         inner_modules: inner_modules
             .map(|&(file, callback)| (ModuleRef::Inner { file, callback }, Vec::new()))
             .collect(),
+        files_with_late_stars: Vec::new(),
     };
+    if !modules_with_names_of_mock.is_empty() {
+        let has_late_star = |requests: &[ModuleRequest]| {
+            let places = requests.iter().map(|it| it.star_place);
+            !places.filter(|&place| place != NO_STAR_PLACE).is_sorted()
+        };
+        let files = modules.record_files.iter().zip(&finished.files);
+        let files = files.filter(|(_, requests)| has_late_star(requests));
+        finished.files_with_late_stars = files.map(|(&file, _)| file).collect();
+        finished.files_with_late_stars.sort_unstable();
+    }
     let mut seen = FxHashSet::default();
     for (requests, &file) in finished.files.iter_mut().zip(&modules.record_files) {
         seen.clear();
@@ -863,8 +1123,7 @@ pub(super) fn finish_requests(
             if !seen.insert((referrer, target)) {
                 continue;
             }
-            // Behind a site of such a target it has run to its end, or it lies on a cycle that the requests show.
-            let completes = modules.keeps_error(target) || !order.exposed(target);
+            let completes = !order.half(target);
             let request = ModuleRequest::require(target, completes);
             match referrer {
                 ModuleRef::Inner { file, callback } => {

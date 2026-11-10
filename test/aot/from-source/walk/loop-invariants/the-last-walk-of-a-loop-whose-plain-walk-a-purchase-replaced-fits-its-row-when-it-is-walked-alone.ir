@@ -1,0 +1,34 @@
+# -- source: main.js
+# class Painter {
+#   box(text) {
+#     return "[" + text + "]";
+#   }
+#   line(of) {
+#     return of.text + ";";
+#   }
+#   sheet(sheet) {
+#     let top = "";
+#     let boxes = "";
+#     for (let i = 0; i < sheet.heads.length; i++) boxes += this.box(sheet.heads[i]);
+#     top += this.line({ text: boxes });
+#     let rest = "";
+#     for (let i = 0; i < sheet.lines.length; i++) {
+#       const line = sheet.lines[i];
+#       boxes = "";
+#       for (let k = 0; k < line.length; k++) boxes += this.box(line[k]);
+#       rest += this.line({ text: boxes });
+#     }
+#     if (rest) rest = `<${rest}>`;
+#     return "(" + top + ")" + rest;
+#   }
+# }
+# const painter = new Painter();
+# globalThis.kept = painter;
+# print(painter.sheet({ heads: ["a", "b"], lines: [["1", "2"], ["3"], []] }));
+# -- end of source
+# OPTIONS: check=LastWalksOfLoopsAlone
+# RUN(ALONE): walk f4 mechanisms=all
+# ALONE: code f4:Body
+# RUN(RIGHT): run-in-shell
+# RIGHT: ([a][b];)<[1][2];[3];;>
+# RIGHT-NEXT: exited with 0

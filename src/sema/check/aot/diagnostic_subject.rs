@@ -2,7 +2,7 @@ use crate::atom::{Atom, known};
 use crate::bind::SymFlags;
 use crate::check::Checker;
 use crate::program::{Files, Sym};
-use crate::types::{Origin, TypeData, TypeId};
+use crate::types::{Origin, Prop, PropSource, TypeData, TypeId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub enum DiagnosticSubject {
@@ -34,7 +34,6 @@ pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 4] 
         .lookup(b"ErrorConstructor")
         .and_then(|name| files.global_type_symbol(name))
         .map(|symbol| files.canonical(symbol));
-    // A program that adds to it (`declare global { namespace NodeJS { interface ProcessEnv { .. } } }`) declares it alone.
     let node_namespace = files
         .atoms
         .lookup(b"NodeJS")
@@ -44,8 +43,19 @@ pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 4] 
 }
 
 impl Checker<'_, '_> {
+    pub(in crate::check) fn is_prop_brought(&self, prop: &Prop<'_>) -> bool {
+        let PropSource::Symbol(symbol) = prop.source else {
+            return false;
+        };
+        let files = self.files();
+        let declarations = files.decls_of(files.canonical(symbol));
+        !declarations.is_empty() && declarations.iter().all(|&(of, _)| files.is_brought(of))
+    }
+
     pub(in crate::check) fn member_container(&self, symbol: Sym) -> DiagnosticSubject {
-        DiagnosticSubject::MemberContainer(self.files().canonical(symbol))
+        let container = self.files().canonical(symbol);
+        self.files().keep_tree(container.file);
+        DiagnosticSubject::MemberContainer(container)
     }
 
     pub(in crate::check) fn member_container_of_type(&self, ty: TypeId) -> DiagnosticSubject {

@@ -1,0 +1,21 @@
+# `s += p[k] * q[k]` over two lists of the file whose contents Link has proven: int32s beside fractions. No proof of a value goes unchecked, and to hold a double against `i32|fractional` takes 32 instructions a read.
+# The readers are `*` and `+` on doubles: they ask for a number and nothing more, and that is what the storage of doubles says by itself. So the read claims a number and nothing is left to test.
+# A list of whole numbers keeps its claim: it is cheap to hold and it says which storage is asked for first.
+# It was 545 instructions a turn where it is 258
+# f1 = ofFractions
+# f2 = ofWholeNumbers
+# -- source: a-number-that-may-be-a-fraction-read-out-of-a-proven-list-for-readers-of-doubles-claims-a-number.ts
+# declare function sink(...values: unknown[]): void;
+# const p = [1.5, 2.5, 3.5], q = [0.5, 0.25, 4], m = [1, 2, 3], n = [3, 5, 7];
+# function ofFractions(t: number): number { p[0] = t & 7; let s = 0; for (let k = 0; k < 3; k++) s += p[k] * q[k]; return s; }
+# function ofWholeNumbers(t: number): number { m[0] = (t | 0) * (t | 0); n[1] = (t | 0) * (t | 0); let s = 0.5; for (let k = 0; k < 3; k++) s += m[k] * n[k]; return s; }
+# sink(ofFractions(1), ofFractions(2), ofWholeNumbers(1), ofWholeNumbers(2));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: fractional @OptionalDouble = GetArrayElement
+# CHECK: undefined|number @OptionalDouble = GetArrayElement {{*}}level=Proven
+# CHECK-NOT: fractional @OptionalDouble = GetArrayElement
+# RUN(WHOLE): walk f2 mechanisms=all
+# WHOLE-LABEL: code f2:Body
+# WHOLE: undefined|int|whole @OptionalDouble = GetArrayElement {{*}}level=Proven

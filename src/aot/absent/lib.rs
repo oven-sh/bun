@@ -1,16 +1,14 @@
-//! The functions that `bun_aot_interface` declares, in a Bun that is built without the ahead-of-time compiler.
-//! `engine::has_compiler()` is false in such a Bun, and every road to the compiler asks it first.
-
 use bun_aot_interface::compile::{BuildFailed, Compilation};
 use bun_aot_interface::diagnostic_codes::Code;
 use bun_aot_interface::engine::{EngineModuleId, EngineResult, RejectedOptionWord};
-use bun_aot_interface::link::ProgramNames;
 use bun_aot_interface::options::Options;
-use bun_aot_interface::report::{ReportEntry, ReportInput, ReportMessage, SourceTexts};
+use bun_aot_interface::report::{
+    ReportEntry, ReportInput, ReportMessage, SourceChanged, SourceTexts,
+};
 use bun_aot_interface::statistics::{StatisticId, Statistics};
 use bun_aot_interface::{Opaque, SourceProvider};
 use bun_ast::Log;
-use bun_options_types::aot_options::{ExplainSet, ReplacedByTests, ReportDetail};
+use bun_options_types::aot_options::ExplainSet;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
@@ -31,23 +29,22 @@ bun_aot_interface::define_linked_functions! {
     fn bun_aot_check_option_word(_earlier_words: &[Box<[u8]>], _word: &[u8]) -> Result<(), RejectedOptionWord> { Ok(()) }
     fn bun_aot_used_features(_result: &EngineResult) -> UsedFeatures { absent() }
     fn bun_aot_image(_result: &EngineResult) -> Option<&[u8]> { absent() }
+    fn bun_aot_image_mut_and_symbols(_result: &mut EngineResult) -> (Option<&mut [u8]>, &[u8]) { absent() }
     fn bun_aot_entry_module_ids(_result: &EngineResult) -> &[EngineModuleId] { absent() }
-    fn bun_aot_symbols(_result: &EngineResult) -> &[u8] { absent() }
     fn bun_aot_new_statistics() -> Statistics { Statistics(Opaque::new(())) }
     fn bun_aot_statistic(_statistics: &Statistics, _id: StatisticId) -> u64 { 0 }
+    fn bun_aot_log_time_outside_stages(_name: &str) { absent() }
+    fn bun_aot_log_part_outside_stages(_name: &str) { absent() }
     fn bun_aot_new_report_line(_kind: ExplainSet, _text: Vec<u8>) -> ReportEntry { absent() }
     fn bun_aot_write_summary(_input: &ReportInput<'_>, _out: &mut Vec<u8>) { absent() }
+    fn bun_aot_write_developer_options(_option_words: &[Box<[u8]>], _out: &mut Vec<u8>) { absent() }
     fn bun_aot_write_untyped_note(_statistics: &Statistics, _out: &mut Vec<u8>) { absent() }
     fn bun_aot_collect_report_entries(_input: &ReportInput<'_>, _kinds: ExplainSet) -> Vec<ReportEntry> { absent() }
     fn bun_aot_report_entries_to_messages(_texts: &SourceTexts, _entries: &[ReportEntry]) -> Vec<ReportMessage> { absent() }
-    fn bun_aot_write_obfuscation_map(_engine: &EngineResult, _names: &ProgramNames, _texts: &SourceTexts, _file_name: &[u8], _debug_id: Option<&[u8]>) -> Vec<u8> { absent() }
-    fn bun_aot_write_build_report(_input: &ReportInput<'_>, _detail: ReportDetail, _build_id: Option<&[u8]>) -> Vec<u8> { absent() }
-    fn bun_aot_write_registry() -> Vec<u8> { absent() }
-    fn bun_aot_unlinked_named_values<'a, 's>(_files: &'a Files<'s>, _atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a> { absent() }
-    fn bun_aot_find_what_tests_replace(_files: &[Vec<u8>], _threads: usize, _resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests { absent() }
-    fn bun_aot_everything_that_tests_replace() -> ReplacedByTests { absent() }
-    fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]> { absent() }
-    fn bun_aot_builtins_that_load_library_modules() -> Vec<String> { absent() }
-    fn bun_aot_library_modules_spelled_in(_text: &[u8]) -> Option<Vec<&'static [u8]>> { absent() }
-    fn bun_aot_builtins_that_load_library_modules_spelled_in(_text: &[u8]) -> Option<Vec<String>> { absent() }
+    fn bun_aot_write_obfuscation_map(_engine: &EngineResult, _texts: &SourceTexts, _file_name: &[u8], _debug_id: Option<&[u8]>) -> Result<Vec<u8>, SourceChanged> { absent() }
+    fn bun_aot_globals_that_a_window_replaces() -> Vec<u32> { Vec::new() }
+    fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32> { Vec::new() }
+    fn bun_aot_imports_vitest(_path: &[u8], _text: &[u8]) -> bool { absent() }
+    fn bun_aot_find_importers_outside_run(_root: &[u8], _files: &[Vec<u8>], _is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Vec<Option<Vec<u8>>> { absent() }
+    fn bun_aot_name_values_of_unlinked_files<'a>(_files: &'a Files<'_>) -> Box<dyn NamedValues + 'a> { absent() }
 }

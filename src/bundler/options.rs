@@ -656,11 +656,7 @@ pub fn get_loader_and_virtual_source<'a>(
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
-        jsc_vm
-            .read_dir_info_package_json(dir)
-            // SAFETY: the vtable returns a pointer into the resolver's DirInfo
-            // cache owned by `jsc_vm.owner`, which outlives `'a`.
-            .map(|p| unsafe { &*p })
+        jsc_vm.read_dir_info_package_json(dir)
     } else {
         None
     };
@@ -1696,9 +1692,9 @@ impl<'a> BundleOptions<'a> {
 
     /// Shared-borrow the per-Transpiler `Log`.
     ///
-    /// SAFETY: `self.log` is non-null: `Transpiler::init_in_place` validates
+    /// SAFETY: `self.log` is non-null: `Transpiler::init` validates
     /// the pointer via `NonNull::new(log).expect(..)` before storing it and
-    /// before calling `from_api` (which has no other callers).
+    /// before calling `from_api`.
     /// The pointee is the caller-owned arena `Log` which outlives `self`. The
     /// same allocation is aliased into `Transpiler.log` / `Resolver.log` /
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller

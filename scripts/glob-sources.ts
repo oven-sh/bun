@@ -131,6 +131,10 @@ const patterns = {
       "packages/bun-usockets/src/crypto/*.cpp",
     ],
   },
+  /** the native tests of the AoT compiler that ask bun's table of built-ins: compiled like `cxx`, linked into testaot alone */
+  aotNativeTests: {
+    paths: ["test/aot/native/*.cpp"],
+  },
   /** all `*.c` compiled into bun (usockets, llhttp, uv polyfills) */
   c: {
     paths: [

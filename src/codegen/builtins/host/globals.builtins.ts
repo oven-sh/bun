@@ -1,14 +1,15 @@
 import * as b from "bun-builtins-table";
 import {
+  argumentsCell,
   environmentCell,
+  formatsStackCell,
   framesOfModuleGraphsCell,
+  functionOfTimersPromisesCell,
   moduleGraphsCell,
+  overriddenMainCell,
   performanceTimingCell,
   requestHandlerCell,
   serverOptionsCell,
-  socketDataCell,
-  socketOptionsCell,
-  socketsCell,
   standardBlobCell,
   targetsOfEventsCell,
   timelineHandlerCell,
@@ -19,7 +20,16 @@ import {
   webSocketHandlerCell,
   webSocketsCell,
 } from "./native-cells.ts";
-import { handedOver, mayAnswerWrapperKeptIn } from "./native-code.ts";
+import {
+  answering,
+  comparedDeeply,
+  deepComparison,
+  handedOver,
+  matchedDeeply,
+  mayAnswerWrapperKeptIn,
+  promiseOf,
+} from "./native-code.ts";
+import { convertedToString, iterated, sequencesOfTLSOptions, socketOptions, tlsOptionNames } from "./socket-options.ts";
 
 type Contents = Readonly<Record<string, b.TableType>>;
 type UsesByOperand = Readonly<Record<string, readonly b.UseSpec[]>>;
@@ -62,12 +72,16 @@ const delayedTimer = (times: b.CallbackTimes) => [
   timerAfterDelay(times, b.f64.loose.optional, "js"),
 ];
 
-const answersFunctionOfTimersPromises = {
-  getter: b.any,
-  capability: "js",
-  throws: true,
-  implementation: b.generic,
-} satisfies b.GetterField;
+// NodeTimers.cpp: the getter loads node:timers/promises and answers what the object of the module holds under the name of the timer. It does not look at its receiver.
+const answersFunctionOfTimersPromises = (timer: string) =>
+  ({
+    this: b.any,
+    getter: b.any,
+    capability: "js",
+    throws: true,
+    uses: { this: [b.returnedFrom(functionOfTimersPromisesCell(timer))] },
+    implementation: b.generic,
+  }) satisfies b.GetterField;
 
 const timerCancellation = {
   args: { timer: b.any.optional },
@@ -108,12 +122,14 @@ const clockReading = (symbol: string) =>
     },
   }) satisfies b.FunctionField;
 
-const characters = [b.readAsCharacters];
+const characters = b.inspected;
 const converted = [b.runs("ToPrimitive")];
+// Native code that asks whether a value is a string says yes to a String object, and runs the object's own toString.
+const stringOrStringObject = b.union(b.string, b.instance("String"));
 const membersInspected = (...names: readonly string[]) => [b.runs(b.named(...names)), b.membersOnlyInspected];
 
-// The message of an error about a refused value prints the value the way console.log does.
-const describedAfterReading = (...names: readonly string[]) => [b.printedByFormatter(...names)];
+// The message of an error about a refused value reads its constructor.name, or prints it the way console.log does.
+const describedAfterReading = (...names: readonly string[]) => [b.printedByFormatter("constructor", ...names)];
 const describedInErrorMessage = describedAfterReading();
 
 const refusal = (operand: string, implementation: b.ImplementationSpec = b.hostCall) =>
@@ -139,40 +155,21 @@ const keptByNativeCode = (readMembers: readonly string[], calledMembers: readonl
     b.named(...readMembers),
     ...(calledMembers.length > 0 ? [b.calls(...calledMembers)] : []),
   ),
-  b.membersOfObjectsOnly,
 ];
-
-const memberOf = (operand: b.OperandName, ...path: b.MemberPath): b.PlaceSpec => ({ place: "Member", operand, path });
-
-// ToString of what lies at the end of the path: of an object, a function among them, it calls these three and nothing else.
-const convertedToString = (operand: b.OperandName, ...path: b.MemberPath) =>
-  [
-    { name: "@@toPrimitive", args: [b.string] },
-    { name: "toString", args: [] },
-    { name: "valueOf", args: [] },
-  ].map(({ name, args }) =>
-    b.memberCalled([...path, name], { times: "Once", this: memberOf(operand, ...path), args, result: "Ignored" }),
-  );
-
-// A sequence: native code asks what lies at the end of the path for its iterator and steps it, before the call returns.
-const iterated = (operand: b.OperandName, ...path: b.MemberPath) =>
-  b.memberCalled([...path, "@@iterator"], {
-    times: "Once",
-    this: memberOf(operand, ...path),
-    args: [],
-    result: "Escapes",
-  });
 
 // Native code copies what it reads out of the options. Each function that it calls has a b.memberCalled of its own, which says its `this`, and each sequence a b.memberCalled of its iterator.
 const readAndKeptIn = (cell: string, readMembers: readonly string[]) => [
   b.storedIn(b.nativeCell(cell)),
   b.reachableValuesStoredIn(b.nativeCell(cell)),
   b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...readMembers)),
-  b.membersOfObjectsOnly,
   b.functionsConvertedUnderNamesOnly,
 ];
 
-const sequencesOfTLSOptions = ["ca", "cert", "key", "crl"];
+// An event answers what it was dispatched on as its target, whoever dispatched it: native code dispatches on what has a listener.
+const keptAsTargetOfEvents = (eventTarget: b.TableType) =>
+  eventTarget === receiver
+    ? b.storedIn(b.nativeCell(targetsOfEventsCell))
+    : b.createdIn(eventTarget, b.nativeCell(targetsOfEventsCell));
 
 const listenerRegistration = (eventTarget: b.TableType) =>
   ({
@@ -181,16 +178,18 @@ const listenerRegistration = (eventTarget: b.TableType) =>
     throws: true,
     runsOnlyOperandCode: true,
     uses: {
-      this: [b.retained],
+      this: [b.retained, keptAsTargetOfEvents(eventTarget)],
       type: b.inspected,
       listener: [
         b.retained,
-        // dispatchEvent hands the listener the event that it was handed.
+        // dispatchEvent hands the listener the event that it was handed. What native code dispatches on a signal, and `open` and `close` elsewhere, is an Event. The events of the classes below Event are made by
+        // MessagePort.cpp, BroadcastChannel.cpp, WebSocket.cpp, Worker.cpp, WorkerMessagingProxy.cpp and src/runtime/webview/ChromeBackend.cpp alone. Worker says so in its rows (eventsOfWorker). WHOEVER GIVES MessageChannel,
+        // BroadcastChannel, WebSocket, Bun.WebView OR THE BINDINGS createNodeWorkerConstructor, createNodeWorkerThreadsBinding, createWebSocketBindingForWs ROWS SAYS THERE WHICH EVENTS THEY MAKE.
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",
           times: "PerEvent",
           this: eventTarget,
-          args: [b.object],
+          args: [b.anyMadeOf("Event")],
           result: "Escapes",
         }),
         b.runs(b.calls("handleEvent")),
@@ -242,8 +241,36 @@ const eventHandlerAttribute = (eventTarget: b.TableType) =>
     },
   }) satisfies b.GetterField;
 
+// JSEventListener.cpp, eventHandlerAttribute(): it answers the object that was stored last, and null after anything else.
+const eventHandlerAttributeKeptIn = (cell: string, eventTarget: b.TableType) => {
+  const attribute = eventHandlerAttribute(eventTarget);
+  const { uses } = attribute.setter;
+  return {
+    ...attribute,
+    getter: b.null,
+    uses: { this: [b.returnedFrom(cell)] },
+    setter: { ...attribute.setter, uses: { ...uses, value: [...uses.value, b.storedIn(b.nativeCell(cell))] } },
+  } satisfies b.GetterField;
+};
+
 const receiver = b.operand("this");
 const globalObject = b.builtin("globalThis");
+
+// The listeners that were added earlier run, with the event and the target, and the event keeps the target.
+// What stands for the global object there has the members of the global object, and is not identical to `globalThis`. Native code makes no other object for it.
+const eventDispatch = (eventTarget: b.TableType) =>
+  ({
+    args: { event: b.object },
+    returns: b.bool,
+    capability: "js",
+    throws: true,
+    uses: {
+      this: [b.retained, keptAsTargetOfEvents(eventTarget)],
+      event: [b.retained],
+    },
+    reads: externalState,
+    writes: externalState,
+  }) satisfies b.FunctionField;
 // What `bun:test` exports. The table lists the members that the compiler has to know, so the object counts as one that nobody knows as well.
 const testModule = b.union(b.builtin("bun:test"), b.object);
 
@@ -260,12 +287,28 @@ const heapsReadByClone = [
   "ExternalState",
 ];
 const heapsWrittenByTransfer = ["TypedArrayStorage", "TypedArrayElements", "ExternalState"];
+// A view that keeps its bytes in its cell gets a buffer.
+const heapsWrittenByClone = ["TypedArrayStorage", "ExternalState"];
 const membersReadByClone = ["name", "message", "stack", "cause"];
 const cloned = [
   b.readsContents(),
-  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", b.named(...membersReadByClone)),
+  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...membersReadByClone)),
 ];
 const transferList = [b.runsTransitively(b.named("transfer"), "Iterate"), b.writesContents()];
+const classesOfViews = [
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+] as const;
 const optionsWithClonedDetail = (...names: readonly string[]) => [
   b.readsContents(),
   b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...membersReadByClone, ...names)),
@@ -282,8 +325,8 @@ const timelineOperation = (signature: b.SignatureOptions) =>
     implementation: b.generic,
   }) satisfies b.FunctionField;
 
-// getEntries answers the object that mark or measure returned, and an observer is handed it too.
-const timelineEntry = b.object;
+// getEntries answers the object that mark or measure returned, and an observer is handed it too. It is a PerformanceMark, a PerformanceMeasure or a PerformanceResourceTiming.
+const timelineEntry = b.instance("PerformanceEntry");
 const timelineEntries = newArrayOf(timelineEntry);
 
 // `timing` and toJSON() hand out one object, which the first of them makes.
@@ -397,7 +440,7 @@ const inspect = [
     ...operandCodeOnly,
     args: { value: b.any.optional, options: b.any.optional, colors: b.any.optional },
     uses: {
-      value: [b.printedByFormatter(), b.functionsOnlyNamed],
+      value: [b.printedByFormatter()],
       options: membersInspected("depth", "colors", "sorted", "compact"),
       colors: b.inspected,
     },
@@ -421,23 +464,6 @@ const peek: b.FunctionField[] = [
   },
 ];
 
-// A key of one operand is read from the other under that name, through its prototypes, so any member may be read.
-const comparedDeeply = [
-  b.readsContents(),
-  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named()),
-];
-
-const deepComparison = (args: Contents, uses: UsesByOperand) =>
-  ({
-    ...operandCodeOnly,
-    args,
-    returns: b.bool,
-    throws: true,
-    uses,
-    reads: heapsReadByClone,
-    implementation: b.hostCall,
-  }) satisfies b.FunctionField;
-
 const joinedBytes = {
   returns: b.union(b.instance("ArrayBuffer"), b.instance("Uint8Array").exactly).fresh,
   throws: true,
@@ -460,7 +486,11 @@ const concatArrayBuffers = [
     ...joinedBytes,
     ...operandCodeOnly,
     args: { buffers: b.instance("Array").nullable, maxLength: b.any.optional, asUint8Array: b.any.optional },
-    uses: { buffers: [b.readsContents(), b.runs("OwnValues")], maxLength: b.inspected, asUint8Array: b.inspected },
+    uses: {
+      buffers: [b.readsContents(), b.runs("OwnValues", "PrototypeChain")],
+      maxLength: b.inspected,
+      asUint8Array: b.inspected,
+    },
   },
 ] satisfies b.FunctionField[];
 
@@ -516,34 +546,6 @@ const consumedStream = (settledValue: b.TableType) =>
   }) satisfies b.FunctionField;
 
 const streamConsumer = (settledValue: b.TableType) => [consumedStream(settledValue), refusal("stream")];
-
-const tlsOptionNames = [
-  "passphrase",
-  "dhParamsFile",
-  "serverName",
-  "servername",
-  "lowMemoryMode",
-  "rejectUnauthorized",
-  "requestCert",
-  "ca",
-  "cert",
-  "key",
-  "secureOptions",
-  "minVersion",
-  "maxVersion",
-  "keyFile",
-  "certFile",
-  "caFile",
-  "ALPNProtocols",
-  "ciphers",
-  "clientRenegotiationLimit",
-  "clientRenegotiationWindow",
-  "crl",
-  "allowPartialTrustChain",
-  "sessionTimeout",
-  "sigalgs",
-  "ecdhCurve",
-];
 
 const s3OptionNames = [
   "accessKeyId",
@@ -702,7 +704,8 @@ const webSocketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>
   ping: [webSocket, binaryFrame],
   pong: [webSocket, binaryFrame],
   close: [webSocket, b.f64, b.string],
-  error: [b.any, webSocket],
+  // WebSocketServerContext.rs run_error_callback(): what another of these handlers threw.
+  error: [b.thrown, webSocket],
 };
 
 // upgrade, close and terminate call these before they return.
@@ -754,8 +757,13 @@ const serverOptions = (server: b.PlaceLike) => {
       args: nodeRequestHandlerArguments,
       result: "Escapes",
     }),
-    // `this` is undefined once the server object has been collected.
-    b.memberCalled(["error"], { times: "PerEvent", this: b.any, args: [b.any], result: "Escapes" }),
+    // RequestContext.rs: what a handler threw, the reason of the promise that it answered, or an error that native code made. `this` is undefined once the server object has been collected.
+    b.memberCalled(["error"], {
+      times: "PerEvent",
+      this: b.union(servers, b.undefined),
+      args: [b.thrown],
+      result: "Escapes",
+    }),
     ...routeHandlersUnder("routes", routed),
     ...routeHandlersUnder("static", routed),
     ...webSocketHandlersUnder("websocket"),
@@ -792,43 +800,32 @@ const subprocessOptionNames = [
 
 const subprocessHandlerNames = ["ipc", "onExit", "onDisconnect", "data", "exit", "drain"];
 
-const socketOptionNames = [
-  "socket",
-  "data",
-  "binaryType",
-  "allowHalfOpen",
-  "hostname",
-  "host",
-  "port",
-  "unix",
-  "fd",
-  "fdIsRawSocket",
-  "localAddress",
-  "localPort",
-  "exclusive",
-  "reusePort",
-  "ipv6Only",
-  "pauseOnConnect",
-  "tls",
-  "secureContext",
-  ...tlsOptionNames,
-];
-
 const datagramSocketOptionNames = ["port", "hostname", "flags", "fd", "sharedFd", "binaryType", "socket", "connect"];
 const datagramSocketHandlerNames = ["data", "drain", "error"];
+const datagramSocket = b.instance("UDPSocket");
+const receivedDatagram = b.union(
+  b.instance("Buffer"),
+  b.instance("Uint8Array").exactly,
+  b.instance("ArrayBuffer"),
+).fresh;
+// udp_socket.rs on_data(), on_drain(), call_error_handler().
+const datagramSocketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> = {
+  data: [datagramSocket, receivedDatagram, b.f64, b.string, b.anyMadeOf("Object")],
+  drain: [datagramSocket],
+  error: [b.thrown],
+};
 
 const bundlerOptionNames = [
   "admit",
+  "allow",
   "allowCodeFromDisk",
   "allowUnresolved",
   "aot",
   "aotCheck",
-  "aotDisable",
   "aotExplain",
-  "aotHeat",
+  "aotHarden",
+  "aotOut",
   "aotTesting",
-  "aotTypeErrors",
-  "aotValidate",
   "asset",
   "assets",
   "auto",
@@ -851,6 +848,7 @@ const bundlerOptionNames = [
   "development",
   "disallowCodeGenerationFromStrings",
   "drop",
+  "dts",
   "emitDCEAnnotations",
   "entry",
   "entrypoints",
@@ -872,6 +870,7 @@ const bundlerOptionNames = [
   "identifiers",
   "ignoreDCEAnnotations",
   "importSource",
+  "inspector",
   "jitPolicy",
   "json",
   "jsx",
@@ -982,7 +981,7 @@ const serverMembers = {
         b.keptCalled(webSocketHandlerCell("error"), {
           times: "Once",
           this: b.undefined,
-          args: [b.any, webSocket],
+          args: webSocketHandlerArguments.error,
           result: "Ignored",
         }),
       ],
@@ -996,7 +995,6 @@ const serverMembers = {
           "ToPrimitive",
           b.named("data", "headers"),
         ),
-        b.membersOfObjectsOnly,
         b.memberStoredIn(["data"], b.nativeCell(webSocketDataCell)),
       ],
     },
@@ -1022,7 +1020,7 @@ const serverMembers = {
           result: "Escapes",
         }),
       ],
-      request: [b.readsContents(), b.writesContents()],
+      request: [b.readsContents(), b.writesContents(), ...converted],
       options: handedOver,
     },
   },
@@ -1080,9 +1078,9 @@ const subprocessOptionsKept: readonly b.MemberPath[] = [
   ["cgroup"],
 ];
 
-const subprocessOptionsAt = (operand: b.OperandName) => [
+const runningSubprocess = b.instance("Subprocess");
+const subprocessOptionsAt = (operand: b.OperandName, callsHandlers: boolean) => [
   b.runsTransitively(b.named(...subprocessOptionNames, ...subprocessHandlerNames)),
-  b.membersOfObjectsOnly,
   // What it keeps of them, and what it calls, is listed below.
   b.membersOnlyInspected,
   ...subprocessOptionsConverted.flatMap(name => convertedToString(operand, name)),
@@ -1090,15 +1088,28 @@ const subprocessOptionsAt = (operand: b.OperandName) => [
   ...convertedToString(operand, "env", b.everyOwnValue),
   ...convertedToString(operand, "cmd", b.everyOwnValue),
   ...subprocessOptionsKept.map(path => b.memberStoredIn(path, b.nativeMemory)),
-  // subprocess.rs: (the Subprocess or undefined, the exit code or null, the signal or null, an error of the system or undefined), (the message, the Subprocess, a handle), (true).
+  ...(callsHandlers ? subprocessHandlersCalled : []),
+];
+// subprocess.rs: (the Subprocess or undefined, the exit code or null, the signal or null, an error of the system or undefined), (the message, the Subprocess, a handle), (true). Each is called on the Subprocess.
+const subprocessHandlersCalled = [
   b.memberCalled(["onExit"], {
     times: "PerEvent",
-    this: b.any,
-    args: [b.any, b.f64.nullable, b.union(b.string, b.f64, b.strictNull), b.any],
+    this: b.union(runningSubprocess, b.undefined),
+    args: [
+      b.union(runningSubprocess, b.undefined),
+      b.union(b.f64, b.strictNull),
+      b.union(b.string, b.f64, b.strictNull),
+      b.union(b.instance("Error"), b.undefined),
+    ],
     result: "Ignored",
   }),
-  b.memberCalled(["ipc"], { times: "PerEvent", this: b.any, args: [b.any, b.any, b.any], result: "Ignored" }),
-  b.memberCalled(["onDisconnect"], { times: "PerEvent", this: b.any, args: [b.bool], result: "Ignored" }),
+  b.memberCalled(["ipc"], {
+    times: "PerEvent",
+    this: runningSubprocess,
+    args: [b.any, runningSubprocess, b.any],
+    result: "Ignored",
+  }),
+  b.memberCalled(["onDisconnect"], { times: "PerEvent", this: runningSubprocess, args: [b.bool], result: "Ignored" }),
   ...["data", "exit", "drain"].map(handler =>
     b.memberCalled(["terminal", handler], {
       times: "PerEvent",
@@ -1108,73 +1119,23 @@ const subprocessOptionsAt = (operand: b.OperandName) => [
     }),
   ),
 ];
-// A socket is one object for as long as it lives.
-const socket = b.nativeCell(socketsCell);
-const newSocket = b.union(b.instance("TCPSocket"), b.instance("TLSSocket")).fresh;
-const receivedChunk = b.union(b.instance("Buffer"), b.instance("Uint8Array").exactly, b.instance("ArrayBuffer")).fresh;
-
-const socketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> = {
-  open: [socket],
-  data: [socket, receivedChunk],
-  close: [socket, b.any],
-  // A TLS socket passes a negative error number after a send has failed for good.
-  drain: [socket, b.union(b.f64, b.undefined)],
-  error: [socket, b.any],
-  end: [socket],
-  timeout: [socket],
-  connectError: [socket, b.any],
-  handshake: [socket, b.bool, b.any],
-  session: [socket, b.instance("Buffer").fresh],
-  keylog: [socket, b.instance("Buffer").fresh],
-  alpnCallback: [socket, b.union(b.string, b.undefined), b.instance("Buffer").fresh],
-};
-
-// The data of the listener for a socket that it accepted, the socket's own for one that was upgraded, undefined where there is none.
-const dataOfServer = [b.nativeCell(socketDataCell), b.undefined];
-
-// SocketConfig.bind.ts and SSLConfig.bind.ts: a dictionary. Each member is read under its name and is of its type or refused, but these:
-// `hostname`, `host` and `port` are converted, and `ca`, `cert`, `key` and `crl` of `tls` may be a sequence, which is iterated.
-// Listener.rs describes a `secureContext` that is none in its message: whatever is there may be printed.
-const socketOptions = [
-  b.storedIn(b.nativeCell(socketOptionsCell)),
-  b.reachableValuesStoredIn(b.nativeCell(socketOptionsCell)),
-  b.runsTransitively(b.named(...socketOptionNames)),
-  b.membersOfObjectsOnly,
-  ...["hostname", "host", "port"].flatMap(name => convertedToString("options", name)),
-  ...sequencesOfTLSOptions.map(name => iterated("options", "tls", name)),
-  b.memberStoredIn(["tls", "secureContext"], b.nativeMemory),
-  b.createdIn(newSocket, socket),
-  b.createdIn(newSocket, b.nativeMemory),
-  b.memberStoredIn(["data"], b.nativeCell(socketDataCell)),
-  ...Object.entries(socketHandlerArguments).map(([handler, args]) =>
-    b.memberCalled(["socket", handler], { times: "PerEvent", this: socket, args, result: "Escapes" }),
-  ),
-  ...dataOfServer.map(data =>
-    b.memberCalled(["socket", "serverName"], {
-      times: "PerEvent",
-      this: data,
-      args: [data, b.string, socket],
-      result: "Escapes",
-    }),
-  ),
-];
-
 // The options are the first operand where that is no list, and the second where it is.
-const startsSubprocess = (returns: b.TableType): b.FunctionField[] => [
+// js_bun_spawn_bindings.rs: spawnSync makes no Subprocess for a script: it asks that onExit and onDisconnect are functions, keeps neither and calls neither, does not read `ipc` and refuses `terminal`.
+const startsSubprocess = (returns: b.TableType, callsHandlers: boolean): b.FunctionField[] => [
   {
     ...startedByOptions,
     args: { commandOrOptions: b.instance("Array"), options: b.any.optional },
     returns,
     uses: {
       commandOrOptions: [b.readsContents(), b.runsTransitively("OwnValues", "ToPrimitive")],
-      options: subprocessOptionsAt("options"),
+      options: subprocessOptionsAt("options", callsHandlers),
     },
   },
   {
     ...startedByOptions,
     args: { commandOrOptions: b.object },
     returns,
-    uses: { commandOrOptions: subprocessOptionsAt("commandOrOptions") },
+    uses: { commandOrOptions: subprocessOptionsAt("commandOrOptions", callsHandlers) },
   },
 ];
 
@@ -1195,10 +1156,11 @@ const resultOfSpawnSync = b.layout("SpawnSyncResult", {
 const cron: b.FunctionField[] = [
   {
     ...operandCodeOnly,
-    args: { schedule: b.string, handler: b.callable, options: b.any.optional },
+    args: { schedule: stringOrStringObject, handler: b.callable, options: b.any.optional },
     returns: b.instance("CronJob").fresh,
     throws: true,
     uses: {
+      schedule: [b.retained, ...converted],
       handler: [
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",
@@ -1215,10 +1177,11 @@ const cron: b.FunctionField[] = [
     implementation: b.generic,
   },
   {
-    args: { path: b.string, schedule: b.string, title: b.string },
+    args: { path: stringOrStringObject, schedule: stringOrStringObject, title: stringOrStringObject },
     returns: settledWithAnyReason(b.undefined),
-    capability: "heap",
+    ...operandCodeOnly,
     throws: true,
+    uses: { path: converted, schedule: converted, title: converted },
     reads: externalState,
     writes: externalState,
     implementation: b.generic,
@@ -1253,7 +1216,7 @@ const parsesLines = (returns: b.TableType, args: Contents, uses: UsesByOperand) 
       returns,
       capability: "heap",
       throws: true,
-      uses: { input: [b.readAsCharacters, b.readsContents()], ...uses },
+      uses: { input: [b.readsContents()], ...uses },
       reads: viewHeaps,
       implementation: b.generic,
     },
@@ -1281,20 +1244,27 @@ const keychainOperation = (settledValue: b.TableType, options: readonly b.UseSpe
 
 const namedSecret = membersInspected("service", "name");
 
+// get_main() in src/runtime/api/BunObject.rs: what the program has stored there, and else a path.
 const mainModulePath = {
-  getter: b.any,
+  getter: b.string,
   capability: "heap",
+  uses: { this: [b.returnedFrom(overriddenMainCell)] },
   reads: externalState,
   writes: externalState,
   implementation: b.generic,
+  // setBunObjectMain in BunObject.cpp refuses another path where the build has decided in the code which file is the main module.
   setter: {
     value: b.any,
     capability: "heap",
-    uses: { value: [b.retained] },
+    throws: true,
+    uses: { value: [b.retained, b.storedIn(b.nativeCell(overriddenMainCell))] },
     writes: externalState,
     implementation: b.generic,
   },
 } satisfies b.GetterField;
+
+// JSX509Certificate::toLegacyObject()
+const legacyCertificate = b.anyMadeOf("Object", "Array", "Buffer", "ArrayBuffer");
 
 const sentWithRequest = [
   ...keptByNativeCode([...requestOptionNames, ...requestCallbackNames], []),
@@ -1302,14 +1272,14 @@ const sentWithRequest = [
   b.memberCalled(["tls", "checkServerIdentity"], {
     times: "PerEvent",
     this: b.undefined,
-    args: [b.string, b.any],
+    args: [b.string, legacyCertificate],
     result: "Escapes",
   }),
   b.reachableValuesStoredIn(b.resultSlot("reason")),
 ];
 
 const fetch = {
-  args: { input: b.any, init: b.any.optional },
+  args: { input: b.any.optional, init: b.any.optional },
   returns: settledWithAnyReason(b.instance("Response").fresh),
   capability: "js",
   throws: true,
@@ -1369,9 +1339,77 @@ const viewAtPointer = (returns: b.TableType) =>
     implementation: b.generic,
   }) satisfies b.FunctionField;
 
-// constructDNSObject in BunObject.cpp puts them on Bun.dns. Nothing is said yet of what a call does.
-const undeclaredFunctionsOfDNS = [
-  "getServers",
+// ffi_body.rs generate_symbol_for_function(): of a signature `args` is read as an own property and must be a list of type numbers or texts; `threadsafe`, `returns` and
+// `ptr` are read through the prototype chain, and so is a hole of `args`. A String object in `args` and whatever lies under `returns` are converted to a text; `ptr` never is.
+// generate_symbols(): an object with a signature under each of its own names. Nothing is retained, and no error message formats a value.
+const signatureFields = b.named("args", "threadsafe", "returns", "ptr");
+const signature = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", signatureFields)];
+const signaturesByName = [b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", signatureFields)];
+// One that refuses its operands answers the error in place of throwing it: a new Error or TypeError. What code of an operand throws, it throws.
+const readingSignatures = (made: b.TableType) =>
+  ({
+    returns: b.union(made, b.instance("Error")),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    reads: externalState,
+    writes: externalState,
+    implementation: b.generic,
+  }) satisfies Partial<b.FunctionField>;
+// JSFFICString.cpp: called or constructed it answers a text and no object: the bytes at the address, up to a zero or `byteLength` of them. Without an address the text is empty.
+const textAtPointer = {
+  args: { ptr: b.any.optional, byteOffset: b.any.optional, byteLength: b.any.optional },
+  returns: b.string,
+  capability: "heap",
+  throws: true,
+  uses: { ptr: b.inspected, byteOffset: b.inspected, byteLength: b.inspected },
+  reads: rawMemoryHeaps,
+  constructable: true,
+  implementation: b.generic,
+} satisfies b.FunctionField;
+
+// builtins/Glob.ts: each hands its operand to a native method that lies on the prototype under a private symbol (glob.rs scan() | scan_sync()), and answers the object of a generator
+// function of its own. The operand is undefined, null, a text (the folder) or a dictionary; native code copies what it reads of it, keeps nothing and calls nothing of the library.
+// What the object yields goes through `yield*` over a list of texts, so through the iterator of lists as the program has left it: the row says nothing of it.
+const optionsOfScan = ["onlyFiles", "throwErrorOnBrokenSymlink", "followSymlinks", "absolute", "cwd", "dot"];
+const scansFolder = (name: string, made: b.TableType): b.FunctionField[] => {
+  const scans = {
+    this: b.instance("Glob"),
+    returns: made,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    reads: externalState,
+    writes: externalState,
+    implementation: b.compiled("builtins/Glob", name),
+  } satisfies b.FunctionField;
+  return [
+    {
+      ...scans,
+      args: { folder: b.union(b.string, b.instance("String")).nullable },
+      uses: { this: b.inspected, folder: converted },
+    },
+    // What is neither a text nor an object is refused.
+    {
+      ...scans,
+      args: { options: b.union(b.bool, b.f64, b.bigint, b.symbol) },
+      returns: b.never,
+      uses: { this: b.inspected, options: b.inspected },
+    },
+    // A member is read through the prototype chain, and a String object under `cwd` is converted.
+    {
+      ...scans,
+      args: { options: b.dictionary(optionsOfScan) },
+      uses: {
+        this: b.inspected,
+        options: [b.readsContents(), b.runsTransitively("ToPrimitive", b.named(...optionsOfScan))],
+      },
+    },
+  ] satisfies b.FunctionField[];
+};
+
+// constructDNSObject in BunObject.cpp puts them on Bun.dns. Each answers a promise of the records.
+const queriesOfDNS = [
   "lookupService",
   "resolve",
   "resolveAny",
@@ -1385,7 +1423,6 @@ const undeclaredFunctionsOfDNS = [
   "resolveSrv",
   "resolveTxt",
   "reverse",
-  "setServers",
 ];
 
 const createdOnFirstRead = (holds: b.TableType) => b.property(holds, { createdOnFirstRead: { capability: "heap" } });
@@ -1414,14 +1451,28 @@ export default b.declarations(
   resultOfSpawnSync,
   b.membersFrom("globalThis", b.staticTable("src/jsc/bindings/ZigGlobalObject.lut.txt", "bunGlobalObjectTable")),
   plainObjects.flatMap(path => b.inherits(path, "Object.prototype")),
+  // ZigGlobalObject.lut.txt: DontDelete|ReadOnly. No store replaces it, so nobody has to ask whether one has.
+  b.extend("Bun", { mutability: "AlwaysLocked" }),
   computedOnce.flatMap(name => b.extend(`Bun.${name}`, { mutability: "ConstantUnlessWritten" })),
+  // A function of the library's JavaScript, which `new` may be used on as on any such function.
+  b.constructionOfFunction("Bun.$", shellCommand),
   b.namespace(
     "Bun",
     {
       fetch,
       main: mainModulePath,
-      // What process.argv answers at the first read: the program may have stored anything there, or defined a getter.
-      argv: b.property(b.any, { createdOnFirstRead: { capability: "js", throws: true, reads: externalState } }),
+      // What process.argv answers at the first read: the list that it keeps, which this read makes if nobody has asked for it,
+      // or what the program has stored there, or what a getter of the program answers.
+      argv: b.property(b.any, {
+        createdOnFirstRead: {
+          capability: "js",
+          throws: true,
+          uses: {
+            this: [b.createdIn(newArrayOf(b.string).dense, b.nativeCell(argumentsCell)), b.returnedFrom(argumentsCell)],
+          },
+          reads: externalState,
+        },
+      }),
       // Nothing is known of the class, so whoever reads it counts as calling import() of a graph (ReadLoadsCodeByName in marks.builtins.ts).
       // From the first graph on, the natives that look for the graph of a frame find graphs and frames.
       ModuleGraph: b.property(b.any, {
@@ -1472,8 +1523,8 @@ export default b.declarations(
         returns: servers.fresh,
         uses: { options: serverOptions(b.result) },
       },
-      spawn: startsSubprocess(b.instance("Subprocess")),
-      spawnSync: startsSubprocess(b.ordinaryObjectOf("SpawnSyncResult").fresh),
+      spawn: startsSubprocess(b.instance("Subprocess"), true),
+      spawnSync: startsSubprocess(b.ordinaryObjectOf("SpawnSyncResult").fresh, false),
       sleep: {
         args: { duration: b.union(b.f64, b.instance("Date")) },
         // Nothing rejects it: a duration of another kind is refused at the call.
@@ -1534,10 +1585,7 @@ export default b.declarations(
         { left: b.any.optional, right: b.any.optional, strict: b.any.optional, skipsPrototypes: b.any.optional },
         { left: comparedDeeply, right: comparedDeeply, strict: b.inspected, skipsPrototypes: b.inspected },
       ),
-      deepMatch: deepComparison(
-        { subset: b.object, value: b.object },
-        { subset: comparedDeeply, value: comparedDeeply },
-      ),
+      deepMatch: deepComparison({ subset: b.object, value: b.object }, { subset: matchedDeeply, value: matchedDeeply }),
       concatArrayBuffers,
       readableStreamToArray: streamConsumer(newArrayOf(b.any)),
       // A stream whose only chunk is a string settles with a Uint8Array.
@@ -1546,10 +1594,10 @@ export default b.declarations(
       ),
       readableStreamToBlob: streamConsumer(b.instance("Blob").fresh),
       readableStreamToBytes: streamConsumer(b.instance("Uint8Array").exactly.fresh),
-      // The bytes are handed to what `FormData.from` holds when they have arrived, which a program can replace.
+      // The bytes are handed to `FormData.from` when they have arrived, which no program can replace. What the promise finds under `then` above the form may be anything.
       readableStreamToFormData: [
         {
-          ...consumedStream(b.any),
+          ...consumedStream(b.anyMadeOf("FormData")),
           args: { stream: b.instance("ReadableStream"), contentType: b.any.optional },
           uses: { stream: [b.retained], contentType: [b.retained] },
         },
@@ -1578,11 +1626,12 @@ export default b.declarations(
         },
         {
           ...operandCodeOnly,
-          args: { input: b.any, format: b.string.nullable },
+          args: { input: b.any, format: b.any.optional },
           returns: b.union(b.plainData, b.strictNull, b.f64, b.string),
           throws: true,
           uses: {
             input: [b.readsContents(), b.runs("OwnValues", b.named("r", "g", "b", "a")), b.membersOnlyInspected],
+            format: [...characters, ...converted],
           },
           reads: [...viewHeaps, ...externalState],
           implementation: b.hostCall,
@@ -1609,7 +1658,7 @@ export default b.declarations(
         returns: testModule,
         capability: "js",
         throws: true,
-        uses: { path: b.inspected },
+        uses: { path: converted },
         implementation: b.hostCall,
       },
       listen: {
@@ -1624,7 +1673,14 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         args: { options: b.any.optional },
         returns: settledWithAnyReason(b.instance("UDPSocket")),
-        uses: { options: keptByNativeCode(datagramSocketOptionNames, datagramSocketHandlerNames) },
+        uses: {
+          options: [
+            ...keptByNativeCode(datagramSocketOptionNames, datagramSocketHandlerNames),
+            ...Object.entries(datagramSocketHandlerArguments).map(([handler, args]) =>
+              b.memberCalled(["socket", handler], { times: "PerEvent", this: datagramSocket, args, result: "Ignored" }),
+            ),
+          ],
+        },
       },
     },
     { table: b.staticTable("src/jsc/bindings/BunObject.cpp", "bunObjectTable") },
@@ -1646,6 +1702,8 @@ export default b.declarations(
     ),
   ),
   b.fn("Bun.plugin.clearAll", b.otherwise),
+  // Symbol.for("nodejs.util.inspect.custom"): whoever has it may lay the method that the formatter calls with util.inspect.
+  b.static("Bun.inspect.custom", b.property(b.symbol)),
   // The printer of console.table. The second operand is a list of names or the options.
   b.fn("Bun.inspect.table", {
     ...printedValue,
@@ -1653,7 +1711,7 @@ export default b.declarations(
     args: { tabularData: b.any.optional, properties: b.any.optional, options: b.any.optional },
     uses: {
       tabularData: [b.printedByFormatter()],
-      properties: [b.printedByFormatter()],
+      properties: [b.printedByFormatter("depth", "colors", "sorted", "compact")],
       options: membersInspected("depth", "colors", "sorted", "compact"),
     },
   }),
@@ -1667,12 +1725,57 @@ export default b.declarations(
   }),
   // bun:ffi calls its own throwing wrappers (ffi.bind.ts) instead of these six, and deletes callback, closeCallback and cfunction when it loads. cfunction, dlopen and linkSymbols load native code.
   b.namespace("Bun.FFI", {
-    ...Object.fromEntries(
-      ["callback", "cfunction", "closeCallback", "dlopen", "linkSymbols", "viewSource"].map(name => [
-        name,
-        b.otherwiseBy(b.generic),
-      ]),
-    ),
+    // Native code calls the function with primitives only and converts its result to the declared return type.
+    callback: {
+      ...readingSignatures(b.instance("FFICallback")),
+      args: { options: b.any.optional, callback: b.any.optional },
+      uses: {
+        options: signature,
+        callback: [
+          b.retained,
+          b.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "PerEvent",
+            this: b.undefined,
+            args: [],
+            spreadArgs: b.union(b.f64, b.bigint, b.bool, b.string, b.strictNull),
+            result: "Escapes",
+          }),
+        ],
+      },
+    },
+    // JSFFIFunction.cpp of JavaScriptCore: a function that enters the machine code at `ptr`.
+    cfunction: {
+      ...readingSignatures(b.callable),
+      args: { options: b.any.optional, name: b.any.optional },
+      uses: { options: signature, name: converted },
+    },
+    // A callback that is closed has no address any more. Anything else is left as it is.
+    closeCallback: {
+      args: { callback: b.any.optional },
+      capability: "heap",
+      uses: { callback: [...handedOver, b.definesName(["ptr"], b.strictNull)] },
+      reads: externalState,
+      writes: externalState,
+      implementation: b.generic,
+    },
+    // Without a `name` it throws.
+    dlopen: {
+      ...readingSignatures(b.instance("FFI")),
+      args: { name: b.string.loose.nullable, symbols: b.any.optional },
+      uses: { name: converted, symbols: signaturesByName },
+    },
+    linkSymbols: {
+      ...readingSignatures(b.instance("FFI")),
+      args: { symbols: b.any.optional },
+      uses: { symbols: signaturesByName },
+    },
+    // The text of the C wrapper of each signature, or one line of text for a callback.
+    viewSource: {
+      ...readingSignatures(b.union(b.string, b.instance("Array").holding({ element: b.string }))),
+      args: { symbols: b.any.optional, isCallback: b.bool.loose.optional },
+      uses: { symbols: signaturesByName },
+    },
     // Returns a TypeError for a bad argument. Once the pointer exists, native code, `read.*` and views created from the pointer can read and write the bytes.
     ptr: {
       args: { view: b.any.optional, byteOffset: b.any.optional },
@@ -1690,8 +1793,7 @@ export default b.declarations(
     },
     toArrayBuffer: viewAtPointer(b.instance("ArrayBuffer").fresh),
     toBuffer: viewAtPointer(b.instance("Buffer").fresh),
-    // `new CString(..)` answers with a string, which no row of a function says.
-    CString: b.property(b.any),
+    CString: textAtPointer,
   }),
   b.namespace(
     "Bun.FFI.read",
@@ -1703,16 +1805,33 @@ export default b.declarations(
     ),
   ),
   b.inherits("Bun.FFI.read", "Object.prototype"),
+  b.constructionOfFunction("Bun.FFI.CString", textAtPointer),
+  // ffi_body.rs dlopen(), link_symbols(), cc(): an object below Object.prototype that native code has made for the library, with a function under each name of the symbols. The accessor has no setter.
+  // An empty field reads as undefined.
+  b.method("%FFI%.prototype.symbols", {
+    getter: b.union(b.instance("Object"), b.undefined),
+    capability: "heap",
+    throws: true,
+    uses: { this: [b.readsContents(), b.writesContents(), b.reachableValuesStoredIn(b.result)] },
+    reads: externalState,
+    writes: externalState,
+    implementation: { how: "CachedGetter", cppClass: "Bun::Bindgen::Generated::JSFFI", member: "m_symbolsValue" },
+  }),
+  b.method("%Glob%.prototype.scan", scansFolder("scan", b.instance("AsyncGenerator"))),
+  b.method("%Glob%.prototype.scanSync", scansFolder("scanSync", b.instance("Generator"))),
   b.namespace("Bun.dns", {
     ...Object.fromEntries(["ADDRCONFIG", "ALL", "V4MAPPED"].map(name => [name, b.property(b.f64)])),
-    ...Object.fromEntries(undeclaredFunctionsOfDNS.map(name => [name, b.otherwiseBy(b.generic)])),
+    ...Object.fromEntries(queriesOfDNS.map(name => [name, answering(promiseOf(b.plainData))])),
+    getServers: answering(b.plainData),
+    setServers: answering(b.undefined),
     getCacheStats: { returns: b.plainData, capability: "heap", reads: externalState, implementation: b.generic },
     lookup: {
       ...operandCodeOnly,
-      args: { hostname: b.string, options: b.any.optional },
+      args: { hostname: stringOrStringObject, options: b.any.optional },
       returns: settledWithAnyReason(b.plainData),
       throws: true,
       uses: {
+        hostname: converted,
         options: describedAfterReading("port", "family", "socketType", "socktype", "protocol", "backend", "flags"),
       },
       reads: externalState,
@@ -1720,9 +1839,10 @@ export default b.declarations(
       implementation: b.generic,
     },
     prefetch: {
-      args: { hostname: b.string, port: b.f64.nullable },
-      capability: "heap",
+      args: { hostname: stringOrStringObject, port: b.f64.nullable },
+      ...operandCodeOnly,
       throws: true,
+      uses: { hostname: converted },
       reads: externalState,
       writes: externalState,
       implementation: b.generic,
@@ -1771,9 +1891,19 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // FormatStackTraceForJS.cpp: it answers the text of the stack, or throws where its first operand is no error.
+  b.hostFunction(
+    formatsStackCell,
+    "FormatStackTraceForJS.cpp",
+    "jsFunctionDefaultErrorPrepareStackTrace",
+    answering(b.string, b.hostCall),
+  ),
+  // ZigGlobalObject.cpp errorConstructorPrepareStackTraceGetter: what the program has stored, and until then that function.
+  // FormatStackTraceForJS.cpp: the function is handed the object whose stack is asked for and a new list of call sites, objects of a class that the table does not have.
   b.static(
     "Error.prepareStackTrace",
-    b.property(b.any, {
+    b.property(b.builtin("%NativeFunctions%.FormatStackTraceForJSCppJsFunctionDefaultErrorPrepareStackTrace"), {
+      resultIsDeclaredOnly: true,
       setter: {
         value: b.any,
         capability: "js",
@@ -1785,7 +1915,7 @@ export default b.declarations(
               afterwards: "TouchesOnlyWhatRowNames",
               times: "Later",
               this: b.builtin("Error"),
-              args: [b.any, b.any],
+              args: [b.nativeMemory, b.instance("Array").holding({ element: b.instance("Object").unaliased }).fresh],
               result: "Escapes",
             }),
           ],
@@ -1796,10 +1926,13 @@ export default b.declarations(
   ),
 
   // Native code answers a read and takes a store, and a descriptor shows a data property (ZigGlobalObject.cpp: a CustomGetterSetter without the attribute of an accessor).
+  b.method("AbortSignal.prototype.onabort", eventHandlerAttributeKeptIn("AbortSignal.onabort", receiver)),
   b.static("onerror", b.property(b.any, { setter: eventHandlerAttribute(globalObject).setter })),
   b.static("onmessage", b.property(b.any, { setter: eventHandlerAttribute(globalObject).setter })),
   b.fn("addEventListener", listenerRegistration(globalObject)),
   b.fn("removeEventListener", listenerRemoval),
+  // Whatever it is called on, the target is the global object.
+  b.fn("dispatchEvent", { ...eventDispatch(globalObject), this: b.any, implementation: b.generic }),
 
   b.namespace("performance", { now: clockReading("AOT__performanceNow") }),
   b.inherits("performance", "Performance.prototype"),
@@ -1845,6 +1978,7 @@ export default b.declarations(
         returns: timelineEntry,
         uses: { markName: converted, markOptions: optionsWithClonedDetail("detail", "startTime") },
         reads: heapsReadByClone,
+        writes: heapsWrittenByClone,
       }),
       measure: timelineOperation({
         ...operandCodeOnly,
@@ -1856,6 +1990,7 @@ export default b.declarations(
           endMark: converted,
         },
         reads: heapsReadByClone,
+        writes: heapsWrittenByClone,
       }),
       getEntries: timelineOperation({ returns: timelineEntries, capability: "heap" }),
       getEntriesByName: timelineOperation({
@@ -1919,25 +2054,7 @@ export default b.declarations(
       readsStateBeforeConversions: true,
     }),
     removeEventListener: () => ({ ...listenerRemoval, uses: { this: b.inspected, ...listenerRemoval.uses } }),
-    // The listeners that were added earlier run, with the event and the target, and the event keeps the target.
-    // What stands for the global object there is an object of the host.
-    dispatchEvent: (eventTarget: b.TableType) => ({
-      args: { event: b.object },
-      returns: b.bool,
-      capability: "js",
-      throws: true,
-      uses: {
-        this: [
-          b.retained,
-          eventTarget === receiver
-            ? b.storedIn(b.nativeCell(targetsOfEventsCell))
-            : b.createdIn(b.object, b.nativeCell(targetsOfEventsCell)),
-        ],
-        event: [b.retained],
-      },
-      reads: externalState,
-      writes: externalState,
-    }),
+    dispatchEvent: eventDispatch,
   } satisfies Record<string, (eventTarget: b.TableType) => b.FunctionField>).map(([name, on]) =>
     b.method(`EventTarget.prototype.${name}`, [
       {
@@ -1954,9 +2071,17 @@ export default b.declarations(
 
   b.fn("setTimeout", delayedTimer("Later")),
   b.fn("setInterval", delayedTimer("PerEvent")),
-  ...["setImmediate", "setInterval", "setTimeout"].map(timer =>
-    b.static(`${timer}.@@@nodejs.util.promisify.custom`, answersFunctionOfTimersPromises),
-  ),
+  ...["setImmediate", "setInterval", "setTimeout"].flatMap(timer => [
+    b.static(`${timer}.@@@nodejs.util.promisify.custom`, answersFunctionOfTimersPromises(timer)),
+    b.extend(`${timer}.@@@nodejs.util.promisify.custom`, {
+      loads: [
+        {
+          module: "node:timers/promises",
+          exports: [b.exportRead(timer, b.keptIn(functionOfTimersPromisesCell(timer)))],
+        },
+      ],
+    }),
+  ]),
   b.method("%Timeout%.prototype._onTimeout", {
     getter: b.any,
     capability: "heap",
@@ -2039,6 +2164,18 @@ export default b.declarations(
       throws: true,
       implementation: b.hostCall,
     },
+    // The clone of a view is of the built-in class, whatever class below it the view is of: a Buffer comes back as a Uint8Array. It follows a buffer as the view does.
+    ...classesOfViews.map(name => ({
+      args: { value: b.instance(name), options: b.any.optional },
+      returns: b.instance(name).unaliased,
+      capability: "js" as const,
+      throws: true,
+      runsOnlyOperandCode: true,
+      uses: { value: cloned, options: transferList },
+      reads: heapsReadByClone,
+      writes: heapsWrittenByTransfer,
+      implementation: b.hostCall,
+    })),
     {
       args: { value: b.any.optional, options: b.any.optional },
       returns: b.any.fresh,

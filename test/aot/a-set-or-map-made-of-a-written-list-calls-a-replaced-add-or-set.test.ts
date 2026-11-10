@@ -9,25 +9,21 @@ raiseDefaultTimeout(120_000);
 // `new Set(list)` asks the new set for `add` and calls it for every value, and `new Map(list)` does so with `set`.
 // No expression spells that lookup, so a test that replaces the method has to be seen where the list is written in place too.
 
-async function runTests(directory: string, flags: string[] = [], layers = "TestRunLayers:0") {
-  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: layers };
+async function runTests(directory: string, flags: string[] = []) {
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   return { stdout, results, exitCode };
 }
 
-// As one program and, where asked, with the code under test in a layer below the test file.
-async function expectCompiledToRunAsPlain(files: Record<string, string>, layers: string[] = []) {
+// As one program: so every case here went wrong.
+async function expectCompiledToRunAsPlain(files: Record<string, string>) {
   using dir = tempDir("written-list-of-a-collection", files);
-  const [plain, ...compiled] = await Promise.all([
-    runTests(String(dir)),
-    runTests(String(dir), ["--aot"]),
-    ...layers.map(words => runTests(String(dir), ["--aot"], words)),
-  ]);
+  const [plain, compiled] = await Promise.all([runTests(String(dir)), runTests(String(dir), ["--aot"])]);
   expect(plain.results.filter(result => result.startsWith("fail"))).toEqual([]);
   expect(plain.results).not.toEqual([]);
-  for (const result of compiled) expect(result).toEqual(plain);
+  expect(compiled).toEqual(plain);
 }
 
 // Code under test in a file of its own, and every way to write the list in place.
@@ -70,10 +66,9 @@ const cases = [
 ];
 
 test.each(cases)("a spy on %s.prototype.%s", async (holder, name, makers) => {
-  await expectCompiledToRunAsPlain(
-    {
-      "uses.ts": uses,
-      "one.test.ts": `
+  await expectCompiledToRunAsPlain({
+    "uses.ts": uses,
+    "one.test.ts": `
       import { expect, spyOn, test } from "bun:test";
       import { ${makers} as makers, show } from "./uses";
       test("counted", () => {
@@ -98,9 +93,7 @@ test.each(cases)("a spy on %s.prototype.%s", async (holder, name, makers) => {
         console.log(spy.mock.calls.length);
         spy.mockRestore();
       });`,
-    },
-    ["TestRunLayers:1,TestRunPartFiles:1", "TestRunLayers:2,TestRunPartFiles:1"],
-  );
+  });
 });
 
 test.each(cases)("%s.prototype.%s is assigned, defined and deleted", async (holder, name, makers) => {

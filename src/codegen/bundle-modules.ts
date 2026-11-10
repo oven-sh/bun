@@ -16,26 +16,15 @@ import { readBuiltinUses } from "../../scripts/build/trim/builtin-uses.ts";
 import { featureNamed } from "../../scripts/build/trim/features.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
-import { locate, nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
+import { nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
 import { Guards } from "./builtins/guards.ts";
-import { listBundledNamesOfModule } from "./bundled-names";
-import {
-  encodeBundledPositions,
-  encodeBundledPositionsOfSecondText,
-  findModuleHeldInPart,
-  formatBundledPositions,
-  listPlacesInOtherFiles,
-  readFileOfFunctions,
-  readModule,
-  type Reading,
-} from "./bundled-positions";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP } from "./generate-js2native";
 import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
 import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
-import { assertNoDestructuredGlobalThis, define } from "./replacements";
+import { assertNoDestructuredGlobalThis, assertNoStoredFunctionBehindComma, define } from "./replacements";
 
 const builtinUsesFlag = "--builtin-uses=";
 const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
@@ -114,7 +103,10 @@ const bundledEntryPoints: string[] = [];
 for (let i = 0; i < nativeStartIndex; i++) {
   try {
     const file = path.join(BASE, moduleList[i]);
-    let input = fs.readFileSync(file, "utf8");
+    // A module of compiled programs alone: nothing that `bun run` evaluates asks for it.
+    let input = fs.existsSync(file)
+      ? fs.readFileSync(file, "utf8")
+      : `throw new Error(${JSON.stringify(moduleList[i] + " is a module of compiled programs alone")});\nexport default undefined;\n`;
 
     if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
@@ -258,7 +250,6 @@ const config_cli = [
   `IS_BUN_DEVELOPMENT=${String(!!debug)}`,
   "--define",
   `__intrinsic__debug=${debug ? "$debug_log_enabled" : "false"}`,
-  "--sourcemap=external",
   "--outdir",
   path.join(TMP_DIR, "modules_out"),
 ];
@@ -277,20 +268,14 @@ if (out.exitCode !== 0) {
 mark("Bundle modules");
 
 const outputs = new Map();
-const bundledNames: string[] = [];
-/** By the name of the module: the module as it is written, what the bundler made of it with its map, and what `bun run` evaluates. */
-const textsOfModules = new Map<string, Parameters<typeof readModule>>();
 
 for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const output = fs
-    .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
-    .replace(/\n\/\/# debugId=\w+\n$/, "");
+  const output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8");
   // Checks the input, since --minify-syntax turns `var a = globalThis.a; var b = globalThis.b;` into a destructuring.
   assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
-  const sourceMap = JSON.parse(fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path + ".map"), "utf8"));
-  const written = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
-  bundledNames.push(...listBundledNamesOfModule(moduleList[i], written, output, sourceMap));
+  const written = path.join(BASE, moduleList[i]);
+  if (fs.existsSync(written)) assertNoStoredFunctionBehindComma(fs.readFileSync(written, "utf8"), moduleList[i]);
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
@@ -321,29 +306,10 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
 
-  textsOfModules.set(moduleList[i], [written, output, sourceMap, captured]);
-
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);
   outputs.set(file_path.replace(".js", ""), captured);
-}
-
-for (const [file, texts] of textsOfModules) {
-  const readByCompiler = fs.readFileSync(locate(file), "utf8");
-  // What holds a part of a module is a second text of that module, which leaves the rest out.
-  const whole = findModuleHeldInPart(readByCompiler);
-  if (whole !== undefined && !textsOfModules.has(whole))
-    throw new Error(`${file} holds a part of ${whole}: no such module`);
-  if (whole !== undefined) bundledNames.push(`part\t${file}\t${whole}`);
-  bundledNames.push(
-    formatBundledPositions(
-      file,
-      whole === undefined && locate(file) === path.join(BASE, file)
-        ? encodeBundledPositions(...texts)
-        : encodeBundledPositionsOfSecondText(readByCompiler, ...textsOfModules.get(whole ?? file)!),
-    ),
-  );
 }
 
 mark("Postprocesss modules");
@@ -420,54 +386,12 @@ function idToPublicSpecifierOrEnumName(id: string) {
   return idToEnumName(id);
 }
 
-const {
-  combinedSourceCode: functionsSource,
-  privateNames,
-  files: filesOfFunctions,
-} = await bundleBuiltinFunctions({
+const { combinedSourceCode: functionsSource, privateNames } = await bundleBuiltinFunctions({
   typesDir: TYPES_DIR,
   requireTransformer,
 });
 
 mark("Bundle Functions");
-
-{
-  const readings = new Map<string, Reading>();
-  for (const { basename, functions } of filesOfFunctions) {
-    const file = `builtins/${basename}.ts`;
-    // Nobody has written a second text of such a file yet.
-    if (locate(file) !== path.join(BASE, file)) continue;
-    const inOrder = functions.toSorted((a, b) => a.numberInFile - b.numberInFile);
-    const reading = readFileOfFunctions(
-      fs.readFileSync(path.join(BASE, file), "utf8"),
-      inOrder.map(fn => ({ name: fn.name, output: fn.output, map: fn.sourceMap, evaluated: fn.source })),
-    );
-    readings.set(file, reading);
-    // Where what `bun run` evaluates for each function starts and ends in the text of all of them.
-    const ranges = inOrder.flatMap(fn => [fn.sourceOffset, fn.sourceOffset + fn.source.length]);
-    bundledNames.push(
-      `evaluated-functions\t${file}\t${ranges.join(" ")}`,
-      formatBundledPositions(file, reading.corrections),
-    );
-  }
-  const read = (file: string) => {
-    const known = readings.get(file);
-    if (known) return known;
-    const texts = textsOfModules.get(file);
-    if (!texts) throw new Error(`${file} is no module and no file of functions`);
-    const reading = readModule(...texts);
-    readings.set(file, reading);
-    return reading;
-  };
-  for (const file of [...textsOfModules.keys(), ...readings.keys()]) {
-    bundledNames.push(...listPlacesInOtherFiles(file, fs.readFileSync(locate(file), "utf8"), read));
-  }
-}
-
-writeIfNotChanged(
-  path.join(CODEGEN_DIR, "bundled_names_of_modules.txt"),
-  bundledNames.map(line => line + "\n").join(""),
-);
 
 nativeCalls(typesOnlySchemas(process.argv));
 

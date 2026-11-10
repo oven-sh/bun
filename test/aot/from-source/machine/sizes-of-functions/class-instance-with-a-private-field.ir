@@ -1,0 +1,24 @@
+# f1 = make
+# -- source: class-instance-with-a-private-field.ts
+# class Counter {
+#   #count: number;
+#   constructor(start: number) {
+#     this.#count = start;
+#   }
+#   get count(): number {
+#     return this.#count;
+#   }
+# }
+# function make(start: number): Counter {
+#   return new Counter(start);
+# }
+# declare const input: any;
+# const counter = make(+input);
+# (globalThis as any).answer = [make, counter, counter.count];
+# -- end of source
+# The compiler before this one: 6 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 5, patches 1, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

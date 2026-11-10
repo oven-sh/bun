@@ -32,29 +32,17 @@ anything but itself. In addition, a program that mentions `kill` is not run at a
 One run tests one way to build. Several runs side by side, each with different options, find more than one wide run.
 
 ```sh
-.. --modes default,hot,cold     # how hot a function is decides how it is compiled
-.. --modes default,separate-entry-points                             # every program is its own entry point: the compiler proves more about a small program
-.. --batch 1                                                  # every program gets its own build: a shared build hides false flow-analysis claims
-.. --modes large,cold-large           # code paths that only a very large application gets
-.. --modes check-proofs,hot-check-proofs             # the executable checks at run time what the compiler proved
-.. --validate                                                 # the same, in a fully validating build
-.. --modes check-moved-loads,check-claims                 # the same for hoisted loads and for what the back end is told
-.. --modes no-flow-results,hot-no-flow-results           # every guard and slow path stays in the code
-.. --gc-stress 1,2,3,5,7,11 --compiled-run-seconds 60  # a collection at every n-th slow-path allocation
-.. --fail-predictions 1,2,7                                   # take the slow path although the fast one would have worked
-.. --lowered-limits                                           # one compiler limit at 0, 1 or 2: a small program hits what only a large one does
-.. --rewritten                                            # also rewrite each program so that it prints the same and the compiler knows less about it
-.. --company 33,65,130,300                                    # build beside that many unrelated object shapes that use the same property names
+.. --modes default,separate-entry-points                      # every program is an entry point that a Worker starts: several globals in one executable
+.. --batch 1                                                  # every program gets its own build: a shared build hides false facts, and only here does the compiler prove what it can only prove about a small program
+.. --gc-stress 1,2,3,5,7,11 --compiled-run-seconds 60         # a collection at every n-th slow-path allocation
+.. --rewritten                                                # also rewrite each program so that it prints the same and the compiler knows less about it
+.. --decoy-shapes 33,65,130,300                               # build beside that many unrelated object shapes that use the same property names
 .. --workers 4                                                # four workers run each program at once
 .. --threads 16 --jobs 2 --batch 64                           # the compiler's own threads, and bugs that only show in a shared build
-.. --no-verifiers                                                # leave the compiler's verifiers off, as in a user's build
-.. --flags --aot-disable=pass:<name>                          # one optional pass off (`--aot-list=registry` lists them)
+.. --no-verifiers                                             # leave the compiler's verifiers off, as in a user's build
 ```
 
-Every executable that exits normally is run a second time with `BUN_JSC_validateAOTRuntime=1`, which turns on the run-time checks; `--run-once` skips that.
-
-With an AddressSanitizer build, pass `--bun <path> --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 Malloc=1"`. Without `Malloc=1`, ASan does not see WTF's allocations (strings,
-vectors, hash tables). To test several builds of Bun on the same programs, start one run per build with the same `--seed`.
+With an AddressSanitizer build, pass `--bun <path> --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1"`. To test several builds of Bun on the same programs, start one run per build with the same `--seed`.
 
 Some sources need their own settings to be useful:
 
@@ -65,7 +53,7 @@ Some sources need their own settings to be useful:
 | `workers-terminated-midway`                                    | `--batch 4 --compiled-run-seconds 40`                                                                        |
 | `regexp-heavy-backtracking`                                    | `--batch 1 --run-seconds 30 --compiled-run-seconds 200`                                                      |
 | `last-reference-read-during-allocation`                        | `--run-environment "BUN_JSC_slowPathAllocsBetweenGCs=1 BUN_JSC_scribbleFreeCells=1 BUN_JSC_useZombieMode=1"` |
-| `builtin-own-properties-by-name`                               | `--single-file --no-verifiers --validate --modes default,validate --batch 1`                                 |
+| `builtin-own-properties-by-name`                               | `--single-file --no-verifiers --modes default --batch 1`                                                     |
 
 `burst.ts` starts many such runs side by side, shares the machine's cores among them, and lists what they found in `<out>/NEW.tsv`:
 
@@ -84,11 +72,10 @@ bun test/aot/fuzz/run-as-tests.ts --seconds 600 --jobs 16 --out /tmp/as-tests
 bun test/aot/fuzz/run-as-tests.ts --together 8 --flags --isolate --out /tmp/as-tests    # eight test files to a run, compiled as one program
 bun test/aot/fuzz/run-as-tests.ts --together 8 --flags --parallel=4 --out /tmp/as-tests # the same in four processes
 bun test/aot/fuzz/run-as-tests.ts --multi-file --together 24 --flags --parallel=24      # each program split into files that import each other
-bun test/aot/fuzz/run-as-tests.ts --multi-file --together 24 --flags --parallel=24 --layers 2 # built in two layers, which a small run is not by itself
 bun test/aot/fuzz/run-as-tests.ts --multi-file --as-packages --together 24 --flags --isolate # and those files in a package under node_modules
 ```
 
-One program in ten comes from the two sources of this driver alone. `exports-replaced-by-tests`: a small project whose test file replaces what a module exports (`spyOn(lib, "f")`, `mock.module`, a store to the exports of a CommonJS file) and asks every road to it (the named import, the namespace, a barrel, a file that imported it first, a call inside the module, `require()`, `import()`) before, meanwhile and after. `built-ins-replaced-by-tests`: test files that replace a built-in (a store, `spyOn`, `defineProperty`, a name made at run time ..), use it from the test file or from a file it imports, and put it back. Where the compiled run says that a test can't replace a member, that scene is left out and the rest of the program is compared.
+One program in ten comes from the three sources of this driver alone. `exports-replaced-by-tests`: a small project whose test file replaces what a module exports (`spyOn(lib, "f")`, `mock.module`, a store to the exports of a CommonJS file) and asks every road to it (the named import, the namespace, a barrel, a file that imported it first, a call inside the module, `require()`, `import()`) before, meanwhile and after. `built-ins-replaced-by-tests`: test files that replace a built-in (a store, `spyOn`, `defineProperty`, a name made at run time ..), use it from the test file or from a file it imports, and put it back. Where the compiled run says that a test can't replace a member, that scene is left out and the rest of the program is compared. `modules-loaded-again-by-tests`: a test file that loads a module again (deletes it from `require.cache` and asks for it anew, or imports it under a query) and then asks every module object it holds which instance answers.
 
 With `--parallel` a run prints what its files print on stderr, so the driver reads it there. If no test file prints a line in any run, it says `nothing judged` instead of passing.
 
@@ -103,7 +90,7 @@ says what its programs are about.
 - **Tables.** A few files count their programs and export `programOf(index)`, for example every kind of loop crossed with every kind of typed array. The seed picks the row.
 - **Lists**, in `sources/`. Where some programs need a flag, an environment variable or extra entry points, a file in `sources/` lists them with the helpers in `family.ts`.
 - **Scripts.** `case-scripts/*.py` each write a folder of small cases (source `scripted-cases`); `generators/python/*.py` each write one random program per seed (source `by-python`).
-- **Stored programs.** `mutation` mutates the programs in `../parallel`; `stored-programs` runs them unchanged; `stored-programs-in-hot-loop` makes their top-level code hot at default flags.
+- **Stored programs.** `mutation` mutates the programs in `../parallel`; `stored-programs` runs them unchanged; `stored-programs-in-hot-loop` moves their top-level code into a function that a loop calls.
 
 Every second program is also generated as `<source>-multi-file`: its top-level declarations move into up to four more files, some of them JavaScript, some with incomplete or invalid
 declaration files, some published as packages. `--single-file` turns that off.
@@ -124,12 +111,14 @@ bun test/aot/fuzz/json-for-generated-types.ts --seconds 3600 --jobs 16 --out /tm
 
 - `reduced.*`, the program reduced as far as the failure allows (a folder if it has several files), and `original.*`;
 - `plain.txt` and `compiled.txt`, the output of the two runs;
-- `finding.json`: seed, source, mode, flags, and the pass or flow-analysis result without which the failure goes away.
+- `driver-errors.txt`, beside `findings/`: faults of the fuzzer itself. Each may have cost a finding, so `run.ts` ends with exit code 1 where there is one.
+- `finding.json`: seed, source, mode, flags, and whether the failure goes away without the verifiers or the written types.
 
 `<out>/as-tests/<name>.<ext>` is the reduced program again in the format of `../parallel`, with its flags, entry points and exit code in its first lines.
 
 Kinds of failure: `different output`, `different exit code`, `crash` and `hang` for the executable; `internal compiler error`, `build crash`, `build hang`, `build error` and `build refused` for the
-build; `validation failure` when a run-time check caught a false proof. A signal or a failed assertion is always a bug. A timeout on a busy machine is not.
+build. A signal or a failed assertion is always a bug. A timeout on a busy machine is not. Under `--gc-stress` or `--run-env` a run that does not end is a `hang` only if plain Bun ends under the same
+settings in the same time; otherwise the program counts as skipped.
 
 A difference in output or exit code that an executable built without `--aot` shows too comes from the bundler or the standalone runtime, not from the compiler. It is listed in
 `<out>/same-without-aot.tsv` and is not a finding.
@@ -147,8 +136,9 @@ commit it: the status line must say `known 1`.
 1. Replay it alone on a fresh build to see that it is still there.
 2. Take its file under `<out>/as-tests/` and reduce it by hand until every line is needed. `bun test/aot/run-parallel.ts --root=<out>/as-tests <file>` runs it the way CI will.
 3. Fix the compiler.
-4. Commit the small program with the fix, as `test/aot/parallel/<topic>/<what-it-tests>.<ext>` or as a folder with `main.<ext>`. Flags go in its first lines: `// Flags: --aot-validate`,
-   `// Env: TZ=America/New_York`, `// Entry points: ./child.cjs` (`../run-parallel.ts` lists them all). A bug in one pass is better pinned by an IR test under `test/aot/engine-tests/`.
+4. Commit the small program with the fix, as `test/aot/parallel/<topic>/<what-it-tests>.<ext>` or as a folder with `main.<ext>`. Flags go in its first lines: `// Flags: --aot-huge-heap`,
+   `// Env: TZ=America/New_York`, `// Entry points: ./child.cjs` (`../run-parallel.ts` lists them all). A bug in one stage is better pinned by a text test of that stage: `test/aot/ir/` for the front
+   end, `Source/JavaScriptCore/aot/tests/<stage>/` in WebKit for the engine (`test/aot/engine/` runs those).
 5. Commit nothing else: no seeds, no lists of programs that once failed, no generator output. The generator can produce them again.
 
 ## Adding a source

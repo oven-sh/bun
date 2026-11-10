@@ -19,7 +19,9 @@ pub(crate) struct MemoryHost {
     required: Vec<(Vec<u8>, Vec<u8>)>,
     node_paths: Vec<Vec<u8>>,
     found: Vec<(Vec<u8>, Vec<u8>)>,
+    found_with_side_effects: Vec<Vec<u8>>,
     holds_modules_with_queries: bool,
+    given_in_memory: Vec<Vec<u8>>,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
 }
 
@@ -39,21 +41,28 @@ impl MemoryHost {
         self
     }
 
-    /// `imported` is what "module" names in a package, `required` what "main" names.
     pub(crate) fn required_in_place_of(mut self, imported: &str, required: &str) -> MemoryHost {
         self.required.push((imported.into(), required.into()));
         self
     }
 
-    /// The host finds `specifier` by itself, and the module runs under `path`.
     pub(crate) fn finds(mut self, specifier: &str, path: &str) -> MemoryHost {
         self.found.push((specifier.into(), path.into()));
         self
     }
 
-    /// The module of `/p/a.ts` with `?x` has the path `/p/a.ts?x`, and the host makes none of a `.json` file.
+    pub(crate) fn finds_with_side_effects(mut self, specifier: &str, path: &str) -> MemoryHost {
+        self.found_with_side_effects.push(specifier.into());
+        self.finds(specifier, path)
+    }
+
     pub(crate) fn holding_modules_with_queries(mut self) -> MemoryHost {
         self.holds_modules_with_queries = true;
+        self
+    }
+
+    pub(crate) fn given_in_memory(mut self, path: &str) -> MemoryHost {
+        self.given_in_memory.push(path.into());
         self
     }
 
@@ -127,7 +136,6 @@ impl MemoryHost {
 }
 
 impl MemoryHost {
-    // What "imports" of the nearest `package.json` names by an exact key is taken for a module of the host.
     fn find_through_imports(&self, search: &FileSearch<'_>) -> Option<FoundCode> {
         let manifest = ancestors(search.directory).find_map(|directory| {
             let path = self.follow_links(&inside(directory, b"package.json"));
@@ -236,8 +244,16 @@ impl CodeHost for MemoryHost {
         }
     }
 
+    fn leaves_packages_outside(&self) -> bool {
+        !self.claims.is_empty()
+    }
+
     fn holds_modules_with_queries(&self) -> bool {
         self.holds_modules_with_queries
+    }
+
+    fn is_given_in_memory(&self, path: &[u8]) -> bool {
+        self.given_in_memory.iter().any(|it| it == path)
     }
 
     fn add_module_with_query(
@@ -252,10 +268,12 @@ impl CodeHost for MemoryHost {
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
         let mut found = self.found.iter();
         if let Some((_, path)) = found.find(|(specifier, _)| specifier == search.specifier) {
+            let mut with_side_effects = self.found_with_side_effects.iter();
             return FoundCode::File {
                 path: path.clone(),
                 required: None,
                 links_followed: true,
+                has_side_effects: with_side_effects.any(|it| it == search.specifier),
             };
         }
         let in_node_paths = || {
@@ -284,8 +302,9 @@ impl CodeHost for MemoryHost {
         match found {
             FoundCode::File {
                 path,
+                required: _,
                 links_followed,
-                ..
+                has_side_effects,
             } if search.prefers_module_field => {
                 let mut pairs = self.required.iter();
                 let required = pairs.find(|pair| pair.0 == path).map(|pair| pair.1.clone());
@@ -293,6 +312,7 @@ impl CodeHost for MemoryHost {
                     path,
                     required,
                     links_followed,
+                    has_side_effects,
                 }
             }
             found => found,
@@ -396,6 +416,7 @@ pub(crate) fn resolve_computed_with(
         directory: dirname::<Posix>(importer),
         kind: pattern.kind,
         form: CodeImportForm::Static,
+        site: Default::default(),
     });
     let (unknown, candidates) = match answer {
         ComputedResolution::Candidates { candidates, .. } => (None, candidates),

@@ -6,7 +6,6 @@ use crate::hir::JsxPragmas;
 use bun_core::identifier::is_identifier;
 use std::sync::OnceLock;
 
-// `bun run` holds an `extends` chain in an array of this size and rejects a longer one, which also ends a cycle.
 const MAX_EXTENDED_CONFIGS: usize = 64;
 const CONFIG_FILE_NAMES: [&[u8]; 2] = [b"tsconfig.json", b"jsconfig.json"];
 
@@ -57,7 +56,7 @@ impl JsxSettings {
         });
         let fields = JsxFields {
             runtime,
-            is_development: None,
+            is_development: pragmas.is_development,
             factory: text(pragmas.factory).and_then(split_members),
             fragment: text(pragmas.fragment_factory).and_then(split_members),
             import_source: text(pragmas.import_source).map(<[u8]>::to_vec),
@@ -72,23 +71,19 @@ pub struct TranspileSettings {
     pub experimental_decorators: bool,
     pub emits_decorator_metadata: bool,
     pub use_define_for_class_fields: Option<bool>,
+    pub bun_run_assigns_class_fields: bool,
 }
 
 pub(in crate::resolve) struct CodeConfig<'h> {
     pub base_url: Option<&'h [u8]>,
-    /// Each key of `paths` with what may stand for it, as absolute paths.
     paths: &'h [(&'h [u8], &'h [&'h [u8]])],
-    /// What the substitutions of `paths` were relative to.
     paths_directory: &'h [u8],
     pub settings: &'h TranspileSettings,
 }
 
-/// What `paths` and `baseUrl` let a name mean that is no path.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(in crate::resolve) enum ConfiguredName<'h> {
-    /// A key without a star.
     Whole(&'h [u8]),
-    /// `"@/*": ["./src/*"]`: what follows `written` is a path from `directory`.
     Below {
         written: &'h [u8],
         directory: &'h [u8],
@@ -100,8 +95,6 @@ impl<'h> CodeConfig<'h> {
         self.paths.iter().any(|&(key, _)| can_match(key, prefix))
     }
 
-    /// Where a name that begins with `prefix` may lie by `paths` and `baseUrl`, beside the installed packages.
-    /// `None`: a key says it in another form than `"a/*": ["./b/*"]`, or the prefix names no folder below the one that the config starts from: it may be any file of the project.
     pub(in crate::resolve) fn find_names_that_begin_with(
         &self,
         prefix: &[u8],
@@ -144,9 +137,11 @@ fn can_match(key: &[u8], prefix: &[u8]) -> bool {
 pub(in crate::resolve) struct ConfigCaches<'h> {
     by_directory: Memo<&'h [u8], Option<&'h CodeConfig<'h>>>,
     override_config: OnceLock<Option<&'h CodeConfig<'h>>>,
+    in_working_directory: OnceLock<Option<&'h CodeConfig<'h>>>,
     default_settings: OnceLock<&'h TranspileSettings>,
     aot_package_settings: Memo<&'h [u8], &'h TranspileSettings>,
     is_development: OnceLock<bool>,
+    bun_run_assigns_class_fields: OnceLock<bool>,
 }
 
 impl<'h> ConfigCaches<'h> {
@@ -154,9 +149,11 @@ impl<'h> ConfigCaches<'h> {
         ConfigCaches {
             by_directory: Memo::new(are_small),
             override_config: OnceLock::new(),
+            in_working_directory: OnceLock::new(),
             default_settings: OnceLock::new(),
             aot_package_settings: Memo::new(are_small),
             is_development: OnceLock::new(),
+            bun_run_assigns_class_fields: OnceLock::new(),
         }
     }
 }
@@ -214,7 +211,6 @@ struct ParsedConfig {
     extends: Option<Vec<u8>>,
     base_url: Option<Vec<u8>>,
     paths: Option<Paths>,
-    /// What the substitutions of `paths` are relative to.
     paths_directory: Vec<u8>,
     jsx: JsxFields,
     emits_decorator_metadata: bool,
@@ -236,7 +232,6 @@ impl ParsedConfig {
             };
         };
         let written_base_url = string_entry(options, b"baseUrl");
-        // An empty `baseUrl` sets no base, but still allows substitutions that are not relative.
         let has_base_url = written_base_url.is_some();
         let base_url = written_base_url
             .map(|text| replace_config_dir(text, config_dir))
@@ -265,7 +260,6 @@ impl ParsedConfig {
         }
         self.jsx.inherit(parent.jsx);
         self.emits_decorator_metadata |= parent.emits_decorator_metadata;
-        // `bun run` never merges this option, so the last file of the chain decides.
         self.experimental_decorators = parent.experimental_decorators;
         let use_define = parent.use_define_for_class_fields;
         self.use_define_for_class_fields = self.use_define_for_class_fields.or(use_define);
@@ -297,7 +291,8 @@ impl<'h> Resolver<'h> {
             return self.aot_package_settings(dirname::<Posix>(path));
         }
         let config = match self.transpiles_by_working_directory() {
-            true => self.enclosing_code_config(&self.code_options().working_directory),
+            true => self.code_config_in_working_directory(),
+            false if self.code_host().is_given_in_memory(path) => None,
             false => self.enclosing_code_config(&self.code_host().directory_of(path)),
         };
         let create_default = || self.create_settings(&ParsedConfig::default());
@@ -308,7 +303,16 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    /// TypeScript in a package with the "aot" condition, unless the program runs inside that package.
+    fn code_config_in_working_directory(&self) -> Option<&'h CodeConfig<'h>> {
+        let find = || {
+            let directory = &self.code_options().working_directory;
+            let lies_there = self.is_under_tsconfig_override(directory)
+                || self.find_config_file(directory).is_some();
+            lies_there.then(|| self.enclosing_code_config(directory))?
+        };
+        *self.config_caches().in_working_directory.get_or_init(find)
+    }
+
     fn is_aot_source_of_dependency(&self, path: &[u8]) -> bool {
         let working_directory = &self.code_options().working_directory;
         !is_javascript_file(self.host, path)
@@ -317,14 +321,11 @@ impl<'h> Resolver<'h> {
             })
     }
 
-    /// The `compilerOptions` of the package's own `package.json` decide how its TypeScript runs. No `tsconfig.json`
-    /// and no flag of the program that installs it does, so the package answers alike in every program.
     fn aot_package_settings(&self, directory: &[u8]) -> &'h TranspileSettings {
         let by_directory = &self.config_caches().aot_package_settings;
         if let Some(&known) = by_directory.get_ref(directory) {
             return known;
         }
-        // As `find_package_with_compiler_options` has it, which finds the options that the files are type checked under.
         let stated = ancestors(directory)
             .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
             .map(|ancestor| inside(ancestor, b"package.json"))
@@ -343,6 +344,7 @@ impl<'h> Resolver<'h> {
             experimental_decorators: stated.experimental_decorators,
             emits_decorator_metadata: stated.emits_decorator_metadata,
             use_define_for_class_fields: stated.use_define_for_class_fields,
+            bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
         });
         *by_directory.insert_ref(self.keep(directory), settings)
     }
@@ -358,7 +360,6 @@ impl<'h> Resolver<'h> {
             }
             unknown_count += 1;
             if let Some(path) = self.find_config_file(ancestor) {
-                // A file that fails to load still hides the files above it.
                 config = self.load_config(&path);
                 break;
             }
@@ -436,6 +437,22 @@ impl<'h> Resolver<'h> {
             experimental_decorators: config.experimental_decorators,
             emits_decorator_metadata: config.emits_decorator_metadata,
             use_define_for_class_fields: config.use_define_for_class_fields,
+            bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
+        })
+    }
+
+    fn load_config_that_bun_run_takes(&self) -> Option<ParsedConfig> {
+        let working_directory = &self.code_options().working_directory;
+        let find_in_working_directory = || self.find_config_file(working_directory);
+        let path = self.override_path().or_else(find_in_working_directory);
+        path.and_then(|path| self.load_merged(&path))
+    }
+
+    fn bun_run_assigns_class_fields(&self) -> bool {
+        let caches = self.config_caches();
+        *caches.bun_run_assigns_class_fields.get_or_init(|| {
+            let taken = self.load_config_that_bun_run_takes();
+            taken.and_then(|taken| taken.use_define_for_class_fields) == Some(false)
         })
     }
 
@@ -445,10 +462,8 @@ impl<'h> Resolver<'h> {
             if let Some(forced) = options.forced_jsx_development {
                 return forced;
             }
-            let find_in_working_directory = || self.find_config_file(&options.working_directory);
-            let path = self.override_path().or_else(find_in_working_directory);
-            let merged = path.and_then(|path| self.load_merged(&path));
-            let written = merged.and_then(|merged| merged.jsx.is_development);
+            let taken = self.load_config_that_bun_run_takes();
+            let written = taken.and_then(|taken| taken.jsx.is_development);
             written.unwrap_or(options.jsx.is_development)
         })
     }
@@ -502,7 +517,6 @@ fn parse_paths(entries: &[(Vec<u8>, Json)], config_dir: &[u8], has_base_url: boo
 
 fn replace_config_dir(text: &[u8], config_dir: &[u8]) -> Vec<u8> {
     let directory = inside(config_dir, b"");
-    // Drops a separator after the template: `directory` ends in one, and `//` would start a UNC path.
     let text = strings::replace_owned(text, b"${configDir}/", &directory);
     strings::replace_owned(&text, b"${configDir}", &directory)
 }

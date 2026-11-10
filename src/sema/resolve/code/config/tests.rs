@@ -463,6 +463,7 @@ fn settings_start_from_command_line() {
         experimental_decorators: false,
         emits_decorator_metadata: false,
         use_define_for_class_fields: None,
+        bun_run_assigns_class_fields: false,
     };
     assert_eq!(settings(&create_host(""), "/app/a.tsx"), expected);
     assert_eq!(lib_settings("{}"), expected);
@@ -616,6 +617,7 @@ fn pragmas_override_one_member_each() {
         });
         let pragmas = JsxPragmas {
             classic,
+            is_development: None,
             factory,
             fragment_factory,
             import_source,
@@ -623,6 +625,102 @@ fn pragmas_override_one_member_each() {
         let once = base.with_pragmas(&pragmas, &atoms).unwrap();
         assert_eq!(render_jsx(&once), expected, "{classic:?} {texts:?}");
         assert_eq!(once.with_pragmas(&pragmas, &atoms).as_ref(), Some(&once));
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn pragma_overrides_development() {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    for (written, expected) in [
+        (Some(true), [true, true]),
+        (Some(false), [false, false]),
+        (None, [false, true]),
+    ] {
+        let pragmas = JsxPragmas {
+            classic: Some(false),
+            is_development: written,
+            ..JsxPragmas::default()
+        };
+        let found = [false, true].map(|is_development| {
+            let base = JsxSettings {
+                is_development,
+                ..JsxSettings::default()
+            };
+            let settings = base.with_pragmas(&pragmas, &atoms).unwrap();
+            settings.is_development
+        });
+        assert_eq!(found, expected, "{written:?}");
+    }
+}
+
+const CONFIG_A: &str = r#"{"compilerOptions": {"useDefineForClassFields": false, "experimentalDecorators": true, "jsx": "react", "jsxFactory": "fromA"}}"#;
+const CONFIG_B: &str = r#"{"compilerOptions": {"useDefineForClassFields": true, "experimentalDecorators": false, "jsx": "react", "jsxFactory": "fromB"}}"#;
+
+fn configuration_of(settings: &TranspileSettings) -> &'static str {
+    let factory = text(&bstr::join(".", &settings.jsx.factory));
+    let (legacy, define) = (
+        settings.experimental_decorators,
+        settings.use_define_for_class_fields,
+    );
+    match (factory.as_str(), legacy, define) {
+        ("fromA", true, Some(false)) => "A",
+        ("fromB", false, Some(true)) => "B",
+        ("React.createElement", false, None) => "none",
+        _ => "mixed",
+    }
+}
+
+const CONFIGURATION_THAT_COUNTS: &str = "
+    /p/tsconfig.json     -                    /p     /p/main.tsx     A    A
+    /p/jsconfig.json     -                    /p     /p/main.tsx     A    A
+    /p/tsconfig.json     -                    /p/sub /p/sub/main.tsx none A
+    /p/jsconfig.json     -                    /p/sub /p/sub/main.tsx none A
+    /p/tsconfig.json     -                    /p/sub /p/outer.tsx    none A
+    /p/sub/tsconfig.json -                    /p     /p/sub/main.tsx none A
+    /p/sub/tsconfig.json -                    /p     /p/main.tsx     none none
+    /p/tsconfig.json     /p/sub/tsconfig.json /p     /p/sub/part.tsx A    B
+    /p/tsconfig.json     /p/sub/tsconfig.json /p/sub /p/sub/main.tsx B    B
+    /q/tsconfig.json     -                    /q     /p/main.tsx     A    none
+    /q/tsconfig.json     /p/tsconfig.json     /q     /p/main.tsx     A    B
+";
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn run_time_transpiles_by_config_in_working_directory_and_bundler_by_nearest() {
+    for line in CONFIGURATION_THAT_COUNTS.trim().lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let &[a, b, working_directory, path, in_run, in_bundle] = &words[..] else {
+            panic!("{line}");
+        };
+        let files = [(a, CONFIG_A), (b, CONFIG_B)];
+        let host = MemoryHost::new(&files[..if b == "-" { 1 } else { 2 }]);
+        let found = [true, false].map(|transpiles_by_working_directory| {
+            let options = CodeOptions {
+                transpiles_by_working_directory,
+                ..CodeOptions::bun_run(working_directory.as_bytes())
+            };
+            configuration_of(&settings_with(&host, &options, path))
+        });
+        assert_eq!(found, [in_run, in_bundle], "{line}");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn bundler_transpiles_file_given_in_memory_under_no_config() {
+    let above = ("/app/tsconfig.json", CONFIG_A);
+    let host = MemoryHost::new(&[above, ("/app/sub/tsconfig.json", CONFIG_B)])
+        .given_in_memory("/app/made.tsx")
+        .given_in_memory("/app/sub/made.tsx");
+    for (path, expected) in [
+        ("/app/made.tsx", "none"),
+        ("/app/sub/made.tsx", "none"),
+        ("/app/disk.tsx", "A"),
+        ("/app/sub/disk.tsx", "B"),
+    ] {
+        assert_eq!(configuration_of(&settings(&host, path)), expected, "{path}");
     }
 }
 

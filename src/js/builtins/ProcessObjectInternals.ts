@@ -730,20 +730,21 @@ export function createOnWarning(
     }
     const detail = warning.detail;
     if (typeof detail === "string") msg += `\n${detail}`;
-    writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
+      const flag = isDeprecation ? "--trace-deprecation" : "--trace-warnings";
       const argv0 = processObject.argv0 || "node";
       // A string goes to the native path.basename(), so a path.basename() that the program replaced is not called.
       // Anything else goes to node:path, which throws unless the program replaced basename().
       const program =
         typeof argv0 !== "string"
-          ? require("node:path").basename(argv0)
+          ? require("node:path").basename(argv0, ".exe")
           : (process.platform === "win32"
               ? $bindgen("node_path.bind.ts", "basenameWin32")
-              : $bindgen("node_path.bind.ts", "basenamePosix"))(argv0);
-      writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
+              : $bindgen("node_path.bind.ts", "basenamePosix"))(argv0, ".exe");
+      msg += `\n(Use \`${program} ${flag} ...\` to show where the warning was created)`;
     }
+    writeOut(msg);
   };
 }
 

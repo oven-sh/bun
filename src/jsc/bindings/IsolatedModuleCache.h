@@ -62,6 +62,7 @@ public:
 
     // A key holds only the last provider inserted for it. It's a hit only if that provider was made from the same input:
     // the file or the same `pluginContents` and loader, with the same test globals ("bun:test" or "vitest").
+    // The first lookup of an entry since didReset() or didFinishFile() moved the cache generation also checks it against its file, and evicts it if they differ.
     static Zig::SourceProvider* lookup(JSC::VM&, const WTF::String& key, const CodeString* pluginContents = nullptr);
 
     // No-op unless isTagCacheable(provider.m_tag), !provider.m_dependsOnMoreThanSource and !provider.m_fromEarlierGeneration.

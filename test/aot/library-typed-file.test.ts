@@ -54,9 +54,9 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 // app.ts, index.aot.ts and version.aot.ts are compiled with their types, and the build has nothing to say about them.
 const USED = { said: [], typedFiles: 3, exitCode: 0, signal: null, stdout: "7 1.2.3\n" };
 
-async function install(root: string) {
+async function install(root: string, flags: string[] = []) {
   const built = await spawned(
-    [bunExe(), "compile", "--library", "src/index.ts", "src/version.ts"],
+    [bunExe(), "compile", "--library", "src/index.ts", "src/version.ts", ...flags],
     join(root, "library"),
     env,
   );
@@ -127,6 +127,34 @@ export function area(shape: Shape): Sizes.Size {
     });
     await install(String(dir));
     expect(await compile(String(dir))).toEqual(USED);
+  });
+
+  // `bun check` refuses this program from index.d.ts. With `any` for the member in index.aot.ts, it would compile.
+  test("a member whose only store the build removes has the type of the sources for a program", async () => {
+    using dir = tempDir("aot-library-typed-file-member-without-store", {
+      ...library,
+      "library/src/index.ts": library["library/src/index.ts"] + `export { Ruler } from "./ruler";\n`,
+      "library/src/ruler.ts": `declare const __DEV__: boolean;
+export type Unit = "cm" | "in";
+export class Ruler {
+  unit;
+  constructor() {
+    if (__DEV__) this.unit = "cm" as Unit;
+  }
+}
+`,
+      "app/app.ts": `import { Ruler } from "shapes";
+const wrong: number = new Ruler().unit;
+console.log(wrong);
+`,
+    });
+    await install(String(dir), ["--define", "__DEV__=false"]);
+    expect(await compile(String(dir))).toMatchObject({
+      said: ["error: TS2322: Type 'string | undefined' is not assignable to type 'number'."],
+      exitCode: 1,
+    });
+    const typed = readFileSync(join(String(dir), "app/node_modules/shapes/index.aot.ts"), "utf8");
+    expect(typed).toContain('  unit: "cm" | "in" | undefined;\n');
   });
 
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {

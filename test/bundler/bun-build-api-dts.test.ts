@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 
@@ -150,6 +150,39 @@ export { join };
     });
     expect(built.logs).toEqual([]);
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
+  });
+
+  test.each([
+    ["to outdir", true],
+    ["to outputs", false],
+  ])("a class member whose stores the build removes keeps the type of the sources, written %s", async (_, toOutdir) => {
+    using dir = tempDir("build-api-dts-members", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.ts": `declare const __DEV__: boolean;
+export class Settings {
+  mode;
+  static count;
+  static {
+    if (__DEV__) this.count = 1;
+  }
+  constructor() {
+    if (__DEV__) this.mode = "dev";
+  }
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: toOutdir ? join(root, "out") : undefined,
+      tsconfig: join(root, "tsconfig.json"),
+      define: { __DEV__: "false" },
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = await built.outputs.find(output => output.path.endsWith("index.aot.ts"))?.text();
+    expect(typed).toContain("class Settings {\n  mode: string | undefined;\n  static count: number | undefined;\n");
+    expect(existsSync(join(root, "out/index.aot.ts"))).toBe(toOutdir);
   });
 
   // A constant that only a type names is not in the bundle. The typed file declares it with what the type checker says.

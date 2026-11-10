@@ -3075,11 +3075,22 @@ impl<'a> Transfer<'_, 'a, '_> {
                 {
                     insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
                 }
+                if slot.place == Place::MemberType
+                    && let Some(noted) = module.types.and_then(|types| types.member_type(key))
+                {
+                    insertions.add(slot.start, Order::Slot, [&b": "[..], noted].concat());
+                }
                 continue;
             };
             let text = module.trimmed_text(found.start, found.end);
             let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
+                Place::MemberType if text == b"?" => {
+                    match module.types.and_then(|types| types.member_type(key)) {
+                        Some(noted) => (Order::Slot, [&b"?: "[..], noted].concat()),
+                        None => (Order::Slot, text),
+                    }
+                }
                 Place::MemberType
                     if is_computed
                         && text.starts_with(b":")
@@ -4120,6 +4131,8 @@ pub struct ModuleTypes {
     pub exports: Vec<(Box<[u8]>, Target)>,
     pub constants: Vec<(u32, Box<[u8]>)>,
     pub functions_returning_undefined: Vec<u32>,
+    /// The type of each class member with no annotation and no value, if it names nothing.
+    pub members: Vec<(u32, Box<[u8]>)>,
     pub globals: Vec<u32>,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
@@ -4127,6 +4140,13 @@ pub struct ModuleTypes {
 }
 
 impl ModuleTypes {
+    fn member_type(&self, key: u32) -> Option<&[u8]> {
+        self.members
+            .iter()
+            .find(|member| member.0 == key)
+            .map(|member| &member.1[..])
+    }
+
     fn constant_type(&self, binding: u32) -> Option<&[u8]> {
         self.constants
             .iter()
@@ -4253,6 +4273,35 @@ fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> O
             }
         },
     })
+}
+
+/// [`text_that_names_nothing`], and for a union the text of each of its types: the printer names an alias of a union.
+fn text_of_types_that_name_nothing(
+    services: &mut Services<'_, '_, '_>,
+    ty: TypeId,
+) -> Option<Box<[u8]>> {
+    if !services.type_flags(ty).contains(TypeFlags::UNION) {
+        return text_that_names_nothing(services, ty);
+    }
+    let mut texts: Vec<Box<[u8]>> = Vec::new();
+    for &part in services.constituents(ty) {
+        let text = text_that_names_nothing(services, part)?;
+        if !texts.contains(&text) {
+            texts.push(text);
+        }
+    }
+    // In the order of the printer: `boolean` for `false | true`, and `null` and `undefined` last.
+    let place_of = |wanted: &[u8]| texts.iter().position(|text| &text[..] == wanted);
+    if let (Some(no), Some(yes)) = (place_of(b"false"), place_of(b"true")) {
+        texts[no.min(yes)] = b"boolean"[..].into();
+        texts.remove(no.max(yes));
+    }
+    texts.sort_by_key(|text| match &text[..] {
+        b"null" => 1,
+        b"undefined" => 2,
+        _ => 0,
+    });
+    Some(texts.join(&b" | "[..]).into())
 }
 
 pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
@@ -4453,6 +4502,31 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 augmented_modules.push((statement.start, path));
             }
         }
+        // The build drops the dead stores that type a member. Only `noImplicitAny` types a member by its stores.
+        let mut members = Vec::new();
+        let is_typed_by_stores = services.compiler_options().no_implicit_any;
+        let classes = if is_typed_by_stores {
+            &hir.classes[..]
+        } else {
+            &[]
+        };
+        for id in classes.iter().flat_map(|class| class.members.iter()) {
+            let member = &hir[id];
+            if member.kind != MemberKind::Property
+                || member.ty.is_some()
+                || member.init.is_some()
+                || syntax.is_type_only_member(member)
+            {
+                continue;
+            }
+            let ty = services.type_at_location(NodeRef {
+                file,
+                node: hir.node(id),
+            });
+            if let Some(text) = text_of_types_that_name_nothing(services, ty) {
+                members.push((syntax.member_key(member), text));
+            }
+        }
         ModuleTypes {
             path,
             text: hir.text[..].into(),
@@ -4461,6 +4535,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             exports,
             constants,
             functions_returning_undefined,
+            members,
             globals,
             augmented_modules,
             locals,

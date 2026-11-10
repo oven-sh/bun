@@ -115,6 +115,36 @@ describe.concurrent("bun build --dts", () => {
     );
   });
 
+  test("--splitting --minify-syntax --minify-whitespace: a class member of a chunk keeps the type of the sources", async () => {
+    using dir = tempDir("build-dts-minify-chunk", {
+      "tsconfig.json": project["tsconfig.json"],
+      "package.json": project["package.json"],
+      "src/settings.ts": `declare const __DEV__: boolean;
+export class Settings {
+  mode;
+  constructor() {
+    if (__DEV__) this.mode = "dev";
+  }
+}
+`,
+      "src/first.ts": `import { Settings } from "./settings";
+export const first = (): Settings => new Settings();
+`,
+      "src/second.ts": `import { Settings } from "./settings";
+export const second = (): string | undefined => new Settings().mode;
+`,
+    });
+    const flags = ["--dts", "--splitting", "--minify-syntax", "--minify-whitespace", "--define", "__DEV__=false"];
+    const built = await bun(String(dir), "build", "./src/first.ts", "./src/second.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readdirSync(join(String(dir), "out")).filter(name => name.endsWith(".aot.ts"));
+    const chunk = typed.find(name => name !== "first.aot.ts" && name !== "second.aot.ts");
+    expect(typed).toHaveLength(3);
+    expect(readFileSync(join(String(dir), "out", chunk!), "utf8")).toBe(
+      "class Settings{mode: string | undefined;\nconstructor(){}}\nexport{Settings};\n",
+    );
+  });
+
   test("a statement that never runs is left out", async () => {
     using dir = tempDir("build-dts-dead", {
       ...project,
@@ -132,6 +162,139 @@ export function join(first: string, second: string): string {
       'function join(first, second) {\n  return first + " " + second;\n}',
     );
     expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).not.toContain("__DEV__");
+  });
+
+  const only = (source: string) => ({
+    "tsconfig.json": project["tsconfig.json"],
+    "package.json": project["package.json"],
+    "src/index.ts": source,
+  });
+  const written = (dir: unknown, name: string) => readFileSync(join(String(dir), "out", name), "utf8");
+  const membersOf = (text: string) =>
+    text.match(/^ +(?:static )?#?\w+\??(?:: [^;{]+| = [^;]+)?;$/gm)?.map(it => it.trim());
+
+  test("a class member without an annotation keeps the type of the sources when the build removes what it stores", async () => {
+    using dir = tempDir(
+      "build-dts-dead-stores",
+      only(`declare const __DEV__: boolean;
+declare const process: { env: Record<string, string | undefined> };
+export class Settings {
+  mode;
+  level;
+  static count;
+  static {
+    if (__DEV__) this.count = 1;
+  }
+  constructor(level: number) {
+    if (__DEV__) this.mode = "dev";
+    if (__DEV__) this.level = "debug";
+    else this.level = level;
+  }
+  read(): string {
+    return String(this.mode) + this.level + Settings.count;
+  }
+}
+export class Trace {
+  to;
+  constructor() {
+    if (process.env.NODE_ENV === "production") this.to = "stderr";
+  }
+  read(): string {
+    return String(this.to);
+  }
+}
+`),
+    );
+    const flags = ["--dts", "--define", "__DEV__=false"];
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const members = [
+      "mode: string | undefined;",
+      // The store of a string is not in the bundle, and the store of a number is.
+      "level: string | number;",
+      "static count: number | undefined;",
+      "to: string | undefined;",
+    ];
+    expect(membersOf(written(dir, "index.aot.ts"))).toEqual(members);
+    // The check of the sources wrote the same types into index.d.ts.
+    expect(membersOf(written(dir, "index.d.ts"))).toEqual(members);
+    expect(membersOf(written(dir, "index.js"))).toEqual(["mode;", "level;", "static count;", "to;"]);
+    const erased = (name: string, loader: "ts" | "js") =>
+      new Bun.Transpiler({ loader, target: "node" }).transformSync(written(dir, name)).replace(/\s+/g, "");
+    expect(erased("index.aot.ts", "ts")).toBe(erased("index.js", "js"));
+    // The tsconfig.json has no "include", so index.aot.ts is a source of this project too. The build judges the file
+    // as a dependency of another program, where TS7008 does not count. Here it does.
+    const checked = await bun(String(dir), "check");
+    expect({ said: (checked.stdout + checked.stderr).match(/TS\d+[^\n]*/g), exitCode: checked.exitCode }).toEqual({
+      said: null,
+      exitCode: 0,
+    });
+  });
+
+  test("a member is written with the type of the sources only where that type names nothing", async () => {
+    using dir = tempDir(
+      "build-dts-member-types",
+      only(`declare const __DEV__: boolean;
+export type Mode = "fast" | "slow";
+export enum Color {
+  Red,
+  Blue,
+}
+function mode(): Mode {
+  return "fast";
+}
+export class Rows {
+  optional?;
+  #hidden;
+  either;
+  flag;
+  both;
+  picked;
+  far;
+  kept;
+  color;
+  entries;
+  valued = 1;
+  constructor(on: boolean) {
+    this.either = on ? "a" : null;
+    this.kept = "kept";
+    if (__DEV__) this.optional = "dev";
+    if (__DEV__) this.#hidden = 1n;
+    if (__DEV__) this.flag = false as const;
+    if (__DEV__) this.both = on;
+    if (__DEV__) this.picked = mode();
+    if (__DEV__) this.far = 1e999 as const;
+    if (__DEV__) this.color = Color.Red;
+    if (__DEV__) this.entries = new Map<string, number>();
+  }
+  read(): string {
+    return [this.optional, this.#hidden, this.flag, this.both, this.picked, this.far, this.color].join();
+  }
+  size(): number {
+    return this.valued + this.kept.length + (this.entries?.size ?? 0) + (this.either?.length ?? 0);
+  }
+}
+`),
+    );
+    const flags = ["--dts", "--define", "__DEV__=false"];
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(membersOf(written(dir, "index.aot.ts"))).toEqual([
+      "optional?: string | undefined;",
+      "#hidden: bigint | undefined;",
+      "either: string | null;",
+      "flag: false | undefined;",
+      "both: boolean | undefined;",
+      // The type checker prints `Mode | undefined` for it, and `Mode` can be the name of another type in a bundle.
+      'picked: "fast" | "slow" | undefined;',
+      // `Infinity` is the name of a value.
+      "far: number | undefined;",
+      "kept: string;",
+      // The member of an enum and a class are names. These two are as the bundle has them.
+      "color;",
+      "entries;",
+      "valued = 1;",
+    ]);
   });
 
   test("a build without it writes what it always did", async () => {

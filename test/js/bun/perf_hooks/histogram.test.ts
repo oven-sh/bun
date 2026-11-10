@@ -1574,12 +1574,15 @@ describe("Histogram", () => {
     });
 
     test("not into bytes", () => {
-      assert.throws(() => serialize({ nested: [createHistogram()] }), /could not be cloned|can not be cloned/);
+      assert.throws(() => serialize({ nested: [createHistogram()] }), {
+        constructor: Error,
+        message: /could not be cloned/,
+      });
     });
 
     // Node.js gives an empty object.
     test("not into bytes, of an ELDHistogram", notInNode, () => {
-      assert.throws(() => serialize(monitorEventLoopDelay()), { name: "DataCloneError" });
+      assert.throws(() => serialize(monitorEventLoopDelay()), { constructor: Error, message: /could not be cloned/ });
     });
 
     test("through a MessagePort", async () => {

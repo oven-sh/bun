@@ -483,7 +483,7 @@ it("deserialize rejects a RegExp record whose pattern does not parse", async () 
     [
       "bun:jsc rejected TypeError",
       "bun:jsc true xyz gi true",
-      "node:v8 rejected TypeError",
+      "node:v8 rejected Error",
       "node:v8 true xyz gi true",
       "",
     ].join("\n"),
@@ -511,13 +511,17 @@ it("getProtectedObjects returns only objects", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "ok true\n", exitCode: 0 });
 });
 
-it("serialize rejects a CryptoKey created with extractable set to false", async () => {
-  // bun:jsc serialize() (and node:v8 serialize(), which wraps it) hands the raw
-  // structured-clone buffer to the caller, so a key imported with
-  // extractable: false must not be serializable through it. Keys marked
+it.each([
+  ["bun:jsc", "DataCloneError"],
+  ["node:v8", "Error"],
+])("%s serialize rejects a CryptoKey that is not extractable", async (module, errorName) => {
+  // bun:jsc serialize() and node:v8 serialize() each hand the raw
+  // structured-clone buffer to the caller from a native entry of their own, so
+  // a key imported with extractable: false must not be serializable through
+  // either. Each rejects it with the error of its module. Keys marked
   // extractable still serialize, and the non-extractable key remains usable.
   const script = `
-    import { serialize } from "bun:jsc";
+    import { serialize } from "${module}";
     const secret = "THIS-IS-SECRET-KEY-MATERIAL-32B!";
     const secretBytes = new TextEncoder().encode(secret);
     const nonExtractable = await crypto.subtle.importKey(
@@ -532,11 +536,11 @@ it("serialize rejects a CryptoKey created with extractable set to false", async 
       const bytes = new Uint8Array(serialize(nonExtractable));
       const text = Array.from(bytes, b => String.fromCharCode(b)).join("");
       outcome = text.includes(secret) ? "serialized with key material" : "serialized without key material";
-    } catch {
-      outcome = "rejected";
+    } catch (error) {
+      outcome = "rejected with " + error.name;
     }
     console.log(outcome);
-    // A key the caller marked extractable still serializes.
+    // A key the caller marked extractable still serializes. node's v8.serialize() refuses every CryptoKey.
     const extractable = await crypto.subtle.importKey(
       "raw",
       secretBytes,
@@ -557,7 +561,7 @@ it("serialize rejects a CryptoKey created with extractable set to false", async 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("rejected\ntrue\n32\n");
+  expect(stdout).toBe(`rejected with ${errorName}\ntrue\n32\n`);
   expect(exitCode).toBe(0);
 });
 

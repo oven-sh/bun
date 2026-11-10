@@ -131,6 +131,7 @@ enum class SerializationReturnCode {
     ValidationError,
     ExistingExceptionError,
     DataCloneError,
+    NeedsTransferError,
     UnspecifiedError
 };
 
@@ -1282,10 +1283,7 @@ private:
                     write(index->value);
                     return true;
                 }
-                // MessagePort present in the message but not listed in the
-                // transfer list: node throws a DataCloneError with this message.
-                WebCore::propagateException(*m_lexicalGlobalObject, scope, Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
-                code = SerializationReturnCode::ExistingExceptionError;
+                code = SerializationReturnCode::NeedsTransferError;
                 return true;
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
@@ -4513,6 +4511,14 @@ static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffe
     return contents;
 }
 
+static Exception exceptionForSerializationFailure(SerializationReturnCode);
+
+// Out of line: its caller also runs after every walk that succeeds, and has to stay small enough to inline.
+static NEVER_INLINE void throwSerializationFailure(JSGlobalObject& lexicalGlobalObject, ThrowScope& scope, SerializationReturnCode code)
+{
+    propagateException(lexicalGlobalObject, scope, exceptionForSerializationFailure(code));
+}
+
 static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlobalObject, SerializationReturnCode code)
 {
     auto& vm = lexicalGlobalObject.vm();
@@ -4525,7 +4531,8 @@ static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlob
         throwException(&lexicalGlobalObject, scope, createStackOverflowError(&lexicalGlobalObject));
         break;
     case SerializationReturnCode::ValidationError:
-        throwTypeError(&lexicalGlobalObject, scope, "Unable to deserialize data."_s);
+    case SerializationReturnCode::NeedsTransferError:
+        throwSerializationFailure(lexicalGlobalObject, scope, code);
         break;
     case SerializationReturnCode::DataCloneError:
         throwDataCloneError(lexicalGlobalObject, scope);
@@ -4546,9 +4553,12 @@ static Exception exceptionForSerializationFailure(SerializationReturnCode code)
     case SerializationReturnCode::StackOverflowError:
         return Exception { StackOverflowError };
     case SerializationReturnCode::ValidationError:
-        return Exception { TypeError };
+        return Exception { TypeError, "Unable to deserialize data."_s };
     case SerializationReturnCode::DataCloneError:
         return Exception { DataCloneError };
+    case SerializationReturnCode::NeedsTransferError:
+        // node's text for a MessagePort in the message that the transfer list does not name
+        return Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s };
     case SerializationReturnCode::ExistingExceptionError:
         return Exception { ExistingExceptionError };
     case SerializationReturnCode::UnspecifiedError:
@@ -5047,6 +5057,35 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
     return arrayBuffer;
 }
 
+// Inlined: deserialize() of bun:jsc pays no call for the share.
+static ALWAYS_INLINE DeserializationResult deserializeBytesOf(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& arrayBuffer, size_t byteOffset, size_t maxByteLength)
+{
+    auto blobURLs = Vector<String> {};
+    auto blobFiles = Vector<String> {};
+
+    if (arrayBuffer.isShared()) {
+        // prevent detaching while in-use
+        arrayBuffer.pin();
+    }
+
+    auto* data = static_cast<uint8_t*>(arrayBuffer.data()) + byteOffset;
+    auto size = std::min(arrayBuffer.byteLength(), maxByteLength);
+    auto span = std::span<uint8_t> { data, size };
+
+    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, span, blobURLs, blobFiles, nullptr
+#if ENABLE(WEBASSEMBLY)
+        ,
+        nullptr, nullptr
+#endif
+    );
+
+    if (arrayBuffer.isShared()) {
+        arrayBuffer.unpin();
+    }
+
+    return result;
+}
+
 JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset, size_t maxByteLength, SerializationErrorMode throwExceptions, bool* didFail)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5061,28 +5100,8 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
 
         return JSC::jsUndefined();
     }
-    auto blobURLs = Vector<String> {};
-    auto blobFiles = Vector<String> {};
 
-    if (arrayBuffer->isShared()) {
-        // prevent detaching while in-use
-        arrayBuffer->pin();
-    }
-
-    auto* data = static_cast<uint8_t*>(arrayBuffer->data()) + byteOffset;
-    auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
-    auto span = std::span<uint8_t> { data, size };
-
-    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, span, blobURLs, blobFiles, nullptr
-#if ENABLE(WEBASSEMBLY)
-        ,
-        nullptr, nullptr
-#endif
-    );
-
-    if (arrayBuffer->isShared()) {
-        arrayBuffer->unpin();
-    }
+    auto result = deserializeBytesOf(domGlobal, globalObject, *arrayBuffer, byteOffset, maxByteLength);
 
     if (didFail) {
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
@@ -5093,6 +5112,25 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
+
+    return result.first ? result.first : jsNull();
+}
+
+ExceptionOr<JSC::JSValue> SerializedScriptValue::tryFromArrayBuffer(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset, size_t maxByteLength)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (!arrayBuffer || arrayBuffer->isDetached())
+        return exceptionForSerializationFailure(SerializationReturnCode::ValidationError);
+
+    auto result = deserializeBytesOf(domGlobal, globalObject, *arrayBuffer, byteOffset, maxByteLength);
+    RETURN_IF_EXCEPTION(throwScope, Exception { ExistingExceptionError });
+    // UnspecifiedError is the deserializer's word for no bytes at all.
+    if (result.second == SerializationReturnCode::UnspecifiedError)
+        return exceptionForSerializationFailure(SerializationReturnCode::ValidationError);
+    if (result.second != SerializationReturnCode::SuccessfullyCompleted)
+        return exceptionForSerializationFailure(result.second);
 
     return result.first ? result.first : jsNull();
 }

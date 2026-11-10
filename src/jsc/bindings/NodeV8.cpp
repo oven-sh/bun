@@ -3,7 +3,11 @@
 #include "root.h"
 
 #include "ErrorCode.h"
+#include "JSDOMExceptionHandling.h"
+#include "MessagePort.h"
 #include "NodeV8.h"
+#include "RemovableFeatures.h"
+#include "SerializedScriptValue.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/JSArray.h>
@@ -92,6 +96,82 @@ JSC_DEFINE_HOST_FUNCTION(functionStopGCProfiler, (JSGlobalObject * globalObject,
     }
 
     return JSValue::encode(result);
+}
+
+// v8.serialize(): bun:jsc's serialize() into a Buffer, except that a failure of the serializer throws node's Error, not a DataCloneError or a TypeError.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_serialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, jsFunctionNodeV8_serialize);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+    Vector<RefPtr<WebCore::MessagePort>> dummyPorts;
+    auto serialized = WebCore::SerializedScriptValue::create(*lexicalGlobalObject, callFrame->argument(0), WTF::move(transferList), dummyPorts, WebCore::SerializationForStorage::Yes, WebCore::SerializationErrorMode::NonThrowing, WebCore::SerializationContext::Default, WebCore::SerializationForCrossProcessTransfer::No);
+    EXCEPTION_ASSERT(!scope.exception() || serialized.hasException());
+    if (serialized.hasException()) {
+        auto exception = serialized.releaseException();
+        if (scope.exception() || exception.code() == WebCore::ExceptionCode::StackOverflowError)
+            WebCore::propagateException(*lexicalGlobalObject, scope, WTF::move(exception));
+        else if (exception.code() == WebCore::ExceptionCode::DataCloneError) {
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/v8.js#L379
+            String message = exception.releaseMessage();
+            if (message.isEmpty())
+                message = "The object could not be cloned."_s;
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, message));
+        } else {
+            // What is left is the writer: it could not hold the bytes. V8 has this text for it, and node throws it as an Error too.
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Data cannot be cloned, out of memory."_s));
+        }
+        RELEASE_AND_RETURN(scope, {});
+    }
+
+    auto arrayBuffer = serialized.releaseReturnValue()->toArrayBuffer();
+    size_t byteLength = arrayBuffer->byteLength();
+    auto* buffer = JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(arrayBuffer), 0, byteLength);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(buffer);
+}
+
+// v8.deserialize(): bun:jsc's deserialize(), except that bytes that are no serialized value throw node's Error, not a TypeError.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_deserialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, jsFunctionNodeV8_deserialize);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = callFrame->argument(0);
+    // The bytes that v8.ts has read in front of the value: the mark of its envelope for Buffers.
+    size_t skipped = callFrame->argument(1).isUInt32() ? callFrame->argument(1).asUInt32() : 0;
+    RefPtr<JSC::ArrayBuffer> arrayBuffer;
+    size_t byteOffset = 0;
+    size_t byteLength = 0;
+    if (auto* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        arrayBuffer = jsArrayBuffer->impl();
+        byteLength = arrayBuffer->byteLength();
+    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        arrayBuffer = view->possiblySharedBuffer();
+        byteOffset = view->byteOffset();
+        byteLength = view->byteLength();
+    } else {
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_serdes.cc#L339
+        return Bun::throwError(lexicalGlobalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "buffer must be a TypedArray or a DataView"_s);
+    }
+
+    skipped = std::min(skipped, byteLength);
+    auto deserialized = WebCore::SerializedScriptValue::tryFromArrayBuffer(*lexicalGlobalObject, lexicalGlobalObject, arrayBuffer.get(), byteOffset + skipped, byteLength - skipped);
+    EXCEPTION_ASSERT(!scope.exception() || deserialized.hasException());
+    if (deserialized.hasException()) {
+        auto exception = deserialized.releaseException();
+        if (!scope.exception() && exception.code() == WebCore::ExceptionCode::TypeError) {
+            // https://github.com/nodejs/node/blob/v26.3.0/deps/v8/src/objects/value-serializer.cc#L1631-L1633
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, exception.releaseMessage()));
+        } else
+            WebCore::propagateException(*lexicalGlobalObject, scope, WTF::move(exception));
+        RELEASE_AND_RETURN(scope, {});
+    }
+
+    return JSValue::encode(deserialized.releaseReturnValue());
 }
 
 JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject)

@@ -515,7 +515,7 @@ describe("structuredClone with Blob and File", () => {
       expect({ lines, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
         lines: [
           { entry: "bun:jsc", threw: { name: "TypeError", message: "Unable to deserialize data." } },
-          { entry: "node:v8", threw: { name: "TypeError", message: "Unable to deserialize data." } },
+          { entry: "node:v8", threw: { name: "Error", message: "Unable to deserialize data." } },
         ],
         stderr: "",
         exitCode: 0,

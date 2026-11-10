@@ -1247,16 +1247,17 @@ describe("X509Certificate records whose DER does not decode are rejected", () =>
     }
   };
 
+  // node:v8 throws node's Error for bytes that are no serialized value.
   describe.each([
-    ["bun:jsc deserialize", deserialize],
-    ["v8.deserialize", v8Deserialize],
-  ])("%s", (_api, fn) => {
+    ["bun:jsc deserialize", deserialize, "TypeError"],
+    ["v8.deserialize", v8Deserialize, "Error"],
+  ])("%s", (_api, fn, errorName) => {
     test.each([
       ["an empty DER", Buffer.alloc(0)],
       ["a DER that is not a certificate", Buffer.from([0xde, 0xad, 0xbe, 0xef])],
       ["a truncated certificate DER", der.subarray(0, der.length - 1)],
     ])("rejects %s", (_name, derBytes) => {
-      expect(outcome(fn, record(derBytes))).toEqual({ threw: "TypeError: Unable to deserialize data." });
+      expect(outcome(fn, record(derBytes))).toEqual({ threw: `${errorName}: Unable to deserialize data.` });
     });
   });
 

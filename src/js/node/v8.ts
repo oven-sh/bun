@@ -30,6 +30,11 @@ const {
 } = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const setNewContextsHaveGC = $newCppFunction("NodeVM.cpp", "jsFunctionSetNewContextsHaveGC", 1);
+const serializeToBuffer = $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_serialize", 1) as (value: unknown) => Buffer;
+const deserializeBytes = $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_deserialize", 2) as (
+  bytes: unknown,
+  skipped?: number,
+) => unknown;
 
 const DateNow = Date.now;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -63,7 +68,6 @@ const DataViewPrototypeGetByteLength: ViewGetter<number> = ObjectGetOwnPropertyD
   DataView.prototype,
   "byteLength",
 )!.get!;
-const Uint8ArrayPrototypeSubarray = Uint8ArrayCtor.prototype.subarray;
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -323,32 +327,34 @@ function hasBufferEnvelopeMagic(view: Uint8Array) {
 }
 
 function deserialize(value) {
-  let view: Uint8Array;
-  if ($isTypedArrayView(value)) {
-    view = new Uint8ArrayCtor(
-      TypedArrayPrototypeGetBuffer.$call(value),
-      TypedArrayPrototypeGetByteOffset.$call(value),
-      TypedArrayPrototypeGetByteLength.$call(value),
-    );
-  } else if (isDataView(value)) {
-    // $isTypedArrayView excludes DataView, whose accessors live on its own
-    // prototype rather than %TypedArray%.prototype.
-    view = new Uint8ArrayCtor(
-      DataViewPrototypeGetBuffer.$call(value),
-      DataViewPrototypeGetByteOffset.$call(value),
-      DataViewPrototypeGetByteLength.$call(value),
-    );
-  } else if (isAnyArrayBuffer(value)) {
-    view = new Uint8ArrayCtor(value);
-  } else {
-    // Let jsc.deserialize validate and reject non-buffer input itself.
-    return jsc.deserialize(value);
+  let view: Uint8Array | undefined;
+  try {
+    if ($isTypedArrayView(value)) {
+      view = new Uint8ArrayCtor(
+        TypedArrayPrototypeGetBuffer.$call(value),
+        TypedArrayPrototypeGetByteOffset.$call(value),
+        TypedArrayPrototypeGetByteLength.$call(value),
+      );
+    } else if (isDataView(value)) {
+      // $isTypedArrayView excludes DataView: its accessors are on its own prototype, not on %TypedArray%.prototype.
+      view = new Uint8ArrayCtor(
+        DataViewPrototypeGetBuffer.$call(value),
+        DataViewPrototypeGetByteOffset.$call(value),
+        DataViewPrototypeGetByteLength.$call(value),
+      );
+    } else if (isAnyArrayBuffer(value)) {
+      view = new Uint8ArrayCtor(value);
+    }
+  } catch {
+    // The ArrayBuffer is detached, or the view is out of its bounds: there are no bytes to look at.
   }
-  if (hasBufferEnvelopeMagic(view)) {
-    const envelope = jsc.deserialize(Uint8ArrayPrototypeSubarray.$call(view, kBufferEnvelopeMagic.length));
+  if (view !== undefined && hasBufferEnvelopeMagic(view)) {
+    // The native entry skips the mark. A subarray() here would ask the constructor property of the view, which a program can replace.
+    const envelope = deserializeBytes(value, kBufferEnvelopeMagic.length);
     return require("internal/serialization_buffers").restoreBuffers(envelope);
   }
-  return jsc.deserialize(value as ArrayBuffer);
+  // The native entry refuses what is no buffer, and a buffer that has no bytes.
+  return deserializeBytes(value);
 }
 function takeCoverage() {
   notimpl("takeCoverage");
@@ -359,9 +365,9 @@ function stopCoverage() {
 function serialize(arg1) {
   const tagged = require("internal/serialization_buffers").tagBuffers(arg1);
   if (tagged === null) {
-    return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+    return serializeToBuffer(arg1);
   }
-  const payload = jsc.serialize(tagged, { binaryType: "nodebuffer" });
+  const payload = serializeToBuffer(tagged);
   const framed = BufferAllocUnsafe(kBufferEnvelopeMagic.length + TypedArrayPrototypeGetByteLength.$call(payload));
   for (let i = 0; i < kBufferEnvelopeMagic.length; i++) framed[i] = kBufferEnvelopeMagic[i];
   TypedArrayPrototypeSet.$call(framed, payload, kBufferEnvelopeMagic.length);

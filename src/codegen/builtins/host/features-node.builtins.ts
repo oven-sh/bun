@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import { pathOfNativeBinding } from "../paths.ts";
+import { externalValueFeatures } from "./external-values.ts";
 
 const extendAll = (uses: readonly b.FeatureUseSpec[], ...paths: readonly b.BuiltinPath[]) =>
   paths.flatMap(path => b.extend(path, { usesFeature: uses }));
@@ -56,6 +57,11 @@ export default b.declarations(
   ),
 
   extendAll(["NodeV8"], ...nativeBindings("Cpp", "NodeV8.cpp", "Bun::createNodeV8Binding")),
+  extendAll(
+    ["StructuredClone", "Buffer"],
+    ...nativeBindings("NewCppFunction", "NodeV8.cpp", "jsFunctionNodeV8_serialize"),
+  ),
+  extendAll(externalValueFeatures, ...nativeBindings("NewCppFunction", "NodeV8.cpp", "jsFunctionNodeV8_deserialize")),
   extendAll(["ParseArgs"], ...nativeBindings("Bindgen", "parse_args.bind.ts", "parseArgs")),
 
   extendAll(

@@ -22,11 +22,15 @@ import {
 } from "./native-cells.ts";
 import {
   answering,
+  cloned,
   comparedDeeply,
   deepComparison,
   handedOver,
+  heapsReadByClone,
+  heapsWrittenByClone,
   matchedDeeply,
   mayAnswerWrapperKeptIn,
+  membersReadByClone,
   promiseOf,
 } from "./native-code.ts";
 import { convertedToString, iterated, sequencesOfTLSOptions, socketOptions, tlsOptionNames } from "./socket-options.ts";
@@ -278,22 +282,7 @@ const testModule = b.union(b.builtin("bun:test"), b.object);
 const timeline = b.union(b.builtin("performance"), b.instance("Performance"));
 const timelineFeatures: readonly b.FeatureUseSpec[] = ["PerformanceTimeline"];
 
-const heapsReadByClone = [
-  "TypedArrayStorage",
-  "TypedArrayElements",
-  "CollectionStorage",
-  "CollectionEntries",
-  "InternalFields",
-  "ExternalState",
-];
 const heapsWrittenByTransfer = ["TypedArrayStorage", "TypedArrayElements", "ExternalState"];
-// A view that keeps its bytes in its cell gets a buffer.
-const heapsWrittenByClone = ["TypedArrayStorage", "ExternalState"];
-const membersReadByClone = ["name", "message", "stack", "cause"];
-const cloned = [
-  b.readsContents(),
-  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...membersReadByClone)),
-];
 const transferList = [b.runsTransitively(b.named("transfer"), "Iterate"), b.writesContents()];
 const classesOfViews = [
   "Int8Array",

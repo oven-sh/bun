@@ -303,7 +303,11 @@ void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& ke
 void patchImportsThatHaveLoaded(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
 // The loader has run the body of an ES module, to the end or to its first await. Patches the module if a mock waited for that.
 void patchModuleWhoseBodyHasRun(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
-// The loader has made the record of `key` of the module object in `requireMap`, which had run before (`hadRun`) or not. If that was a waiting mock's, the record has no original.
-void didMakeRecordOfModuleObject(Zig::GlobalObject*, JSC::JSMap* requireMap, const JSC::Identifier& key, bool hadRun);
+// The loader has made the record of `key` of the module object in `requireMap`. If a waiting mock had patched that module object, the record has no original.
+void didMakeRecordOfModuleObject(Zig::GlobalObject*, JSC::JSMap* requireMap, const JSC::Identifier& key);
+// The loader has made the record of `key` and found no module object in `requireMap` to make it of. If a mock waits for the module, the record goes once its load has settled.
+void didMakeRecordOfNoModuleObject(Zig::GlobalObject*, JSC::JSMap* requireMap, const JSC::Identifier& key);
+// require() has made `moduleObject` of `moduleMock`. If the mock waits for its module, the module object moves to a key of its own.
+void didRequireModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, JSC::JSObject* moduleObject);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

@@ -7356,7 +7356,6 @@ describe.concurrent("a module that is mocked while a module which imports it has
       imports = "",
       seen = "",
       required = false,
-      ranAtMost = 1,
     } = {},
   ) {
     const graph = `
@@ -7366,7 +7365,9 @@ describe.concurrent("a module that is mocked while a module which imports it has
       import { atLoad, now } from "./cart.js";
     `;
     // Where the transpiler threads decide whether the body of the module runs, it still never runs twice for one test file.
-    const sees = `(expect(${counted(name)}).toBeLessThanOrEqual(${ranAtMost}), expect([rate, atLoad, now(), ${counted(name)}${seen && ", " + seen}]).toEqual(${expected}))`;
+    // Test files that share a process share the count, so each file takes off what the file before it saw.
+    const seenBefore = `(globalThis.countsSeen ??= {})[${JSON.stringify(name)}]`;
+    const sees = `(expect(${counted(name)} - (${seenBefore} ?? 0)).toBeLessThanOrEqual(1), ${seenBefore} = ${counted(name)}, expect([rate, atLoad, now(), ${counted(name)}${seen && ", " + seen}]).toEqual(${expected}))`;
     const files: Record<string, string> = {
       [`${name}/mocks.cjs`]: `const { jest, mock, vi } = require("bun:test");\n${mocks}`,
       [`${name}/cart.js`]: `import { ${exported} as rate } from ${JSON.stringify(specifier)}; export const atLoad = rate; export const now = () => rate;`,
@@ -7611,18 +7612,36 @@ describe.concurrent("a module that is mocked while a module which imports it has
           { specifier: "./tax.json", tax: `{ "rate": "real" }` },
         ),
       };
-      // A CommonJS module that is mocked before its body has run is the mock, and has no original to go back to.
-      if (delivery.handsBack)
+      // A CommonJS module that is mocked before its body has run is the mock. Its body runs once the mock is removed.
+      Object.assign(
+        files,
+        asked(
+          "a CommonJS module",
+          `${mocks("./tax.cjs", "vi.mock")} vi.unmock("./tax.cjs");`,
+          original,
+          commonJS("a CommonJS module"),
+        ),
+      );
+      // The loader runs a CommonJS module that mocks itself, and makes the module of what the mock has left. The mock has the
+      // exports of the file all the same: a module of the same graph that removes the mock gets them from require().
+      const itself = "a CommonJS module that mocks itself";
+      if (delivery === atOnce)
         Object.assign(
           files,
           asked(
-            "a CommonJS module",
-            `${mocks("./tax.cjs", "vi.mock")} vi.unmock("./tax.cjs");`,
-            original,
-            commonJS("a CommonJS module"),
+            itself,
+            `const mocked = require("./tax.cjs").rate; jest.dontMock("./tax.cjs"); globalThis.required = [mocked, require("./tax.cjs").rate];`,
+            `["mock", "mock", "mock", 1, ["mock", "real"]]`,
+            {
+              specifier: "./tax.cjs",
+              tax: `${count(itself)}; exports.rate = "real"; require("bun:test").${mocks("./tax.cjs")}`,
+              first: "./tax.cjs",
+              then: `import "./mocks.cjs";`,
+              seen: "globalThis.required",
+            },
           ),
         );
-      await expectFixturesToPassWith(delivery, files, delivery.handsBack ? 11 : 10);
+      await expectFixturesToPassWith(delivery, files, delivery === atOnce ? 12 : 11);
     });
 
     // Until the mock patches the module, require() gets what the factory returns. The next test file gets the original.
@@ -7639,20 +7658,22 @@ describe.concurrent("a module that is mocked while a module which imports it has
           seen: "globalThis.required",
         }),
         "an ES module/later.test.js": later("./tax.js"),
-        // Its body runs only if the loader had run it before the mock was made: require() has the mock for the module since.
+        // What require() gets while the mock waits is no module of the key: the loader makes the module of the file, and its
+        // body runs, as it does without the require().
         ...asked(
           "a CommonJS module",
           requires("./tax.cjs"),
-          `["mock", "mock", "mock", ${which === "last" ? 1 : 0}, "mock"]`,
+          `["mock", "mock", "mock", ${ranCommonJS(delivery)}, "mock"]`,
           {
             ...commonJS("a CommonJS module"),
             seen: "globalThis.required",
           },
         ),
         "a CommonJS module/later.test.js": later("./tax.cjs"),
+        // Each require() gets a module object of its own: the module that required it first goes with the mock too.
         ...asked(
           "through another module",
-          `${mocks()} globalThis.required = require("./service.cjs").rate;`,
+          `${mocks()} globalThis.required = require("./service.cjs").rate; require("./tax.js");`,
           `["mock", "mock", "mock", 1, "mock"]`,
           {
             seen: "globalThis.required",
@@ -7674,6 +7695,14 @@ describe.concurrent("a module that is mocked while a module which imports it has
           `["mock", "mock", "mock", 1, ["first", "mock"]]`,
           { seen: "globalThis.required" },
         ),
+        // jest.resetModules() puts a mock that calls the factory again in the place of one whose factory has run. That one
+        // patches the module of the file.
+        ...asked(
+          "and reset",
+          `${requires("./tax.cjs")} jest.resetModules();`,
+          `["mock", "mock", "mock", ${ranCommonJS(delivery)}, "mock"]`,
+          { ...commonJS("and reset"), seen: "globalThis.required" },
+        ),
       };
       // A module object that the loader has to run is the file's own, whatever require() had for the module before.
       if (which === "first")
@@ -7686,16 +7715,15 @@ describe.concurrent("a module that is mocked while a module which imports it has
             { ...commonJS("and taken out of require.cache again"), seen: "globalThis.required" },
           ),
         );
-      if (delivery.handsBack)
-        Object.assign(
-          files,
-          asked(
-            "a CommonJS module that is unmocked",
-            `${requires("./tax.cjs")} jest.unmock("./tax.cjs");`,
-            `["real", "real", "real", 1, "mock"]`,
-            { ...commonJS("a CommonJS module that is unmocked"), seen: "globalThis.required" },
-          ),
-        );
+      Object.assign(
+        files,
+        asked(
+          "a CommonJS module that is unmocked",
+          `${requires("./tax.cjs")} jest.unmock("./tax.cjs");`,
+          `["real", "real", "real", 1, "mock"]`,
+          { ...commonJS("a CommonJS module that is unmocked"), seen: "globalThis.required" },
+        ),
+      );
       // The loader makes its own module of a JSON file, whatever require() has for it.
       Object.assign(
         files,
@@ -7712,9 +7740,9 @@ describe.concurrent("a module that is mocked while a module which imports it has
           { specifier: "./tax.json", tax: `{ "rate": "real" }`, seen: "globalThis.required" },
         ),
       );
-      // The loader makes the module of a CommonJS file of what require.cache has for it: of the mock, if require() got the mock
-      // before the file was fetched. That module is the mock whatever the mock is made of, and goes when the mock does.
-      const fromFunction = which === "last" ? ["real", "real", "real", "mock"] : ["mock", "mock", "mock", "mock"];
+      // A mock that is a function has no export to patch the module of the file with, so the importers keep the file's own.
+      // Where the mock takes the place of a module that has not run, the module is the function.
+      const fromFunction = delivery.handsBack ? ["real", "real", "real", "mock"] : ["mock", "mock", "mock", "mock"];
       Object.assign(files, {
         "a factory that returns a function/mocks.cjs": `require("bun:test").jest.mock("./tax.cjs", () => () => "mock"); globalThis.requiredFunction = require("./tax.cjs")();`,
         "a factory that returns a function/tax.cjs": `module.exports = () => "real";`,
@@ -7756,6 +7784,105 @@ describe.concurrent("a module that is mocked while a module which imports it has
           ),
           { "a CommonJS module that it requires before it mocks it/later.test.js": later("./tax.cjs") },
         );
+      // A mock that takes the place of one that require() got takes over what require() made of that one: the module that
+      // required it goes when the second mock ends. Where the first mock took the place of a module that had not run, the
+      // file is linked to that mock, and the second mock is what the next import loads.
+      const mockedAgainByATest = (name: string, test: string) => ({
+        [`${name}/mocks.cjs`]: `const { mock } = require("bun:test");\n${mocks("./tax.cjs")} globalThis.required = require("./service.cjs").rate;`,
+        [`${name}/service.cjs`]: `exports.rate = require("./tax.cjs").rate;`,
+        [`${name}/tax.cjs`]: `exports.rate = "real";`,
+        [`${name}/asked.test.js`]: `
+          import "./mocks.cjs";
+          import { expect, mock, test } from "bun:test";
+          import { rate } from "./tax.cjs";
+          test(${JSON.stringify(name)}, () => {
+            ${test}
+          });
+        `,
+        [`${name}/later.test.js`]: later("./tax.cjs", "./service.cjs"),
+      });
+      Object.assign(
+        files,
+        mockedAgainByATest(
+          "and mocked again by a test",
+          `mock.module("./tax.cjs", () => ({ rate: "again" }));
+           expect([globalThis.required, rate, require("./tax.cjs").rate]).toEqual(["mock", ${JSON.stringify(delivery === atOnce ? "mock" : "again")}, "again"]);`,
+        ),
+        // The factory of the second mock runs at once where it has a module to patch, and for require() where it has not. It
+        // throws: the module that required the first mock goes at the end of the file all the same.
+        mockedAgainByATest(
+          "and mocked again by a test with a factory that throws",
+          `expect(() => {
+             mock.module("./tax.cjs", () => { throw new Error("no mock"); });
+             require("./tax.cjs");
+           }).toThrow("no mock");
+           expect([globalThis.required, rate]).toEqual(["mock", "mock"]);`,
+        ),
+      );
+      // A module that is handed back after the mocked module has loaded is linked to the same module, and the module that
+      // makes the mock, which that one imports too, runs once.
+      const late = "and imported by a module that is handed back after it has loaded";
+      if (which === "first")
+        Object.assign(files, {
+          [`${late}/mocks.cjs`]: `
+            ${count(late)};
+            require("bun:test").mock.module("./tax.cjs", () => ({ rate: "mock " + ${counted(late)} }));
+            globalThis.required = require("./tax.cjs").rate;
+          `,
+          [`${late}/tax.cjs`]: `exports.rate = "real";`,
+          [`${late}/cart.js`]: `import "./mocks.cjs"; import { rate } from "./tax.cjs"; export const atLoad = rate; export const now = () => rate;`,
+          [`${late}/asked.test.js`]: `
+            import "./mocks.cjs";
+            import { expect, test } from "bun:test";
+            import { rate } from "./tax.cjs";
+            import { atLoad, now } from "./cart.js";
+            test(${JSON.stringify(late)}, () =>
+              expect([rate, atLoad, now(), globalThis.required, ${counted(late)}]).toEqual(["mock 1", "mock 1", "mock 1", "mock 1", 1]));
+          `,
+        });
+      const order = Object.keys(files)
+        .filter(file => file.endsWith(".test.js"))
+        .map(file => `./${file}`);
+      await expectFixturesToPassWith(delivery, files, order.length, order);
+    });
+
+    // A test that takes the module out of require.cache takes it out of the registry too. What is linked to the module that
+    // the mock had patched goes with the mock all the same: the next test file gets the original, or its own mock.
+    test("and taken out of require.cache by a test", async () => {
+      const files: Record<string, string> = {};
+      for (const [helper, does] of [
+        ["the module that mocks it", mocks("./tax.cjs")],
+        ["the module that mocks and requires it", `${mocks("./tax.cjs")} require("./tax.cjs");`],
+      ])
+        for (const [next, does2, expected] of [
+          ["reads it", "", `["real", "real"]`],
+          ["mocks it", `mock.module("./tax.cjs", () => ({ rate: "next" }));`, `["next", "next"]`],
+        ]) {
+          const name = `${helper}, and the next file ${next}`;
+          Object.assign(files, {
+            [`${name}/mocks.cjs`]: `const { mock } = require("bun:test");\n${does}`,
+            [`${name}/tax.cjs`]: `exports.rate = "real";`,
+            [`${name}/cart.js`]: `import { rate } from "./tax.cjs"; export const now = () => rate;`,
+            [`${name}/asked.test.js`]: `
+              import "./mocks.cjs";
+              import { expect, test } from "bun:test";
+              import { rate } from "./tax.cjs";
+              import { now } from "./cart.js";
+              test(${JSON.stringify(name)}, () => {
+                expect([rate, now()]).toEqual(["mock", "mock"]);
+                delete require.cache[require.resolve("./tax.cjs")];
+              });
+            `,
+            [`${name}/later.test.js`]: `
+              import { expect, mock, test } from "bun:test";
+              ${does2}
+              test("the next file", async () => {
+                const { now } = await import("./cart.js");
+                expect([now(), (await import("./tax.cjs")).rate]).toEqual(${expected});
+              });
+            `,
+          });
+        }
       const order = Object.keys(files)
         .filter(file => file.endsWith(".test.js"))
         .map(file => `./${file}`);
@@ -7871,6 +7998,96 @@ describe.concurrent("a module that is mocked while a module which imports it has
     });
   });
 
+  // What require() gets while the mock waits is no module of the key, so the loader makes the module of the file whenever the
+  // mock is removed: while the file is fetched, while the loader makes the module of it, or once the mock has patched it. The
+  // file that imports the module reads the original, and so does every file after it.
+  // Where the module is taken out of require.cache instead, the loader may find nothing to make the module of. Whatever the
+  // file itself gets then, every file after it gets the original.
+  test("and required by the module that mocks it, which removes the mock any number of promise jobs after the file is fetched", async () => {
+    // Holds tax.cjs until mocks.cjs has run. Hands it back then, and calls what mocks.cjs left as many promise jobs later as the directory says.
+    const removesLater = `
+      import { plugin } from "bun";
+      import { readFileSync } from "node:fs";
+      import { basename, dirname } from "node:path";
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      const handedBack = new Set();
+      plugin({
+        name: "hands a file back and removes its mock some promise jobs later",
+        setup(build) {
+          build.onLoad({ filter: /tax[.]cjs$/ }, ({ path }) => {
+            const file = () => ({ contents: readFileSync(path, "utf8"), loader: "js" });
+            if (handedBack.has(path)) return file();
+            handedBack.add(path);
+            return new Promise(resolve => {
+              (async () => {
+                while (!globalThis.removeMock) await turn();
+                const removeMock = globalThis.removeMock;
+                globalThis.removeMock = undefined;
+                await turn();
+                resolve(file());
+                for (let jobs = parseInt(basename(dirname(path))); jobs > 0; jobs--) await null;
+                removeMock();
+              })();
+            });
+          });
+        },
+      });
+    `;
+    const files: Record<string, string> = { "removes-later.js": removesLater };
+    // The file that comes after them all: every one of the modules is the original there.
+    const later: string[] = [];
+    for (let jobs = 0; jobs <= 10; jobs++) {
+      const name = `${jobs} jobs later`;
+      Object.assign(files, {
+        [`${name}/mocks.cjs`]: `
+          const { jest, mock } = require("bun:test");
+          ${mocks("./tax.cjs")}
+          globalThis.required = require("./tax.cjs").rate;
+          globalThis.removeMock = () => jest.unmock("./tax.cjs");
+        `,
+        [`${name}/tax.cjs`]: `${count(name)}; exports.rate = "real";`,
+        [`${name}/asked.test.js`]: `
+          import "./mocks.cjs";
+          import { expect, test } from "bun:test";
+          import { rate } from "./tax.cjs";
+          test(${JSON.stringify(name)}, async () =>
+            expect([globalThis.required, rate, (await import("./tax.cjs")).rate, require("./tax.cjs").rate, ${counted(name)}]).toEqual(["mock", "real", "real", "real", 1]));
+        `,
+      });
+      later.push(`
+        test(${JSON.stringify(name)}, async () =>
+          expect([(await import("./${name}/tax.cjs")).rate, require("./${name}/tax.cjs").rate, ${counted(name)}]).toEqual(["real", "real", 1]));
+      `);
+    }
+    for (let jobs = 0; jobs <= 6; jobs++) {
+      const name = `${jobs} jobs later, out of require.cache`;
+      Object.assign(files, {
+        [`${name}/mocks.cjs`]: `
+          const { mock } = require("bun:test");
+          ${mocks("./tax.cjs")}
+          require("./tax.cjs");
+          globalThis.removeMock = () => delete require.cache[require.resolve("./tax.cjs")];
+        `,
+        [`${name}/tax.cjs`]: `exports.rate = "real";`,
+        [`${name}/asked.test.js`]: `
+          import "./mocks.cjs";
+          import { expect, test } from "bun:test";
+          import * as tax from "./tax.cjs";
+          test(${JSON.stringify(name)}, () => expect(["mock", "real", undefined]).toContain(tax.rate));
+        `,
+      });
+      later.push(`
+        test(${JSON.stringify(name)}, async () =>
+          expect([(await import("./${name}/tax.cjs")).rate, require("./${name}/tax.cjs").rate]).toEqual(["real", "real"]));
+      `);
+    }
+    files["later.test.js"] = `import { expect, test } from "bun:test";\n${later.join("")}`;
+    const order = Object.keys(files)
+      .filter(file => file.endsWith(".test.js"))
+      .map(file => `./${file}`);
+    await expectFixturesToPass(files, 36, ["--preload", "./removes-later.js", ...order]);
+  });
+
   // Nothing has asked for the module if mocks.cjs runs before the only module that imports it has become a module. Then the mock
   // is all that loads: the body of the module doesn't run, and the module has the exports of the mock alone. Else the module
   // loads, and the mock patches it.
@@ -7927,7 +8144,7 @@ describe.concurrent("a module that is mocked while a module which imports it has
   const shared = (name: string, mocks: string, expected: (file: number) => string, options = {}, last = 3) => {
     const files: Record<string, string> = {};
     for (let file = 1; file <= last; file++) {
-      const fixture = asked(name, mocks, expected(file), { ...options, ranAtMost: file });
+      const fixture = asked(name, mocks, expected(file), options);
       const { [`${name}/asked.test.js`]: test, ...others } = fixture;
       Object.assign(files, others, { [`${name}/${file}.test.js`]: test });
     }
@@ -8499,6 +8716,7 @@ describe.concurrent("a module that is mocked while a module which imports it has
         import { rate } from ${JSON.stringify(specifier)};
         import { atLoad, now } from "./cart.js";
         (globalThis.preloaded ??= {})[${JSON.stringify(kind)}] = [rate, atLoad, now()];
+        (globalThis.preloadReads ??= {})[${JSON.stringify(kind)}] = () => [rate, now()];
       `,
       [`${kind}/mocks-again.cjs`]: `require("bun:test").${mocks(specifier, "mock.module", `{ rate: "file" }`)}`,
     });
@@ -8564,7 +8782,122 @@ describe.concurrent("a module that is mocked while a module which imports it has
         .map(name => `./${name}`);
       await expectFixturesToPassWith(delivery, files, inOrder.length, ["--preload", "./preload.js", ...inOrder]);
     });
+
+    // A test file that resets the modules, or that mocks the module again and takes it out of require.cache, leaves the
+    // preload's mock on what the preload loaded: the preload's own modules read it in the next file, and so does that file.
+    test("its mock is the module again after a test file has reset the modules or taken the module out of require.cache", async () => {
+      const actions: [string, (specifier: string) => string][] = [
+        ["jest.resetModules", () => `jest.resetModules();`],
+        ["vi.resetModules", () => `vi.resetModules();`],
+        [
+          "mocked again and out of require.cache",
+          specifier =>
+            `${mocks(specifier, "mock.module", `{ rate: "file" }`)} delete require.cache[require.resolve(${JSON.stringify(specifier)})];`,
+        ],
+      ];
+      const files: Record<string, string> = {};
+      const preloads: string[] = [];
+      for (const [kind, specifier, real] of targets)
+        for (const [action, does] of actions) {
+          const name = `${kind}, ${action}`;
+          preloads.push(`import "./${name}/preload.js";`);
+          Object.assign(files, graph(name, specifier, real), {
+            [`${name}/first.test.js`]: `
+              import { expect, jest, mock, test, vi } from "bun:test";
+              import { rate } from ${JSON.stringify(specifier)};
+              test(${JSON.stringify(name)}, () => {
+                expect(rate).toBe("preload");
+                ${does(specifier)}
+              });
+            `,
+            [`${name}/second.test.js`]: `
+              import { expect, test } from "bun:test";
+              import { rate } from ${JSON.stringify(specifier)};
+              test("the next file", () =>
+                expect([globalThis.preloadReads[${JSON.stringify(name)}](), rate, require(${JSON.stringify(specifier)}).rate]).toEqual([["preload", "preload"], "preload", "preload"]));
+            `,
+          });
+        }
+      files["preload.js"] = preloads.join("\n");
+      const inOrder = Object.keys(files)
+        .filter(name => name.endsWith(".test.js"))
+        .sort()
+        .map(name => `./${name}`);
+      await expectFixturesToPassWith(delivery, files, inOrder.length, ["--preload", "./preload.js", ...inOrder]);
+    });
   });
+
+  // The preload's mock is made and required while the file is fetched. The loader makes the module of the file, and the mock
+  // patches it. A mock of a test file patches it again, and the preload's mock is back on it when that file ends, for the
+  // preload's own modules too. After a reset the module is out of the registry: the mock of the file is what the next import
+  // loads, and the file stays linked to the preload's.
+  test.each([
+    ["", "", "file"],
+    [", with a hook of the preload that resets the modules", `beforeEach(() => void jest.resetModules());`, "preload"],
+  ])(
+    "in a preload, required by the module that mocks it: its mock is the module again after a test file has mocked the module%s",
+    async (_, hook, linked) => {
+      const reads = `
+        import { expect, test } from "bun:test";
+        import { rate } from "./tax.cjs";
+        test("a file that reads the module", () =>
+          expect([globalThis.preloaded, globalThis.preloadReads(), rate, require("./tax.cjs").rate, ${counted("tax.cjs")}]).toEqual([["preload", "preload"], "preload", "preload", "preload", 1]));
+      `;
+      const files = {
+        "tax.cjs": `${count("tax.cjs")}; exports.rate = "real";`,
+        "mocks.cjs": `
+          const { mock } = require("bun:test");
+          ${mocks("./tax.cjs", "mock.module", `{ rate: "preload" }`)}
+          globalThis.hasMocked = require("./tax.cjs").rate;
+        `,
+        "setup.js": `
+          import "./mocks.cjs";
+          import { rate } from "./tax.cjs";
+          globalThis.preloaded = [globalThis.hasMocked, rate];
+          globalThis.preloadReads = () => rate;
+        `,
+        // Holds tax.cjs until mocks.cjs has run.
+        "preload.js": `
+          import { plugin } from "bun";
+          import { beforeEach, jest } from "bun:test";
+          import { readFileSync } from "node:fs";
+          ${hook}
+          plugin({
+            name: "holds a file until it is mocked",
+            setup(build) {
+              build.onLoad({ filter: /tax[.]cjs$/ }, ({ path }) => {
+                const file = () => ({ contents: readFileSync(path, "utf8"), loader: "js" });
+                if (globalThis.hasMocked) return file();
+                return (async () => {
+                  while (!globalThis.hasMocked) await new Promise(resolve => setImmediate(resolve));
+                  return file();
+                })();
+              });
+            },
+          });
+          await import("./setup.js");
+        `,
+        "first.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import { rate } from "./tax.cjs";
+          test("the mock of the file takes the place of the preload's", async () => {
+            const before = rate;
+            mock.module("./tax.cjs", () => ({ rate: "file" }));
+            expect([before, rate, require("./tax.cjs").rate, (await import("./tax.cjs")).rate]).toEqual(["preload", ${JSON.stringify(linked)}, "file", "file"]);
+          });
+        `,
+        "second.test.js": reads,
+        "third.test.js": reads,
+      };
+      await expectFixturesToPass(files, 3, [
+        "--preload",
+        "./preload.js",
+        "./first.test.js",
+        "./second.test.js",
+        "./third.test.js",
+      ]);
+    },
+  );
 
   // A preload that begins a load and doesn't wait for it leaves its mock waiting when the first test file starts. The wait ends
   // with that file at the latest. From then on the mock is what the next import loads, as on main, and what the preload began to

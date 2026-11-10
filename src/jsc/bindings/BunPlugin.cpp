@@ -543,9 +543,9 @@ public:
 #endif
     // A load in flight had asked for the module when it was mocked. In OnLoad::moduleMocksWaitingForModule until the mock patches the module.
     bool waitsForModule { false };
-    // require() got the mock meanwhile, and left a module object that is made of it in require.cache.
-    bool wasRequiredWhileWaiting { false };
-    // The loader has made the module's record meanwhile, of a module object that was the mock's by then (Bun::didMakeRecordOfModuleObject()).
+    // How often require() got the mock meanwhile, each time from a module object under a key of its own (Bun::didRequireModuleMock()).
+    unsigned timesRequiredWhileWaiting { 0 };
+    // The loader has made the module's record meanwhile, of a module object that the mock had patched by then (Bun::didMakeRecordOfModuleObject()).
     bool isRecordMadeOfMock { false };
     // A preload's mock, and it stopped waiting without a module to patch: it stands in place of what the preload loaded under its key.
     bool hasWaitedInVain { false };
@@ -794,6 +794,12 @@ static String withoutOriginalModuleQuery(const String& key)
 static String unwaitedModuleMockKey(const String& specifier)
 {
     return makeString(specifier, specifier.contains('?') ? '&' : '?', "mocked"_s);
+}
+
+// What the `made`-th require() of a mock that waits for its module got: a module object that is no module of the key.
+static String keyOfModuleObjectOfWaitingMock(const String& specifier, unsigned made)
+{
+    return makeString(unwaitedModuleMockKey(specifier), '&', made);
 }
 
 static String specifierOfUnwaitedModuleMockKey(const String& key)
@@ -2429,6 +2435,14 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
     }
 }
 
+// Undoes overrideLoadedModuleExports() on a module object. One that still has its source had not run when the mock took its place: it runs when something asks for it again.
+static void restoreModuleObject(JSC::VM& vm, Bun::JSCommonJSModule* moduleObject, JSValue original)
+{
+    moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original, 0);
+    if (!moduleObject->sourceCode.isNull())
+        moduleObject->hasEvaluated = false;
+}
+
 using ModuleImporters = UncheckedKeyHashMap<String, Vector<String>>;
 
 static void addImporter(ModuleImporters& importersOf, const String& importer, const String& imported)
@@ -2488,6 +2502,10 @@ struct ModulesToEvict {
     Vector<String> patchedCommonJSModules;
     // Mocked modules whose factory was abandoned, so their pending fetch never settles.
     Vector<String> abandonedModules;
+    // Records that a mock which ends had patched: what is linked to one that has left the registry goes too.
+    Vector<JSC::AbstractModuleRecord*> patchedRecords;
+    // With `isEndOfTestFile`: the modules that the file had mocked. What is linked to a record of one that has left the registry goes too.
+    Vector<String> mockedByTestFile;
     bool all { false };
     // With `all`: not what Vitest externalizes.
     bool exceptPackages { false };
@@ -2623,7 +2641,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     auto& plugins = globalObject->onLoadPlugins;
     Vector<String>& keys = evict.modules;
     keys.removeAllMatching([&](const String& key) { return plugins.modulesToEvictOnceLoaded.contains(key); });
-    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled)
+    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.patchedRecords.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled)
         return;
 
     auto& vm = JSC::getVM(globalObject);
@@ -2693,8 +2711,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             auto* imported = loaded.m_module.get();
             if (auto registered = registeredKeys.find(imported); registered != registeredKeys.end())
                 addImporter(importersOf, key, registered->value);
-            else if (evict.isEndOfTestFile && imported->hasLiveExports() && plugins.testFileOfModule.get(key))
-                keys.append(key); // Linked to a mock's record that is no longer registered, e.g. after `delete require.cache[mocked]`.
+            else if (((evict.isEndOfTestFile && (imported->hasLiveExports() || evict.mockedByTestFile.contains(imported->moduleKey().string()))) || evict.patchedRecords.contains(imported)) && plugins.testFileOfModule.get(key))
+                keys.append(key); // Linked to a mock's record, or to one that a mock had patched, that is no longer registered, e.g. after `delete require.cache[mocked]`.
         }
     }
 
@@ -2881,15 +2899,17 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 RETURN_IF_EXCEPTION(scope, );
                 if (commonJSModule.isCell())
                     plugins.evictedPreloadCommonJSModules.add(key, JSC::Strong<JSC::JSCell> { vm, commonJSModule.asCell() });
-                // Undo the patch now, because unmockModule() can't find the module once it's evicted.
+                // Undo the patch of a test file's mock now, because unmockModule() can't find the module once it's evicted.
                 auto* mock = registeredModuleMock(globalObject, key);
-                if (auto* patched = mock && mock->originalCommonJSExports ? dynamicDowncast<Bun::JSCommonJSModule>(commonJSModule) : nullptr)
-                    patched->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), mock->originalCommonJSExports.get(), 0);
+                if (auto* patched = mock && !mock->isFromPreload && mock->originalCommonJSExports ? dynamicDowncast<Bun::JSCommonJSModule>(commonJSModule) : nullptr)
+                    restoreModuleObject(vm, patched, mock->originalCommonJSExports.get());
             }
             JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(keyString));
             RETURN_IF_EXCEPTION(scope, );
         }
-        if (auto* mock = registeredModuleMock(globalObject, key)) {
+        // A preload's mock stays on what the preload loaded, which is set aside and given back when the test file ends.
+        bool staysOnPreloadModule = plugins.evictedPreloadModules.contains(key) || plugins.evictedPreloadCommonJSModules.contains(key);
+        if (auto* mock = registeredModuleMock(globalObject, key); mock && !(mock->isFromPreload && staysOnPreloadModule)) {
             if (leavesRegistry) {
                 if (mock->patchedNamespace && !mock->originalExportsOfEvictedModule)
                     mock->originalExportsOfEvictedModule.setMayBeNull(vm, mock, mock->originalExports.get());
@@ -3019,41 +3039,34 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
         }
     }
 #endif
+    // What each require() made of the mock while it waited goes, with the module that required it.
+    for (unsigned made = std::exchange(mock->timesRequiredWhileWaiting, 0); made; --made)
+        evict.modules.append(keyOfModuleObjectOfWaitingMock(specifier, made));
     // What the mock waits for is the original, in the middle of a load: it stays, unless the mock patched its module object (waitsForRecord in mockModule()).
     if (mock->waitsForModule) {
         stopWaiting(globalObject, mock);
         mock->hasWaitedInVain = mock->isFromPreload;
-        if (!mock->originalCommonJSExports) {
-            // What require() made of the mock goes, with the modules that required it, under a key of its own: under the module's key the module would go too.
-            if (loaded.commonJSModule && std::exchange(mock->wasRequiredWhileWaiting, false)) {
-                JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
-                String madeOfMock = unwaitedModuleMockKey(specifier);
-                JSC__JSMap__set(requireMap, globalObject, JSValue::encode(jsString(vm, madeOfMock)), JSValue::encode(loaded.commonJSModule));
-                RETURN_IF_EXCEPTION(scope, );
-                JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(mock->specifier.get()));
-                RETURN_IF_EXCEPTION(scope, );
-                // Without a test file of its own it would count as a module of the preload, which is given back when the file ends.
-                globalObject->onLoadPlugins.testFileOfModule.set(madeOfMock, globalObject->onLoadPlugins.testFile);
-                evict.modules.append(madeOfMock);
-            }
+        if (!mock->originalCommonJSExports)
             return;
-        }
     }
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
     if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier)))
         evict.packagesToBringBack.append(specifier);
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
-    if (auto* patched = mock->patchedNamespace.get(); patched && saved) {
+    // A test file that removes a preload's mock leaves what the preload itself took out of the registry as the preload left it: the preload's modules are linked to it.
+    bool staysAsPreloadLeftIt = mock->isFromPreload && mock->originalExportsOfEvictedModule && !JSMock__isInPreload(globalObject);
+    if (auto* patched = mock->patchedNamespace.get(); patched && saved && !staysAsPreloadLeftIt) {
         restoreOverwrittenExports(globalObject, patched, saved);
         RETURN_IF_EXCEPTION(scope, );
+        evict.patchedRecords.append(patched->moduleRecord());
     }
     // A record with live exports was loaded as a mock, so it isn't the module that was patched.
     JSObject* overwritten = loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports() ? nullptr : mock->originalExports.get();
 
     if (JSValue original = mock->originalCommonJSExports.get()) {
         if (loaded.commonJSModule)
-            loaded.commonJSModule->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original, 0);
+            restoreModuleObject(vm, loaded.commonJSModule, original);
     }
 
     if (!overwritten && !mock->originalCommonJSExports) {
@@ -3705,8 +3718,6 @@ struct ModuleMockCall {
     bool isLoadInFlight { false };
     // The mock has been the module's mock since it was made, and has waited for the module (JSModuleMock::waitsForModule).
     bool hasWaited { false };
-    // The loader has made the record of the module of what the mock left in require.cache (JSModuleMock::isRecordMadeOfMock).
-    bool isRecordMadeOfMock { false };
 #if ENABLE(AOT)
     unsigned loadedByTestFile { 0 };
     bool staysTheOriginal { false };
@@ -3986,15 +3997,11 @@ __attribute__((minsize)) static JSObject* patchLoadedModule(Zig::GlobalObject* g
     std::optional<unsigned> placeOfMockThatEnds = call.placeOfMockThatEnds;
 #endif
 
-    // require() got the mock while it waited: what that left in require.cache has no original to patch or save, and stays so that unmockModule() finds the modules that required it.
-    bool wasRequired = hasWaited && std::exchange(mock->wasRequiredWhileWaiting, false);
     // The mock patched the module object when it was made, and has waited for the record (waitsForRecord in mockModule()).
     bool hasPatchedModuleObject = hasWaited && mock->originalCommonJSExports;
     auto withoutWhatIsMadeOfTheMock = [&](LoadedModule found) {
-        if (wasRequired || hasPatchedModuleObject)
+        if (hasPatchedModuleObject)
             found.commonJSModule = nullptr;
-        if (call.isRecordMadeOfMock)
-            found.esmNamespace = nullptr;
         return found;
     };
     loaded = withoutWhatIsMadeOfTheMock(loaded);
@@ -4024,7 +4031,9 @@ __attribute__((minsize)) static JSObject* patchLoadedModule(Zig::GlobalObject* g
         mock->originalExports.setMayBeNull(vm, mock, previous->originalExports.get());
         mock->originalNamespace.setMayBeNull(vm, mock, previous->originalNamespace.get());
         mock->patchedNamespace.setMayBeNull(vm, mock, previous->patchedNamespace.get());
-        mock->originalExportsOfEvictedModule.setMayBeNull(vm, mock, previous->originalExportsOfEvictedModule.get());
+        // What a preload's mock patched and the preload itself took out of the registry stays as the preload left it: the preload's modules are linked to it.
+        if (!previous->isFromPreload || mock->isFromPreload)
+            mock->originalExportsOfEvictedModule.setMayBeNull(vm, mock, previous->originalExportsOfEvictedModule.get());
         mock->patchOrder = previous->patchOrder;
         if (JSValue exports = previous->originalCommonJSExports.get())
             mock->originalCommonJSExports.set(vm, mock, exports);
@@ -4174,7 +4183,7 @@ __attribute__((minsize)) static JSObject* patchLoadedModule(Zig::GlobalObject* g
         if (loaded.esmNamespace != before.esmNamespace) {
             mock->originalExports.clear();
             mock->originalNamespace.clear();
-            if (previous)
+            if (previous && (!previous->isFromPreload || mock->isFromPreload))
                 mock->originalExportsOfEvictedModule.setMayBeNull(vm, mock, previous->originalExportsOfEvictedModule.get());
         }
         if (before.commonJSModule && loaded.commonJSModule != before.commonJSModule)
@@ -4197,6 +4206,9 @@ __attribute__((minsize)) static JSObject* patchLoadedModule(Zig::GlobalObject* g
     auto& plugins = globalObject->onLoadPlugins;
     if (isCurrent) {
         plugins.addModuleMock(vm, specifier, mock);
+        // It takes over what require() made of the mock whose place it takes: the modules that required that one go when this one ends.
+        if (previous)
+            mock->timesRequiredWhileWaiting += std::exchange(previous->timesRequiredWhileWaiting, 0);
 #if ENABLE(AOT)
         if (vm.hasCompiledCode() && !formsWait && !placeOfMockThatEnds && mock->factory.get()) {
             for (JSC::AOT::ModuleID form : JSC::AOT::formsThatAttributesAskFor(globalObject, specifier)) {
@@ -4256,11 +4268,10 @@ __attribute__((minsize)) static void patchModuleOfWaitingMock(Zig::GlobalObject*
     stopWaiting(globalObject, mock);
     if (!isRegistered)
         return;
-    // A record that the loader has made of a module object which was the mock's by then has nothing of the original to patch or to save.
-    ModuleMockCall call { nullptr, false, loaded.staleESMEntry, true };
-    call.isRecordMadeOfMock = std::exchange(mock->isRecordMadeOfMock, false) && loaded.esmNamespace && !loaded.esmNamespace->moduleRecord()->inherits<JSC::CyclicModuleRecord>();
-    if (call.isRecordMadeOfMock && mock->originalCommonJSExports)
+    // A record that the loader has made of a module object which the mock had patched by then has nothing of the original to patch or to save.
+    if (std::exchange(mock->isRecordMadeOfMock, false) && loaded.esmNamespace && !loaded.esmNamespace->moduleRecord()->inherits<JSC::CyclicModuleRecord>())
         return;
+    ModuleMockCall call { nullptr, false, loaded.staleESMEntry, true };
     // From here on it is a module that was loaded when it was mocked: registered once its factory has run, with the file's tests waiting for a pending one (JSMock__hasPendingModulePatches).
     globalObject->onLoadPlugins.virtualModules->remove(specifier);
     scope.release();
@@ -4591,6 +4602,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             again->originalExportsOfEvictedModule.setMayBeNull(vm, again, mock->originalExportsOfEvictedModule.get());
             again->patchOrder = mock->patchOrder;
             value.set(vm, again);
+            // The module is still loading for a module that asked for it: the mock that takes this one's place waits for it.
+            if (mock->waitsForModule) {
+                stopWaiting(globalObject, mock);
+                LoadedModule loading;
+                findLoadedESModule(globalObject, again->specifier.get(), loading);
+                RETURN_IF_EXCEPTION(scope, {});
+                waitForModule(globalObject, again, loading.beingFetched);
+            }
         }
     }
 
@@ -4807,6 +4826,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             auto* mock = dynamicDowncast<JSModuleMock>(value.get());
             if (mock && !mock->isFromPreload)
                 mocks.append(mock);
+            else if (mock && mock->patchedNamespace)
+                evict.patchedRecords.append(mock->patchedNamespace->moduleRecord());
         }
     }
     Vector<JSModuleMock*> lastPatchFirst;
@@ -4821,6 +4842,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     for (auto& waiting : plugins.moduleMocksWaitingForModule)
         evict.modules.append(uncheckedDowncast<JSModuleMock>(waiting.get())->specifier->tryGetValue().data);
     for (auto* mock : lastPatchFirst) {
+        evict.mockedByTestFile.append(mock->specifier->tryGetValue().data);
         unmockModule(globalObject, mock, mock->specifier->tryGetValue().data, evict);
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
@@ -4879,9 +4901,19 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             evict.patchedCommonJSModules.append(specifier);
         if (mock->state != JSModuleMock::State::Settled)
             continue;
+        auto* patched = mock->patchedNamespace.get();
         LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
         if (!scope.exception()) [[likely]]
             overrideLoadedModuleExports(globalObject, mock, loaded);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        // What the mock had patched may have left the registry meanwhile. The preload's modules are linked to it all the same, and what the file linked to it goes.
+        if (!patched || patched == loaded.esmNamespace)
+            continue;
+        evict.patchedRecords.append(patched->moduleRecord());
+        LoadedModule left;
+        left.esmNamespace = patched;
+        overrideLoadedModuleExports(globalObject, mock, left);
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
     }
@@ -5706,12 +5738,31 @@ JSC::JSPromise* runModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* mo
         return settled;
     }
 
-    JSC::JSPromise* pending = mock->run(globalObject, synchronous);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    // A factory that is pending has nothing for require() yet.
-    if (synchronous && !pending && mock->waitsForModule && !mock->originalCommonJSExports)
-        mock->wasRequiredWhileWaiting = true;
-    return pending;
+    RELEASE_AND_RETURN(scope, mock->run(globalObject, synchronous));
+}
+
+void didRequireModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMock, JSC::JSObject* moduleObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
+    if (!mock || !mock->waitsForModule)
+        return;
+    // The loader makes the module of the file, and the mock patches that: what require() gets until then is no module of the key.
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
+    String specifier = mock->specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    JSValue cached = JSValue::decode(JSC__JSMap__get(requireMap, globalObject, JSValue::encode(mock->specifier.get())));
+    RETURN_IF_EXCEPTION(scope, );
+    if (cached != moduleObject)
+        return;
+    String madeOfMock = Zig::keyOfModuleObjectOfWaitingMock(specifier, ++mock->timesRequiredWhileWaiting);
+    JSC__JSMap__set(requireMap, globalObject, JSValue::encode(jsString(vm, madeOfMock)), JSValue::encode(moduleObject));
+    RETURN_IF_EXCEPTION(scope, );
+    JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(mock->specifier.get()));
+    RETURN_IF_EXCEPTION(scope, );
+    // Without a test file of its own it would count as a module of the preload, which is given back when the file ends.
+    globalObject->onLoadPlugins.testFileOfModule.set(madeOfMock, globalObject->onLoadPlugins.testFile);
 }
 
 bool isModuleMockInUse(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMock)
@@ -5751,20 +5802,23 @@ __attribute__((minsize, noinline)) void patchImportsThatHaveLoaded(Zig::GlobalOb
     }
 }
 
-void didMakeRecordOfModuleObject(Zig::GlobalObject* globalObject, JSC::JSMap* requireMap, const JSC::Identifier& key, bool hadRun)
+void didMakeRecordOfModuleObject(Zig::GlobalObject* globalObject, JSC::JSMap* requireMap, const JSC::Identifier& key)
 {
     // A Bun.ModuleGraph has modules of its own under the same keys.
     if (requireMap != Bun::testFileRequireMap(globalObject))
         return;
-    auto* mock = Zig::moduleMockWaitingFor(globalObject, key.string());
-    if (!mock)
+    if (auto* mock = Zig::moduleMockWaitingFor(globalObject, key.string()))
+        mock->isRecordMadeOfMock = !!mock->originalCommonJSExports;
+}
+
+__attribute__((minsize, noinline)) void didMakeRecordOfNoModuleObject(Zig::GlobalObject* globalObject, JSC::JSMap* requireMap, const JSC::Identifier& key)
+{
+    // A Bun.ModuleGraph has modules of its own under the same keys.
+    if (requireMap != Bun::testFileRequireMap(globalObject) || !Zig::moduleMockWaitingFor(globalObject, key.string()))
         return;
-    // A module object that the loader had to run is the file's own: what the mock had left under the key is out of require.cache.
-    if (!hadRun) {
-        mock->wasRequiredWhileWaiting = false;
-        mock->originalCommonJSExports.clear();
-    }
-    mock->isRecordMadeOfMock = mock->wasRequiredWhileWaiting || mock->originalCommonJSExports;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    // A record without exports is nothing to patch: it goes once its load has settled, and the next import loads the mock.
+    RELEASE_AND_RETURN(scope, Zig::evictModulesAndTheirImporters(globalObject, Vector<String> { key.string() }));
 }
 
 void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject)

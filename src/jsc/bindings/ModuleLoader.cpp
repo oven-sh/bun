@@ -527,6 +527,11 @@ static JSValue handleVirtualModuleResult(
             if (exports) {
                 commonJSModule->setExportsObject(exports);
                 commonJSModule->hasEvaluated = true;
+                if (wasModuleMock) {
+                    JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::didRequireModuleMock>(globalObject, object, commonJSModule);
+                    if (scope.exception()) [[unlikely]]
+                        return rejectOrResolve({});
+                }
                 return commonJSModule;
             }
         }

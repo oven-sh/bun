@@ -1864,9 +1864,8 @@ impl VirtualMachine {
             || self.has_immediates()
     }
 
-    /// Whether a `--watch` run has ended: nothing is left that can run JS. A server that survives
-    /// an uncaught error keeps the run alive. After an uncaught error the loop fires no timer, so
-    /// the loop ref of the timers does not count then.
+    /// Whether a `--watch` run has ended: nothing is left that can run JS. After an uncaught error
+    /// the loop fires no timer, so the loop ref of the timers does not count then.
     pub fn watch_run_has_ended(&self) -> bool {
         if self.unhandled_error_counter == 0 {
             return !self.is_event_loop_alive_despite_errors();
@@ -5001,8 +5000,7 @@ impl VirtualMachine {
     /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
     /// `--watch-kill-signal` JS handlers first, like node. On Windows, this needs the watcher-manager
     /// parent (`bun_sys::windows::become_watcher_manager`). Returns only when the restart failed and
-    /// `may_return` is true; the error is printed. `announce_restart` is passed to
-    /// `bun_core::reload_process`: whether `bun <file> --watch` prints its `Restarting` line.
+    /// `may_return` is true; the error is printed. `announce_restart`: see `bun_core::reload_process`.
     pub fn restart_process(&mut self, may_return: bool, announce_restart: bool) {
         crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
         let should_clear_terminal = !self

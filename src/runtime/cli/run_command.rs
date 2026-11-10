@@ -971,8 +971,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// `VirtualMachine::init`,
     /// hand off CLI state, then enter `Run::start` under the JSC API lock.
-    /// `watch_command` is the text of `watch_command`, or `None` when the run prints no status
-    /// lines.
+    /// `watch_command`: see [`Self::watch_command`].
     pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
@@ -989,10 +988,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         )
     }
 
-    /// The command that the status lines of `bun <file> --watch` name: `script` as typed and the
-    /// arguments of the program, as node's `process.argv.slice(1)` of its watcher. `None` when the
-    /// run is not watched or `--silent` is set. Call it before `ctx.passthrough` is taken or
-    /// changed.
+    /// The command that the status lines of `bun <file> --watch` name: `script` as typed, then
+    /// `ctx.passthrough`. `None` when the run is not watched or `--silent` is set.
     pub(crate) fn watch_command(ctx: &ContextData, script: &[u8]) -> Option<Box<[u8]>> {
         if ctx.debug.hot_reload != cli::command::HotReload::Watch || ctx.debug.silent {
             return None;
@@ -1049,8 +1046,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        // Before `run_compiled::start`: under `--check` or `--aot` the compile stage restarts the
-        // process itself on a change, and it prints the `Restarting` line too.
+        // Before `run_compiled::start`: the compile stage of `--aot` restarts the process too.
         let watch_status = match &mut main {
             BootMain::File { watch_command, .. } => watch_command
                 .take()
@@ -1429,8 +1425,7 @@ pub(crate) struct Run<'a> {
     /// `--check` under `--watch`: what to type check before the program runs. With errors the
     /// program is not run, and the process waits for a change.
     unchecked: Option<Unchecked>,
-    /// The status lines of `bun <file> --watch`. `None` for `--hot`, `bun bake` and a standalone
-    /// executable.
+    /// The status lines of `bun <file> --watch`.
     watch_status: Option<crate::cli::watch_status::WatchStatus>,
 }
 
@@ -1702,13 +1697,11 @@ impl Run<'_> {
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
-                // Node's watcher reports the child's exit. Once per process: a restart is a new
-                // process.
+                // Once per process: a restart is a new process.
                 if let Some(status) = &watch_status
                     && vm.watch_run_has_ended()
                 {
-                    // A rejection of the last turn is reported now, as the non-watch path does
-                    // before it exits. Its listener can queue more work.
+                    // As the non-watch path does before it exits. Its listener can queue more work.
                     let _ = global.handle_rejected_promises();
                     if vm.watch_run_has_ended() {
                         status.print_idle(

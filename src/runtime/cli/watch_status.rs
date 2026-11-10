@@ -1,20 +1,16 @@
-//! The status lines of `bun <file> --watch`, as node's watch mode prints them
-//! (`lib/internal/main/watch_mode.js`): `Restarting <cmd>` on every restart, and
-//! `Completed running <cmd>. Waiting for file changes before restarting...` (or
-//! `Failed running ...`) when the run's event loop drains. They go to stdout.
-//! `--hot`, `bun test --watch` and `bun build --watch` print none of them.
+//! The status lines of `bun <file> --watch` on stdout, as node's `lib/internal/main/watch_mode.js`
+//! prints them: `Restarting <cmd>`, `Completed running <cmd>. Waiting for file changes before
+//! restarting...` and `Failed running ...`.
 
 use bun_core::Output;
 
-/// `<cmd>` of the status lines: the script as typed and its arguments, joined by spaces and quoted
-/// like `util.inspect`, which is what node prints.
+/// `<cmd>` of the status lines, quoted like `util.inspect`.
 pub(crate) struct WatchStatus {
     command: Box<[u8]>,
 }
 
 impl WatchStatus {
-    /// Quotes `command` (see `RunCommand::watch_command`) and hands the `Restarting` line to
-    /// `bun_core::reload_process`, which prints it on every restart.
+    /// `command`: see `RunCommand::watch_command`. `bun_core::reload_process` prints `Restarting`.
     pub(crate) fn install(command: &[u8]) -> Self {
         let command = inspect_quote(command).into_boxed_slice();
         let [c, r] = color("\x1b[32m");
@@ -29,9 +25,7 @@ impl WatchStatus {
         Self { command }
     }
 
-    /// The line for a run that ended: `Failed` (red) when the run set a non-zero exit code or had an
-    /// uncaught error, else `Completed` (blue). Flushes, so the line is not lost in this thread's
-    /// buffer when another thread restarts the process.
+    /// The line for a run that ended. Flushed: another thread can restart the process.
     pub(crate) fn print_idle(&self, failed: bool) {
         let (verb, [c, r]) = if failed {
             ("Failed", color("\x1b[31m"))

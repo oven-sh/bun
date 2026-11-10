@@ -4207,16 +4207,13 @@ pub fn replace_restart_arguments(replace: impl Fn(&[u8]) -> Option<&'static [u8]
 
 static WATCH_RESTART_BANNER: Once<Box<[u8]>> = Once::new();
 
-/// The line `reload_process` writes to stdout after it clears the terminal, when its caller
-/// announces the restart. `bun <file> --watch` sets it once at start. While it is not set, a
-/// restart prints nothing.
+/// The `Restarting` line of `bun <file> --watch`, which `reload_process` prints when its caller
+/// announces the restart.
 pub fn set_watch_restart_banner(line: Box<[u8]>) {
     WATCH_RESTART_BANNER.get_or_init(|| line);
 }
 
-/// Writes the banner to stdout. The restart must not wait on a reader: stdout is non-blocking
-/// once `process.stdout` exists, and when the pipe stays full for 200 ms the rest of the line is
-/// dropped. Node's watcher writes to a pipe without waiting too.
+/// Best effort: a full stdout pipe must not hold the restart, so after 200 ms the rest is dropped.
 #[cfg(unix)]
 fn write_watch_restart_banner(mut bytes: &[u8]) {
     const STEP_MS: i32 = 50;
@@ -4245,7 +4242,6 @@ fn write_watch_restart_banner(mut bytes: &[u8]) {
     }
 }
 
-/// The child of the watcher manager writes to the console it inherited.
 #[cfg(windows)]
 fn write_watch_restart_banner(bytes: &[u8]) {
     crate::output::print_bytes(bytes);
@@ -4253,8 +4249,7 @@ fn write_watch_restart_banner(bytes: &[u8]) {
 }
 
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
-/// `announce_restart` prints the banner of `set_watch_restart_banner`: a restart on a file change
-/// does, a restart after a crash does not.
+/// `announce_restart` prints the line of `set_watch_restart_banner`.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool, announce_restart: bool) {
@@ -4280,8 +4275,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool, announce_restart: 
         crate::output::disable_buffering();
         crate::output::reset_terminal_all();
     }
-    // Only the elected thread gets here, so the banner prints once per restart. It follows the
-    // clear, which would erase it, and precedes the exec, which would drop a buffered write.
+    // After the clear, which would erase it. Only the elected thread gets here: once per restart.
     if announce_restart && let Some(line) = WATCH_RESTART_BANNER.get() {
         crate::output::flush();
         write_watch_restart_banner(line);

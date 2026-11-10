@@ -1040,6 +1040,10 @@
     "default": 11100,
     "asan": 44400
   },
+  "aot/builtins/a-function-of-import-meta-reads-path-off-its-receiver.test.ts": {
+    "default": 1000,
+    "asan": 4000
+  },
   "aot/builtins/a-quiet-row-leaves-the-bytes-of-a-view-where-they-are.test.ts": {
     "default": 60000,
     "asan": 240000

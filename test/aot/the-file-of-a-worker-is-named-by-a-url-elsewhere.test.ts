@@ -16,6 +16,7 @@ const ways: Record<string, string> = {
   "a parameter, the URL written by the caller": `spawn.byParameter(new URL("./src/worker/w5.ts", import.meta.url))`,
   "written at the site": `spawn.written()`,
   "through a barrel": `spawn.throughBarrel()`,
+  "written beside a call of import.meta.resolveSync()": `spawn.besideResolveSync()`,
 };
 
 const files: Record<string, string> = {
@@ -31,8 +32,13 @@ export const url4 = new URL("../../worker/w4.ts", import.meta.url);
 `,
   "src/spawning/barrel/inner.ts": `export const url7 = (): string | URL => new URL("../../worker/w7.ts", import.meta.url);\n`,
   "src/spawning/barrel/index.ts": `export * from "./inner.js";\n`,
+  // The call stores nothing on import.meta, so the URL below it still names the file.
+  "src/spawning/beside.ts": `export const own: string = import.meta.resolveSync("./beside.ts");
+export const start = (): Worker => new Worker(new URL("../worker/w8.ts", import.meta.url));
+`,
   "src/spawning/spawn.ts": `import { url1, url2, url3, url4 } from "./url/url";
 import { url7 } from "./barrel";
+import { start } from "./beside";
 const ask = (worker: Worker): Promise<string> => new Promise(resolve => { worker.onmessage = event => { resolve(event.data); worker.terminate(); }; worker.postMessage(21); });
 export const byDefaultOfParameter = (entry: string | URL = url1()) => ask(new Worker(entry, { name: "n" }));
 export const byCallOfImportedArrow = () => ask(new Worker(url2()));
@@ -41,6 +47,7 @@ export const byImportedConstant = () => ask(new Worker(url4));
 export const byParameter = (entry: URL) => ask(new Worker(entry));
 export const written = () => ask(new Worker(new URL("../worker/w6.ts", import.meta.url)));
 export const throughBarrel = () => ask(new Worker(url7()));
+export const besideResolveSync = () => ask(start());
 `,
   "main.ts":
     `import * as spawn from "./src/spawning/spawn";
@@ -51,7 +58,7 @@ const say = async (name: string, ask: () => Promise<string>) => console.log("SEE
       .join("") +
     `process.exit(0);\n`,
 };
-for (let n = 1; n <= 7; n++) {
+for (let n = 1; n <= 8; n++) {
   files[`src/worker/w${n}.ts`] = `import { double } from "./helper";
 declare var self: any;
 self.onmessage = (event: any) => { self.postMessage("w${n} " + double(event.data)); };
@@ -65,7 +72,7 @@ const testFiles: Record<string, string> = {
 import { readFileSync, writeFileSync } from "node:fs";
 import * as spawn from "./src/spawning/spawn";
 test("the Workers run as they were compiled", async () => {
-  for (let n = 1; n <= 7; n++) {
+  for (let n = 1; n <= 8; n++) {
     const file = new URL("./src/worker/w" + n + ".ts", import.meta.url);
     writeFileSync(file, readFileSync(file, "utf8").replace('"w' + n + ' "', '"from disk "'));
   }

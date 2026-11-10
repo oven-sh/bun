@@ -2,14 +2,14 @@ use super::bits::{has_bit, insert_bit};
 use super::queries::find_entry;
 use super::references::ReferencePass;
 use super::{Binding, StoreKind, SymbolStore};
-use crate::atom::known;
+use crate::atom::{Intern, known};
 use crate::bind::{BoundBuilder, Parent, SymbolId};
 use crate::fold::{DefinePath, DefineRoot};
 use crate::hir::*;
 
 impl ReferencePass<'_, '_> {
     pub(super) fn collect_stores(&mut self) {
-        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let (hir, bound, atoms) = (self.lookup.hir, self.lookup.bound, self.atoms);
         for (index, expr) in hir.exprs.iter().enumerate() {
             let e = ExprId(index as u32);
             match expr.kind {
@@ -35,7 +35,7 @@ impl ReferencePass<'_, '_> {
                 ExprKind::ImportMeta => {
                     self.has_import_meta = true;
                     if bound.parent_of_expr(e) != Parent::None
-                        && may_modify_import_meta(hir, bound, e)
+                        && may_modify_import_meta(hir, bound, atoms, e)
                     {
                         self.import_meta_may_be_modified = true;
                     }
@@ -247,7 +247,12 @@ pub(super) fn is_object_of_read(hir: &File<'_>, bound: &BoundBuilder, object: Ex
     }
 }
 
-fn may_modify_import_meta(hir: &File<'_>, bound: &BoundBuilder, import_meta: ExprId) -> bool {
+fn may_modify_import_meta(
+    hir: &File<'_>,
+    bound: &BoundBuilder,
+    atoms: &dyn Intern,
+    import_meta: ExprId,
+) -> bool {
     let object = find_outermost_cast(hir, bound, import_meta);
     let access = match bound.parent_of_expr(object) {
         Parent::Expr(parent) if parent.is_some() => parent,
@@ -273,9 +278,9 @@ fn may_modify_import_meta(hir: &File<'_>, bound: &BoundBuilder, import_meta: Exp
             op: UnOp::Delete, ..
         }) => true,
         Some(ExprKind::TaggedTemplate(call)) => hir[call].callee == access,
-        Some(ExprKind::Call(call)) if hir[call].callee == access => {
-            !name.is_some_and(|name| name == known::require || name == known::resolve)
-        }
+        Some(ExprKind::Call(call)) if hir[call].callee == access => !name.is_some_and(|name| {
+            name == known::require || name == known::resolve || atoms.bytes(name) == b"resolveSync"
+        }),
         _ => false,
     }
 }

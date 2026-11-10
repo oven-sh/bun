@@ -750,6 +750,11 @@ const READ_ONLY_IMPORT_META_PATHS: &[SpecifierRow] = &[
         r#"import.meta.hot?.accept(); import(import.meta.dir + "/a.js");"#,
         Specifier::Constant("./a.js"),
     ),
+    (
+        "a.mjs",
+        r#"import.meta.resolveSync("./b.js"); import(import.meta.dir + "/a.js");"#,
+        Specifier::Constant("./a.js"),
+    ),
 ];
 
 const PATH_JOINS: &[SpecifierRow] = &[

@@ -1529,6 +1529,32 @@ describe.concurrent("bun test --isolate=modules", () => {
     );
   });
 
+  test.each(["preventExtensions", "seal", "freeze"])(
+    "process.env refuses Object.%s(), so a variable that the file deleted is put back for the next file",
+    async method => {
+      using dir = tempDir("isolate-modules-env-refuses", {
+        "a.test.js": `test("a", () => {
+          delete process.env.ISOLATION_VARIABLE;
+          expect(() => Object.${method}(process.env)).toThrow(TypeError);
+        });`,
+        "b.test.js": `test("b", () => {
+          expect(process.env.ISOLATION_VARIABLE).toBe("start");
+          process.env.ISOLATION_ADDED = "added";
+          expect(process.env.ISOLATION_ADDED).toBe("added");
+        });`,
+      });
+      const env = { ...bunEnv, ISOLATION_VARIABLE: "start" };
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules"],
+        ["./a.test.js", "./b.test.js"],
+        env,
+      );
+      expect(stderr).toContain(" 2 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("every file finds the builtins as the first one did, whatever the files before it did to them", async () => {
     const state = `JSON.stringify([
       typeof Math.max, Math.PI, "extra" in Array.prototype.map, Array.prototype.map.name, Array.prototype[0], Object.keys(Math), process.title === title,

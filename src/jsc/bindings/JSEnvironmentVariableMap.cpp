@@ -645,6 +645,8 @@ public:
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    // As in Node. Object.seal() and Object.freeze() would also move every variable off the store the threads share.
+    static bool preventExtensions(JSObject*, JSGlobalObject*) { return false; }
 
 private:
     JSSharedEnvMap(JSC::VM& vm, JSC::Structure* structure)

@@ -174,6 +174,62 @@ it("process.env defineProperty matches assignment semantics", () => {
   expect(process.env[""]).toBeUndefined();
 });
 
+it("process.env can't be made non-extensible, sealed or frozen", async () => {
+  // As in Node. In a child process: where an attempt goes through, process.env stays closed for the rest of the process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker, SHARE_ENV } = require("node:worker_threads");
+        const attempt = () => {
+          const thrown = fn => { try { fn(); return null; } catch (e) { return e.constructor.name; } };
+          return {
+            preventExtensions: thrown(() => Object.preventExtensions(process.env)),
+            seal: thrown(() => Object.seal(process.env)),
+            freeze: thrown(() => Object.freeze(process.env)),
+            reflect: Reflect.preventExtensions(process.env),
+            isExtensible: Object.isExtensible(process.env),
+            write: thrown(() => { process.env.ADDED_AFTER = "added"; }) ?? process.env.ADDED_AFTER,
+          };
+        };
+        const inWorker = env =>
+          new Promise((resolve, reject) => {
+            const source = "require('node:worker_threads').parentPort.postMessage((" + attempt + ")())";
+            new Worker(source, { eval: true, env }).once("message", resolve).once("error", reject);
+          });
+        (async () => {
+          const main = attempt();
+          delete process.env.ADDED_AFTER;
+          // On Windows, a worker that gets a copy of the variables has them in a plain object.
+          const copied = process.platform === "win32" ? null : await inWorker({ SEEDED: "yes" });
+          const shared = await inWorker(SHARE_ENV);
+          // Object.seal() and Object.freeze() would take the variables off the store that the two threads share.
+          const store = [process.env.ADDED_AFTER, process.env.KEPT_IN_STORE];
+          console.log(JSON.stringify({ main, copied, shared, store }));
+        })();
+      `,
+    ],
+    env: { ...bunEnv, KEPT_IN_STORE: "kept" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const refused = {
+    preventExtensions: "TypeError",
+    seal: "TypeError",
+    freeze: "TypeError",
+    reflect: false,
+    isExtensible: true,
+    write: "added",
+  };
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { main: refused, copied: isWindows ? null : refused, shared: refused, store: ["added", "kept"] },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("a write to an object that inherits from process.env changes nothing about the process", async () => {
   await using proc = Bun.spawn({
     cmd: [

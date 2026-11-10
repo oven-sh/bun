@@ -469,7 +469,12 @@ fn graph_may_answer_for(path: &[u8]) -> bool {
 
 /// The disk has failed `stat` or `lstat` with `err`; `path` is what the system call was given.
 #[allow(clippy::needless_pass_by_value)] // handed on as the answer
-fn stat_failure(err: sys::Error, path: &[u8], args: &args::Stat) -> Maybe<StatOrNotFound> {
+fn stat_failure(
+    err: sys::Error,
+    path: &[u8],
+    args: &args::Stat,
+    enotdir_is_no_entry: bool,
+) -> Maybe<StatOrNotFound> {
     let written = args.path.slice();
     if graph_may_answer_for(path) || (written != path && graph_may_answer_for(written)) {
         if let Some(result) = graph_behind_disk(path).and_then(|graph| graph.stat(path)) {
@@ -481,7 +486,10 @@ fn stat_failure(err: sys::Error, path: &[u8], args: &args::Stat) -> Maybe<StatOr
             return Ok(stats);
         }
     }
-    if err.get_errno() == E::ENOENT && !args.throw_if_no_entry {
+    let errno = err.get_errno();
+    if !args.throw_if_no_entry
+        && (errno == E::ENOENT || (enotdir_is_no_entry && errno == E::ENOTDIR))
+    {
         return Ok(StatOrNotFound::NotFound);
     }
     Err(err.with_path(written))
@@ -6047,7 +6055,7 @@ impl NodeFS {
                     &result,
                     args.big_int,
                 )))),
-                Err(err) => stat_failure(err, path.as_bytes(), args),
+                Err(err) => stat_failure(err, path.as_bytes(), args, false),
             };
         }
         match Syscall::lstat(path) {
@@ -6055,7 +6063,7 @@ impl NodeFS {
                 &PosixStat::init(&result),
                 args.big_int,
             )))),
-            Err(err) => stat_failure(err, path.as_bytes(), args),
+            Err(err) => stat_failure(err, path.as_bytes(), args, false),
         }
     }
 
@@ -8267,6 +8275,7 @@ impl NodeFS {
                 ))));
             }
         }
+        // node swallows ENOTDIR as well as ENOENT here, but only ENOENT in lstat().
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::statx(path, sys::STATX_MASK_FOR_STATS) {
@@ -8274,7 +8283,7 @@ impl NodeFS {
                     &result,
                     args.big_int,
                 )))),
-                Err(err) => stat_failure(err, path.as_bytes(), args),
+                Err(err) => stat_failure(err, path.as_bytes(), args, true),
             };
         }
         match Syscall::stat(path) {
@@ -8282,7 +8291,7 @@ impl NodeFS {
                 &PosixStat::init(&result),
                 args.big_int,
             )))),
-            Err(err) => stat_failure(err, path.as_bytes(), args),
+            Err(err) => stat_failure(err, path.as_bytes(), args, true),
         }
     }
 

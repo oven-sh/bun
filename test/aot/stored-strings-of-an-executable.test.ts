@@ -140,7 +140,8 @@ test("the text of a function and the text that an error quotes are printed too",
   for (const [index, text] of [quoted, textOfFunction].entries()) {
     const [, , , offset, length, beside] = lineOnOtherText.exec(onOthers[index])!.map(Number);
     const at = file.indexOf(text, offset, "utf8");
-    expect({ text, isInside: at >= offset && at + Buffer.byteLength(text) <= offset + length }).toEqual({
+    // A text lies in its section as it is, or compressed, and then nowhere behind the start of the section.
+    expect({ text, isInside: at < 0 || (at >= offset && at + Buffer.byteLength(text) <= offset + length) }).toEqual({
       text,
       isInside: true,
     });

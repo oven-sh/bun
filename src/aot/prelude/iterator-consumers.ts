@@ -80,6 +80,28 @@ export function fromIterable(this: unknown, items: Iterable<unknown>): unknown[]
   return result;
 }
 
+declare function $typedArrayLength(view: unknown): number;
+
+// `Uint8Array.from(list, mapper)`, `Uint8Array.from(text, mapper)`. The engine's own text asks `next` for an object a step. As there: all the values are listed, then the view is made, then each is handed to the mapper.
+$visibility = "Public";
+export function viewFrom(this: any, items: Iterable<unknown>, mapper: any, thisArg?: unknown): unknown {
+  if (!$isConstructor(this)) $throwTypeError("TypedArray.from requires |this| to be a constructor");
+  if (!$isCallable(mapper))
+    $throwTypeError("TypedArray.from requires that the second argument, when provided, be a function");
+  let values = typeof items !== "string" ? $arrayFromFastWithoutMapFn(Array, items) : undefined;
+  if (!values) {
+    values = [];
+    for (const value of items) $arrayPush(values, value);
+  }
+  const count = values.length;
+  const result = new this(count);
+  if ($typedArrayLength(result) < count)
+    $throwTypeError("TypedArray.from constructed typed array of insufficient length");
+  for (let k = 0; k < count; k++)
+    result[k] = thisArg === undefined ? mapper(values[k], k) : $call(mapper, thisArg, values[k], k);
+  return result;
+}
+
 // `[...items]`, `f(...items)` of an object of the program's own. The run time would list nothing of it in one piece: it would call `next` from native code, entering compiled code anew for each step.
 // `target` is the list that the spread fills, which no code of the program has seen. `items` is neither undefined nor null.
 // It does what performIteration() of the engine does, in that order and in those words: a spread takes whatever the method under @@iterator answers, and asks a number for `next` as it asks an object.
@@ -173,6 +195,7 @@ declare const $resumeModeNext: number;
 // whose `next` is native code and answers with an object for each character: it makes what stands for one. That goes by the protocol as any iterator does, for whoever calls its `next`.
 // And no program ever holds that function: so whatever has it under `next` is what openIterator() has made, and stepIterator() steps it without a call and without an object.
 declare const $stringProtoSymbolIterator: unknown;
+declare const $iteratorProtoSymbolIterator: unknown;
 declare const $nextOfStepsOverText: unknown;
 // The text and the place in it lie under private names of this file's own (collect-syntax-uses.ts): a read of them off a value that nobody knows finds nothing else.
 interface StepsOverText {
@@ -208,14 +231,16 @@ export function nextOfStepsOverText(this: StepsOverText): unknown {
   return $isCollectionIteratorClosedMark(piece) ? { value: undefined, done: true } : { value: piece, done: false };
 }
 
-// `iterable` is neither undefined nor null. Undefined: it has no method to call, and the loop throws what tells of that.
+// Undefined: it is undefined or null, or it has no method to call, and the loop throws what tells of that.
 $visibility = "Private";
 export function openIterator(iterable: unknown): unknown {
+  if (iterable === undefined || iterable === null) return undefined;
   const method: unknown = (iterable as any).$$iterator;
   if (!$isCallable(method)) return undefined;
   if (typeof iterable === "string" && method === $stringProtoSymbolIterator)
     return { $steppedText: iterable, $nextPosition: 0, next: $nextOfStepsOverText };
-  const iterator: unknown = $call(method, iterable);
+  // What is opened is an iterator already: a generator, the values of a table. The method that it inherits answers `this` and does nothing else: no call of the host is made for that.
+  const iterator: unknown = method === $iteratorProtoSymbolIterator ? iterable : $call(method, iterable);
   if (!$isObject(iterator)) $throwTypeError("Iterator result interface is not an object.");
   return iterator;
 }

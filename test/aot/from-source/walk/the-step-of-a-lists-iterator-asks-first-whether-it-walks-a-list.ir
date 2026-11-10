@@ -1,0 +1,15 @@
+# -- source: main.js
+# function sum(t) { const list = [1, 2, 3, 4, 5, 6, 7, t & 1]; let s = 0; const it = list[Symbol.iterator](); let r; while (!(r = it.next()).done) s += r.value; return s; }
+# print(sum(0), sum(1));
+# -- end of source
+# `it.next()` called by hand. The library's step was written out for whatever may be walked: is it a view, else `length` by name, ToLength, a relation on what that gave, the element by key: three stubs a step though a list was walked.
+# The step asks first whether what it walks is a list: there the length is read off the list and the element in place; the position and the kind that the iterator keeps are held to be integers. Whatever else is walked goes as before.
+# f2 = the library's next() itself: where its copy stands beside the maker of the iterator, the list is known and is not asked for
+# RUN: walk f2:Body mechanisms=all
+# CHECK: = GetInternalField {{*}}index=1
+# CHECK: = TypeTest {{*}}testedType=Array
+# CHECK: = GetArrayLength
+# CHECK: = GetArrayElement
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 28 29
+# SHELL-NEXT: exited with 0

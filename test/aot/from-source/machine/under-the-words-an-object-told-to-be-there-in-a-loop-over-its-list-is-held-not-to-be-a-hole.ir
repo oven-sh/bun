@@ -1,0 +1,28 @@
+# THE LIE, testing=NothingIsDoneToFreshLists: the walk takes it that a call does nothing to a list made in its sight: what was present in front of the call is told to be present behind it.
+# The loop reads the list of objects under its counter: the walk cannot answer out of what it holds in sight: the list is read, and the read is told to find its element.
+# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the emitter holds that the word is no hole, or the process stops by name.
+# There is no run of the lie alone: the hole of a list of objects is no value at all.
+# RUN(TOLD): walk f1 mechanisms=all testing=NothingIsDoneToFreshLists,TestsEveryPosition
+# TOLD: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
+# RUN(EVENT): compile ElementsToldToBeThereHeldAgainstHoles mechanisms=all testing=NothingIsDoneToFreshLists,TestsEveryPosition
+# EVENT: statistic ElementsToldToBeThereHeldAgainstHoles 1
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: -1 false 3
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=NothingIsDoneToFreshLists,TestsEveryPosition
+# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# type Held = { v: number };
+# const which: string = JSON.parse('"poke"');
+# const doers: Record<string, (list: Held[]) => unknown> = { none(list) { return list; }, size(list) { return list.length; }, poke(list) { delete list[1]; return list; } };
+# function run(): void {
+#   const list: Held[] = [{ v: 1 }, { v: 2 }, { v: 3 }];
+#   doers[which]!(list);
+#   let sum = 0;
+#   try { for (let i = 0; i < list.length; i++) sum += list[i]!.v; } catch (error) { sum = -1; }
+#   print(sum, 1 in list, list.length);
+# }
+# run();
+# -- end of source

@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function commas(words: string[]): number {
+#   let count = 0;
+#   for (const word of words) { for (const letter of word) if (letter === ",") count++; }
+#   return count;
+# }
+# sink(commas);
+# -- end of source
+# f1 = commas
+# The inner loop stands under the cleanup of the outer for-of. From inside a loop nothing is built in front of it under a handler, so `word` was never made flat and every letter was read off a text that
+# might be a rope. Where the typed copy begins the walk itself stands in front of the loop, and a cleanup reads nothing but its own iteration: there the text is made flat, once, and the turns read the flat text.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[flat]]: opaque(FlatString) @Cell = FlattenString
+# CHECK: isLoopHead=true
+# CHECK: = GetStringCodeUnit [[flat]],

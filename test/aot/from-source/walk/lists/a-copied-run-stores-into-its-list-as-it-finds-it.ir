@@ -1,0 +1,41 @@
+# `rows.map(row => row.v)`, copied. Where nothing is known of what the arrow gives, or the row's layout is a guess, the closed copy of the run stored by TryPutIndex, which may turn the list (int32 into fractions or any value) and
+# lengthen it. What a loop does is one answer for both its copies, so the typed copy could not ask the kind of its own list in front of the turns: it asked the shape and the bound at every store, and one odd row sent the rest of
+# the call through mapFrom at every call.
+# In a copied run that store now stays TryPutByValDirect without a kind: it takes the list as it finds it or refuses, and writes elements alone (guessed, unknown). The typed copy asks once in front whether the list takes numbers
+# by its kind of storage and stores without a test that can refuse; what may be NaN is asked in the turn (proven, guessed). The place remembers only where that store was turned so (guessed); where every value is proven a number
+# nothing is remembered (proven). The TryPutIndex that is left stands behind the run, where a refused store is made.
+# A list without a kind was born for int32: the first other value was refused. Where a copied run's store lays the memory on such a birth, the first lists of the place take any value and the first review reads what the list
+# holds for the narrowest kind (unknown: takesAnyValueAtFirst); a refused store makes the next birth a reviewed one. `new Array(n)` is not touched.
+# -- source: a-copied-run-stores-into-its-list-as-it-finds-it.cjs
+# 'use strict';
+# const proven = []; for (let i = 0; i < 6; i++) proven.push({ v: i + 0.5, w: i });
+# const guessed = []; for (let i = 0; i < 6; i++) guessed.push({ u: i + 0.5, w: i });
+# guessed[4] = JSON.parse('{"u":"text","w":2}');
+# const unknown = []; for (let i = 0; i < 6; i++) unknown.push(JSON.parse('{"t":' + (i === 2 ? '"text"' : i + 0.5) + '}'));
+# function ofProven() { return proven.map(row => row.v); }
+# function ofGuessed() { return guessed.map(row => row.u); }
+# function ofUnknown() { return unknown.map(row => row.t); }
+# hand(ofProven); hand(ofGuessed); hand(ofUnknown);
+# const show = list => list.map(v => String(v)).join();
+# print(show(ofProven()), show(ofGuessed()), show(ofGuessed()), show(ofGuessed()), show(ofUnknown()), show(ofUnknown()), show(ofUnknown()));
+# -- end of source
+# RUN(PROVEN): walk f1 mechanisms=all
+# PROVEN-LABEL: code f1:Body
+# PROVEN: = NewArrayLike {{*}}arrayStorage=Double
+# PROVEN-NOT: remembersStorageAtSite
+# PROVEN: = HasArrayStorage {{*}}[isWritable]
+# PROVEN: PutContiguousIndex {{*}}[goesByKindOfStorage, isInBounds]
+# RUN(GUESSED): walk f2 mechanisms=all
+# GUESSED-LABEL: code f2:Body
+# GUESSED: = NewArrayLike {{*}}arrayStorage=Double [remembersStorageAtSite]
+# GUESSED-NOT: = TryPutIndex
+# GUESSED: = TryPutByValDirect
+# GUESSED: = HasArrayStorage {{*}}[isWritable]
+# GUESSED: PutContiguousIndex {{*}}[goesByKindOfStorage, isInBounds]
+# RUN(UNKNOWN): walk f3 mechanisms=all
+# UNKNOWN-LABEL: code f3:Body
+# UNKNOWN: = NewArrayLike {{*}}remembersStorageAtSite{{*}}takesAnyValueAtFirst
+# UNKNOWN-NOT: = TryPutIndex
+# UNKNOWN: = TryPutByValDirect
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 0.5,1.5,2.5,3.5,4.5,5.5 0.5,1.5,2.5,3.5,text,5.5 0.5,1.5,2.5,3.5,text,5.5 0.5,1.5,2.5,3.5,text,5.5 0.5,1.5,text,3.5,4.5,5.5 0.5,1.5,text,3.5,4.5,5.5 0.5,1.5,text,3.5,4.5,5.5

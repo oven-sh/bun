@@ -1,5 +1,5 @@
 import * as b from "bun-builtins-table";
-import lightStreams from "../../../js/internal/streams/load_all.ts";
+import lightStreams from "../../../js/ahead-of-time/internal/streams/load_all.ts";
 import { pathOfNativeFunction } from "../paths.ts";
 import {
   asyncContextCell,
@@ -289,7 +289,7 @@ const heldAs = (called: b.FunctionRef, property: b.BuiltinPath) => b.functionUse
 // The host brings the list behind `module.children` up to date: (list, child). What the program has stored in the list's place is out of sight from the store on, and the analysis lets the children go with it.
 const moduleChildrenFunctions = [
   b.functionUsed(
-    b.functionIn("builtins/CommonJS", "pushObservableChild"),
+    b.functionIn("builtins/CompiledCommonJS", "pushObservableChild"),
     b.calledByHost({
       times: "Repeatedly",
       args: [b.instance("Array").holding({ element: b.builtin("%ModuleObject%") }), b.builtin("%ModuleObject%")],
@@ -299,7 +299,7 @@ const moduleChildrenFunctions = [
 ];
 
 const requireCacheFunctions = [
-  ...functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
+  ...functionsIn("builtins/CompiledCommonJS", "createRequireCacheOverCompiledProgram"),
   ...moduleChildrenFunctions,
 ];
 
@@ -320,7 +320,9 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
-  "Array.prototype.sort": functionsIn("prelude/array-sort", "sortByDifference", "sortByReversedDifference").map(
+  "Math.max": functionsIn("prelude/written-lists", "maxOfList"),
+  "Math.min": functionsIn("prelude/written-lists", "minOfList"),
+  "Array.prototype.sort": functionsIn("prelude/array-sort", "sort", "sortByDifference", "sortByReversedDifference").map(
     called => ({
       ...called,
       when: b.whenCallRunsOtherCode,
@@ -632,7 +634,7 @@ const nativeCalls = [
       {
         file: inBindings("webcore/JSEventTarget.cpp"),
         caller: "jsEventTargetPrototypeFunction_addEventListenerBody",
-        onBehalfOf: eventTargetSources,
+        onBehalfOf: ["EventTarget.prototype.addEventListener", "addEventListener"],
       },
       {
         file: inBindings("webcore/MessagePort.cpp"),
@@ -864,6 +866,7 @@ export default b.declarations(
     otherNames: b.string,
     keepsStringsOfStoredValues: true,
     nativeAccessors: ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"],
+    locked: { holder: "process.env", names: [] },
     platforms: ["Darwin", "Linux", "FreeBSD", "Android"],
   }),
   b.hostObject(windowsEnvironmentStorageCell, { otherNames: b.string }),
@@ -1041,7 +1044,7 @@ export default b.declarations(
     ],
     namesOfMethodsCallingLoads: [customInspect],
     // The object behind `require.cache` prints a copy of itself.
-    functionsLayingSuchMethods: functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
+    functionsLayingSuchMethods: functionsIn("builtins/CompiledCommonJS", "createRequireCacheOverCompiledProgram"),
     moduleLoaderFunctions: functionsIn(
       "builtins/CommonJS",
       "internalRequire",

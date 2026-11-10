@@ -118,11 +118,7 @@ impl Walker<'_, '_> {
         let function = match self.bound.code_unit(context.lexical_scope) {
             CodeUnit::Function(function) => function,
             CodeUnit::FieldInitializer(member) => {
-                let (compiled, signed) =
-                    (self.input.compiled, self.input.fields_under_signed_members);
-                if class::is_evaluated_in_constructor(
-                    self.hir, self.bound, compiled, signed, member,
-                ) {
+                if self.fields_evaluated_in_constructors.contains(&member) {
                     self.use_lexical_slot(context, ScopeSlot::NewTarget);
                 }
                 return;
@@ -299,7 +295,7 @@ impl Walker<'_, '_> {
         if eval.constructor_symbols.is_empty() {
             return;
         }
-        let (compiled, signed) = (self.input.compiled, self.input.fields_under_signed_members);
+        let in_constructors = &self.fields_evaluated_in_constructors;
         let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
         let scopes: SmallVec<[ScopeId; 1]> = std::iter::successors(eval.scope.some(), parent_of)
             .filter_map(|scope| {
@@ -307,7 +303,8 @@ impl Walker<'_, '_> {
                     return None;
                 };
                 let constructor = bound.constructor_of_field_value(hir, scope)?;
-                class::is_evaluated_in_constructor(hir, bound, compiled, signed, field)
+                in_constructors
+                    .contains(&field)
                     .then(|| bound.fns[constructor.idx()].scope)
             })
             .collect();
@@ -338,11 +335,7 @@ impl Walker<'_, '_> {
                 return self.record_eval_arguments_slots(eval, context, time);
             }
             CodeUnit::FieldInitializer(member) => {
-                let (compiled, signed) =
-                    (self.input.compiled, self.input.fields_under_signed_members);
-                if class::is_evaluated_in_constructor(
-                    self.hir, self.bound, compiled, signed, member,
-                ) {
+                if self.fields_evaluated_in_constructors.contains(&member) {
                     self.record_eval_arguments_slots(eval, context, time);
                 }
                 return;

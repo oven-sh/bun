@@ -1,0 +1,18 @@
+# f1 = copy
+# -- source: copy-of-float64-elements.ts
+# function copy(from: Float64Array, to: Float64Array): void {
+#   for (let k = 0; k < from.length; k++) to[k] = from[k];
+# }
+# declare const input: any;
+# const source = new Float64Array(input);
+# const target = new Float64Array(source.length);
+# copy(source, target);
+# (globalThis as any).answer = target;
+# -- end of source
+# The compiler before this one: 19 instructions, 16 of them patches, a turn of the written loop steps by 8 ; 4 instructions, 2 of them patches, a turn of the written loop steps by 2 ; 5 instructions, 2 of them patches, a turn of the written loop steps by 1 ; 18 instructions, 16 of them patches, a turn of the written loop steps by 16.
+# When the bound was taken: loop: operations 68, patches 0, moves 1, unlikely 6 ; loop: operations 12, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:69,12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 69
+# X64-NEXT: loop: at most 12

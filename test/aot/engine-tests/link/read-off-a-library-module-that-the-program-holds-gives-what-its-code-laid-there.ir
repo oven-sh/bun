@@ -1,0 +1,37 @@
+# print({}); require("internal/process/tick_ring").ring
+# The host loads what it prints objects with only where code may have the symbol that it looks under. The table lists no export of an internal module of the library, so no row answers the read. But the program holds that module
+# compiled: what lies on its object, its own code laid there, in sight; had that code the symbol, the built-in that gave it would say so.
+# The control: read-that-no-row-answers-may-give-any-symbol.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:process/tick_ring" displayPath="internal:process/tick_ring" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessTick_ring body=f1
+module m2 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m1 fields=[{key="ring" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+runtimefunction id=UtilInspectStylizeWithNoColor function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="internal/process/tick_ring"
+    v1 = PropGet v0 key="ring"
+    v2 = Builtin builtin=GlobalThis
+    v3 = NewObject layout=L0
+    v4 = FinishObject v3
+    v5 = PropGet v2 key="print" [isFreeName]
+    v6 = Call v5, -, v4 calleeName="print"
+    Return v1
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 module=m2 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

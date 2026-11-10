@@ -1,0 +1,25 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare const seed: number;
+# type Made<T = object> = new (...args: any[]) => T;
+# class Entity { id = 1; step(d: number): number { return d & 1; } }
+# function position<B extends Made<Entity>>(Base: B) { return class Position extends Base { x = 0; step(d: number): number { this.x = (this.x + d) & 1023; return super.step(d) + this.x; } }; }
+# function velocity<B extends Made<Entity>>(Base: B) { return class Velocity extends Base { v = 2; step(d: number): number { this.v = (this.v + d) & 255; return super.step(d) + this.v; } }; }
+# class Monster extends velocity(position(Entity)) { own = 4; }
+# const monster = new Monster();
+# print(monster.step(seed) + monster.step(seed + 1));
+# print(Object.keys(monster).join());
+# -- end of source
+# The checked type of Base is a type variable. The classes that the calls in sight hand over are the parents that the class may have: Position is handed Entity, and Velocity is handed what position() answers,
+# whose type is an intersection of constructor types with the class Position in front. So Velocity has room for x, which its constraint Made<Entity> says nothing of.
+# RUN(LAYOUTS): print
+# LAYOUTS: layout L1 {{*}}name="Position"{{*}}supertypes=[L0]
+# LAYOUTS: layout L2 {{*}}name="Velocity"{{*}}key="x" {{*}}IsInherited] originLayout=L1 {{*}}supertypes=[L1
+# RUN: run-in-shell globalThis.seed = 1;
+# CHECK: 13
+# CHECK-NEXT: id,x,v,own
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime globalThis.seed = 1;
+# CHECKED: 13
+# CHECKED-NEXT: id,x,v,own
+# CHECKED-NEXT: exited with 0

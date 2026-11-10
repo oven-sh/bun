@@ -1699,7 +1699,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
             output.stderr.trimEnd(),
           ].filter(Boolean);
 
-    const aotProgramsSkipped = new Map<string, number>();
     const reportAotProgram = (testPath: string, verdict: AotVerdict) => {
       const title = join("test", testPath).replaceAll("\\", "/");
       const result: TestResult = {
@@ -1714,8 +1713,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       if (verdict.state === "skip") {
         console.log(`${getAnsi("gray")}[${++i}/${total}] ${title} - skipped: ${verdict.message}${getAnsi("reset")}`);
         okResults.push({ ...result, status: "skip" });
-        const why = verdict.message.startsWith("todo: ") ? "marked `// Todo:`" : verdict.message;
-        aotProgramsSkipped.set(why, (aotProgramsSkipped.get(why) ?? 0) + 1);
         return;
       }
       if (verdict.state === "pass") {
@@ -1829,17 +1826,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       startGroup(`Running ${parallelSafeTests.length} parallel-safe tests (${parallelSafeWidth}-wide)`);
     }
     await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
-    for (const [why, count] of aotProgramsSkipped) {
-      const line = `SKIPPED ${count} of ${aotPrograms.length} programs compiled ahead of time: ${why}`;
-      console.log(`${getAnsi("yellow")}${line}${getAnsi("reset")}`);
-      if (why.startsWith("marked ")) continue;
-      reportAnnotationToBuildkite({
-        context: "aot-programs-skipped",
-        label: "programs compiled ahead of time",
-        style: "warning",
-        content: `${escapeHtml(line)} <i>(on ${getBuildLabel()})</i>\n\n`,
-      });
-    }
   }
 
   if (vendorTests?.length) {

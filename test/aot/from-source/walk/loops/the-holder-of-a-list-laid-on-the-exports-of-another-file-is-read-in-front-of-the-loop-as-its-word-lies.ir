@@ -1,0 +1,17 @@
+# `const state = require("./state.cjs")`, then `for (..; place < state.shelf.rows.length; ..) total = total + state.shelf.rows[place]`: what the other file lays on its exports lies in a variable of that file, which holds undefined until it is laid.
+# The variable is read in front of the loop AS ITS WORD LIES: what Link claims of the reads behind the check of the name that require gave does not travel with it. Whoever buys the loop asks there, at the run, whether it holds an object of its layout.
+# -- source: main.cjs
+# const state = require("./state.cjs");
+# function sum(start) { let total = start; for (let place = 0; place < state.shelf.rows.length; place++) total = total + state.shelf.rows[place]; return total; }
+# print(sum([].length + 1));
+# -- source: state.cjs
+# class Shelf { constructor(rows) { this.rows = rows; } }
+# exports.shelf = new Shelf(JSON.parse("[1, 2, 3, 4.5]"));
+# -- end of source
+# RUN(COUNT): compile CapturedListsReadInFrontOfLoops LoopsBuiltForListsAndForBytes mechanisms=all
+# COUNT: statistic CapturedListsReadInFrontOfLoops 2
+# COUNT: statistic LoopsBuiltForListsAndForBytes 1
+# RUN(WALK): walk f3 mechanisms=all
+# WALK: = GetModuleVariable variable=g{{*}} [givesWordAsItLies]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 11.5

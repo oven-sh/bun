@@ -1,0 +1,17 @@
+# f2 = start
+# -- source: call-a-function-as-the-last-thing.ts
+# function finish(value: number, steps: number): number {
+#   return value / steps;
+# }
+# function start(value: number): number {
+#   return finish(value + 1, value);
+# }
+# declare const input: any;
+# (globalThis as any).answer = start(+input);
+# -- end of source
+# The compiler before this one: 2 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 3, patches 1, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:5 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 5

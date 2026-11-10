@@ -1,0 +1,13 @@
+# A counted loop that reads the code units of a text made flat in front of it: its turns are laid out in a row ONCE FOR EACH WIDTH: narrow texts take the first row, wide ones the second, and the
+# width is asked in front of the rows. Before, a wide text ran the loop as written, which asks the width at every unit: 10.01 instructions a unit against 3.52 (hash), 18.71 against 12.72 (starts).
+# f1 = hash: never leaves its turns: two rows. f2 = starts: leaves its turns at a line's end and comes back: two rows in one ring.
+# RUN(EVENT): compile LoopsWhoseTurnsAreLaidOut LoopsLaidOutThatAreComeBackTo LoopsLaidOutOnceAKindThatAreComeBackTo mechanisms=all
+# EVENT: statistic LoopsWhoseTurnsAreLaidOut 4
+# EVENT: statistic LoopsLaidOutThatAreComeBackTo 1
+# EVENT: statistic LoopsLaidOutOnceAKindThatAreComeBackTo 1
+# -- source: main.ts
+# function hash(text: string): number { let t = 7; for (let i = 0; i < text.length; i++) t = (t * 31 + text.charCodeAt(i)) | 0; return t; }
+# function starts(text: string): number { const found: number[] = []; let pos = 0, start = 0; while (pos < text.length) { const ch = text.charCodeAt(pos); pos++; switch (ch) { case 13: if (text.charCodeAt(pos) === 10) pos++; case 10: found.push(start); start = pos; break; default: if (ch > 127 && (ch === 0x2028 || ch === 0x2029)) { found.push(start); start = pos; } } } found.push(start); return found.length; }
+# const texts: string[] = JSON.parse('["one\\ntwo", "\\u0416\\nthree"]');
+# console.log(hash(texts[0]), hash(texts[1]), starts(texts[0]), starts(texts[1]));
+# -- end of source

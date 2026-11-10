@@ -1,4 +1,5 @@
 use bun_sema::bind::{Binding, CodeUnit, InitialState, ScopeId, ScopeKind, SymbolId};
+use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{FnKind, IdList, StmtId, StmtKind};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -164,9 +165,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             match placement.storage {
                 Storage::Variable(key) => {
                     let variable = self.file.ensure_variable(key);
+                    let runs_again = self.file.inputs.modules.runs_again(self.file.file);
                     let is_stored_at_entry = match binding {
-                        BindingRef::Symbol(_) => entry.find_initial(binding).is_some(),
+                        BindingRef::Symbol(_) => {
+                            runs_again || entry.find_initial(binding).is_some()
+                        }
                         BindingRef::Slot(..) => true,
+                    };
+                    let value = match (value, binding) {
+                        (None, BindingRef::Symbol(_))
+                            if runs_again && dead_zone::has_dead_zone(self.file, binding) =>
+                        {
+                            Some(self.get_entry_absent(&mut entry))
+                        }
+                        _ => value,
                     };
                     if let Some(value) = value
                         && is_stored_at_entry
@@ -207,7 +219,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 bound.code_unit(bound.symbol_scope(symbol)),
                 CodeUnit::Function(_)
             );
-            if is_name_in_function
+            let written = FunctionRef {
+                file: self.file.file,
+                function,
+            };
+            let is_left_out = is_local && self.file.inputs.library_functions.is_left_out(written);
+            if (is_name_in_function || is_left_out)
                 && !bound.is_visible_to_eval(symbol)
                 && self.file.scopes.is_never_named(symbol)
             {

@@ -1,0 +1,1 @@
+import "./two.js"; import "./four.js"; export const three = 3;

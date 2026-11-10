@@ -1,0 +1,12 @@
+# -- source: a-counter-without-an-upper-bound-of-its-own-addresses-the-code-units-of-turns-laid-out.cjs
+# function marks(text) { let found = 0; for (const unit of text) if (unit === ";") found++; return found; }
+# function sum(text) { let all = 0; for (let at = 0; at < text.length; at++) all += text[at] === "," ? 1 : 0; return all; }
+# globalThis.kept = [marks, sum];
+# console.log(marks("a;b;;c".repeat(4)), sum("a,b,,c".repeat(4)));
+# -- end of source
+# f1 = marks, f2 = sum
+# The counter of such a loop is typed up to 2^53 by itself; `at < text.length` narrows it, and the position of the read is that narrowed number in a word. That the number fits a word is proven at the position, not at the
+# counter behind its narrowings: a belt that asked the counter's own type took the form away from every such loop.
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Load8Z({{*}}, offset = 1, characters8

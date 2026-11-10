@@ -1409,6 +1409,30 @@ const WRITTEN_WITHOUT_WHAT_NOBODY_TAKES: &[(&str, &str, bool, bool)] = &[
         false,
         true,
     ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = ([], Kind.User); v(KEY);"#,
+        false,
+        false,
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = [...[1]] ? Kind.User : "z"; v(KEY);"#,
+        false,
+        false,
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = 1 + 1 === 2 ? Kind.User : "z"; v(KEY);"#,
+        false,
+        false,
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = "abc".length && Kind.User; v(KEY);"#,
+        false,
+        false,
+    ),
     ("a.mjs", r#"v([f()] ? "a" : "b");"#, false, false),
     ("a.mjs", r#"v([free] ? "a" : "b");"#, false, false),
     ("a.mjs", r#"v([...[]] ? "a" : "b");"#, false, false),
@@ -1473,6 +1497,8 @@ fn bun_build_writes_nothing_for_what_nobody_takes() {
                 let decisions = &s.analysis.decisions;
                 let is_found = decisions.is_string_or_number_in_bun_run(&s.hir, probe(s));
                 assert_eq!(is_found, is_expected, "{text}");
+                let is_found = decisions.is_string_or_number_under_minify_syntax(&s.hir, probe(s));
+                assert_eq!(is_found, is_written_under_minify_syntax, "{text}");
             });
         }
     }

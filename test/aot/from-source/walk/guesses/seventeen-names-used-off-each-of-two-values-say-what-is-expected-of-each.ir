@@ -1,0 +1,26 @@
+# Two classes with seventeen fields each; their instances reach `sum` through a list that nobody knows, so the names used off each parameter alone say what is expected of it.
+# A list of more than sixteen names is numbered once for each root of a frame and what is asked of the whole list is kept under that number: this is the first size at which that is so.
+# An answer kept under the number of the other parameter's list would leave the reads off one of the two untyped.
+# f1 = sum. The loop is built twice: the reads off both parameters are typed in both builds
+# -- source: main.js
+# class First { constructor() { this.a0 = 0; this.a1 = 1; this.a2 = 2; this.a3 = 3; this.a4 = 4; this.a5 = 5; this.a6 = 6; this.a7 = 7; this.a8 = 8; this.a9 = 9; this.a10 = 10; this.a11 = 11; this.a12 = 12; this.a13 = 13; this.a14 = 14; this.a15 = 15; this.a16 = 16; } }
+# class Second { constructor() { this.b0 = 0; this.b1 = 2; this.b2 = 4; this.b3 = 6; this.b4 = 8; this.b5 = 10; this.b6 = 12; this.b7 = 14; this.b8 = 16; this.b9 = 18; this.b10 = 20; this.b11 = 22; this.b12 = 24; this.b13 = 26; this.b14 = 28; this.b15 = 30; this.b16 = 32; } }
+# globalThis.kept = [new First(), new Second()];
+# function sum(one, other) {
+#   let total = 0;
+#   for (let i = 0; i < 3; i++) {
+#     total += one.a0 + one.a1 + one.a2 + one.a3 + one.a4 + one.a5 + one.a6 + one.a7 + one.a8 + one.a9 + one.a10 + one.a11 + one.a12 + one.a13 + one.a14 + one.a15 + one.a16;
+#     total += other.b0 + other.b1 + other.b2 + other.b3 + other.b4 + other.b5 + other.b6 + other.b7 + other.b8 + other.b9 + other.b10 + other.b11 + other.b12 + other.b13 + other.b14 + other.b15 + other.b16;
+#   }
+#   return total;
+# }
+# const list = globalThis.kept;
+# print(sum(list[0], list[1]));
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: = GetSlot {{*}}key="a16" receivers=[L0]
+# WALK: = GetSlot {{*}}key="b16" receivers=[L1]
+# WALK: = GetSlot {{*}}key="a16" receivers=[L0]
+# WALK: = GetSlot {{*}}key="b16" receivers=[L1]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1224

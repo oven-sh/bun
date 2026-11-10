@@ -1,0 +1,39 @@
+# console.log(typeof process.nextTick)
+# Nobody calls the function. But native code makes the value of the property by a call of initializeNextTickQueue(), at the first read: what makes the value of an entry does not wait until the entry may run.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f2
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
+    v3 = PropGet v2 key="log"
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v5 = Builtin builtin=Process
+    v6 = PropGet v5 key="nextTick"
+    v7 = Convert v6 declared={type=builtin(ProcessNextTick) flags=[IsExpected]}
+    v8 = TypeOf v7
+    v9 = Call v4, v2, v8 calleeKey="log" calleeName="console.log"
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="createOnWarning" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsCreateOnWarning thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f3 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

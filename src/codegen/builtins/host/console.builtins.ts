@@ -34,6 +34,22 @@ const formattedWithoutCode = b.union(b.null, b.bool, b.f64, b.string, b.symbol);
 // print_proxy() in src/jsc/ConsoleObject.rs. console.dir reads its options, and console.table lists its rows, off whatever they are handed.
 const logging = printing(formattedWithoutCode, [formatted]);
 
+// Compiled code enters a function that takes the realm and the operands: no frame and no list of arguments is made. One text is printed as it is: nothing is formatted. Anything else goes on as
+// the call does.
+const enteredBy = (symbol: string) =>
+  logging.map(row => ({
+    ...row,
+    directEntry: {
+      symbol,
+      declaration: `extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol}(JSC::JSGlobalObject*, const JSC::EncodedJSValue*, size_t);`,
+      headers: [],
+      parameters: [
+        { value: "Realm" as const, cppType: "JSC::JSGlobalObject*" },
+        { value: "RestOfValues" as const, cppType: "const JSC::EncodedJSValue*, size_t" },
+      ],
+    },
+  })) satisfies b.FunctionField[];
+
 const labeled = (label: b.TableType) =>
   ({
     args: { label },
@@ -62,11 +78,11 @@ export default b.declarations(
     b.extend(`console.${name}`, { mutability: "ConstantUnlessWritten" }),
   ),
   b.namespace("console", {
-    log: logging,
-    info: logging,
-    warn: logging,
-    error: logging,
-    debug: logging,
+    log: enteredBy("Bun__ConsoleObject__logValues"),
+    info: enteredBy("Bun__ConsoleObject__infoValues"),
+    warn: enteredBy("Bun__ConsoleObject__warnValues"),
+    error: enteredBy("Bun__ConsoleObject__errorValues"),
+    debug: enteredBy("Bun__ConsoleObject__debugValues"),
     trace: logging,
     dir: listing,
     dirxml: logging,

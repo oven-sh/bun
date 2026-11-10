@@ -12,8 +12,11 @@
 # CHECK: = Call {{*}}calleeKey="some" {{*}}methodOfReceiverAsMade=ArrayPrototypeSome
 # RUN(BYTES): bytes f1 mechanisms=all-CellsInFrames
 # BYTES: Call Stub CallCompiledMethodOfArray.Some count 1
+# The closed call stands in a rare block: its arrow is made in the heap (answers/a-closure-made-on-a-rare-way-is-made-in-the-heap.ts), so the stub is the one that lends nothing.
 # RUN(LENDS): bytes f1 mechanisms=all
-# LENDS: Call Stub CallCompiledMethodOfArrayLending.Some count 1
+# LENDS: Call Stub CallCompiledMethodOfArray.Some count 1
+# RUN(NEVER): bytes f1 mechanisms=all
+# NEVER-NOT: CallCompiledMethodOfArrayLending
 # RUN(OTHER): walk f2 mechanisms=all
 # OTHER-LABEL: code f2:Body
 # OTHER-NOT: methodOfReceiverAsMade

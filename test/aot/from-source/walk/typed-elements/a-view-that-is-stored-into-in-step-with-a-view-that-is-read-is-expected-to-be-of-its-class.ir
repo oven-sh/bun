@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# "use strict";
+# function twice(xs, out) { for (let i = 0; i < xs.length; i++) out[i] = xs[i] * 2; return out; }
+# const byName = { twice }, key = JSON.parse('"twice"');
+# const whole = new Float64Array(8).fill(9);
+# byName[key](Float64Array.of(1, 2, 3, 4, 5), whole.subarray(2, 6));
+# print(whole.join());
+# print(byName[key](Float64Array.of(1, 2), [0]).join());
+# -- end of source
+# In front of the loop the holder that is read is told apart. In its copy for a view another holder that is READ in step was expected to be of the same class; one that is STORED INTO in step was asked for a list alone,
+# and a view sent the whole loop into the copy as it is written. It is expected to be of that class too; who fails there goes on to the copy that asks for a list, as before.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: TypeTest v1 testedType=Float64Array
+# WALK: PutTypedArrayElement {{*}} typedArrayType=10 level=Proven [keyIsIntegral
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 9,9,2,4,6,8,9,9
+# RIGHT-NEXT: 2,4
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# HELD: 9,9,2,4,6,8,9,9
+# HELD-NEXT: 2,4
+# HELD-NEXT: exited with 0

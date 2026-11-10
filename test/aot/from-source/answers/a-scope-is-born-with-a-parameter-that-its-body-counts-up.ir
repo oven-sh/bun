@@ -1,0 +1,25 @@
+# -- source: main.js
+# function lay(parts, at, sofar, done) {
+#   while (at < parts.length) {
+#     const part = parts[at++];
+#     if (Array.isArray(part)) {
+#       for (const one of part) lay([one], 0, sofar.slice(), rest => lay(parts, at, rest, done));
+#       return;
+#     }
+#     sofar.push(part);
+#   }
+#   done(sofar);
+# }
+# const out = [];
+# lay(JSON.parse('["a",["b","c"],"d"]'), 0, [], whole => out.push(whole.join("")));
+# print(out.join());
+# -- end of source
+# `at` is a parameter that a closure captures and the body counts up. Link proves it a number with every writer in sight, so its slot in the scope holds the raw word. The scope is born with the parameter as it
+# arrives, and a body that has not proven that a number asks in front of the store; the choice of the allocation, which comes first, leaves a raw slot to that question. It refused the unit: no program with such a
+# function was built.
+# RUN(FORM): plan layouts mechanisms=all
+# FORM: Environment
+# FORM-NEXT: slot 0 {{*}}OptionalDouble Inline offset=8
+# RUN(RIGHT): run-in-shell
+# RIGHT: abd,acd
+# RIGHT-NEXT: exited with 0

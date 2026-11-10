@@ -8,10 +8,13 @@
 // from the last Bun that used libwebp (1.4.4, libwebp 1.6.0, Linux x64), and this script refuses to run on any other:
 // what a later Bun records is what it does, not what it should do.
 //
-// The exception is the lossy encodes that are `fixed`. libwebp 1.6.0 counted the uses of one probability as those of another,
-// which 80bda3fd, a later commit, corrects, and `bun_webp` has the correction. Their results come from `WebPEncodeRGBA`, and
-// `WebPMuxAssemble` for a profile, of libwebp 1.6.0 with that commit. This script keeps them as they are, and a lossy
-// encode that it adds may need the same.
+// The exception is the cases that are `fixed`: libwebp has corrected what it did with them in 1.6.0, and `bun_webp` has
+// the corrections. This script keeps them as they are, and a case that it adds may need the same.
+// - Lossy encodes. 1.6.0 counted the uses of one probability as those of another, until 80bda3fd. The results come from
+//   `WebPEncodeRGBA`, and `WebPMuxAssemble` for a profile, of libwebp 1.6.0 with that commit.
+// - Decodes of a bitstream that goes on behind the end of its chunk. 1.6.0 read on, to the end of the file. Since c3fe5bb6
+//   the bitstream ends with its chunk, and `WebPDecode` refuses these files. The same commit has `WebPGetInfo` accept a lossy
+//   frame without a chunk header that ends in its first partition. No case is such a file so far.
 //
 // No case is a damaged lossy file whose coefficients overflow 16 bits: libwebp's SSE2 code and its C code decode
 // those to different pixels. `bun_webp` does what the C code does, and webp-golden.test.ts has cases of its own for that.
@@ -54,36 +57,42 @@ const decodeFixture = join(import.meta.dir, "decode.json.gz");
 const encodeFixture = join(import.meta.dir, "encode.json.gz");
 
 // Sets, so that a case that is there already is not added again.
-const files = new Set(args.fresh ? [] : (await load<DecodeCase>(decodeFixture)).map(c => c.data));
+const files = new Set<string>();
+const fixedDecodes = new Map<string, DecodeCase>();
+for (const c of await load<DecodeCase>(decodeFixture)) {
+  if (!args.fresh) files.add(c.data);
+  if (c.fixed) fixedDecodes.set(c.data, c);
+}
 for (const directory of args.decode) {
   for (const name of readdirSync(directory).sort()) {
     files.add(Buffer.from(await Bun.file(join(directory, name)).bytes()).toString("base64"));
   }
 }
 const encodes = new Set<string>();
-const fixed = new Map<string, EncodeCase>();
+const fixedEncodes = new Map<string, EncodeCase>();
 const keyOf = ({ image, options, icc }: EncodeCase) => JSON.stringify({ image, options, icc });
 for (const c of await load<EncodeCase>(encodeFixture)) {
   if (!args.fresh) encodes.add(keyOf(c));
-  if (c.fixed) fixed.set(keyOf(c), c);
+  if (c.fixed) fixedEncodes.set(keyOf(c), c);
 }
 for (const path of args.encode) {
   for (const line of (await Bun.file(path).text()).trim().split("\n")) encodes.add(keyOf(JSON.parse(line)));
 }
 
 const decoded: DecodeCase[] = [];
-for (const data of files) {
+async function observe(data: string): Promise<DecodeCase> {
   const file = Buffer.from(data, "base64");
   const metadata = await observeMetadata(file);
   const tooLarge = "width" in metadata && metadata.width * metadata.height > 1 << 16;
-  decoded.push({ data, metadata, decoded: tooLarge ? undefined : await observeDecode(file) });
+  return { data, metadata, decoded: tooLarge ? undefined : await observeDecode(file) };
 }
+for (const data of files) decoded.push(fixedDecodes.get(data) ?? (await observe(data)));
 await save(decodeFixture, decoded);
 
 const encoded: EncodeCase[] = [];
 for (const json of encodes) {
   const input: Pick<EncodeCase, "image" | "options" | "icc"> = JSON.parse(json);
-  encoded.push(fixed.get(json) ?? { ...input, ...(await observeEncode(input)) });
+  encoded.push(fixedEncodes.get(json) ?? { ...input, ...(await observeEncode(input)) });
 }
 await save(encodeFixture, encoded);
 

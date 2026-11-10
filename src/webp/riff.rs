@@ -33,7 +33,7 @@ pub(crate) const fn padded(size: u32) -> u32 {
 pub(crate) struct Headers<'a> {
     /// The size that the bitstream announces.
     info: Info,
-    /// From the first byte of the VP8 or VP8L bitstream to the end of the input, which can be past the end of the chunk.
+    /// The VP8 or VP8L bitstream, to the end of its chunk. Of part of a file, what there is of it.
     pub(crate) bitstream: &'a [u8],
     /// The payload of the last `ALPH` chunk in front of the bitstream.
     pub(crate) alpha: Option<&'a [u8]>,
@@ -123,11 +123,12 @@ fn parse_optional_chunks<'a>(data: &mut &'a [u8], riff_size: u32) -> Result<Opti
 }
 
 /// Skips the `VP8 ` or `VP8L` chunk header if there is one. Returns the size of the bitstream and whether it is lossless.
+/// Without a chunk header the bitstream goes on to the end of the file, so part of a file does not tell its size.
 fn parse_vp8_header(
     data: &mut &[u8],
     have_all_data: bool,
     riff_size: u32,
-) -> Result<(usize, bool)> {
+) -> Result<(Option<usize>, bool)> {
     let is_vp8 = data.starts_with(b"VP8 ");
     let is_vp8l = data.starts_with(b"VP8L");
     let minimal_size = (TAG_SIZE + CHUNK_HEADER_SIZE) as u32;
@@ -135,7 +136,8 @@ fn parse_vp8_header(
         return Err(Error::NotEnoughData);
     }
     if !is_vp8 && !is_vp8l {
-        return Ok((data.len(), vp8l::dec::check_signature(data)));
+        let size = have_all_data.then_some(data.len());
+        return Ok((size, vp8l::dec::check_signature(data)));
     }
     let size = le32(data, TAG_SIZE)?;
     if riff_size >= minimal_size && size > riff_size - minimal_size {
@@ -145,7 +147,7 @@ fn parse_vp8_header(
         return Err(Error::NotEnoughData);
     }
     *data = data.sub(CHUNK_HEADER_SIZE..)?;
-    Ok((size as usize, is_vp8l))
+    Ok((Some(size as usize), is_vp8l))
 }
 
 /// The RIFF header and the `VP8X` chunk, neither of which a file needs to have.
@@ -193,7 +195,7 @@ impl<'a> Prefix<'a> {
         };
         let (compressed_size, is_lossless) =
             parse_vp8_header(&mut data, self.have_all_data, self.riff_size)?;
-        if compressed_size > MAX_CHUNK_PAYLOAD as usize {
+        if compressed_size.is_some_and(|size| size > MAX_CHUNK_PAYLOAD as usize) {
             return Err(Error::BitstreamError);
         }
         let info = if is_lossless {
@@ -210,9 +212,13 @@ impl<'a> Prefix<'a> {
         if self.canvas.is_some_and(|canvas| canvas != info) {
             return Err(Error::BitstreamError);
         }
+        let bitstream = match compressed_size {
+            Some(size) if self.have_all_data => data.sub(..size)?,
+            _ => data,
+        };
         Ok(Headers {
             info,
-            bitstream: data,
+            bitstream,
             alpha,
             is_lossless,
         })

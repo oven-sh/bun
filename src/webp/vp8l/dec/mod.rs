@@ -823,7 +823,7 @@ impl<'a> Header<'a> {
     }
 }
 
-/// `VP8LDecodeHeader` and `VP8LDecodeImage`. `data` starts at the signature byte and goes on to the end of the file.
+/// `VP8LDecodeHeader` and `VP8LDecodeImage`. `data` starts at the signature byte and goes on to the end of the chunk.
 pub(crate) fn decode(data: &[u8], output: &mut Output<'_>) -> Result<()> {
     let mut br = BitReader::new(data);
     let info = read_image_info(&mut br).ok_or(Error::BitstreamError)?;

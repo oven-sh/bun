@@ -63,8 +63,9 @@ describe("decode", () => {
         data: "UklGRkYAAABXRUJQVlA4IDkAAAC2AwCdASogAA8Az4BqhEgAC6D8uzfxihQIGdILRCzLeiAfSca+OAD183X3zflN//r1u///zfr2jX8A",
         decoded: { width: 32, height: 15, rgba: "ea6839333e4e3c49" },
       },
+      // `intoThePadding` below, in a chunk that holds all of it.
       {
-        data: "UklGRnAAAABXRUJQVlA4IGMAAACSBACdASovwByAD9IUCAAcby/Yz2lm0eUo8eq51tFU780F4Be3dlEutruJ7cagDgAAGwAAAwAAJ53SUqnfXa6vkrMM55Em////////////////////7//////////////1/ncA",
+        data: "UklGRnAAAABXRUJQVlA4IGQAAACSBACdASovwByAD9IUCAAcby/Yz2lm0eUo8eq51tFU780F4Be3dlEutruJ7cagDgAAGwAAAwAAJ53SUqnfXa6vkrMM55Em////////////////////7//////////////1/ncA",
         decoded: { width: 47, height: 28, rgba: "0af0ea6c72c50e79" },
       },
       {
@@ -92,6 +93,16 @@ describe("decode", () => {
     );
     expect(await observeMetadata(file)).toEqual({ width: 1, height: 1, format: "webp" });
     expect(await observeDecode(file)).toEqual({ error: "ERR_IMAGE_DECODE_FAILED" });
+  });
+
+  // libwebp refuses this since c3fe5bb6, after 1.6.0. The chunk has 99 bytes, and the decoder needs the byte that pads it.
+  test("a bitstream that goes on in the padding of its chunk is refused", async () => {
+    const intoThePadding = Buffer.from(
+      "UklGRnAAAABXRUJQVlA4IGMAAACSBACdASovwByAD9IUCAAcby/Yz2lm0eUo8eq51tFU780F4Be3dlEutruJ7cagDgAAGwAAAwAAJ53SUqnfXa6vkrMM55Em////////////////////7//////////////1/ncA",
+      "base64",
+    );
+    expect(await observeMetadata(intoThePadding)).toEqual({ width: 47, height: 28, format: "webp" });
+    expect(await observeDecode(intoThePadding)).toEqual({ error: "ERR_IMAGE_DECODE_FAILED" });
   });
 });
 
@@ -140,6 +151,10 @@ describe("libwebp's history", () => {
   const anmf = (payload: Uint8Array, size = 16 + payload.length) =>
     chunk("ANMF", Buffer.concat([hex("00000000000000000000000064000000"), payload]), size);
   const alph = (payload: string) => chunk("ALPH", hex(payload));
+  /** 5 x 3 pixels. The decoder needs the first 33 of the 34 bytes. */
+  const lossyBits = hex("b001009d012a0500030002c04c258c0274010efe02ec00fe6c5da603e5df44040000");
+  /** 12 x 1 pixels. The decoder needs the first 23 of the 27 bytes. */
+  const losslessBits = hex("2f0b00001096a3b2bc61e50406c7f29e8074a52c1bae42e700a669");
   /** A lossless 1 x 1 image whose distance code has the lengths that `bits` spells out. */
   const withDistanceCode = (bits: string) =>
     riff([chunk("VP8L", hex("2f000000006844453ad37f0f90240992244912" + bits.padEnd(40, "0")))]);
@@ -172,6 +187,20 @@ describe("libwebp's history", () => {
     icc: icc === undefined ? undefined : hash(Buffer.from(icc)),
   });
   const [gray, clear, color] = ["7f7f7fff", "00000000", "221133ff"];
+  const lossySize = { ...size, width: 5, height: 3 };
+  const lossyPixels = {
+    ...pixel(
+      "757d83ff899197ffa2abb1ffb5bdc4ffc4ccd5ff757d83ff899197ffa2ab" +
+        "b1ffb5bdc4ffc4ccd5ff757d83ff899197ffa2abb1ffb5bdc4ffc4ccd5ff",
+    ),
+    width: 5,
+    height: 3,
+  };
+  const losslessSize = { ...size, width: 12 };
+  const losslessPixels = {
+    ...pixel("0da804de2b2c06de2b2c04de0d2c06580da804de0da806582b2c06582ba804580d2c06de0da806580da806580d2c04de"),
+    width: 12,
+  };
 
   test.each([
     ["a lossy image", riff([lossy]), size, pixel(gray)],
@@ -323,6 +352,46 @@ describe("libwebp's history", () => {
       riff([vp8x(ICCP), iccp, lossy, anim, anmf(chunk("JUNK", hex("0000")))]),
       size,
       pixel(gray),
+    ],
+
+    // c3fe5bb6, after 1.6.0: the decoders read on behind the end of the image chunk, to the end of the file.
+    ...([34, 33] as const).map(
+      n =>
+        [
+          `a lossy image in a chunk of ${n} bytes`,
+          riff([chunk("VP8 ", lossyBits, n)]),
+          lossySize,
+          lossyPixels,
+        ] as const,
+    ),
+    ["a lossy image in a chunk of 32 bytes", riff([chunk("VP8 ", lossyBits, 32)]), lossySize, refused],
+    // The frame header takes 10 bytes. With an empty first partition, no chunk is too small to hold the partition.
+    ...([1, 9, 10] as const).map(
+      n =>
+        [
+          `a lossy frame with an empty first partition in a chunk of ${n} bytes`,
+          riff([chunk("VP8 ", hex("1000009d012a0500030002c04c258c02"), n)]),
+          lossySize,
+          refused,
+        ] as const,
+    ),
+    ...([27, 23] as const).map(
+      n =>
+        [
+          `a lossless image in a chunk of ${n} bytes`,
+          riff([chunk("VP8L", losslessBits, n)]),
+          losslessSize,
+          losslessPixels,
+        ] as const,
+    ),
+    ["a lossless image in a chunk of 22 bytes", riff([chunk("VP8L", losslessBits, 22)]), losslessSize, refused],
+    ["a lossless image in a chunk of 0 bytes", riff([chunk("VP8L", losslessBits, 0)]), losslessSize, refused],
+    // The same commit: without a chunk header, the start of a frame does not tell that its first partition is cut short.
+    [
+      "a lossy frame without a chunk header that ends in its first partition",
+      riff([hex("b201009d012a01800a000290")]),
+      { ...size, height: 10 },
+      refused,
     ],
 
     ["an animation", riff([vp8x(ICCP | ANIMATION), iccp, anim, anmf(lossy)]), size, refused],

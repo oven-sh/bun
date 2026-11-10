@@ -28,8 +28,9 @@ const MAX_NUM_PARTITIONS: usize = 8;
 /// Where the coefficients of a block are, in the order of the bitstream.
 const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
 
-/// `VP8GetInfo`: the width and the height, if `data` starts like a key frame that fits in `chunk_size` bytes.
-pub(crate) fn get_info(data: &[u8], chunk_size: usize) -> Option<Info> {
+/// `VP8GetInfo`: the width and the height, if `data` starts like a key frame that fits in `chunk_size` bytes, where that
+/// is known.
+pub(crate) fn get_info(data: &[u8], chunk_size: Option<usize>) -> Option<Info> {
     let &[b0, b1, b2, s0, s1, s2, w0, w1, h0, h1] = data.first_chunk::<FRAME_HEADER_SIZE>()?;
     if [s0, s1, s2] != SIGNATURE {
         return None;
@@ -44,7 +45,7 @@ pub(crate) fn get_info(data: &[u8], chunk_size: usize) -> Option<Info> {
     if !is_key_frame
         || profile > 3
         || !is_shown
-        || partition_length >= chunk_size
+        || chunk_size.is_some_and(|size| partition_length >= size)
         || width == 0
         || height == 0
     {
@@ -438,9 +439,11 @@ struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
-    /// `VP8GetHeaders`, of a frame that `get_info` accepts.
+    /// `VP8GetHeaders`, of a frame that `get_info` accepts. `get_info` reads past the end of the chunk, where `data` ends.
     fn parse(data: &'a [u8]) -> Result<Self> {
-        let (header, buf) = data.split_first_chunk::<FRAME_HEADER_SIZE>().ok_or(Bug)?;
+        let (header, buf) = data
+            .split_first_chunk::<FRAME_HEADER_SIZE>()
+            .ok_or(Error::NotEnoughData)?;
         let &[b0, b1, b2, _, _, _, w0, w1, h0, h1] = header;
         let partition_length = (u32::from_le_bytes([b0, b1, b2, 0]) >> 5) as usize;
         // The two bits above each are a scale for the display.
@@ -528,7 +531,7 @@ impl<'a> Decoder<'a> {
     }
 }
 
-/// `VP8GetHeaders`, `VP8Decode`. `data` goes from the frame header to the end of the file. `alpha`: the `ALPH` payload.
+/// `VP8GetHeaders`, `VP8Decode`. `data` goes from the frame header to the end of the chunk. `alpha`: the `ALPH` payload.
 pub(crate) fn decode(data: &[u8], alpha: Option<&[u8]>, output: &mut Output<'_>) -> Result<()> {
     let dec = Decoder::parse(data)?;
     output.check(dec.width, dec.height)?;

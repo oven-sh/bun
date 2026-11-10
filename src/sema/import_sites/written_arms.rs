@@ -202,12 +202,7 @@ impl ArmsWalk<'_, '_, '_, '_> {
 
     fn find_value_stored(&self, target: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.hir, self.bound);
-        let mut stored_to = target;
-        while let Parent::Expr(parent) = bound.parent_of_expr(stored_to)
-            && hir.type_assertion_operand(parent).is_some()
-        {
-            stored_to = parent;
-        }
+        let stored_to = bound.outermost_type_assertion(hir, target);
         let Parent::Expr(assignment) = bound.parent_of_expr(stored_to) else {
             return None;
         };

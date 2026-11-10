@@ -610,6 +610,7 @@ bun_spawn::link_impl_ProcessExit! {
 
 bun_io::impl_buffered_reader_parent! {
     ContentMapper for Child;
+    feature = Check;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| Child::on_read_chunk(this, &chunk, has_more);
     on_reader_done  = |this| Child::on_reader_done(this);

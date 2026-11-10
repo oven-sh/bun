@@ -202,22 +202,9 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
             debug_assert!(args.kind == js_ast::scope::Kind::FunctionArgs);
             // A parameter named like the function expression took the scope member of `name`, and `declare_symbol`
             // linked `name` to it. It went with the old parameter list, so `name` is a symbol of its own again.
-            if let Some(name) = name {
-                let symbol = &self.symbols[name.inner_index() as usize];
-                let text = symbol.original_name.slice();
-                if symbol.has_link()
-                    && let Some(mut member) = args.members.get(text).copied()
-                    && js_ast::symbol::follow_symbols(&self.symbols, member.ref_)
-                        == js_ast::symbol::follow_symbols(&self.symbols, name)
-                {
-                    debug_assert!(symbol.kind == js_ast::symbol::Kind::HoistedFunction);
-                    debug_assert!(!self.symbols.iter().any(|other| other.link.get() == name));
-                    symbol.link.set(js_ast::Ref::NONE);
-                    member.ref_ = name;
-                    // SAFETY: `text` is the `original_name` of a symbol, which outlives `args`.
-                    unsafe { args.members.put(text, member) };
-                }
-            }
+            let merged = name
+                .filter(|name| self.symbols[name.inner_index() as usize].has_link())
+                .map(|name| (name, js_ast::symbol::follow_symbols(&self.symbols, name)));
             // Still printed: `arguments`, and `name` when a function expression declares it here.
             let mut kept = js_ast::scope::Members::EMPTY;
             for (key, member) in args.members.iter() {
@@ -227,6 +214,16 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                     // outlive `args`. It is already the key of a member of
                     // `args`, stored under the same contract.
                     unsafe { kept.put(key, *member) };
+                } else if let Some((name, root)) = merged
+                    && js_ast::symbol::follow_symbols(&self.symbols, member.ref_) == root
+                {
+                    let symbol = &self.symbols[name.inner_index() as usize];
+                    debug_assert!(symbol.kind == js_ast::symbol::Kind::HoistedFunction);
+                    debug_assert!(!self.symbols.iter().any(|other| other.link.get() == name));
+                    symbol.link.set(js_ast::Ref::NONE);
+                    let loc = member.loc;
+                    // SAFETY: as above.
+                    unsafe { kept.put(key, js_ast::scope::Member { ref_: name, loc }) };
                 }
             }
             args.members = kept;

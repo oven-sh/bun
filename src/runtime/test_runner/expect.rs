@@ -1310,7 +1310,7 @@ impl Expect {
 
             let prop_matchers = _prop_matchers;
 
-            let (matched, with_matchers) = value.jest_deep_match(prop_matchers, global_this, true)?;
+            let (matched, with_matchers) = value.jest_deep_match(prop_matchers, global_this, Some(true))?;
             if !matched {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);

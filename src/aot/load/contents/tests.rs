@@ -1625,7 +1625,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
     use bun_sema::module_format::ModuleFormat::{CommonJs, Esm};
     const NO_KIND: &str = "globalThis.ran = true;";
     const PLUG: (&str, &str) = ("plug.mjs", r#"import "./plain.cjs";"#);
-    let rows: [(&[(&str, &str)], &str, _); 6] = [
+    let rows: [(&[(&str, &str)], &str, _, _); 7] = [
         (
             &[
                 ("main.cjs", r#"require(require("./config.json").plugin);"#),
@@ -1634,6 +1634,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("plain.cjs", NO_KIND),
             ],
             "plain.cjs",
+            CommonJs,
             CommonJs,
         ),
         (
@@ -1646,6 +1647,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
+            CommonJs,
             Esm,
         ),
         (
@@ -1657,6 +1659,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
             ],
             "plain.cjs",
             CommonJs,
+            CommonJs,
         ),
         (
             &[
@@ -1665,6 +1668,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("plain.cjs", NO_KIND),
             ],
             "plain.cjs",
+            CommonJs,
             CommonJs,
         ),
         (
@@ -1677,6 +1681,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
+            CommonJs,
             Esm,
         ),
         (
@@ -1685,11 +1690,22 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
+            CommonJs,
+            Esm,
+        ),
+        (
+            &[
+                ("package.json", r#"{"type":"commonjs"}"#),
+                ("main.mjs", r#"await import("./setup.mjs");"#),
+                ("setup.mjs", NO_KIND),
+            ],
+            "setup.mjs",
+            Esm,
             Esm,
         ),
     ];
     for builds_executable in [false, true] {
-        for &(files, asked, bundled_format) in &rows {
+        for &(files, asked, in_place_format, bundled_format) in &rows {
             let mut project = executable(files);
             project.builds_executable = builds_executable;
             load(&project, |loaded| {
@@ -1698,7 +1714,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 let format = if builds_executable {
                     bundled_format
                 } else {
-                    CommonJs
+                    in_place_format
                 };
                 assert_eq!(
                     analysis.module_format, format,

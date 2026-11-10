@@ -180,11 +180,14 @@ impl<'h> Resolver<'h> {
     }
 
     pub(crate) fn module_type_where_imported(&self, path: &[u8]) -> DeclaredModuleType {
-        // In-place imports use the same extension precedence as the runtime loader.
+        let of_package = self.package_module_type(path);
         if !self.code_options().builds_executable {
+            // Concurrent JSX/TSX imports use the package format, unlike require().
+            if path.ends_with(b".jsx") || path.ends_with(b".tsx") {
+                return of_package;
+            }
             return self.declared_module_type(path);
         }
-        let of_package = self.package_module_type(path);
         let is_contradicted = of_package == DeclaredModuleType::CommonJs
             && self.declared_module_type(path) == DeclaredModuleType::Esm;
         match is_contradicted {

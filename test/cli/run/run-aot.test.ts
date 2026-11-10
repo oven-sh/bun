@@ -689,6 +689,41 @@ describe.skipIf(!supported)("bun run --aot", () => {
     });
   }
 
+  for (const extension of ["jsx", "tsx"]) {
+    for (const entry of ["dynamic.mjs", "static.mjs", "require.cjs"]) {
+      test.concurrent(`in-place .${extension} module format matches the runtime: ${entry}`, async () => {
+        const { stdout } = await expectSameAsBunRun(
+          {
+            "pkg/package.json": `{ "type": "module" }`,
+            [`pkg/target.${extension}`]: `
+              process.env.BUN_TEST_FORMAT_DIRNAME = __dirname;
+              process.env.BUN_TEST_FORMAT_SEEN = process.env.BUN_TEST_FORMAT_ORDER;
+            `,
+            "before.mjs": `process.env.BUN_TEST_FORMAT_ORDER = "before";`,
+            "dynamic.mjs": `
+              await import("./before.mjs");
+              await new Promise(resolve => setImmediate(resolve));
+              const imported = await import("./pkg/target.${extension}");
+              console.log("default" in imported, typeof process.env.BUN_TEST_FORMAT_DIRNAME, process.env.BUN_TEST_FORMAT_SEEN);
+            `,
+            "static.mjs": `
+              import "./before.mjs";
+              import * as imported from "./pkg/target.${extension}";
+              console.log("default" in imported, typeof process.env.BUN_TEST_FORMAT_DIRNAME, process.env.BUN_TEST_FORMAT_SEEN);
+            `,
+            "require.cjs": `
+              const imported = require("./pkg/target.${extension}");
+              console.log(Object.getPrototypeOf(imported) === Object.prototype, typeof process.env.BUN_TEST_FORMAT_DIRNAME);
+            `,
+          },
+          entry,
+          { env: { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "0" } },
+        );
+        expect(stdout).toBe(entry === "require.cjs" ? "true string\n" : "false string before\n");
+      });
+    }
+  }
+
   test.concurrent("a CommonJS module with a top-level return is compiled", async () => {
     using dir = tempDir("run-aot", {
       "entry.cjs": `console.log(require("./returns.cjs"), require("./returns-a-value.cjs"));`,

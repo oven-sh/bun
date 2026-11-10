@@ -3669,9 +3669,11 @@ declare module "bun" {
 
     /**
      * Cancel the build. When the signal aborts, the returned promise rejects
-     * with `signal.reason` (an `AbortError` by default), the bundler stops, and
-     * a plugin hook that is still pending is never waited for. A signal that
-     * is already aborted rejects at once, before any plugin runs.
+     * with `signal.reason` (a `TimeoutError` from `AbortSignal.timeout()`, an
+     * `AbortError` from `controller.abort()` with no reason). The bundler
+     * schedules no further work, a plugin hook that is still pending is not
+     * waited for, and `onEnd` callbacks do not run. A signal that is already
+     * aborted rejects at once, before any plugin runs.
      *
      * @example
      * ```ts

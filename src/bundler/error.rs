@@ -4,8 +4,7 @@ pub enum Error {
     ModuleNotFound,
     #[error("BuildFailed")]
     BuildFailed,
-    /// The `Bun.build` this pass ran for was cancelled (its `signal` fired, or the VM that owns its
-    /// plugins stopped). The log carries no message for it: the JS side reports the cause.
+    /// The `Bun.build` was cancelled (see `CancelCause`). The log carries no message for it.
     #[error("Cancelled")]
     Cancelled,
     #[error("CompilationFailed")]

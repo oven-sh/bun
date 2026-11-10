@@ -1512,7 +1512,7 @@ Default `true`. When a namespace object does have to be created, each property c
 
 ### signal
 
-Pass an `AbortSignal` to cancel a build. When the signal aborts, the returned promise rejects with `signal.reason` (an `AbortError` by default). The bundler stops, and a plugin hook that has not answered yet is not waited for. The abort is not a build error: it is not reported as a `BuildMessage`, and `throw: false` does not turn it into a `{ success: false }` result. A signal that is already aborted rejects at once, before any plugin runs.
+Pass an `AbortSignal` to cancel a build. When the signal aborts, the returned promise rejects with `signal.reason`: a `TimeoutError` from `AbortSignal.timeout()`, an `AbortError` from `controller.abort()` with no reason. The bundler schedules no further work (a file already being parsed finishes), and a plugin hook that has not answered yet, `setup()` and `onStart()` included, is not waited for. The abort is not a build result: it is not reported as a `BuildMessage`, `onEnd` callbacks do not run, and `throw: false` does not turn it into a `{ success: false }` result. A signal that is already aborted rejects at once, before any plugin runs.
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 const result = await Bun.build({
@@ -2000,9 +2000,11 @@ interface BuildConfig {
 
   /**
    * Cancel the build. When the signal aborts, the returned promise rejects
-   * with `signal.reason` (an `AbortError` by default), the bundler stops, and
-   * a plugin hook that is still pending is never waited for. A signal that
-   * is already aborted rejects at once, before any plugin runs.
+   * with `signal.reason` (a `TimeoutError` from `AbortSignal.timeout()`, an
+   * `AbortError` from `controller.abort()` with no reason). The bundler
+   * schedules no further work, a plugin hook that is still pending is not
+   * waited for, and `onEnd` callbacks do not run. A signal that is already
+   * aborted rejects at once, before any plugin runs.
    */
   signal?: AbortSignal;
 

@@ -16,6 +16,7 @@ use crate::bun_fs as Fs;
 use crate::bundle_v2::api::JSBundler::{
     Load, LoadValue, MiniImportRecord, Plugin, RequestOwner, Resolve, ResolveValue,
 };
+use crate::bundle_v2::dispatch::CancelCause;
 use crate::options::Target;
 
 const FILE_NAMESPACE: &[u8] = b"file";
@@ -228,11 +229,29 @@ impl PluginRequests {
         self.waiters.lock().release(waiter);
 
         match answer {
+            Answer::Resolve(ResolveValue::Cancelled) => Err(self.cancelled(log)),
             Answer::Resolve(value) => resolution_from_value(value, log),
             Answer::Load(_) | Answer::Drained => {
                 unreachable!("a resolve request gets a resolve answer")
             }
         }
+    }
+
+    /// A request came back cancelled. The pass hands the plugins nothing further (`dispatch()`
+    /// answers every later request itself), and the compile stops at its next stage: it stops
+    /// on a logged error, so one is logged. `Bun.build` reports the cause, not this message.
+    fn cancelled(&self, log: &mut Log) -> Failed {
+        self.with_bundle(|bundle| {
+            if bundle.graph.cancelled.is_none() {
+                bundle.graph.cancelled = Some(
+                    bundle
+                        .completion_cancel_cause()
+                        .unwrap_or(CancelCause::ContextStopped),
+                );
+            }
+        });
+        log.add_error(None, bun_ast::Loc::EMPTY, b"Bun.build was cancelled");
+        Failed
     }
 
     // The filters are matched one thread at a time.
@@ -285,12 +304,10 @@ impl PluginRequests {
         match unsafe { pending.waiter.as_ref() }.wait() {
             WakeReason::Answered(answer) => {
                 self.release_load(pending);
-                loaded_from_value(
-                    load_value(answer),
-                    request.read_file,
-                    request.default_loader,
-                    log,
-                )
+                match load_value(answer) {
+                    LoadValue::Cancelled => Err(self.cancelled(log)),
+                    value => loaded_from_value(value, request.read_file, request.default_loader, log),
+                }
             }
             WakeReason::Deferred => {
                 let file = (request.read_file)();
@@ -417,7 +434,10 @@ impl PluginRequests {
         // SAFETY: the pool owns every waiter until `self` drops.
         let value = load_value(unsafe { pending.waiter.as_ref() }.wait_for_answer());
         let (namespace, path) = self.release_load(pending);
-        let loaded = loaded_from_value(value, || file, default_loader, log);
+        let loaded = match value {
+            LoadValue::Cancelled => Err(self.cancelled(log)),
+            value => loaded_from_value(value, || file, default_loader, log),
+        };
         (namespace, path, loaded)
     }
 }
@@ -456,8 +476,7 @@ fn resolution_from_value(value: ResolveValue, log: &mut Log) -> Result<Resolutio
             record_message(message, log)?;
             Ok(Resolution::NotHandled)
         }
-        ResolveValue::Cancelled => Err(Failed),
-        ResolveValue::Pending | ResolveValue::Consumed => {
+        ResolveValue::Cancelled | ResolveValue::Pending | ResolveValue::Consumed => {
             unreachable!("a resolve request is answered with a value")
         }
     }
@@ -480,8 +499,7 @@ fn loaded_from_value(
             record_message(message, log)?;
             Ok(Loaded::from_file(read_file(), default_loader))
         }
-        LoadValue::Cancelled => Err(Failed),
-        LoadValue::Pending | LoadValue::Consumed => {
+        LoadValue::Cancelled | LoadValue::Pending | LoadValue::Consumed => {
             unreachable!("a load request is answered with a value")
         }
     }

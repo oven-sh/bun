@@ -1256,10 +1256,17 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_until(promise, || false).map(|_| ())
+    }
+
+    /// [`wait_for_promise`](Self::wait_for_promise) that also gives up, with `Ok(false)`, once
+    /// `stop()` holds between ticks while the promise is still pending.
+    pub fn wait_for_promise_until(
+        &mut self,
+        promise: jsc::AnyPromise,
+        mut stop: impl FnMut() -> bool,
+    ) -> Result<bool, jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
-        if promise.status() != PromiseStatus::Pending {
-            return Ok(());
-        }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
@@ -1267,12 +1274,15 @@ impl EventLoop {
             {
                 return Err(jsc::Stopped);
             }
+            if stop() {
+                return Ok(false);
+            }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// With nothing keeping the loop alive, `auto_tick` only polls, so a caller that keeps waiting would spin. This sleeps.

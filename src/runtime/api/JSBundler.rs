@@ -844,11 +844,14 @@ pub(crate) mod js_bundler {
     }
 
     impl Config {
+        /// `None`: `signal` aborted while a plugin's `setup()` (or its `onStart()`) was awaited.
+        /// The plugins are destroyed, the caller rejects with the reason.
         pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
-        ) -> JsResult<Config> {
+            signal: Option<&jsc::AbortSignal>,
+        ) -> JsResult<Option<Config>> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
             let mut this = Config::default();
@@ -952,11 +955,16 @@ pub(crate) mod js_bundler {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
                             // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this
+                            let settled = global_this
                                 .bun_vm()
                                 .as_mut()
-                                .wait_for_promise(promise)
+                                .wait_for_promise_until(promise, || {
+                                    signal.is_some_and(jsc::AbortSignal::aborted)
+                                })
                                 .map_err(|stopped| stopped.throw(global_this))?;
+                            if !settled {
+                                return Ok(None);
+                            }
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
@@ -1828,7 +1836,7 @@ pub(crate) mod js_bundler {
             }
 
             scopeguard::ScopeGuard::into_inner(plugins);
-            Ok(this)
+            Ok(Some(this))
         }
     }
 
@@ -1862,6 +1870,25 @@ pub(crate) mod js_bundler {
         pub(crate) keep_names: bool,
     }
 
+    /// `config.signal`: an `AbortSignal`, or nothing. Anything else throws.
+    fn read_signal(
+        global_this: &JSGlobalObject,
+        config: JSValue,
+    ) -> JsResult<Option<jsc::AbortSignalRef>> {
+        match config.fast_get(global_this, jsc::BuiltinName::signal)? {
+            None => Ok(None),
+            Some(value) if value.is_undefined_or_null() => Ok(None),
+            Some(value) => match jsc::AbortSignal::ref_from_js(value) {
+                Some(signal) => Ok(Some(signal)),
+                None => Err(global_this.throw_invalid_argument_type_value(
+                    b"signal",
+                    b"AbortSignal",
+                    value,
+                )),
+            },
+        }
+    }
+
     /// `Bun.build(config)`
     pub(crate) fn build(cx: &mut JsScope<'_>, config: JsLocal<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
@@ -1889,33 +1916,29 @@ pub(crate) mod js_bundler {
                  const result = Bun.spawnSync([\"bun\", \"build\", entrypoint, \"--format=esm\"]);")));
         }
 
-        // Before the plugins' `setup()` runs: a build that is already aborted asks them nothing.
-        let signal = match config.fast_get(global_this, jsc::BuiltinName::signal)? {
-            None => None,
-            Some(value) if value.is_undefined_or_null() => None,
-            Some(value) => match jsc::AbortSignal::ref_from_js(value) {
-                Some(signal) => Some(signal),
-                None => {
-                    return Err(global_this.throw_invalid_argument_type_value(
-                        b"signal",
-                        b"AbortSignal",
-                        value,
-                    ));
-                }
-            },
+        let rejected_with_reason = |signal: &jsc::AbortSignal| {
+            Ok(
+                jsc::JSPromise::rejected_promise(global_this, signal.js_reason(global_this))
+                    .to_js(),
+            )
         };
+        // Before the plugins' `setup()` runs: a build that is already aborted asks them nothing.
+        let signal = read_signal(global_this, config)?;
         if let Some(signal) = &signal
             && signal.aborted()
         {
-            return Ok(jsc::JSPromise::rejected_promise(
-                global_this,
-                signal.js_reason(global_this),
-            )
-            .to_js());
+            return rejected_with_reason(signal);
         }
 
         let mut plugins: Option<*mut Plugin> = None;
-        let config = Config::from_js(global_this, config, &mut plugins)?;
+        let Some(config_parsed) =
+            Config::from_js(global_this, config, &mut plugins, signal.as_deref())?
+        else {
+            return rejected_with_reason(&signal.expect("from_js gives up only on a signal"));
+        };
+        // Read again: a plugin's `setup()` may set `build.config.signal`, like any other option.
+        let signal = read_signal(global_this, config)?;
+        let config = config_parsed;
 
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its

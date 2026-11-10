@@ -1,6 +1,6 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -2700,21 +2700,49 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
 });
 
 describe("Bun.build signal", () => {
-  /** A plugin whose `onLoad` for `entry.ts` stays pending until `release()` is called. */
-  function hangingPlugin() {
+  /** A plugin whose `hook` for `entry.ts` stays pending until `release()` is called (or the plugin is disposed). */
+  function hangingPlugin(hook: "onLoad" | "onResolve" = "onLoad") {
     const { promise: called, resolve: markCalled } = Promise.withResolvers<void>();
     const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+    let ended = 0;
     const plugin: import("bun").BunPlugin = {
       name: "hang",
       setup(build) {
-        build.onLoad({ filter: /entry\.ts$/ }, async () => {
-          markCalled();
-          await gate;
-          return { contents: "export const x = 1;", loader: "ts" };
-        });
+        build.onEnd(() => void ended++);
+        if (hook === "onLoad") {
+          build.onLoad({ filter: /entry\.ts$/ }, async () => {
+            markCalled();
+            await gate;
+            return { contents: "export const x = 1;", loader: "ts" };
+          });
+        } else {
+          build.onResolve({ filter: /entry\.ts$/ }, async args => {
+            markCalled();
+            await gate;
+            return { path: args.path };
+          });
+        }
       },
     };
-    return { plugin, called, release };
+    return {
+      plugin,
+      called,
+      release,
+      get ended() {
+        return ended;
+      },
+      [Symbol.dispose]: release,
+    };
+  }
+
+  /** The rejection of `promise`, or a throw if it resolves. */
+  async function rejectionOf(promise: Promise<unknown>): Promise<any> {
+    return promise.then(
+      () => {
+        throw new Error("resolved");
+      },
+      e => e,
+    );
   }
 
   test("a signal that is already aborted rejects with its reason before any plugin runs", async () => {
@@ -2743,67 +2771,174 @@ describe("Bun.build signal", () => {
     ).toThrow(/signal/);
   });
 
-  test("aborting while an onLoad hook is pending rejects with the reason", async () => {
-    using dir = tempDir("build-signal-hung-onload", { "entry.ts": "export const x = 1;" });
-    const { plugin, called, release } = hangingPlugin();
-    const controller = new AbortController();
-    const promise = Bun.build({
-      entrypoints: [join(String(dir), "entry.ts")],
-      plugins: [plugin],
-      signal: controller.signal,
-    });
-    await called;
-    controller.abort();
-    const error = await promise.then(
-      () => {
-        throw new Error("resolved");
-      },
-      e => e,
-    );
-    expect(error).toBe(controller.signal.reason);
-    expect(error.name).toBe("AbortError");
-    expect(error).not.toBeInstanceOf(AggregateError);
+  for (const hook of ["onLoad", "onResolve"] as const) {
+    test(`aborting while an ${hook} hook is pending rejects with the reason`, async () => {
+      using dir = tempDir(`build-signal-hung-${hook}`, { "entry.ts": "export const x = 1;" });
+      using hang = hangingPlugin(hook);
+      const controller = new AbortController();
+      const outdir = join(String(dir), "out");
+      const promise = Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        plugins: [hang.plugin],
+        signal: controller.signal,
+        outdir,
+      });
+      await hang.called;
+      controller.abort();
+      const error = await rejectionOf(promise);
+      expect(error).toBe(controller.signal.reason);
+      expect(error.name).toBe("AbortError");
+      expect(error).not.toBeInstanceOf(AggregateError);
+      // Not a build result: no onEnd, no output.
+      expect(hang.ended).toBe(0);
+      expect(existsSync(outdir)).toBe(false);
 
-    // The late answer from the hook is dropped, and the next build in this process runs.
-    release();
-    const next = await Bun.build({
-      entrypoints: [join(String(dir), "entry.ts")],
-      plugins: [plugin],
+      // The late answer from the hook is dropped, and the next build in this process runs.
+      hang.release();
+      const next = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        plugins: [hang.plugin],
+      });
+      expect(next.success).toBe(true);
+      expect(await next.outputs[0].text()).toContain("x = 1");
+      expect(hang.ended).toBe(1);
     });
-    expect(next.success).toBe(true);
-    expect(await next.outputs[0].text()).toContain("x = 1");
-  });
+  }
 
   test("a custom abort reason is the rejection", async () => {
     using dir = tempDir("build-signal-custom-reason", { "entry.ts": "export const x = 1;" });
-    const { plugin, called, release } = hangingPlugin();
+    using hang = hangingPlugin();
     const controller = new AbortController();
     const reason = { why: "deadline" };
     const promise = Bun.build({
       entrypoints: [join(String(dir), "entry.ts")],
-      plugins: [plugin],
+      plugins: [hang.plugin],
       signal: controller.signal,
     });
-    await called;
+    await hang.called;
     controller.abort(reason);
     await expect(promise).rejects.toBe(reason);
-    release();
+  });
+
+  test("AbortSignal.timeout rejects with its TimeoutError", async () => {
+    using dir = tempDir("build-signal-timeout", { "entry.ts": "export const x = 1;" });
+    using hang = hangingPlugin();
+    const signal = AbortSignal.timeout(10);
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [hang.plugin],
+      signal,
+    });
+    const error = await rejectionOf(promise);
+    expect(error).toBe(signal.reason);
+    expect(error.name).toBe("TimeoutError");
   });
 
   test("throw: false still rejects on abort", async () => {
     using dir = tempDir("build-signal-throw-false", { "entry.ts": "export const x = 1;" });
-    const { plugin, called, release } = hangingPlugin();
+    using hang = hangingPlugin();
     const controller = new AbortController();
     const promise = Bun.build({
       entrypoints: [join(String(dir), "entry.ts")],
-      plugins: [plugin],
+      plugins: [hang.plugin],
       signal: controller.signal,
       throw: false,
     });
-    await called;
+    await hang.called;
     controller.abort();
     await expect(promise).rejects.toBe(controller.signal.reason);
-    release();
+  });
+
+  test("aborting while an async setup() is pending rejects with the reason", async () => {
+    using dir = tempDir("build-signal-hung-setup", { "entry.ts": "export const x = 1;" });
+    const { promise: setupCalled, resolve: markSetup } = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    setupCalled.then(() => controller.abort());
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [
+        {
+          name: "hang-setup",
+          async setup() {
+            markSetup();
+            await new Promise(() => {});
+          },
+        },
+      ],
+      signal: controller.signal,
+    });
+    await expect(promise).rejects.toBe(controller.signal.reason);
+    // The next build in this process runs.
+    const next = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")] });
+    expect(next.success).toBe(true);
+  });
+
+  test("aborting while an onStart() is pending rejects with the reason", async () => {
+    using dir = tempDir("build-signal-hung-onstart", { "entry.ts": "export const x = 1;" });
+    const controller = new AbortController();
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [
+        {
+          name: "hang-onstart",
+          setup(build) {
+            build.onStart(() => {
+              queueMicrotask(() => controller.abort());
+              return new Promise<void>(() => {});
+            });
+          },
+        },
+      ],
+      signal: controller.signal,
+    });
+    await expect(promise).rejects.toBe(controller.signal.reason);
+  });
+
+  test("aborting from inside setup() rejects with the reason", async () => {
+    using dir = tempDir("build-signal-abort-in-setup", { "entry.ts": "export const x = 1;" });
+    const controller = new AbortController();
+    const reason = new Error("from setup");
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [{ name: "abort", setup: () => controller.abort(reason) }],
+      signal: controller.signal,
+    });
+    await expect(promise).rejects.toBe(reason);
+    const next = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")] });
+    expect(next.success).toBe(true);
+  });
+
+  test("a signal that setup() puts on build.config is followed", async () => {
+    using dir = tempDir("build-signal-set-in-setup", { "entry.ts": "export const x = 1;" });
+    using hang = hangingPlugin();
+    const controller = new AbortController();
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [{ name: "set-signal", setup: build => void (build.config.signal = controller.signal) }, hang.plugin],
+    });
+    await hang.called;
+    controller.abort();
+    await expect(promise).rejects.toBe(controller.signal.reason);
+  });
+
+  test("a plugin-free build on the bundle thread rejects on abort", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 60; i++) {
+      files[`/m${i}.ts`] =
+        `import { v${(i + 1) % 60} } from "./m${(i + 1) % 60}"; export const v${i} = ${i} + v${(i + 1) % 60};`;
+    }
+    files["/entry.ts"] = `import { v0 } from "./m0"; console.log(v0);`;
+    using dir = tempDir("build-signal-plugin-free", {});
+    const controller = new AbortController();
+    const promise = Bun.build({
+      entrypoints: ["/entry.ts"],
+      files,
+      outdir: join(String(dir), "out"),
+      signal: controller.signal,
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    controller.abort();
+    await expect(promise).rejects.toBe(controller.signal.reason);
   });
 
   test("a build queued behind a hung build rejects on abort without waiting for it", async () => {
@@ -2811,12 +2946,12 @@ describe("Bun.build signal", () => {
       "entry.ts": "export const x = 1;",
       "other.ts": "export const y = 2;",
     });
-    const { plugin, called, release } = hangingPlugin();
+    using hang = hangingPlugin();
     const first = Bun.build({
       entrypoints: [join(String(dir), "entry.ts")],
-      plugins: [plugin],
+      plugins: [hang.plugin],
     });
-    await called;
+    await hang.called;
     // The bundle thread is busy with `first`: this one waits on its queue.
     const controller = new AbortController();
     const second = Bun.build({
@@ -2825,7 +2960,7 @@ describe("Bun.build signal", () => {
     });
     controller.abort();
     await expect(second).rejects.toBe(controller.signal.reason);
-    release();
+    hang.release();
     expect((await first).success).toBe(true);
   });
 

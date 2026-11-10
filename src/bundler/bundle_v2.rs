@@ -1090,8 +1090,7 @@ pub mod bv2_impl {
                 Err(bun_ast::Msg),
                 Success(ResolveSuccess),
                 NoMatch,
-                /// The pass was cancelled before the plugins answered: no message, the pass
-                /// fails as a whole with [`crate::Error::Cancelled`].
+                /// The pass was cancelled before the plugins answered (no message).
                 Cancelled,
                 #[default]
                 Pending,
@@ -1796,9 +1795,8 @@ pub mod bv2_impl {
         /// from it (whether the result is an error, and the concurrent-task
         /// enqueue), so the high tier hands the bundler an erased owner +
         /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
-        /// Why a `Bun.build` stops before its end. Set once on the JS thread, read by the bundle
-        /// thread at its checkpoints: the pass hands the plugins nothing further, consumes the
-        /// answers it still waits for, and returns [`crate::Error::Cancelled`] with no message.
+        /// Why a `Bun.build` stops before its end: set on the JS thread, read by the bundle thread
+        /// at its checkpoints, which then return [`crate::Error::Cancelled`].
         #[derive(Copy, Clone, Debug, PartialEq, Eq)]
         #[repr(u8)]
         pub enum CancelCause {
@@ -2456,11 +2454,8 @@ pub mod bv2_impl {
             self.thread_lock.assert_locked();
 
             if self.graph.cancelled.is_none() {
-                // The JS thread cancelled the build (its signal fired, or the VM that owns the plugins is
-                // shutting down). It answers every request the plugins still hold — and every hop that
-                // never reached them — as cancelled, on its own thread like any other answer; the pass
-                // keeps consuming answers until none is pending, hands nothing further to that VM
-                // (`dispatch()`), and fails as a whole at its next checkpoint.
+                // The JS thread answers what the plugins still hold as cancelled; the pass keeps
+                // consuming answers until none is pending and fails at its next checkpoint.
                 self.graph.cancelled = self.completion_cancel_cause();
             }
 
@@ -5080,9 +5075,8 @@ pub mod bv2_impl {
             }
         }
 
-        /// A request came back answered as cancelled. The pass fails as a whole: the JS thread's cause
-        /// when it set one, else the plugins' context stopped without telling this build (a disposed
-        /// `Bun.ModuleGraph` while the VM lives on).
+        /// A request came back answered as cancelled: the pass fails as a whole. Without a cause on
+        /// the task, the plugins' context stopped (a disposed `Bun.ModuleGraph`).
         fn note_cancelled_answer(&mut self) {
             if self.graph.cancelled.is_none() {
                 self.graph.cancelled = Some(
@@ -5590,8 +5584,7 @@ pub mod bv2_impl {
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
             }
-            // Nothing ticks the loop during `link`: a signal that fired meanwhile is seen here,
-            // before any output file is written.
+            // Nothing ticks the loop during `link`: an abort during it is seen before any output is written.
             if self.completion_cancel_cause().is_some() {
                 return Err(crate::Error::Cancelled);
             }
@@ -7524,7 +7517,9 @@ pub mod bv2_impl {
             let mut resolve_queue = ResolveQueue::default();
             let mut process_log = true;
 
-            if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
+            // A cancelled pass schedules nothing further: its imports stay unresolved.
+            let schedule_imports = this.graph.cancelled.is_none();
+            if matches!(parse_result.value, parse_task::ResultValue::Success(_)) && schedule_imports {
                 barrel_imports::apply_barrel_optimization(this, parse_result);
                 resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
                 if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
@@ -7734,6 +7729,7 @@ pub mod bv2_impl {
                     // swapped earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
                     let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
+                        && schedule_imports
                         && {
                             let separate = this
                                 .framework
@@ -7764,7 +7760,7 @@ pub mod bv2_impl {
 
                     // Barrel optimization: eagerly record import requests and
                     // un-defer barrel records that are now needed.
-                    if this.is_barrel_optimization_enabled() {
+                    if schedule_imports && this.is_barrel_optimization_enabled() {
                         diff += barrel_imports::schedule_barrel_deferred_imports(
                             this,
                             result_source_index as IndexInt,

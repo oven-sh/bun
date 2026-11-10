@@ -166,13 +166,32 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
-  // A browser has none of these globals, and its getRandomValues rejects shared memory. A second run makes bun the same.
-  const withoutNodeGlobals = {
-    "/without-node-globals.js": /* js */ `
-      for (const name of ["process", "Buffer", "global", "setImmediate", "clearImmediate"]) delete globalThis[name];
+  // Makes bun like a page that is not cross-origin isolated. node:vm gives the buffers of another realm, as an iframe does.
+  const likeAPage = {
+    "/like-a-page.js": /* js */ `
+      import vm from "node:vm";
+      const isShared = buffer => Object.prototype.toString.call(buffer) === "[object SharedArrayBuffer]";
+      let openChannels = 0;
+      const { close } = MessagePort.prototype;
+      MessagePort.prototype.close = function () {
+        openChannels--;
+        return close.call(this);
+      };
+      globalThis.MessageChannel = class extends MessageChannel {
+        constructor() {
+          super();
+          openChannels++;
+        }
+      };
+      globalThis.openChannels = () => openChannels;
+      globalThis.anotherRealm = vm.runInNewContext("({ ArrayBuffer, Uint8Array })");
+      for (const name of ["process", "Buffer", "global", "setImmediate", "clearImmediate", "SharedArrayBuffer"]) {
+        delete globalThis[name];
+      }
       const getRandomValues = crypto.getRandomValues.bind(crypto);
       crypto.getRandomValues = view => {
-        if (view.buffer instanceof SharedArrayBuffer) throw new TypeError("The view must not be shared.");
+        if (isShared(view.buffer)) throw new TypeError("The view must not be shared.");
+        if (view.byteLength > 65536) throw new DOMException("The quota is 65536 bytes.", "QuotaExceededError");
         return getRandomValues(view);
       };
       await import("./out.js");
@@ -227,9 +246,9 @@ describe("bundler", () => {
         }));
       `,
     },
-    runtimeFiles: withoutNodeGlobals,
+    runtimeFiles: likeAPage,
     target: "browser",
-    run: [{ stdout: cryptoKnownAnswers }, { file: "/without-node-globals.js", stdout: cryptoKnownAnswers }],
+    run: [{ stdout: cryptoKnownAnswers }, { file: "/like-a-page.js", stdout: cryptoKnownAnswers }],
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out.split("BN.wordSize = 26").length - 1, "one copy of bn.js 4 and one of bn.js 5").toBe(2);
@@ -262,7 +281,7 @@ describe("bundler", () => {
         crypto.randomFillSync(new Uint8Array(view.buffer, 16, 16));
         const elements = new Uint8Array(48);
         crypto.randomFillSync(new Uint16Array(elements.buffer, 16, 8), 2, 4);
-        const shared = new Uint8Array(new SharedArrayBuffer(48));
+        const shared = new Uint8Array(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer);
         crypto.randomFillSync(new Uint8Array(shared.buffer, 16, 16));
         const codeOf = fn => {
           try {
@@ -304,9 +323,416 @@ describe("bundler", () => {
         }));
       `,
     },
-    runtimeFiles: withoutNodeGlobals,
+    runtimeFiles: likeAPage,
     target: "browser",
-    run: [{ stdout: cryptoDefaultImport }, { file: "/without-node-globals.js", stdout: cryptoDefaultImport }],
+    run: [{ stdout: cryptoDefaultImport }, { file: "/like-a-page.js", stdout: cryptoDefaultImport }],
+  });
+  // node v26.3.0 prints this text for the entry file of the next test, where node:crypto is its own.
+  const cryptoLikeNode = `
+    randomFillSync(undefined): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received undefined
+    randomFillSync(null): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received null
+    randomFillSync(1): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type number (1)
+    randomFillSync(-0): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type number (-0)
+    randomFillSync(NaN): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type number (NaN)
+    randomFillSync(true): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type boolean (true)
+    randomFillSync(5n): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type bigint (5n)
+    randomFillSync(Symbol(s)): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type symbol (Symbol(s))
+    randomFillSync("x"): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type string ('x')
+    randomFillSync(a string of 29): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type string ('aaaaaaaaaaaaaaaaaaaaaaaaa...')
+    randomFillSync(a string with a quote): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type string ("it's")
+    randomFillSync({}): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received an instance of Object
+    randomFillSync([]): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received an instance of Array
+    randomFillSync(new Thing()): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received an instance of Thing
+    randomFillSync(named): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received function named
+    randomFillSync(Object.create(null)): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received [Object: null prototype] {}
+    randomFillSync(a null-prototype object with a key): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received [Object: null prototype]
+    randomFillSync({ constructor: null }): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received [Object]
+    randomFillSync({ constructor: {} }): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received [Object]
+    randomFillSync(Object.create({ constructor: null })): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received {}
+    randomFillSync(u8, "test"), and randomFill: TypeError [ERR_INVALID_ARG_TYPE] The "offset" argument must be of type number. Received type string ('test')
+    randomFillSync(u8, null), and randomFill: TypeError [ERR_INVALID_ARG_TYPE] The "offset" argument must be of type number. Received null
+    randomFillSync(u8, NaN), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received NaN
+    randomFillSync(u8, -10), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received -10
+    randomFillSync(u8, 11), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received 11
+    randomFillSync(u8, 2 ** 31), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received 2147483648
+    randomFillSync(u8, 2 ** 32), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received 4294967296
+    randomFillSync(u8, -(10 ** 11)), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received -100_000_000_000
+    randomFillSync(u8, 2 ** 33 + 0.5), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received 8589934592.5
+    randomFillSync(u8, 0, "test"), and randomFill: TypeError [ERR_INVALID_ARG_TYPE] The "size" argument must be of type number. Received type string ('test')
+    randomFillSync(u8, 0, null), and randomFill: TypeError [ERR_INVALID_ARG_TYPE] The "size" argument must be of type number. Received null
+    randomFillSync(u8, 1, NaN), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received NaN
+    randomFillSync(u8, 1, -10), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received -10
+    randomFillSync(u8, 1, 2 ** 31), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received 2147483648
+    randomFillSync(u8, 1, 2 ** 32), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received 4294967296
+    randomFillSync(u8, 1, 1e21), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received 1e_+21
+    randomFillSync(u8, 1, 10), and randomFill: RangeError [ERR_OUT_OF_RANGE] The value of "size + offset" is out of range. It must be <= 10. Received 11
+    randomBytes(undefined), and with a callback: TypeError [ERR_INVALID_ARG_TYPE] The "size" argument must be of type number. Received undefined
+    randomBytes(null), and with a callback: TypeError [ERR_INVALID_ARG_TYPE] The "size" argument must be of type number. Received null
+    randomBytes(false), and with a callback: TypeError [ERR_INVALID_ARG_TYPE] The "size" argument must be of type number. Received type boolean (false)
+    randomBytes({}), and with a callback: TypeError [ERR_INVALID_ARG_TYPE] The "size" argument must be of type number. Received an instance of Object
+    randomBytes(-1), and with a callback: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received -1
+    randomBytes(NaN), and with a callback: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received NaN
+    randomBytes(2 ** 32), and with a callback: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received 4294967296
+    randomBytes(2 ** 31), and with a callback: RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received 2147483648
+    randomFillSync(u8): bytes 0 to 64 of 64
+    randomFill(u8, callback): bytes 0 to 64 of 64
+    randomFillSync(u8, 16): bytes 16 to 64 of 64
+    randomFill(u8, 16, callback): bytes 16 to 64 of 64
+    randomFillSync(u8, 16, 16): bytes 16 to 32 of 64
+    randomFill(u8, 16, 16, callback): bytes 16 to 32 of 64
+    randomFillSync(u8, 16.5): bytes 16 to 64 of 64
+    randomFill(u8, 16.5, callback): bytes 16 to 63 of 64
+    randomFillSync(u8, 16.5, 16.9): bytes 16 to 32 of 64
+    randomFill(u8, 16.5, 16.9, callback): bytes 16 to 32 of 64
+    randomFillSync(u8, 64): no bytes
+    randomFill(u8, 64, callback): no bytes
+    randomFillSync(u8, 0, 0): no bytes
+    randomFill(u8, 0, 0, callback): no bytes
+    randomFillSync(u8.subarray(16, 48)): bytes 16 to 48 of 64
+    randomFill(u8.subarray(16, 48), callback): bytes 16 to 48 of 64
+    randomFillSync(u8.subarray(16, 48), 8, 8): bytes 24 to 32 of 64
+    randomFill(u8.subarray(16, 48), 8, 8, callback): bytes 24 to 32 of 64
+    randomFillSync(new Uint16Array(buffer, 16, 16), 4): bytes 24 to 48 of 64
+    randomFill(new Uint16Array(buffer, 16, 16), 4, callback): bytes 24 to 48 of 64
+    randomFillSync(new Float64Array(buffer), 2, 2): bytes 16 to 32 of 64
+    randomFill(new Float64Array(buffer), 2, 2, callback): bytes 16 to 32 of 64
+    randomFillSync(new DataView(buffer, 16, 32)): bytes 16 to 48 of 64
+    randomFill(new DataView(buffer, 16, 32), callback): bytes 16 to 48 of 64
+    randomFillSync(new DataView(buffer, 16, 32), 8): bytes 24 to 48 of 64
+    randomFill(new DataView(buffer, 16, 32), 8, callback): RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received NaN
+    randomFillSync(buffer): bytes 0 to 64 of 64
+    randomFill(buffer, callback): bytes 0 to 64 of 64
+    randomFillSync(buffer, 16): bytes 16 to 64 of 64
+    randomFill(buffer, 16, callback): RangeError [ERR_OUT_OF_RANGE] The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received NaN
+    randomFillSync(buffer, 16, 16): bytes 16 to 32 of 64
+    randomFill(buffer, 16, 16, callback): bytes 16 to 32 of 64
+    randomFillSync(new Uint8Array(70000)): bytes 0 to 70000 of 70000
+    randomFill(new Uint8Array(70000), callback): bytes 0 to 70000 of 70000
+    randomFillSync(a shared buffer of 70000): bytes 0 to 70000 of 70000
+    randomFill(a shared buffer of 70000, callback): bytes 0 to 70000 of 70000
+    randomFillSync(a view of a shared buffer, 16, 16): bytes 16 to 32 of 64
+    randomFill(a view of a shared buffer, 16, 16, callback): bytes 16 to 32 of 64
+    randomFillSync(new OtherArrayBuffer(64), 16, 16): bytes 16 to 32 of 64
+    randomFill(new OtherArrayBuffer(64), 16, 16, callback): bytes 16 to 32 of 64
+    randomFillSync(new OtherUint8Array(64), 16): bytes 16 to 64 of 64
+    randomFill(new OtherUint8Array(64), 16, callback): bytes 16 to 64 of 64
+    randomBytes("8", 1): TypeError [ERR_INVALID_ARG_TYPE] The "size" argument must be of type number. Received type string ('8')
+    randomBytes(8, 1): TypeError [ERR_INVALID_ARG_TYPE] The "callback" argument must be of type function. Received type number (1)
+    randomBytes(8, null): TypeError [ERR_INVALID_ARG_TYPE] The "callback" argument must be of type function. Received null
+    randomBytes(8, callback) returns: undefined
+    randomBytes(size) for 0, 1, 2, 4, 16, 256, 1024, 101.2: Buffer of 0, Buffer of 1, Buffer of 2, Buffer of 4, Buffer of 16, Buffer of 256, Buffer of 1024, Buffer of 101
+    randomBytes(size, callback) for 0, 1, 2, 4, 16, 256, 1024, 101.2: Buffer of 0, Buffer of 1, Buffer of 2, Buffer of 4, Buffer of 16, Buffer of 256, Buffer of 1024, Buffer of 101
+    randomBytes(64): bytes 0 to 64 of 64
+    randomBytes(70000): bytes 0 to 70000 of 70000
+    randomBytes(64, callback): bytes 0 to 64 of 64
+    prng, pseudoRandomBytes and rng are randomBytes: true
+    randomFillSync(u8) returns u8: true
+    randomFill(u8, callback) calls back with u8: true
+    randomFillSync(new Uint16Array(5), 6): RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received 12
+    randomFillSync(new Uint16Array(5), 3, 3): RangeError [ERR_OUT_OF_RANGE] The value of "size + offset" is out of range. It must be <= 10. Received 12
+    randomFill("x", 0, 1, "callback"): TypeError [ERR_INVALID_ARG_TYPE] The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type string ('x')
+    randomFill(u8, -1, 1, "callback"): TypeError [ERR_INVALID_ARG_TYPE] The "callback" argument must be of type function. Received type string ('callback')
+    randomFill(u8, -1, callback): RangeError [ERR_OUT_OF_RANGE] The value of "offset" is out of range. It must be >= 0 && <= 10. Received -1
+    randomFill(u8): TypeError [ERR_INVALID_ARG_TYPE] The "callback" argument must be of type function. Received undefined
+    randomFill(u8, 1): TypeError [ERR_INVALID_ARG_TYPE] The "callback" argument must be of type function. Received undefined
+    randomFill(u8, undefined, callback): TypeError [ERR_INVALID_ARG_TYPE] The "offset" argument must be of type number. Received undefined
+    randomFill(u8, undefined, undefined, callback): TypeError [ERR_INVALID_ARG_TYPE] The "offset" argument must be of type number. Received undefined
+    randomBytes(8, callback) calls back: a microtask, a promise job, the callback
+    randomBytes(0, callback) calls back: inside the call
+    randomFill(u8, callback) calls back: a microtask, a promise job, the callback
+    randomFill(u8, 2, 3, callback) calls back: a microtask, a promise job, the callback
+    randomFill(empty, callback) calls back: inside the call
+    randomFill(u8, 10, callback) calls back: inside the call
+    randomFill(u8, 0, 0, callback) calls back: inside the call
+    randomFill(u8, 0, 0.5, callback) calls back: inside the call
+    createHmac(5, 5): TypeError [ERR_INVALID_ARG_TYPE] The "hmac" argument must be of type string. Received type number (5)
+    createHmac(): TypeError [ERR_INVALID_ARG_TYPE] The "hmac" argument must be of type string. Received undefined
+    createHmac("sha256", 5, { encoding: 5 }): TypeError [ERR_INVALID_ARG_TYPE] The "options.encoding" property must be of type string. Received type number (5)
+    createHmac("sha256", 5): TypeError [ERR_INVALID_ARG_TYPE] The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey. Received type number (5)
+    createHmac("sha256"): TypeError [ERR_INVALID_ARG_TYPE] The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey. Received undefined
+    createHmac("sha256", {}): TypeError [ERR_INVALID_ARG_TYPE] The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey. Received an instance of Object
+    hmac with the key "key": 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with the key "6b6579" and the encoding "hex": 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with the key "a2V5" and the encoding "base64": 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with the key "key" and the encoding "buffer": 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with the key "key" and the encoding null: 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with a Uint8Array key: 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with an ArrayBuffer key: 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with an ArrayBuffer key of another realm: 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with a DataView key at an offset: 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab
+    hmac with a key of 100 bytes: 30f0f7f4a3d31b9750666b038c048550020795dd2743759bf83bcf5e0f125b36
+    hmac with a string key of 100 bytes: 30f0f7f4a3d31b9750666b038c048550020795dd2743759bf83bcf5e0f125b36
+    hmac with a shared key of 100 bytes: abc726aa04620d1059bc8473a31ba2eb2585a9299c33af7ab8c12adbd741486f
+    hmac with a view of 3 bytes of a shared key: fd7adb152c05ef80dccf50a1fa4c05d5a3ec6da95575fc312ae7c5d091836351
+    new OtherArrayBuffer(10) instanceof ArrayBuffer: false
+    timingSafeEqual("x", u8): TypeError [ERR_INVALID_ARG_TYPE] The "buf1" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.
+    timingSafeEqual(u8, 5): TypeError [ERR_INVALID_ARG_TYPE] The "buf2" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.
+    timingSafeEqual(undefined, undefined): TypeError [ERR_INVALID_ARG_TYPE] The "buf1" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.
+    timingSafeEqual(u8, new Uint8Array(11)): RangeError [ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH] Input buffers must have the same byte length
+    timingSafeEqual(new Uint16Array(5), new Uint8Array(5)): RangeError [ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH] Input buffers must have the same byte length
+    timingSafeEqual(the bytes 1 0 2 0, new Uint16Array([1, 2])): true
+    timingSafeEqual(the byte 1, the byte 2): false
+    timingSafeEqual(an ArrayBuffer, a DataView at an offset): true
+    timingSafeEqual(a shared buffer, a view of a shared buffer): true
+    timingSafeEqual(new OtherArrayBuffer(10), u8): true
+    channels that stay open: 0
+  `;
+  itBundled("browser/NodeCryptoPolyfillLikeNode", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        import crypto from "node:crypto";
+        const { createHmac, randomBytes, randomFill, randomFillSync, timingSafeEqual } = crypto;
+        const { ArrayBuffer: OtherArrayBuffer, Uint8Array: OtherUint8Array } = anotherRealm;
+
+        const lines = [];
+        const message = error => error.name + " [" + error.code + "] " + error.message;
+        const check = async (label, run) => {
+          try {
+            lines.push(label + ": " + (await run()));
+          } catch (error) {
+            lines.push(label + ": " + message(error));
+          }
+        };
+        // The error of both functions, which must be the same.
+        const thrown = (run, also) => {
+          try {
+            run();
+            return "no error";
+          } catch (error) {
+            return also === undefined || thrown(also) === message(error) ? message(error) : "two different errors";
+          }
+        };
+        const never = () => lines.push("a callback ran after an error");
+        const calledBack = start =>
+          new Promise((resolve, reject) => start((error, value) => (error ? reject(error) : resolve(value))));
+        const u8 = () => new Uint8Array(10);
+        const zeros = () => new Uint8Array(64);
+        const manyZeros = () => new Uint8Array(70000);
+        // A page that is not cross-origin isolated has no SharedArrayBuffer global. WebAssembly gives the constructor.
+        const SharedBuffer = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer.constructor;
+        const shared = length => new Uint8Array(new SharedBuffer(length));
+
+        // The bytes that fill() changes in zeros. Four rounds, so that no byte at an end stays zero by chance.
+        const filled = async (fill, make = zeros) => {
+          let start = Infinity;
+          let end = 0;
+          let length;
+          for (let round = 0; round < 4; round++) {
+            const bytes = make();
+            const other = await fill(bytes);
+            if (other) bytes.set(new Uint8Array(other.buffer ?? other));
+            const changed = byte => byte !== 0;
+            if (!bytes.some(changed)) continue;
+            start = Math.min(start, bytes.findIndex(changed));
+            end = Math.max(end, bytes.findLastIndex(changed) + 1);
+            length = bytes.length;
+          }
+          return end === 0 ? "no bytes" : "bytes " + start + " to " + end + " of " + length;
+        };
+
+        // Inside the call, or after a microtask and a promise job that the caller queues next.
+        const timing = start =>
+          new Promise(resolve => {
+            const order = [];
+            let inside = true;
+            start(() => resolve(inside ? "inside the call" : order.concat("the callback").join(", ")));
+            inside = false;
+            queueMicrotask(() => order.push("a microtask"));
+            Promise.resolve().then(() => order.push("a promise job"));
+          });
+
+        function named() {}
+        class Thing {}
+        for (const [label, value] of [
+          ["undefined", undefined],
+          ["null", null],
+          ["1", 1],
+          ["-0", -0],
+          ["NaN", NaN],
+          ["true", true],
+          ["5n", 5n],
+          ["Symbol(s)", Symbol("s")],
+          ['"x"', "x"],
+          ["a string of 29", "a".repeat(29)],
+          ["a string with a quote", "it's"],
+          ["{}", {}],
+          ["[]", []],
+          ["new Thing()", new Thing()],
+          ["named", named],
+          ["Object.create(null)", Object.create(null)],
+          ["a null-prototype object with a key", Object.assign(Object.create(null), { a: 1 })],
+          ["{ constructor: null }", { constructor: null }],
+          ["{ constructor: {} }", { constructor: {} }],
+          ["Object.create({ constructor: null })", Object.create({ constructor: null })],
+        ]) {
+          await check("randomFillSync(" + label + ")", () => randomFillSync(value));
+        }
+
+        for (const [label, ...range] of [
+          ['"test"', "test"],
+          ["null", null],
+          ["NaN", NaN],
+          ["-10", -10],
+          ["11", 11],
+          ["2 ** 31", 2 ** 31],
+          ["2 ** 32", 2 ** 32],
+          ["-(10 ** 11)", -(10 ** 11)],
+          ["2 ** 33 + 0.5", 2 ** 33 + 0.5],
+          ['0, "test"', 0, "test"],
+          ["0, null", 0, null],
+          ["1, NaN", 1, NaN],
+          ["1, -10", 1, -10],
+          ["1, 2 ** 31", 1, 2 ** 31],
+          ["1, 2 ** 32", 1, 2 ** 32],
+          ["1, 1e21", 1, 1e21],
+          ["1, 10", 1, 10],
+        ]) {
+          const sync = () => randomFillSync(u8(), ...range);
+          const withCallback = () => randomFill(u8(), ...range, never);
+          await check("randomFillSync(u8, " + label + "), and randomFill", () => thrown(sync, withCallback));
+        }
+
+        for (const [label, size] of [
+          ["undefined", undefined],
+          ["null", null],
+          ["false", false],
+          ["{}", {}],
+          ["-1", -1],
+          ["NaN", NaN],
+          ["2 ** 32", 2 ** 32],
+          ["2 ** 31", 2 ** 31],
+        ]) {
+          const sync = () => randomBytes(size);
+          const withCallback = () => randomBytes(size, never);
+          await check("randomBytes(" + label + "), and with a callback", () => thrown(sync, withCallback));
+        }
+
+        // What randomFillSync(...args) and randomFill(...args, callback) fill. args(bytes) gives the arguments.
+        for (const [label, args, make] of [
+          ["u8", bytes => [bytes]],
+          ["u8, 16", bytes => [bytes, 16]],
+          ["u8, 16, 16", bytes => [bytes, 16, 16]],
+          ["u8, 16.5", bytes => [bytes, 16.5]],
+          ["u8, 16.5, 16.9", bytes => [bytes, 16.5, 16.9]],
+          ["u8, 64", bytes => [bytes, 64]],
+          ["u8, 0, 0", bytes => [bytes, 0, 0]],
+          ["u8.subarray(16, 48)", bytes => [bytes.subarray(16, 48)]],
+          ["u8.subarray(16, 48), 8, 8", bytes => [bytes.subarray(16, 48), 8, 8]],
+          ["new Uint16Array(buffer, 16, 16), 4", bytes => [new Uint16Array(bytes.buffer, 16, 16), 4]],
+          ["new Float64Array(buffer), 2, 2", bytes => [new Float64Array(bytes.buffer), 2, 2]],
+          ["new DataView(buffer, 16, 32)", bytes => [new DataView(bytes.buffer, 16, 32)]],
+          ["new DataView(buffer, 16, 32), 8", bytes => [new DataView(bytes.buffer, 16, 32), 8]],
+          ["buffer", bytes => [bytes.buffer]],
+          ["buffer, 16", bytes => [bytes.buffer, 16]],
+          ["buffer, 16, 16", bytes => [bytes.buffer, 16, 16]],
+          ["new Uint8Array(70000)", bytes => [bytes], manyZeros],
+          ["a shared buffer of 70000", bytes => [bytes.buffer], () => shared(70000)],
+          ["a view of a shared buffer, 16, 16", bytes => [bytes, 16, 16], () => shared(64)],
+          ["new OtherArrayBuffer(64), 16, 16", () => [new OtherArrayBuffer(64), 16, 16]],
+          ["new OtherUint8Array(64), 16", () => [new OtherUint8Array(64), 16]],
+        ]) {
+          const sync = bytes => randomFillSync(...args(bytes));
+          const withCallback = bytes => calledBack(callback => randomFill(...args(bytes), callback));
+          await check("randomFillSync(" + label + ")", () => filled(sync, make));
+          await check("randomFill(" + label + ", callback)", () => filled(withCallback, make));
+        }
+
+        const hmac = (key, options) => createHmac("sha256", key, options).update("abc").digest("hex");
+        const keyBytes = new TextEncoder().encode("key");
+        const padded = new Uint8Array(32);
+        padded.set(keyBytes, 8);
+        const otherKey = new OtherArrayBuffer(3);
+        new Uint8Array(otherKey).set(keyBytes);
+        const sizes = [0, 1, 2, 4, 16, 256, 1024, 101.2];
+        const kind = bytes => (Buffer.isBuffer(bytes) ? "Buffer of " : "no Buffer of ") + bytes.length;
+        const sameObject = async (bytes, result) => (await result(bytes)) === bytes;
+        const randomBytesLater = size => calledBack(callback => randomBytes(size, callback));
+        const randomFillLater = bytes => calledBack(callback => randomFill(bytes, callback));
+        const aliases = [crypto.prng, crypto.pseudoRandomBytes, crypto.rng];
+
+        for (const [label, run] of [
+          ['randomBytes("8", 1)', () => randomBytes("8", 1)],
+          ["randomBytes(8, 1)", () => randomBytes(8, 1)],
+          ["randomBytes(8, null)", () => randomBytes(8, null)],
+          ["randomBytes(8, callback) returns", () => String(randomBytes(8, () => {}))],
+          ["randomBytes(size) for " + sizes.join(", "), () => sizes.map(size => kind(randomBytes(size))).join(", ")],
+          [
+            "randomBytes(size, callback) for " + sizes.join(", "),
+            async () => (await Promise.all(sizes.map(randomBytesLater))).map(kind).join(", "),
+          ],
+          ["randomBytes(64)", () => filled(() => randomBytes(64))],
+          ["randomBytes(70000)", () => filled(() => randomBytes(70000), manyZeros)],
+          ["randomBytes(64, callback)", () => filled(() => randomBytesLater(64))],
+          ["prng, pseudoRandomBytes and rng are randomBytes", () => aliases.every(alias => alias === randomBytes)],
+          ["randomFillSync(u8) returns u8", () => sameObject(u8(), randomFillSync)],
+          ["randomFill(u8, callback) calls back with u8", () => sameObject(u8(), randomFillLater)],
+          ["randomFillSync(new Uint16Array(5), 6)", () => randomFillSync(new Uint16Array(5), 6)],
+          ["randomFillSync(new Uint16Array(5), 3, 3)", () => randomFillSync(new Uint16Array(5), 3, 3)],
+
+          ['randomFill("x", 0, 1, "callback")', () => randomFill("x", 0, 1, "callback")],
+          ['randomFill(u8, -1, 1, "callback")', () => randomFill(u8(), -1, 1, "callback")],
+          ["randomFill(u8, -1, callback)", () => randomFill(u8(), -1, never)],
+          ["randomFill(u8)", () => randomFill(u8())],
+          ["randomFill(u8, 1)", () => randomFill(u8(), 1)],
+          ["randomFill(u8, undefined, callback)", () => randomFill(u8(), undefined, never)],
+          ["randomFill(u8, undefined, undefined, callback)", () => randomFill(u8(), undefined, undefined, never)],
+
+          ["randomBytes(8, callback) calls back", () => timing(callback => randomBytes(8, callback))],
+          ["randomBytes(0, callback) calls back", () => timing(callback => randomBytes(0, callback))],
+          ["randomFill(u8, callback) calls back", () => timing(callback => randomFill(u8(), callback))],
+          ["randomFill(u8, 2, 3, callback) calls back", () => timing(callback => randomFill(u8(), 2, 3, callback))],
+          ["randomFill(empty, callback) calls back", () => timing(callback => randomFill(new Uint8Array(0), callback))],
+          ["randomFill(u8, 10, callback) calls back", () => timing(callback => randomFill(u8(), 10, callback))],
+          ["randomFill(u8, 0, 0, callback) calls back", () => timing(callback => randomFill(u8(), 0, 0, callback))],
+          ["randomFill(u8, 0, 0.5, callback) calls back", () => timing(callback => randomFill(u8(), 0, 0.5, callback))],
+
+          ["createHmac(5, 5)", () => createHmac(5, 5)],
+          ["createHmac()", () => createHmac()],
+          ['createHmac("sha256", 5, { encoding: 5 })', () => createHmac("sha256", 5, { encoding: 5 })],
+          ['createHmac("sha256", 5)', () => createHmac("sha256", 5)],
+          ['createHmac("sha256")', () => createHmac("sha256")],
+          ['createHmac("sha256", {})', () => createHmac("sha256", {})],
+          ['hmac with the key "key"', () => hmac("key")],
+          ['hmac with the key "6b6579" and the encoding "hex"', () => hmac("6b6579", { encoding: "hex" })],
+          ['hmac with the key "a2V5" and the encoding "base64"', () => hmac("a2V5", { encoding: "base64" })],
+          ['hmac with the key "key" and the encoding "buffer"', () => hmac("key", { encoding: "buffer" })],
+          ['hmac with the key "key" and the encoding null', () => hmac("key", { encoding: null })],
+          ["hmac with a Uint8Array key", () => hmac(keyBytes)],
+          ["hmac with an ArrayBuffer key", () => hmac(keyBytes.buffer)],
+          ["hmac with an ArrayBuffer key of another realm", () => hmac(otherKey)],
+          ["hmac with a DataView key at an offset", () => hmac(new DataView(padded.buffer, 8, 3))],
+          ["hmac with a key of 100 bytes", () => hmac(new Uint8Array(100).fill(7))],
+          ["hmac with a string key of 100 bytes", () => hmac(String.fromCharCode(7).repeat(100))],
+          ["hmac with a shared key of 100 bytes", () => hmac(new SharedBuffer(100))],
+          ["hmac with a view of 3 bytes of a shared key", () => hmac(shared(64).subarray(0, 3))],
+          ["new OtherArrayBuffer(10) instanceof ArrayBuffer", () => new OtherArrayBuffer(10) instanceof ArrayBuffer],
+        ]) {
+          await check(label, run);
+        }
+
+        for (const [label, a, b] of [
+          ['"x", u8', "x", u8()],
+          ["u8, 5", u8(), 5],
+          ["undefined, undefined"],
+          ["u8, new Uint8Array(11)", u8(), new Uint8Array(11)],
+          ["new Uint16Array(5), new Uint8Array(5)", new Uint16Array(5), new Uint8Array(5)],
+          ["the bytes 1 0 2 0, new Uint16Array([1, 2])", new Uint8Array([1, 0, 2, 0]), new Uint16Array([1, 2])],
+          ["the byte 1, the byte 2", new Uint8Array([1]), new Uint8Array([2])],
+          ["an ArrayBuffer, a DataView at an offset", keyBytes.buffer, new DataView(padded.buffer, 8, 3)],
+          ["a shared buffer, a view of a shared buffer", new SharedBuffer(8), shared(8)],
+          ["new OtherArrayBuffer(10), u8", new OtherArrayBuffer(10), u8()],
+        ]) {
+          await check("timingSafeEqual(" + label + ")", () => timingSafeEqual(a, b));
+        }
+        await check("channels that stay open", () => openChannels());
+
+        console.log(lines.join("\\n"));
+      `,
+    },
+    runtimeFiles: likeAPage,
+    target: "browser",
+    run: { file: "/like-a-page.js", stdout: cryptoLikeNode },
   });
   itBundled("browser/NodeStreamTicksOnTheHostProcess", {
     files: {

@@ -2041,3 +2041,62 @@ it("Readable.fromWeb's native source accepts pull(view) without the flags array"
     delete Object.prototype.setFlowing;
   }
 });
+
+// Node's Readable.fromWeb pushes from a promise reaction, so a 'data' listener
+// throw rejects that promise and surfaces as an unhandledRejection, not an
+// uncaughtException. Bun's fromWeb over a native fetch body keeps that channel.
+it("Readable.fromWeb over a fetch body: a 'data' listener throw is an unhandledRejection", async () => {
+  const script = `
+    const { Readable } = require("node:stream");
+    let ue = 0, ur = 0, bytes = 0;
+    process.on("uncaughtException", (e, origin) => {
+      ue++;
+      console.log("unexpected: " + origin + " " + e.message);
+      setImmediate(() => process.exit());
+    });
+    process.on("unhandledRejection", e => {
+      ur++;
+      if (e.message !== "data-throw") console.log("unexpected: " + e.message);
+      // The rejection is the last event this script waits for.
+      setImmediate(() => process.exit());
+    });
+    process.on("exit", () => console.log("bytes=" + bytes + " ue=" + ue + " ur=" + ur));
+    const { promise: go, resolve: signal } = Promise.withResolvers();
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (new URL(req.url).pathname === "/go") { signal(); return new Response(); }
+        return new Response(new ReadableStream({
+          async pull(c) {
+            c.enqueue(new TextEncoder().encode("a"));
+            await go;
+            c.enqueue(new TextEncoder().encode("b"));
+            c.close();
+          },
+        }));
+      },
+    });
+    const res = await fetch(server.url);
+    const r = Readable.fromWeb(res.body);
+    r.on("data", chunk => {
+      bytes += chunk.length;
+      // The first chunk can arrive with the headers and is then delivered
+      // from the buffer. Once it is out, the next pull is pending before the
+      // server gets the signal, so "b" is pushed from the promise reaction.
+      if (bytes === 1) fetch(server.url + "go");
+      else throw new Error("data-throw");
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "bytes=2 ue=0 ur=1",
+    stderr: "",
+    exitCode: 0,
+  });
+});

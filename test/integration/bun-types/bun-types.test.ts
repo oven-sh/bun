@@ -321,9 +321,10 @@ function checkForEmptyInterfaces(program: ts.Program) {
  *   Headers extends Bun.__internal.BunHeadersOverride
  *                                   a base that the lib does not give the interface and that is not empty
  *   Worker.unref (only without the lib, from Bun.Worker)
- *                                   a member of a base that is `{}` for this `lib`, when the lib does not have
- *                                   the member: a project that loads the lib does not get it. A member that
- *                                   only Bun has goes in a base that is always on, such as `BunHeadersOverride`
+ *                                   a member that bun-types writes, in a base that is `{}` for this `lib`, when
+ *                                   the lib does not have the member: a project that loads the lib does not get
+ *                                   it. A member that only Bun has goes in a base that is always on, such as
+ *                                   `BunHeadersOverride`
  *   var Crypto                      a `var` that writes its type out. `Bun.__internal.UseLibDomIfAvailable`
  *                                   takes the type from the `var` of the lib
  *   var Worker.data (only without the lib)
@@ -337,7 +338,10 @@ function checkForEmptyInterfaces(program: ts.Program) {
  * The list says which declarations land on the lib, not what they say: a changed signature of a
  * listed member is a diff in ./inventory (packages/bun-types/scripts/inventory.ts), not here.
  * `only without the lib` compares names too. A gated member or a construct signature that accepts
- * more than the one of the lib is a difference between two presets of the inventory.
+ * more than the one of the lib is a difference between two presets of the inventory. It is only
+ * for what bun-types writes: a member that a gated base gets from another package, such as `ref()`
+ * of the `MessagePort` of @types/node, would come and go with the releases of that package. The
+ * `UseLibDomIfAvailable<"WebAssembly", ...>["Instance"]` form of a `var` is not read for statics.
  */
 function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
   const checker = program.getTypeChecker();

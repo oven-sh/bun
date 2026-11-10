@@ -108,8 +108,13 @@ function bytesToFill(buffer, offset = 0, size) {
 // Not npm randomfill: its browser file fills from the start of the ArrayBuffer and ignores the byteOffset of a view.
 export function randomFillSync(buffer, offset, size) {
   const bytes = bytesToFill(buffer, offset, size);
-  // getRandomValues takes at most 65536 bytes in one call
-  for (let i = 0; i < bytes.length; i += 65536) crypto.getRandomValues(bytes.subarray(i, i + 65536));
+  const shared = typeof SharedArrayBuffer === "function" && bytes.buffer instanceof SharedArrayBuffer;
+  // getRandomValues takes at most 65536 bytes in one call. In a browser it rejects a view of a SharedArrayBuffer.
+  for (let i = 0; i < bytes.length; i += 65536) {
+    const chunk = bytes.subarray(i, i + 65536);
+    if (shared) chunk.set(crypto.getRandomValues(new Uint8Array(chunk.length)));
+    else crypto.getRandomValues(chunk);
+  }
   return buffer;
 }
 

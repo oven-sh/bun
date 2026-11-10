@@ -658,14 +658,6 @@ const cases: Case[] = [
   // RegExp.
   { name: "two equal regexps", a: () => /a/g, b: () => /a/g, strict: true, loose: true },
   { name: "regexps with different flags", a: () => /a/g, b: () => /a/i, strict: false, loose: false },
-  {
-    name: "regexps with different lastIndex",
-    a: () => Object.assign(/a/g, { lastIndex: 3 }),
-    b: () => /a/g,
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
-  },
   // lastIndex is compared with ===, not Object.is, in every mode.
   {
     name: "regexps with lastIndex -0 and 0",
@@ -678,6 +670,54 @@ const cases: Case[] = [
     name: "regexps with lastIndex NaN",
     a: () => Object.assign(/a/g, { lastIndex: NaN }),
     b: () => Object.assign(/a/g, { lastIndex: NaN }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  // A lastIndex of 0 and of -0 make two deep-equal members. The Set and Map walks take the
+  // first deep-equal member and do not pair members one to one.
+  // https://github.com/oven-sh/bun/issues/28760
+  {
+    name: "sets of three regexps with lastIndex 0, -0, 1 and 0, 1, 1",
+    a: () =>
+      new Set([
+        Object.assign(/a/g, { lastIndex: 0 }),
+        Object.assign(/a/g, { lastIndex: -0 }),
+        Object.assign(/a/g, { lastIndex: 1 }),
+      ]),
+    b: () =>
+      new Set([
+        Object.assign(/a/g, { lastIndex: 0 }),
+        Object.assign(/a/g, { lastIndex: 1 }),
+        Object.assign(/a/g, { lastIndex: 1 }),
+      ]),
+    strict: false,
+    loose: false,
+    strictBug: "reports equal",
+    looseBug: "reports equal",
+  },
+  // https://github.com/oven-sh/bun/issues/34830
+  {
+    name: "maps with two regexp keys whose lastIndex is 0 and -0",
+    a: () =>
+      new Map([
+        [Object.assign(/a/g, { lastIndex: 0 }), 1],
+        [Object.assign(/a/g, { lastIndex: -0 }), 2],
+      ]),
+    b: () =>
+      new Map([
+        [Object.assign(/a/g, { lastIndex: 0 }), 1],
+        [Object.assign(/a/g, { lastIndex: -0 }), 2],
+      ]),
+    strict: true,
+    loose: true,
+    strictBug: "reports not equal",
+    looseBug: "reports not equal",
+  },
+  {
+    name: "regexps with different lastIndex",
+    a: () => Object.assign(/a/g, { lastIndex: 3 }),
+    b: () => /a/g,
     strict: false,
     loose: false,
     looseBug: "reports equal",
@@ -1178,10 +1218,10 @@ describe("util.isDeepStrictEqual", () => {
     expect(calls).toBe(2);
   });
 
-  // Node's areSimilarRegExps() compares lastIndex with ===, so -0 equals 0 and NaN differs from NaN.
+  // Node's areSimilarRegExps() compares lastIndex with ===: -0 equals 0, NaN differs from NaN, "0" differs from 0.
   // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L148-L152
   describe("RegExp lastIndex", () => {
-    const withLastIndex = (lastIndex: number) => Object.assign(/a/g, { lastIndex });
+    const withLastIndex = (lastIndex: unknown) => Object.assign(/a/g, { lastIndex });
     const positions: Array<[string, (re: RegExp) => unknown]> = [
       ["at the top level", re => re],
       ["in an array", re => [re]],
@@ -1192,26 +1232,33 @@ describe("util.isDeepStrictEqual", () => {
       ["in an Error cause", re => new Error("e", { cause: re })],
     ];
 
-    test.each(positions)("is compared with === %s", (_name, wrap) => {
-      const sameObject = withLastIndex(NaN);
-      for (const skipPrototype of [false, true]) {
-        const equal = (a: RegExp, b: RegExp) => util.isDeepStrictEqual(wrap(a), wrap(b), skipPrototype as any);
-        expect({
-          skipPrototype,
-          negativeZeroAndZero: equal(withLastIndex(-0), withLastIndex(0)),
-          zeroAndNegativeZero: equal(withLastIndex(0), withLastIndex(-0)),
-          nanAndNaN: equal(withLastIndex(NaN), withLastIndex(NaN)),
-          // The identity shortcut answers before lastIndex is read.
-          sameObjectWithNaN: equal(sameObject, sameObject),
-        }).toEqual({
-          skipPrototype,
-          negativeZeroAndZero: true,
-          zeroAndNegativeZero: true,
-          nanAndNaN: false,
-          sameObjectWithNaN: true,
-        });
-      }
-    });
+    for (const [name, wrap] of positions) {
+      test(`is compared with === ${name}`, () => {
+        const sameObject = withLastIndex(NaN);
+        for (const skipPrototype of [false, true]) {
+          const equal = (a: RegExp, b: RegExp) => util.isDeepStrictEqual(wrap(a), wrap(b), skipPrototype as any);
+          assert.deepStrictEqual(
+            {
+              skipPrototype,
+              negativeZeroAndZero: equal(withLastIndex(-0), withLastIndex(0)),
+              zeroAndNegativeZero: equal(withLastIndex(0), withLastIndex(-0)),
+              nanAndNaN: equal(withLastIndex(NaN), withLastIndex(NaN)),
+              stringZeroAndZero: equal(withLastIndex("0"), withLastIndex(0)),
+              // The identity shortcut answers before lastIndex is read.
+              sameObjectWithNaN: equal(sameObject, sameObject),
+            },
+            {
+              skipPrototype,
+              negativeZeroAndZero: true,
+              zeroAndNegativeZero: true,
+              nanAndNaN: false,
+              stringZeroAndZero: false,
+              sameObjectWithNaN: true,
+            },
+          );
+        }
+      });
+    }
   });
 
   // The third argument was added in Node v26.

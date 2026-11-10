@@ -385,7 +385,7 @@ describe("bun test", () => {
       expect(stderr).not.toContain("test #4");
     });
 
-    // The failure is reported from a promise reaction, so the exit starts inside a JS frame.
+    // A timer is still pending when --bail stops the run.
     test.skipIf(!isASAN)("tears down the VM without leaks", async () => {
       using dir = tempDir("bun-test-bail-leak-check", {
         "a.test.ts": `
@@ -3501,7 +3501,10 @@ describe.concurrent("a test file that fails to load", () => {
       ["--rerun-each=2", "missing", "one"],
       ["beforeAll", "one: true", "afterAll", "one: true", "afterAll"],
     ],
-    [["--bail=1", "missing", "one"], ["beforeAll"]],
+    [
+      ["--bail=1", "missing", "one"],
+      ["beforeAll", "afterAll"],
+    ],
     [
       ["--bail=1", "one", "missing"],
       ["beforeAll", "one: true", "afterAll"],

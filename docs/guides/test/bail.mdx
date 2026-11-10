@@ -21,4 +21,8 @@ bun test --bail=10
 
 ---
 
+When the run bails out, Bun still runs the `afterEach` and `afterAll` hooks of the tests and `describe` blocks that started. Then Bun prints the summary. The summary has the `--seed` if `--randomize` or `describe.shuffle` set the order.
+
+---
+
 See [`bun test`](/test).

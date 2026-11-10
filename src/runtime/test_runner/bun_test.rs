@@ -598,14 +598,9 @@ impl BunTestRoot {
 
     /// Tear down `bun:test` GC roots before `global_exit()` so
     /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
-    /// closures they pin. Releases the active file's per-test `Strong`s (the
-    /// bail path skips its `scopeguard::defer! { exit_file() }` because
-    /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
-    /// `hook_scope`, and the `pending_then_refs` Vec.
+    /// closures they pin: the preload-hook `Strong`s held in `hook_scope`, and the `pending_then_refs` Vec.
     pub(crate) fn deinit_for_exit(&mut self) {
-        if self.active_file.is_some() {
-            self.exit_file();
-        }
+        debug_assert!(self.active_file.is_none());
         self.reset_hook_scope_for_test_isolation();
         // `pending_then_refs` holds the `+1` `RefData` ref taken at
         // `Promise.then()` time so a never-settled promise's box stays
@@ -1215,6 +1210,12 @@ impl BunTest {
             }
             bun_core::scoped_log!(bun_test_group, "-> timer set");
         }
+    }
+
+    /// `--bail` reached its failure count in the group that is running. See `Execution::stopped_in`.
+    #[cold]
+    pub(crate) fn stop(&mut self) {
+        self.execution.stopped_in = Some(self.execution.group_index);
     }
 
     fn advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {

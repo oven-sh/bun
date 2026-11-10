@@ -300,6 +300,17 @@ bun test --bail
 bun test --bail=10
 ```
 
+When the run reaches that number of failures, Bun stops it:
+
+- Bun starts no more tests and no more test files.
+- Tests that run [concurrently](#concurrent-test-execution) with the last failure finish. They keep their hooks, timeouts and retries. They can fail too, so the summary can count more failures than the number you set.
+- Bun runs the `afterEach` and `afterAll` hooks of the tests and `describe` blocks that started.
+- Bun prints the summary. The summary has the `--seed` if `--randomize` or `describe.shuffle` set the order.
+- Bun writes the coverage and JUnit reports. It can leave new and updated snapshots unwritten.
+- Bun exits with a failure code. With `--watch`, Bun keeps watching for changes.
+
+When [`--parallel`](/test/parallel) runs more than one worker, Bun starts no more test files, and the files that already run finish.
+
 ## Watch mode
 
 Like `bun run`, `bun test` accepts the `--watch` flag to watch for changes and re-run tests.

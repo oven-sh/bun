@@ -1502,3 +1502,53 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
 });
+
+// The report comes from the end of the run, or from the process.exit() of a hook that the stopped run still owes.
+test.each([
+  ["", ""],
+  [", and a hook then ends the process", `afterAll(() => process.exit(0));`],
+])("reports what ran when --bail stops the run%s", async (_, hook) => {
+  using dir = tempDir("coverage-bail", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "lib.ts": `export function run(late: boolean) {
+  if (late) {
+    console.log("only the test behind the failure");
+    console.log("gets here");
+  }
+  return 1;
+}
+`,
+    "lib.test.ts": `
+      import { afterAll, test, expect } from "bun:test";
+      import { run } from "./lib";
+      ${hook}
+      test("runs", () => { expect(run(false)).toBe(1); });
+      test("fails", () => { expect(run(false)).toBe(2); });
+      test("behind the failure", () => { expect(run(true)).toBe(1); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--bail", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // The table comes before the counts, as in every run.
+  const lines = stderr.split(/\r?\n/).map(line => line.trimEnd());
+  const row = lines.indexOf(" lib.ts    |  100.00 |   60.00 | 3-4");
+  expect(row).toBeGreaterThan(lines.findIndex(line => line.startsWith("(fail) fails")));
+  expect(lines.indexOf(" 1 pass")).toBeGreaterThan(row);
+  expect(lines.at(-2)).toBe("Bailed out after 1 failure");
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+  expect(
+    lcov
+      .split(/\r?\n/)
+      .filter(line => line.startsWith("DA:"))
+      .map(line => line.replace(/,[1-9]\d*$/, ",hit")),
+  ).toEqual(["DA:1,hit", "DA:2,hit", "DA:3,0", "DA:4,0", "DA:6,hit"]);
+  expect(exitCode).toBe(1);
+});

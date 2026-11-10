@@ -82,6 +82,15 @@ pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
     vm.exit_handler.exit_code = code;
+    if vm.exit_handler.exits_nonzero {
+        // `bun test --bail` stopped the run, and the exit keeps it from the end that prints its report.
+        bun_removable_features::call_removable!(
+            TestCommand,
+            ReturnDefault,
+            crate::cli::test_command::report_stopped_run,
+            vm
+        );
+    }
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner

@@ -97,6 +97,8 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
+    /// The group in which `--bail` reached its failure count. A sequence that had not started by then starts only if the file `owes` it.
+    pub(crate) stopped_in: Option<usize>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -425,6 +427,7 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack: core::cell::Cell::new(None),
+            stopped_in: None,
         }
     }
 
@@ -565,6 +568,44 @@ impl Execution {
         Some(&mut self.groups[self.group_index])
     }
 
+    /// Whether a file that `--bail` stopped still runs the sequence at `index`: no test, but the teardown of each scope that the group `stopped_in` entered, and the end of the file.
+    #[cold]
+    fn owes(&self, stopped_in: usize, index: usize) -> bool {
+        let sequence = &self.sequences[index];
+        let (None, Some(hook)) = (sequence.test_entry, sequence.first_entry) else {
+            return false;
+        };
+        // SAFETY: arena-owned entry
+        let Some(scope) = unsafe { hook.as_ref() }.base.parent else {
+            // `BunTest::file_end` is the one hook that no scope owns.
+            return true;
+        };
+        let group = &self.groups[stopped_in];
+        // Of the hooks of an entered scope, only its teardown has not started yet.
+        self.sequences[group.sequence_start..group.sequence_end]
+            .iter()
+            .filter(|started| !started.started_at.eql(&Timespec::EPOCH))
+            .filter_map(|started| started.test_entry.or(started.first_entry))
+            .any(|entry| {
+                // SAFETY: arena-owned entry, whose parent chain consists of live DescribeScope nodes.
+                let mut parent = unsafe { entry.as_ref() }.base.parent;
+                while let Some(entered) = parent {
+                    if core::ptr::eq(entered, scope) {
+                        return true;
+                    }
+                    // SAFETY: as above.
+                    parent = unsafe { (*entered).base.parent };
+                }
+                false
+            })
+    }
+
+    /// Whether `--bail` stopped the file. A test that passes after that does not repeat.
+    fn is_stopped(buntest: NonNull<BunTest>) -> bool {
+        // SAFETY: a field that no `&mut ExecutionSequence` and no `ConcurrentGroup` pointer reaches.
+        unsafe { (*buntest.as_ptr()).execution.stopped_in.is_some() }
+    }
+
     /// Shared-borrow variant of [`active_group`] for read-only inspection
     /// (e.g. `BunTest::get_current_state_data`, which only reads).
     pub(crate) fn active_group_ref(&self) -> Option<&ConcurrentGroup> {
@@ -701,7 +742,11 @@ impl Execution {
             }
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
-            if test_passed && sequence.remaining_repeat_count > 0 && sequence.result != Result::Skip {
+            if test_passed
+                && sequence.remaining_repeat_count > 0
+                && sequence.result != Result::Skip
+                && !Self::is_stopped(buntest)
+            {
                 sequence.remaining_repeat_count -= 1;
                 // SAFETY: arena-owned entry
                 sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
@@ -1222,11 +1267,27 @@ fn step_sequence_one(
         group_log::log(format_args!("runOne: no more entries; sequence complete."));
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
+    // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
+    let is_first_start =
+        Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH);
+    if is_first_start
+        && let Some(stopped_in) = this.stopped_in
+        // An attempt after the first is a retry of a test that had started.
+        && this.sequences[seq_abs].attempt == 0
+        && !this.owes(stopped_in, seq_abs)
+    {
+        this.sequences[seq_abs].active_entry = None;
+        // SAFETY: group points into this.groups.
+        let group = unsafe { &mut *group.as_ptr() };
+        debug_assert!(group.remaining_incomplete_entries > 0);
+        group.remaining_incomplete_entries = group.remaining_incomplete_entries.saturating_sub(1);
+        return Ok(Some(AdvanceSequenceStatus::Done));
+    }
+    let sequence = &mut this.sequences[seq_abs];
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
     sequence.executing = true;
-    // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
-    if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
+    if is_first_start {
         Execution::on_sequence_started(global_this, sequence);
     }
     Execution::on_entry_started(next_item);

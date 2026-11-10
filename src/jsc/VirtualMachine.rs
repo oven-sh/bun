@@ -790,6 +790,8 @@ pub struct ExitHandler {
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
+    /// `bun test --bail` sets this when it stops a run: the script that still runs cannot make the failed run exit 0. See `global_exit`.
+    pub exits_nonzero: bool,
 }
 
 impl ExitHandler {
@@ -2510,7 +2512,9 @@ impl VirtualMachine {
         } else {
             self.close_sqlite_databases_for_exit();
         }
-        bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+        // Applied here and not where a code is set: an 'exit' listener can store a 0 after that.
+        let floor = u8::from(self.exit_handler.exits_nonzero);
+        bun_core::Global::exit(u32::from(self.exit_handler.exit_code.max(floor)))
     }
 
     /// Ends this thread's VM, which is not the main thread's: its exit handlers,

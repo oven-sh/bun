@@ -344,10 +344,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if let Some(seed) = opts.seed {
         argv.push(print_z(format_args!("--seed={}", seed))?);
     }
-    // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
-    // (see test_command.rs handle_test_completed), which the coordinator would
-    // misread as a crash. Cross-worker bail is handled at file granularity by
-    // the coordinator instead.
+    // --bail is intentionally NOT forwarded: only the coordinator sees the failures of the whole run, so it handles the bail, at file granularity.
     if opts.repeat_count > 0 {
         argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
     }

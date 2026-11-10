@@ -483,7 +483,7 @@ fn leads_to_mocks(builtin: BuiltinId) -> bool {
     builtin == test_runner_object() || returns_test_runner_object(builtin) || mocks_modules(builtin)
 }
 
-const MEMBERS_THAT_LEAVE_MODULES_ALONE: [&[u8]; 30] = [
+const MEMBERS_THAT_LEAVE_MODULES_ALONE: [&[u8]; 31] = [
     b"advanceTimersByTime",
     b"advanceTimersToNextTimer",
     b"clearAllMocks",
@@ -497,6 +497,7 @@ const MEMBERS_THAT_LEAVE_MODULES_ALONE: [&[u8]; 30] = [
     b"isMockFunction",
     b"mocked",
     b"now",
+    b"replaceProperty",
     b"resetAllMocks",
     b"restore",
     b"restoreAllMocks",

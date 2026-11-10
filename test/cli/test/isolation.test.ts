@@ -3105,6 +3105,128 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
+  const replaced = `[[process, "platform"], [shared, "value"], [Shared.prototype, "inheritedValue"], [shared, "inheritedValue"]]`;
+  const replacedFiles = {
+    "shared.ts": `
+      export class Shared {}
+      Shared.prototype.inheritedValue = "original";
+      export const shared = Object.assign(new Shared(), { value: "original" });
+    `,
+    "a.test.ts": `
+      import { expect, jest, test } from "bun:test";
+      import { shared, Shared } from "./shared.ts";
+      test("a", () => {
+        for (const [object, key] of ${replaced}) jest.replaceProperty(object, key, "replaced");
+        expect(${replaced}.map(([object, key]) => object[key])).toEqual(["replaced", "replaced", "replaced", "replaced"]);
+        expect(Object.hasOwn(shared, "inheritedValue")).toBe(true);
+      });
+    `,
+    "b.test.ts": `
+      import { expect, test } from "bun:test";
+      import { shared, Shared } from "./shared.ts";
+      test("b", () => {
+        expect(${replaced}.map(([object, key]) => object[key])).toEqual([process.env.ISOLATION_PLATFORM, "original", "original", "original"]);
+        expect(Object.hasOwn(shared, "inheritedValue")).toBe(false);
+      });
+    `,
+  };
+
+  test.each(modes)("replaced properties are restored: bun test %s", async flags => {
+    using dir = tempDir("replaced-of-a-file", replacedFiles);
+    const { stderr, exitCode } = await runTests(String(dir), flags.split(" "), ["./a.test.ts", "./b.test.ts"], {
+      ...bunEnv,
+      ISOLATION_PLATFORM: process.platform,
+    });
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
+  test("replaced properties of a file that fails to load are restored", async () => {
+    using dir = tempDir("replaced-of-a-file", {
+      ...replacedFiles,
+      "a.test.ts": `
+        import { jest } from "bun:test";
+        import { shared, Shared } from "./shared.ts";
+        for (const [object, key] of ${replaced}) jest.replaceProperty(object, key, "replaced");
+        throw new Error("thrown while loading");
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"], {
+      ...bunEnv,
+      ISOLATION_PLATFORM: process.platform,
+    });
+    expect(stderr).toContain("error: thrown while loading");
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) b"], exitCode: 1 });
+  });
+
+  test("a replaced property that can't be restored is reported once, under the file that made it", async () => {
+    using dir = tempDir("replaced-of-a-file", {
+      "a.test.ts": `
+        import { jest, test } from "bun:test";
+        test("a", () => {
+          let isOver = false;
+          globalThis.target = new Proxy({ value: "original" }, {
+            defineProperty(...args) {
+              if (isOver) throw new Error("the trap refuses");
+              return Reflect.defineProperty(...args);
+            },
+          });
+          jest.replaceProperty(target, "value", "replaced");
+          isOver = true;
+        });
+      `,
+      "b.test.ts": `
+        import { expect, jest, test } from "bun:test";
+        test("b", () => {
+          expect(target.value).toBe("replaced");
+          jest.restoreAllMocks();
+          expect(target.value).toBe("replaced");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+    const lines = stderr.split("\n").filter(line => /^(error: |[ab]\.test\.ts:$|\((pass|fail)\) )/.test(line));
+    expect(
+      lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+      stderr,
+    ).toEqual(["a.test.ts:", "(pass) a", "error: the trap refuses", "b.test.ts:", "(pass) b"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("properties replaced by a preload or its beforeAll() are kept across files", async () => {
+    using dir = tempDir("replaced-of-a-preload", {
+      "preload.ts": `
+        import { beforeAll, jest } from "bun:test";
+        globalThis.target = { loading: "original", hook: "original", file: "original" };
+        jest.replaceProperty(target, "loading", "replaced");
+        beforeAll(() => {
+          jest.replaceProperty(target, "hook", "replaced");
+        });
+      `,
+      "a.test.ts": `
+        import { expect, jest, test } from "bun:test";
+        test("a", () => {
+          jest.replaceProperty(target, "file", "replaced");
+          jest.replaceProperty(target, "loading", "replaced by a");
+          expect(target).toEqual({ loading: "replaced by a", hook: "replaced", file: "replaced" });
+        });
+      `,
+      "b.test.ts": `
+        import { expect, jest, test } from "bun:test";
+        test("b", () => {
+          expect(target).toEqual({ loading: "replaced", hook: "replaced", file: "original" });
+          jest.restoreAllMocks();
+          expect(target).toEqual({ loading: "original", hook: "original", file: "original" });
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
   test("a preload's afterAll() sees the calls made in every file", async () => {
     using dir = tempDir("mocks-of-a-preload", {
       "preload.ts": `

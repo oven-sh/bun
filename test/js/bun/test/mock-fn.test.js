@@ -2246,6 +2246,470 @@ describe("spyOn", () => {
   });
 });
 
+// Vitest has no replaceProperty.
+(isBun || jest.replaceProperty ? describe : describe.skip)("replaceProperty", () => {
+  test("replaces a data property and restores it", () => {
+    const target = { value: 1 };
+    const replaced = jest.replaceProperty(target, "value", 2);
+    expect(target.value).toBe(2);
+    expect(Object.keys(replaced).sort()).toEqual(["replaceValue", "restore"]);
+    expect(replaced.replaceValue(3)).toBe(replaced);
+    expect(target.value).toBe(3);
+    expect(replaced.restore()).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(target, "value")).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    replaced.restore();
+    expect(target.value).toBe(1);
+  });
+
+  test("keeps the attributes of the property", () => {
+    const target = Object.defineProperty({}, "value", {
+      value: 1,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+    const replaced = jest.replaceProperty(target, "value", 2);
+    expect(target.value).toBe(2);
+    expect(Object.keys(target)).toEqual([]);
+    replaced.restore();
+    expect(Object.getOwnPropertyDescriptor(target, "value")).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  // Jest assigns the value, which a read-only property refuses.
+  test.skipIf(!isBun)("replaces a read-only property, which stays read-only", () => {
+    const target = Object.defineProperty({}, "value", { value: 1, writable: false, configurable: true });
+    const replaced = jest.replaceProperty(target, "value", 2);
+    expect(target.value).toBe(2);
+    expect(() => {
+      "use strict";
+      target.value = 3;
+    }).toThrow(TypeError);
+    replaced.restore();
+    expect(Object.getOwnPropertyDescriptor(target, "value")).toEqual({
+      value: 1,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  test("an index of an array", () => {
+    const target = [1, 2, 3];
+    const replaced = jest.replaceProperty(target, 1, 20);
+    expect(target).toEqual([1, 20, 3]);
+    replaced.restore();
+    expect(target).toEqual([1, 2, 3]);
+  });
+
+  test("an element of a typed array converts the value as an assignment does", () => {
+    const target = new Uint8Array([1, 2]);
+    const replaced = jest.replaceProperty(target, 1, { valueOf: () => 20 });
+    expect(target).toEqual(new Uint8Array([1, 20]));
+    replaced.replaceValue("30");
+    expect(target).toEqual(new Uint8Array([1, 30]));
+    replaced.restore();
+    expect(target).toEqual(new Uint8Array([1, 2]));
+  });
+
+  test("process.env converts the value to a string, as an assignment does", () => {
+    process.env.REPLACE_PROPERTY_TEST = "original";
+    try {
+      const replaced = jest.replaceProperty(process.env, "REPLACE_PROPERTY_TEST", 1);
+      expect(process.env.REPLACE_PROPERTY_TEST).toBe("1");
+      replaced.replaceValue(true);
+      expect(process.env.REPLACE_PROPERTY_TEST).toBe("true");
+      replaced.restore();
+      expect(process.env.REPLACE_PROPERTY_TEST).toBe("original");
+    } finally {
+      delete process.env.REPLACE_PROPERTY_TEST;
+    }
+  });
+
+  test("refuses to add a property to an object that is not extensible", () => {
+    const target = Object.freeze(Object.create({ value: 1 }));
+    expect(() => jest.replaceProperty(target, "value", 2)).toThrow(TypeError);
+    expect(Object.hasOwn(target, "value")).toBe(false);
+  });
+
+  test("restore and replaceValue work when destructured", () => {
+    const target = { value: 1 };
+    const { restore, replaceValue } = jest.replaceProperty(target, "value", 2);
+    replaceValue(5);
+    expect(target.value).toBe(5);
+    restore();
+    expect(target.value).toBe(1);
+  });
+
+  test("an inherited property is shadowed, and the shadow deleted on restore", () => {
+    const prototype = { value: 1 };
+    const target = Object.create(prototype);
+    const replaced = jest.replaceProperty(target, "value", 2);
+    expect(target.value).toBe(2);
+    expect(Object.hasOwn(target, "value")).toBe(true);
+    expect(prototype.value).toBe(1);
+    replaced.restore();
+    expect(Object.hasOwn(target, "value")).toBe(false);
+    expect(target.value).toBe(1);
+  });
+
+  test("the shadow of an inherited property has the default attributes, as an assignment makes", () => {
+    const defaults = { value: 2, writable: true, enumerable: true, configurable: true };
+    for (const target of [{}, [], function () {}]) {
+      const prototype = Object.create(Object.getPrototypeOf(target));
+      Object.defineProperty(prototype, "k", { value: 1, writable: true, enumerable: false, configurable: true });
+      Object.setPrototypeOf(target, prototype);
+      const replaced = jest.replaceProperty(target, "k", 2);
+      expect(Object.getOwnPropertyDescriptor(target, "k")).toEqual(defaults);
+      replaced.replaceValue(3);
+      expect(Object.getOwnPropertyDescriptor(target, "k")).toEqual({ ...defaults, value: 3 });
+      replaced.restore();
+      expect([Object.hasOwn(target, "k"), target.k]).toEqual([false, 1]);
+    }
+  });
+
+  test("the same object and key give the same handle, and one restore", () => {
+    const target = { value: 1 };
+    const first = jest.replaceProperty(target, "value", 2);
+    const second = jest.replaceProperty(target, "value", 3);
+    expect(second).toBe(first);
+    expect(target.value).toBe(3);
+    first.restore();
+    expect(target.value).toBe(1);
+  });
+
+  test("replaceValue on the shadow of an inherited property", () => {
+    const prototype = { value: 1 };
+    const target = Object.create(prototype);
+    const replaced = jest.replaceProperty(target, "value", 2);
+    replaced.replaceValue(3);
+    expect([target.value, prototype.value, Object.hasOwn(target, "value")]).toEqual([3, 1, true]);
+    replaced.restore();
+    expect([target.value, prototype.value, Object.hasOwn(target, "value")]).toEqual([1, 1, false]);
+  });
+
+  test("a function object is a valid target", () => {
+    function target() {}
+    target.count = 1;
+    const replaced = jest.replaceProperty(target, "count", 2);
+    expect(target.count).toBe(2);
+    replaced.restore();
+    expect(target.count).toBe(1);
+  });
+
+  test("a value of any type, a function included", () => {
+    const target = { value: 1 };
+    const fn = () => 2;
+    const replaced = jest.replaceProperty(target, "value", fn);
+    expect(target.value).toBe(fn);
+    replaced.replaceValue(undefined);
+    expect(target.value).toBeUndefined();
+    expect("value" in target).toBe(true);
+    replaced.restore();
+    expect(target.value).toBe(1);
+  });
+
+  test("restoreAllMocks restores every replaced property, even one whose handle is gone", () => {
+    const target = { a: 1, b: 1 };
+    jest.replaceProperty(target, "a", 2);
+    const replaced = jest.replaceProperty(target, "b", 2);
+    if (isBun) Bun.gc(true);
+    expect(target).toEqual({ a: 2, b: 2 });
+    jest.restoreAllMocks();
+    expect(target).toEqual({ a: 1, b: 1 });
+    // Restoring again changes nothing.
+    replaced.restore();
+    target.b = 3;
+    jest.restoreAllMocks();
+    expect(target).toEqual({ a: 1, b: 3 });
+  });
+
+  test("resetAllMocks and clearAllMocks leave a replaced property alone", () => {
+    const target = { value: 1 };
+    jest.replaceProperty(target, "value", 2);
+    jest.clearAllMocks();
+    jest.resetAllMocks();
+    expect(target.value).toBe(2);
+    jest.restoreAllMocks();
+    expect(target.value).toBe(1);
+  });
+
+  test("replaceValue after restore replaces the property again, and restore puts the original back again", () => {
+    const target = { value: 1 };
+    const replaced = jest.replaceProperty(target, "value", 2);
+    replaced.restore();
+    expect(replaced.replaceValue(9)).toBe(replaced);
+    expect(target.value).toBe(9);
+    replaced.restore();
+    expect(target.value).toBe(1);
+    // As in a describe() with afterEach(() => replaced.restore()), whose tests call replaceValue().
+    replaced.replaceValue(10);
+    expect(target.value).toBe(10);
+    jest.restoreAllMocks();
+    expect(target.value).toBe(1);
+  });
+
+  test("restore on a restored handle puts back the original of a later replacement of the same property", () => {
+    // As in a describe() with afterEach(() => replaced.restore()), whose tests call jest.replaceProperty() again.
+    const target = { value: 1 };
+    const replaced = jest.replaceProperty(target, "value", 2);
+    replaced.restore();
+    const later = jest.replaceProperty(target, "value", 3);
+    expect(later).not.toBe(replaced);
+    replaced.restore();
+    expect(target.value).toBe(1);
+    later.restore();
+    expect(target.value).toBe(1);
+  });
+
+  test("a symbol key", () => {
+    const key = Symbol("value");
+    const target = { [key]: 1 };
+    const replaced = jest.replaceProperty(target, key, 2);
+    expect(target[key]).toBe(2);
+    replaced.restore();
+    expect(target[key]).toBe(1);
+  });
+
+  test("refuses what Jest refuses, with Jest's messages", () => {
+    const thrownBy = (object, key) => {
+      try {
+        jest.replaceProperty(object, key, 2);
+      } catch (error) {
+        return [error.constructor, error.message];
+      }
+      return "no error";
+    };
+    const symbol = Symbol("value");
+    expect(thrownBy(null, "value")).toEqual([Error, "Cannot use replaceProperty on a primitive value; null given"]);
+    expect(thrownBy(undefined, "value")).toEqual([
+      Error,
+      "Cannot use replaceProperty on a primitive value; undefined given",
+    ]);
+    expect(thrownBy(1, "value")).toEqual([Error, "Cannot use replaceProperty on a primitive value; number given"]);
+    expect(thrownBy("value", "length")).toEqual([
+      Error,
+      "Cannot use replaceProperty on a primitive value; string given",
+    ]);
+    expect(thrownBy({}, null)).toEqual([Error, "No property name supplied"]);
+    expect(thrownBy({}, undefined)).toEqual([Error, "No property name supplied"]);
+    expect(thrownBy({}, "value")).toEqual([Error, "Property `value` does not exist in the provided object"]);
+    expect(thrownBy({}, symbol)).toEqual([Error, "Property `Symbol(value)` does not exist in the provided object"]);
+    const fixed = Object.defineProperty({}, "value", { value: 1, configurable: false, writable: true });
+    expect(thrownBy(fixed, "value")).toEqual([Error, "Property `value` is not declared configurable"]);
+    expect(thrownBy(Object.create(fixed), "value")).toEqual([Error, "Property `value` is not declared configurable"]);
+    expect(thrownBy(Object.freeze({ value: 1 }), "value")).toEqual([
+      Error,
+      "Property `value` is not declared configurable",
+    ]);
+    const fixedAccessor = Object.defineProperty({}, "value", { get: () => 1, configurable: false });
+    expect(thrownBy(fixedAccessor, "value")).toEqual([Error, "Property `value` is not declared configurable"]);
+    const getter = {
+      get value() {
+        return 1;
+      },
+    };
+    const getterMessage =
+      "Cannot replace the `value` property because it has a getter. Use `jest.spyOn(object, 'value', 'get').mockReturnValue(value)` instead.";
+    expect(thrownBy(getter, "value")).toEqual([Error, getterMessage]);
+    expect(thrownBy(Object.create(getter), "value")).toEqual([Error, getterMessage]);
+    expect(thrownBy({ get value() {}, set value(v) {} }, "value")).toEqual([Error, getterMessage]);
+    expect(thrownBy({ set value(v) {} }, "value")).toEqual([
+      Error,
+      "Cannot replace the `value` property because it has a setter. Use `jest.spyOn(object, 'value', 'set').mockReturnValue(value)` instead.",
+    ]);
+    const functionMessage =
+      "Cannot replace the `value` property because it is a function. Use `jest.spyOn(object, 'value')` instead.";
+    expect(thrownBy({ value() {} }, "value")).toEqual([TypeError, functionMessage]);
+    expect(thrownBy(Object.create({ value() {} }), "value")).toEqual([TypeError, functionMessage]);
+    expect(thrownBy({ value: class {} }, "value")).toEqual([TypeError, functionMessage]);
+    expect(thrownBy({ [symbol]: () => {} }, symbol)).toEqual([
+      TypeError,
+      "Cannot replace the `Symbol(value)` property because it is a function. Use `jest.spyOn(object, 'Symbol(value)')` instead.",
+    ]);
+  });
+
+  if (isBun) {
+    test("a property of a built-in object", () => {
+      const { platform } = process;
+      const replaced = jest.replaceProperty(process, "platform", "haiku");
+      expect(process.platform).toBe("haiku");
+      replaced.restore();
+      expect(process.platform).toBe(platform);
+    });
+
+    test("an export of a module namespace object", async () => {
+      const ns = await import("./mock/mock-module-fixture.ts");
+      const original = ns.default;
+      const replaced = jest.replaceProperty(ns, "default", "replaced");
+      expect(ns.default).toBe("replaced");
+      replaced.replaceValue("replaced again");
+      expect(ns.default).toBe("replaced again");
+      expect(jest.replaceProperty(ns, "default", "and again")).toBe(replaced);
+      expect(ns.default).toBe("and again");
+      replaced.restore();
+      expect(ns.default).toBe(original);
+      expect(() => jest.replaceProperty(ns, "fn", 1)).toThrow(
+        "Cannot replace the `fn` property because it is a function. Use `jest.spyOn(object, 'fn')` instead.",
+      );
+    });
+
+    // TZ is an own accessor of process.env even while it is not set, so `in` would skip always.
+    test.skipIf(
+      [process.env.MODE, process.env.DEV, process.env.PROD, process.env.TZ].some(value => value !== undefined),
+    )("import.meta.env", () => {
+      expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV]).toEqual(["test", false, true]);
+      const mode = jest.replaceProperty(import.meta.env, "MODE", "production");
+      const dev = jest.replaceProperty(import.meta.env, "DEV", false);
+      expect([import.meta.env.MODE, process.env.MODE, import.meta.env.DEV]).toEqual([
+        "production",
+        "production",
+        false,
+      ]);
+      mode.restore();
+      dev.restore();
+      expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV, "DEV" in process.env]).toEqual([
+        "test",
+        false,
+        true,
+        false,
+      ]);
+      // A variable that is set keeps the string it had, not the boolean import.meta.env shows.
+      process.env.PROD = "";
+      try {
+        const prod = jest.replaceProperty(import.meta.env, "PROD", true);
+        expect([import.meta.env.PROD, process.env.PROD]).toEqual([true, "1"]);
+        prod.restore();
+        expect([import.meta.env.PROD, process.env.PROD]).toEqual([false, ""]);
+      } finally {
+        delete process.env.PROD;
+      }
+      // An unset TZ does not exist, whether process.env still has its accessor for it or a file deleted it.
+      expect(() => jest.replaceProperty(import.meta.env, "TZ", "Asia/Tokyo")).toThrow(
+        "Property `TZ` does not exist in the provided object",
+      );
+      expect(process.env.TZ).toBeUndefined();
+      // A set TZ is assigned, so the zone changes with it.
+      const zone = new Date(0).getTimezoneOffset();
+      process.env.TZ = "America/New_York";
+      try {
+        const tz = jest.replaceProperty(import.meta.env, "TZ", "Asia/Tokyo");
+        expect([new Date(0).getTimezoneOffset(), process.env.TZ]).toEqual([-540, "Asia/Tokyo"]);
+        tz.restore();
+        expect([new Date(0).getTimezoneOffset(), process.env.TZ]).toEqual([300, "America/New_York"]);
+      } finally {
+        delete process.env.TZ;
+      }
+      expect(new Date(0).getTimezoneOffset()).toBe(zone);
+    });
+
+    test("import.meta.env over an object put in place of process.env", () => {
+      const env = process.env;
+      process.env = { VALUE: undefined, get ACCESSOR() {}, set ACCESSOR(v) {} };
+      try {
+        // A value of undefined is a value. An accessor that reads undefined is an unset variable.
+        const replaced = jest.replaceProperty(import.meta.env, "VALUE", "x");
+        expect([import.meta.env.VALUE, process.env.VALUE]).toEqual(["x", "x"]);
+        replaced.restore();
+        expect([import.meta.env.VALUE, Object.hasOwn(process.env, "VALUE")]).toEqual([undefined, true]);
+        expect(() => jest.replaceProperty(import.meta.env, "ACCESSOR", "x")).toThrow(
+          "Property `ACCESSOR` does not exist in the provided object",
+        );
+      } finally {
+        process.env = env;
+      }
+    });
+
+    test.skipIf(process.env.DEV !== undefined)(
+      "import.meta.env replaces and restores the process.env of the time it was called",
+      () => {
+        // As in beforeEach(() => (process.env = { ...process.env })) with afterEach(() => (process.env = saved)).
+        const env = process.env;
+        const copy = { ...process.env, VALUE: "a" };
+        process.env = copy;
+        let value, dev;
+        try {
+          value = jest.replaceProperty(import.meta.env, "VALUE", "b");
+          dev = jest.replaceProperty(import.meta.env, "DEV", false);
+          expect([copy.VALUE, copy.DEV, import.meta.env.DEV]).toEqual(["b", "", false]);
+        } finally {
+          process.env = env;
+        }
+        // The copy is gone from process.env, so the handles still write to the copy.
+        dev.replaceValue(true);
+        expect([copy.DEV, "DEV" in env]).toEqual(["1", false]);
+        value.restore();
+        dev.restore();
+        expect([copy.VALUE, "DEV" in copy, "VALUE" in env, "DEV" in env]).toEqual(["a", false, false, false]);
+      },
+    );
+
+    test.skipIf(process.env.MODE !== undefined)(
+      "restore on a restored import.meta.env handle puts back the original of a later replacement",
+      () => {
+        // As in a describe() with afterEach(() => mode.restore()), whose tests call jest.replaceProperty() again.
+        const mode = jest.replaceProperty(import.meta.env, "MODE", "a");
+        mode.restore();
+        const later = jest.replaceProperty(import.meta.env, "MODE", "c");
+        expect([later === mode, import.meta.env.MODE, process.env.MODE]).toEqual([false, "c", "c"]);
+        mode.restore();
+        expect([import.meta.env.MODE, "MODE" in process.env]).toEqual(["test", false]);
+      },
+    );
+
+    test("through a Proxy", () => {
+      const target = { value: 1 };
+      const traps = [];
+      const proxy = new Proxy(target, {
+        defineProperty(target, key, descriptor) {
+          traps.push(["defineProperty", key]);
+          return Reflect.defineProperty(target, key, descriptor);
+        },
+        // The restore defines what the target holds, not what the trap answers.
+        get: () => 99,
+      });
+      const replaced = jest.replaceProperty(proxy, "value", 2);
+      expect(target.value).toBe(2);
+      replaced.restore();
+      expect(target.value).toBe(1);
+      expect(traps).toEqual([
+        ["defineProperty", "value"],
+        ["defineProperty", "value"],
+      ]);
+      // A `has` trap that claims a key no descriptor describes.
+      expect(() => jest.replaceProperty(new Proxy({}, { has: () => true }), "value", 2)).toThrow(
+        "Property `value` does not exist in the provided object",
+      );
+      // The write runs a trap that replaces other properties, which moves the records around.
+      const objects = Array.from({ length: 20 }, () => ({ value: 1 }));
+      let isReplacing = true;
+      const busy = new Proxy(
+        { value: 1 },
+        {
+          defineProperty(target, key, descriptor) {
+            if (isReplacing) for (const object of objects) jest.replaceProperty(object, "value", 2);
+            return Reflect.defineProperty(target, key, descriptor);
+          },
+        },
+      );
+      const first = jest.replaceProperty(busy, "value", 2);
+      expect(jest.replaceProperty(busy, "value", 3)).toBe(first);
+      isReplacing = false;
+      jest.restoreAllMocks();
+      expect([busy.value, ...objects.map(object => object.value)]).toEqual(Array(21).fill(1));
+    });
+  }
+});
+
 if (isBun) {
   describe("new on a mock", () => {
     test("a class implementation constructs", () => {

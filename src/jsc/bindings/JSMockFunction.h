@@ -39,6 +39,8 @@ public:
     V(Structure, mockModuleStructure)                             \
     V(Structure, activeSpySetStructure)                           \
     V(JSFunction, withImplementationCleanupFunction)              \
+    V(JSFunction, replacedPropertyRestoreFunction)                \
+    V(JSFunction, replacedPropertyReplaceValueFunction)           \
     V(JSC::Structure, mockWithImplementationCleanupDataStructure) \
     V(JSCell, lazyPrototype)                                      \
     V(JSString, defaultName)                                      \
@@ -67,6 +69,13 @@ public:
 
     // A JSMap from the promises given to didStartDynamicImport() to their keys. Settled ones get swept.
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
+
+    // The mock behind each jest.replaceProperty() that is not restored yet, and its `Replaced` handle. Nothing else roots that mock.
+    struct ReplacedProperty {
+        JSC::Strong<JSC::JSObject> mock;
+        JSC::Strong<JSC::JSObject> handle;
+    };
+    Vector<ReplacedProperty> replacedProperties;
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
     bool preloadMayBeRunning { true };

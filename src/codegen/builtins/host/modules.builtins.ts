@@ -78,6 +78,26 @@ const spyOn = {
 } satisfies b.FunctionField;
 
 const stubbedName = b.keyFrom("name");
+// jsJestReplaceProperty keeps what the data property holds, weakly, and defines or assigns `value` under the name, which process.env converts.
+const replacedName = b.keyFrom("name");
+const replaceProperty = {
+  args: { object: b.object, name: b.propertyKey.loose, value: b.any },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  uses: {
+    value: [b.runs("ToPrimitive")],
+    object: [
+      b.readByKey(replacedName, b.nativeMemory),
+      b.definesName(replacedName, b.operand("value")),
+      b.deletedByKey(replacedName),
+      b.runs("PrototypeChain"),
+      ...b.ownPropertyTraps,
+    ],
+  },
+  implementation: b.generic,
+} satisfies b.FunctionField;
+
 const stubGlobal = [
   {
     args: { name: b.propertyKey.loose, value: b.any, global: b.builtin("globalThis") },
@@ -516,7 +536,7 @@ export default b.declarations(
   functionsOfRunner("bun:test", passedByJest),
   functionsOfRunner("bun:test/vitest", passedByVitest),
   b.fn("bun:test.spyOn", spyOn),
-  b.namespace("bun:test.jest", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise }),
+  b.namespace("bun:test.jest", { spyOn, replaceProperty, resetModules: b.otherwise, useFakeTimers: b.otherwise }),
   b.namespace("bun:test.vi", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise, stubGlobal }),
   b.fn("bun:test/vitest.spyOn", spyOn),
   b.namespace("bun:test/vitest.vi", {

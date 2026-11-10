@@ -46,6 +46,22 @@ expectType<ReturnType<typeof spyOn<DateConstructor, "now">>>().is<Mock<() => num
 expectType<ReturnType<typeof jest.spyOn<DateConstructor, "now">>>().is<Mock<() => number>>();
 expectType<ReturnType<typeof vi.spyOn<DateConstructor, "now">>>().is<Mock<() => number>>();
 
+// jest.replaceProperty() types the value and the handle after the property, as in Jest.
+const config = { mode: "production" as "production" | "test", retries: 1 };
+const replaced = jest.replaceProperty(config, "mode", "test");
+expectType(replaced).is<jest.Replaced<"production" | "test">>();
+expectType(replaced.replaceValue("production")).is<jest.Replaced<"production" | "test">>();
+expectType(replaced.restore()).is<void>();
+expectType(jest.replaceProperty(process.env, "NODE_ENV", "test")).is<jest.Replaced<string | undefined>>();
+// @ts-expect-error the value has the property's type
+jest.replaceProperty(config, "retries", "many");
+// @ts-expect-error the property must exist
+jest.replaceProperty(config, "notAProperty", 1);
+// @ts-expect-error a method is spied on, not replaced
+jest.replaceProperty(Math, "max", () => 1);
+// @ts-expect-error a class is spied on, not replaced
+jest.replaceProperty(globalThis, "Date", class {});
+
 // Same for `ReturnType<typeof mock>`.
 expectType<ReturnType<typeof mock>>().is<Mock<(...args: any[]) => any>>();
 expectType<ReturnType<typeof jest.fn>>().is<Mock<(...args: any[]) => any>>();

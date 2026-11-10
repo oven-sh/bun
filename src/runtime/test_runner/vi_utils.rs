@@ -15,6 +15,7 @@ unsafe extern "C" {
     safe fn JSMock__resetAllMocks(global: &JSGlobalObject);
     safe fn JSMock__clearAllMocks(global: &JSGlobalObject);
     safe fn JSMock__didFinishTestFile(global: &JSGlobalObject);
+    safe fn JSMock__didDiscardTestFileGlobal(global: &JSGlobalObject);
     safe fn JSMock__willRunTest(global: &JSGlobalObject);
 }
 
@@ -75,6 +76,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
         runner.vi_config = runner.vi_config_of_preload;
     }
     if !next_load_shares_global {
+        JSMock__didDiscardTestFileGlobal(global);
         return;
     }
     run(global, JSMock__didFinishTestFile);

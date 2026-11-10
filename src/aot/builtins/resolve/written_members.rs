@@ -116,7 +116,8 @@ fn find_writer(function: BuiltinId) -> Option<Writer> {
         | BuiltinId::BunTestJestSpyOn
         | BuiltinId::BunTestViSpyOn
         | BuiltinId::BunTestVitestSpyOn
-        | BuiltinId::BunTestVitestViSpyOn => Writer::Spy,
+        | BuiltinId::BunTestVitestViSpyOn
+        | BuiltinId::BunTestJestReplaceProperty => Writer::Spy,
         BuiltinId::ObjectDefineProperty
         | BuiltinId::ReflectDefineProperty
         | BuiltinId::ReflectDeleteProperty

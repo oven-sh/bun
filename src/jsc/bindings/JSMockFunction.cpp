@@ -27,6 +27,8 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <JavaScriptCore/RegExpPrototype.h>
@@ -112,6 +114,8 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionGetMockName);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockClear);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockReset);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockRestore);
+JSC_DECLARE_HOST_FUNCTION(jsReplacedPropertyRestore);
+JSC_DECLARE_HOST_FUNCTION(jsReplacedPropertyReplaceValue);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockImplementation);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockImplementationOnce);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockName);
@@ -286,6 +290,7 @@ static bool isJSFunctionOrCompiledCallee(JSObject* object)
 }
 
 JSObject* processEnvOfImportMetaEnvForTests(JSGlobalObject*, JSObject*);
+JSValue processEnvValueOfImportMetaEnvForTests(JSGlobalObject*, PropertyName, JSValue);
 
 // Script never sees what putDirect() stores on a Proxy, or on a node:vm global for a key that the contextified object has.
 static bool isModuleNamespace(JSObject* object)
@@ -354,6 +359,41 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
 }
 
 static constexpr unsigned descriptorAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor;
+
+static String propertyKeyForMessage(const Identifier& key)
+{
+    return key.isSymbol() ? makeString("Symbol("_s, key.string(), ')') : key.string();
+}
+
+// `object[key] = value` in strict mode, so the object's own put() runs (process.env converts to a string).
+static void assignProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue value)
+{
+    PutPropertySlot slot(object, true);
+    object->methodTable()->put(object, globalObject, key, value, slot);
+}
+
+// True if `object` is a module namespace object, whose exports are replaced in the module that declares them.
+static bool replaceExportOfNamespace(JSGlobalObject* globalObject, JSC::CallFrame* callframe, JSObject* object, const Identifier& propertyKey, JSValue replacement)
+{
+    if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
+        moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+        return true;
+    }
+#if ENABLE(AOT)
+    if (JSC::AOT::isModuleNamespace(object)) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (!isReplaced)
+            throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::fileOfCallerThatWasNotCompiled(vm, callframe)));
+        return true;
+    }
+#else
+    UNUSED_PARAM(callframe);
+#endif
+    return false;
+}
 
 static void putOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key, const PropertyDescriptor& descriptor)
 {
@@ -450,12 +490,18 @@ public:
     bool hasLazyPrototype { true };
     // Preloads and their beforeAll() hooks run once for all test files, so the end of a test file leaves it alone.
     bool isMadeByPreload { false };
+    // Made by jest.replaceProperty(). It is never called. mockModule().replacedProperties roots it until it is restored.
+    bool isReplacedProperty { false };
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
     // The spy is the property's getter or setter, or what its getter returns.
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
     // isOpaqueProperty() was true at install time, so restore the same way.
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
+    // The replacement was assigned, as `object[key] = value`, because the object has its own put(). The restore assigns too.
+    static constexpr unsigned SpyAttributeAssigned = 1 << 27;
+    // Replaced through import.meta.env, which converts a Vite boolean on the way to process.env. The target is the process.env of that time.
+    static constexpr unsigned SpyAttributeImportMetaEnv = 1 << 26;
 
     JSString* jsName()
     {
@@ -865,6 +911,39 @@ public:
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
 
+    bool isInstalledOn(JSObject* target, const Identifier& key) const
+    {
+        return m_spyTarget && m_spyTarget.get() == target && m_spyIdentifier == key;
+    }
+
+    // Writes another value where a replaced property is installed. False once the property is restored.
+    bool putReplacement(JSGlobalObject* globalObject, JSC::CallFrame* callframe, JSValue value)
+    {
+        JSObject* target = m_spyTarget.get();
+        if (!target)
+            return false;
+        unsigned attributes = m_spyAttributes;
+        if (attributes & SpyAttributeAssigned) {
+            if (attributes & SpyAttributeImportMetaEnv)
+                value = processEnvValueOfImportMetaEnvForTests(globalObject, m_spyIdentifier, value);
+            assignProperty(globalObject, target, m_spyIdentifier, value);
+            return true;
+        }
+        bool isOpaque = attributes & SpyAttributeOpaque;
+        ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
+        if (attributes & SpyAttributeESModuleNamespace) {
+            replaceExportOfNamespace(globalObject, callframe, target, m_spyIdentifier, value);
+            return true;
+        }
+        // The original may be a custom property, whose attributes would make putOwnPropertyStorage() treat the value as its getter.
+        attributes &= PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
+        // A replacement of an inherited property is a new own property with the default attributes, as an assignment makes. The restore deletes it.
+        if (!m_spyOriginal)
+            attributes = 0;
+        putOwnPropertyStorage(globalObject, target, m_spyIdentifier, value, attributes, isOpaque);
+        return true;
+    }
+
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
     {
@@ -954,6 +1033,14 @@ private:
         m_spyIdentifier = JSC::Identifier();
         m_spyAttributes = 0;
         leave(List::Spies);
+        if (isReplacedProperty) [[unlikely]]
+            forgetReplacedProperty();
+    }
+
+    NEVER_INLINE void forgetReplacedProperty()
+    {
+        auto& replaced = mockModule().replacedProperties;
+        replaced.removeFirstMatching([&](auto& entry) { return entry.mock.get() == this; });
     }
 
     void setFallbackImplementation(JSMockImplementation::Kind kind, JSValue value)
@@ -1000,6 +1087,19 @@ private:
             scope.release();
             if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target))
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, original);
+            return;
+        }
+
+        if (attributes & SpyAttributeAssigned) {
+            if (original) {
+                scope.release();
+                assignProperty(globalObject, target, identifier, original);
+                return;
+            }
+            bool isDeleted = JSCell::deleteProperty(target, globalObject, identifier);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!isDeleted)
+                throwTypeError(globalObject, scope, makeString("Cannot restore the `"_s, propertyKeyForMessage(identifier), "` property because it cannot be deleted"_s));
             return;
         }
 
@@ -1279,6 +1379,12 @@ extern "C" void JSMock__didFinishTestFile(Zig::GlobalObject* globalObject)
     JSMockFunction::didFinishTestFile(globalObject);
 }
 
+// The test file's global is thrown away with everything it replaced. The roots would keep it alive.
+extern "C" void JSMock__didDiscardTestFileGlobal(Zig::GlobalObject* globalObject)
+{
+    globalObject->mockModule.replacedProperties.clear();
+}
+
 JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
 {
     JSMockModule mock;
@@ -1411,6 +1517,14 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     mock.withImplementationCleanupFunction.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
             init.set(JSC::JSFunction::create(init.vm, init.owner, 2, String(), jsMockFunctionWithImplementationCleanup, ImplementationVisibility::Public));
+        });
+    mock.replacedPropertyRestoreFunction.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, 0, "restore"_s, jsReplacedPropertyRestore, ImplementationVisibility::Public));
+        });
+    mock.replacedPropertyReplaceValueFunction.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, 1, "replaceValue"_s, jsReplacedPropertyReplaceValue, ImplementationVisibility::Public));
         });
     mock.mockWithImplementationCleanupDataStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
@@ -2952,11 +3066,6 @@ __attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObjec
     mock->setInitialImplementation(globalObject, function);
 }
 
-static String propertyKeyForMessage(const Identifier& key)
-{
-    return key.isSymbol() ? makeString("Symbol("_s, key.string(), ')') : key.string();
-}
-
 static String propertyKeyForFunctionName(const Identifier& key)
 {
     return key.isSymbol() ? makeString('[', key.string(), ']') : key.string();
@@ -2983,6 +3092,135 @@ enum class SpyAccess : uint8_t {
     Get,
     Set,
 };
+
+// The object a spy or a replacement goes on, and what `key` is there.
+struct SpiedProperty {
+    JSObject* object { nullptr };
+    // A data property's value, when `isEasy` and the property exists.
+    JSValue value;
+    // Filled when the property is not a plain data property, or the object is opaque.
+    PropertyDescriptor descriptor;
+    unsigned slotAttributes { 0 };
+    bool hasValue { false };
+    bool isOwn { false };
+    bool isOpaque { false };
+    // A data property or a missing one, spied as a value.
+    bool isEasy { false };
+};
+
+// Resolves the object that stands in for `object` (a GlobalProxy, a node:vm global, a mocked module's namespace) and describes `propertyKey` there.
+__attribute__((minsize)) static void resolveSpiedProperty(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& propertyKey, SpyAccess access, ASCIILiteral function, SpiedProperty& result)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (object->type() == JSC::JSType::GlobalProxyType)
+        object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
+
+    // A WebAssembly GC object's Structure can't change, so the direct stores below would abort.
+    if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
+        throwTypeError(globalObject, scope, makeString(function, " does not support WebAssembly GC objects"_s));
+        return;
+    }
+
+    // A node:vm global reads a key that the contextified object inherits from that object, but says it has no such key. So spy there.
+    if (auto* contextGlobal = dynamicDowncast<NodeVMGlobalObject>(object)) {
+        if (JSObject* contextified = contextGlobal->contextifiedObject()) {
+            bool isOwn = contextified->hasOwnProperty(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, );
+            bool isInherited = !isOwn && contextified->hasProperty(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, );
+            if (isInherited)
+                object = contextified;
+        }
+    }
+
+    // A module mock's exports are read live from the object its factory returned, so spy on that object.
+#if ENABLE(AOT)
+    while (globalObject->aotInstance()) {
+        JSObject* exports = Bun::objectHoldingExportOfCompiledModuleMock(globalObject, object, propertyKey);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!exports)
+            break;
+        object = exports;
+    }
+#endif
+    while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
+        JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!exports)
+            break;
+        object = exports;
+    }
+
+    if (auto* target = dynamicDowncast<JSMockFunction>(object); target && propertyKey == vm.propertyNames->prototype) {
+        target->prototypeProperty(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+
+    JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
+    bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
+    RETURN_IF_EXCEPTION(scope, );
+    // A String object's indices and `length` are own properties, but come without a slotBase().
+    bool isOwn = hasValue && (!slot.slotBase() || slot.slotBase() == object);
+    // An object of compiled code has what its layout lacks, such as an index key, in a second object, which is then the slotBase().
+    if (hasValue && !isOwn && vm.hasCompiledCode()) [[unlikely]] {
+        isOwn = object->hasOwnProperty(globalObject, propertyKey);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    unsigned slotAttributes = hasValue ? slot.attributes() : 0;
+    bool isEasy = access == SpyAccess::Value && (!hasValue || slot.isValue());
+
+    bool isOpaque = isOpaqueProperty(globalObject, object, propertyKey);
+    RETURN_IF_EXCEPTION(scope, );
+    if (hasValue && (!isEasy || isOpaque)) {
+        JSObject* holder = findPropertyDescriptor(globalObject, object, propertyKey, result.descriptor);
+        RETURN_IF_EXCEPTION(scope, );
+        // An opaque property's slot only says that the property exists, so go by the descriptor.
+        if (isOpaque) {
+            isOwn = holder == object;
+            slotAttributes = result.descriptor.attributes() & descriptorAttributes;
+            isEasy = access == SpyAccess::Value && result.descriptor.isDataDescriptor();
+        }
+    }
+
+#if ENABLE(AOT)
+    // The lock of a built-in object lists the members that a program could change. A member that the language makes read-only and not configurable is not listed, and putDirect asks no attribute.
+    constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
+    bool isFixedMember = vm.hasCompiledCode() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
+    bool isLocked = object->structure()->mayHaveImmutableProperties();
+    bool isFixedMemberOfLockedObject = isFixedMember && isLocked && !JSC::AOT::isMemberUnlockedForTests(object, propertyKey.impl());
+    // A constructor need not be locked for compiled code to take its `prototype` or a constant on it for what the realm was created with.
+    bool isFixedMemberOfOpenObject = isFixedMember && !isLocked && JSC::AOT::isMemberFoldedAsConstant(object, propertyKey.impl());
+    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject || isFixedMemberOfOpenObject || JSC::AOT::rejectsOwnPropertyOnLibraryFunction(object, propertyKey.impl()))) {
+        String message = JSC::AOT::rejectedSpyMessage(globalObject, object, propertyKey.impl());
+        if (message.isNull())
+            message = makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
+        throwTypeError(globalObject, scope, message);
+        return;
+    }
+
+#endif
+    JSValue value;
+    if (isEasy && hasValue) {
+        if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
+            // if it's a Proxy or JSModuleNamespaceObject
+            value = object->get(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, );
+        } else {
+            value = slot.getValue(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+
+    result.object = object;
+    result.value = value;
+    result.slotAttributes = slotAttributes;
+    result.hasValue = hasValue;
+    result.isOwn = isOwn;
+    result.isOpaque = isOpaque;
+    result.isEasy = isEasy;
+}
 
 __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool isVitest)
 {
@@ -3028,137 +3266,34 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
     }
 
-    JSC::JSObject* object = objectValue.getObject();
-    if (object->type() == JSC::JSType::GlobalProxyType)
-        object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
-
-    // A WebAssembly GC object's Structure can't change, so the direct stores below would abort.
-    if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
-        throwTypeError(globalObject, scope, "spyOn(target, prop) does not support WebAssembly GC objects"_s);
-        return {};
-    }
-
-    // A node:vm global reads a key that the contextified object inherits from that object, but says it has no such key. So spy there.
-    if (auto* contextGlobal = dynamicDowncast<NodeVMGlobalObject>(object)) {
-        if (JSObject* contextified = contextGlobal->contextifiedObject()) {
-            bool isOwn = contextified->hasOwnProperty(globalObject, propertyKey);
-            RETURN_IF_EXCEPTION(scope, {});
-            bool isInherited = !isOwn && contextified->hasProperty(globalObject, propertyKey);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (isInherited)
-                object = contextified;
-        }
-    }
-
+    JSObject* target = objectValue.getObject();
     // In tests `import.meta.env` is backed by `process.env`, so spy there.
-    if (object->structure()->typeInfo().prohibitsPropertyCaching()) [[unlikely]] {
-        if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object))
-            object = env;
+    if (target->structure()->typeInfo().prohibitsPropertyCaching()) [[unlikely]] {
+        if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, target))
+            target = env;
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // A module mock's exports are read live from the object its factory returned, so spy on that object.
-#if ENABLE(AOT)
-    while (globalObject->aotInstance()) {
-        JSObject* exports = Bun::objectHoldingExportOfCompiledModuleMock(globalObject, object, propertyKey);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!exports)
-            break;
-        object = exports;
-    }
-#endif
-    while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
-        JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!exports)
-            break;
-        object = exports;
-    }
-
-    if (auto* target = dynamicDowncast<JSMockFunction>(object); target && propertyKey == vm.propertyNames->prototype) {
-        target->prototypeProperty(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
-    bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
+    SpiedProperty property;
+    resolveSpiedProperty(globalObject, target, propertyKey, access, "spyOn(target, prop)"_s, property);
     RETURN_IF_EXCEPTION(scope, {});
-    // A String object's indices and `length` are own properties, but come without a slotBase().
-    bool isOwn = hasValue && (!slot.slotBase() || slot.slotBase() == object);
-    // An object of compiled code has what its layout lacks, such as an index key, in a second object, which is then the slotBase().
-    if (hasValue && !isOwn && vm.hasCompiledCode()) [[unlikely]] {
-        isOwn = object->hasOwnProperty(globalObject, propertyKey);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    unsigned slotAttributes = hasValue ? slot.attributes() : 0;
-    bool isEasy = access == SpyAccess::Value && (!hasValue || slot.isValue());
+    JSObject* object = property.object;
+    PropertyDescriptor& descriptor = property.descriptor;
+    bool hasValue = property.hasValue;
+    bool isOwn = property.isOwn;
+    bool isOpaque = property.isOpaque;
+    bool isEasy = property.isEasy;
+    unsigned slotAttributes = property.slotAttributes;
 
-    PropertyDescriptor descriptor;
-    bool isOpaque = isOpaqueProperty(globalObject, object, propertyKey);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (hasValue && (!isEasy || isOpaque)) {
-        JSObject* holder = findPropertyDescriptor(globalObject, object, propertyKey, descriptor);
-        RETURN_IF_EXCEPTION(scope, {});
-        // An opaque property's slot only says that the property exists, so go by the descriptor.
-        if (isOpaque) {
-            isOwn = holder == object;
-            slotAttributes = descriptor.attributes() & descriptorAttributes;
-            isEasy = access == SpyAccess::Value && descriptor.isDataDescriptor();
-        }
-    }
-
-#if ENABLE(AOT)
-    // The lock of a built-in object lists the members that a program could change. A member that the language makes read-only and not configurable is not listed, and putDirect asks no attribute.
-    constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
-    bool isFixedMember = vm.hasCompiledCode() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
-    bool isLocked = object->structure()->mayHaveImmutableProperties();
-    bool isFixedMemberOfLockedObject = isFixedMember && isLocked && !JSC::AOT::isMemberUnlockedForTests(object, propertyKey.impl());
-    // A constructor need not be locked for compiled code to take its `prototype` or a constant on it for what the realm was created with.
-    bool isFixedMemberOfOpenObject = isFixedMember && !isLocked && JSC::AOT::isMemberFoldedAsConstant(object, propertyKey.impl());
-    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject || isFixedMemberOfOpenObject || JSC::AOT::rejectsOwnPropertyOnLibraryFunction(object, propertyKey.impl()))) {
-        String message = JSC::AOT::rejectedSpyMessage(globalObject, object, propertyKey.impl());
-        if (message.isNull())
-            message = makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
-        throwTypeError(globalObject, scope, message);
-        return {};
-    }
-
-#endif
-
-    // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
     auto replaceExport = [&](JSValue replacement) {
-        if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
-            return true;
-        }
-#if ENABLE(AOT)
-        if (JSC::AOT::isModuleNamespace(object)) {
-            bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
-            RETURN_IF_EXCEPTION(scope, true);
-            if (!isReplaced)
-                throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::fileOfCallerThatWasNotCompiled(vm, callframe)));
-            return true;
-        }
-#endif
-        return false;
+        return replaceExportOfNamespace(globalObject, callframe, object, propertyKey, replacement);
     };
 
     // easymode: regular property or missing property
     if (isEasy) {
-        JSValue value = jsUndefined();
-        if (hasValue) {
-            if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
-                // if it's a Proxy or JSModuleNamespaceObject
-                value = object->get(globalObject, propertyKey);
-                RETURN_IF_EXCEPTION(scope, {});
-            } else {
-                value = slot.getValue(globalObject, propertyKey);
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-
-            if (dynamicDowncast<JSMockFunction>(value)) {
-                return JSValue::encode(value);
-            }
+        JSValue value = hasValue ? property.value : jsUndefined();
+        if (dynamicDowncast<JSMockFunction>(value)) {
+            return JSValue::encode(value);
         }
 
         bool isNamespace = isModuleNamespace(object);
@@ -3287,6 +3422,266 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     return JSValue::encode(mock);
 }
 
+// `{ restore, replaceValue }`, bound to the mock so that both work when destructured. The bound target and key serve a handle whose mock is restored already.
+static JSObject* createReplacedPropertyHandle(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSObject* target, const Identifier& propertyKey)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& mockModule = globalObject->mockModule;
+
+    JSObject* handle = JSC::constructEmptyObject(globalObject);
+    MarkedArgumentBuffer boundArguments;
+    boundArguments.append(handle);
+    boundArguments.append(target);
+    boundArguments.append(identifierToJSValue(vm, propertyKey));
+
+    auto* restore = JSC::JSBoundFunction::create(vm, globalObject, mockModule.replacedPropertyRestoreFunction.getInitializedOnMainThread(globalObject), mock, boundArguments, 0, nullptr, makeSource("restore"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* replaceValue = JSC::JSBoundFunction::create(vm, globalObject, mockModule.replacedPropertyReplaceValueFunction.getInitializedOnMainThread(globalObject), mock, boundArguments, 1, nullptr, makeSource("replaceValue"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    handle->putDirect(vm, Identifier::fromString(vm, "restore"_s), restore);
+    handle->putDirect(vm, Identifier::fromString(vm, "replaceValue"_s), replaceValue);
+    return handle;
+}
+
+// The entry of an earlier jest.replaceProperty() on the same object and key that is not restored yet. A test file gets its own record over a preload's.
+static JSMockModule::ReplacedProperty* findReplacedProperty(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& propertyKey)
+{
+    bool isInPreload = globalObject->mockModule.preloadMayBeRunning && JSMock__isInPreload(globalObject);
+    for (auto& entry : globalObject->mockModule.replacedProperties) {
+        auto* mock = uncheckedDowncast<JSMockFunction>(entry.mock.get());
+        if (mock->isInstalledOn(target, propertyKey) && (isInPreload || !mock->isMadeByPreload))
+            return &entry;
+    }
+    return nullptr;
+}
+
+// jest.replaceProperty(object, key, value) with Jest 30's checks. Returns the handle, or the given one when replaceValue() installs a restored `mock` again.
+__attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSObject* target, const Identifier& propertyKey, JSValue value, JSMockFunction* mock, JSObject* handle)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    SpiedProperty property;
+    resolveSpiedProperty(globalObject, target, propertyKey, SpyAccess::Value, "replaceProperty(target, prop, value)"_s, property);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* object = property.object;
+    String keyForMessage = propertyKeyForMessage(propertyKey);
+
+    if (!property.hasValue) {
+        throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` does not exist in the provided object"_s));
+        return {};
+    }
+    // import.meta.env converts Vite's variables and gives the ones process.env lacks a default. The original is what process.env holds, and the spy is installed there: a test may put another object in place of process.env before the restore.
+    JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* installTarget = env ? env : object;
+    if (env) {
+        PropertySlot envSlot(env, PropertySlot::InternalMethodType::GetOwnProperty);
+        property.isOwn = env->getOwnPropertySlotInline(globalObject, propertyKey, envSlot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (property.isOwn) {
+            // On Windows process.env is a Proxy whose target holds the TZ accessor, so read it through the Proxy.
+            property.value = envSlot.isValue() ? envSlot.getValue(globalObject, propertyKey) : env->get(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+            // process.env's accessor for an unset TZ reads undefined: the variable does not exist, as in Node. A value of undefined on an object put in place of process.env is a value.
+            if (!envSlot.isValue() && property.value.isUndefined()) {
+                throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` does not exist in the provided object"_s));
+                return {};
+            }
+        }
+    }
+
+    bool isNamespace = isModuleNamespace(object);
+    // What the replacement is defined with. The restore writes the original back with the attributes of its storage.
+    unsigned attributes = property.slotAttributes;
+    // A Proxy's `get` trap may answer anything. Its target's descriptor holds what the restore defines again.
+    JSValue original = property.isOpaque && property.isEasy ? property.descriptor.value() : property.value;
+    if (!property.isEasy) {
+        // A getter, a setter, or a property that a native getter serves. A Proxy's `has` trap may also claim a key that no descriptor describes.
+        const PropertyDescriptor& descriptor = property.descriptor;
+        if (!descriptor.isAccessorDescriptor() && !descriptor.isDataDescriptor()) {
+            throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` does not exist in the provided object"_s));
+            return {};
+        }
+        if (descriptor.isAccessorDescriptor()) {
+            if (!descriptor.configurable()) {
+                throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` is not declared configurable"_s));
+                return {};
+            }
+            bool hasGetter = descriptor.getterPresent() && !descriptor.getter().isUndefined();
+            throwVMError(globalObject, scope, makeString("Cannot replace the `"_s, keyForMessage, "` property because it has a "_s, hasGetter ? "getter"_s : "setter"_s, ". Use `jest.spyOn(object, '"_s, keyForMessage, "', '"_s, hasGetter ? "get"_s : "set"_s, "').mockReturnValue(value)` instead."_s));
+            return {};
+        }
+        attributes = descriptor.attributes() & descriptorAttributes;
+        original = descriptor.value();
+    }
+    // An export of a module namespace object is not configurable, but overrideExportValue() replaces it all the same.
+    if (!isNamespace && (attributes & PropertyAttribute::DontDelete)) {
+        throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` is not declared configurable"_s));
+        return {};
+    }
+    if (original.isCallable()) {
+        throwTypeError(globalObject, scope, makeString("Cannot replace the `"_s, keyForMessage, "` property because it is a function. Use `jest.spyOn(object, '"_s, keyForMessage, "')` instead."_s));
+        return {};
+    }
+
+    if (auto* existing = findReplacedProperty(globalObject, installTarget, propertyKey)) {
+        // The write may run script that adds to or removes from the vector behind `existing`.
+        JSValue existingHandle = existing->handle.get();
+        auto* existingMock = uncheckedDowncast<JSMockFunction>(existing->mock.get());
+        existingMock->putReplacement(globalObject, callframe, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        return handle ? handle : existingHandle;
+    }
+
+    // A shadow of an inherited property is a new own property, which an object that is not extensible refuses.
+    if (!property.isOwn && !isNamespace) {
+        bool isExtensible = installTarget->isExtensible(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isExtensible) {
+            throwTypeError(globalObject, scope, makeString("Cannot replace the `"_s, keyForMessage, "` property because the object is not extensible"_s));
+            return {};
+        }
+    }
+
+    // An assignment refuses a read-only property. import.meta.env has no storage of its own, so its process.env is always assigned.
+    bool isAssigned = env || (!isNamespace && !property.isOpaque && !(attributes & PropertyAttribute::ReadOnly) && object->structure()->typeInfo().overridesPut());
+#if ENABLE(AOT)
+    if (!env && object->structure()->mayHaveImmutableProperties())
+        isAssigned = false;
+#endif
+
+    unsigned spyAttributes = attributes;
+    // A property that a native getter serves is restored from its storage, not from the value the getter returned.
+    if (!property.isEasy && property.isOwn && !isAssigned) {
+        original = getOwnPropertyStorage(globalObject, object, propertyKey, spyAttributes);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    // A replacement that shadows an inherited property is a new own property with the default attributes, as Jest's assignment makes. The restore deletes it.
+    if (!property.isOwn)
+        attributes = 0;
+    if (isNamespace)
+        spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+    if (property.isOpaque)
+        spyAttributes |= JSMockFunction::SpyAttributeOpaque;
+    if (isAssigned)
+        spyAttributes |= JSMockFunction::SpyAttributeAssigned;
+    if (env)
+        spyAttributes |= JSMockFunction::SpyAttributeImportMetaEnv;
+
+    if (!mock) {
+        mock = createMockFunction(vm, globalObject, false);
+        mock->isJest = true;
+        mock->isReplacedProperty = true;
+    }
+    if (isAssigned) {
+        if (env)
+            value = processEnvValueOfImportMetaEnvForTests(globalObject, propertyKey, value);
+        assignProperty(globalObject, installTarget, propertyKey, value);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        ThroughLockOfBuiltins throughLock(vm, property.isOpaque);
+        if (!replaceExportOfNamespace(globalObject, callframe, object, propertyKey, value))
+            putOwnPropertyStorage(globalObject, object, propertyKey, value, attributes, property.isOpaque);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    mock->didInstall(installTarget, propertyKey, property.isOwn ? original : JSValue(), spyAttributes);
+
+    if (!handle) {
+        handle = createReplacedPropertyHandle(globalObject, mock, object, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    globalObject->mockModule.replacedProperties.append({ JSC::Strong<JSObject>(vm, mock), JSC::Strong<JSObject>(vm, handle) });
+    return handle;
+}
+
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsJestReplaceProperty, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject) [[unlikely]] {
+        throwVMError(lexicalGlobalObject, scope, "Cannot run replaceProperty from a different global context"_s);
+        return {};
+    }
+
+    JSValue objectValue = callframe->argument(0);
+    JSValue propertyKeyValue = callframe->argument(1);
+    JSValue value = callframe->argument(2);
+
+    if (!objectValue.isObject()) {
+        JSString* type = objectValue.isUndefinedOrNull() ? (objectValue.isNull() ? vm.smallStrings.nullString() : vm.smallStrings.undefinedString()) : jsTypeStringForValue(globalObject, objectValue);
+        auto typeView = type->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        throwVMError(globalObject, scope, makeString("Cannot use replaceProperty on a primitive value; "_s, typeView.data, " given"_s));
+        return {};
+    }
+    if (propertyKeyValue.isUndefinedOrNull()) {
+        throwVMError(globalObject, scope, "No property name supplied"_s);
+        return {};
+    }
+    Identifier propertyKey = propertyKeyValue.toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(replaceProperty(globalObject, callframe, objectValue.getObject(), propertyKey, value, nullptr, nullptr)));
+}
+
+namespace Bun {
+
+// Bound arguments: the handle, the target, the key.
+JSC_DEFINE_HOST_FUNCTION(jsReplacedPropertyRestore, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* mock = dynamicDowncast<JSMockFunction>(callframe->thisValue());
+    if (!mock) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    if (mock->isRestoredSpy()) {
+        // Jest's restore() always puts the original back. A later replacement of the same property is restored instead.
+        JSObject* target = callframe->argument(1).getObject();
+        Identifier propertyKey = callframe->argument(2).toPropertyKey(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        // A replacement through import.meta.env is installed on the process.env behind it.
+        if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, target))
+            target = env;
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* active = findReplacedProperty(uncheckedDowncast<Zig::GlobalObject>(mock->globalObject()), target, propertyKey);
+        if (!active)
+            return JSValue::encode(jsUndefined());
+        mock = uncheckedDowncast<JSMockFunction>(active->mock.get());
+    }
+    mock->clearSpy(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+// Bound arguments: the handle to return, the target, the key. The value follows them.
+JSC_DEFINE_HOST_FUNCTION(jsReplacedPropertyReplaceValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* mock = dynamicDowncast<JSMockFunction>(callframe->thisValue());
+    JSValue handle = callframe->argument(0);
+    if (!mock) [[unlikely]]
+        return JSValue::encode(handle);
+    JSValue value = callframe->argument(3);
+
+    bool isInstalled = mock->putReplacement(lexicalGlobalObject, callframe, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isInstalled) {
+        // Restored already. Jest assigns the value. This installs the replacement again, so that restore() still puts the original back.
+        JSObject* target = callframe->argument(1).getObject();
+        Identifier propertyKey = callframe->argument(2).toPropertyKey(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        replaceProperty(uncheckedDowncast<Zig::GlobalObject>(mock->globalObject()), callframe, target, propertyKey, value, mock, handle.getObject());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(handle);
+}
+
+} // namespace Bun
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return spyOn(globalObject, callframe, false);
@@ -3378,6 +3773,7 @@ extern "C" __attribute__((minsize)) void JSMock__putMockFunctionUtilities(Zig::G
     vi->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "spyOn"_s), 2, jsVitestSpyOn, ImplementationVisibility::Public, NoIntrinsic, 0);
     jest->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "fn"_s), 1, jsJestFn, ImplementationVisibility::Public, NoIntrinsic, 0);
     jest->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "spyOn"_s), 2, jsJestSpyOn, ImplementationVisibility::Public, NoIntrinsic, 0);
+    jest->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "replaceProperty"_s), 3, jsJestReplaceProperty, ImplementationVisibility::Public, NoIntrinsic, 0);
 }
 
 #undef CHECK_IS_MOCK_FUNCTION

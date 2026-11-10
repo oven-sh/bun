@@ -334,6 +334,23 @@ declare module "bun:test" {
       obj: T,
       methodOrPropertyValue: K,
     ): Mock<Extract<T[K], (...args: any[]) => any>>;
+    /**
+     * Replaces a data property of `object` with `value`. The property must exist, be configurable, and hold
+     * neither a function (use `jest.spyOn(object, key)`) nor an accessor (use `jest.spyOn(object, key, "get")`).
+     *
+     * `jest.restoreAllMocks()`, the `restoreMocks` option and the end of the test file put the original back.
+     *
+     * @example
+     * const config = { mode: "production" };
+     * const mode = jest.replaceProperty(config, "mode", "test");
+     * mode.replaceValue("staging");
+     * mode.restore();
+     */
+    function replaceProperty<T extends object, K extends JestMock.PropertyLikeKeys<T>>(
+      object: T,
+      propertyKey: K,
+      value: T[K],
+    ): Replaced<T[K]>;
 
     /**
      * Constructs the type of a mock function, such as the return type of `jest.fn()`.

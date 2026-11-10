@@ -452,6 +452,38 @@ describe.concurrent("--update-snapshots", () => {
     },
   );
 
+  // b.test.ts does not register "shared": shared.ts is in the module cache, and its test ran for a.test.ts. With --isolate it does, so b.test.ts.snap is in use.
+  const shared = snap({ "shared 1": `"s"` });
+  test.each([
+    ["a hook with an inline snapshot", `beforeAll(() => { expect(1).toMatchInlineSnapshot(\`1\`); });`],
+    ["a test with an inline snapshot", `test("own", () => { expect(1).toMatchInlineSnapshot(\`1\`); });`],
+    ["a test with a file snapshot", `test("own", async () => { await expect("x").toMatchFileSnapshot("./x.txt"); });`],
+    [
+      "a skipped test and a hook with an inline snapshot",
+      `beforeAll(() => { expect(1).toMatchInlineSnapshot(\`1\`); });
+       test.skip("own", () => {});`,
+    ],
+  ])(
+    "keeps the file of a test file that takes no snapshot from it and imports a module with tests that ran before: %s",
+    async (_, ofB) => {
+      const files = {
+        "shared.ts": `import { expect, test } from "bun:test";
+          test("shared", () => { expect("s").toMatchSnapshot(); });`,
+        "a.test.ts": `import "./shared";`,
+        "b.test.ts": `import "./shared";
+          import { beforeAll, expect, test } from "bun:test";
+          ${ofB}`,
+        "__snapshots__/a.test.ts.snap": shared,
+        "__snapshots__/b.test.ts.snap": shared,
+      };
+      const result = await update(files, "./a.test.ts", "./b.test.ts");
+      expect({ snapshots: result.snapshots, exitCode: result.exitCode }).toEqual({
+        snapshots: { "a.test.ts.snap": shared, "b.test.ts.snap": shared },
+        exitCode: 0,
+      });
+    },
+  );
+
   // The second "./a.test.ts" registers no test: a.test.ts is in the module cache. The hook of the preload file runs there.
   test("keeps the entries of a test file that runs again when a preload hook takes a snapshot there", async () => {
     const entries = snap({ "skipped 1": `"s"`, "(unnamed) 1": `"hook"` });
@@ -604,7 +636,7 @@ describe.concurrent("--update-snapshots", () => {
     });
   });
 
-  // No test asks the file for an entry, so the run has nothing to put in its place. The third file is not Bun's.
+  // No test asks the file for an entry, so the run says nothing about it. The third file is not Bun's.
   const inline = `test("a", () => { expect("a").toMatchInlineSnapshot(\`"a"\`); });`;
   test.each([
     ["a test is skipped", `${inline}\ntest.skip("b", () => { expect("b").toMatchSnapshot(); });`, unreadable],

@@ -1827,13 +1827,25 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       expect(exitCode).toBe(0);
     });
 
-    test.each(formats)("%s: a file that nothing is left of is removed", async format => {
+    test.each(["jest", "vitest"] as const)("%s: a file that nothing is left of is removed", async format => {
       using dir = tempDir("snapshot-obsolete-file", {
         "a.test.js": `test("t", () => { expect(1).toMatchInlineSnapshot(\`1\`); });`,
         "__snapshots__/a.test.js.snap": headers[format] + "\nexports[`t 1`] = `1`;\n",
       });
       const { exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
       expect(readdirSync(join(String(dir), "__snapshots__"))).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    // Such a run says nothing about the entries of a file in Bun's format. new-snapshot.test.ts has the case that needs them.
+    test("bun: a file that the run takes no snapshot from stays as it is", async () => {
+      const stored = headers.bun + "\nexports[`t 1`] = `1`;\n";
+      using dir = tempDir("snapshot-obsolete-file", {
+        "a.test.js": `test("t", () => { expect(1).toMatchInlineSnapshot(\`1\`); });`,
+        "__snapshots__/a.test.js.snap": stored,
+      });
+      const { exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+      expect(snap(dir)).toBe(stored);
       expect(exitCode).toBe(0);
     });
 
@@ -1919,7 +1931,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         );
       });
 
-      // Such a run leaves no entry in a file of Jest or Vitest that parses either. A file in Bun's format can be another tool's.
+      // The same as for a file that parses: Bun's format stays as it is, the other two lose the file.
       test("when every test ran to the end and none asks it for a snapshot, is removed only in Jest's and Vitest's formats", async () => {
         const inline = `test("inline", () => { expect(1).toMatchInlineSnapshot(\`1\`); });\n`;
         const result = await update(inline + ofItsOwnFile, "--update-snapshots");

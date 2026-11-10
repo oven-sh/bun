@@ -90,6 +90,8 @@ describe("a snapshot file that bun test can't write", () => {
   const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
   const stored = header + '\nexports[`matches 1`] = `"a"`;\n';
   const unused = header + '\nexports[`no test has this name 1`] = `"b"`;\n';
+  // Only a file of Jest or Vitest loses its entries, and with the last one the file, in a run that takes no snapshot from it.
+  const unusedOfJest = unused.replace(header, "// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing\n");
   const withUnused = stored + '\nexports[`no test has this name 1`] = `"b"`;\n';
   const matches = `test("matches", () => { expect("a").toMatchSnapshot(); });`;
   const inline = `test("inline", () => { expect("a").toMatchInlineSnapshot(\`"a"\`); });`;
@@ -223,20 +225,20 @@ describe("a snapshot file that bun test can't write", () => {
   test.serial.skipIf(isWindows)(
     "--update-snapshots reports a file with no entry left that it can't remove",
     async () => {
-      using fixture = readOnly({ "a.test.js": inline, "__snapshots__/a.test.js.snap": unused });
+      using fixture = readOnly({ "a.test.js": inline, "__snapshots__/a.test.js.snap": unusedOfJest });
       const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots");
       expect(stderr).toContain(
         `EACCES: Permission denied: Failed to remove the entries that no test uses from ${quoted("a.test.js")} (unlink)\n`,
       );
       expect(stderr).toContain(" 1 pass\n 0 fail\n 1 error\n");
-      expect(fixture.read()).toBe(unused);
+      expect(fixture.read()).toBe(unusedOfJest);
       expect(exitCode).toBe(1);
     },
   );
 
   // Jest and Vitest remove such a file too. To remove a file takes write access to its directory, not to the file.
   test.serial("--update-snapshots removes a read-only file with no entry left from a writable directory", async () => {
-    using fixture = readOnly({ "a.test.js": inline, "__snapshots__/a.test.js.snap": unused }, "writable");
+    using fixture = readOnly({ "a.test.js": inline, "__snapshots__/a.test.js.snap": unusedOfJest }, "writable");
     const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots");
     expect(stderr).toContain(" 1 pass\n 0 fail\n");
     expect(fixture.has()).toBe(false);

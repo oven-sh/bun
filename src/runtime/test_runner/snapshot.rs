@@ -606,6 +606,8 @@ impl Snapshots {
         }
         let ran = Self::keep_entries_of_tests(&mut self.values, file, buntest);
         file.keeps_all |= ran == Ran::NotAllRegistered || (file.unparsed && ran != Ran::ToTheEnd);
+        // A run that takes no entry from a file in Bun's format leaves it as it is. It does not say which entries are in use: a module that an earlier test file imported does not register its tests again. A file of Jest or Vitest loses its unused entries in such a run, as in those runners.
+        let takes_none_of_bun = file.format == Format::Bun && !self.values.values().iter().any(|entry| entry.checked);
         if file.unparsed {
             if !file.keeps_all && !self.values.is_empty() {
                 file.unparsed = false;
@@ -618,8 +620,8 @@ impl Snapshots {
             self.values.clear();
             file.pending = Pending::Nothing;
             if taken == 0 {
-                // A run of every test to the end that asks for no entry leaves none, as in a file that parses. A file in Bun's format can be another tool's: it is any file with no header of Jest or Vitest.
-                if !file.keeps_all && file.format != Format::Bun {
+                // A run of every test to the end that asks for no entry leaves none, as in a file that parses.
+                if !file.keeps_all && !takes_none_of_bun {
                     Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable)?;
                     file.unparsed = false;
                 }
@@ -630,7 +632,7 @@ impl Snapshots {
                 .ok_or_else(|| LeftAsItIs::NotWritable(Self::path_is_too_long()))?;
             return Err(LeftAsItIs::DoesNotParse(Box::from(&path_buf.0[..len]), file.format));
         }
-        if file.keeps_all {
+        if file.keeps_all || takes_none_of_bun {
             return Ok(());
         }
         let kept = self.values.values().iter().filter(|entry| entry.checked || entry.stays).count();

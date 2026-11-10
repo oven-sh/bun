@@ -50,7 +50,7 @@ bun test --update-snapshots
 
 Do this when you've intentionally changed the output. In CI environments, Bun does not write new snapshots unless you pass this flag.
 
-`--update-snapshots` writes the entries whose value changed and adds the new ones. It removes the entries that no test uses anymore from the snapshot file of each test file that ran a snapshot matcher. If no entry is left, it removes the file.
+`--update-snapshots` writes the entries whose value changed and adds the new ones. It removes the entries that no test uses anymore from each snapshot file that the run takes a snapshot from.
 
 It keeps the entries of a test that did not run to the end:
 
@@ -60,6 +60,8 @@ It keeps the entries of a test that did not run to the end:
 - a `test.failing` test, which can throw before it reaches its snapshot
 
 If a `describe()` callback throws, Bun removes no entry from the snapshot file of that test file, because the tests after the throw are not registered.
+
+A run that takes no snapshot from a snapshot file in Bun's format leaves that file as it is, also when the test file has inline snapshots or file snapshots. Such a run does not show which entries are in use. Without [`--isolate`](/test/parallel#--isolate), a module that registers tests when it loads does not register them again while it stays loaded, so a later test file that imports it can register fewer tests than it has. To remove unused entries from such a snapshot file, delete them or the file.
 
 To remove one of these entries, delete it from the snapshot file. To write a snapshot file from scratch, delete the file and run `bun test --update-snapshots`. For a file in [Jest's or Vitest's format](#snapshots-from-jest-and-vitest), delete everything below its first line instead. That line keeps the file in its format.
 
@@ -317,7 +319,13 @@ A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, 
 
 Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from.
 
-`--update-snapshots` follows the [same rules](#updating-snapshots) in all three formats, with one difference. In a file in Vitest's format, a `test.todo`, and a `test.fails` or `test.failing` test that passes, count as tests that ran to the end, so it also removes their unused entries. Vitest removes the entries of its `test.todo` and `test.fails` too. A file in Jest's or Vitest's format that is sorted by key stays sorted, as those runners keep it. The rule for a file that does not parse is Bun's own: Jest replaces such a file in every run that updates it, and Vitest 5 never replaces it.
+`--update-snapshots` follows the [same rules](#updating-snapshots) in all three formats, with these differences for a file in Jest's or Vitest's format:
+
+- A run that takes no snapshot from the file also removes the entries that no test uses, and removes the file if no entry is left. Jest and Vitest do the same.
+- In Vitest's format, a `test.todo`, and a `test.fails` or `test.failing` test that passes, count as tests that ran to the end, so their unused entries go. Vitest removes the entries of its `test.todo` and `test.fails` too.
+- A file that is sorted by key stays sorted, as those runners keep it.
+
+The rule for a file that does not parse is Bun's own: Jest replaces such a file in every run that updates it, and Vitest 5 never replaces it.
 
 Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
 

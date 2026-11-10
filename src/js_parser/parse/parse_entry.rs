@@ -23,9 +23,9 @@ use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
 
-// Named instantiations of `P<'_, TS, SCAN>`.
-pub type JavaScriptParser<'a> = P<'a, false, false>;
-pub type TSXParser<'a> = P<'a, true, false>;
+// Named instantiations of `P<'_, TS>`.
+pub type JavaScriptParser<'a> = P<'a, false>;
+pub type TSXParser<'a> = P<'a, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
@@ -51,7 +51,7 @@ macro_rules! init_p {
 /// What `Parser::parse_only` parsed.
 pub struct ParsedOnly<'p, 'a> {
     pub stmts: &'p [js_ast::Stmt],
-    p: &'p P<'a, false, false>,
+    p: &'p P<'a, false>,
 }
 
 impl<'a> ParsedOnly<'_, 'a> {
@@ -487,7 +487,7 @@ impl<'a> Parser<'a> {
     /// `Err`: the source does not parse.
     #[cold]
     pub fn parse_only<R>(mut self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
-        type Pi<'a> = P<'a, false, false>;
+        type Pi<'a> = P<'a, false>;
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
@@ -522,7 +522,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from
-    /// `bun run`, so keep the `_scan_imports` monomorphizations out of the hot
+    /// `bun run`, so keep `_scan_imports` out of the hot
     /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
     pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult<'a>) -> Result<(), Error> {
@@ -538,7 +538,7 @@ impl<'a> Parser<'a> {
         &mut self,
         scan_pass: &mut ScanPassResult<'a>,
     ) -> Result<(), Error> {
-        type Pi<'a, const TS: bool> = P<'a, TS, true>;
+        type Pi<'a, const TS: bool> = P<'a, TS>;
         // `Lexer` owns `Vec`s and `Options` owns
         // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
         // when `self` later drops. Move them out, leaving inert placeholders.
@@ -567,9 +567,7 @@ impl<'a> Parser<'a> {
         p.import_records =
             crate::p::ImportRecordList::Scan(core::mem::take(&mut scan_pass.import_records));
         p.named_imports = core::mem::take(&mut scan_pass.named_imports);
-        if TS {
-            p.parse_pass_symbol_uses = Some(core::mem::take(&mut scan_pass.used_symbols));
-        }
+        p.begin_scan(core::mem::take(&mut scan_pass.used_symbols));
         let result = Self::scan_imports_with(p);
         scan_pass.import_records = p.import_records.take_scan(p.arena);
         scan_pass.named_imports = core::mem::take(&mut p.named_imports);
@@ -580,21 +578,10 @@ impl<'a> Parser<'a> {
     }
 
     #[cold]
-    fn scan_imports_with<const TS: bool>(p: &mut P<'a, TS, true>) -> Result<(), Error> {
+    fn scan_imports_with<const TS: bool>(p: &mut P<'a, TS>) -> Result<(), Error> {
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
         // So we don't have a good way to distinguish between a type-only import and not.
-        if TS {
-            // Pre-size the name-keyed usage map so the scan pass doesn't
-            // re-hash it one identifier reference at a time (≈ one tracked
-            // symbol per 16 source bytes). `ensure_total_capacity` is a no-op
-            // when the map already retains enough capacity from a prior file.
-            let _ = p
-                .parse_pass_symbol_uses
-                .as_mut()
-                .expect("set by the caller for TS")
-                .ensure_total_capacity(p.source.contents.len() / 16);
-        }
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
@@ -909,7 +896,7 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        init_p!(let p: P<'_, TS, false> =
+        init_p!(let p: P<'_, TS> =
             (bump, log, source, define, lexer, options));
 
         if p.options.features.hot_module_reloading {

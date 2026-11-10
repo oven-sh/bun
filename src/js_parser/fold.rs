@@ -48,7 +48,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 
 // File-split mixin pattern: a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     pub(crate) fn maybe_relocate_vars_to_top_level(
         &mut self,
         decls: &[G::Decl],

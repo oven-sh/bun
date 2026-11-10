@@ -1007,7 +1007,7 @@ fn then_export(arena: &Arena, import: Expr, parameter: js_ast::Ref, name: &[u8])
     )
 }
 
-impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
+impl<'a, const TS: bool> P<'a, TS> {
     pub(crate) fn depends_on_more_than_source(&self) -> bool {
         self.macro_call_count != 0
             || matches!(

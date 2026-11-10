@@ -9,7 +9,7 @@
 // through a mask register makes the chain half as long again. Nothing here gains much from more than 256 bits.
 // So this is the list in scripts/build/deps/highway.ts and more: the rest of SVE, and whatever is newer than AVX2.
 #undef HWY_DISABLED_TARGETS
-#define HWY_DISABLED_TARGETS (HWY_ALL_SVE | (HWY_AVX2 - 1))
+#define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_NEON_BF16 | (HWY_AVX2 - 1))
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_png.cpp"

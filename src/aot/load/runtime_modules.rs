@@ -283,9 +283,7 @@ impl RuntimeModules {
 
     #[cfg(test)]
     pub(crate) fn prelude_paths(&self) -> impl Iterator<Item = Vec<u8>> {
-        prelude::FILES
-            .iter()
-            .map(|(name, _)| virtual_path(&prelude_archive_name(name)))
+        prelude::files().map(|(name, _)| virtual_path(&prelude_archive_name(name)))
     }
 
     pub(crate) fn function_files_without_ids(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
@@ -442,9 +440,9 @@ fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
     let configuration = RuntimeFileKind::Configuration;
     add(b"tsconfig.json", configuration, None);
     add(b"package.json", configuration, Some(PACKAGE_JSON));
-    for &(name, text) in prelude::FILES {
+    for (name, text) in prelude::files() {
         let name = prelude_archive_name(name);
-        add(&name, RuntimeFileKind::Functions, Some(text.as_bytes()));
+        add(&name, RuntimeFileKind::Functions, Some(text));
     }
     for name in manifest.module_declarations() {
         let file = RuntimeFile {

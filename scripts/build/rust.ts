@@ -250,7 +250,7 @@ export interface RustBuildInputs {
 const generatedBuiltinTables = ["aot_builtin_ids.rs", "aot_builtin_syntax.rs", "aot_builtin_table.rs"];
 
 const generatedFilesReadBy: Record<string, string[] | "all"> = {
-  bun_aot: [...generatedBuiltinTables, "aot_schema.rs"],
+  bun_aot: [...generatedBuiltinTables, "aot_schema.rs", "compressed/aot/"],
   bun_aot_builtins: [...generatedBuiltinTables, "aot_schema_builtins.rs"],
   bun_aot_interface: ["aot_schema_interface.rs"],
   bun_ast: ["runtime.out.js"],

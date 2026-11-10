@@ -462,7 +462,7 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
  * Release builds embed these via `bun_zstd::embed_compressed!` and inflate on
  * first use instead of carrying the plain text in `.rodata`. Anything that runs
  * inside Bun (builtin modules, bake.server.js, FFI headers, …) stays as-is,
- * except text that only `bun lint`, `bun fmt` and `bun check` read.
+ * except text that only `bun lint`, `bun fmt`, `bun check` and `bun compile` read.
  * Output: `<codegenDir>/compressed/<name>.zst`.
  */
 function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
@@ -509,6 +509,18 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
         "fmt/evaluate-prettier.js",
         "fmt/tailwind.js",
       ].map(file => resolve(cfg.cwd, "src/lint/driver", file)),
+    },
+    {
+      name: "aot/prelude.ts",
+      inputs: [
+        "array-search.ts",
+        "array-sort.ts",
+        "decorators.ts",
+        "iterator-consumers.ts",
+        "rejected-imports.ts",
+        "test-files.ts",
+        "written-lists.ts",
+      ].map(file => resolve(cfg.cwd, "src/aot/prelude", file)),
     },
   ];
   for (const { inputs, name } of assets) {

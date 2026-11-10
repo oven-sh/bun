@@ -59,7 +59,7 @@ pub(crate) fn drop_namespace_of_lowered_callee(
     is_lowered
 }
 
-impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
+impl<'a, const TS: bool> P<'a, TS> {
     /// Picks the transpiler cache key, so `bun test` and `bun run` have to compute the same answer.
     pub(crate) fn uses_test_api(&self) -> bool {
         self.has_hoisted_mock_stmt

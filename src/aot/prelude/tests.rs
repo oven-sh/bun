@@ -1,6 +1,6 @@
 #![allow(clippy::disallowed_methods)]
 
-use super::FILES;
+use super::{NAMES, files};
 use crate::builtins::table::{self, RuntimeFunctionData, RuntimeFunctionRole};
 
 const TABLE_FOLDER: &str = "prelude/";
@@ -11,11 +11,13 @@ fn compiler_functions() -> impl Iterator<Item = (&'static str, &'static RuntimeF
     functions.filter_map(|data| Some((data.file.strip_prefix(TABLE_FOLDER)?, data)))
 }
 
+fn texts() -> impl Iterator<Item = (&'static str, &'static str)> {
+    files().map(|(name, text)| (name, std::str::from_utf8(text).unwrap()))
+}
+
 fn file_text(stem: &str) -> &'static str {
-    let file = FILES
-        .iter()
-        .find(|file| file.0.strip_suffix(EXTENSION) == Some(stem));
-    file.unwrap_or_else(|| panic!("{stem}{EXTENSION} is not in FILES"))
+    let file = texts().find(|file| file.0.strip_suffix(EXTENSION) == Some(stem));
+    file.unwrap_or_else(|| panic!("{stem}{EXTENSION} is not one of the files"))
         .1
 }
 
@@ -38,20 +40,12 @@ fn find_duplicate<T: Copy + Ord>(items: impl IntoIterator<Item = T>) -> Option<T
 }
 
 #[test]
-fn files_are_listed_once() {
-    let names: Vec<&str> = FILES.iter().map(|(name, _)| *name).collect();
-    let expected = [
-        "array-search.ts",
-        "array-sort.ts",
-        "decorators.ts",
-        "iterator-consumers.ts",
-        "rejected-imports.ts",
-        "test-files.ts",
-        "written-lists.ts",
-    ];
-    assert_eq!(names, expected);
-    for (name, text) in FILES {
+fn each_text_is_that_of_the_file_with_the_name() {
+    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("prelude");
+    assert_eq!(files().count(), NAMES.len());
+    for (name, text) in files() {
         assert!(!text.is_empty(), "{name} is empty");
+        assert!(std::fs::read(folder.join(name)).unwrap() == text, "{name}");
     }
 }
 
@@ -86,7 +80,7 @@ fn every_compiler_function_is_exported() {
 
 #[test]
 fn every_export_is_a_compiler_function() {
-    for (file, text) in FILES {
+    for (file, text) in texts() {
         let stem = file.strip_suffix(EXTENSION);
         assert!(
             exported_functions(text).next().is_some(),

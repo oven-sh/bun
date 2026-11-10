@@ -3229,6 +3229,45 @@ pub(crate) mod __gated_printer {
             let mut flags = in_flags;
 
             match &expr.data {
+                ExprData::EUnary(_)
+                | ExprData::EBinary(_)
+                | ExprData::EClass(_)
+                | ExprData::ENew(_)
+                | ExprData::EFunction(_)
+                | ExprData::ECall(_)
+                | ExprData::EDot(_)
+                | ExprData::EIndex(_)
+                | ExprData::EArrow(_)
+                | ExprData::EJsxElement(_)
+                | ExprData::ESpread(_)
+                | ExprData::ETemplate(_)
+                | ExprData::ERegExp(_)
+                | ExprData::EAwait(_)
+                | ExprData::EYield(_)
+                | ExprData::EIf(_)
+                | ExprData::EImport(_)
+                | ExprData::EIdentifier(_)
+                | ExprData::EImportIdentifier(_)
+                | ExprData::EPrivateIdentifier(_)
+                | ExprData::ECommonjsExportIdentifier(_)
+                | ExprData::EBigInt(_)
+                | ExprData::ERequireString(_)
+                | ExprData::ERequireResolveString(_)
+                | ExprData::ERequireCallTarget
+                | ExprData::ERequireResolveCallTarget
+                | ExprData::EThis(_)
+                | ExprData::ESuper(_)
+                | ExprData::ENewTarget(_)
+                | ExprData::EImportMeta(_)
+                | ExprData::EImportMetaMain(_)
+                | ExprData::ERequireMain
+                | ExprData::ESpecial(_)
+                | ExprData::EInlinedEnum(_)
+                | ExprData::ENameOfSymbol(_)
+                    if IS_JSON =>
+                {
+                    unreachable!("print_json() prints what a parser of data makes")
+                }
                 ExprData::EMissing(_) => {}
                 ExprData::EUndefined(_) => {
                     self.add_source_mapping(expr.loc);
@@ -5114,7 +5153,7 @@ pub(crate) mod __gated_printer {
             }
 
             if let Some(val) = &item.value {
-                if let ExprData::EFunction(f) = &val.data {
+                if !IS_JSON && let ExprData::EFunction(f) = &val.data {
                     if item.flags.contains(js_ast::flags::Property::IsMethod) {
                         self.print_func(&f.func);
                         return;
@@ -5127,9 +5166,7 @@ pub(crate) mod __gated_printer {
 
             if IS_JSON {
                 debug_assert!(item.initializer.is_none());
-            }
-
-            if let Some(initial) = &item.initializer {
+            } else if let Some(initial) = &item.initializer {
                 self.print_initializer(*initial);
             }
         }

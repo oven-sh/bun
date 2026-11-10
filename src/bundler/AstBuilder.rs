@@ -273,7 +273,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // This is mimicking how it calls ImportScanner
         //
         // `ImportScanner` is currently monomorphized
-        // over the concrete `P<'_, TS, J, SCAN>` parser only (see
+        // over the concrete `P<'_, TS>` parser only (see
         // ImportScanner.rs:30), so the equivalent transform is open-coded here
         // for the stmt shapes `AstBuilder` callers actually emit (`S.Import`,
         // `S.Local{is_export}`, `S.ExportDefault(expr)`). Without this, the

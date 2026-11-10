@@ -18,7 +18,12 @@ const HIGHWAY_COMMIT = "2607d3b5b0113992fe84d3848859eae13b3b52c1";
 // off: bun's movemask-style kernels (highway_json/xml/sourcemap.cpp) use BitsFromMask, which only
 // fixed-width targets have. SVE2_128 (Neoverse V2/N2) is fixed-width and stays on, as before.
 // highway_png.cpp puts a longer list in the place of this one.
-const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128";
+//
+// The other four would compile bun's kernels to the instructions of a target that stays on. The tables that
+// HWY_EXPORT makes hold their addresses, so the linker's safe ICF folds none of them. AVX3_SPR is AVX3_ZEN4 again and
+// AVX10_2 is AVX3_DL (one `vmovw` for a `vmovd`); NEON and NEON_BF16 are NEON_WITHOUT_AES. highway_dispatch.h picks the
+// target that a CPU with AVX3_SPR takes instead.
+const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128+HWY_AVX3_SPR+HWY_AVX10_2+HWY_NEON+HWY_NEON_BF16";
 
 export const highway: Dependency = {
   name: "highway",

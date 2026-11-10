@@ -36,7 +36,7 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     #[inline]
     pub(crate) fn parse_expr_or_bindings(
         &mut self,

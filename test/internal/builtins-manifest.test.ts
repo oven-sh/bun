@@ -14,6 +14,7 @@ import {
   specifierOf,
   typesOnlySchemas,
 } from "../../src/codegen/builtins-manifest-model";
+import { blankComments } from "../../src/codegen/comments";
 import { run } from "../aot/harness/run";
 
 const root = join(import.meta.dir, "..", "..");
@@ -130,7 +131,7 @@ describe("builtins-manifest.ts", () => {
     const { read, frames } = readArchive(fixture.archive);
     for (const [id, file] of sourceFiles.entries()) expect([file, frames.get(file)!.module]).toEqual([file, id]);
     expect(frames.get("manifest")!.module).toBe(-1);
-    const text = readFileSync(join(root, "src", "js", "node", "os.ts"), "utf8");
+    const text = blankComments("node/os.ts", readFileSync(join(root, "src", "js", "node", "os.ts"), "utf8"));
     expect(read("node/os.ts")).toBe(text);
     expect(frames.get("node/os.ts")!.frame.length).toBeLessThan(text.length / 20);
     expect(() => zstdDecompressSync(frames.get("node/os.ts")!.frame)).toThrow();
@@ -185,11 +186,12 @@ describe("builtins-manifest.ts", () => {
     expect(read("manifest")).toBe(readFileSync(fixture.manifest, "utf8"));
     expect(read("engine/A.js")).toBe("function first() {}\n");
     for (const name of ["node/fs.ts", "builtins/Fifo.ts"]) {
-      expect(read(name)).toBe(readFileSync(locate(name), "utf8"));
+      expect(read(name)).toBe(blankComments(name, readFileSync(locate(name), "utf8")));
     }
     // The helpers of the bundler are compiled from the text that `bun run` evaluates.
     expect(read("runtime.out.js")).toBe(readFileSync(fixture.file("runtime.out.js"), "utf8"));
-    expect(read("runtime.main.js")).toBe(readFileSync(join(root, "src", "runtime.main.js"), "utf8"));
+    const runtimeMain = readFileSync(join(root, "src", "runtime.main.js"), "utf8");
+    expect(read("runtime.main.js")).toBe(blankComments("runtime.main.js", runtimeMain));
     // What private.d.ts says a module answers lies beside the module, so whoever reads the one need not read all the others.
     const listings = records.filter(([kind]) => kind === "declarations").map(([, name]) => name);
     expect(names).toEqual(expect.arrayContaining(listings));
@@ -207,10 +209,12 @@ describe("builtins-manifest.ts", () => {
     // A module's second text, for the compiler alone, goes under the module's own name.
     expect(names.filter(name => name.startsWith("ahead-of-time/"))).toEqual([]);
     for (const name of textsForTheCompiler) {
-      expect(read(name)).toBe(readFileSync(join(root, "src", "js", "ahead-of-time", name), "utf8"));
-      expect(read(name)).not.toBe(readFileSync(join(root, "src", "js", name), "utf8"));
+      const textOf = (...path: string[]) => blankComments(name, readFileSync(join(root, "src", "js", ...path), "utf8"));
+      expect(read(name)).toBe(textOf("ahead-of-time", name));
+      expect(read(name)).not.toBe(textOf(name));
     }
-    expect(read("node/path.ts")).toBe(readFileSync(join(root, "src", "js", "node", "path.ts"), "utf8"));
+    const pathModule = readFileSync(join(root, "src", "js", "node", "path.ts"), "utf8");
+    expect(read("node/path.ts")).toBe(blankComments("node/path.ts", pathModule));
     const tsconfig = JSON.parse(read("tsconfig.json"));
     expect(Object.keys(tsconfig)).toEqual(["compilerOptions"]);
     expect(tsconfig.compilerOptions).toMatchObject({ experimentalDecorators: true, baseUrl: ".", composite: false });
@@ -261,6 +265,68 @@ describe("builtins-manifest.ts", () => {
       generatorTimeout,
     );
   }
+});
+
+describe("comments.ts", () => {
+  test("a comment keeps its length, its lines and what it begins and ends with", () => {
+    const text = [
+      "const a = 1; // one \u2014 two",
+      "/* three",
+      "   four */ const b = /[/*]/.test('// no') ? `/* ${/* five */ a} */` : 2 /* six */;",
+      "function f<T>(/* seven */ x: T /* eight */) {} //",
+      "const c = a /* nine */ / b; // ten / eleven",
+      "const d = [/['\"`]/, () => { return /\\/\\//; }, `${{ a: `}${a /* twelve */}` }}// no`];",
+    ].join("\n");
+    expect(blankComments("a.ts", text)).toBe(
+      [
+        "const a = 1; //            ",
+        "/*      ",
+        "        */ const b = /[/*]/.test('// no') ? `/* ${/*      */ a} */` : 2 /*     */;",
+        "function f<T>(/*       */ x: T /*       */) {} //",
+        "const c = a /*      */ / b; //             ",
+        "const d = [/['\"`]/, () => { return /\\/\\//; }, `${{ a: `}${a /*        */}` }}// no`];",
+      ].join("\n"),
+    );
+  });
+
+  test("a comment that is read stays", () => {
+    const text = [
+      "//! Nobody's",
+      "// Copyright (c) Nobody",
+      '/// <reference path="a.d.ts" />',
+      "// @ts-expect-error",
+      "const a = /* @__PURE__ */ f();",
+      "/** @deprecated */",
+      "declare function f(): number;",
+    ].join("\n");
+    expect(blankComments("a.ts", text)).toBe(text);
+  });
+
+  test("a notice of many line comments stays", () => {
+    const text = "// a\n\n// Copyright\n//\n// Permission\n\n// b\nf();\n// c\n";
+    expect(blankComments("a.ts", text)).toBe("//  \n\n// Copyright\n//\n// Permission\n\n//  \nf();\n//  \n");
+  });
+
+  test("the types of a JavaScript file stay", () => {
+    const text = "/** @type {number} */\nlet a;\n/* b */\n";
+    expect(blankComments("a.js", text)).toBe("/** @type {number} */\nlet a;\n/*   */\n");
+    expect(blankComments("a.ts", text)).toBe("/** @type          */\nlet a;\n/*   */\n");
+  });
+
+  test("the names of JSDoc's tags stay", () => {
+    const text = "/**\n * a {@link b}\n * @param c d\n   @returns e\n */\n/* @param */\n";
+    expect(blankComments("a.ts", text)).toBe("/**\n              \n   @param    \n   @returns  \n */\n/*        */\n");
+  });
+
+  test("a slash that can be read in two ways is one of a file that the transpiler reads as the same", () => {
+    const division = "export default (a) / b / c; // d\n";
+    expect(blankComments("a.js", division)).toBe("export default (a) / b / c; //  \n");
+    const keyword = "let of = 1;\nf(of / 2); // it's / x\n";
+    expect(blankComments("a.js", keyword)).toBe("let of = 1;\nf(of / 2); //         \n");
+    const regexp = `if (a) /'/.test(b), "'/* c */'", /'/.test(b);\nexport {};\n`;
+    expect(() => blankComments("a.js", regexp)).toThrow("is not clear");
+    expect(() => blankComments("a.js", "this is not (JavaScript) / a / b")).toThrow();
+  });
 });
 
 describe("builtins-manifest-model.ts", () => {

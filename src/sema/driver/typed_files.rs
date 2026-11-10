@@ -3452,13 +3452,17 @@ impl<'a> Transfer<'_, 'a, '_> {
                     suffix.extend_from_slice(&member);
                     level = Level::Compare;
                     let kinds = || chain.casts.iter().map(|&cast| &syntax.file[cast].kind);
-                    // Under an `as` the place has the type of the `as`. Without one it has the enum, which `0 as E.M` does not widen to.
                     let is_asserted = kinds().any(|kind| matches!(kind, ExprKind::As { .. }));
                     let is_const = kinds().any(|kind| matches!(kind, ExprKind::AsConst(_)));
+                    // Under an `as`, the place that holds the value (`unit = 0`) has the type of the `as`. Without one it has the enum, which `0 as E.M` does not widen to.
+                    let holds_value = |declared: &&u32| {
+                        let equals = output.after_trivia(**declared);
+                        output.byte(equals) == b'=' && output.after_trivia(equals + 1) == start
+                    };
                     let declared = widened
                         .get(&chain.outermost)
-                        .filter(|_| !is_asserted)
-                        .and_then(|&(place, key)| output_places.get(&(place, index as u32, key)));
+                        .and_then(|&(place, key)| output_places.get(&(place, index as u32, key)))
+                        .filter(|declared| !(is_asserted && holds_value(declared)));
                     if let (Some(&declared), Some(name)) = (
                         declared,
                         linked.enum_names.get(&(index as u32, source_position)),

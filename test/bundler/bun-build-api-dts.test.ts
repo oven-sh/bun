@@ -34,7 +34,7 @@ async function typed(files: Record<string, string>, options: Partial<Bun.BuildCo
   using dir = tempDir("build-api-dts-typed", { "tsconfig.json": project["tsconfig.json"], ...files });
   const root = String(dir);
   const built = await Bun.build({
-    entrypoints: [join(root, "src/index.ts")],
+    entrypoints: [join(root, "src/index.tsx" in files ? "src/index.tsx" : "src/index.ts")],
     outdir: join(root, "out"),
     tsconfig: join(root, "tsconfig.json"),
     dts: true,
@@ -221,8 +221,8 @@ console.log(useIt(), useIt(1, null), useIt(1, Unit.Em), only(null), new Box().un
 `;
     const fromAnotherFile = `import { Color, Unit } from "./enums";\n`;
     // The name of an enum can have a number behind it, and each value has the name of its member in a comment.
-    const typedFile = async (files: Record<string, string>) =>
-      (await typed(files, { target: "bun", ...options }))
+    const typedFile = async (files: Record<string, string>, more: Partial<Bun.BuildConfig> = {}) =>
+      (await typed(files, { target: "bun", ...options, ...more }))
         .replace(/\b(Unit|Color)\d+/g, "$1")
         .replace(/ \/\* \w+ \*\//g, "");
     const expectVariableAndValues = (text: string) => {
@@ -251,6 +251,30 @@ console.log(useIt(), useIt(1, null), useIt(1, Unit.Em), only(null), new Box().un
       expectVariableAndValues(
         await typedFile({ "src/enums.ts": enums, "src/index.ts": fromAnotherFile + variableAndValues }),
       );
+    });
+
+    // The React Compiler prints `(unit = Unit.Px)` as `(t0) { let unit = t0 === undefined ? 0 : t0`. The parameter holds
+    // no value there, and the enum is the one type that the typed file has for it, with and without an `as`.
+    test("in a default value that the React Compiler moves into the function body", async () => {
+      const text = await typedFile(
+        {
+          "src/state.ts": `export function useState<T>(initial: T): [T] {\n  return [initial];\n}\n`,
+          "src/index.tsx": `import { useState } from "./state";
+${enums}export function useCell(first: number, unit = Unit.Px as Unit | null): string {
+  const [value] = useState(first);
+  if (unit === null) return value + "none";
+  switch (unit) {
+    case Unit.Px:
+      return value + "px";
+    case Unit.Em:
+      return value + "em";
+  }
+}
+`,
+        },
+        { reactCompiler: true },
+      );
+      expect(text).toContain("function useCell(first: number, t0: Unit): string {");
     });
 
     // Observed: `function useIt(first = 1, unit = 0) {`, and TS2322 for `unit = null`. The bundle has the value of a

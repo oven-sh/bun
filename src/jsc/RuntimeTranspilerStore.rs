@@ -33,6 +33,7 @@ use bun_watcher::Watcher;
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
+use crate::module_loader::SourceValidator;
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
@@ -400,6 +401,7 @@ impl RuntimeTranspilerStore {
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 has_plugins: global_object.has_plugins(),
+                captures_validator: global_object.bun_vm().captures_source_validators(),
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -462,6 +464,8 @@ pub struct TranspilerJob {
     pub(crate) generation_number: u32,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
+    /// The VM's `captures_source_validators()` when the job was dispatched: the pool thread may not ask the VM.
+    captures_validator: bool,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -879,6 +883,9 @@ impl TranspilerJob {
                 parse_options.virtual_source = Some(src);
             }
         }
+        // The parser reads `path` from disk unless it is handed a source or decodes a `data:` URL.
+        let reads_file = parse_options.virtual_source.is_none()
+            && !strings::has_prefix_comptime(specifier, b"data:");
 
         if let Some(own) = &this.aot_package_config {
             parse_options.apply_aot_package_config(own);
@@ -911,6 +918,20 @@ impl TranspilerJob {
 
             this.parse_error = Some(crate::CrateError::ParseError);
             return;
+        };
+
+        // Taken here: the watcher may adopt the descriptor below, and the printer consumes `parse_result`.
+        let validator = if !reads_file {
+            SourceValidator::NOT_A_FILE
+        } else if this.captures_validator {
+            SourceValidator::of_file(
+                *input_file_fd,
+                path.text,
+                &parse_result.source.contents,
+                cache.input_hash,
+            )
+        } else {
+            SourceValidator::default()
         };
 
         if let Some(iw) = import_watcher
@@ -982,6 +1003,7 @@ impl TranspilerJob {
                 tag: this_tag,
                 ..Default::default()
             };
+            validator.apply(&mut this.resolved_source);
 
             return;
         }
@@ -1000,6 +1022,7 @@ impl TranspilerJob {
                 ..Default::default()
             };
             this.resolved_source.source_code.ensure_hash();
+            validator.apply(&mut this.resolved_source);
             return;
         }
 
@@ -1133,6 +1156,7 @@ impl TranspilerJob {
             tag: this_tag,
             ..ResolvedSource::printed(printed_ast, source_code)
         };
+        validator.apply(&mut this.resolved_source);
 
         // `arena` and `ast_memory_store` drop here (after `_ast_scope` restores
         // the thread-local AST heap pointer), `mi_heap_destroy`ing every parse

@@ -908,6 +908,95 @@ fn constructor_that_is_looked_up_at_run_time_counts_as_the_global() {
     }
 }
 
+const GUESSED: &[&str] = &["./conf.cjs guessed", "./other.cjs guessed"];
+const GUESSED_BESIDE_SETTINGS: &[&str] = &[
+    "./conf.cjs guessed",
+    "./other.cjs guessed",
+    "./settings.cjs read",
+];
+const NAMED_BY_DATA: &[&str] = &["conf.cjs NamedByData", "other.cjs NamedByData"];
+const NAMED_BY_DATA_BESIDE_SETTINGS: &[&str] = &[
+    "settings.cjs NamedByData",
+    "conf.cjs NamedByData",
+    "other.cjs NamedByData",
+];
+
+const PATHS_THAT_APPEND_TO_A_TEXT_OUT_OF_A_DATA_FILE: &[(&str, &[&str], &[&str])] = &[
+    (
+        r#"require(config.folder.concat(name, ".cjs"));"#,
+        GUESSED,
+        NAMED_BY_DATA,
+    ),
+    (
+        r#"require("./".concat(name, config.end));"#,
+        GUESSED,
+        NAMED_BY_DATA,
+    ),
+    (
+        r#"require("".concat(config.folder).concat(name, ".cjs"));"#,
+        GUESSED,
+        NAMED_BY_DATA,
+    ),
+    (
+        r#"{ let path = config.folder; path += name; require(path + ".cjs"); }"#,
+        &[
+            "./.cjs guessed",
+            "./conf.cjs guessed",
+            "./other.cjs guessed",
+        ],
+        NAMED_BY_DATA,
+    ),
+    (
+        r#"require(process.argv[2] ? config.settings : config.folder.concat(name, ".cjs"));"#,
+        GUESSED_BESIDE_SETTINGS,
+        NAMED_BY_DATA_BESIDE_SETTINGS,
+    ),
+    (
+        "require(name ? config.settings : config.folder.concat(process.argv[2]));",
+        &["./settings.cjs read"],
+        &["settings.cjs NamedByData"],
+    ),
+    (
+        "require(config.settings);",
+        &["./settings.cjs read"],
+        &["settings.cjs NamedByData"],
+    ),
+    ("require(config.folder.concat(process.argv[2]));", &[], &[]),
+    (r#"require(config.folder + name + ".cjs");"#, &[], &[]),
+    ("require(`${config.folder}${name}.cjs`);", &[], &[]),
+];
+
+#[test]
+fn part_appended_unread_to_a_text_out_of_a_data_file_is_guessed_as_written() {
+    const NAMES: &str = r#"const config = require("./config.json"); const names = ["conf", "other"]; hand(names); for (const name of names) "#;
+    for &(path, names, found) in PATHS_THAT_APPEND_TO_A_TEXT_OUT_OF_A_DATA_FILE {
+        let project = executable(&[
+            ("main.cjs", &format!("{NAMES}{path}")),
+            (
+                "config.json",
+                r#"{ "folder": "./", "end": ".cjs", "settings": "./settings.cjs" }"#,
+            ),
+            ("conf.cjs", "exports.name = 1;"),
+            ("other.cjs", "exports.name = 2;"),
+            ("settings.cjs", "exports.port = 1;"),
+        ]);
+        load(&project, |loaded| {
+            let files = files_of(loaded);
+            let analysis = files.analysis(file_named(files, "main.cjs"));
+            let named = analysis.names_out_of_data_files.iter();
+            let described: Vec<String> = named
+                .map(|&(name, _, is_guess)| {
+                    let how = if is_guess { "guessed" } else { "read" };
+                    format!("{} {how}", text_of(files, name))
+                })
+                .collect();
+            assert_eq!(described, names, "{path}");
+            let entry_points = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(entry_points, found, "{path}");
+        });
+    }
+}
+
 #[test]
 fn written_arm_of_a_name_that_is_unknown_otherwise_is_an_entry_point() {
     let rows: [(&str, &[&str]); 7] = [

@@ -149,6 +149,7 @@ macro_rules! pass {
 pub(crate) fn compile_fn(
     func: &FunctionNode<'_>,
     fn_name: Option<&str>,
+    own_name: Option<bun_ast::Ref>,
     host: &mut dyn Host,
     arena: &bun_alloc::Arena,
     fn_type: ReactFunctionType,
@@ -179,7 +180,7 @@ pub(crate) fn compile_fn(
     let mut hir = pass!(
         env,
         "Lowering",
-        lowering::lower(func, fn_name, &*host, &mut env, import_bindings)
+        lowering::lower(func, fn_name, &*host, &mut env, import_bindings, own_name)
     )?;
 
     dump_lowered(&hir, &env);
@@ -339,7 +340,7 @@ pub(crate) fn compile_outlined_fn(
     };
 
     let func_node = FunctionNode::Function(&outlined_decl);
-    let mut hir = lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings)?;
+    let mut hir = lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings, None)?;
 
     if env.has_errors() {
         return Err(env.take_errors());

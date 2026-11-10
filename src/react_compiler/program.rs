@@ -84,12 +84,14 @@ pub trait Host {
         None
     }
 
-    /// Whether `ref_` is bound outside the function being compiled.
-    fn is_module_level(&self, ref_: Ref) -> bool {
-        self.symbols()
-            .get(ref_.inner_index() as usize)
-            .and_then(|sym| self.module_scope().members.get(sym.original_name.slice()))
-            .is_some_and(|member| member.ref_ == ref_)
+    /// Whether a scope around the function being compiled has `ref_` as a member. Never asked whether `ref_` is a local.
+    fn is_named_by_enclosing_scope(&self, _ref: Ref) -> bool {
+        true
+    }
+
+    /// What the function being compiled declares with no declaration in its tree. The parser's tree has each one.
+    fn locals_without_declaration(&self) -> &[Ref] {
+        &[]
     }
     fn source(&self) -> &[u8];
     fn arena(&self) -> &bun_alloc::Arena;
@@ -1397,6 +1399,8 @@ fn compile_pending(
         host,
         FunctionNode::Function(&tmp),
         name,
+        // A declaration is bound by its own name, in the scope around it.
+        pending.own_name.filter(|own| pending.binding != Some(*own)),
         pending.in_react_hoc,
         pending.is_top_level,
     )?;
@@ -1418,6 +1422,7 @@ fn maybe_compile_node(
     host: &mut dyn Host,
     node: FunctionNode<'_>,
     name: Option<&[u8]>,
+    own_name: Option<Ref>,
     in_react_hoc: bool,
     is_top_level: bool,
 ) -> Option<CodegenFunction> {
@@ -1494,6 +1499,7 @@ fn maybe_compile_node(
     match pipeline::compile_fn(
         &node,
         fn_name.as_deref(),
+        own_name,
         host,
         arena,
         fn_type,

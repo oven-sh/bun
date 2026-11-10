@@ -45,7 +45,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn import_records(&self) -> &[js_ast::ImportRecord<'_>] {
         self.p.import_records.items()
     }
-    fn is_module_level(&self, ref_: js_ast::Ref) -> bool {
+    fn is_named_by_enclosing_scope(&self, ref_: js_ast::Ref) -> bool {
         let Some(symbol) = self.p.symbols.get(ref_.inner_index() as usize) else {
             return false;
         };

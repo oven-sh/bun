@@ -10,6 +10,7 @@
 
 mod build_hir;
 mod find_context_identifiers;
+mod function_bindings;
 mod hir_builder;
 
 pub(crate) use build_hir::lower;
@@ -28,5 +29,6 @@ pub(crate) fn thread_has_stack() -> bool {
     bun_core::StackCheck::init().is_safe_to_recurse()
 }
 
+pub(crate) use function_bindings::LocalRef;
 pub use hir_builder::FunctionNode;
 pub(crate) use hir_builder::convert_loc;

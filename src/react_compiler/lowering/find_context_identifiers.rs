@@ -14,6 +14,7 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as ast, AssignTarget, Expr, G, Loc, OpCode, Ref, Stmt, StmtOrExpr, b::B};
 
 use super::FunctionNode;
+use super::function_bindings::{FunctionBindings, RefMap};
 use super::hir_builder::convert_loc;
 use crate::program::Host;
 
@@ -22,11 +23,6 @@ use crate::program::Host;
     reason = "vendored react_compiler_hir HashSet<BindingId> contract"
 )]
 type RefSet = crate::collections::FxHashSet<Ref>;
-#[allow(
-    clippy::disallowed_types,
-    reason = "vendored react_compiler_hir HashMap<BindingId, _> contract"
-)]
-type RefMap<V> = crate::collections::FxHashMap<Ref, V>;
 
 #[derive(Default)]
 struct BindingInfo {
@@ -346,7 +342,12 @@ impl<'a> ContextIdentifierVisitor<'a> {
                 // function *expressions*).
                 self.walk_fn(&f.func);
                 if let Some(name) = &f.func.name {
-                    self.record_decl(name.ref_);
+                    // A name that the module scope generated is the module's, wherever its declaration stands.
+                    if self.host.module_scope().generated.contains(&name.ref_) {
+                        self.decl_depth.remove(&name.ref_);
+                    } else {
+                        self.record_decl(name.ref_);
+                    }
                 }
             }
             StmtData::SClass(c) => {
@@ -662,9 +663,10 @@ fn is_captured_by_function(decl_depth: Option<u32>, fn_depth: u32) -> bool {
 /// This is the Rust equivalent of the TypeScript `FindContextIdentifiers` pass.
 pub(crate) fn find_context_identifiers(
     func: &FunctionNode<'_>,
+    own_name: Option<Ref>,
     host: &dyn Host,
     env: &mut Environment,
-) -> Result<RefSet, CompilerError> {
+) -> Result<(RefSet, FunctionBindings), CompilerError> {
     let mut visitor = ContextIdentifierVisitor {
         host,
         env,
@@ -676,6 +678,9 @@ pub(crate) fn find_context_identifiers(
         inner_reassignments: Vec::new(),
         error: None,
     };
+    for &local in host.locals_without_declaration().iter().chain(&own_name) {
+        visitor.record_decl(local);
+    }
 
     // Walk params and body (like Babel's func.traverse())
     visitor.push_scope(func.args_loc());
@@ -712,13 +717,17 @@ pub(crate) fn find_context_identifiers(
         }
     }
 
+    let declared = visitor.decl_depth;
+
     // Collect results
-    Ok(visitor
+    let context_identifiers = visitor
         .binding_info
         .into_iter()
-        .filter(|(_, info)| {
-            info.reassigned_by_inner_fn || (info.reassigned && info.referenced_by_inner_fn)
+        .filter(|(id, info)| {
+            declared.contains_key(id)
+                && (info.reassigned_by_inner_fn || (info.reassigned && info.referenced_by_inner_fn))
         })
         .map(|(id, _)| id)
-        .collect())
+        .collect();
+    Ok((context_identifiers, FunctionBindings::new(declared)))
 }

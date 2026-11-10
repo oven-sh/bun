@@ -2100,51 +2100,51 @@
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-1.test.ts": {
+  "aot/mocks-over-failing-module-1.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-10.test.ts": {
+  "aot/mocks-over-failing-module-10.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-11.test.ts": {
+  "aot/mocks-over-failing-module-11.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-12.test.ts": {
+  "aot/mocks-over-failing-module-12.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-2.test.ts": {
+  "aot/mocks-over-failing-module-2.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-3.test.ts": {
+  "aot/mocks-over-failing-module-3.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-4.test.ts": {
+  "aot/mocks-over-failing-module-4.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-5.test.ts": {
+  "aot/mocks-over-failing-module-5.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-6.test.ts": {
+  "aot/mocks-over-failing-module-6.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-7.test.ts": {
+  "aot/mocks-over-failing-module-7.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-8.test.ts": {
+  "aot/mocks-over-failing-module-8.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/mocks-over-a-file-that-fails-first-9.test.ts": {
+  "aot/mocks-over-failing-module-9.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -3124,6 +3124,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/type-errors-of-untyped-imports.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/type-errors-under-a-tsconfig-that-needs-another-program.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -3179,6 +3183,14 @@
   "aot/vm-main-loader.test.ts": {
     "default": 4900,
     "asan": 19600
+  },
+  "aot/wasm-large-function.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/wasm-nested-build.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/wasm-same-bytes.test.ts": {
     "default": 300,

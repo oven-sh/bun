@@ -53,6 +53,8 @@ These work:
 - A subclass: `class List extends Array {}`, `class Upper extends Response {}`.
 - What tests and tools usually replace: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, `console.*`, `process.exit`, `process.emit`.
 - A global that isn't listed below: `globalThis.Promise = Bluebird`.
+- A symbol of your own, such as `Symbol.for("nodejs.util.inspect.custom")`, on any prototype but `Object.prototype`.
+- `Object.freeze(Object.prototype)`.
 
 These throw a `TypeError`:
 
@@ -62,7 +64,7 @@ These throw a `TypeError`:
 - What the language looks up by itself, added to a prototype that doesn't have it: `Array.prototype[Symbol.toPrimitive]`, `Array.prototype.then`, `Array.prototype.toJSON`, `RegExp.prototype.toJSON`, `Array.prototype[0]`.
 - `process.versions`, `process.release` and `process.isBun`, which tell a program what runtime it's on.
 
-`Reflect.set()` returns `false` for these, as it does for any read-only property.
+`Reflect.set()`, `Reflect.defineProperty()` and `Reflect.deleteProperty()` return `false` for these, as they do for any read-only property.
 
 Their property descriptors are what `bun run` reports, `writable: true` included. The exception is `Buffer.concat`, which reports `writable: false`. `minizlib` 3, which `tar` 7 and `npm` use, reads that descriptor and replaces the function only if it is writable.
 
@@ -86,7 +88,11 @@ bun compile ./strings.ts && ./strings
 5 10 object
 ```
 
-`eval`, `new Function` and `node:vm` work. The build can't see that code and the executable has no JIT, so Bun interprets it.
+`eval`, `new Function` and `node:vm` work, under a computed name like `globalThis[name](code)` too. The build can't see that code and the executable has no JIT, so Bun interprets it.
+
+- Where the build can't tell that a call evaluates code, the call throws an `EvalError`. `fn[name](code)` does if `"constructor"` isn't written anywhere in your code.
+- Code from a string can `import()` your entry points. Any other file may throw `Cannot load`. Pass the module to that code instead.
+- A script from a string can't declare a built-in global at its top level. `vm.runInThisContext("let Array = 5")` throws a `SyntaxError`. It works in a block, in a function or in a `node:vm` context of its own.
 
 Interpreted code is fine for a template or a config file. It costs you when a library generates its hot code this way, as zod 4, ajv, fast-json-stringify and Elysia do.
 
@@ -138,32 +144,35 @@ The build compiles every file it can reach from your entry point. Where a path i
 - `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
 - `fs.readdirSync()` and `fs.existsSync()` see the compiled files, so a loader that lists a folder and calls `require()` on each file works.
 - `import.meta.glob()` is expanded at build time, and every file that matches is compiled.
-- `require.resolve()` and `import.meta.resolve()` return a path. They don't embed the file. Neither do `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()`. With those three the build warns if the path names a file that isn't in the executable (`TS100099`). With those three and `require.resolve()` it warns if the path isn't a constant and some of your code isn't in the executable (`TS100087`).
-- A query, as in `import("./a.ts?v=2")`, loads one more copy of the file, as in `bun run`. `?raw`, `?url`, a query on a data file and a query in a `require()` stop the build (`TS100159`).
+- `require.resolve()` and `import.meta.resolve()` return a path. They don't embed the file. Neither do `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()`. With those three the build warns if the path names a file that isn't in the executable (`TS100099`). With those three and `require.resolve()` it warns if the path isn't a constant and some of your code isn't in the executable (`TS100087`). `require.resolve()` returns where the file was when you built, so reading it fails on another machine.
+- `require("./notes.txt")` returns the text itself, as in `bun build --compile`. `bun run` returns an object with the text as its `default`.
+- A query, as in `import("./a.ts?v=2")`, loads one more copy of the file, as in `bun run`. `?worker` works too. `?raw`, `?url`, a query on a data file and a query in a `require()` stop the build (`TS100159`).
 
 ### A file that isn't in the executable
 
-| You load                                                           | What happens                                                                                   |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| A relative path or a package name that the executable doesn't hold | `MODULE_NOT_FOUND`, so `try { require(optional) } catch {}` works                              |
-| A compiled file, by a path that the build knows nothing about      | `Cannot load '/$bunfs/root/lib/a.ts': this executable can't load a module from a dynamic path` |
-| An absolute path to code on disk                                   | `Cannot load '/home/me/late.ts': it isn't in this executable`                                  |
-| An absolute path to JSON, TOML, YAML or text on disk               | The file is read from disk                                                                     |
+| You load                                                                | What happens                                                                                   |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| A relative path or a package name that the executable doesn't hold      | `MODULE_NOT_FOUND`, so `try { require(optional) } catch {}` works                              |
+| A compiled file, by a path that the build knows nothing about           | `Cannot load '/$bunfs/root/lib/a.ts': this executable can't load a module from a dynamic path` |
+| A path made from the working directory, like `path.resolve("lib/a.js")` | It names a file on disk. Use `import.meta.dir` or `__dirname` for a compiled file              |
+| An absolute path to code on disk                                        | `Cannot load '/home/me/late.ts': it isn't in this executable`                                  |
+| An absolute path to JSON, TOML, YAML or text on disk                    | The file is read from disk                                                                     |
 
-| You want to load                   | Do this                                                      |
-| ---------------------------------- | ------------------------------------------------------------ |
-| One of your files                  | Pass it as another entry point                               |
-| A package with a dynamic name      | Pass its main file as an entry point                         |
-| A Worker that the build can't find | Pass it as another entry point. The build warns (`TS100082`) |
-| JSON, TOML, YAML or text from disk | Give an absolute path                                        |
-| Any code from disk                 | `--aot-allow-code-from-disk`                                 |
-| One package from disk              | `--external <package> --aot-allow-code-from-disk`            |
+| You want to load                               | Do this                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------ |
+| One of your files                              | Pass it as another entry point                               |
+| A package with a dynamic name                  | Pass its main file as an entry point                         |
+| A `node:` or `bun:` module with a dynamic name | Import it by name somewhere, if it throws `Cannot load`      |
+| A Worker that the build can't find             | Pass it as another entry point. The build warns (`TS100082`) |
+| JSON, TOML, YAML or text from disk             | Give an absolute path                                        |
+| Any code from disk                             | `--aot-allow-code-from-disk`                                 |
+| One package from disk                          | `--external <package> --aot-allow-code-from-disk`            |
 
 ```bash terminal icon="terminal"
 bun compile ./app.ts './extra/*.ts' ./node_modules/pg/lib/index.js
 ```
 
-Code that's loaded from disk is interpreted. It can use globals, built-in modules, files and packages on disk, and what your program passes to it. It can't import the files that were compiled into the executable.
+Code that's loaded from disk is interpreted. It can use globals, built-in modules, files and packages on disk, and what your program passes to it. It can't import the files that were compiled into the executable, and a package that it imports is a second instance.
 
 Next.js and Angular load your pages by dynamic paths. [Libraries](/compiler/libraries) shows what to pass.
 
@@ -175,7 +184,7 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `Module._resolveFilename = hook`                                 | Called for dynamic paths only. The build warns (`TS100080`)                 |
 | `Module._extensions[".js"] = loader`                             | Called for dynamic paths only                                               |
-| `delete require.cache[path]`                                     | Does nothing. A module runs once. The build warns (`TS100091`)              |
+| `delete require.cache[path]`, `require.cache[path] = entry`      | Do nothing. A module runs once. The build warns (`TS100091`, `TS100092`)    |
 | `Object.keys(require.cache)`                                     | Doesn't list compiled modules                                               |
 | `Bun.plugin()` at run time                                       | Asked about dynamic paths only. It can't replace a module that was compiled |
 | A tracer that patches modules as they load, like OpenTelemetry's | Sees none of them                                                           |
@@ -196,7 +205,7 @@ Every compiled file has a path under `/$bunfs/root`, laid out like your sources.
 | `__dirname`, `__filename`                  | Where the file was when you built       |
 | `process.execPath`                         | The executable                          |
 
-`/$bunfs/root` is the folder of your entry point. A file above it, like a package in a `node_modules` beside `src`, is under `/$bunfs/_.._` instead.
+`/$bunfs/root` is the folder of your entry point. A file above it, like a package in a `node_modules` beside `src`, is under `/$bunfs/_.._` instead. For a folder more than one level above your entry point, use `__dirname`: `path.join(import.meta.dir, "../../commands")` is `/commands` in an executable.
 
 `require.main === module`, `import.meta.main`, `module.paths`, `module.parent` and `createRequire(import.meta.url)` work as under `bun run`.
 
@@ -247,7 +256,7 @@ An executable is a bundle, so two fields of a `package.json` mean what they mean
 
 ### `"main"` and `"module"`
 
-If a package has both, `import` loads `"module"` in an executable and `"main"` under `bun run`. `require()` loads `"main"` in both, and one `require()` of the package anywhere makes every import of it load `"main"` too. `"exports"` wins over both fields.
+If a package has both, `import` loads `"module"` in an executable and `"main"` under `bun run`. `require()` loads `"main"` in both, and one `require()` of the package anywhere makes every import of it load `"main"` too. `"exports"` wins over both fields. `bun test --aot` loads `"main"`, as `bun test` does.
 
 The two files usually export the same things. If they don't, put `"main"` first:
 
@@ -268,20 +277,21 @@ With that field, a package says that loading its files does nothing except defin
 
 The field in your own `package.json` covers your own files, so `import "./setup.ts"` is removed too.
 
-If you import such a package for what it does when it loads, like a polyfill or a plugin that registers itself, its field is wrong. Build with `--ignore-dce-annotations`.
+If you import such a package for what it does when it loads, like a polyfill or a plugin that registers itself, its field is wrong. Build with `--ignore-dce-annotations`. `zod@3.25.76` is such a package: after `import * as z from "zod/v4"`, every message is `Invalid input`.
 
 ## Language
 
 `bun run` transpiles each file before it runs it, and its transpiler takes a few shortcuts. Compiled code does what the language says, as Node does.
 
-| In your program                                                                | `bun run`                              | An executable                        |
-| ------------------------------------------------------------------------------ | -------------------------------------- | ------------------------------------ |
-| `{ function inner() {} }` in a CommonJS file that isn't in strict mode         | `inner` stays inside the block         | `inner` is visible after it          |
-| `"use strict"` at the start of a function, in such a file                      | Dropped                                | The function is in strict mode       |
-| `const first = read(), limit = 5`, where `read()` returns `limit`              | `5`                                    | A `ReferenceError`                   |
-| `undefined[key] = 1`, where `key` has a `toString()`                           | Calls `toString()`, then throws        | Throws                               |
-| `(Color as any).Red = 2`, then `Color.Red`, for an `enum` imported from a file | `2`                                    | `1`. The member is a constant        |
-| `fn.caller` and `fn.arguments`, outside strict mode                            | The calling function and the arguments | `null`. The build warns (`TS100302`) |
+| In your program                                                                | `bun run`                                   | An executable                           |
+| ------------------------------------------------------------------------------ | ------------------------------------------- | --------------------------------------- |
+| `{ function inner() {} }` in a CommonJS file that isn't in strict mode         | `inner` stays inside the block              | `inner` is visible after it             |
+| `"use strict"` at the start of a function, in such a file                      | Dropped                                     | The function is in strict mode          |
+| `const first = read(), limit = 5`, where `read()` returns `limit`              | `5`                                         | A `ReferenceError`                      |
+| `undefined[key] = 1`, where `key` has a `toString()`                           | Calls `toString()`, then throws             | Throws                                  |
+| `(Color as any).Red = 2`, then `Color.Red`, for an `enum` imported from a file | `2`                                         | `1`. The member is a constant           |
+| `"useDefineForClassFields"` in `tsconfig.json`                                 | Taken from the one in the working directory | Taken from the one nearest to each file |
+| `fn.caller` and `fn.arguments`, outside strict mode                            | The calling function and the arguments      | `null`. The build warns (`TS100302`)    |
 
 `process.env.NODE_ENV`, `process.platform` and `process.arch`, written out like that, are replaced by their values when you build, as in `bun build --compile`. `NODE_ENV=production ./app` still reads `"development"` unless you built with `NODE_ENV=production` or `--production`.
 
@@ -289,7 +299,9 @@ An executable can collect an object earlier or later than `bun run` does. Only a
 
 ## Error messages
 
-The class of an error, its message and the lines in its stack trace are the same as under `bun run`. The paths in the stack trace start with `/$bunfs/root`. An uncaught error prints without the source excerpt that `bun run` shows above it.
+The class of an error and the lines in its stack trace are the same as under `bun run`. The paths in the stack trace start with `/$bunfs/root`. An uncaught error prints without the source excerpt that `bun run` shows above it.
+
+A message that quotes your code can differ. An executable quotes what you wrote, and leaves out functions and literals that span lines. `bun run` quotes what its transpiler printed.
 
 Where a message quotes your source, an executable takes it from the text of your functions, which it keeps for `fn.toString()`. Built with [`--no-compile-function-source`](/compiler/size) it has no text, and says less:
 
@@ -307,16 +319,18 @@ Check `error.name` or use `instanceof`, not `error.message`.
 
 ## Not supported
 
-| Feature                                                                | Instead                                                                    |
-| ---------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `--target` for another platform                                        | Build on that platform, or pass `--no-aot`                                 |
-| `--preload`, `--import` in `BUN_OPTIONS`                               | Import the file from your entry point, or build with `--compile-inspector` |
-| `preload` in `bunfig.toml`                                             | It's ignored. Import the file from your entry point                        |
-| `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT`                            | Build with `--compile-inspector`                                           |
-| `--unhandled-rejections` in `BUN_OPTIONS`                              | Build with `--compile-exec-argv=--unhandled-rejections=<mode>`             |
-| `--sql-preconnect` in `BUN_OPTIONS`                                    | Build with `--compile-exec-argv=--sql-preconnect`                          |
-| Breakpoints and `debugger`                                             | `bun --inspect-brk ./app.ts`                                               |
-| `cc()` from `bun:ffi`, on Linux 6.7 and later                          | Compile the C file first, then `dlopen()`                                  |
-| Over 256 open `JSCallback`s, if the executable can't read its own file | Make the file readable, or `close()` some                                  |
-| Over 32 GB of objects in a thread                                      | `--aot-huge-heap`                                                          |
-| `with { type: "macro" }` on an import (`TS100053`)                     | Pass `--no-aot`                                                            |
+| Feature                                                                | Instead                                                                                  |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `--target` for another platform                                        | Build on that platform, or pass `--no-aot`                                               |
+| `--preload`, `--import` in `BUN_OPTIONS`                               | Import the file from your entry point, or build with `--compile-inspector`               |
+| `preload` in `bunfig.toml`                                             | It's ignored. Import the file from your entry point, or build with `--compile-inspector` |
+| The same, built with `--no-compile-function-source` or `--obfuscate`   | It's an error at startup. Build with `--no-compile-autoload-bunfig`                      |
+| `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT`                            | Build with `--compile-inspector`                                                         |
+| `--unhandled-rejections` in `BUN_OPTIONS`                              | Build with `--compile-exec-argv=--unhandled-rejections=<mode>`                           |
+| `--sql-preconnect` in `BUN_OPTIONS`                                    | Build with `--compile-exec-argv=--sql-preconnect`                                        |
+| Breakpoints and `debugger`                                             | `bun --inspect-brk ./app.ts`                                                             |
+| `cc()` from `bun:ffi`, on Linux 6.7 and later                          | Compile the C file first, then `dlopen()`                                                |
+| Over 256 open `JSCallback`s, if the executable can't read its own file | Make the file readable, or `close()` some                                                |
+| Over 32 GB of objects in a thread                                      | `--aot-huge-heap`                                                                        |
+| A stack under 512 KB (`ulimit -s`)                                     | Give it more. `bun run` needs less                                                       |
+| `with { type: "macro" }` on an import (`TS100053`)                     | Pass `--no-aot`                                                                          |

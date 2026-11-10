@@ -12,7 +12,7 @@
 # The last two iterations read the elements at their old location. Nothing has been collected since, and nothing is stored there.
 # With testing=CheckBoundsAtRunTime (--aot-harden=ignore-told-ranges) and with testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same operations are built in the same places.
 # The hoisted values are checked against the cell inside the iteration, and the process crashes with a named error.
-# AS-USERS-BUILD: under the runner's checks the code verifier rejects the injected fault at the read (walk/loops/hoisted-storage-pointer-across-a-push-is-rejected.ir). This file tests what the run-time checks catch without it.
+# AS-USERS-BUILD: under the runner's checks the code verifier rejects the injected fault at the read (walk/loops/stale-storage-pointer-rejected.ir). This file tests what the run-time checks catch without it.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 23 16
 # RIGHT-NEXT: exited with 0

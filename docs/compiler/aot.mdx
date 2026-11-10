@@ -101,6 +101,7 @@ The build only stops where `tsc` reports an error under your own `tsconfig.json`
 | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | A function that nothing calls                                                                      | No, it isn't compiled. `bun compile --check` and `bun check --aot` check it too |
 | JavaScript files                                                                                   | No, even with `checkJs` or `// @ts-check`. A syntax error still stops the build |
+| An entry point that `exclude` in `tsconfig.json` rules out, and what only it imports               | No                                                                              |
 | A folder whose `tsconfig.json` sets `strictNullChecks` or `lib` differently from the entry point's | No. The `check` line of the build counts its files as compiled without types    |
 
 During development, [`bun run --aot`](/compiler/debugging) runs the same checks and then runs your program from its source. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) compiles your tests and runs the compiled code.

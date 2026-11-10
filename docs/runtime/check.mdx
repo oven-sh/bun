@@ -440,7 +440,7 @@ for (const log of result.logs) {
 
 [`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. Like the build, it takes entry points. It also reports the type errors in code that the executable leaves out, such as a function that nothing calls. `bun compile --check` stops at those too.
 
-The build doesn't stop for a type error in a package. If the TypeScript of a package that gets compiled has type errors, `bun check --aot` prints one warning that names the package, and still exits with 0. `bun check --aot --all` lists each of them as an error. Both can only check a package whose `strict` options and `lib` fit your own `tsconfig.json`. The last line doesn't count a file that has such errors or that couldn't be checked.
+The build doesn't stop for a type error in a package. If the TypeScript of a package that gets compiled has type errors, `bun check --aot` prints one warning that names the package, and still exits with 0. `bun check --aot --all` lists each of them as an error. Both can only check a package whose `strict` options and `lib` fit your own `tsconfig.json`. A package's options are the `compilerOptions` in its `package.json`, strict unless they say otherwise. Its `tsconfig.json` isn't read. The last line doesn't count a file that has such errors or that couldn't be checked. Errors in a package's `.d.ts` files aren't listed here. Plain `bun check` lists them.
 
 Pass both commands the same `--define` flags. The build reports no errors in code that a define removes.
 

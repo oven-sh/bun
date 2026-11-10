@@ -35,7 +35,6 @@ use bun_sema::hir_from_data::DataValue;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::messages;
 use bun_sema::program::{FileId, FileRole, Files};
-use bun_sema::resolve::AOT_CONDITION;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Incomplete, RoleDecision,
     TextLocator, decide_roles, keep_verified_roles, run_on_one_thread_while,
@@ -530,7 +529,7 @@ impl Build<'_> {
             let unchecked = compiled_files.filter(|&&file| {
                 program.origin(file) == FileOrigin::DependencySource
                     && roles.role(file) == FileRole::Checked
-                    && !program.files().is_checked_as_by_own_project(file)
+                    && !program.files().matches_own_project_checks(file)
             });
             let id = StatisticId::DependencyFilesNotVerified;
             self.statistics.count(id, unchecked.count() as u64);
@@ -668,8 +667,16 @@ impl Build<'_> {
             .map(|path| (path.clone(), driver::ScriptKind::Ts))
             .collect();
         let conditions = self.options.code.custom_conditions.iter();
-        let conditions = conditions.filter(|it| it[..] != *AOT_CONDITION);
         let conditions: Vec<Box<[u8]>> = conditions.map(|it| it[..].into()).collect();
+        let promised_types = || {
+            let path = runtime_types::PROMISED_TYPES_PATH.to_vec();
+            (path, runtime_types::PROMISED_TYPES.to_vec())
+        };
+        let read_texts_of_build = || {
+            let mut texts = read_texts_of_build();
+            texts.extend([promised_types()]);
+            texts
+        };
         let request = driver::Request {
             cwd: &self.options.code.working_directory,
             project: self.options.code.tsconfig_override.as_deref(),
@@ -689,6 +696,8 @@ impl Build<'_> {
             plan_options: driver::PlanOptions {
                 checks_only_requested_paths: true,
                 takes_defaults_of_tsc: true,
+                takes_aot_sources_last: true,
+                declarations_of_last_resort: Some(runtime_types::PROMISED_TYPES_PATH),
                 ..Default::default()
             },
             stops_like_tsc: false,

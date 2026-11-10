@@ -42,9 +42,9 @@ use bun_sema::program::{
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, ProjectFile, ProjectFiles, ancestors, contains_path,
-    displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
-    is_javascript, is_javascript_file, is_relative, is_same_path, join,
+    AOT_CONDITION, Host, ModuleDetection, Options, ProjectFile, ProjectFiles, ancestors,
+    contains_path, displayed_path, get_relative_path_from_directory, inside,
+    is_declaration_file_name, is_javascript, is_javascript_file, is_relative, is_same_path, join,
     output_declaration_file_name, run_with_current_helpers, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
@@ -895,6 +895,10 @@ pub struct PlanOptions {
     /// A program whose project hasn't installed `@types/bun` is checked as if it had, with the packages below this directory
     /// (`Options::type_root_of_last_resort`). The caller provides their files (`Provided::already_read`).
     pub type_root_of_last_resort: Option<&'static [u8]>,
+    /// `Options::declarations_of_last_resort`. The caller provides the file (`Provided::already_read`).
+    pub declarations_of_last_resort: Option<&'static [u8]>,
+    /// `Options::takes_aot_sources_last`, unless the project itself names the condition "aot".
+    pub takes_aot_sources_last: bool,
     /// `useSourceOfProjectReferenceRedirect`, as in an editor: an import that leads into a referenced project reads its
     /// source, even if it specifies a declaration file that the project would emit. No referenced project is checked
     /// for the sake of another, and nothing is emitted.
@@ -4336,6 +4340,8 @@ fn check_named_files(
         }
         _ => host::from_native(request.cwd),
     };
+    project.options.takes_aot_sources_last = request.plan_options.takes_aot_sources_last
+        && !(project.options.custom_conditions.iter()).any(|it| it == AOT_CONDITION);
     let conditions = request.conditions.iter().map(|it| it.to_vec());
     project.options.custom_conditions.extend(conditions);
     let config_path = project.config_path.clone();
@@ -4443,6 +4449,10 @@ fn check_named_files(
         }
         let mut is_kept = is_kept.iter();
         (project.files).retain(|_| is_kept.next().is_some_and(|it| it.load(Ordering::Relaxed)));
+    }
+    if let Some(path) = request.plan_options.declarations_of_last_resort {
+        project.options.declarations_of_last_resort = path.to_vec();
+        project.files.push(path.to_vec());
     }
     let includes_everything = !config_path.is_empty()
         && project.written.include.is_none()

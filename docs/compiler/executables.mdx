@@ -975,9 +975,9 @@ Pass `--asset` multiple times to embed several directories (for example `--asset
 
 With `--aot`, your modules and the files you embed keep their places relative to one another, the same as under `bun run`. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`. That holds outside the directory you build in too: next to `../lib/load.mjs`, `--asset ../lib/data.txt` is at `path.join(import.meta.dir, "data.txt")`, and `Bun.embeddedFiles` lists it as `_.._/lib/data.txt`.
 
-A single file keeps its folder too. `--asset ./a/config.json` is at `/$bunfs/root/a/config.json` with `--aot` and at `/$bunfs/root/config.json` without it. The shorter path also works with `--aot`.
+A single file keeps its folder too. `--asset ./a/config.json` is at `/$bunfs/root/a/config.json` with `--aot` and at `/$bunfs/root/config.json` without it. The shorter path also works with `--aot`, unless two embedded files would share it.
 
-`__dirname` and `__filename` give the path your source file had on the machine that ran the build. With `--aot`, Bun looks in the executable for a path under that directory that isn't on disk, so `path.join(__dirname, "public")` finds the files of `--asset ./public`.
+`__dirname` and `__filename` give the path your source file had on the machine that ran the build, so an executable that uses one of them contains that path. With `--aot`, Bun looks in the executable for a path under that directory that isn't on disk, so `path.join(__dirname, "public")` finds the files of `--asset ./public`.
 
 Embedded files are read-only. Writing to one fails with `EROFS`.
 

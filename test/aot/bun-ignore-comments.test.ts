@@ -7,8 +7,13 @@ import { test } from "./supported";
 const leftOut = { "left-out.cjs": `module.exports = 1;\n` };
 const path = `process.argv[2]`;
 
-async function build(files: Record<string, string>, entryPoints = ["main.cjs"], flags: string[] = []) {
-  using dir = tempDir("bun-ignore-comments", { ...leftOut, ...files });
+async function build(
+  files: Record<string, string>,
+  entryPoints = ["main.cjs"],
+  flags: string[] = [],
+  others: Record<string, string> = leftOut,
+) {
+  using dir = tempDir("bun-ignore-comments", { ...others, ...files });
   using out = tempDir("bun-ignore-comments-out", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--aot", ...flags, ...entryPoints, "--outfile", join(String(out), "program")],
@@ -150,6 +155,105 @@ test("in a dependency a comment silences, and a stale one is not the user's to f
   expect(await build(files(`// bun-ignore TS100064\nconsole.log(1);\n// bun-ignore\n`))).toEqual(nothing);
 });
 
+// One file may belong to several programs. What one of them never runs, another may.
+test.each([
+  [
+    "a function that this program doesn't call",
+    `function load() {\n  // bun-ignore TS100064\n  return require(${path});\n}\n`,
+  ],
+  [
+    "an arrow function that this program doesn't call",
+    `const load = () => {\n  return require(${path}); // bun-ignore TS100064\n};\n`,
+  ],
+  ["a branch that is never taken", `if (false) {\n  // bun-ignore TS100064\n  require(${path});\n}\n`],
+  [
+    "a statement behind a return",
+    `function load() {\n  return 1;\n  // bun-ignore TS100064\n  require(${path});\n}\nload();\n`,
+  ],
+  [
+    "a lookup in a function that this program doesn't call",
+    `function find() {\n  // bun-ignore TS100087\n  return Bun.resolveSync(${path}, __dirname);\n}\n`,
+  ],
+])("a comment in %s isn't stale", async (_, text) => {
+  expect(await build({ "main.cjs": text + `console.log(1);\n` })).toEqual(nothing);
+});
+
+test("one shared file, one program that calls the function and one that doesn't", async () => {
+  const files = {
+    "shared.cjs": `exports.load = function (name) {\n  // bun-ignore TS100064\n  return require(name);\n};\nexports.other = () => 1;\n`,
+    "calls.cjs": `require("./shared.cjs").load(${path});\n`,
+    "calls-not.cjs": `require("./shared.cjs").other();\n`,
+  };
+  expect(await build(files, ["calls.cjs"])).toEqual(nothing);
+  expect(await build(files, ["calls-not.cjs"])).toEqual(nothing);
+});
+
+test("an export that nobody imports", async () => {
+  const files = {
+    "main.mjs": `import { other } from "./shared.mjs";\nconsole.log(other());\n`,
+    "shared.mjs": `export function load(name) {\n  // bun-ignore TS100064\n  return import(name);\n}\nexport const other = () => 1;\n`,
+  };
+  expect(await build(files, ["main.mjs"])).toEqual(nothing);
+});
+
+test("a comment isn't stale where the whole build has nothing to warn of", async () => {
+  const text = `// bun-ignore TS100064\nrequire(${path});\n// bun-ignore TS100087\nBun.resolveSync(${path}, __dirname);\n`;
+  expect(await build({ "main.cjs": text }, ["main.cjs", "./left-out.cjs"])).toEqual(nothing);
+});
+
+test("a comment in code that runs is still stale where nothing is to silence", async () => {
+  const text = `function load() {\n  // bun-ignore TS100064\n  return 1;\n}\nload();\n`;
+  expect(await build({ "main.cjs": text })).toEqual({
+    said: [stale("the build reports no TS100064 on the line that it applies to")],
+    exitCode: 0,
+  });
+});
+
+test("among JSX children", async () => {
+  const text = `const React = { createElement: (...all) => all };\nconst made = (\n  <div>\n    {/* bun-ignore TS100064 */}\n    {require(${path})}\n  </div>\n);\nconsole.log(made.length);\n`;
+  const tsconfig = JSON.stringify({ compilerOptions: { jsx: "react" } });
+  expect(await build({ "main.jsx": text, "tsconfig.json": tsconfig }, ["main.jsx"])).toEqual(nothing);
+});
+
+test.each([
+  ["CR LF", "\r\n"],
+  ["CR", "\r"],
+  ["U+2028", "\u2028"],
+  ["U+2029", "\u2029"],
+])("lines that end in %s", async (_, end) => {
+  const above = [`console.log(1);`, `// bun-ignore TS100064`, `require(${path});`, ``].join(end);
+  expect(await build({ "main.cjs": above })).toEqual(nothing);
+  const behind = [`console.log(1);`, `require(${path}); // bun-ignore TS100064`, `require(${path});`, ``].join(end);
+  expect(await build({ "main.cjs": behind })).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
+});
+
+test.each([
+  `TS100064.`,
+  `TS100064: the plugins ship with the program`,
+  `TS100064;TS100087`,
+  `TS100064; TS100087.`,
+  `TS100064 (see the README)`,
+])("a mark behind a code: %s", async codes => {
+  const call = codes.includes("TS100087") ? `require(Bun.resolveSync(${path}, __dirname))` : `require(${path})`;
+  expect(await build({ "main.cjs": `// bun-ignore ${codes}\n${call};\n` })).toEqual(nothing);
+});
+
+test("letters behind a code make it no code", async () => {
+  expect(await build({ "main.cjs": `// bun-ignore TS100064x\nrequire(${path});\n` })).toEqual({
+    said: [stale("it names no warning. Write the codes after it, as in // bun-ignore TS100064"), "warn: TS100064"],
+    exitCode: 0,
+  });
+});
+
+test.each([
+  ["on its first line", `/* bun-ignore TS100064\n   the plugins ship with the program */`],
+  ["on its first line, with stars", `/**\n * bun-ignore TS100064 */`],
+  ["on its first line, and more lines", `/* bun-ignore TS100064\n * the plugins\n * ship with the program\n */`],
+  ["on its last line", `/* The plugins ship with the program.\n   bun-ignore TS100064 */`],
+])("a comment of several lines with the words %s", async (_, comment) => {
+  expect(await build({ "main.cjs": `${comment}\nrequire(${path});\n` })).toEqual(nothing);
+});
+
 test("--explain lists what a comment silenced", async () => {
   const text = `// bun-ignore TS100064\nrequire(${path});\n`;
   const { said, exitCode } = await build({ "main.cjs": text }, ["main.cjs"], ["--explain"]);
@@ -168,6 +272,35 @@ test("the warning of a computed import stops once every file of the project is a
   expect(await build(files, ["main.cjs", "./left-out.cjs"])).toEqual(nothing);
   const more = { ...files, "second.cjs": `module.exports = 2;\n` };
   expect((await build(more, ["main.cjs", "./left-out.cjs"])).said).toEqual(["warn: TS100064"]);
+});
+
+test.each(["addon.node", "data.json", "notes.txt"])(
+  "a second entry point that a computed import can't name as code doesn't stop the warning: %s",
+  async name => {
+    const files = { "main.cjs": `require(${path});\n`, [name]: name.endsWith(".json") ? "{}\n" : "no code\n" };
+    expect(await build(files, ["main.cjs", `./${name}`], [], {})).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
+  },
+);
+
+test("a dependency keeps the warning: the build doesn't look for what is left out of a package", async () => {
+  const files = {
+    "main.cjs": `require("dep");\nrequire(${path});\n`,
+    "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js" }),
+    "node_modules/dep/index.js": `require(${path});\n`,
+    "node_modules/dep/plugin.js": `module.exports = 1;\n`,
+  };
+  expect((await build(files)).said).toEqual(["warn: TS100064", "warn: TS100064"]);
+  expect(await build(files, ["main.cjs", "./left-out.cjs"])).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
+});
+
+test("a program that is itself a package keeps the warning: what its user names lies outside", async () => {
+  const files = {
+    "node_modules/tool/package.json": JSON.stringify({ name: "tool", bin: "cli.cjs" }),
+    "node_modules/tool/cli.cjs": `require("./extra.cjs");\nrequire(${path});\n`,
+    "node_modules/tool/extra.cjs": `module.exports = 1;\n`,
+  };
+  const entryPoints = ["node_modules/tool/cli.cjs", "node_modules/tool/extra.cjs"];
+  expect(await build(files, entryPoints, [], {})).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
 });
 
 test("a project of one file keeps the warning of a computed import", async () => {

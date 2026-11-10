@@ -194,6 +194,16 @@ fn lies_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, span: Span) 
         })
 }
 
+fn lies_in_dead_code(files: &Files<'_>, span: Span) -> bool {
+    let (hir, decisions) = (files.hir(span.file), &files.analysis(span.file).decisions);
+    let holds = |node| {
+        let (start, end) = range_of_node(hir, node);
+        (start..end).contains(&span.start)
+    };
+    decisions.dead_stmts().any(|it| holds(NodeData::Stmt(it)))
+        || decisions.dead_exprs().any(|it| holds(NodeData::Expr(it)))
+}
+
 fn warn_where_modules_are_reset(
     diagnostics: &mut Diagnostics,
     view: ProgramView<'_, '_>,
@@ -840,6 +850,10 @@ impl Build<'_> {
                         self.diagnostics.add(Some(view), warning);
                     }
                 }
+                self.diagnostics.forgive_unasked_comments(|span| {
+                    lies_in_left_out_code(view.files(), &left_out, span)
+                        || lies_in_dead_code(view.files(), span)
+                });
                 if !self.options.aot.runs_in_place {
                     let loaders = &self.options.load.loaders;
                     let has_found_data = name_data_files_found_by_patterns(

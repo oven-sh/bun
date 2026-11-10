@@ -48,7 +48,7 @@ An `error` stops the build. After a `warn` you still get an executable, but the 
 | `--aot does not apply to a package.json script` | Put `--aot` on the `bun` command inside the script                                                                            |
 | `this build of Bun doesn't support --trim`      | Use a release of Bun, not one you built                                                                                       |
 
-`TS100064: this import path isn't a constant` stops by itself once you pass more than one entry point and every code file of your project is in the executable.
+`TS100064: this import path isn't a constant` stops by itself once you pass more than one code file as an entry point and every code file of your project is in the executable. It stays if you compile a package from `node_modules`, because the files its users name lie outside the package.
 
 ### Silence a warning
 
@@ -63,9 +63,9 @@ const found = Bun.resolveSync(name, root); // bun-ignore TS100087
 
 - Any text after the codes is yours, so say why.
 - To silence several warnings on one line, list their codes: `// bun-ignore TS100064, TS100087`. No form silences every warning.
-- It silences the compiler's own warnings and notes, `TS100000` to `TS100999`. It never silences a type error, or an error that stops the build.
-- A comment that silences nothing gets a warning of its own, `TS100073`, so stale comments don't pile up.
-- It works in `.js`, `.ts`, `.jsx` and `.tsx` files, and in dependencies.
+- It silences the compiler's own warnings and notes, `TS100000` to `TS100999`. It never silences a type error, an error that stops the build, or a warning that isn't about a line, such as `TS100308`.
+- A comment that silences nothing gets a warning of its own, `TS100073`, so stale comments don't pile up. A comment in code that this build leaves out, such as a function it never calls, isn't stale: another build of the same file may need it.
+- It works in `.js`, `.ts`, `.jsx` and `.tsx` files, and in dependencies. Between JSX elements, write `{/* bun-ignore TS100064 */}`.
 - `--explain` still lists each warning that a comment silenced.
 
 ## Errors when the program runs

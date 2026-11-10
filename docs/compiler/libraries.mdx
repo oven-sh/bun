@@ -28,7 +28,7 @@ These [replace part of a built-in object](/compiler/compatibility#built-in-objec
 | `tar` 6, `minizlib` 2                                                                                 | `tar` 7                                                                   |
 | `collections`, `prototype`                                                                            | No replacement                                                            |
 
-Adding to a built-in object is allowed. `core-js` 3, `reflect-metadata`, `regenerator-runtime`, `colors`, `mockdate` and `sinon` with its fake timers all work.
+Adding to a built-in object is allowed. `core-js` 3, `reflect-metadata`, `regenerator-runtime`, `colors`, `mockdate` and `sinon` with its fake timers all work. So does `next`, which logs a line that begins with `Failed to install` when it starts.
 
 These [hook the module loader](/compiler/compatibility#loader-hooks-and-the-module-cache). The hook never runs for a compiled file. `--no-aot` doesn't change that.
 

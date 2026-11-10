@@ -41,6 +41,12 @@ pub(crate) fn globals_that_nothing_declares() -> &'static [u8] {
     })
 }
 
+pub(crate) const PROMISED_TYPES_PATH: &[u8] = b"/$bun/types/promised.d.ts";
+pub(crate) const PROMISED_TYPES: &[u8] = b"declare module \"bun\" {
+  export type int32 = number;
+}
+";
+
 pub(crate) const PACKAGES: &[u8] = b"/$bun/packages/node_modules/";
 const IN_ARCHIVE: &[u8] = b"types/";
 

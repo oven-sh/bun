@@ -1344,6 +1344,16 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         self.comment_directive(last_line, pos, end);
+        if last_line != start {
+            // A `bun-ignore` comment may go on below its first line.
+            let mut first = start + 2;
+            while first < end && matches!(src[first], b'*' | b' ' | b'\t') {
+                first += 1;
+            }
+            if first < end && src[first] == b'b' {
+                self.ignore_comment_at(first, end);
+            }
+        }
         Some(end)
     }
 

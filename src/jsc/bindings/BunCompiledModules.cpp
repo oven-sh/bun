@@ -928,10 +928,11 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
     // The engine says whose child the file is.
     if (referrer)
         target->compiledModule = module.index();
+    bool isAdopted = false;
     if (requirer && !referrer) {
         target->compiledModuleLoadedInto = module.index();
         AOT::willRequireFromUncompiledCode(globalObject, module, requirer);
-        bool isAdopted = tryAdoptModuleObject(globalObject, target, module, key);
+        isAdopted = tryAdoptModuleObject(globalObject, target, module, key);
         RETURN_IF_EXCEPTION(scope, void());
         if (isAdopted)
             target->hasEvaluated = true;
@@ -945,9 +946,9 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
     }
     bool readsExportsOffVariable = tryBindExportsVariable(globalObject, target, module);
     RETURN_IF_EXCEPTION(scope, void());
-    if (readsExportsOffVariable) {
+    if (readsExportsOffVariable || isAdopted) {
         scope.release();
-        AOT::requireModule(globalObject, module, referrer);
+        AOT::requireModule(globalObject, module, referrer, AOT::ReadsExports::No);
         return;
     }
     RELEASE_AND_RETURN(scope, requireInto(globalObject, target, module, referrer));

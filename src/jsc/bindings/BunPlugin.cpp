@@ -4302,7 +4302,7 @@ static void scheduleDetachedLoadRetry(Zig::GlobalObject* globalObject, JSModuleM
             job->performPromiseThen(vm, globalObject, jsUndefined(), jsUndefined(), next);
             job = next;
         }
-        job->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionSettleReplacedFactoryCall), globalObject->thenable(jsFunctionSettleReplacedFactoryCall), jsUndefined(), earlier.patched.get());
+        job->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionSettleReplacedFactory), globalObject->thenable(jsFunctionSettleReplacedFactory), jsUndefined(), earlier.patched.get());
     }
 }
 
@@ -7415,7 +7415,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionDecideWhetherFailureIsKept, (JSC::JSGlobalObj
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-BUN_DEFINE_HOST_FUNCTION(jsFunctionSettleReplacedFactoryCall, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+BUN_DEFINE_HOST_FUNCTION(jsFunctionSettleReplacedFactory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* patched = uncheckedDowncast<JSC::JSPromise>(callFrame->argument(1));
     patched->resolve(globalObject, JSC::getVM(globalObject), JSC::jsUndefined());

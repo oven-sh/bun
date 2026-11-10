@@ -100,7 +100,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         match checks_dependency_sources
             && is_asked_otherwise
             && origin == FileOrigin::DependencySource
-            && files.is_checked_as_by_own_project(file)
+            && files.matches_own_project_checks(file)
         {
             true => Requested::All,
             false => requested_diagnostics(

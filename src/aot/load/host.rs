@@ -217,6 +217,13 @@ fn collect_entry_point_paths(
     paths
 }
 
+fn is_code_file_name(name: &[u8]) -> bool {
+    !name.starts_with(b".")
+        && !bun_paths::extension(name).is_empty()
+        && !is_declaration_file_name(name)
+        && loader_by_name(name).is_javascript_like()
+}
+
 fn collect_entry_points_by_file(options: &Options<'_>) -> Vec<(Vec<u8>, Vec<u8>)> {
     let paths = &options.paths;
     let names = paths.entry_point_file_names.iter();
@@ -575,11 +582,7 @@ impl<'a> LoadHost<'a> {
             files.sort_unstable();
             for name in files {
                 let path = [&folder[..], b"/", &name[..]].concat();
-                let is_code = !name.starts_with(b".")
-                    && !bun_paths::extension(&name).is_empty()
-                    && !is_declaration_file_name(&name)
-                    && loader_by_name(&name).is_javascript_like();
-                if is_code && !held.contains(&self.disk.realpath(&path)[..]) {
+                if is_code_file_name(&name) && !held.contains(&self.disk.realpath(&path)[..]) {
                     return Some(path);
                 }
             }
@@ -592,6 +595,18 @@ impl<'a> LoadHost<'a> {
             );
         }
         None
+    }
+
+    pub(crate) fn has_all_project_code(&self, held: &FxHashSet<&[u8]>) -> bool {
+        let options = &self.input.options;
+        let written = options.entry_points.iter();
+        let code_count = written
+            .filter(|path| is_code_file_name(bun_paths::basename(path)))
+            .count();
+        let root = from_native(&options.paths.root_directory);
+        code_count > 1
+            && !bun_core::strings::contains(&root, b"node_modules")
+            && self.find_code_left_out(held).is_none()
     }
 
     pub(crate) fn find_file_that_require_finds(

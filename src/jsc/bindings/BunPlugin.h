@@ -17,7 +17,7 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionFactoryOfCompiledMockSettled);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionFactoryOfCompiledMockFailed);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionDecideWhetherFailureIsKept);
-BUN_DECLARE_HOST_FUNCTION(jsFunctionSettleReplacedFactoryCall);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionSettleReplacedFactory);
 #endif
 BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 

@@ -395,7 +395,7 @@ impl<'s> Files<'s> {
         }
     }
 
-    pub fn is_checked_as_by_own_project(&self, file: FileId) -> bool {
+    pub fn matches_own_project_checks(&self, file: FileId) -> bool {
         let (program, project) = (self.options, self.module_options(file));
         !self.needs_another_program(file)
             || (program.strict_null_checks == project.strict_null_checks

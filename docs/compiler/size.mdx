@@ -13,7 +13,7 @@ bun compile --trim ./server.ts
 
 The build prints the size of the executable and how much it removed. In `Bun.build`, the option is `compile: { trim: true }`.
 
-`bun compile` already leaves out the `bun` command line and the JIT compilers. `bun build --compile` keeps both, and `--trim` only removes the command line there.
+`bun compile` already leaves out the `bun` command line and the JIT compilers, unless your code passes `Bun.build` an option that needs them, like `compile`. `bun build --compile` keeps both, and `--trim` only removes the command line there.
 
 A trimmed executable doesn't read `bunfig.toml` at startup unless you pass `--compile-autoload-bunfig`.
 
@@ -43,14 +43,14 @@ aot: trim: removed bun:sqlite and node:sqlite (sqlite): unused
 
 If the report starts with `blocked by`, your program or a dependency could reach APIs that the compiler can't see, so `--trim` keeps more. The line says where.
 
-| `blocked by`      | Your program                                           |
-| ----------------- | ------------------------------------------------------ |
-| `eval`            | Calls `eval` or `new Function`                         |
-| `runtime-code`    | Uses `node:vm` or `Bun.plugin`                         |
-| `native-code`     | Uses `bun:ffi` or a native addon                       |
-| `dynamic-import`  | Imports a computed path, or starts a `Worker` from one |
-| `external-import` | Imports an `--external` package or a URL               |
-| `build-option`    | Is built with `--compile-inspector`                    |
+| `blocked by`      | Your program                                                                    |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `eval`            | Calls `eval` or `new Function`                                                  |
+| `runtime-code`    | Uses `node:vm` or `Bun.plugin`                                                  |
+| `native-code`     | Uses `bun:ffi` or a native addon                                                |
+| `dynamic-import`  | Imports a computed path, or starts a `Worker` from a computed path or from text |
+| `external-import` | Imports an `--external` package or a URL                                        |
+| `build-option`    | Is built with `--compile-inspector`                                             |
 
 With the last two, `--trim` keeps almost every API. With the others, unused Bun and Node.js APIs are still removed.
 
@@ -66,15 +66,19 @@ Without `--trim-locales`, Bun keeps the locales that your code passes as constan
 
 A dependency that calls `new Function` is the most common reason `--trim` is blocked. With [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings), those calls throw an `EvalError`, so they block nothing. A library that tries `new Function` in a `try` block falls back to plain code, and one that needs generated code throws at startup. `bun` takes the flag too, so you can find out which before you build.
 
-`node:vm` still runs code from strings with that flag, as in Node.js. With `=strict` it throws the `EvalError` too, and blocks nothing.
+`node:vm` and `module._compile` still run code from strings with that flag, as in Node.js. With `=strict` they throw the `EvalError` too, and block nothing.
 
 ## Using a removed feature
 
 Bun removes code, not names. `typeof HTMLRewriter` gives the same result as before. A call throws an `Error` with the code `ERR_FEATURE_REMOVED` and a message that says how to keep the feature.
 
-Your program only runs into this from code that the compiler never sees, like a string passed to `eval`. `bun test` runs your source files, so it can't find these errors. Test the executable itself.
+Your program runs into this through a name that isn't known until run time, as in `Bun[name]()`, and in code that the compiler never sees, like a string passed to `eval`. That code finds the APIs that the rest of your program uses.
 
-In `Bun.build`, `trim: { allow: ["color"] }` keeps a feature that only such code uses. `trim: { remove: ["sqlite"] }` takes a feature out even if your code uses it. Neither has a command-line flag.
+For `Bun[name]()`, the parts of `Bun` that are written in JavaScript, like `Bun.$` and `Bun.sql`, are always kept, and others may be. A copy of the `Bun` you name, like `{ ...Bun }`, counts as a use. The test runner, `Intl`, `Temporal` and `WebAssembly` are kept only where your code names them.
+
+`bun test` runs your source files, so it can't find these errors. Test the executable itself.
+
+In `Bun.build`, `trim: { allow: ["color"] }` keeps a feature that only such code uses. `trim: { remove: ["sqlite"] }` takes a feature out even if your code uses it. Without `serve`, `listen()` in `node:http` emits an `"error"` event. Neither has a command-line flag.
 
 ### Feature names
 

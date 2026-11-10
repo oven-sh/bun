@@ -46,6 +46,7 @@ impl Diagnostics {
             missing_at_load: FxHashSet::default(),
             int32_flows: FxHashMap::default(),
             ignore_comments: Vec::new(),
+            withheld: Vec::new(),
             should_list_silenced: false,
             has_all_project_code: false,
         }

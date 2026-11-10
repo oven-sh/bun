@@ -8,7 +8,7 @@
 # A getter stands in front of `next`, so the literal is born without it and `next` is laid by a store behind the birth: `NewObject . PropDefine key="next" . FinishObject`. The text of the opening method still
 # names one function for `next`: the one store under that name into that literal. It used to be read off the operands of the birth alone: nothing was expected, `next` was called by value each step and its
 # answer was made and read by name: 4,222 instructions for 32 steps against 2,036.
-# STATISTIC: NextMethodsTestedForFunctionWritten = 1
+# STATISTIC: DeclaredNextMethodsGuarded = 1
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: [[next]]: {{*}} = PropGet {{*}}key="next"

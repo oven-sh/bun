@@ -1,5 +1,5 @@
 // The headers are read first, then the status, then the text, then the body, whatever the order of the literal.
-// STATISTIC: LiteralArgumentsTakenApart >= 1
+// STATISTIC: LiteralArgumentsScalarized >= 1
 const told = [];
 function answer(turn) {
   const status = { valueOf() { told.push("status"); return 200 + turn; } };

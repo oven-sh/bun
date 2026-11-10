@@ -1,6 +1,6 @@
 // A turn stores a slot of an object of a class of the program and then a field of an object of a class below Map: both kinds are put back, each once.
 // The question that fails behind the two stores is asked of what the element holds: a list of plain values is asked for its kind in front of the loop, and then no turn begins again.
-// STATISTIC: StoresPutBackWhereTurnsBeginAgain >= 2
+// STATISTIC: StoresUndoneAtIterationRestarts >= 2
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; this.m = 2; } }
 class P { constructor() { this.x = 1; this.y = 2; } }

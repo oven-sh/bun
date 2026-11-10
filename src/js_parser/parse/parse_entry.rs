@@ -971,6 +971,14 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Only `bun test` reads them, from what it transpiles and from the cache, which `bun run` fills too.
+        p.may_request_originals = (p.options.features.inject_jest_globals
+            || p.options
+                .features
+                .runtime_transpiler_cache_mut()
+                .is_some_and(|cache| cache.input_hash.is_some()))
+            && strings::contains(&p.source.contents, b"Actual");
+
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,

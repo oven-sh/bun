@@ -1,4 +1,4 @@
-// STATISTIC: KeysHeldToWholeNumbersInTurnsOfTypedCopies = 0
+// STATISTIC: NumberKeysGuardedInIterations = 0
 const rounds = +process.argv[2]! || 3;
 const say = (x: unknown) => Object.is(x, -0) ? "-0" : String(x);
 class Field {

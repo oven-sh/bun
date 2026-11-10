@@ -1,11 +1,12 @@
-# The image keeps the 255 most frequent records of functions in a table of their own; a function with another record is marked, and the run time looks its record up by the function's number: here for the frames of an error's stack.
-# THE LIE, testing=RecordsOfFunctionsAreListedUnderOtherNumbers: all records but the most frequent one are listed by function, each under the number behind its own.
-# In every build the row found is asked to be there and to bear the number asked for, or the process ends.
+# The image keeps the 255 most frequent function records in a table of their own. A function with another record is marked, and the runtime looks up its record by the function's number.
+# Here the runtime does that for the frames of an error's stack.
+# Fault injection, testing=MisnumberFunctionRecords: all records except the most frequent one are listed by function, each under the number after its own.
+# In every build the runtime checks that the entry it found exists and carries the requested number. Otherwise the process crashes.
 # AS-USERS-BUILD: the run time asks the row in every build.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: has frames string
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=RecordsOfFunctionsAreListedUnderOtherNumbers
+# RUN(HELD): run-in-shell mechanisms=all testing=MisnumberFunctionRecords
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

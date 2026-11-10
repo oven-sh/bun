@@ -12,6 +12,7 @@ use super::compare_code_units;
 use super::deferred_exports::mirrors_an_object;
 use super::failures::{ModuleFailure, ModuleFailureId};
 use super::imports::NamedMember;
+use super::instances::InstanceLayout;
 use super::interop::{Interop, ModuleKind};
 use super::known_members::list_data_linked_by_names_alone;
 use super::order::SiteKey;
@@ -61,6 +62,7 @@ pub struct ModuleGraph {
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
     pub(super) member_stores: Vec<OnceLock<MemberStores>>,
+    pub(super) instance_layouts: Vec<OnceLock<InstanceLayout>>,
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
     pub(super) folders_of_databases: Vec<FileId>,
@@ -139,7 +141,7 @@ fn is_among(files: &[FileId], module: ModuleRef) -> bool {
     match module {
         ModuleRef::File(file)
         | ModuleRef::Inner { file, .. }
-        | ModuleRef::Face(file)
+        | ModuleRef::Facade(file)
         | ModuleRef::Check(file) => !files.is_empty() && files.binary_search(&file).is_ok(),
         ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
     }
@@ -180,11 +182,13 @@ impl ModuleGraph {
         match module {
             ModuleRef::File(file) => self.row(file).interop,
             ModuleRef::Inner { .. } => Interop::INNER_MODULE,
-            ModuleRef::Face(file) if self.commonjs_exports.face_captures(file) => Interop {
-                export_rule: self.row(file).interop.export_rule,
-                ..Interop::ES_MODULE
-            },
-            ModuleRef::Face(_) | ModuleRef::Check(_) => Interop::ES_MODULE,
+            ModuleRef::Facade(file) if self.commonjs_exports.has_capturing_facade(file) => {
+                Interop {
+                    export_rule: self.row(file).interop.export_rule,
+                    ..Interop::ES_MODULE
+                }
+            }
+            ModuleRef::Facade(_) | ModuleRef::Check(_) => Interop::ES_MODULE,
             ModuleRef::Runtime(_) => Interop::RUNTIME,
             ModuleRef::External { .. } => {
                 let kind = self.external_kind(module);
@@ -528,7 +532,7 @@ impl ModuleGraph {
                 retain_used_exports(&mut row.exports, row.file, find_use);
             }
         });
-        self.commonjs_exports.limit_exports_of_faces(find_use);
+        self.commonjs_exports.retain_used_facade_exports(find_use);
     }
 
     pub fn import_bindings(&self, file: FileId) -> &[(SymbolId, ImportBinding)] {
@@ -611,6 +615,10 @@ impl ModuleGraph {
 
     pub fn required_names(&self, file: FileId) -> &[RequiredName] {
         &self.row(file).required_names
+    }
+
+    pub fn namespace_values(&self, file: FileId) -> &[ModuleRef] {
+        &self.row(file).namespace_values
     }
 
     pub fn names_searched_behind_stars(&self, file: FileId) -> &[(FileId, Atom)] {

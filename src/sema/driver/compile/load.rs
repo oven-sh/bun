@@ -732,11 +732,20 @@ fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
     let Some(root) = host.type_root_in_place_of_bun_types() else {
         return false;
     };
+    take_bun_types_below(root, &|path| host.is_file(path), options);
+    true
+}
+
+pub(crate) fn take_bun_types_below(
+    root: Vec<u8>,
+    is_file: &dyn Fn(&[u8]) -> bool,
+    options: &mut Options,
+) {
     let roots = options.effective_type_roots();
     let has_bun_types_package = roots.iter().any(|root| {
         let directories = [Some(&root[..]), root.strip_suffix(b"/@types")];
         (directories.into_iter().flatten())
-            .any(|it| host.is_file(&[it, b"/bun-types/package.json"].concat()))
+            .any(|it| is_file(&[it, b"/bun-types/package.json"].concat()))
     });
     options.type_root_of_last_resort = Some(root);
     let (named, other): (&[u8], &[u8]) = match has_bun_types_package {
@@ -748,5 +757,4 @@ fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
     if !types.iter().any(|name| name == named) {
         types.push(named.to_vec());
     }
-    true
 }

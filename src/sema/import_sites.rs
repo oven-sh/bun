@@ -7,6 +7,7 @@ mod jsx;
 mod macro_calls;
 mod made_requires;
 mod parameters;
+mod requested_originals;
 mod scan;
 mod statements;
 #[cfg(all(test, not(miri)))]
@@ -15,11 +16,10 @@ mod touched_exports;
 mod written_arms;
 
 pub use call_sites::{
-    RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
-    does_import_meta_resolve_ask_resolver, ends_in_call_that_reads_frame_of_caller,
-    find_module_printed_as_require, find_require_call, is_linked_by_bundler,
-    is_module_call_of_plugin, is_name_read_by_transpiler, is_name_written_out,
-    may_spell_word_that_mock_looks_for, names_word_that_mock_looks_for,
+    RequireCall, RequireCallForm, does_import_meta_resolve_ask_resolver,
+    ends_in_call_that_reads_frame_of_caller, find_module_printed_as_require, find_require_call,
+    is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
+    is_name_written_out,
 };
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, is_process,
@@ -50,6 +50,9 @@ pub(crate) use made_requires::{OtherUse, find_imported_export, names_own_file, s
 pub use parameters::{
     ExportedNames, find_names_exported_for, find_parameter_named, find_values_of_parameter,
     find_values_passed_for, is_exported,
+};
+pub use requested_originals::{
+    RequestedOriginals, find_request_positions, find_requested_originals,
 };
 pub(crate) use scan::collect_import_sites;
 pub(crate) use statements::is_runtime_import;
@@ -137,7 +140,7 @@ pub struct ExportedFileChanger {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct FileReadBesideCaller {
+pub struct CallerRelativeRead {
     pub function: SymbolId,
     pub place: u32,
     pub property: Option<Atom>,
@@ -145,7 +148,7 @@ pub struct FileReadBesideCaller {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct OwnUrlHanded {
+pub struct OwnUrlArgument {
     pub argument: ExprId,
     pub function: SymbolId,
     pub place: u32,
@@ -210,9 +213,9 @@ pub(crate) struct ImportScan<'s> {
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub paths_of_changed_files: &'s [ChangedPath],
-    pub paths_of_files_read: &'s [(ExprId, Atom)],
-    pub files_read_beside_callers: &'s [FileReadBesideCaller],
-    pub own_urls_handed: &'s [OwnUrlHanded],
+    pub module_relative_reads: &'s [(ExprId, Atom)],
+    pub caller_relative_reads: &'s [CallerRelativeRead],
+    pub own_url_arguments: &'s [OwnUrlArgument],
     pub exported_file_changers: &'s [ExportedFileChanger],
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],

@@ -8,9 +8,9 @@
 // CHECK: [[name]] = String string="fs"
 // CHECK: = RequireDynamic [[name]]
 // RUN(HELD): link
-// HELD: module {{*}}path="node:path" {{*}}IsHeldUnderNameWithoutPrefix
+// HELD: module {{*}}path="node:path" {{*}}RejectsRequireCacheOverride
 // RUN(OPEN): link
-// OPEN-NOT: module {{*}}path="node:fs" {{*}}IsHeldUnderNameWithoutPrefix
+// OPEN-NOT: module {{*}}path="node:fs" {{*}}RejectsRequireCacheOverride
 
 exports.bound = function bound() {
   return [require("node:fs"), require("path")];

@@ -1,6 +1,6 @@
 // In a loop `[...given]`, `[...given, a]`, `[...given, a, b, c]`, `[...given, 1]` and `[...given, ...given]` are made of everything that can be given: lists of every storage, with holes, shared, frozen, long, with names
 // of their own, of a class below Array, with an iterator of their own; what is no list; what cannot be spread. Each answer is held against plain Bun's, and neither side sees what is later done to the other.
-// STATISTIC: LiteralsBornHoldingTheListSpreadRightBehind >= 5
+// STATISTIC: ArrayLiteralsAllocatedFromSpread >= 5
 const turns = JSON.parse("3");
 function alone(given) { let last; for (let i = 0; i < turns; i++) last = [...given]; return last; }
 function andOne(given, a) { let last; for (let i = 0; i < turns; i++) last = [...given, a]; return last; }

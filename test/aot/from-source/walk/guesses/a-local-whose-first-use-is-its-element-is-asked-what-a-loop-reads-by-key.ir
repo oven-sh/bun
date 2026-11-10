@@ -10,5 +10,5 @@
 # CHECK: testedType=string
 # RUN(LIST): walk f2:Body mechanisms=all
 # LIST: testedType=Array
-# RUN(COUNT): compile BasesAskedThatAnElementReadsFirst mechanisms=all
-# COUNT-NOT: statistic BasesAskedThatAnElementReadsFirst 0
+# RUN(COUNT): compile ArraysSpeculatedFromIndexedReads mechanisms=all
+# COUNT-NOT: statistic ArraysSpeculatedFromIndexedReads 0

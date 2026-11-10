@@ -402,7 +402,7 @@ impl<'a> LoadHost<'a> {
             levels_above_root: AtomicUsize::new(0),
             levels_of_texts: Guarded::new(FxHashMap::default()),
             holds_texts_of_levels: AtomicBool::new(false),
-            highest_level_named: AtomicUsize::new(0),
+            highest_level_named: AtomicUsize::new(provider.highest_asset_level()),
             file_lost_with_texts_of_other_levels: Guarded::new(None),
             has_file_that_asks_for_what_unseen_code_finds: AtomicBool::new(false),
             extra_extensions: extra_extensions.collect(),
@@ -565,6 +565,33 @@ impl<'a> LoadHost<'a> {
             self.note_way_named(&way);
         }
         find_file_on_way(paths, way)
+    }
+
+    pub(crate) fn find_code_left_out(&self, held: &FxHashSet<&[u8]>) -> Option<Vec<u8>> {
+        let root = from_native(&self.input.options.paths.root_directory);
+        let mut pending = vec![root.strip_suffix(b"/").unwrap_or(&root).to_vec()];
+        while let Some(folder) = pending.pop() {
+            let (mut files, mut folders) = self.entries(&folder);
+            files.sort_unstable();
+            for name in files {
+                let path = [&folder[..], b"/", &name[..]].concat();
+                let is_code = !name.starts_with(b".")
+                    && !bun_paths::extension(&name).is_empty()
+                    && !is_declaration_file_name(&name)
+                    && loader_by_name(&name).is_javascript_like();
+                if is_code && !held.contains(&self.disk.realpath(&path)[..]) {
+                    return Some(path);
+                }
+            }
+            folders.retain(|name| name != b"node_modules" && !name.starts_with(b"."));
+            folders.sort_unstable_by(|one, other| other.cmp(one));
+            pending.extend(
+                folders
+                    .into_iter()
+                    .map(|name| [&folder[..], b"/", &name[..]].concat()),
+            );
+        }
+        None
     }
 
     pub(crate) fn find_file_that_require_finds(

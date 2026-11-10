@@ -1,4 +1,4 @@
-// STATISTIC: StoresUnderAnyKeyThatRaiseTheLengthInLine >= 1
+// STATISTIC: UntypedKeyStoresAppendingInline >= 1
 "use strict";
 const ids = JSON.parse("[0,3,1,9,2,30,31,5,200,201,7,5000,5001,4]");
 const links = [];

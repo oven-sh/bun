@@ -309,6 +309,8 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
+    // By source URL: ResolvedSource::requested_originals of each module that has any.
+    WTF::UncheckedKeyHashMap<WTF::String, WTF::String> requestedOriginals;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 

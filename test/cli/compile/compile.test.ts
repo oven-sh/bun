@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, rmSync, statSync } from "fs";
+import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
 import { unsupported } from "../../aot/harness/commands";
@@ -66,7 +66,7 @@ describe.concurrent("bun compile", () => {
   });
 
   test.skipIf(!!unsupported)(
-    "prints three lines, and --explain says how much is typed and why the rest is not",
+    "prints four aligned rows, and --explain says how much is typed and why the rest is not",
     async () => {
       using dir = tempDir("compile-explain", {
         "app.ts": `function first(text: string): number {\n  return JSON.parse(text).head;\n}\nconsole.log(first('{"head":1}'));`,
@@ -75,16 +75,22 @@ describe.concurrent("bun compile", () => {
       const built = await bun(String(dir), "compile", "app.ts");
       expect({ ...built, stdout: built.stdout.split("\n") }).toEqual({
         stdout: [
-          expect.stringMatching(/^ *\[[\d.]+m?s\]  bundle  1 modules$/),
-          expect.stringMatching(
-            /^ *\[[\d.]+m?s\] compile  \S*app(\.exe)?  compiled 4 lines in [\d,]+\.\d\d s \([\d,]+ lines\/s\)$/,
-          ),
+          expect.stringMatching(/^ +\[[\d.]+m?s\]  bundle  1 module$/),
+          expect.stringMatching(/^ +\[[\d.]+m?s\]   check  4 lines$/),
+          expect.stringMatching(/^ +\[[\d.]+m?s\] compile  \S*app(\.exe)?  \d+\.\d MB$/),
           expect.stringMatching(/^ +build id  [0-9a-f]{32}$/),
           "",
         ],
         stderr: "",
         exitCode: 0,
       });
+      const labelEnds = built.stdout
+        .trimEnd()
+        .split("\n")
+        .map(row => /^ *(\[\S+\] +)?(bundle|check|compile|build id)/.exec(row)![0].length);
+      expect(labelEnds).toEqual([17, 17, 17, 17]);
+      const megabytes = Number(/ (\d+\.\d) MB$/m.exec(built.stdout)![1]);
+      expect(megabytes).toBeCloseTo(statSync(executable(String(dir), "app")).size / 1_000_000, 0);
       const explained = await bun(String(dir), "compile", "app.ts", "--explain");
       const summary = said(explained).filter(line => /of property accesses|^Untyped code works/.test(line));
       expect(summary).toEqual([
@@ -121,6 +127,108 @@ describe.concurrent("bun compile", () => {
           'error: Invalid value for --explain: "nonsense". Must be one of text, json, guards, guards-json, trim, allocations, forms, statistics\n',
         exitCode: 1,
       });
+    },
+    120_000,
+  );
+
+  test.skipIf(!!unsupported)(
+    "the check row counts the files that are compiled without types",
+    async () => {
+      using dir = tempDir("compile-untyped-files", {
+        "app.ts": `import { value } from "./loose/value";\nconsole.log(value);\n`,
+        "tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
+        "loose/tsconfig.json": `{ "compilerOptions": { "strictNullChecks": false } }`,
+        "loose/value.ts": `export const value: number = 1;\n`,
+      });
+      const built = await bun(String(dir), "compile", "app.ts");
+      expect(built.stdout.split("\n").slice(0, 2)).toEqual([
+        expect.stringMatching(/^ +\[[\d.]+m?s\]  bundle  2 modules$/),
+        expect.stringMatching(/^ +\[[\d.]+m?s\]   check  3 lines  1 file compiled without types$/),
+      ]);
+      expect(built.exitCode).toBe(0);
+    },
+    120_000,
+  );
+
+  test.skipIf(!!unsupported)(
+    "what is only slower in a package is counted, and each reason that limits --trim is printed once",
+    async () => {
+      using dir = tempDir("compile-noisy-package", {
+        "app.ts": `import { pack } from "packer";\nconsole.log(await pack(process.argv[2]));\n`,
+        "package.json": `{ "name": "app", "type": "module" }`,
+        "node_modules/packer/package.json": `{ "name": "packer", "version": "1.0.0", "main": "index.js" }`,
+        "node_modules/packer/index.js": `"use strict";
+Symbol.asyncDispose ??= Symbol("Symbol.asyncDispose");
+const path = require("node:path");
+const escapeText = text => text.replace(/[.*+?]/g, "\\\\$&");
+const matchers = [name => new RegExp("^" + escapeText(name)), name => new RegExp(escapeText(name) + "$")];
+const globalObject = new Function("return this")();
+const wordsOf = language => require("./locales/" + language);
+async function pack(file) {
+  const config = file ? require(path.resolve(file)) : { name: "none" };
+  const found = matchers.filter(make => make(config.name).test("none"));
+  return [found.length, typeof globalObject, config.text ? eval(config.text) : 0, wordsOf("en.json").hello].join(" ");
+}
+module.exports = { pack };
+`,
+        "node_modules/packer/locales/en.json": `{ "hello": "hello" }`,
+        "node_modules/packer/locales/README.md": "# translations\n",
+      });
+      const codes = (text: string) => [...text.matchAll(/TS\d+/g)].map(String);
+      const notes = (text: string) => text.split("\n").filter(line => /^ {13,}[a-z]/.test(line));
+      const counted =
+        "             note  2 regular expressions in packer are compiled at run time (--explain lists them)";
+
+      const built = await bun(String(dir), "compile", "app.ts");
+      expect({ codes: codes(built.stderr), notes: notes(built.stderr) }).toEqual({
+        codes: ["TS100064", "TS100064"],
+        notes: [counted],
+      });
+      expect(built.exitCode).toBe(0);
+      expect(await run(String(dir), [executable(String(dir), "app")])).toEqual({
+        stdout: "2 object 0 hello\n",
+        stderr: "",
+        exitCode: 0,
+      });
+
+      const explained = await bun(String(dir), "compile", "app.ts", "--explain");
+      expect(codes(explained.stderr).sort()).toEqual(["TS100058", "TS100058", "TS100064", "TS100064", "TS100088"]);
+      expect(explained.stderr).not.toContain("regular expressions in packer");
+      expect(explained.stderr).not.toContain("(reason ");
+
+      const checked = await bun(String(dir), "check", "--aot", "--trim", "app.ts");
+      expect(notes(checked.stderr)).toEqual([
+        counted,
+        "             trim  kept APIs your code doesn't call:",
+        "                   the program calls eval() or new Function()",
+        "                     node_modules/packer/index.js:6:26",
+        "                     node_modules/packer/index.js:11:60",
+        "                   the program calls import() or require() with a dynamic path",
+        expect.stringMatching(/^ {21}node_modules\/packer\/index\.js:\d+:\d+$/),
+      ]);
+      expect(checked.exitCode).toBe(0);
+    },
+    240_000,
+  );
+
+  test.skipIf(!!unsupported)(
+    "the compile row gives the lines per second of a build of a thousand lines or more",
+    async () => {
+      const lines = (count: number) => Array.from({ length: count }, (_, i) => `console.log(${i});\n`).join("");
+      using dir = tempDir("compile-rate", { "short.ts": lines(999), "long.ts": lines(1000) });
+      const [short, long] = await Promise.all([
+        bun(String(dir), "compile", "short.ts"),
+        bun(String(dir), "compile", "long.ts"),
+      ]);
+      expect(short.stdout.split("\n").slice(1, 3)).toEqual([
+        expect.stringMatching(/   check  999 lines$/),
+        expect.stringMatching(/ compile  \S*short(\.exe)?  \d+\.\d MB$/),
+      ]);
+      expect(long.stdout.split("\n").slice(1, 3)).toEqual([
+        expect.stringMatching(/   check  1,000 lines$/),
+        expect.stringMatching(/ compile  \S*long(\.exe)?  \d+\.\d MB  (\d+|\d+\.\dk) lines\/s$/),
+      ]);
+      expect({ short: short.exitCode, long: long.exitCode }).toEqual({ short: 0, long: 0 });
     },
     120_000,
   );
@@ -268,6 +376,182 @@ describe.concurrent("bun compile in a project that has its own compile", () => {
       "index.ts": files["index.ts"],
     });
     expect(await bun(String(dir), "compile", "a")).toEqual({ stdout: "the file a\n", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.concurrent("bun compile with the name of an installed executable", () => {
+  const prints = (text: string) => `#!/usr/bin/env node\nconsole.log(${JSON.stringify(text)});`;
+  const tool = {
+    "node_modules/tool/package.json": JSON.stringify({
+      name: "tool",
+      main: "lib/index.js",
+      bin: { tool: "bin/cli.js", "tool-helper": "./bin/helper.js" },
+    }),
+    "node_modules/tool/lib/index.js": `exports.greet = name => "hello, " + name;`,
+    "node_modules/tool/bin/cli.js": `#!/usr/bin/env node\nconsole.log(require("../lib/index.js").greet(process.argv[2]));`,
+    "node_modules/tool/bin/helper.js": prints("helper"),
+  };
+
+  async function compiles(cwd: string, args: string[], name: string, stdout: string) {
+    const built = await bun(cwd, "compile", ...withoutCompiler, ...args);
+    expect(built.stderr).not.toContain("error");
+    expect(built.exitCode).toBe(0);
+    expect(await run(cwd, [executable(cwd, name), "world"])).toEqual({ stdout, stderr: "", exitCode: 0 });
+  }
+
+  test("the name of a package, and again next to the executable of the first build", async () => {
+    using dir = tempDir("compile-installed", tool);
+    await compiles(String(dir), ["tool"], "tool", "hello, world\n");
+    await compiles(String(dir), ["tool", "--outfile", "again"], "again", "hello, world\n");
+  });
+
+  test("a scoped package whose bin is a string", async () => {
+    using dir = tempDir("compile-installed-scoped", {
+      "node_modules/@scope/tool/package.json": JSON.stringify({ name: "@scope/tool", bin: "cli.js" }),
+      "node_modules/@scope/tool/cli.js": prints("scoped"),
+    });
+    await compiles(String(dir), ["@scope/tool"], "tool", "scoped\n");
+  });
+
+  test.skipIf(isWindows)("a link in node_modules/.bin", async () => {
+    using dir = tempDir("compile-installed-link", tool);
+    mkdirSync(join(String(dir), "node_modules", ".bin"));
+    symlinkSync(join("..", "tool", "bin", "helper.js"), join(String(dir), "node_modules", ".bin", "tool-helper"));
+    await compiles(String(dir), ["tool-helper"], "tool-helper", "helper\n");
+  });
+
+  test("a launcher in node_modules/.bin", async () => {
+    using dir = tempDir("compile-installed-launcher", {
+      ...tool,
+      [`node_modules/.bin/tool-helper${isWindows ? ".cmd" : ""}`]: "not JavaScript {",
+      "node_modules/@scope/other/package.json": JSON.stringify({ name: "@scope/other", bin: { other: "cli.js" } }),
+    });
+    await compiles(String(dir), ["tool-helper"], "tool-helper", "helper\n");
+  });
+
+  test("in a folder of the project", async () => {
+    using dir = tempDir("compile-installed-from-below", { ...tool, "src/app.ts": "" });
+    await compiles(join(String(dir), "src"), ["tool"], "tool", "hello, world\n");
+  });
+
+  test("the nearest package of that name hides one further up", async () => {
+    using dir = tempDir("compile-installed-nearest", {
+      ...tool,
+      "sub/node_modules/tool/package.json": JSON.stringify({ name: "tool", main: "index.js" }),
+      "sub/node_modules/tool/index.js": `console.log("the nearer library");`,
+    });
+    const cwd = join(String(dir), "sub");
+    const built = await bun(cwd, "compile", ...withoutCompiler, "tool");
+    expect(built.stderr).toStartWith(`note: tool has no "bin" in its package.json`);
+    expect(built.exitCode).toBe(0);
+    expect(await run(cwd, [executable(cwd, "tool")])).toEqual({
+      stdout: "the nearer library\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a source file of that name in the working directory is compiled instead", async () => {
+    using dir = tempDir("compile-installed-or-file", {
+      "node_modules/tool/package.json": JSON.stringify({ name: "tool", bin: "cli.js" }),
+      "node_modules/tool/cli.js": prints("installed"),
+      "tool.ts": prints("the file"),
+    });
+    await compiles(String(dir), ["tool"], "tool", "the file\n");
+  });
+
+  test.each([
+    [
+      "no bin",
+      { name: "library", main: "index.js" },
+      `note: library has no "bin" in its package.json, so this compiles the library that import "library" loads\n`,
+    ],
+    [
+      "a bin with other names",
+      { name: "library", main: "index.js", bin: { first: "index.js", second: "index.js" } },
+      `note: library has no "bin" of that name in its package.json, so this compiles the library that import "library" loads. Its "bin" has: first, second\n`,
+    ],
+  ])("a package that is a library gets a note: %s", async (_, packageJson, note) => {
+    using dir = tempDir("compile-installed-library", {
+      "node_modules/library/package.json": JSON.stringify(packageJson),
+      "node_modules/library/index.js": `exports.answer = 42;`,
+    });
+    const built = await bun(String(dir), "compile", ...withoutCompiler, "library");
+    expect(built.stderr).toStartWith(note);
+    expect(built.exitCode).toBe(0);
+    expect(await run(String(dir), [executable(String(dir), "library")])).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  describe.each(unsupported ? ["--no-aot"] : ["--aot", "--no-aot"])("a file without an extension, %s", mode => {
+    const compilesInMode = async (files: Record<string, string>, entryPoint: string, stdout: string) => {
+      using dir = tempDir("compile-no-extension", files);
+      const built = await bun(String(dir), "compile", mode, entryPoint, "--outfile", "out");
+      expect(built.stderr).not.toContain("error");
+      expect(built.exitCode).toBe(0);
+      expect(await run(String(dir), [executable(String(dir), "out")])).toEqual({ stdout, stderr: "", exitCode: 0 });
+    };
+    const installed = (cli: string) => ({
+      "node_modules/tool/package.json": JSON.stringify({ name: "tool", bin: "bin/tool" }),
+      "node_modules/tool/lib.js": `exports.answer = 42;`,
+      "node_modules/tool/bin/tool": cli,
+    });
+    const printsAnswer = `console.log(require("../lib.js").answer);`;
+
+    test("the name of an installed executable", () =>
+      compilesInMode(installed("#!/usr/bin/env node\n" + printsAnswer), "tool", "42\n"));
+
+    test("the path of a file that a bin names", () =>
+      compilesInMode(installed(printsAnswer), "node_modules/tool/bin/tool", "42\n"));
+
+    test("a script whose first line names bun", () =>
+      compilesInMode(
+        { "script": `#!/usr/bin/env -S bun run\nconst answer: number = 42;\nconsole.log(answer);` },
+        "./script",
+        "42\n",
+      ));
+  });
+
+  test("bun build --compile resolves the name to the library", async () => {
+    using dir = tempDir("compile-installed-build", tool);
+    const built = await bun(String(dir), "build", "--compile", "tool");
+    expect(built.stderr).not.toContain("error");
+    expect(built.exitCode).toBe(0);
+    expect(await run(String(dir), [executable(String(dir), "tool")])).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["next to it", () => "../outside.js"],
+    ["above node_modules", () => "../../above.js"],
+    ["by an absolute path", (dir: string) => join(dir, "above.js")],
+  ])("a bin outside the package is an error: %s", async (_, bin) => {
+    using dir = tempDir("compile-installed-outside", {
+      "node_modules/tool/index.js": "",
+      "node_modules/outside.js": prints("outside"),
+      "above.js": prints("above"),
+    });
+    const written = bin(String(dir));
+    const packageJson = join(String(dir), "node_modules", "tool", "package.json");
+    writeFileSync(packageJson, JSON.stringify({ name: "tool", main: "index.js", bin: written }));
+    const built = await bun(String(dir), "compile", ...withoutCompiler, "tool");
+    expect(built.stderr).toStartWith(`error: "bin" in ${packageJson} is "${written}", which is outside the package\n`);
+    expect({ stdout: built.stdout, exitCode: built.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    expect(existsSync(executable(String(dir), "tool"))).toBe(false);
+  });
+
+  test.each(["dist/cli.js", "lib", "", "."])("a bin that is not a file: %j", async bin => {
+    using dir = tempDir("compile-installed-missing", {
+      "node_modules/tool/package.json": JSON.stringify({ name: "tool", main: "index.js", bin }),
+      "node_modules/tool/index.js": "",
+      "node_modules/tool/lib/index.js": "",
+    });
+    const built = await bun(String(dir), "compile", ...withoutCompiler, "tool");
+    const packageJson = join(String(dir), "node_modules", "tool", "package.json");
+    expect(built.stderr).toStartWith(`error: "bin" in ${packageJson} is "${bin}", which is not a file\n`);
+    expect({ stdout: built.stdout, exitCode: built.exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 });
 

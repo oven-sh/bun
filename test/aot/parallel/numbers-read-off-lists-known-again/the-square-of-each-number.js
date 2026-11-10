@@ -1,4 +1,4 @@
-// STATISTIC: NumbersReadOffListsKnownAgain >= 1
+// STATISTIC: NumericElementReadsEliminated >= 1
 const rounds = Number(process.argv[2] ?? 3);
 function fractions(length, step) {
   const list = [];

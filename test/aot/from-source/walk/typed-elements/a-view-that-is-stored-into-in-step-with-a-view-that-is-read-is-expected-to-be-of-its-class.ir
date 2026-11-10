@@ -16,7 +16,7 @@
 # RIGHT: 9,9,2,4,6,8,9,9
 # RIGHT-NEXT: 2,4
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly
 # HELD: 9,9,2,4,6,8,9,9
 # HELD-NEXT: 2,4
 # HELD-NEXT: exited with 0

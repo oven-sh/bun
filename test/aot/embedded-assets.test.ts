@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
@@ -10,10 +10,15 @@ async function run(cwd: string, cmd: string[], env = bunEnv) {
   return { stdout, stderr, exitCode };
 }
 
-async function bothWays(dir: string, entryPoint: string, ...flags: string[]) {
-  const app = join(dir, "app");
-  const plain = await run(app, [bunExe(), "run", entryPoint]);
-  const built = await run(app, [
+function bothWays(dir: string, entryPoint: string, ...flags: string[]) {
+  return bothWaysIn(dir, "app", entryPoint, ...flags);
+}
+
+/** Builds in `folder`, which is `app` or lies below it. All of `app` is moved away before the executable runs. */
+async function bothWaysIn(dir: string, folder: string, entryPoint: string, ...flags: string[]) {
+  const cwd = join(dir, folder);
+  const plain = await run(cwd, [bunExe(), "run", entryPoint]);
+  const built = await run(cwd, [
     bunExe(),
     "build",
     "--compile",
@@ -21,10 +26,10 @@ async function bothWays(dir: string, entryPoint: string, ...flags: string[]) {
     entryPoint,
     ...flags,
     "--outfile",
-    "../built.exe",
+    join(dir, "built.exe"),
   ]);
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  renameSync(app, join(dir, "moved-away"));
+  renameSync(join(dir, "app"), join(dir, "moved-away"));
   return { plain, compiled: await run(dir, ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" }) };
 }
 
@@ -177,6 +182,224 @@ console.log(fs.existsSync(path.join(__dirname, "..", "elsewhere", "note.txt")), 
     expect(plain).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
     // The first is the file on disk, beside the folder of the build, which `__dirname` names. The second is the one in the executable.
     expect(compiled).toEqual({ ...plain, stdout: "true true\n" });
+  }, 120_000);
+
+  test.each(["main.mjs", "main.cjs"])(
+    "an outside asset is also found by its base name from %s",
+    async entryPoint => {
+      const body = `const at = (...names) => fs.existsSync(path.join(here, ...names));
+console.log(at("data.txt"), at("elsewhere"), at("elsewhere", "sub", "note.txt"), at("sub"), at("note.txt"));
+if (at("elsewhere")) console.log(fs.readdirSync(path.join(here, "elsewhere")).join(), fs.readFileSync(path.join(here, "elsewhere", "sub", "note.txt"), "utf8"));
+`;
+      using dir = tempDir("aot-outside-asset-base-names", {
+        "app/server/main.mjs": `import fs from "node:fs";\nimport path from "node:path";\nconst here = import.meta.dirname;\n${body}`,
+        "app/server/main.cjs": `const fs = require("node:fs");\nconst path = require("node:path");\nconst here = __dirname;\n${body}`,
+        "app/lib/data.txt": "the text",
+        "app/elsewhere/sub/note.txt": "a note",
+      });
+      const flags = ["--asset", "../lib/data.txt", "--asset", "../elsewhere"];
+      const { plain, compiled } = await bothWaysIn(String(dir), "app/server", `./${entryPoint}`, ...flags);
+      expect(plain).toEqual({ stdout: "false false false false false\n", stderr: "", exitCode: 0 });
+      expect(compiled).toEqual({ ...plain, stdout: "true true true false false\nsub a note\n" });
+    },
+    120_000,
+  );
+
+  test.each(["main.mjs", "main.cjs"])(
+    "an outside asset is mounted outside the root of %s",
+    async entryPoint => {
+      const body = `console.log(fs.readdirSync(here).sort().join(), fs.readFileSync(path.join(here, "..", "data.txt"), "utf8"));\n`;
+      using dir = tempDir("aot-outside-asset-mount", {
+        "app/server/main.mjs": `import fs from "node:fs";\nimport path from "node:path";\nconst here = import.meta.dirname;\n${body}`,
+        "app/server/main.cjs": `const fs = require("node:fs");\nconst path = require("node:path");\nconst here = __dirname;\n${body}`,
+        "app/data.txt": "the text",
+      });
+      const { plain, compiled } = await bothWaysIn(
+        String(dir),
+        "app/server",
+        `./${entryPoint}`,
+        "--asset",
+        "../data.txt",
+      );
+      expect(plain).toEqual({ stdout: "main.cjs,main.mjs the text\n", stderr: "", exitCode: 0 });
+      expect(compiled).toEqual({ ...plain, stdout: `${entryPoint} the text\n` });
+    },
+    120_000,
+  );
+
+  test("outside folders may share a base name", async () => {
+    using dir = tempDir("aot-outside-folders-share-base-name", {
+      "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const at = (...names) => fs.existsSync(path.join(import.meta.dirname, ...names));
+console.log(at("..", "one", "pub", "a.txt"), at("..", "two", "pub", "b.txt"), at("pub", "a.txt"), at("pub", "b.txt"), at("pub", "c.txt"));
+`,
+      "app/one/pub/a.txt": "a",
+      "app/two/pub/b.txt": "b",
+    });
+    const flags = ["--asset", "../one/pub", "--asset", "../two/pub"];
+    const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+    expect(plain).toEqual({ stdout: "true true false false false\n", stderr: "", exitCode: 0 });
+    expect(compiled).toEqual({ ...plain, stdout: "true true true true false\n" });
+  }, 120_000);
+
+  test("an untidy path finds an embedded file", async () => {
+    using dir = tempDir("aot-untidy-embedded-paths", {
+      "app/server/main.mjs": `import fs from "node:fs";
+const texts = ["/../lib/data.txt", "/../lib/./data.txt", "/../lib//data.txt", "/./sub/note.txt", "/sub/../sub/note.txt"];
+for (const text of texts) console.log(text, fs.existsSync(import.meta.dirname + text), fs.readFileSync(import.meta.dirname + text, "utf8"));
+for (const text of ["/absent/../sub/note.txt", "/../absent/../lib/data.txt", "/sub/note.txt/../note.txt"]) console.log(text, fs.existsSync(import.meta.dirname + text));
+`,
+      "app/server/sub/note.txt": "a note",
+      "app/lib/data.txt": "the text",
+    });
+    const flags = ["--asset", "../lib/data.txt", "--asset", "sub/note.txt"];
+    const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+    expect(plain).toEqual({
+      stdout: `/../lib/data.txt true the text
+/../lib/./data.txt true the text
+/../lib//data.txt true the text
+/./sub/note.txt true a note
+/sub/../sub/note.txt true a note
+/absent/../sub/note.txt false
+/../absent/../lib/data.txt false
+/sub/note.txt/../note.txt false
+`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
+  test.each([
+    [`"../server/note.txt"`, `"../server"`],
+    [`"..", "server", "note.txt"`, `"..", "server"`],
+  ])(
+    "a module above the root reads below it by path.join(here, %s)",
+    async (file, folder) => {
+      using dir = tempDir("aot-back-through-root-folders", {
+        "app/server/main.mjs": `import "../lib/load.mjs";\n`,
+        "app/server/note.txt": "a note",
+        "app/lib/load.mjs": `import fs from "node:fs";
+import path from "node:path";
+const here = import.meta.dirname;
+const [file, folder] = [path.join(here, ${file}), path.join(here, ${folder})];
+console.log(fs.existsSync(file), fs.readFileSync(file, "utf8"), fs.existsSync(folder), fs.statSync(folder).isDirectory());
+console.log(fs.existsSync(path.join(here, "../servers/note.txt")), fs.existsSync(path.join(here, "../server/absent.txt")));
+`,
+      });
+      const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", "--asset", "note.txt");
+      expect(plain).toEqual({ stdout: "true a note true true\nfalse false\n", stderr: "", exitCode: 0 });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
+  test("an outside folder keeps its path", async () => {
+    using dir = tempDir("aot-outside-folder-keeps-path", {
+      "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const folder = path.join(import.meta.dirname, "..", "elsewhere");
+console.log(fs.readdirSync(folder).join(), fs.readFileSync(path.join(folder, "sub", "note.txt"), "utf8"));
+`,
+      "app/elsewhere/sub/note.txt": "a note",
+    });
+    const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", "--asset", "../elsewhere");
+    expect(plain).toEqual({ stdout: "sub a note\n", stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
+  // The second embeds the source of the compiled module too.
+  test.each([[["--asset", "../lib/data.txt", "--asset", "../lib/sub"]], [["--asset", "../lib"]]])(
+    "an asset beside an outside module keeps its path %j",
+    async flags => {
+      using dir = tempDir("aot-asset-beside-outside-module", {
+        "app/server/main.mjs": `import "../lib/load.mjs";\n`,
+        "app/lib/load.mjs": `import fs from "node:fs";
+import path from "node:path";
+const here = import.meta.dirname;
+console.log(fs.readFileSync(path.join(here, "data.txt"), "utf8"), fs.readFileSync(path.join(here, "sub", "more.txt"), "utf8"));
+console.log(fs.existsSync(path.join(here, "sub")), fs.existsSync(path.join(here, "absent.txt")), fs.statSync(path.join(here, "data.txt")).size);
+console.log(fs.readdirSync(here).sort().join(), fs.readdirSync(path.join(here, "sub")).join());
+`,
+        "app/lib/data.txt": "the text",
+        "app/lib/sub/more.txt": "more",
+      });
+      const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+      expect(plain).toEqual({
+        stdout: "the text more\ntrue false 8\ndata.txt,load.mjs,sub more.txt\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
+  test("an asset above the working directory keeps its path", async () => {
+    using dir = tempDir("aot-asset-above-working-directory", {
+      "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+console.log(fs.readFileSync(path.join(import.meta.dirname, "..", "data.txt"), "utf8"), fs.readFileSync(new URL("../data.txt", import.meta.url), "utf8"), await Bun.file(new URL("../data.txt", import.meta.url)).exists());
+`,
+      "app/data.txt": "the text",
+    });
+    const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", "--asset", "../data.txt");
+    expect(plain).toEqual({ stdout: "the text the text true\n", stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
+  test.skipIf(isWindows)(
+    "an asset in a linked package keeps its path",
+    async () => {
+      using dir = tempDir("aot-asset-in-linked-package", {
+        "app/server/main.cjs": `console.log(require("pkg").load());\n`,
+        "app/pkg/package.json": `{ "name": "pkg", "main": "index.cjs" }`,
+        "app/pkg/index.cjs": `exports.load = () => require("node:fs").readFileSync(require("node:path").join(__dirname, "data.txt"), "utf8");\n`,
+        "app/pkg/data.txt": "the text",
+      });
+      mkdirSync(join(String(dir), "app/server/node_modules"));
+      symlinkSync("../../pkg", join(String(dir), "app/server/node_modules/pkg"));
+      const { plain, compiled } = await bothWaysIn(
+        String(dir),
+        "app/server",
+        "./main.cjs",
+        "--asset",
+        "../pkg/data.txt",
+      );
+      expect(plain).toEqual({ stdout: "the text\n", stderr: "", exitCode: 0 });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
+  test("outside assets may share a base name", async () => {
+    using dir = tempDir("aot-outside-assets-share-base-name", {
+      "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+const read = (...names) => fs.readFileSync(path.join(import.meta.dirname, ...names), "utf8");
+console.log(read("..", "one", "config.json"), read("..", "two", "config.json"), fs.existsSync(path.join(import.meta.dirname, "config.json")));
+`,
+      "app/one/config.json": "1",
+      "app/two/config.json": "2",
+    });
+    const flags = ["--asset", "../one/config.json", "--asset", "../two/config.json"];
+    const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+    expect(plain).toEqual({ stdout: "1 2 false\n", stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
+  test("an outside file is also found by its base name", async () => {
+    using dir = tempDir("aot-outside-asset-base-name", {
+      "app/server/main.mjs": `import fs from "node:fs";
+import path from "node:path";
+console.log(fs.existsSync(path.join(import.meta.dirname, "data.txt")), Bun.embeddedFiles.map(file => file.name).join());
+`,
+      "app/lib/data.txt": "the text",
+    });
+    const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", "--asset", "../lib/data.txt");
+    expect(plain).toEqual({ stdout: "false \n", stderr: "", exitCode: 0 });
+    expect(compiled).toEqual({ ...plain, stdout: "true _.._/lib/data.txt\n" });
   }, 120_000);
 
   // macOS and Windows have no such names.

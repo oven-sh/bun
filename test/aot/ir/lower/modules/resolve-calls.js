@@ -1,4 +1,5 @@
 // DIAGNOSTIC: TS100150 1
+// DIAGNOSTIC: TS100087 1
 // RUN(PATH): lower
 // PATH-LABEL: function {{*}}name="path"
 // PATH-NOT: Resolve

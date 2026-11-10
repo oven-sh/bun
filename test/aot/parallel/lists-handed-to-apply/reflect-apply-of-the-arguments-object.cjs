@@ -1,5 +1,5 @@
 // A wrapper hands its arguments object.
-// STATISTIC: CallsForwardedBehindTestsOfTheirTargets >= 1
+// STATISTIC: CallsForwardedAfterTargetChecks >= 1
 const table = { add(a, b) { return this.base + a + b; }, count() { return this.base + arguments.length; }, join(...all) { return this.base + all.join(); } };
 const names = JSON.parse('["add","count","join"]');
 const holder = { base: 100 };

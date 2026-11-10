@@ -5,22 +5,29 @@
 # const list = [1.5, 2.5, 3.5, 4.5];
 # print(sum(list, turns), list.length);
 # -- end of source
-# One turn pushes until the list has no room left and its elements move, and fills it. The pushes are written out: a loop that goes by the length would never end under the lie.
-# The lie, testing=StorageAndLengthsAreTakenToBeAsInFront: the turns of a loop are taken to leave the storage of lists and of views, and so their lengths, as they were in front of it: what a turn reads of them is read once, in front. The last two turns read the elements where they lay: nothing has been collected since, and nothing is stored there.
-# Under testing=TestsEveryPosition (--aot-harden=ignore-told-ranges) and testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same records are built at the same places, and what was read in front is held against the cell in the turn: the process stops by name.
+# One iteration pushes until the array runs out of capacity and its elements move, and then fills the array.
+# The pushes are written out one by one, because a loop that tests the length would never end with the fault injected.
+# Fault injection, testing=AssumeInvariantArrayStorage: the iterations of a loop are assumed to leave the storage of arrays and of typed arrays, and therefore their lengths, unchanged.
+# So whatever an iteration reads of them is hoisted and read once, before the loop.
+# The last two iterations read the elements at their old location. Nothing has been collected since, and nothing is stored there.
+# With testing=CheckBoundsAtRunTime (--aot-harden=ignore-told-ranges) and with testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same operations are built in the same places.
+# The hoisted values are checked against the cell inside the iteration, and the process crashes with a named error.
+# AS-USERS-BUILD: under the runner's checks the code verifier rejects the injected fault at the read (walk/loops/hoisted-storage-pointer-across-a-push-is-rejected.ir). This file tests what the run-time checks catch without it.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 23 16
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime
 # HELD: 23 16
 # HELD-NEXT: exited with 0
-# The lie as built: another answer, and nobody stops.
-# RUN(SILENT): run-in-shell mechanisms=all testing=StorageAndLengthsAreTakenToBeAsInFront
+# The fault in a default build: the program prints a different result, and nothing crashes.
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeInvariantArrayStorage
 # SILENT: 12 16
 # SILENT-NEXT: exited with 0
-# RUN(POSITIONS): run-in-shell mechanisms=all testing=TestsEveryPosition,StorageAndLengthsAreTakenToBeAsInFront
-# POSITIONS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,AssumeInvariantArrayStorage
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed
+# POSITIONS-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # POSITIONS: crashed with
-# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,StorageAndLengthsAreTakenToBeAsInFront
-# PROOFS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeInvariantArrayStorage
+# PROOFS: bun: internal AOT error: redundancy elimination check failed
+# PROOFS-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # PROOFS: crashed with

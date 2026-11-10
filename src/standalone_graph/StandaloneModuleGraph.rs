@@ -20,7 +20,9 @@ use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
 use bun_paths::{self as path, PathBuffer, strings};
 use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
-use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, ImageFile};
+use bun_resolver::compiled_program::{
+    CompiledEntryPoint, CompiledProgram, ImageFile, join_public_path,
+};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
@@ -217,6 +219,7 @@ impl StandaloneModuleGraph {
         self.files
             .get(name)
             .or_else(|| self.files.get(&self.key_of_asset_named_at_root(name)?))
+            .or_else(|| self.files.get(&self.key_of_file_above_root(name)?))
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
@@ -357,7 +360,9 @@ impl StandaloneModuleGraph {
         if self.compiled_program.is_none() || self.files.contains_key(name) {
             return self.files.get_mut(name);
         }
-        let key = self.key_of_asset_named_at_root(name)?;
+        let key = self
+            .key_of_asset_named_at_root(name)
+            .or_else(|| self.key_of_file_above_root(name))?;
         self.files.get_mut(&key)
     }
 }
@@ -1662,6 +1667,22 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
     bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
+/// The bunfs key of a file that lay above the root directory of a compiled program: where the modules that lay beside it are mounted.
+fn key_above_root(
+    prefix: &[u8],
+    program: Option<&CompiledProgramInput<'_>>,
+    output_file: &OutputFile,
+) -> Option<Vec<u8>> {
+    let dest_path = module_dest_path(output_file);
+    let program = program.filter(|_| dest_path.starts_with(b"../"))?;
+    join_public_path(
+        prefix,
+        program.levels_above_root as usize,
+        prefix,
+        dest_path,
+    )
+}
+
 /// Every region of the serialized graph is addressed by a `StringPointer`, a `u32` offset and
 /// length, so the graph has to fit in 4 GiB. A debug build can lower the limit through
 /// `BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES` so a test reaches it without a 4 GiB input.
@@ -1703,6 +1724,9 @@ pub(crate) fn to_bytes(
             bstr::BStr::new(&output_file.dest_path)
         ));
         string_builder.count_z(prefix);
+        if let Some(key) = key_above_root(prefix, program, output_file) {
+            string_builder.fmt_count(format_args!("{}\0", bstr::BStr::new(&key)));
+        }
         if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
                 // This is an over-estimation to ensure that we allocate
@@ -2060,11 +2084,16 @@ pub(crate) fn to_bytes(
     }
 
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
-        module.name = string_builder.fmt_append_count_z(format_args!(
-            "{}{}",
-            bstr::BStr::new(prefix),
-            bstr::BStr::new(module_dest_path(output_file))
-        ));
+        module.name = match key_above_root(prefix, program, output_file) {
+            Some(key) => {
+                string_builder.fmt_append_count_z(format_args!("{}", bstr::BStr::new(&key)))
+            }
+            None => string_builder.fmt_append_count_z(format_args!(
+                "{}{}",
+                bstr::BStr::new(prefix),
+                bstr::BStr::new(module_dest_path(output_file))
+            )),
+        };
         // The bytecode cache was generated under the bytecode output file's
         // path; the runtime must present exactly the same path to hit it.
         if output_file.bytecode_index != u32::MAX {

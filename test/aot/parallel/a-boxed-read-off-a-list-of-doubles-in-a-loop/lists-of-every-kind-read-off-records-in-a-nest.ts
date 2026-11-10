@@ -1,4 +1,4 @@
-// STATISTIC: BoxedReadsInLoopsWithAnArmForDoubles >= 1
+// STATISTIC: BoxedReadsWithDoublePath >= 1
 // A list of numbers that is read off a record in the turn of a loop is of no kind that was asked in front: its elements are read boxed. In a loop such a read has an arm in line for storage of doubles too.
 interface Line { readonly cells: number[] }
 function show(x: unknown): string { return typeof x === "number" && Object.is(x, -0) ? "-0" : String(x); }

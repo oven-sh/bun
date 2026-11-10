@@ -1,4 +1,4 @@
-// Turns the JavaScript that Fuzzilli writes into TypeScript. README.md beside this file describes the settings.
+// Turns the JavaScript that Fuzzilli writes into TypeScript. README.md beside this file says how to turn it on, and `TypeScriptSettings` below has the settings.
 //
 // Fuzzilli's typer knows a type for every variable. A plan is made from it before a program is lifted: which
 // declarations get an annotation and which one, which types are declared, and where a value has to pass through a

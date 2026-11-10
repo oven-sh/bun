@@ -1,7 +1,10 @@
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use super::entry_points::find_default_entry_point;
+use super::entry_points::{
+    EntryPointError, NamedEntryPoint, find_default_entry_point, find_installed_executable,
+    is_script_without_extension,
+};
 use super::library::find_default_library_entry_points;
 use super::{BundlerInputs, CompileProduct, CompileRequest, ExecutableSettings, RequestOrigin};
 pub(super) use crate::cli::build_command::compile_outfile;
@@ -63,12 +66,82 @@ pub(super) fn use_default_entry_point(ctx: &mut ContextData) {
                 ctx.bundler_options.outfile = found.executable_name;
             }
         }
-        Err(error) => {
-            let mut message = Vec::new();
-            error.write_message(&mut message);
-            exit_without_entry_point(&message);
-        }
+        Err(error) => exit_with_error(&error),
     }
+}
+
+/// `bun compile rollup` compiles the file that `bun run rollup` runs.
+pub(super) fn use_installed_executable(ctx: &mut ContextData) {
+    if ctx.bundler_options.library {
+        return;
+    }
+    let Some(written) = ctx.args.entry_points.first() else {
+        return;
+    };
+    let working_directory = ctx
+        .args
+        .absolute_working_dir
+        .as_deref()
+        .expect("Arguments::parse sets the working directory");
+    match find_installed_executable(working_directory, written) {
+        Ok(NamedEntryPoint::AsWritten) => {}
+        Ok(NamedEntryPoint::Library { executable_names }) => {
+            note_library_entry_point(written, &executable_names);
+        }
+        Ok(NamedEntryPoint::Executable(found)) => {
+            ctx.args.entry_points[0] = found.path;
+            if ctx.bundler_options.outfile.is_empty() {
+                ctx.bundler_options.outfile = found.executable_name;
+            }
+        }
+        Err(error) => exit_with_error(&error),
+    }
+}
+
+#[cold]
+pub(super) fn load_script_as_code(ctx: &mut ContextData) {
+    let working_directory = ctx
+        .args
+        .absolute_working_dir
+        .as_deref()
+        .expect("Arguments::parse sets the working directory");
+    let is_script = (ctx.args.entry_points.first())
+        .is_some_and(|written| is_script_without_extension(working_directory, written));
+    if !is_script {
+        return;
+    }
+    // What `--loader=:tsx` does. `bun run` and `--aot` read such an entry point as TSX too.
+    let loaders = ctx.args.loaders.get_or_insert_default();
+    if !loaders.extensions.iter().any(|it| it.is_empty()) {
+        loaders.extensions.push(Box::default());
+        loaders.loaders.push(api::Loader::tsx);
+    }
+}
+
+#[cold]
+fn note_library_entry_point(package_name: &[u8], executable_names: &[Vec<u8>]) {
+    let package_name = bstr::BStr::new(package_name);
+    if executable_names.is_empty() {
+        bun_core::note!(
+            "{} has no \"bin\" in its package.json, so this compiles the library that import \"{}\" loads",
+            package_name,
+            package_name
+        );
+        return;
+    }
+    bun_core::note!(
+        "{} has no \"bin\" of that name in its package.json, so this compiles the library that import \"{}\" loads. Its \"bin\" has: {}",
+        package_name,
+        package_name,
+        bstr::BStr::new(&executable_names.join(&b", "[..]))
+    );
+}
+
+#[cold]
+fn exit_with_error(error: &EntryPointError) -> ! {
+    let mut message = Vec::new();
+    error.write_message(&mut message);
+    exit_without_entry_point(&message)
 }
 
 #[cold]

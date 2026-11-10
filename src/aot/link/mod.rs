@@ -336,6 +336,7 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
                                     modules: &modules,
                                     functions: &functions,
                                     variables: &variables,
+                                    layouts: &layouts,
                                     definitions: &definitions,
                                     numbering: &numbering,
                                     in_parallel,

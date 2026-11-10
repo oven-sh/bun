@@ -54,8 +54,8 @@ const fn assert_send<T: Send>() {}
 const _: () = assert_send::<LinkUnit>();
 
 impl LinkUnit {
-    pub fn take_types_in_function_text(&mut self) -> Option<(ProgramFile, PackedTypeRanges)> {
-        let types = self.module.types_in_function_text.take()?;
+    pub fn take_erased_type_ranges(&mut self) -> Option<(ProgramFile, PackedTypeRanges)> {
+        let types = self.module.erased_type_ranges.take()?;
         Some((self.file, types))
     }
 

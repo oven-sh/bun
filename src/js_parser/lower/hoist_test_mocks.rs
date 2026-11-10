@@ -28,6 +28,98 @@ impl MockApi {
 
 pub(crate) use bun_ast::import_record::is_test_module;
 
+/// One `.importActual`, `.requireActual` or call of a variable of either name.
+#[derive(Clone, Copy)]
+pub(crate) struct OriginalRequest<'a> {
+    /// Where the name is.
+    loc: js_ast::Loc,
+    /// What it is called with, and where its variables are looked up. `None`: it may request any module.
+    module: Option<(Literal<'a>, js_ast::StoreRef<js_ast::Scope>)>,
+}
+
+/// The requests in the body of one function.
+pub(crate) struct FunctionRequests<'a> {
+    body_loc: js_ast::Loc,
+    requests: &'a [OriginalRequest<'a>],
+}
+
+/// An expression that is written with strings, numbers and names alone. It is evaluated once every declaration is
+/// parsed: see `evaluate_literal`.
+#[derive(Clone, Copy)]
+pub(crate) enum Literal<'a> {
+    /// A lone surrogate is a NUL here.
+    String(&'a [u8]),
+    Number(f64),
+    Variable(&'a [u8]),
+    /// `object.name` or `object["name"]`
+    Member(&'a [u8], &'a [u8]),
+    Sum(&'a [Literal<'a>; 2]),
+    /// The strings and the holes, in order.
+    Template(&'a [Literal<'a>]),
+}
+
+/// A `const`, or a member of an enum, that is initialized with a `Literal`.
+pub(crate) struct Constant<'a> {
+    declared: Ref,
+    enum_member: Option<&'a [u8]>,
+    value: Literal<'a>,
+}
+
+enum LiteralValue {
+    String(Vec<u8>),
+    Number(f64),
+}
+
+impl LiteralValue {
+    /// As JavaScript converts it to a string. `None` for a number that JavaScript may print otherwise than Rust.
+    fn into_string(self) -> Option<Vec<u8>> {
+        match self {
+            LiteralValue::String(value) => Some(value),
+            LiteralValue::Number(value) => (value == 0.0
+                || (1e-6..9007199254740992.0).contains(&value))
+            .then(|| value.to_string().into_bytes()),
+        }
+    }
+}
+
+fn requests_original(name: &[u8]) -> bool {
+    matches!(name, b"importActual" | b"requireActual")
+}
+
+/// Whether `test` is truthy, if it is written with literals alone.
+#[cold]
+#[inline(never)]
+fn find_literal_truth(test: &Expr) -> Option<bool> {
+    match test.data {
+        ExprData::EBoolean(literal) => Some(literal.value),
+        ExprData::ENumber(literal) => Some(literal.value() != 0.0),
+        ExprData::EString(literal) => Some(literal.len() != 0),
+        ExprData::ENull(_) => Some(false),
+        ExprData::EUnary(unary) => match unary.op {
+            js_ast::OpCode::UnNot => find_literal_truth(&unary.value).map(|is_true| !is_true),
+            js_ast::OpCode::UnVoid => Some(false),
+            js_ast::OpCode::UnNeg | js_ast::OpCode::UnPos => match unary.value.data {
+                ExprData::ENumber(literal) => Some(literal.value() != 0.0),
+                _ => None,
+            },
+            _ => None,
+        },
+        ExprData::EBinary(either)
+            if matches!(
+                either.op,
+                js_ast::OpCode::BinLogicalAnd | js_ast::OpCode::BinLogicalOr
+            ) =>
+        {
+            let left = find_literal_truth(&either.left)?;
+            match left == (either.op == js_ast::OpCode::BinLogicalOr) {
+                true => Some(left),
+                false => find_literal_truth(&either.right),
+            }
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum MockHoistOrder {
     BeforeHoisted,
@@ -474,6 +566,279 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             },
             loc,
         ))
+    }
+
+    /// A function requests the original of a module where its body says `.importActual` or `.requireActual`, or calls
+    /// a variable of either name. Decided in the parse pass, so that it doesn't depend on what the visit pass folds,
+    /// inlines or drops: `bun test --aot` decides the same from a tree of its own.
+    /// Code that plainly never runs doesn't count: see `drop_requests_in_dead_stmt` and `drop_requests_unless`.
+    #[cold]
+    pub(crate) fn did_parse_member_name(&mut self, name: &[u8], loc: js_ast::Loc) {
+        if requests_original(name) {
+            self.original_requests
+                .push(OriginalRequest { loc, module: None });
+        }
+    }
+
+    fn find_literal(&self, expr: &Expr) -> Option<Literal<'a>> {
+        let arena = self.arena;
+        let string = |literal: &E::String| -> Literal<'a> {
+            if literal.is_utf8() {
+                return Literal::String(literal.data.slice());
+            }
+            Literal::String(match String::from_utf16(literal.slice16()) {
+                Ok(literal) => arena.alloc_slice_copy(literal.as_bytes()),
+                Err(_) => b"\0",
+            })
+        };
+        Some(match expr.data {
+            ExprData::EString(literal) => string(&literal),
+            ExprData::ENumber(literal) => Literal::Number(literal.value()),
+            ExprData::EIdentifier(id) => Literal::Variable(self.load_name_from_ref(id.ref_)),
+            ExprData::EDot(dot) if dot.optional_chain.is_none() => {
+                let ExprData::EIdentifier(object) = dot.target.data else {
+                    return None;
+                };
+                Literal::Member(self.load_name_from_ref(object.ref_), dot.name.slice())
+            }
+            ExprData::EIndex(index) if index.optional_chain.is_none() => {
+                let (ExprData::EIdentifier(object), ExprData::EString(name)) =
+                    (index.target.data, index.index.data)
+                else {
+                    return None;
+                };
+                let Literal::String(name) = string(&name) else {
+                    return None;
+                };
+                Literal::Member(self.load_name_from_ref(object.ref_), name)
+            }
+            ExprData::EBinary(sum) if sum.op == js_ast::OpCode::BinAdd => {
+                let operands = [
+                    self.find_literal(&sum.left)?,
+                    self.find_literal(&sum.right)?,
+                ];
+                Literal::Sum(arena.alloc(operands))
+            }
+            ExprData::ETemplate(template) if template.tag.is_none() => {
+                let E::TemplateContents::Cooked(head) = &template.head else {
+                    return None;
+                };
+                let mut pieces = vec![string(head)];
+                for part in template.parts.slice() {
+                    let E::TemplateContents::Cooked(tail) = &part.tail else {
+                        return None;
+                    };
+                    pieces.push(self.find_literal(&part.value)?);
+                    pieces.push(string(tail));
+                }
+                Literal::Template(arena.alloc_slice_copy(&pieces))
+            }
+            _ => return None,
+        })
+    }
+
+    /// A name has a value if it is a `Constant`. The initializer of a `Constant` is evaluated without a `scope`, so a
+    /// name in it has none.
+    fn evaluate_literal(
+        &self,
+        literal: Literal<'a>,
+        scope: Option<js_ast::StoreRef<js_ast::Scope>>,
+    ) -> Option<LiteralValue> {
+        let (variable, enum_member) = match literal {
+            Literal::String(value) => return Some(LiteralValue::String(value.to_vec())),
+            Literal::Number(value) => return Some(LiteralValue::Number(value)),
+            Literal::Sum(&[left, right]) => {
+                let left = self.evaluate_literal(left, scope)?;
+                let right = self.evaluate_literal(right, scope)?;
+                if let (&LiteralValue::Number(left), &LiteralValue::Number(right)) = (&left, &right)
+                {
+                    return Some(LiteralValue::Number(left + right));
+                }
+                let mut joined = left.into_string()?;
+                joined.extend_from_slice(&right.into_string()?);
+                return Some(LiteralValue::String(joined));
+            }
+            Literal::Template(pieces) => {
+                let mut joined = Vec::new();
+                for &piece in pieces {
+                    joined.extend_from_slice(&self.evaluate_literal(piece, scope)?.into_string()?);
+                }
+                return Some(LiteralValue::String(joined));
+            }
+            Literal::Variable(variable) => (variable, None),
+            Literal::Member(object, name) => (object, Some(name)),
+        };
+        let hash = js_ast::Scope::get_member_hash(variable);
+        let mut scope = scope;
+        let declared = loop {
+            let current = scope?;
+            if let Some(member) = current.get_member_with_hash(variable, hash) {
+                break member.ref_;
+            }
+            scope = current.parent;
+        };
+        let constant = (self.constants.iter())
+            .find(|it| it.declared == declared && it.enum_member == enum_member)?;
+        self.evaluate_literal(constant.value, None)
+    }
+
+    #[cold]
+    pub(crate) fn did_parse_declarator(
+        &mut self,
+        kind: js_ast::symbol::Kind,
+        binding: &js_ast::Binding,
+        value: Option<&Expr>,
+    ) {
+        if kind == js_ast::symbol::Kind::Constant
+            && let js_ast::binding::Data::BIdentifier(id) = binding.data
+        {
+            self.did_parse_constant(id.r#ref, None, value);
+        }
+    }
+
+    #[cold]
+    pub(crate) fn did_parse_constant(
+        &mut self,
+        declared: Ref,
+        enum_member: Option<&'a [u8]>,
+        value: Option<&Expr>,
+    ) {
+        if let Some(value) = value.and_then(|value| self.find_literal(value)) {
+            self.constants.push(Constant {
+                declared,
+                enum_member,
+                value,
+            });
+        }
+    }
+
+    #[cold]
+    pub(crate) fn did_parse_call(&mut self, callee: &Expr, args: &[Expr]) {
+        let member_loc = match callee.data {
+            ExprData::EDot(dot) if requests_original(dot.name.slice()) => Some(dot.name_loc),
+            ExprData::EIdentifier(id) if requests_original(self.load_name_from_ref(id.ref_)) => {
+                None
+            }
+            _ => return,
+        };
+        let module = args.first().and_then(|arg| self.find_literal(arg));
+        let module = module.map(|module| (module, self.current_scope));
+        let Some(member_loc) = member_loc else {
+            self.original_requests.push(OriginalRequest {
+                loc: callee.loc,
+                module,
+            });
+            return;
+        };
+        let member = self
+            .original_requests
+            .iter_mut()
+            .rfind(|request| request.loc == member_loc);
+        if let Some(member) = member {
+            member.module = module;
+        }
+    }
+
+    /// `stmt` holds the requests from `first_request` on, and follows `before` in a list of statements. It never runs
+    /// if TypeScript erases it, or if it comes after a `return`, `throw`, `break` or `continue`, unless it is a
+    /// function declaration, which is hoisted.
+    #[cold]
+    pub(crate) fn drop_requests_in_dead_stmt(
+        &mut self,
+        stmt: &Stmt,
+        before: &[Stmt],
+        first_request: usize,
+    ) {
+        let is_dead = match stmt.data {
+            StmtData::STypeScript(_) => true,
+            StmtData::SFunction(_) => false,
+            _ => before.iter().any(|earlier| {
+                matches!(
+                    earlier.data,
+                    StmtData::SReturn(_)
+                        | StmtData::SThrow(_)
+                        | StmtData::SBreak(_)
+                        | StmtData::SContinue(_)
+                )
+            }),
+        };
+        if is_dead {
+            self.original_requests.truncate(first_request);
+        }
+    }
+
+    /// The requests from `first_request` on are in code that runs only if `test` is `runs_if`. Drops them if `test`
+    /// is written with literals that say otherwise.
+    #[inline]
+    pub(crate) fn drop_requests_unless(
+        &mut self,
+        test: &Expr,
+        runs_if: bool,
+        first_request: usize,
+    ) {
+        if self.original_requests.len() > first_request
+            && find_literal_truth(test) == Some(!runs_if)
+        {
+            self.original_requests.truncate(first_request);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_always_true(&self, test: &Expr) -> bool {
+        self.may_request_originals && find_literal_truth(test) == Some(true)
+    }
+
+    /// `first_request` is the length of `original_requests` where the body started.
+    #[inline]
+    pub(crate) fn did_parse_fn_body(&mut self, body_loc: js_ast::Loc, first_request: usize) {
+        if self.original_requests.len() > first_request {
+            self.add_requested_originals(body_loc, first_request);
+        }
+    }
+
+    #[cold]
+    fn add_requested_originals(&mut self, body_loc: js_ast::Loc, first_request: usize) {
+        let requests = &self.original_requests[first_request..];
+        let requests = self.arena.alloc_slice_copy(requests);
+        self.requested_originals
+            .push(FunctionRequests { body_loc, requests });
+    }
+
+    /// Looks names up in the parser's scopes, so `to_ast` calls it before it moves the module scope out.
+    pub(crate) fn take_requested_originals(
+        &mut self,
+    ) -> js_ast::StoreSlice<js_ast::RequestedOriginals> {
+        let mut functions = BumpVec::new_in(self.arena);
+        for function in &self.requested_originals {
+            let mut names = BumpVec::new_in(self.arena);
+            let mut may_be_any_module = false;
+            for request in function.requests {
+                let module = request.module;
+                match module.and_then(|(name, scope)| self.evaluate_literal(name, Some(scope))) {
+                    // Any other is a name that no module has.
+                    Some(LiteralValue::String(name)) => {
+                        if !name.is_empty() && name.iter().all(|byte| *byte >= b' ') {
+                            let name: &'a [u8] = self.arena.alloc_slice_copy(&name);
+                            names.push(js_ast::StoreStr::new(name));
+                        }
+                    }
+                    _ => may_be_any_module = true,
+                }
+            }
+            if may_be_any_module {
+                names.clear();
+            } else if names.is_empty() {
+                continue;
+            }
+            functions.push(js_ast::RequestedOriginals {
+                body_loc: function.body_loc,
+                printed_at: js_ast::RequestedOriginals::NOT_PRINTED.into(),
+                names: js_ast::StoreSlice::new_mut(names.into_bump_slice_mut()),
+            });
+        }
+        let functions = functions.into_bump_slice_mut();
+        functions.sort_unstable_by_key(|function| function.body_loc.start);
+        js_ast::StoreSlice::new_mut(functions)
     }
 
     /// Rewrites `vi.mock(import("./a"))` to `vi.mock("./a")`. Returns true if it visited the first argument.

@@ -40,7 +40,7 @@ impl<T> Errorable<T> {
     }
 }
 
-bun_core::assert_ffi_layout!(Errorable<crate::ResolvedSource>, 144, 8);
+bun_core::assert_ffi_layout!(Errorable<crate::ResolvedSource>, 168, 8);
 bun_core::assert_ffi_layout!(Errorable<bun_core::String>, 32, 8);
 
 impl<T> Drop for Errorable<T> {

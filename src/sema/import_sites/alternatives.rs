@@ -329,7 +329,7 @@ struct Follower<'i, 'a, 's> {
     asked_of_other_files: Option<&'i AskedOfDataFiles>,
     asked_of_own_exports: Option<&'i AskedOfOwnExports>,
     takes_all_as_written: bool,
-    keeps_what_is_known: bool,
+    keeps_known_alternatives: bool,
     has_read_data_file: Cell<bool>,
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
@@ -343,7 +343,7 @@ struct Follower<'i, 'a, 's> {
     folder: Folder,
     open_parameters: Vec<OpenParameter>,
     stand_in: Option<SymbolId>,
-    property_of_stand_in: Option<Atom>,
+    stand_in_property: Option<Atom>,
     calls_of_resolvers: RefCell<FxHashMap<Vec<u8>, CallsUnderName>>,
     objects_asked_whether_their_functions_see_them:
         FxHashMap<ExprId, Option<Rc<FxHashSet<Vec<u8>>>>>,
@@ -392,7 +392,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             asked_of_other_files: None,
             asked_of_own_exports: None,
             takes_all_as_written: false,
-            keeps_what_is_known: false,
+            keeps_known_alternatives: false,
             has_read_data_file: Cell::new(false),
             kept_as_written: FxHashSet::default(),
             unchecked: Vec::new(),
@@ -406,7 +406,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             folder,
             open_parameters: Vec::new(),
             stand_in: None,
-            property_of_stand_in: None,
+            stand_in_property: None,
             calls_of_resolvers: RefCell::default(),
             objects_asked_whether_their_functions_see_them: FxHashMap::default(),
             asked_who_takes: FxHashMap::default(),
@@ -484,7 +484,7 @@ pub(super) fn find_alternatives(
 #[derive(Clone, Copy)]
 pub(super) struct OpenParameter {
     pub(super) mention: ExprId,
-    pub(super) taken_out: Option<Atom>,
+    pub(super) destructured_key: Option<Atom>,
 }
 
 pub(super) fn find_known_alternatives(
@@ -495,12 +495,12 @@ pub(super) fn find_known_alternatives(
 ) -> (Option<Found>, Option<OpenParameter>) {
     let folder = Folder::OfFile;
     let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
-    follower.keeps_what_is_known = true;
+    follower.keeps_known_alternatives = true;
     let found = find_alternatives_with(&mut follower, argument);
     (found, follower.open_parameters.first().copied())
 }
 
-pub(super) fn find_alternatives_beside_caller(
+pub(super) fn find_caller_relative_alternatives(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
     asked_of_data_files: &AskedOfDataFiles,
@@ -514,8 +514,8 @@ pub(super) fn find_alternatives_beside_caller(
     let folder = Folder::OfCaller;
     let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
     follower.stand_in = Some(parameter);
-    follower.property_of_stand_in = property;
-    follower.keeps_what_is_known = true;
+    follower.stand_in_property = property;
+    follower.keeps_known_alternatives = true;
     find_alternatives_with(&mut follower, argument)
 }
 
@@ -937,7 +937,7 @@ impl Follower<'_, '_, '_> {
 
     fn values_of_alternative(&mut self, e: ExprId) -> Option<Values> {
         let values = self.values_of(e);
-        match self.keeps_what_is_known {
+        match self.keeps_known_alternatives {
             true => Some(values.unwrap_or_default()),
             false => values,
         }
@@ -1259,8 +1259,8 @@ impl Follower<'_, '_, '_> {
         if self.stand_in == Some(symbol) {
             let text = match self.folder {
                 Folder::OfFile | Folder::WorkingDirectory => Text::whole(STAND_IN),
-                Folder::OfCaller if self.property_of_stand_in.is_some() => return None,
-                Folder::OfCaller => url_of_caller(),
+                Folder::OfCaller if self.stand_in_property.is_some() => return None,
+                Folder::OfCaller => caller_url_placeholder(),
             };
             return Some(vec![Held::Text(text)]);
         }
@@ -1304,7 +1304,7 @@ impl Follower<'_, '_, '_> {
                         if handed.is_none() {
                             self.open_parameters.push(OpenParameter {
                                 mention: name,
-                                taken_out: None,
+                                destructured_key: None,
                             });
                         }
                         handed
@@ -1467,7 +1467,7 @@ impl Follower<'_, '_, '_> {
             };
         }
         if let PatParent::Elem(whole, element) = bound.pat_parent[pattern.idx()] {
-            let PatParent::Var(_) = bound.pat_parent[whole.idx()] else {
+            let (PatParent::Var(_) | PatParent::Elem(..)) = bound.pat_parent[whole.idx()] else {
                 return None;
             };
             let lists = self.values_of_declaration(symbol, whole)?;
@@ -1479,18 +1479,18 @@ impl Follower<'_, '_, '_> {
             return None;
         };
         if let (Some(parameter), &[name]) = (self.stand_in, &path[..])
-            && self.property_of_stand_in == Some(name)
+            && self.stand_in_property == Some(name)
             && bound.binding(source) == Binding::Symbol(parameter)
             && bound.stores_to(symbol).is_empty()
         {
-            return Some(vec![Held::Text(url_of_caller())]);
+            return Some(vec![Held::Text(caller_url_placeholder())]);
         }
         let opened = self.open_parameters.len();
         let values = self.values_of(source);
         if let (&[name], Some(open)) = (&path[..], self.open_parameters.get_mut(opened))
             && open.mention == source
         {
-            open.taken_out = Some(name);
+            open.destructured_key = Some(name);
         }
         let mut values = values?;
         for &name in &path {
@@ -1511,14 +1511,19 @@ impl Follower<'_, '_, '_> {
             return None;
         };
         let position = elements.iter().position(|it| it == element)?;
-        if hir[element].is_rest || hir[element].default.is_some() {
+        if hir[element].default.is_some() {
             return None;
         }
         let mut values = Distinct::new();
         for list in lists {
-            let Held::List(places) = list else {
+            let Held::List(mut places) = list else {
                 return None;
             };
+            if hir[element].is_rest {
+                let rest = places.split_off(position.min(places.len()));
+                add(&mut values, Held::List(rest));
+                continue;
+            }
             match places.into_iter().nth(position) {
                 Some(place) => place.into_iter().for_each(|it| add(&mut values, it)),
                 None => add(&mut values, Held::Primitive(Constant::Undefined)),
@@ -2115,7 +2120,7 @@ impl Follower<'_, '_, '_> {
             PatKind::Missing => true,
             PatKind::Ident(written) => {
                 let name = bound.declared_symbol(decl(pattern));
-                let is_taken_apart = !matches!(
+                let is_destructuring_source = !matches!(
                     bound.pat_parent[pattern.idx()],
                     PatParent::Var(_) | PatParent::Param(_)
                 );
@@ -2134,7 +2139,7 @@ impl Follower<'_, '_, '_> {
                     return is_seen_here_alone
                         && self.fills_the_name_it_declares(pattern, written, decl);
                 };
-                let holds_nothing_to_change = is_taken_apart
+                let holds_nothing_to_change = is_destructuring_source
                     && is_seen_here_alone
                     && self.holds_what_cannot_be_changed(mention);
                 holds_nothing_to_change || self.asks_name(pattern, Binding::Symbol(name))
@@ -3079,10 +3084,10 @@ impl Follower<'_, '_, '_> {
     fn values_of_member(&mut self, member: ExprId, chain: Chain) -> Option<Values> {
         let (object, key) = self.inputs.hir.member_key(member)?;
         if let (Some(parameter), MemberKey::Name(name)) = (self.stand_in, key)
-            && self.property_of_stand_in == Some(name)
+            && self.stand_in_property == Some(name)
             && self.inputs.bound.binding(object) == Binding::Symbol(parameter)
         {
-            return Some(vec![Held::Text(url_of_caller())]);
+            return Some(vec![Held::Text(caller_url_placeholder())]);
         }
         if let Some(values) = self.values_of_field_of_class_written_here(object, key) {
             return Some(values);
@@ -3562,7 +3567,7 @@ impl Follower<'_, '_, '_> {
                 .is_none()
                 .then(|| (name.start[..=end].to_vec(), is_written))
         });
-        match self.keeps_what_is_known {
+        match self.keeps_known_alternatives {
             true => Some(folders.flatten().collect()),
             false => folders.collect(),
         }
@@ -3961,7 +3966,7 @@ pub(super) fn names_own_url(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> boo
         && !bound.import_meta_may_be_modified()
 }
 
-fn url_of_caller() -> Text {
+fn caller_url_placeholder() -> Text {
     let path = [b"./", STAND_IN].concat();
     href_of(&from_own_directory(Text::whole(&path)))
 }

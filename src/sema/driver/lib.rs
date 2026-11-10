@@ -892,6 +892,9 @@ pub struct PlanOptions {
     /// Without a configuration file the defaults are `tsc`'s where `bun init` writes otherwise: the library is the default
     /// for the target, which has the DOM, in place of `ESNext` alone, and Bun's types aren't named though they're installed.
     pub takes_defaults_of_tsc: bool,
+    /// A program whose project hasn't installed `@types/bun` is checked as if it had, with the packages below this directory
+    /// (`Options::type_root_of_last_resort`). The caller provides their files (`Provided::already_read`).
+    pub type_root_of_last_resort: Option<&'static [u8]>,
     /// `useSourceOfProjectReferenceRedirect`, as in an editor: an import that leads into a referenced project reads its
     /// source, even if it specifies a declaration file that the project would emit. No referenced project is checked
     /// for the sake of another, and nothing is emitted.
@@ -4398,6 +4401,12 @@ fn check_named_files(
         && !request.plan_options.takes_defaults_of_tsc
     {
         project.options.types = Some(vec![b"bun".to_vec()]);
+    }
+    if let Some(root) = request.plan_options.type_root_of_last_resort
+        && !report.has_bun_types_installed
+    {
+        let is_file = |path: &[u8]| host.is_file(path);
+        compile::take_bun_types_below(root.to_vec(), &is_file, &mut project.options);
     }
     let (skip_lib_check, skip_default_lib_check) = (
         project.options.skip_lib_check,

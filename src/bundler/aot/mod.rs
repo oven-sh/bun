@@ -196,7 +196,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     // `options::root_directory` widens a root that nobody wrote to the assets below the working directory.
     let root_directory = &options.paths.root_directory[..];
     let is_root_widened = !is_root_written && is_at_or_below(root_directory, working_directory);
-    let folder_of_assets_that_keep_paths = match is_root_widened {
+    let assets_root = match is_root_widened {
         true => working_directory.to_vec(),
         false => root_directory.to_vec(),
     };
@@ -210,7 +210,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             root_directory: Box::from(&options.paths.root_directory[..]),
         },
     )
-    .with_assets(assets_by_absolute_paths, folder_of_assets_that_keep_paths);
+    .with_assets(assets_by_absolute_paths, assets_root);
     let mut said_by_compiler = Log::init();
     let result = bun_aot::compile(&options, &services, &mut said_by_compiler);
     // SAFETY: the log outlives the build, and the reference ends with the statement.

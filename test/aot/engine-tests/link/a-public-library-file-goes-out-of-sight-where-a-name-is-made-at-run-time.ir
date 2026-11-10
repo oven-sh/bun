@@ -3,7 +3,7 @@
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link fields variables functions modules mechanisms=all
-# DIAGNOSTIC: CodeOutsideImageIsRefused 1
+# DIAGNOSTIC: NonConstantImportPath 1
 # CHECK-NOT: field L0.1 "join" proven
 # CHECK-NOT: variable g0 proven
 # CHECK-NOT: function f2 unreached

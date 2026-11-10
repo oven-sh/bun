@@ -9,5 +9,5 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: : boolean @Boolean @
-# RUN(COUNT): compile StepsOfListsOnWaysApartUnderHandlers mechanisms=all
-# COUNT: statistic StepsOfListsOnWaysApartUnderHandlers 2
+# RUN(COUNT): compile IteratorStepsThreadedUnderHandlers mechanisms=all
+# COUNT: statistic IteratorStepsThreadedUnderHandlers 2

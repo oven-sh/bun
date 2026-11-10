@@ -183,7 +183,7 @@ describe("at run time", () => {
       LATE: "/late.ts",
     });
     expect(stderr).toContain(
-      "warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time",
+      "warn: TS100064: this import path isn't a constant, so it throws at run time if the file isn't in the executable",
     );
     expect(stdout).toMatch(
       /^ERR_MODULE_NOT_FOUND: Cannot load '[^']*late\.ts': it wasn't compiled with the program, and --aot only runs code that was\. Import the file by a constant path, or add --aot-allow-code-from-disk\.$/m,

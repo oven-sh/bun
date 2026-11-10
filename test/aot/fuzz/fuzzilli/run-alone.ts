@@ -9,7 +9,7 @@
 // `--scene a,b` draws every program from those scenes of write-ordinary-scenes.ts, one scene to a program. Without it a program has one to three scenes of any kind.
 // `--families 25` draws 25 programs of 100 from the sources of ../sources.ts that give one file.
 // `--programs <folder>` takes the files of the folder, once each, in place of draws.
-// `--checks-proofs 50` builds 50 programs of 100 once more with --aot-testing=CheckProofsAtRunTime or another word under which the executable checks itself, `--writes-straight 50` with --aot-testing=WritesBodiesStraight. Both executables have to do as `bun <file>` does.
+// `--checks-proofs 50` builds 50 programs of 100 once more with --aot-testing=CheckProofsAtRunTime or another word under which the executable checks itself, `--writes-straight 50` with --aot-testing=ForceStraightCompilation. Both executables have to do as `bun <file>` does.
 // `--as-a-test 25` has a test import 25 programs of 100, under `bun test --aot` and under `bun test`. A difference counts where the compiled test run prints something else than the executable too.
 // `--shuffles-costs 50` builds 50 programs of 100 once more under a word that may only change what the code costs: guesses fail unasked, expected types are ignored or shuffled, so are the frequencies of blocks and
 // the choices by cost, Link is given more. An answer that changes there is a miscompilation.
@@ -156,7 +156,7 @@ function lacksOnlyLines(less: string, more: string) {
   for (const line of more.split("\n")) if (at < wanted.length && line === wanted[at]) at++;
   return at === wanted.length;
 }
-const stopAtAFalseProof = /^AOT: .*$/m;
+const stopAtAFalseProof = /^bun: internal AOT error: .*$/m;
 
 /** `plain` and `plainAgain` are two runs of the reference, `ours` is the second run of what was compiled. */
 function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: Ended) {
@@ -168,8 +168,8 @@ function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: E
   // No page declares a death.
   if (/^SIG/.test(ours.end) || Number(ours.end) >= 128) return "signal";
   if (ours.end === plainAgain.end && withoutLayout(ours.stdout) === withoutLayout(plainAgain.stdout))
-    return "function text";
-  // Where the first line on which they part is a line of the program itself, `bun <file>` prints the text of a function.
+    return "function source";
+  // Where the first line on which they part is a line of the program itself, `bun <file>` prints the source of a function.
   const [left, right] = [withoutDetails(ours.stdout).split("\n"), withoutDetails(plainAgain.stdout).split("\n")];
   const parting = (right[left.findIndex((each, at) => each !== right[at])] ?? "").trim();
   if (
@@ -178,10 +178,10 @@ function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: E
       parting,
     )
   )
-    return "function text";
-  // The text of a function of the library is not in the executable.
+    return "function source";
+  // The source of a library function is not in the executable.
   if (ours.stdout.includes("{ [native code] }") && !plainAgain.stdout.includes("{ [native code] }"))
-    return "function text";
+    return "function source";
   // A message that names the file of the program names another folder in an executable.
   if (ours.end === plainAgain.end && withoutRoots(ours.stdout) === withoutRoots(plainAgain.stdout))
     return "documented difference";
@@ -441,15 +441,15 @@ function drawArms(text: string): Arm[] {
       "CheckEffectsAtRunTime",
       "CheckProofsAtEntries",
       "CheckProofsAtEntriesAndFields",
-      "TestsEveryPosition",
-      "KeepsCellsOutOfFrames",
+      "CheckBoundsAtRunTime",
+      "DisableFrameCells",
       "DelayFlowRules",
       "DelayOtherFlowRules",
     ][Math.floor(Math.random() * 8)];
     arms.push([`checks-${word.replace(/.*,/, "")}-`, [`--aot-testing=${word}`, ownChecks]]);
   }
   if (Math.random() * 100 < Number(options["writes-straight"]))
-    arms.push(["straight-", ["--aot-testing=WritesBodiesStraight", ownChecks]]);
+    arms.push(["straight-", ["--aot-testing=ForceStraightCompilation", ownChecks]]);
   if (Math.random() * 100 < Number(options["shuffles-costs"])) {
     const seed = 1 + Math.floor(Math.random() * 1000);
     const word = [
@@ -457,24 +457,24 @@ function drawArms(text: string): Arm[] {
       `ShuffleBlockFrequencies:${seed}`,
       "IgnoreExpectedTypes",
       `ShuffleExpectedTypes:${seed}`,
-      "FailGuesses",
+      "FailSpeculations",
       // Every n-th guess fails. With n over one a typed copy of a loop is entered and then left for its closed copy in the middle of ordinary turns; with one, the tests in front fail too and no typed copy is entered.
-      `FailGuesses:${[2, 3, 7][seed % 3]}:${seed}`,
-      `FailGuesses:${[2, 3, 7][seed % 3]}:${seed}`,
-      `FailGuesses:${[2, 3, 7][seed % 3]}:${seed}`,
-      `GiveLinkMore:${seed}`,
+      `FailSpeculations:${[2, 3, 7][seed % 3]}:${seed}`,
+      `FailSpeculations:${[2, 3, 7][seed % 3]}:${seed}`,
+      `FailSpeculations:${[2, 3, 7][seed % 3]}:${seed}`,
+      `WidenFlowNodes:${seed}`,
       `ShuffleChoices:${seed}`,
-      "OrderBlocksAgain",
-      "WalksUnitsBy:NothingCarried",
-      "WalksUnitsBy:Closed",
-      `WalksUnitsBy:${seed & 1 ? "NothingCarried" : "Closed"}:${2 + (seed % 3)}:${seed}`,
-      `CutWalksOfLoopsShort:${1 + (seed % 13)}:${seed % (1 + (seed % 13))}`,
+      "ForceFallbackBlockOrder",
+      "ForceWalkMode:NothingCarried",
+      "ForceWalkMode:Closed",
+      `ForceWalkMode:${seed & 1 ? "NothingCarried" : "Closed"}:${2 + (seed % 3)}:${seed}`,
+      `AbortLoopVisits:${1 + (seed % 13)}:${seed % (1 + (seed % 13))}`,
     ][Math.floor(Math.random() * 15)];
     arms.push([
       `cost-${word.replace(/:.*/, "")}-`,
       [
         `--aot-testing=${word}`,
-        ...(word.startsWith("GiveLinkMore") ? ["--aot-check=FlowFindsNoLessFromMore"] : []),
+        ...(word.startsWith("WidenFlowNodes") ? ["--aot-check=FlowMonotonicity"] : []),
         ...(Math.random() < 0.5 ? [ownChecks] : []),
       ],
     ]);
@@ -556,7 +556,7 @@ while (performance.now() < lastStart || waiting.length) {
         for (const member of members!) waiting.push({ ...member, arms: [[arm, more]], company: record });
       };
       if (!existsSync(join(folder, "executable"))) {
-        const stop = /internal compiler error.*$|Stopped while compiling.*$|^panic.*$|^AOT: .*$/m.exec(
+        const stop = /internal compiler error.*$|Stopped while compiling.*$|^panic.*$|^AOT: .*$|^bun: internal AOT error: .*$/m.exec(
           built.stderr + built.stdout,
         )?.[0];
         if (stop === undefined && built.end === "1") {

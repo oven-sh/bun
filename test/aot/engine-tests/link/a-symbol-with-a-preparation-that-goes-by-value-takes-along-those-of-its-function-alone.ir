@@ -8,7 +8,7 @@
 # Symbols that share a function go by name together or not at all: symbols-with-a-preparation-are-names-all-together-or-not-at-all.ir. kLate has a function of its own.
 # LIBRARY: own
 # RUN: link accesses mechanisms=all
-# STATISTIC: SymbolsWithPreparationThatGoByValue = 1
+# STATISTIC: PreparedSymbolsAccessedByValue = 1
 # CHECK: access f2 v2 under symbol("kHeaders")@m1:0
 # CHECK-NEXT: access f3 v2 under symbol("kLenient")@m1:1
 # CHECK-NEXT: access f4 v2 under symbol("kOther")@m1:2

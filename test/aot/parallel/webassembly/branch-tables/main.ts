@@ -1,4 +1,11 @@
 // br_table with many targets, which is a table of jumps in the code, and with few, which is a row of compares: each index, the default, and indexes far outside.
+// STATISTIC: WasmOptimizedCopies = 4
+// STATISTIC: WasmBaselineCopies = 0
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 0
+// COUNTER in every build: WasmInstancesUsingImageCode = 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

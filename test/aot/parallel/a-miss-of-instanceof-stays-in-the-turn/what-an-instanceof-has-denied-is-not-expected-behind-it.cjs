@@ -2,9 +2,9 @@
 // the read does not test for the class just denied, which every element that comes there would fail, but asks its own site.
 // The class has no kin, and parsed records come behind the denial: of kin, classes or constructor functions, the shapes say what a denial has left, and the read is a slot:
 // ../instanceof-answered-by-the-shapes-of-kin/behind-two-denials-the-field-of-the-class-that-is-left-is-read-off-its-slot.cjs
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
-// STATISTIC: ReadsByNameThatAskTheirSitesAlone >= 1
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin = 0
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
+// STATISTIC: SiteCachedReadsEmitted >= 1
+// STATISTIC: InstanceOfMissesDecidedByHierarchy = 0
 "use strict";
 class Circle { constructor(d) { this.r = d.v; this.h = 0; } }
 const rows = JSON.parse(JSON.stringify(Array.from({ length: 24 }, (_, i) => ({ v: i % 5 + 1, w: i % 4 + 1, h: i % 3 + 2 }))));

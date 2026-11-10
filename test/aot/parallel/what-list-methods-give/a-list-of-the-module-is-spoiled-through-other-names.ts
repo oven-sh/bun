@@ -1,5 +1,5 @@
 // Six lists of the module are each mapped and walked by a function of their own. One stays as it was made; the others get another species in the midst of the run, each by another road.
-// STATISTIC: ResultsOfLibraryFunctionsHeldToRows >= 1
+// STATISTIC: LibraryResultsCheckedAgainstSignatures >= 1
 function Made(this: any, length: number) { this.madeWith = length; this.length = 0; }
 class Stack extends Array<number> { static get [Symbol.species]() { return Made as any; } }
 const other = { [Symbol.species]: Made };

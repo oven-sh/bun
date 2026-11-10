@@ -13,7 +13,7 @@
 // Every number comes from this script: the mean of all runs, none left out. CPU seconds and peak memory are the operating system's for the compiler's process and its children.
 // Instructions are counted where `perf` is there. Lines are physical lines of the files that the compiler is given; what it reads besides (declaration files, its own library, Go's standard library) stands in its own column.
 // Bun's compiler counts those lines in every build and prints the counts under `--explain=statistics`. Cargo and `bun build --compile` without `--aot` don't tell, so their cells are empty.
-// Below the table, the closing line of the last run of each `bun build --compile --aot` is printed as is: how many lines the compiler says it compiled, and how long it says that took.
+// Below the table, the `compile` row of the last run of each `bun build --compile --aot` is printed as is: how long the compiler says that stage took, and how many lines a second it says the whole build compiled.
 // Not a test, and CI does not run it.
 import { spawnSync } from "bun";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -203,13 +203,13 @@ interface Measured {
   cpu: number;
   peakMB: number;
   instructions?: number;
-  /** Only Bun's compiler prints one: `[1.31s] compile  app  compiled 10,123 lines in 1.23 s (8,230 lines/s)`. */
-  closingLine?: string;
+  /** Only Bun's compiler prints one: `[1.31s] compile  app  126.4 MB  8.2k lines/s`. */
+  compileRow?: string;
   /** Only Bun's compiler counts them: the lines of declaration files and of its own library. */
   linesReadBesides?: number;
 }
 
-const closingLineOfBuild = /^.*\bcompiled [\d,]+ lines? in [\d,.]+ s \([\d,]+ lines\/s\)/m;
+const compileRowOfBuild = /^ *\[[\d.]+m?s\] compile  .* lines\/s$/m;
 
 function linesReadBesidesIn(stderr: string) {
   const declarations = /^SourceLinesOfDeclarations (\d+)$/m.exec(stderr);
@@ -243,7 +243,7 @@ function time(command: string[], cwd: string, env: Record<string, string>): Meas
     cpu: Number(usage.cpuTime.total) / 1e6,
     peakMB: usage.maxRSS / (1 << 20),
     instructions: counted || undefined,
-    closingLine: closingLineOfBuild.exec(result.stdout.toString())?.[0].trim(),
+    compileRow: compileRowOfBuild.exec(result.stdout.toString())?.[0].trim(),
     linesReadBesides: linesReadBesidesIn(result.stderr.toString()),
   };
 }
@@ -334,7 +334,7 @@ try {
         peakMB: mean(measured.map(run => run.peakMB)),
         instructions: measured[0].instructions === undefined ? undefined : mean(measured.map(run => run.instructions!)),
         executableBytes: statSync(builtIn(folder, scenario)).size,
-        closingLine: measured.at(-1)!.closingLine,
+        compileRow: measured.at(-1)!.compileRow,
         everyRun: measured,
       };
       results.push(row);
@@ -419,10 +419,10 @@ for (const size of new Set(results.map(row => row.size))) {
           : columns.map(([, width, text]) => text(row).padStart(width)).join("")),
     );
 }
-const rowsWithClosingLine = results.filter(row => row.closingLine);
-if (rowsWithClosingLine.length) {
-  console.log("\nThe closing line of bun's build, in the last run");
-  for (const row of rowsWithClosingLine)
-    console.log(`${whole(row.size).padStart(9)}  ${row.scenario.padEnd(widest)}  ${row.closingLine}`);
+const rowsWithCompileRow = results.filter(row => row.compileRow);
+if (rowsWithCompileRow.length) {
+  console.log("\nThe compile row of bun's build, in the last run");
+  for (const row of rowsWithCompileRow)
+    console.log(`${whole(row.size).padStart(9)}  ${row.scenario.padEnd(widest)}  ${row.compileRow}`);
 }
 if (option("json", "")) writeFileSync(option("json", ""), JSON.stringify(results, null, 2) + "\n");

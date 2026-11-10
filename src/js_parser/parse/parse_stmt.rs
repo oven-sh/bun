@@ -205,6 +205,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // express the cross-iteration back-reference, but the arena keeps every
         // node alive for `'a`.
         let mut current_if: Option<js_ast::StoreRef<S::If>> = None;
+        // Where the requests after the `else` of an `if (true)` start.
+        let mut first_dead_request: Option<usize> = None;
 
         loop {
             p.lexer.next()?;
@@ -215,7 +217,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 lexical_decl: LexicalDecl::AllowFnInsideIf,
                 ..Default::default()
             };
+            let first_request = p.original_requests.len();
             let yes = p.parse_stmt(&mut stmt_opts)?;
+            p.drop_requests_unless(&test, true, first_request);
 
             // Create the if node
             let if_stmt = p.s(
@@ -247,11 +251,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
 
             if p.lexer.token != T::TElse {
+                if let Some(first_dead_request) = first_dead_request {
+                    p.original_requests.truncate(first_dead_request);
+                }
                 return Ok(root_if.unwrap());
             }
 
             current_if.unwrap().else_loc = p.lexer.loc();
             p.lexer.next()?;
+            if first_dead_request.is_none() && p.is_always_true(&test) {
+                first_dead_request = Some(p.original_requests.len());
+            }
 
             // Handle final else
             if p.lexer.token != T::TIf {
@@ -263,6 +273,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let no = p.parse_stmt(&mut stmt_opts)?;
                 let mut cur = current_if.unwrap();
                 cur.no = Some(no);
+                if let Some(first_dead_request) = first_dead_request {
+                    p.original_requests.truncate(first_dead_request);
+                }
                 return Ok(root_if.unwrap());
             }
 
@@ -382,7 +395,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 lexical_decl: LexicalDecl::AllowAll,
                                 ..Default::default()
                             };
-                            body.push(p.parse_stmt(&mut stmt_opts)?);
+                            let first_request = p.original_requests.len();
+                            let stmt = p.parse_stmt(&mut stmt_opts)?;
+                            if p.original_requests.len() > first_request {
+                                p.drop_requests_in_dead_stmt(&stmt, &body, first_request);
+                            }
+                            body.push(stmt);
                         }
                     }
                 }

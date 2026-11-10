@@ -116,7 +116,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn has_location(&self, stored: BindingRef) -> bool {
         let placement = self.scopes.placement(stored);
         placement.is_some_and(|placement| match placement.storage {
-            Storage::Field { .. } | Storage::Variable(_) => true,
+            Storage::Field { .. } | Storage::Variable(_) | Storage::Instance { .. } => true,
             Storage::Local => false,
         })
     }
@@ -128,7 +128,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 placement.is_none_or(|placement| matches!(placement.storage, Storage::Variable(_)))
             }
             BindingForm::Import => match self.inputs.modules.import_binding(self.file, symbol) {
-                ImportBinding::Variable(_) => !self.may_be_answered_by_mock(symbol),
+                ImportBinding::Variable(variable) => {
+                    !self.may_be_answered_by_mock(symbol)
+                        && !self.inputs.modules.has_instances(variable.file)
+                }
                 ImportBinding::Synthetic(export) => is_filled_by_loader(self, export),
                 ImportBinding::CapturedBuiltin { .. }
                 | ImportBinding::BuiltinMember { .. }
@@ -314,7 +317,10 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         let file = &*self.lowering.file;
         let import = file.inputs.modules.import_binding(file.file, symbol);
         match import {
-            ImportBinding::Variable(_) if file.may_be_answered_by_mock(symbol) => {
+            ImportBinding::Variable(variable)
+                if file.may_be_answered_by_mock(symbol)
+                    || file.inputs.modules.has_instances(variable.file) =>
+            {
                 let value = self.lowering.get_import(symbol);
                 self.add_value(binding, value);
             }
@@ -595,6 +601,16 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         };
         match placement.storage {
             Storage::Variable(key) => self.add_variable(binding, key),
+            Storage::Instance { field } => {
+                let instance = self.lowering.get_module_instance();
+                let operand = self.add_value_operand(instance);
+                self.bindings.push(EvalBinding {
+                    layout: Some(environments::instance_layout(self.lowering.file)),
+                    field: Some(field),
+                    operand: Some(operand),
+                    ..binding
+                });
+            }
             Storage::Field { scope, field } if self.lowering.can_reach_environment(scope) => {
                 let operand = match find_entry(&self.environments, scope) {
                     Some(operand) => operand,

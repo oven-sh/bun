@@ -1,7 +1,10 @@
-# The head of a typed build may go by a word that was read out of a variable of the module in front of the loop only while the state holds the note that the variable is as it was there; whatever may write the variable ends the note.
-# THE LIE, testing=VariablesThatBoundAreTakenToBeAsInFront: the head does not ask the note. Here an arm in the turn may run a getter that writes the bound, and behind `seen++` that arm stands in the typed build and comes round:
-# the loop would run to a stale bound in silence: plain Bun prints 2 3 2.5, that build 6 12 2.5, exit 0, and no other net saw it. Where the loop is closed, a head that has gone by such a word while its turns may run other code,
-# or write what the word rests on, stops the build by name. As users build, the try is put back and the loop claims nothing.
+# The header of a specialized loop version may use a value that was read from a module variable in the preheader only while the state holds the fact
+# that the variable is unchanged since the preheader. Anything that may write the variable ends that fact.
+# Fault injection, testing=AssumeInvariantLoopBounds: the header does not look for the fact. In this program a branch in the iteration may run a getter that writes the bound.
+# After `seen++`, that branch is in the specialized version and takes the back edge, so the loop would silently run to a stale bound.
+# Plain Bun prints 2 3 2.5. That build prints 6 12 2.5 and exits with 0, and no other check caught it.
+# When the walk closes the loop, a header that has used such a value while the loop's iterations may run other code, or may write what the value depends on,
+# fails the build with a named internal error. In a user's build, the trial visit is undone and the loop claims nothing.
 # class Box { constructor(public v: number) {} }
 # let bound = 0, seen = 0, target = 0;
 # const trap: any = {};
@@ -10,8 +13,8 @@
 # const boxes: Box[] = [new Box(1), new Box(2), trap, new Box(3)];
 # bound = 12; target = 2.5;
 # console.log(run(boxes), seen, bound);
-# DIAGNOSTIC: WordInFrontOfTypedBuildIsStale
-# RUN: walk f1 mechanisms=all testing=VariablesThatBoundAreTakenToBeAsInFront
+# DIAGNOSTIC: StaleHoistedLoopBound
+# RUN: walk f1 mechanisms=all testing=AssumeInvariantLoopBounds
 
 module m0 path="a-head-that-goes-by-a-bound-from-in-front-where-its-turns-may-write-the-variable-stops-the-build-by-name.ts" displayPath="a-head-that-goes-by-a-bound-from-in-front-where-its-turns-may-write-the-variable-stops-the-build-by-name.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

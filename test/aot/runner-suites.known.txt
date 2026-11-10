@@ -74,7 +74,7 @@ test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the co
 test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
-# With --isolate a test file can't require() another test file that imports from "vitest" and from two more files, as docs/compiler/debugging.mdx says.
+# With --isolate a test file can't require() another test file that imports from "vitest" and from two more files.
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --parallel=1: a later test file can require() it
@@ -122,6 +122,7 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 # The next one: vi.doMock() of a module evicts the CommonJS file that has required it, and the next require() runs the body of that file again. The body of a compiled file runs once.
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > a file from the transpiler cache still says which functions request the original
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

@@ -1,5 +1,5 @@
 // The prototype of a list with holes is moved to an object that has elements at the places of two holes: the reads find them. What is printed is what plain Bun prints.
-// STATISTIC: HolesReadAsNaNInTurnsThatStore >= 1
+// STATISTIC: StoringLoopHoleChecksRemoved >= 1
 const unseen = (x: any): any => [x][JSON.parse("0")];
 const told: string[] = [];
 function halves(n: number): number[] { const list: number[] = []; for (let i = 0; i < n; i++) list.push(i + 0.5); return list; }

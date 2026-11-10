@@ -322,7 +322,7 @@ fn compute_entry_flags(
             flags
         }
         FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
+        | FunctionKey::FacadeBody(_)
         | FunctionKey::CheckBody(_)
         | FunctionKey::Instantiation(_) => {
             unreachable!("the walk meets no function of this kind")

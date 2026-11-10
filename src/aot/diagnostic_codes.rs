@@ -48,15 +48,18 @@ diagnostic_codes! {
         DeletionFromModuleCacheDoesNothing = 100091, Warning, "A compiled module that has run doesn't run again. Taking it out of require.cache does nothing in an executable, and the next require() returns the same exports";
         EntryStoredInModuleCacheIsNotAsked = 100092, Warning, "require.cache doesn't list compiled modules. In an executable, require() doesn't ask an entry that's stored under the path of one: it runs the compiled file and returns that file's exports";
         ModuleCacheIsHandedOn = 100093, Warning, "Code that the build doesn't follow gets require.cache here. In an executable, require.cache doesn't list compiled modules: deleting an entry or storing one changes nothing, and require() returns the same exports";
-        TextOfFunctionIsNotItsTree = 100090, Error, "A check of the compiler itself failed: the text that is kept of a function is not its tree: {0}";
+        FunctionSourceReparseMismatch = 100090, Error, "A check of the compiler itself failed: the retained source of a function does not parse back to its syntax tree: {0}";
         WorkerFilesGoByOnePath = 100086, Warning, "In the executable \"{0}\" is all that is left of the paths of two files: \"{1}\" and \"{2}\". A \"..\" above the root of the executable takes nothing away, so nothing tells the two apart, and a Worker that starts from either fails to load. Pass both files to the build as entry points";
         FilesLeftOutByPattern = 100089, Warning, "The executable doesn't embed {0}, which this path may name. {1}";
         ModuleMayBeNamedAtRunTime = 100094, Warning, "This call may load a module, and the build can't work out its name. If it names code that isn't in the executable, the call throws at run time. Import the module by its name to keep it, or build with --aot-allow-code-from-disk";
         FoldersOfResolveAreNotRead = 100095, Warning, "The build can't work out the folders that this call looks in, so what they hold may not be in the executable. The call may then find a module of the same name in a folder above them, or none. Write the list of folders in the call, each as a path from __dirname or import.meta.dirname";
         MadeRequireGoesOutOfSight = 100096, Warning, "The build can't follow the require() that is made here to every call of it. If such a call names code that isn't in the executable, it throws at run time. Make it for the file's own path or URL, keep it in a const and call it by that name, or build with --aot-allow-code-from-disk";
         SearchGoesOnAboveListedFolder = 100097, Warning, "One of the folders that this call looks in isn't there or doesn't hold the module, so the search goes on in the folders above it and finds {0}. In an executable the search doesn't go on above a listed folder, so the call may find another module of the same name, or none. List the folder that holds the module";
+        ResolvedPathIsComputed = 100087, Warning, "This path isn't a constant, so the build doesn't know which file it names. If it names a file that isn't in the executable, such as {0}, the call throws at run time. Pass the file to bun compile as another entry point";
+        ResolvedFileNotEmbedded = 100099, Warning, "This path names {0}, which isn't in the executable, so the call throws at run time. Pass the file to bun compile as another entry point";
+        IgnoreCommentSilencesNothing = 100073, Warning, "This comment silences nothing: {0}";
         DataFilesFoundByPattern = 100088, Note, "This path isn't a constant, so the executable embeds every file that it may name. These aren't code: {0}";
-        FileReadIsNotEmbedded = 100098, Warning, "This reads \"{0}\", but the executable has no file at that path. Embed it with --asset {0}";
+        UnembeddedFileRead = 100098, Warning, "This reads \"{0}\", but the executable has no file at that path. Embed it with --asset {0}";
 
 
     }
@@ -102,6 +105,7 @@ diagnostic_codes! {
         FunctionIntrospection = 100302, Warning, "'{0}' is always null on a compiled function.";
         InvalidRuntimeSource = 100305, Error, "Bun's own source cannot be compiled: {0}";
         InvalidRegExp = 100307, Error, "{0}";
+        DependencyHasTypeErrors = 100308, Warning, "The package \"{0}\" has {1} in the TypeScript that is compiled. Your build doesn't stop for them. To list them, run bun check --aot --all";
         LibraryFileHasTopLevelCode = 100501, Error, "A library file can only declare functions and types";
         InvalidRegExpFlags = 100515, Error, "Invalid flags \"{0}\" in regular expression";
     }

@@ -13,10 +13,10 @@ pub(in crate::lower) use self::loop_updates::is_let_declaration;
 use super::analysis::{ArgumentsObjects, ScopeAnalysis, SlotKey, find_by_key, sort_unique};
 use super::lexical_owners::compute_lexical_owners;
 use super::walk::{EvalUse, ScopeWalk, walk_file};
-use super::{BindingForm, BindingRef, Placement, ScopeInput, WalkedFunctionId};
+use super::{BindingForm, BindingRef, Placement, ScopeInput, ScopeSlot, WalkedFunctionId};
 use crate::ir::VariableKey;
 use crate::lower::captures::{CaptureInput, CapturePlan, CapturedBinding, compute_captures};
-use crate::modules::{ModuleKind, ModuleRef};
+use crate::modules::{ImportBinding, ModuleKind, ModuleRef};
 
 struct Context<'x, 's> {
     input: &'x ScopeInput<'x, 's>,
@@ -27,6 +27,7 @@ struct Context<'x, 's> {
     is_module_level_scope: Vec<bool>,
     loop_updates: Vec<(ScopeId, ExprId)>,
     holders_without_value: Vec<SymbolId>,
+    has_instances: bool,
 }
 
 struct NormalizedUses {
@@ -41,6 +42,7 @@ struct BindingSharing {
     captured: Vec<CapturedBinding>,
     captured_uses: Vec<(WalkedFunctionId, BindingRef)>,
     variables: Vec<(BindingRef, VariableKey)>,
+    instance_fields: Vec<(BindingRef, u32)>,
     shared: Vec<BindingRef>,
     fields_for_eval: Vec<BindingRef>,
     stored_under_handlers: Vec<Vec<BindingRef>>,
@@ -80,9 +82,10 @@ impl<'x, 's> Context<'x, 's> {
             loop_updates: loop_updates::collect_loop_updates(input.hir, bound, walk),
             module_bodies: find_module_bodies(walk),
             holders_without_value: collect_holders_without_value(input),
+            has_instances: input.modules.has_instances(input.file),
         };
         let has_module_variables = match input.modules.kind(input.file) {
-            ModuleKind::SourceText if input.modules.runs_again(input.file) => false,
+            ModuleKind::SourceText if input.modules.may_be_reevaluated(input.file) => false,
             ModuleKind::SourceText | ModuleKind::Data | ModuleKind::RuntimeSource => true,
             ModuleKind::CommonJs => input.modules.runs_body_once(ModuleRef::File(input.file)),
             ModuleKind::Runtime | ModuleKind::External => false,
@@ -131,6 +134,34 @@ impl<'x, 's> Context<'x, 's> {
         let (bound, decisions) = (self.input.bound, &self.input.compiled.analysis.decisions);
         let is_ignored = |target: ExprId| decisions.is_dead_expr(target) || is_ignored(target);
         bound.binding_stability_ignoring(symbol, &is_ignored) == BindingStability::Stable
+    }
+
+    #[inline]
+    fn instance_slot(&self) -> BindingRef {
+        BindingRef::Slot(self.file_scope, ScopeSlot::ModuleInstance)
+    }
+
+    fn find_instance_field(&self, symbol: SymbolId) -> Option<u32> {
+        if !self.has_instances {
+            return None;
+        }
+        let layout = self.input.modules.instance_layout(self.input.file)?;
+        layout.field_of_export(symbol)
+    }
+
+    fn is_read_through_instance(&self, import: SymbolId) -> bool {
+        if !self.has_instances {
+            return false;
+        }
+        let modules = self.input.modules;
+        match modules.import_binding(self.input.file, import) {
+            ImportBinding::Variable(variable) => modules.has_instances(variable.file),
+            ImportBinding::Namespace {
+                module: ModuleRef::File(file),
+                ..
+            } => modules.has_instances(file),
+            _ => false,
+        }
     }
 
     #[inline]

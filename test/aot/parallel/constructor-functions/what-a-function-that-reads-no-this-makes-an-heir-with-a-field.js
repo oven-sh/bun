@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven of the object is asked again at run time
-// Under: --aot-testing=FailGuesses: every guess fails
+// Under: --aot-testing=FailSpeculations: every guess fails
 function Plain() {}
 Plain.prototype.tag = "plain";
 class Heir extends Plain { field = process.argv.length; }

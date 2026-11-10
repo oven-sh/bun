@@ -19,16 +19,16 @@
 # CHECK: yes boolean found number
 # CHECK-NEXT: kept boolean
 # CHECK-NEXT: exited with 0
-# RUN(TEST): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/RegExp.prototype.test/KindOfResult
+# RUN(TEST): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/RegExp.prototype.test/KindOfResult
 # TEST: yes boolean found number
-# TEST: what a variable holds is not of the type that the compiler has proven of it. It is: boolean. This is a bug in Bun.
+# TEST: found boolean in a local variable
 # TEST-NOT: kept
 # TEST: crashed
-# RUN(MATCH): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/String.prototype.match/KindOfResult
+# RUN(MATCH): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/String.prototype.match/KindOfResult
 # MATCH: yes boolean found number
 # MATCH-NEXT: kept boolean
 # MATCH-NEXT: exited with 0
-# RUN(SEARCH): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/String.prototype.search/KindOfResult
+# RUN(SEARCH): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/String.prototype.search/KindOfResult
 # SEARCH: yes boolean found number
 # SEARCH-NEXT: kept boolean
 # SEARCH-NEXT: exited with 0

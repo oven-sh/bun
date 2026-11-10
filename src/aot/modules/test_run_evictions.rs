@@ -7,16 +7,16 @@ use super::requests::{ScannedSite, Scans};
 use super::{BindInput, ModuleRef};
 use crate::builtins::RuntimeModule;
 use crate::load::{SourceKind, is_in_node_modules};
-use crate::test_run_report::say_es_packages_that_mocks_name;
+use crate::test_run_report::{say_es_packages_that_mocks_name, say_reloadable_files};
 use bun_core::strings::{contains, last_index_of_char};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::FileId;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use core::mem::replace;
 
 pub(super) fn is_marked(set: &[bool], module: ModuleRef) -> bool {
     match module {
-        ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Check(file) => {
+        ModuleRef::File(file) | ModuleRef::Facade(file) | ModuleRef::Check(file) => {
             set.get(file.idx()).copied().unwrap_or(false)
         }
         ModuleRef::Inner { .. } | ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
@@ -108,6 +108,135 @@ pub(super) fn find_es_packages_that_mocks_name(
     found.dedup();
     say_es_packages_that_mocks_name(found.len());
     found.into_iter().map(ModuleRef::File).collect()
+}
+
+fn find_modules_named_by_mocks(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+) -> Option<FxHashSet<ModuleRef>> {
+    let mut named = FxHashSet::default();
+    for &file in input.files.compiled_files() {
+        let path = input.files.module(file).file_name();
+        if input.run.is_replaced_in_text(&input.files.atoms, path) {
+            named.insert(ModuleRef::File(file));
+        }
+        let (analysis, scan) = (input.files.analysis(file), scans.of(file));
+        for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+            let ImportSiteKind::MockModule(call) = site.kind else {
+                continue;
+            };
+            if analysis.decisions.is_dead_expr(call) {
+                continue;
+            }
+            match *answer {
+                ScannedSite::Module(module) => {
+                    named.insert(module);
+                }
+                ScannedSite::Candidates(ref range) => named.extend(scan.modules_spelled_in(range)),
+                ScannedSite::AllModules => return None,
+                ScannedSite::Unresolved | ScannedSite::Erased => {}
+            }
+        }
+    }
+    Some(named)
+}
+
+fn binds_importer_to_module(kind: ImportSiteKind) -> bool {
+    match kind {
+        ImportSiteKind::JsxRuntime
+        | ImportSiteKind::JsxPackage
+        | ImportSiteKind::Import(_)
+        | ImportSiteKind::ExportFrom(_)
+        | ImportSiteKind::ExportStar(_)
+        | ImportSiteKind::ImportEquals(_)
+        | ImportSiteKind::Require(_)
+        | ImportSiteKind::ImportMetaRequire(_) => true,
+        ImportSiteKind::RequireByTestRunner(_)
+        | ImportSiteKind::ImportCall(_)
+        | ImportSiteKind::ImportByTestRunner(_)
+        | ImportSiteKind::RequireResolve(_)
+        | ImportSiteKind::ImportMetaResolve(_)
+        | ImportSiteKind::GetBuiltinModule(_)
+        | ImportSiteKind::MockModule(_) => false,
+    }
+}
+
+pub(super) fn find_reloadable_files(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<bool> {
+    let files = input.files;
+    let mut is_reloadable = vec![false; files.modules.len()];
+    if !input.runner_starts_entry_points {
+        return is_reloadable;
+    }
+    let is_program = |file: &&FileId| input.sources.kind(**file) == SourceKind::Program;
+    let named = match input.mocks_any_module {
+        true => None,
+        false => find_modules_named_by_mocks(input, scans),
+    };
+    let Some(named) = named else {
+        for &file in files.compiled_files().iter().filter(is_program) {
+            is_reloadable[file.idx()] = true;
+        }
+        return is_reloadable;
+    };
+    if named.is_empty() {
+        return is_reloadable;
+    }
+    let mut importers: Vec<(FileId, FileId)> = Vec::new();
+    let mut to_follow: Vec<FileId> = Vec::new();
+    for &module in &named {
+        if let ModuleRef::File(file) = module {
+            to_follow.push(file);
+        }
+    }
+    for &file in files.compiled_files() {
+        let sites = files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scans.of(file).sites) {
+            let &ScannedSite::Module(target) = answer else {
+                continue;
+            };
+            if !binds_importer_to_module(site.kind) {
+                continue;
+            }
+            match target {
+                ModuleRef::File(target) => importers.push((target, file)),
+                _ if named.contains(&target) => to_follow.push(file),
+                _ => {}
+            }
+        }
+    }
+    importers.shared_sort_unstable();
+    importers.dedup();
+    while let Some(file) = to_follow.pop() {
+        if replace(&mut is_reloadable[file.idx()], true) {
+            continue;
+        }
+        let first = importers.partition_point(|import| import.0 < file);
+        let importers_of_file = importers[first..].iter().take_while(|it| it.0 == file);
+        to_follow.extend(importers_of_file.map(|import| import.1));
+    }
+    is_reloadable
+}
+
+pub(super) fn fill_plan_of_reloads(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    is_reloadable: Vec<bool>,
+    plan: &mut Plan,
+) {
+    plan.test_run.is_reloadable = is_reloadable;
+    let is_reloadable = &plan.test_run.is_reloadable;
+    let count_of_kind = |kind: ModuleKind| {
+        let files = input.files.compiled_files().iter();
+        let reloadable = files.filter(|file| is_reloadable[file.idx()]);
+        reloadable
+            .filter(|&&file| scans.of(file).interop.kind == kind)
+            .count()
+    };
+    say_reloadable_files(
+        count_of_kind(ModuleKind::SourceText),
+        count_of_kind(ModuleKind::CommonJs),
+        input.files.compiled_files().len(),
+    );
 }
 
 pub(super) fn find_files_that_leave(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<ModuleRef> {
@@ -260,7 +389,7 @@ pub(super) fn fill_plan_of_copies(
                 continue;
             }
             ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
+            | ModuleRef::Facade(_)
             | ModuleRef::Check(_)
             | ModuleRef::External { .. } => continue,
         };
@@ -285,7 +414,7 @@ pub(super) fn fill_plan_of_copies(
     library_modules.shared_sort_unstable_by_key(|module| module.registry_id());
     library_modules.dedup();
     for module in library_modules {
-        plan.set_is_handed_out_by_test_runner(module);
+        plan.expose_runtime_module(module);
     }
     plan.named_by_copies = NamedByCopies {
         is_every_file,

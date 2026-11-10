@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutWhoseTurnsStoreIntoSlots >= 1
+// STATISTIC: UnrolledLoopsWithSlotStores >= 1
 "use strict";
 // The slot that the turn stores is read again in the turn, in the next turn, through a second name of the same object, and as the loop's own bound.
 const said = [];

@@ -152,7 +152,13 @@ pub(super) fn decide_trimming(
         _ => None,
     };
     match plan {
-        Some(plan) if trim.is_enabled() => Ok(Trimming::Planned(plan)),
+        Some(mut plan) if trim.is_enabled() => {
+            let unrequested = TrimRequest::default();
+            if let Some(unrequested) = plan_trimming(used, &settings, &unrequested, &template)? {
+                plan.set_unrequested_plan(unrequested);
+            }
+            Ok(Trimming::Planned(plan))
+        }
         without_tools if trim.is_enabled() || options.explain.contains(ExplainSet::RUNTIME_USE) => {
             Ok(decide_without_plan(
                 used,

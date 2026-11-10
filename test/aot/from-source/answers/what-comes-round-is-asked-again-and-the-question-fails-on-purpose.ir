@@ -11,17 +11,17 @@
 # print(scanner.all(), scanner.getPos());
 # -- end of source
 # `pos` is asked for an int32 in front of the loop of scan(), and where the sum may have left the int32s it is asked again on the back edge: the failing side enters the closed copy of the loop for the next turn, with what
-# comes round. No program with a text of ordinary length walks that way. Of the ways from a typed copy into its closed copy it was the one that FailGuesses did not take.
+# comes round. No program with a text of ordinary length walks that way. Of the ways from a typed copy into its closed copy it was the one that FailSpeculations did not take.
 # f2 = scan
-# RUN(TWO): run-in-shell testing=FailGuesses:2 mechanisms=all
+# RUN(TWO): run-in-shell testing=FailSpeculations:2 mechanisms=all
 # TWO: 4739 27
 # TWO-NEXT: exited with 0
-# RUN(THREE): run-in-shell testing=FailGuesses:3 mechanisms=all
+# RUN(THREE): run-in-shell testing=FailSpeculations:3 mechanisms=all
 # THREE: 4739 27
 # THREE-NEXT: exited with 0
-# RUN(SEVEN): run-in-shell testing=FailGuesses:7 mechanisms=all
+# RUN(SEVEN): run-in-shell testing=FailSpeculations:7 mechanisms=all
 # SEVEN: 4739 27
 # SEVEN-NEXT: exited with 0
 # In front of the loop, and on its back edge.
-# RUN(WALK): walk f2:Body testing=FailGuesses:2 mechanisms=all
+# RUN(WALK): walk f2:Body testing=FailSpeculations:2 mechanisms=all
 # WALK-COUNT-2: = GuessFailsUnasked

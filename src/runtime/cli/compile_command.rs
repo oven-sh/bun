@@ -37,7 +37,7 @@ pub(crate) use self::library::{
 };
 pub(crate) use self::printing::{
     exit_with_failure, print_error_and_notes, print_failure, print_log, print_report_log,
-    write_trimmed_size,
+    time_since_start, write_trimmed_size,
 };
 pub(crate) use self::stored_strings::print_stored_strings_and_exit;
 pub(crate) use self::trimming::{plan_trimming, trim_settings_of};
@@ -124,12 +124,17 @@ pub(crate) struct CompileOutcome {
     pub(crate) report_messages: Vec<ReportMessage>,
     pub(crate) trim_log_lines: Vec<Vec<u8>>,
     pub(crate) executable: Option<ExecutableDetails>,
-    pub(crate) untyped_note: Vec<u8>,
     pub(crate) module_count: u32,
+    pub(crate) line_count: u64,
+    pub(crate) untyped_file_count: u64,
+    /// `bun check --aot`: the files of dependencies that have type errors which are not listed, or that it can't check.
+    pub(crate) unverified_dependency_file_count: u64,
     /// `Compilation::names_added_to_builtins`
     pub(crate) names_added_to_builtins: Vec<(u32, Vec<u8>)>,
-    pub(crate) engine_time: Duration,
-    pub(crate) executable_time: Duration,
+    /// `nano_timestamp()` at the call of the compiler.
+    pub(crate) compiler_called_at: i128,
+    pub(crate) load_time: Duration,
+    pub(crate) check_time: Duration,
 }
 
 pub(crate) enum AssetError {

@@ -4,7 +4,7 @@
 
 variable g0 name="heapSize" module=m1 declared={type=anything}
 module m0 path="main" displayPath="main" requests=[{target=m1 completes=true}]
-module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc syntheticExports=[{name="heapSize" variable=g0 isKnownMember=true}]
+module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc syntheticExports=[{name="heapSize" variable=g0 isKnownMember=true}]
 module m2 path="goodReadOverItsOwnRequest" displayPath="goodReadOverItsOwnRequest" requests=[{target=m1 completes=true}]
 module m3 path="goodReadOverTwoRequests" displayPath="goodReadOverTwoRequests" requests=[{target=m0 completes=true}]
 module m4 path="goodReadBehindWhatCodeLoads" displayPath="goodReadBehindWhatCodeLoads"

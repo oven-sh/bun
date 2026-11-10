@@ -1,4 +1,4 @@
-// STATISTIC: WholeNumbersStoredOutOfLineAsTheyAre >= 1
+// STATISTIC: IntegralStoresWithoutDoubleConversion >= 1
 "use strict";
 const table = [];
 function fill(from, n) { let i = 0, v = from; while (i < n) { table[i] = v; v = v * 2 + 1; i++; } return JSON.stringify(table); }

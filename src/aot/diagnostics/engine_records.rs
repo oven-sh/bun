@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 
 use super::int32_flows::write_int32_message;
@@ -14,10 +15,32 @@ use crate::report::{ModuleLocator, ModuleOrigin, SourceTexts};
 fn is_about_load_by_unknown_name(record: &UserDiagnosticRecord) -> bool {
     matches!(
         record.kind,
-        UserDiagnosticKind::CodeOutsideImageIsRefused
-            | UserDiagnosticKind::ModuleNamedAtRunTimeIsRefused
-            | UserDiagnosticKind::LoaderIsHeldByUnseenCode
+        UserDiagnosticKind::NonConstantImportPath
+            | UserDiagnosticKind::NonConstantModuleName
+            | UserDiagnosticKind::RequirePassedToUnseenCode
     )
+}
+
+pub(super) fn package_name_in(path: &[u8]) -> Option<&[u8]> {
+    const FOLDER: &[u8] = b"node_modules/";
+    let name = &path[strings::last_index_of(path, FOLDER)? + FOLDER.len()..];
+    let parts = if name.starts_with(b"@") { 2 } else { 1 };
+    let mut slashes = (0..name.len()).filter(|&index| name[index] == b'/');
+    Some(&name[..slashes.nth(parts - 1)?])
+}
+
+pub(crate) fn package_with_slow_code<'t>(
+    record: &UserDiagnosticRecord,
+    texts: &'t SourceTexts,
+) -> Option<&'t [u8]> {
+    if record.kind != UserDiagnosticKind::RegExpPatternNotConstant {
+        return None;
+    }
+    let module = position_of(record.location)?.module;
+    match texts.origin(module) {
+        ModuleOrigin::Dependency => package_name_in(texts.path(module)),
+        ModuleOrigin::Program | ModuleOrigin::Runtime => None,
+    }
 }
 
 impl Diagnostics {
@@ -26,12 +49,20 @@ impl Diagnostics {
         result: &EngineResult,
         texts: &SourceTexts,
         runs_tests: bool,
+        lists_slow_code_in_packages: bool,
     ) {
         let mut locator = ModuleLocator::new(texts);
+        let is_advice_followed = self.has_all_project_code;
         for record in result
             .user_diagnostics()
             .iter()
             .filter(|record| !(runs_tests && is_about_load_by_unknown_name(record)))
+            .filter(|record| {
+                !(is_advice_followed && record.kind == UserDiagnosticKind::NonConstantImportPath)
+            })
+            .filter(|record| {
+                lists_slow_code_in_packages || package_with_slow_code(record, texts).is_none()
+            })
         {
             self.add_user_diagnostic(record, result.text(record.message), texts, &mut locator);
         }

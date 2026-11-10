@@ -53,10 +53,13 @@ void didStartCompiledModuleImport(Zig::GlobalObject*, const ScopedLambda<bool(JS
 bool reinstallBodyMocks(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
 JSC::JSPromise* nextPendingCompiledFactory(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isInGraph, JSC::AOT::PendingFactoryRequester, JSC::JSValue& state);
 uint64_t pendingCompiledFactoryCallID(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& shouldRejectEveryRequire);
+bool isCompiledFactoryCallPending(Zig::GlobalObject*, uint64_t call);
+bool isMockAwaitingBody(Zig::GlobalObject*, JSC::AOT::ModuleID);
 bool isInCompiledFactoryChain(Zig::GlobalObject*, JSC::AOT::ModuleID file, JSC::AOT::ModuleID mocked);
 bool isCompiledModulePatchPending(Zig::GlobalObject*, const WTF::String& path);
 uint32_t addToFactoryImportChains(Zig::GlobalObject*, JSC::AOT::ModuleID importer, JSC::AOT::ModuleID asked, JSC::AOT::LoadKind);
 JSC::JSPromise* turnOfCompiledMockThatLoaderFetches(Zig::GlobalObject*, uint32_t module, const String& key);
+bool isInsideMockFactory(Zig::GlobalObject*);
 void giveBackTurnOfCompiledMockUnlessItRuns(Zig::GlobalObject*, JSC::JSValue holder);
 bool isRequestedByCompiledFactory(Zig::GlobalObject*, JSC::AOT::ModuleID);
 bool isRequiredByCompiledFactory(Zig::GlobalObject*, JSC::AOT::ModuleID required, JSC::AOT::ModuleID requirer);
@@ -189,6 +192,8 @@ extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* pa
 extern "C" bool Bun__AOT__isLoadedSynchronously(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(JSC::JSGlobalObject*);
 extern "C" bool Bun__AOT__hasImmediatesYetToRun(JSC::JSGlobalObject*);
+extern "C" uint64_t Bun__AOT__transpilerJobsScheduled(JSC::JSGlobalObject*);
+extern "C" uint64_t Bun__AOT__transpilerJobsCompleted(JSC::JSGlobalObject*);
 extern "C" uint64_t Bun__AOT__computeFileStamp(const char* path, size_t length);
 extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__allowsCodeFromDisk();
@@ -425,7 +430,7 @@ static String resolveWithoutPlugins(JSGlobalObject* globalObject, const String& 
 static AOT::PluginResolveResult resolveWithPlugins(JSGlobalObject* globalObject, const String& name, const String& importer, String& resolvedWithoutPlugins)
 {
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    AOT::PluginResolveResult answer = isGivenByPlugin(global, name) ? AOT::PluginResolveResult::Answered : AOT::PluginResolveResult::Declined;
+    AOT::PluginResolveResult answer = isGivenByPlugin(global, name) ? AOT::PluginResolveResult::Resolved : AOT::PluginResolveResult::Declined;
     if (answer == AOT::PluginResolveResult::Declined && !global->onResolvePlugins.isEmpty()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
         BunString nameArgument = Bun::toString(name);
@@ -471,7 +476,7 @@ void willResolveImport(Zig::GlobalObject* globalObject, const String& key, JSVal
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     String path = importer.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    AOT::ModuleRequesterScope asker(globalObject, requesterForImporter(path));
+    AOT::ModuleRequesterScope requesterScope(globalObject, requesterForImporter(path));
     scope.release();
     refusesFileToAsker(globalObject, *module, AOT::LoadKind::Import);
 }
@@ -777,7 +782,7 @@ static bool isReadAsCodeByRequire(Zig::GlobalObject* globalObject, AOT::ModuleID
     if (!reloadsFilesFromDisk() || !AOT::isDataFile(module))
         return false;
     BunString pathString = Bun::toString(path);
-    return Bun__getDefaultLoader(globalObject, &pathString, nullptr) == BunLoaderTypeJS && !AOT::isHeldForImport(globalObject, module);
+    return Bun__getDefaultLoader(globalObject, &pathString, nullptr) == BunLoaderTypeJS && !AOT::hasBeenImported(globalObject, module);
 }
 
 // The require() of the library is in a program that loads under names of its own making. The build has followed this name, so the engine is asked at once.
@@ -849,6 +854,21 @@ bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject* globalObject, JSC
     return true;
 }
 
+// A CommonJS file that has no `module` yet takes the object that require() made, as in `bun run`.
+static bool tryAdoptModuleObject(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module, JSString* key)
+{
+    if (!AOT::newModuleObjectTraits(globalObject, module))
+        return false;
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    AOT::ModuleObjects objects;
+    objects.module = target;
+    objects.require = attachRequireFunction(vm, globalObject, target, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    AOT::adoptModuleObject(globalObject, module, objects);
+    return true;
+}
+
 bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool hasImportAttributes)
 {
     auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes, AOT::LoadKind::Require);
@@ -868,23 +888,17 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
     if (JSValue loader = reloadsFilesFromDisk() ? JSValue() : loaderOfProgramForFile(globalObject, path)) {
         JSString* key = jsString(vm, path);
         // What the loader lays on the object the file finds on its `module`, as in `bun run`.
-        auto traits = AOT::newModuleObjectTraits(globalObject, *module);
         // Until the file runs it is an object of require() like any other: `exports` is the empty object that lies there, and it is a child of whoever asked.
-        if (traits) {
-            AOT::ModuleObjects objects;
-            objects.module = target;
-            objects.require = attachRequireFunction(vm, globalObject, target, key);
-            RETURN_IF_EXCEPTION(scope, false);
-            AOT::adoptModuleObject(globalObject, *module, objects);
-        }
-        SetForScope isHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram { target, &path, module->index(), traits.has_value() });
+        bool isAdopted = tryAdoptModuleObject(globalObject, target, *module, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        SetForScope isHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram { target, &path, module->index(), isAdopted });
         MarkedArgumentBuffer arguments;
         arguments.append(target);
         arguments.append(key);
         JSC::profiledCall(globalObject, ProfilingReason::API, loader, getCallData(loader), target, arguments);
         if (scope.exception()) [[unlikely]] {
             // The object leaves the cache. Where the file has not run, or may run again, the next require() makes its `module`.
-            if (traits)
+            if (isAdopted)
                 AOT::releaseModuleObject(globalObject, *module);
             return false;
         }
@@ -917,6 +931,10 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
     if (requirer && !referrer) {
         target->compiledModuleLoadedInto = module.index();
         AOT::willRequireFromUncompiledCode(globalObject, module, requirer);
+        bool isAdopted = tryAdoptModuleObject(globalObject, target, module, key);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (isAdopted)
+            target->hasEvaluated = true;
     }
     if (reloadsFilesFromDisk()) {
         if (AOT::isESModule(module))
@@ -1001,7 +1019,7 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     // Whoever has the function of a default loader can hand it any object and any path. Ahead of what is laid on the object: a refusal leaves it as it was.
     String requesterPath = requesterForRequire(target, String());
-    AOT::ModuleRequesterScope asker(globalObject, requesterPath);
+    AOT::ModuleRequesterScope requesterScope(globalObject, requesterPath);
     if (refusesFileToAsker(globalObject, *module, AOT::LoadKind::Require))
         return false;
     takeForModuleObjectOfFile(globalObject, target, *module, path);
@@ -1889,6 +1907,20 @@ static uint64_t pendingFactoryCallID(JSGlobalObject* globalObject, AOT::ModuleID
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static bool isFactoryCallPending(JSGlobalObject* globalObject, uint64_t call)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return Zig::isCompiledFactoryCallPending(defaultGlobalObject(globalObject), call);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
+static bool isAwaitingOriginalBody(JSGlobalObject* globalObject, AOT::ModuleID module)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return Zig::isMockAwaitingBody(defaultGlobalObject(globalObject), module);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static bool isInPendingFactoryChain(JSGlobalObject* globalObject, AOT::ModuleID file, AOT::ModuleID mocked)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -1992,7 +2024,7 @@ static void crashWithReason(std::span<const char> reason)
     Bun__panic(reason.data(), reason.size());
 }
 
-bool decompressText(std::span<uint8_t> text, std::span<const uint8_t> compressed)
+bool decompressSource(std::span<uint8_t> text, std::span<const uint8_t> compressed)
 {
     ZSTD_DCtx* context = ZSTD_createDCtx();
     bool isOpened = context && ZSTD_decompressDCtx(context, text.data(), text.size(), compressed.data(), compressed.size()) == text.size();
@@ -2016,14 +2048,16 @@ static void fulfillFetchesInLaterTick(WebCore::ScriptExecutionContext& context, 
         // A task behind the yield that an immediate has posted runs in the same iteration, ahead of the next immediates. The thread of `bun test` is not that fast.
         if (isBunTest && !wasPostponed && (Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(context.globalObject()) || Bun__AOT__hasImmediatesYetToRun(context.globalObject()))) [[unlikely]]
             return fulfillFetchesInLaterTick(context, true);
-        AOT::fulfillDeferredFetches(context.vm());
+        // A compiled test run reads some files from disk too, the original of a mocked file for one. `bun test` hands every read to one pool, so a read that was requested earlier ends first.
+        if (!AOT::fulfillDeferredFetches(context.vm(), Bun__AOT__transpilerJobsCompleted(context.globalObject()))) [[unlikely]]
+            return fulfillFetchesInLaterTick(context, wasPostponed);
         // What the delivery has queued runs here, ticks too, so that the run time hears where it ends: what a later turn calls for is held again.
         defaultGlobalObject(context.globalObject())->drainMicrotasks();
         AOT::didDrainDeferredFetchJobs(context.vm());
     });
 }
 
-static void scheduleFetchFulfillment(JSGlobalObject* globalObject)
+static uint64_t scheduleFetchFulfillment(JSGlobalObject* globalObject)
 {
     WebCore::ScriptExecutionContext& context = *defaultGlobalObject(globalObject)->scriptExecutionContext();
     // An executable has every text: what waits for a graph goes on once the jobs have run, ahead of timers and immediates, as in `bun run` and Node.js.
@@ -2031,9 +2065,11 @@ static void scheduleFetchFulfillment(JSGlobalObject* globalObject)
         context.postTask([](WebCore::ScriptExecutionContext& context) {
             AOT::fulfillDeferredFetches(context.vm());
         });
-        return;
+        return 0;
     }
     fulfillFetchesInLaterTick(context, false);
+    // What a factory imports is decided at its call. The run time decides it again when the source arrives, so such a fetch is not moved behind the reads from disk.
+    return Zig::isInsideMockFactory(defaultGlobalObject(globalObject)) ? 0 : Bun__AOT__transpilerJobsScheduled(globalObject);
 }
 
 static bool isRequiredByOwnFactory(JSGlobalObject* globalObject, AOT::ModuleID required, AOT::ModuleID requirer)
@@ -2104,7 +2140,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isRequestedByPendingFactory,
     &hasSourceCache,
     &crashWithReason,
-    &decompressText,
+    &decompressSource,
     &pendingFactoryCallID,
     &evaluateOriginalBeforeFactory,
     &isLoadingUnderVitest,
@@ -2115,9 +2151,11 @@ const AOT::ModuleHost compiledModuleHost = {
     &willLoad,
     &isInPendingFactoryChain,
     &isRequiredByOwnFactory,
+    &isFactoryCallPending,
+    &isAwaitingOriginalBody,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 52 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 54 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
@@ -2436,7 +2474,7 @@ using namespace JSC;
 
 const AOT::ModuleHost compiledModuleHost {};
 
-bool decompressText(std::span<uint8_t>, std::span<const uint8_t>) { return false; }
+bool decompressSource(std::span<uint8_t>, std::span<const uint8_t>) { return false; }
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> moduleThatMockReplaces(const String&) { return std::nullopt; }

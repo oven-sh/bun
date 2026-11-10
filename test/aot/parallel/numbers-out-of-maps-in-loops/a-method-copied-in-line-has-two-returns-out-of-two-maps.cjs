@@ -1,5 +1,5 @@
 // Two returns of a method copied in line meet behind the call: what has met is asked for a number.
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 1
+// STATISTIC: MapResultsGuardedAsNumbers >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.other = new Map(); } look(k) { if (k & 1) return this.other.get(k); return this.get(k); } }
 const one = new H(); for (let k = 0; k < 8; k++) { one.set(k, k === 4 ? "4" : k); one.other.set(k, k === 3 ? "3" : k * 2); }

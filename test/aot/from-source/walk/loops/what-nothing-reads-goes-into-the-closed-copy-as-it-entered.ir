@@ -5,7 +5,7 @@
 # function word() { var from = at; for (;;) { var c = text.charCodeAt(at); if (c !== c || isSpace(c) || c === 44) break; at++; } return text.slice(from, at); }
 # print(word());
 # -- end of source
-# STATISTIC: TurnsThatBeginAgain >= 1
+# STATISTIC: IterationRestartsEmitted >= 1
 # RUN: walk f1 mechanisms=all
 # CHECK: code f1:Body
 # RUN(ANSWERS): run-in-shell mechanisms=all

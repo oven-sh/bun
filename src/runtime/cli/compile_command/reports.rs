@@ -5,7 +5,7 @@ use bun_aot::report::{self, ReportEntry, ReportInput};
 use bun_aot::statistics::{Stage, StatisticId, Statistics};
 use bun_bundler::aot::{AotBuild, MetafileOutput, write_metafile};
 use bun_bundler::linker_context::metafile_builder::generate_markdown;
-use bun_core::ZBox;
+use bun_core::{Output, ZBox};
 use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_sys::Fd;
 use bun_trim::UsedFeatures;
@@ -13,7 +13,8 @@ use bun_trim::UsedFeatures;
 use super::trimming::Trimming;
 use super::{CompileFailure, CompileOutcome};
 
-const ENGINE_STAGES: RangeInclusive<Stage> = Stage::ReadAndVerify..=Stage::BuildImage;
+/// The checker answers questions while the program is lowered, so the two have one time.
+const CHECK_STAGES: RangeInclusive<Stage> = Stage::BindModules..=Stage::Lower;
 const MODULE_STATISTICS: [StatisticId; 3] = [
     StatisticId::SourceFilesChecked,
     StatisticId::SourceFilesInferred,
@@ -43,14 +44,13 @@ pub(super) fn collect_reports(
     options: &AotOptions,
     used: &UsedFeatures,
     trimming: &Trimming,
+    compiler_called_at: i128,
 ) -> CompileOutcome {
     let input = report_input(build, options, used, trimming);
     let mut summary = Vec::new();
-    report::write_summary(&input, &mut summary);
+    report::write_summary(&input, Output::enable_ansi_colors_stderr(), &mut summary);
     let mut developer_options = Vec::new();
-    report::write_developer_options(&options.option_words, &mut developer_options);
-    let mut untyped_note = Vec::new();
-    report::write_untyped_note(&build.statistics, &mut untyped_note);
+    report::write_developer_options(options, &mut developer_options);
 
     let mut entries = report::collect_entries(&input, options.explain);
     if !trimming.has_edges() && options.explain.contains(ExplainSet::RUNTIME_USE) {
@@ -72,11 +72,16 @@ pub(super) fn collect_reports(
         report_messages,
         trim_log_lines: Vec::new(),
         executable: None,
-        untyped_note,
         module_count: count_modules(&build.statistics),
+        line_count: build.statistics.get(StatisticId::SourceLines),
+        untyped_file_count: build.statistics.get(StatisticId::SourceFilesDemoted),
+        unverified_dependency_file_count: build
+            .statistics
+            .get(StatisticId::DependencyFilesNotVerified),
         names_added_to_builtins: build.names_added_to_builtins.clone(),
-        engine_time: compute_engine_time(&build.statistics),
-        executable_time: Duration::ZERO,
+        compiler_called_at,
+        load_time: Duration::from_nanos(build.statistics.get(Stage::Load.time())),
+        check_time: compute_check_time(&build.statistics),
     }
 }
 
@@ -170,10 +175,10 @@ pub(super) fn count_modules(statistics: &Statistics) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
-fn compute_engine_time(statistics: &Statistics) -> Duration {
+fn compute_check_time(statistics: &Statistics) -> Duration {
     let nanoseconds = Stage::ALL
         .into_iter()
-        .filter(|stage| ENGINE_STAGES.contains(stage))
+        .filter(|stage| CHECK_STAGES.contains(stage))
         .map(|stage| statistics.get(stage.time()))
         .fold(0, u64::saturating_add);
     Duration::from_nanos(nanoseconds)

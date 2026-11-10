@@ -1,5 +1,5 @@
 // A loop over an object stands in the turn of a generator method with two yields: the outer generator is walked in its loop, the inner one is made.
-// STATISTIC: GeneratorMethodsWalkedInPlaceOfIterations >= 1
+// STATISTIC: GeneratorMethodsInlinedIntoIterations >= 1
 class Pair { constructor(private first: number, private second: number) {} *[Symbol.iterator]() { yield this.first; yield this.second; } }
 function weigh(left: Pair, right: Pair): number {
   let sum = 0;

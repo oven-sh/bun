@@ -68,9 +68,10 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the class of a name (an index, a number as JavaScript prints it, a word that the schema lists) is read off its text once",
   },
   {
-    paths: /^src\/aot\/lower\/function\/original_asked_for\.rs$/,
+    paths: /^src\/sema\/import_sites\/requested_originals\.rs$/,
+    lines: /known::importActual \|\| name == known::requireActual/,
     reason:
-      "what `bun test` finds by searching the printed text of a mock's factory for three words is said at the build: the words are that search's own",
+      "which functions request the original of a mocked module: Bun's transpiler decides it in its parse pass by these two names alone, whatever they are bound to, and the build has to decide the same",
   },
   {
     paths: /^src\/aot\/options\.rs$/,
@@ -81,7 +82,7 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "a name that begins with % is the build's own: no program can write one",
   },
   {
-    paths: /^src\/aot\/(load\/react_compiler\/module_items|lower\/quoted_text)\.rs$/,
+    paths: /^src\/aot\/(load\/react_compiler\/module_items|lower\/quoted_source)\.rs$/,
     lines: /\.strip_prefix\(NAME_PREFIX\)|\.starts_with\(b"%"\)/,
     reason: "an identifier that begins with % is the build's own too: what is asked is who made the variable",
   },
@@ -188,9 +189,9 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/sema\/import_sites\/changed_files\.rs$/,
     lines:
-      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive|text|json|bytes|arrayBuffer|stream|constants)"|b"O_[A-Z]+"/,
+      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream|exists|stat|lstat|access)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive|text|json|bytes|arrayBuffer|stream|constants)"|b"O_[A-Z]+"|b"[FR]_OK"/,
     reason:
-      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change or read a file, which operand names it, and which flags of `fs.constants` only read. find_function() and find_members_below_holder() find the holder first, by the record of the import or as the free name `Bun`",
+      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change, read or query a file, which operand names it, and which flags and access modes of `fs.constants` only read. find_function() and find_members_below_holder() find the holder first, by the record of the import or as the free name `Bun`",
   },
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,

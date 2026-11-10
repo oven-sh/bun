@@ -9,9 +9,9 @@
 # The guard of gathers() fails on a parsed record, so its slow version runs. The turn of its loop holds no operator on numbers, no relation, no equality and no join of texts: only a call. The step of the for-of at the head of the loop
 # is itself something to reckon: the slow version is walked, not written straight, and asks what it iterates whether it is a list as made.
 # f1 = gathers
-# RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+# RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
 # REQUIRES(STRAIGHT): faulting-loop-polls as-written
-# STRAIGHT: statistic UnitsWrittenStraight 0
+# STRAIGHT: statistic StraightUnitsCompiled 0
 # RUN(SLOW): walk f1:SlowBody mechanisms=all
 # REQUIRES(SLOW): as-written
 # SLOW: IsPristine {{*}} builtinClass=Array

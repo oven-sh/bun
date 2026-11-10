@@ -3033,6 +3033,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         module_info,
                         tag,
                         bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
+                        requested_originals: ResolvedSource::requested_originals_from(
+                            &entry.requested_originals,
+                        ),
                         ..Default::default()
                     });
                 }

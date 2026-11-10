@@ -1,4 +1,4 @@
-// STATISTIC: CountersThatLoopsInsideStepAskedInFrontOfLoops >= 1
+// STATISTIC: NestedLoopCounterGuardsHoisted >= 1
 const rounds = +process.argv[2]! || 3;
 const say = (x: unknown) => Object.is(x, -0) ? "-0" : String(x);
 function swap(arr: number[], i: number, j: number): void { const kept = arr[i]!; arr[i] = arr[j]!; arr[j] = kept; }

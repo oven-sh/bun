@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutThatAreComeBackTo = 1
+// STATISTIC: UnrolledLoopsWithReentry = 1
 const rounds = Number(process.argv[2] ?? 3);
 const bytes = Uint8Array.from(new TextEncoder().encode('"one" "two\\"x" 12 "three and a longer text that goes on for a while \\\\ and on" "four" "" "\\"" 7'));
 function alone(d, from) {

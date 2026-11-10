@@ -1,5 +1,5 @@
 // What Top lays is laid twice: no birth is listed. The second reading ends at its first store.
-// STATISTIC: FieldsListedAtBirthsByConstructors = 0
+// STATISTIC: ConstructorFieldsFoldedIntoAllocations = 0
 function Top(a) { this.a = a; }
 function Twice(a) { Top.call(this, a); Top.call(this, a); this.b = 2; }
 Object.setPrototypeOf(Twice.prototype, Top.prototype);

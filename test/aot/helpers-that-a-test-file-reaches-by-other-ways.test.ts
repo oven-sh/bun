@@ -86,7 +86,7 @@ for (const [title, words] of Object.entries(forms)) {
     await findsAll(`import.meta.dir + "/rows/"`);
   });
   // A test run leaves a folder that is taken out of a URL first to the loader, so that a URL of the root of a large repository does not bring every file below it into the build.
-  // What is loaded from there is not compiled with the tests, and its spy is refused with a sentence that names the file: docs/compiler/compatibility.mdx, "What a test can't replace".
+  // What is loaded from there is not compiled with the tests, and its spy is refused with a sentence that names the file: docs/compiler/debugging.mdx, "What a test can't replace".
   test.failing(
     `the same where the folder is taken out of a URL first, which a test run does not follow yet: ${title}`,
     async () => {

@@ -115,11 +115,11 @@ pub fn find_parameter_named(
     bound: &Bound<'_>,
     mention: ExprId,
 ) -> Option<(FnId, usize)> {
-    let (function, place, path) = find_parameter_and_path_named(hir, bound, mention)?;
+    let (function, place, path) = find_parameter_key_path(hir, bound, mention)?;
     path.is_empty().then_some((function, place))
 }
 
-pub(super) fn find_parameter_and_path_named(
+pub(super) fn find_parameter_key_path(
     hir: &File<'_>,
     bound: &Bound<'_>,
     mention: ExprId,
@@ -285,7 +285,7 @@ pub(super) fn find_values_passed_for_pattern(
     find_written: FindWritten<'_>,
     may_be_exported: bool,
 ) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool)> {
-    let (function, index, path) = find_parameter_and_path_named(hir, bound, mention)?;
+    let (function, index, path) = find_parameter_key_path(hir, bound, mention)?;
     let id = hir[function].params.iter().nth(index)?;
     let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
     let has_default = hir[id].default.is_some();

@@ -1,5 +1,5 @@
 // The loop of a generator is walked with the turn of its consumer inside it: a consumer that brings nothing round adds to a field of an object from outside.
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 class Shelf { constructor(public books: number[]) {} *[Symbol.iterator]() { for (const book of this.books) yield book; } }
 const sums = { total: 0, turns: 0 };
 function add(shelf: Shelf): void { for (const book of shelf) { sums.total += book; sums.turns++; } }

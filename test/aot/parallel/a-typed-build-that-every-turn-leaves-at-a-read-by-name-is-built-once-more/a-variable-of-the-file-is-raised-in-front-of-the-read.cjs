@@ -1,5 +1,5 @@
 // An effect stands in front of the read in the same turn: the read may not begin the turn again: the count is exact.
-// STATISTIC: ReadsThatAskTheirSitesInTurnsThatCall = 0
+// STATISTIC: SiteCachedReadsBesideCalls = 0
 "use strict";
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }

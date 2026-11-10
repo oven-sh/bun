@@ -290,11 +290,6 @@ impl<'s> Decisions<'s> {
         })
     }
 
-    pub fn folds_text_that(&self, is_sought: impl Fn(Atom) -> bool) -> bool {
-        let mut constants = self.constants.iter();
-        constants.any(|it| matches!(it.constant, Constant::String(text) if is_sought(text)))
-    }
-
     #[inline]
     pub fn is_constant_in_bun_run(&self, hir: &File<'_>, expr: ExprId) -> bool {
         let Some(node) = hir.exprs.get(expr.idx()) else {

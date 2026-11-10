@@ -8,8 +8,8 @@
 # add({ id: "abc", owner: 3 });
 # print(items.length + " " + items[0].id + " " + items[1].id + " " + items[1].owner);
 # -- end of source
-# RUN(STOPS): compile MakersWithoutFieldsHeldFilled mechanisms=all
-# STOPS: statistic MakersWithoutFieldsHeldFilled 0
+# RUN(STOPS): compile IncompleteAllocationsTrapped mechanisms=all
+# STOPS: statistic IncompleteAllocationsTrapped 0
 # RUN(WALK): walk f1:Body mechanisms=all
 # WALK: HasNoExtraProperties
 # WALK: GetSlot {{*}} key="id" receivers=[L0] level=Proven

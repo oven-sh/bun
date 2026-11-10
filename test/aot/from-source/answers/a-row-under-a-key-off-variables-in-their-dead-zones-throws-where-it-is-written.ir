@@ -9,8 +9,8 @@
 # print(tried());
 # -- end of source
 # The variables that find the row are read in front of the loop. In its dead zone a variable holds nothing: the read in front asks that and goes the way on which the loop stands as walked before, where the check throws.
-# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
-# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: ReferenceError
 # RIGHT-NEXT: ReferenceError

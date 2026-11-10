@@ -13,6 +13,7 @@ use bun_ast::{ASTMemoryAllocator, Loader, Log, Msg, SideEffects};
 use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_react_compiler::Observer;
 use bun_resolver::compiled_program::{RefusedData, encode_refused_data};
 use bun_resolver::options::{ExternalModules, Packages};
@@ -237,7 +238,7 @@ pub(crate) struct BundlerServices {
     /// What `--asset` names, by absolute paths.
     assets: Box<[Vec<u8>]>,
     /// An asset below this folder is embedded under its path from the root, where the code beside it looks for it. Any other is embedded under its name alone.
-    folder_of_assets_that_keep_paths: Vec<u8>,
+    assets_root: Vec<u8>,
     names_wanted: NamesWanted,
     names_of_packages: Guarded<NamesOfPackages>,
 }
@@ -245,6 +246,22 @@ pub(crate) struct BundlerServices {
 pub(super) fn is_at_or_below(path: &[u8], folder: &[u8]) -> bool {
     let rest = path.strip_prefix(folder);
     rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
+}
+
+/// How many `..` the path from `root` to `asset` starts with, as `path_from_root` of the CLI spells it.
+fn count_levels_above(root: &[u8], asset: &[u8]) -> usize {
+    let Some(written_folder) = bun_paths::dirname(asset) else {
+        return 0;
+    };
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let real_folder = bun_sys::realpath(&ZBox::from_bytes(written_folder), &mut buffer).ok();
+    let folders = [real_folder, Some(written_folder)];
+    if folders.iter().flatten().any(|it| is_at_or_below(it, root)) {
+        return 0;
+    }
+    let relative = bun_paths::resolve_path::relative(root, real_folder.unwrap_or(written_folder));
+    let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
+    steps.take_while(|&step| step == b"..").count()
 }
 
 pub(crate) struct NamesWanted {
@@ -288,7 +305,7 @@ impl BundlerServices {
             refused_data: Guarded::new(Vec::new()),
             files_for_file_system: Guarded::new(FilesForFileSystem::default()),
             assets: Box::default(),
-            folder_of_assets_that_keep_paths: Vec::new(),
+            assets_root: Vec::new(),
             names_wanted,
             names_of_packages: Guarded::new(NamesOfPackages::default()),
         }
@@ -297,10 +314,10 @@ impl BundlerServices {
     pub(crate) fn with_assets(
         mut self,
         assets: Box<[Vec<u8>]>,
-        folder_of_assets_that_keep_paths: Vec<u8>,
+        assets_root: Vec<u8>,
     ) -> BundlerServices {
         self.assets = assets;
-        self.folder_of_assets_that_keep_paths = folder_of_assets_that_keep_paths;
+        self.assets_root = assets_root;
         self
     }
 
@@ -322,10 +339,10 @@ impl BundlerServices {
         found.any(|found| &found[..] == source_path)
     }
 
-    fn is_file_that_asset_would_bring(&self, source_path: &[u8]) -> bool {
+    fn is_embeddable_as_asset(&self, source_path: &[u8]) -> bool {
         let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
         let mut assets = self.assets.iter();
-        is_at_or_below(source_path, &self.folder_of_assets_that_keep_paths)
+        is_at_or_below(source_path, &self.assets_root)
             && !assets.any(|asset| is_at_or_below(source_path, asset))
             && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
     }
@@ -341,8 +358,10 @@ impl BundlerServices {
             let place = place.map(|it| (it.file.clone(), it.line, it.column));
             (place, kept.1.data.text.clone())
         };
-        files.warnings_if_lacking.sort_by_cached_key(key);
-        files.warnings_if_lacking.dedup_by_key(|kept| key(kept));
+        files.warnings_if_not_embedded.sort_by_cached_key(key);
+        files
+            .warnings_if_not_embedded
+            .dedup_by_key(|kept| key(kept));
         files
     }
 
@@ -361,8 +380,8 @@ pub struct FilesForFileSystem {
     pub data_found_by_patterns: Vec<Box<[u8]>>,
     /// The compiled files that `node:fs` finds in the executable. Empty where there is no such data file.
     pub code_seen: Vec<Box<[u8]>>,
-    /// With the path of a data file above: what the build says if `node:fs` won't find it in the executable. Ascending by place and text, each once.
-    pub warnings_if_lacking: Vec<(Box<[u8]>, Msg)>,
+    /// The path of one of the data files above, with the warning to emit if `node:fs` won't find it in the executable. Sorted by location and text, without duplicates.
+    pub warnings_if_not_embedded: Vec<(Box<[u8]>, Msg)>,
 }
 
 impl SourceProvider for BundlerServices {
@@ -570,18 +589,31 @@ impl SourceProvider for BundlerServices {
             .push(source_path.into());
     }
 
-    fn is_file_that_only_asset_brings(&self, source_path: &[u8]) -> bool {
-        !self.is_found_by_pattern(source_path) && self.is_file_that_asset_would_bring(source_path)
+    fn embeds_assets(&self) -> bool {
+        !self.assets.is_empty() && !self.names_wanted.runs_in_place
     }
 
-    fn is_data_file_that_its_folder_may_hide(&self, source_path: &[u8]) -> bool {
-        self.is_found_by_pattern(source_path) && self.is_file_that_asset_would_bring(source_path)
+    fn highest_asset_level(&self) -> usize {
+        if self.names_wanted.runs_in_place {
+            return 0;
+        }
+        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        let levels = self.assets.iter().map(|it| count_levels_above(root, it));
+        levels.max().unwrap_or(0)
     }
 
-    fn warn_if_file_system_lacks(&self, source_path: &[u8], warning: Msg) {
+    fn is_embeddable_only_by_asset(&self, source_path: &[u8]) -> bool {
+        !self.is_found_by_pattern(source_path) && self.is_embeddable_as_asset(source_path)
+    }
+
+    fn is_embedding_undecided(&self, source_path: &[u8]) -> bool {
+        self.is_found_by_pattern(source_path) && self.is_embeddable_as_asset(source_path)
+    }
+
+    fn warn_if_not_embedded(&self, source_path: &[u8], warning: Msg) {
         let mut files = self.files_for_file_system.lock();
         files
-            .warnings_if_lacking
+            .warnings_if_not_embedded
             .push((source_path.into(), warning));
     }
 

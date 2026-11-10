@@ -1,4 +1,4 @@
-// DECLARED: docs/compiler/compatibility.mdx, "Smaller differences". A stand-in laid under the private symbol `handle` of a response does something to the list of headers that it is handed.
+// Differs from `bun run` by design. A stand-in laid under the private symbol `handle` of a response does something to the list of headers that it is handed.
 // `bun <file>` renders every response into one list for the process: behind freeze() the next res.end() throws a TypeError, behind preventExtensions() every later one with a header does.
 // An executable hands out a list for each response, and one empty list where there are no headers, as long as nothing has been put into it. A later response goes out with its own headers and no others.
 // What writes into the list comes first: behind freeze() a list that is handed out whatever it holds could take nothing more, and the rows on the wire would say nothing.

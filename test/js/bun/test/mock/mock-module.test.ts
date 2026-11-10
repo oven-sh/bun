@@ -686,6 +686,204 @@ const manualMocks = {
 };
 
 describe.concurrent("the original of a mocked module", () => {
+  const logged = {
+    "own.ts": `(globalThis.order ??= []).push("own"); export const value = "own";`,
+    "other.ts": `(globalThis.order ??= []).push("other"); export const other = "other";`,
+    "user.ts": `import { value } from "./own"; export const look = () => value;`,
+  };
+  const testOf = (setup: string, mock: string, order: string[]) => `
+    import { expect, jest, mock, test, vi } from "bun:test";
+    ${setup}
+    test("loads", async () => {
+      ${mock}
+      const { look } = await import("./user");
+      expect([look(), ...globalThis.order]).toEqual(${JSON.stringify(["mock", ...order])});
+    });
+  `;
+  const body = `(globalThis.order ??= []).push("factory"); return { ...(await vi.importActual("./own")), value: "mock" };`;
+
+  test("is evaluated before a factory that requests it by name, however the factory is passed", async () => {
+    const requested = ["own", "factory"];
+    await expectFixturesToPass(
+      {
+        ...logged,
+        "factory.ts": `import { vi } from "bun:test"; export const factory = async () => { ${body} };`,
+        "factory.cjs": `exports.factory = () => { (globalThis.order ??= []).push("factory"); return { ...jest.requireActual("./own"), value: "mock" }; };`,
+        "arrow.test.ts": testOf("", `vi.doMock("./own", async () => { ${body} });`, requested),
+        "type-argument.test.ts": testOf(
+          "",
+          `vi.doMock("./own", async () => { ${body.replace("importActual(", 'importActual<typeof import("./own")>(')} });`,
+          requested,
+        ),
+        "function-expression.test.ts": testOf("", `vi.doMock("./own", async function () { ${body} });`, requested),
+        "variable.test.ts": testOf(
+          `const factory = async () => { ${body} };`,
+          `vi.doMock("./own", factory);`,
+          requested,
+        ),
+        "declaration.test.ts": testOf(
+          `async function factory() { ${body} }`,
+          `vi.doMock("./own", factory);`,
+          requested,
+        ),
+        "method.test.ts": testOf(
+          `const holder = { async factory() { ${body} } };`,
+          `vi.doMock("./own", holder.factory);`,
+          requested,
+        ),
+        "another-file.test.ts": testOf(
+          `import { factory } from "./factory";`,
+          `vi.doMock("./own", factory);`,
+          requested,
+        ),
+        "commonjs.test.ts": testOf(
+          `import { factory } from "./factory.cjs";`,
+          `jest.doMock("./own", factory);`,
+          requested,
+        ),
+        "mock-module.test.ts": testOf("", `mock.module("./own", async () => { ${body} });`, requested),
+        "after-non-ascii.test.ts": testOf(
+          `const text = "grüß dich 😀";`,
+          `vi.doMock("./own", async () => { ${body} });`,
+          requested,
+        ),
+        "nested.test.ts": testOf(
+          "",
+          `vi.doMock("./own", async () => { const load = async () => { ${body} }; return load(); });`,
+          requested,
+        ),
+      },
+      11,
+      ["--isolate"],
+    );
+  });
+
+  test("is not evaluated for a factory that only has importOriginal or importActual as a word in its source", async () => {
+    const mocked = (statement: string) =>
+      testOf(
+        "enum Notes { importOriginal = 1 }",
+        `vi.doMock("./own", () => { (globalThis.order ??= []).push("factory"); ${statement}; return { value: "mock" }; });`,
+        ["factory"],
+      );
+    await expectFixturesToPass(
+      {
+        ...logged,
+        "string.test.ts": mocked(`globalThis.note = "importOriginal importActual requireActual"`),
+        "key.test.ts": mocked(`globalThis.note = { importOriginal: 1, importActual: 2, requireActual: 3 }`),
+        "local.test.ts": mocked(`const importOriginal = { caught: 1 }; try { throw importOriginal; } catch {}`),
+        "shorthand.test.ts": mocked(`const importOriginal = Math.random(); globalThis.note = { importOriginal }`),
+        "enum-member.test.ts": mocked(`globalThis.note = Notes["importOriginal"] + Math.random()`),
+        "longer-name.test.ts": mocked(`globalThis.note = (vi as any).importActually`),
+        "comment.test.ts": mocked(`/*! importActual("./own") */`),
+        "regular-expression.test.ts": mocked(`globalThis.note = /importActual/`),
+        "template.test.ts": mocked("globalThis.note = `importActual(${1})`"),
+      },
+      9,
+      ["--isolate"],
+    );
+  });
+
+  test("is not evaluated for a factory that requests another module", async () => {
+    await expectFixturesToPass(
+      {
+        ...logged,
+        "another-module.test.ts": testOf(
+          "",
+          `vi.doMock("./own", async () => { (globalThis.order ??= []).push("factory"); await vi.importActual("./other"); return { value: "mock" }; });`,
+          ["factory", "other"],
+        ),
+      },
+      1,
+    );
+  });
+
+  test("is not evaluated for a request in code that never runs", async () => {
+    const mocked = (statements: string, order = ["factory"]) =>
+      testOf(
+        "",
+        `vi.doMock("./own", async () => { (globalThis.order ??= []).push("factory"); ${statements} });`,
+        order,
+      );
+    await expectFixturesToPass(
+      {
+        ...logged,
+        "after-return.test.ts": mocked(`return { value: "mock" }; await vi.importActual("./own");`),
+        "after-throw.test.ts": mocked(
+          `if (globalThis.never) { throw 1; await vi.importActual("./own"); } return { value: "mock" };`,
+        ),
+        "under-false.test.ts": mocked(`if (false) await vi.importActual("./own"); return { value: "mock" };`),
+        "else-of-true.test.ts": mocked(`if (true) return { value: "mock" }; else await vi.importActual("./own");`),
+        "behind-false-and.test.ts": mocked(`false && (await vi.importActual("./own")); return { value: "mock" };`),
+        "dead-arm.test.ts": mocked(`void (0 ? await vi.importActual("./own") : 1); return { value: "mock" };`),
+        "declared.test.ts": mocked(`declare const made = vi.importActual; return { value: "mock" };`),
+        "sum-names-another-module.test.ts": mocked(`await vi.importActual("./ot" + "her"); return { value: "mock" };`, [
+          "factory",
+          "other",
+        ]),
+        // A function declaration is hoisted.
+        "function-after-return.test.ts": mocked(
+          `return { ...(await load()), value: "mock" }; function load() { return vi.importActual("./own"); }`,
+          ["own", "factory"],
+        ),
+      },
+      9,
+      ["--isolate"],
+    );
+  });
+
+  test("is found by a name that is held in a constant", async () => {
+    const mocked = (setup: string, name: string, order = ["factory", "other"]) =>
+      testOf(
+        setup,
+        `vi.doMock("./own", async () => { (globalThis.order ??= []).push("factory"); return { ...(await vi.importActual(${name})), value: "mock" }; });`,
+        order,
+      );
+    await expectFixturesToPass(
+      {
+        ...logged,
+        "const.test.ts": mocked(`const other = "./other";`, `other`),
+        "const-in-sum.test.ts": mocked(`const rest = "her";`, `"./ot" + rest`),
+        "const-in-template.test.ts": mocked(`const rest = "other";`, "`./${rest}`"),
+        "const-declared-later.test.ts": mocked(``, `other`) + `const other = "./other";`,
+        "enum-member.test.ts": mocked(`enum Names { Other = "./other" }`, `Names.Other`),
+        "mocked-module.test.ts": mocked(`const own = "./own";`, `own`, ["own", "factory"]),
+        // Any of these may name the mocked module.
+        "let.test.ts": mocked(`let other = "./other";`, `other`, ["own", "factory", "other"]),
+        "shadowed.test.ts": testOf(
+          `const other = "./other";`,
+          `vi.doMock("./own", async () => { (globalThis.order ??= []).push("factory"); const load = (other: string) => vi.importActual(other); return { ...(await load("./other")), value: "mock" }; });`,
+          ["own", "factory", "other"],
+        ),
+      },
+      8,
+      ["--isolate"],
+    );
+  });
+
+  test("a file from the transpiler cache still says which functions request the original", async () => {
+    using dir = tempDir("mock-module", {
+      ...logged,
+      "cached.test.ts": testOf(`// ${"-".repeat(8192)}`, `vi.doMock("./own", async () => { ${body} });`, [
+        "own",
+        "factory",
+      ]),
+    });
+    const cache = join(String(dir), "cache");
+    for (let run = 0; run < 2; run++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 1 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+      expect(readdirSync(cache)).not.toBeEmpty();
+    }
+  });
+
   test("importOriginal and vi.importActual load a module that was never loaded, once", async () => {
     await expectFixturesToPass(
       {

@@ -234,13 +234,13 @@ fn finish_keeps_file_and_module() {
     let fragment = builder.finish_alone(ModuleFragment {
         body: Some(body),
         data: Some(data),
-        types_in_function_text: Some(PackedTypeRanges::default()),
+        erased_type_ranges: Some(PackedTypeRanges::default()),
         ..ModuleFragment::default()
     });
     assert_eq!(fragment.file, FileId(5));
     assert_eq!(fragment.module.body, Some(body));
     assert_eq!(fragment.module.data, Some(data));
-    assert!(fragment.module.types_in_function_text.is_some());
+    assert!(fragment.module.erased_type_ranges.is_some());
 }
 
 #[test]

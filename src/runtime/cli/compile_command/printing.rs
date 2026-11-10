@@ -1,8 +1,11 @@
-use std::io::Write as _;
+use core::time::Duration;
 
 use bstr::BStr;
 use bun_aot::report;
-use bun_core::{Global, Output, fmt as bun_fmt, strings};
+use bun_aot::report::build_rows::{
+    BuildRows, ExecutableSize, format_executable_size, write_build_rows,
+};
+use bun_core::{Global, Output, strings};
 use bun_options_types::compile_target::CompileTarget;
 use bun_standalone_graph::StandaloneModuleGraph::ExecutableDetails;
 
@@ -70,38 +73,24 @@ pub(crate) fn print_failure(
     Output::flush();
 }
 
-fn print_elapsed(elapsed: i64) {
-    let padding_buf = [b' '; 16];
-    let elapsed_digit_count: usize = 4usize.saturating_sub(bun_fmt::digit_count(elapsed));
-
-    bun_core::pretty!("{}", BStr::new(&padding_buf[0..elapsed_digit_count]));
-    Output::print_elapsed_stdout_trim(elapsed as f64);
-}
-
-pub(super) fn write_megabytes(out: &mut Vec<u8>, bytes: u64) {
-    let tenths = bytes.saturating_add(50_000) / 100_000;
-    let _ = write!(out, "{}.{} MB", tenths / 10, tenths % 10);
+fn size_of(executable: &ExecutableDetails) -> ExecutableSize {
+    ExecutableSize {
+        bytes: executable.size,
+        trimmed_bytes: (executable.trim_summary.as_ref())
+            .map(|summary| summary.requested_cut_bytes),
+    }
 }
 
 pub(crate) fn write_trimmed_size(executable: &ExecutableDetails, out: &mut Vec<u8>) {
-    let Some(summary) = &executable.trim_summary else {
-        return;
-    };
-    out.extend_from_slice(b"  ");
-    write_megabytes(out, executable.size);
-    out.extend_from_slice(b" (");
-    write_megabytes(out, summary.removed_bytes());
-    out.extend_from_slice(b" of unused Bun APIs removed)");
+    if executable.trim_summary.is_some() {
+        out.extend_from_slice(b"  ");
+        out.extend_from_slice(format_executable_size(size_of(executable)).as_bytes());
+    }
 }
 
-pub(super) fn write_executable_details(outcome: &CompileOutcome, out: &mut Vec<u8>) {
-    if let Some(executable) = &outcome.executable {
-        write_trimmed_size(executable, out);
-    }
-    if !outcome.untyped_note.is_empty() {
-        out.extend_from_slice(b"  ");
-        out.extend_from_slice(&outcome.untyped_note);
-    }
+pub(crate) fn time_since_start(timestamp: i128) -> Duration {
+    let nanoseconds = timestamp.saturating_sub(crate::cli::start_time());
+    Duration::from_nanos(u64::try_from(nanoseconds).unwrap_or(0))
 }
 
 pub(super) fn print_outcome(
@@ -112,28 +101,31 @@ pub(super) fn print_outcome(
 ) -> ! {
     print_log(log);
 
-    let total_elapsed =
-        ((finished - crate::cli::start_time()) as i64) / (bun_core::time::NS_PER_MS as i64);
-    let compiled_elapsed = (outcome.engine_time + outcome.executable_time).as_millis() as i64;
-    print_elapsed((total_elapsed - compiled_elapsed).max(0));
-    bun_core::prettyln!("  <green>bundle<r>  {} modules", outcome.module_count);
-
-    let mut details = Vec::new();
-    write_executable_details(&outcome, &mut details);
-    print_elapsed(compiled_elapsed);
-    bun_core::pretty!(
-        " <green>compile<r>  <b><blue>{}<r>{}\n",
-        BStr::new(outfile),
-        BStr::new(&details),
+    let whole_build = time_since_start(finished);
+    let bundle_time =
+        (time_since_start(outcome.compiler_called_at) + outcome.load_time).min(whole_build);
+    let check_time = outcome.check_time.min(whole_build - bundle_time);
+    let executable = outcome.executable.as_ref();
+    let build_id = executable
+        .and_then(|executable| executable.build_id.as_ref())
+        .map(|id| bun_crash_handler::build_id::write_hexadecimal(id));
+    let mut rows = Vec::new();
+    write_build_rows(
+        &BuildRows {
+            bundle_time,
+            check_time,
+            compile_time: whole_build - bundle_time - check_time,
+            module_count: u64::from(outcome.module_count),
+            line_count: outcome.line_count,
+            untyped_file_count: outcome.untyped_file_count,
+            outfile,
+            executable: executable.map(size_of),
+            build_id: build_id.as_ref().map(|id| &id[..]),
+        },
+        Output::enable_ansi_colors_stdout(),
+        &mut rows,
     );
-    if let Some(id) = outcome
-        .executable
-        .as_ref()
-        .and_then(|executable| executable.build_id)
-    {
-        let id = bun_crash_handler::build_id::write_hexadecimal(&id);
-        bun_core::prettyln!("        <green>build id<r>  {}", BStr::new(&id));
-    }
+    let _ = Output::writer().write_all(&rows);
     Output::flush();
 
     let mut json_reports = Vec::new();

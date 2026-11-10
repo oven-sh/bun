@@ -5,9 +5,10 @@
 # print(cut(fresh(), 1), cut(fresh(), 4), cut(fresh(), 9));
 # -- end of source
 # f1 = cut. The key is held below the length, the length is stored over, and the element is read. The store ends what the walk knows of the length: the read asks for itself.
-# THE LIE, testing=StoresOfLengthsAreTakenToEndNothing: the read is taken to lie inside on the test in front of the store. The verifier of the code walks back from an access to each ground that was read off the list
-# and refuses where the storage or the length of the same list is written on the way.
-# OPTIONS: testing=StoresOfLengthsAreTakenToEndNothing
+# Fault injection, testing=IgnoreLengthStores: the walk assumes that the read is in bounds because of the test before the store.
+# The code verifier walks back from an access to each piece of its bounds evidence that was read from the array.
+# It rejects the code where the storage or the length of the same array is written on the path.
+# OPTIONS: testing=IgnoreLengthStores
 # DIAGNOSTIC: OpcodeNotInForm f1
 # RUN: walk f1:Body mechanisms=all
 # CHECK-NOT: code f1:Body

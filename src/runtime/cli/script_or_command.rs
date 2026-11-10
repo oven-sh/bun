@@ -345,23 +345,20 @@ fn below(dir: &[u8], name: &[u8]) -> Vec<u8> {
     [dir, separator, name].concat()
 }
 
-/// Whether `bun <name>` in `cwd` finds a file to run, `name`, `name.ts` or `name/index.ts`, or an executable that a package has
-/// installed, here or further up. Not for `check`, which has been a command for longer.
-fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
+fn entry_kind(dir: &[u8], parts: &[&[u8]]) -> Option<bun_sys::ExistsAtType> {
+    let path = bun_core::ZBox::from_vec(below(dir, &parts.concat()));
+    bun_sys::exists_at_type(bun_core::Fd::cwd(), &path).ok()
+}
+
+/// Whether `bun <name>` in `cwd` finds a file to run: `name`, `name.ts` or `name/index.ts`.
+pub(super) fn is_runnable_file(name: &[u8], cwd: &[u8]) -> bool {
     use bun_sys::ExistsAtType;
-    if name == b"check" {
-        return false;
-    }
-    let kind = |dir: &[u8], parts: &[&[u8]]| {
-        let path = bun_core::ZBox::from_vec(below(dir, &parts.concat()));
-        bun_sys::exists_at_type(bun_core::Fd::cwd(), &path).ok()
-    };
     // Those of the resolver that can be run: `bun lint -o lint.json` must not take the name away.
     let extensions: [&[u8]; 8] = [
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts",
     ];
-    let is_file = |parts: &[&[u8]]| kind(cwd, parts) == Some(ExistsAtType::File);
-    let found = match kind(cwd, &[name]) {
+    let is_file = |parts: &[&[u8]]| entry_kind(cwd, parts) == Some(ExistsAtType::File);
+    let found = match entry_kind(cwd, &[name]) {
         Some(ExistsAtType::File) => true,
         Some(ExistsAtType::Directory) => {
             is_file(&[name, b"/package.json"])
@@ -369,16 +366,29 @@ fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
         }
         None => false,
     };
-    if found || extensions.iter().any(|it| is_file(&[name, it])) {
+    found || extensions.iter().any(|it| is_file(&[name, it]))
+}
+
+/// What follows the name of an executable in the name of its file in `node_modules/.bin`.
+pub(super) const LAUNCHER_SUFFIXES: &[&[u8]] = match cfg!(windows) {
+    true => &[b".bunx", b".exe", b".cmd"],
+    false => &[b""],
+};
+
+/// Whether `bun <name>` in `cwd` finds a file to run, or an executable that a package has installed, here or further up.
+/// Not for `check`, which has been a command for longer.
+fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
+    if name == b"check" {
+        return false;
+    }
+    if is_runnable_file(name, cwd) {
         return true;
     }
-    let suffixes: &[&[u8]] = match cfg!(windows) {
-        true => &[b".bunx", b".exe", b".cmd"],
-        false => &[b""],
-    };
     let mut dir = cwd;
     loop {
-        if (suffixes.iter()).any(|it| kind(dir, &[b"node_modules/.bin/", name, it]).is_some()) {
+        if (LAUNCHER_SUFFIXES.iter())
+            .any(|it| entry_kind(dir, &[b"node_modules/.bin/", name, it]).is_some())
+        {
             return true;
         }
         let Some(parent) = bun_paths::dirname(dir) else {

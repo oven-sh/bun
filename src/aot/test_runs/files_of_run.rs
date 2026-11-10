@@ -855,7 +855,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         .map(|index| package_of_file(FileId(index as u32)))
         .collect();
     let mut whose = vec![WhoseFile::OfNeither; count];
-    let mut loads_compiled_files_alone = vec![false; count];
+    let mut rejects_uncompiled_code = vec![false; count];
     for file in compiled() {
         let index = file.idx();
         whose[index] = match (is_of_tests[index], is_of_product[index]) {
@@ -866,7 +866,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         let loads_for_tests_alone = is_in_package[index]
             && !packages_of_product.contains(package_of_file(file))
             && loads_what_it_is_told(files, file);
-        loads_compiled_files_alone[index] = !is_of_tests[index] && !loads_for_tests_alone;
+        rejects_uncompiled_code[index] = !is_of_tests[index] && !loads_for_tests_alone;
     }
     let count_of = |side: WhoseFile| compiled().filter(|file| whose[file.idx()] == side).count();
     crate::test_run_report::say_whose_files(
@@ -875,7 +875,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         count_of(WhoseFile::OfProduct),
         count_of(WhoseFile::OfNeither),
     );
-    (whose, loads_compiled_files_alone)
+    (whose, rejects_uncompiled_code)
 }
 
 #[cfg(test)]

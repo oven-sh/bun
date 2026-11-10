@@ -459,7 +459,7 @@ BUN_OPTIONS="--heap-prof-md" ./myapp
 BUN_OPTIONS="--smol --cpu-prof-md" ./myapp
 ```
 
-An executable built with `bun compile` only takes `--inspect` if you built it with [`--compile-inspector`](/compiler/debugging#the-inspector).
+An executable built with `bun compile` only takes `--inspect` if you built it with [`--compile-inspector`](/compiler/debugging).
 
 ---
 
@@ -572,7 +572,7 @@ Checked 63 installs across 64 packages (no changes) [5.00ms]
 
 CLI tools built on top of Bun can use this to install packages, bundle dependencies, or run other files without downloading a separate binary or installing Bun.
 
-An executable built with `bun compile` doesn't include the `bun` CLI, so `BUN_BE_BUN=1` doesn't work there.
+An executable built with [`--trim`](#smaller-executables) doesn't include the `bun` CLI, so `BUN_BE_BUN=1` doesn't work there.
 
 ---
 
@@ -712,7 +712,7 @@ When you add multiple entrypoints to a standalone executable, Bun bundles each o
 
 We may eventually detect statically-known paths in `new Worker(path)` and bundle them automatically. For now, you need to list the worker file as an entrypoint, as in the earlier example.
 
-If you use a relative path to a file not included in the standalone executable, Bun loads that path from disk relative to the process's current working directory, and errors if it doesn't exist. An executable built with `--aot` does that only with [`--aot-allow-code-from-disk`](/compiler/compatibility#dynamic-imports). With [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings#files-on-disk-are-not-part-of-the-program), Bun doesn't load it.
+If you use a relative path to a file not included in the standalone executable, Bun loads that path from disk relative to the process's current working directory, and errors if it doesn't exist. An executable built with `--aot` does that only with [`--aot-allow-code-from-disk`](/compiler/compatibility). With [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings#files-on-disk-are-not-part-of-the-program), Bun doesn't load it.
 
 ---
 
@@ -734,8 +734,6 @@ That means if the executable is at `/usr/bin/hello` and the user's terminal is i
 cd /home/me/Desktop
 ./hello
 ```
-
-With `--aot`, a path is resolved the first time it is imported. After `process.chdir()`, `await import("./my.db", { with: { type: "sqlite" } })` returns the database that was opened first, not the one in the new directory.
 
 ---
 
@@ -931,7 +929,7 @@ console.log(addon.hello());
 
 If you're using `@mapbox/node-pre-gyp` or similar tools, require the `.node` file directly, or it won't bundle correctly.
 
-Some addons load a shared library that ships beside them. The `.node` file of `sharp` needs `libvips` from a neighboring package. With `--aot`, embed the folder that holds both:
+Some addons load a shared library that ships beside them, like `sharp` and `libvips`. With `--aot`, embed the folder that holds both:
 
 ```bash terminal icon="terminal"
 bun build --compile --aot ./index.ts --asset node_modules/@img --outfile mycli
@@ -975,21 +973,13 @@ const html = await Bun.file(path.join(publicDir, "index.html")).text();
 
 Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
 
-With `--aot`, the build also embeds the data files that a `require()` or `import()` with a path that isn't a constant may name, [where it can hold the whole folder](/compiler/compatibility). `fs.stat()` of such a file gives its size, one link, a number of its own and the times the file had when you built; they don't move later, and the owner is whoever runs the executable. A folder that comes into sight that way is also listed in the folder above it, whose own listing may still leave out what the executable doesn't hold. A file you embed with `--asset` has its size and no times.
+With `--aot`, your modules and the files you embed keep their places relative to one another, the same as under `bun run`. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`. That holds outside the directory you build in too: next to `../lib/load.mjs`, `--asset ../lib/data.txt` is at `path.join(import.meta.dir, "data.txt")`, and `Bun.embeddedFiles` lists it as `_.._/lib/data.txt`.
 
-With `--aot`, your modules and the files you embed keep their places relative to one another. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`.
+A single file keeps its folder too. `--asset ./a/config.json` is at `/$bunfs/root/a/config.json` with `--aot` and at `/$bunfs/root/config.json` without it. The shorter path also works with `--aot`.
 
-Without `--aot`, a single file is embedded under its base name: `--asset ./a/config.json` is at `/$bunfs/root/config.json`. With `--aot` it's at `/$bunfs/root/a/config.json`, and `/$bunfs/root/config.json` finds it too, so code written for either keeps working. Three things differ:
+`__dirname` and `__filename` give the path your source file had on the machine that ran the build. With `--aot`, Bun looks in the executable for a path under that directory that isn't on disk, so `path.join(__dirname, "public")` finds the files of `--asset ./public`.
 
-- The base name only resolves. `fs.readdirSync()` and `Bun.embeddedFiles` list the file once, as `a/config.json`.
-- If a module, another embedded file or a directory is already at that path, the path keeps meaning that.
-- `--asset ./a/config.json --asset ./b/config.json` is an error without `--aot`, because both files would be `config.json`. With `--aot` it builds. Each file is at its own path and `/$bunfs/root/config.json` doesn't exist.
-
-`__dirname`, `__filename` and `require.resolve()` give the path your source file had on the machine that ran the build, with and without `--aot`. An executable that uses one of them contains that path, so two builds in different directories differ. `import.meta.dir`, `import.meta.path` and `import.meta.url` start with `/$bunfs/root/` instead.
-
-With `--aot`, those paths keep working after you ship the executable. If a path under the build directory doesn't exist on the machine, Bun looks in the executable: `path.join(__dirname, "public")` finds the files of `--asset ./public`, `require(path.join(__dirname, "commands", file))` loads the compiled file, and `process.chdir(__dirname)` succeeds. If the path does exist, the file on disk wins, so on the build machine you can also read a file that you didn't embed.
-
-Embedded files are read-only, and writing to one fails with `EROFS`. `process.chdir()` works on an embedded directory.
+Embedded files are read-only. Writing to one fails with `EROFS`.
 
 You can also embed individual files via the `with { type: "file" }` import attribute or, for files that use the `file` loader (images, fonts, and so on) as well as `.wasm` and `.node` files, by adding them as extra entry points. With `--aot` an extra entry point is always compiled as code, so use `--asset` for these. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
 
@@ -1365,8 +1355,10 @@ interface CompileBuildOptions {
   aot?: boolean; // Compile the program to machine code ahead of time (default: false)
   aotExplain?: AotReport | AotReport[]; // With aot: reports to add to BuildOutput.logs, such as "guards"
   functionSource?: boolean; // With aot: embed function source code for fn.toString() (default: true)
+  obfuscate?: boolean; // With aot: strip function names and source locations, and write them to <outfile>.map (default: false)
   allowCodeFromDisk?: boolean; // With aot: let import(), require() and new Worker() load code from disk (default: false)
   inspector?: boolean; // With aot: let a debugger attach to the executable (default: false)
+  aotHarden?: string | string[]; // With aot: add run-time checks, "proof-checks" and "ignore-told-ranges" (default: none)
   trim?: boolean | TrimOptions; // Remove the Bun and Node.js APIs your code never calls (default: false)
   disallowCodeGenerationFromStrings?: boolean | "strict"; // eval() and new Function() throw (default: false)
   windows?: {

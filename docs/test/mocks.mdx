@@ -339,7 +339,7 @@ test("mock.module", async () => {
 });
 ```
 
-Like the rest of Bun, module mocks support both `import` and `require`. A `require()` can't wait for a factory that awaits: if the factory hasn't been called yet, a `require()` of the mocked module returns the original, and a `require()` of a module that imports it throws.
+Like the rest of Bun, module mocks support both `import` and `require`. `require()` can't wait for an async factory. If the factory hasn't been called yet, `require()` of the mocked module returns the original, and `require()` of a module that imports it throws.
 
 ### Overriding Already Imported Modules
 
@@ -420,7 +420,7 @@ When one import leads to several mocked modules, Bun calls their factories one a
 
 ### Getters and Missing Exports
 
-Bun reads an export from the object the factory returned every time it's used, so getters stay live. Where a mock updates the real module in place, an `import` of it sees what each getter returned at that moment.
+Bun reads an export from the object the factory returned every time it's used, so getters stay live. When a mock updates a loaded module in place, each getter is read once, at that moment.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -499,7 +499,7 @@ test("automock", () => {
 | `using _ = vi.doMock(path, factory)`                       | Removes the mock at the end of the block                       |
 | `vi.resetModules`, `jest.resetModules`                     | Re-evaluates each module on its next `import()` or `require()` |
 
-Mocked modules stay mocked after `resetModules()`. After `jest.resetModules()`, the next import also calls the factory again. Existing imports keep their values. With [`--aot`](/compiler/compatibility#under-bun-test---aot), an `import()` of a loaded module fails if its mock was made after a reset and uses the original.
+Mocked modules stay mocked after `resetModules()`. After `jest.resetModules()`, the next import also calls the factory again. Existing imports keep their values.
 
 As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a module imported again still shares its copy of `react` with the rest of the test. It does load the `.js` files again that Vitest loads like your own code (see [Mocking a Package](#mocking-a-package)). As in Jest, `jest.resetModules()` loads them again too.
 
@@ -804,7 +804,7 @@ test("lazy import", async () => {
 - If a module that is imported with a static import calls `vi.mock()` for a module that is waiting for an import with an async factory, the original still runs, and assigns its `const`, `let` and `class` exports. A module that reads one of those while it loads gets the original. What it reads later is the mock, and so are the `function` exports all along.
 - Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
 - If two factories import each other's modules, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
-- A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
+- A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it. So does a factory whose body contains `.importActual` or `.requireActual`, unless each is called with a string literal, or a `const` that holds one, that names another module. Code after a `return` or under a literal `false` doesn't count.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 
@@ -828,7 +828,7 @@ Bun resolves the module specifier the same way it resolves an `import`, supporti
 
 ### Import Timing Effects
 
-- **When mocking before first import**: The original module isn't evaluated, unless something still asks for it, such as a factory that declares `importOriginal`, `vi.importActual()`, a mock that has neither a factory nor a `__mocks__` file, or a module in `node_modules` that imports a package you mock with `vi.mock()`
+- **When mocking before first import**: The original module isn't evaluated, unless something still needs it, such as a factory that declares `importOriginal`, `vi.importActual()`, a mock that has neither a factory nor a `__mocks__` file, or a module in `node_modules` that imports a package you mock with `vi.mock()`
 - **When mocking after import**: The original module's side effects have already happened
 
 For this reason, use `vi.mock()`, `jest.mock()` or `--preload` for mocks that need to prevent side effects.

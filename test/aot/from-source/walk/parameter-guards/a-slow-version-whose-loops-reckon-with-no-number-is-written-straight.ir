@@ -10,9 +10,9 @@
 # Both functions have a guard that a parsed record fails, and a slow version that holds a loop. The loop of counts() has a counter, a relation and a sum: there the walk has something to reckon, so that slow version is walked. The loop of
 # follows() only reads names and asks for truth: no operator on numbers, no relation: a walk would reckon nothing there and only cost bytes and time of the build: that slow version is written straight, as one without a loop is.
 # f1 = counts, f2 = follows
-# RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+# RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
 # REQUIRES(STRAIGHT): faulting-loop-polls as-written
-# STRAIGHT: statistic UnitsWrittenStraight 1
+# STRAIGHT: statistic StraightUnitsCompiled 1
 # RUN(COUNTS): walk f1:SlowBody mechanisms=all
 # COUNTS: Increment {{*}} form=
 # RUN(ANSWERS): run-in-shell globalThis.sink = () => {};

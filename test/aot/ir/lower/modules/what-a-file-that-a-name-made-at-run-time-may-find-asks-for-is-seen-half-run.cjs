@@ -2,7 +2,7 @@
 // So what asker.cjs requires may be seen half run: served.cjs makes its first object ahead of everything else, and no request says that served.cjs completes.
 // RUN: link
 // CHECK: module [[served]] path="{{*}}/served.cjs"
-// CHECK: path="{{*}}/asker.cjs"{{*}}IsFoundByName, RunsAgain]{{*}}requests=[{target=[[served]] kind=Require}]
+// CHECK: path="{{*}}/asker.cjs"{{*}}IsFoundByName, MayBeReevaluated]{{*}}requests=[{target=[[served]] kind=Require}]
 // CHECK: function {{*}}module=[[served]] kind=CommonJsModule
 // CHECK-NEXT: b0():
 // CHECK-NEXT: = NewObject

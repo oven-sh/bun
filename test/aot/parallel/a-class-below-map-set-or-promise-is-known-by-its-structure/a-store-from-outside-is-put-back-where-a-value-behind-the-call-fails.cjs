@@ -1,5 +1,5 @@
 // A turn stores a field, calls a method that reads it, and adds a value that is no whole number in two of the turns: there the turn begins again as written, and the field holds what it held at the turn's head.
-// STATISTIC: StoresPutBackWhereTurnsBeginAgain >= 1
+// STATISTIC: StoresUndoneAtIterationRestarts >= 1
 // Under: --aot-testing=CheckEffectsAtRunTime: the store that puts the field back undoes a deed of the turn and is counted so
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; this.m = 2; this.o = null; } two() { return this.n + 1; } }

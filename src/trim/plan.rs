@@ -101,7 +101,7 @@ pub fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequiremen
         || requirements.iter().any(runs_unseen_code)
 }
 
-// Without ImageFlag::AdmitsLibraryText the realm of the program runs no built-in module from its text. A realm that the program creates holds nothing compiled and runs each from its text.
+// Without ImageFlag::AllowsLibrarySource the realm of the program runs no built-in module from its text. A realm that the program creates holds nothing compiled and runs each from its text.
 fn can_run_library_text(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
     used.names(CREATES_REALMS)
         || used
@@ -193,6 +193,7 @@ pub(crate) fn plan_table(
         refused_entry_points: Vec::new(),
         icu_packages,
         keeps_table: false,
+        unrequested: None,
     }
 }
 

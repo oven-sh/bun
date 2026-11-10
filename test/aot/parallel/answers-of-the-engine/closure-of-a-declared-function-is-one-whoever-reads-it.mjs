@@ -1,5 +1,5 @@
 // the closure of a declared function is a constant where nothing is ever stored into the variable, and is read where something takes it: as a value, a key, a receiver, thrown, yielded, across an await, in loops, in arms, ahead of its declaration. A variable that IS stored into is read where the read is written: what was read ahead of the store is called behind it
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function helper(x) { return x + 1; }
 function tagged() { return tagged.tag; }

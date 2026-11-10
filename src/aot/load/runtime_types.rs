@@ -65,6 +65,13 @@ pub(crate) fn read(path: &[u8]) -> Option<Vec<u8>> {
     Archive::read(&name_in_archive(path)?)
 }
 
+pub(crate) fn read_all() -> impl Iterator<Item = (Vec<u8>, Vec<u8>)> {
+    Archive::names_that_begin_with(IN_ARCHIVE).filter_map(|name| {
+        let path = [PACKAGES, &name[IN_ARCHIVE.len()..]].concat();
+        Some((path, Archive::read(name)?))
+    })
+}
+
 pub(crate) fn entries(path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     let (mut files, mut directories): (Vec<Vec<u8>>, Vec<Vec<u8>>) = Default::default();
     let Some(directory) = name_of_directory(path) else {

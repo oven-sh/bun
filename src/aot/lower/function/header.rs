@@ -58,7 +58,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     FunctionKey::StaticInitializer(class) => class.class,
                     enclosing @ (FunctionKey::ModuleBody(_)
                     | FunctionKey::WrappedModuleBody(_)
-                    | FunctionKey::FaceBody(_)
+                    | FunctionKey::FacadeBody(_)
                     | FunctionKey::CheckBody(_)
                     | FunctionKey::Instantiation(_)
                     | FunctionKey::Source(_)
@@ -158,7 +158,7 @@ pub(crate) fn create_header(
         name: None,
         module: file.module_id(),
         position,
-        text: SourceRange::default(),
+        source_range: SourceRange::default(),
         kind,
         role: file.source.function_role(),
         flags,
@@ -172,7 +172,7 @@ pub(crate) fn create_header(
         body: Body::default(),
         function_types: Vec::new(),
         builtin_members: Vec::new(),
-        originals_asked_for: Vec::new(),
+        requested_originals: Vec::new(),
     }
 }
 
@@ -265,14 +265,14 @@ fn create_source_header(
     if header.flags.contains(FunctionFlags::IS_ASYNC)
         && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function)
     {
-        header.syntax |= FunctionSyntax::HAS_WRITTEN_AWAIT;
+        header.syntax |= FunctionSyntax::HAS_LIVE_AWAIT;
     }
-    header.text = file.compute_text_range(function);
-    let asked = file.find_originals_asked_for(function, header.text);
-    if asked.may_be_own {
-        header.syntax |= FunctionSyntax::MAY_ASK_FOR_OWN_ORIGINAL;
+    header.source_range = file.compute_text_range(function);
+    let requested = file.find_requested_originals(function, header.source_range);
+    if requested.may_be_any_module {
+        header.syntax |= FunctionSyntax::MAY_IMPORT_OWN_ORIGINAL;
     }
-    header.originals_asked_for = asked.names;
+    header.requested_originals = requested.names;
     header.length = func
         .params
         .iter()

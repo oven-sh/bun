@@ -125,6 +125,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         commonjs_exports: CommonJsExports::default(),
         plan: Plan::new(OrderParts::without_sites(file_count), Vec::new()),
         member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
+        instance_layouts: (0..file_count).map(|_| OnceLock::new()).collect(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: Vec::new(),
         folders_of_databases: Vec::new(),

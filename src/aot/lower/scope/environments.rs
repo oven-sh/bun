@@ -14,7 +14,7 @@ use crate::builtins::{BuiltinPath, Mutability};
 use crate::ir::generated::{Field, FieldFlags, Layout, LayoutKind};
 use crate::ir::{
     ClassSlot, DeclaredType, LayoutId, LayoutKey, Mapped, OpaqueKind, PositionFlags, Primitives,
-    PropertyKey, StringId, Type, TypeTable,
+    PropertyKey, StringId, Type, TypeId, TypeTable,
 };
 use crate::lower::{FileLowering, class};
 use crate::modules::ModuleKind;
@@ -49,7 +49,65 @@ pub(in crate::lower) fn environment_layout(
     layout
 }
 
+pub(in crate::lower) fn instance_layout(file: &mut FileLowering<'_, '_, '_, '_>) -> LayoutId {
+    let key = LayoutKey::ModuleInstance(file.file);
+    let layout = file.fragment.declare_layout(key);
+    if file.fragment.is_layout_defined(layout) {
+        return layout;
+    }
+    let modules = file.inputs.modules;
+    let fields_of_instance = modules.instance_layout(file.file);
+    let fields_of_instance = fields_of_instance.expect("only a reloadable ES module has instances");
+    let mut fields = Vec::new();
+    for &symbol in fields_of_instance.exports() {
+        let mut field = file.create_environment_field(BindingRef::Symbol(symbol), fields.len());
+        field.flags = field.flags.without(FieldFlags::IS_REQUIRED);
+        if file.is_export_that_code_fills(symbol) {
+            let types = &mut file.fragment.types;
+            field.declared.ty = types.union(field.declared.ty, TypeTable::ABSENT);
+        }
+        fields.push(field);
+    }
+    for &target in fields_of_instance.links() {
+        let linked = LayoutKey::ModuleInstance(target);
+        let linked = file.fragment.declare_layout(linked);
+        let ty = file.fragment.types.intern(Type::environment(linked));
+        fields.push(file.create_hidden_field(fields.len(), ty));
+    }
+    let scope = file.bound.scope_of_declaration(file.hir, Decl::File);
+    let ty = match file.scopes.has_environment(scope) {
+        true => {
+            let environment = environment_layout(file, scope);
+            file.fragment.types.intern(Type::environment(environment))
+        }
+        false => TypeTable::ABSENT,
+    };
+    fields.push(file.create_hidden_field(fields.len(), ty));
+    if !file.fragment.is_layout_defined(layout) {
+        let definition = Layout {
+            kind: LayoutKind::Environment,
+            module: Some(file.module_id()),
+            fields,
+            place: Some(0),
+            ..Layout::default()
+        };
+        file.fragment.define_layout(layout, definition);
+    }
+    layout
+}
+
 impl FileLowering<'_, '_, '_, '_> {
+    fn create_hidden_field(&mut self, index: usize, ty: TypeId) -> Field {
+        let label = format!("{index}");
+        let label = self.intern_bytes(label.as_bytes());
+        let key = PropertyKey::from_engine_private_name(label);
+        Field {
+            key: Some(self.fragment.property_keys.intern(key)),
+            declared: DeclaredType::from_compiler(ty),
+            ..Field::default()
+        }
+    }
+
     pub(in crate::lower) fn stored_position(&mut self, binding: BindingRef) -> DeclaredType {
         let symbol = match binding {
             BindingRef::Symbol(symbol) => symbol,
@@ -179,6 +237,11 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 let path = self.builtins.commonjs_variable(variable);
                 self.expect_builtin_path(DeclaredType::untyped(), path)
+            }
+            ScopeSlot::ModuleInstance => {
+                let layout = LayoutKey::ModuleInstance(self.file);
+                let layout = self.fragment.declare_layout(layout);
+                DeclaredType::from_compiler(self.fragment.types.intern(Type::environment(layout)))
             }
             ScopeSlot::Class(ClassSlot::ClassToken) => {
                 let token = Type::opaque(OpaqueKind::ClassToken);

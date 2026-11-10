@@ -12,6 +12,7 @@ use crate::ir::generated::FunctionRole;
 use crate::link::{KeyContext, LinkUnit};
 use crate::load::data_modules::parse_json;
 use crate::load::runtime_roots::builtins_used_at_start;
+use crate::load::runtime_types;
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::{
@@ -23,6 +24,7 @@ use crate::report;
 use crate::statistics::{Stage, StatisticId, instructions_of_all_threads, logs_stages};
 use bun_ast::runtime::ReactCompilerMode;
 use bun_core::current_work;
+use bun_options_types::aot_options::DependencyTypeErrors;
 use bun_sema::atom::known;
 use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::check::Checker;
@@ -38,6 +40,7 @@ use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Incomplete, RoleDecision,
     TextLocator, decide_roles, keep_verified_roles, run_on_one_thread_while,
 };
+use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
@@ -50,15 +53,23 @@ pub(crate) struct LoweredUnit {
     pub functions_lowered: u64,
     pub values_lowered: u64,
     pub known_helpers: KnownHelpersLowered,
-    pub texts_read_back: u64,
+    pub function_sources_reparsed: u64,
     pub written_function_names: Vec<u8>,
     pub throws_at_load: bool,
+}
+
+struct ViewsOfProject<'a> {
+    read_texts_of_build: &'a dyn Fn() -> driver::host::AlreadyRead,
+    is_own_module: &'a dyn Fn(FileId) -> bool,
+    list_own_modules: &'a dyn Fn() -> FxHashMap<Vec<u8>, FileId>,
+    is_checked_by_build: &'a dyn Fn(FileId, u32) -> bool,
 }
 
 struct DecidedProject {
     roles: RoleDecision,
     files_to_lower: Vec<FileId>,
     left_out_bodies: LeftOutBodies,
+    unchecked_ranges: Option<Guarded<Vec<(FileId, u32, u32)>>>,
     first_reported_early_errors: Vec<(FileId, u32)>,
     files_nested_too_deeply: Vec<FileId>,
 }
@@ -158,6 +169,13 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
         checker: &mut Checker<'_, 's>,
         file: FileId,
     ) -> Option<Option<LoweredUnit>> {
+        if let Some(ranges) = &self.decided.unchecked_ranges
+            && self.loaded.loaded.origin(file) == FileOrigin::ProgramSource
+        {
+            let unchecked = checker.never_checked_ranges().iter();
+            let unchecked = unchecked.map(|&(start, end)| (file, start, end));
+            ranges.lock().extend(unchecked);
+        }
         let path = self.loaded.loaded.files().module(file).file_name();
         let _work = current_work::working_on(current_work::Step::Lower, path);
         let may_fail_where_loaded = self.may_fail_where_loaded(file);
@@ -334,7 +352,11 @@ impl Build<'_> {
             files_to_lower.retain(|&file| {
                 left_out.files.binary_search(&file).is_err() || graph.is_placeholder(file)
             });
+            let files = project.loaded.files();
+            let keeps_unchecked_ranges =
+                id == ProjectId::Application && files.brings_declarations();
             DecidedProject {
+                unchecked_ranges: keeps_unchecked_ranges.then(|| Guarded::new(Vec::new())),
                 first_reported_early_errors: find_first_reported_early_errors(&roles),
                 files_nested_too_deeply: find_files_nested_too_deeply(
                     project.loaded.files(),
@@ -502,6 +524,17 @@ impl Build<'_> {
         self.report_check_diagnostics(roles.diagnostics.clone(), &roles.incomplete);
         let in_parallel = self.parallel_runner();
         report::count_files(&mut self.statistics, view, roles, &in_parallel);
+        if self.options.aot.dependency_type_errors != DependencyTypeErrors::NotChecked {
+            let program = loaded.project(project).loaded;
+            let compiled_files = program.files().compiled_files().iter();
+            let unchecked = compiled_files.filter(|&&file| {
+                program.origin(file) == FileOrigin::DependencySource
+                    && roles.role(file) == FileRole::Checked
+                    && !program.files().is_checked_as_by_own_project(file)
+            });
+            let id = StatisticId::DependencyFilesNotVerified;
+            self.statistics.count(id, unchecked.count() as u64);
+        }
         let mut found = checked.diagnostics;
         let files = loaded.project(project).loaded.files();
         let brings_declarations = files.brings_declarations();
@@ -519,7 +552,41 @@ impl Build<'_> {
             });
             held.chain(given).collect()
         };
-        self.keep_what_project_itself_reports(&mut found, &read_texts_of_build, |it| {
+        let DecidedProject {
+            left_out_bodies,
+            unchecked_ranges,
+            ..
+        } = decided.get(project);
+        let unchecked_ranges = match unchecked_ranges {
+            Some(ranges) => std::mem::take(&mut *ranges.lock()),
+            None => Vec::new(),
+        };
+        let program = loaded.project(project).loaded;
+        let is_own_module = |file: FileId| {
+            brings_declarations
+                && program.origin(file) == FileOrigin::ProgramSource
+                && roles.role(file) == FileRole::Checked
+                && !files.hir(file).is_script_for_project
+                && !left_out_bodies.contains_file(file)
+                && parsed_source(files, file).is_some_and(|it| it.plugin_module.is_none())
+        };
+        let list_own_modules = || {
+            let own = files.compiled_files().iter();
+            let own = own.filter(|&&file| is_own_module(file));
+            own.map(|&file| (files.module(file).file_name().to_vec(), file))
+                .collect()
+        };
+        let is_checked_by_build = |file: FileId, position: u32| {
+            let mut ranges = unchecked_ranges.iter();
+            !ranges.any(|&(of, start, end)| of == file && (start..end).contains(&position))
+        };
+        let views = ViewsOfProject {
+            read_texts_of_build: &read_texts_of_build,
+            is_own_module: &is_own_module,
+            list_own_modules: &list_own_modules,
+            is_checked_by_build: &is_checked_by_build,
+        };
+        self.keep_what_project_itself_reports(&mut found, &views, |it| {
             let file = it.diagnostic.file;
             brings_declarations || file.is_some_and(|file| files.hir(file).is_script_for_project)
         });
@@ -549,8 +616,8 @@ impl Build<'_> {
             statistics.count(StatisticId::KnownHelperFunctions, known_helpers.functions);
             statistics.count(StatisticId::KnownHelperCalls, known_helpers.calls);
             statistics.count(
-                StatisticId::TextsOfFunctionsReadBack,
-                lowered.texts_read_back,
+                StatisticId::FunctionSourcesReparsed,
+                lowered.function_sources_reparsed,
             );
             self.written_function_names
                 .extend_from_slice(&lowered.written_function_names);
@@ -574,9 +641,10 @@ impl Build<'_> {
     fn keep_what_project_itself_reports(
         &self,
         diagnostics: &mut Vec<BuildDiagnostic>,
-        read_texts_of_build: &dyn Fn() -> driver::host::AlreadyRead,
+        views: &ViewsOfProject<'_>,
         is_seen_otherwise_by_project: impl Fn(&BuildDiagnostic) -> bool,
     ) {
+        let read_texts_of_build = views.read_texts_of_build;
         let is_asked = |it: &BuildDiagnostic| {
             matches!(
                 it.diagnostic.class,
@@ -633,8 +701,12 @@ impl Build<'_> {
             (it.path.clone(), it.start, is_about_name, is_style)
         };
         let needs_extension = |it: &&driver::Diagnostic| matches!(it.code, 2834 | 2835);
+        let can_be_mistake = |it: &&driver::Diagnostic| {
+            it.class == DiagnosticClass::Semantic && matches!(place_of(it), (.., false, false))
+        };
         type Places = FxHashSet<(Vec<u8>, u32, bool, bool)>;
         let mut spans: FxHashMap<Vec<u8>, Vec<(u32, u32)>> = FxHashMap::default();
+        let mut reported_by_project: Vec<driver::Diagnostic> = Vec::new();
         let provided = driver::host::Provided {
             already_read: read_texts_of_build(),
             ..Default::default()
@@ -648,6 +720,7 @@ impl Build<'_> {
                         spans.entry(path).or_default().push((it.start, it.end));
                     }
                 }
+                reported_by_project.extend(errors.clone().filter(can_be_mistake).cloned());
                 let unasked = errors.clone().filter(needs_extension).map(|it| &it.path);
                 let not_found = (report.files_checked < paths.len()).then_some(&paths);
                 let unasked = unasked
@@ -671,13 +744,90 @@ impl Build<'_> {
             let until = spans.partition_point(|&(start, _)| start <= found.start);
             until > 0 && found.end <= spans[until - 1].1
         };
+        let mut has_dropped_error = false;
         diagnostics.retain(|it| {
             let found = &it.diagnostic;
-            !is_asked(it)
+            let is_kept = !is_asked(it)
                 || unasked.contains(&found.path)
                 || reported.contains(&place_of(found))
-                || place_of(found).2 && is_held(found)
+                || place_of(found).2 && is_held(found);
+            has_dropped_error |= !is_kept
+                && it.effect == Effect::StopsBuild
+                && !place_of(found).2
+                && found.file.is_some_and(views.is_own_module);
+            is_kept
         });
+        if !has_dropped_error {
+            return;
+        }
+        let own_modules = (views.list_own_modules)();
+        let mut others: Vec<Vec<u8>> = own_modules.keys().cloned().collect();
+        others.retain(|path| paths.binary_search(path).is_err());
+        others.sort();
+        if !others.is_empty() {
+            let provided = driver::host::Provided {
+                already_read: read_texts_of_build(),
+                ..Default::default()
+            };
+            let request = driver::Request {
+                paths: &others,
+                ..request
+            };
+            driver::check_provided_then(&request, provided, |report| {
+                let reported = report.diagnostics.iter();
+                let errors = reported.filter(|it| it.category == driver::Category::Error);
+                reported_by_project.extend(errors.filter(can_be_mistake).cloned());
+            });
+        }
+        let lacks_extension: FxHashSet<Vec<u8>> = (reported_by_project.iter())
+            .filter(needs_extension)
+            .map(|it| it.path.clone())
+            .collect();
+        let kept: Places = (diagnostics.iter().map(|it| place_of(&it.diagnostic))).collect();
+        reported_by_project.retain(|it| {
+            !kept.contains(&place_of(it))
+                && !unasked.contains(&it.path)
+                && !lacks_extension.contains(&it.path)
+                && (own_modules.get(&it.path))
+                    .is_some_and(|&file| (views.is_checked_by_build)(file, it.start))
+        });
+        if reported_by_project.is_empty() {
+            return;
+        }
+        let candidates = reported_by_project.iter().map(|it| it.path.clone());
+        let mut candidates: Vec<Vec<u8>> = candidates.collect();
+        candidates.sort();
+        candidates.dedup();
+        let mut already_read = read_texts_of_build();
+        already_read.extend(runtime_types::read_all());
+        let provided = driver::host::Provided {
+            already_read,
+            ..Default::default()
+        };
+        let request = driver::Request {
+            paths: &candidates,
+            plan_options: driver::PlanOptions {
+                type_root_of_last_resort: Some(runtime_types::TYPE_ROOT),
+                takes_defaults_of_tsc: false,
+                ..request.plan_options
+            },
+            ..request
+        };
+        let reported_with_bun_types: Places =
+            driver::check_provided_then(&request, provided, |report| {
+                let reported = report.diagnostics.iter();
+                let errors = reported.filter(|it| it.category == driver::Category::Error);
+                errors.map(place_of).collect()
+            });
+        for found in reported_by_project {
+            if reported_with_bun_types.contains(&place_of(&found)) {
+                let file = own_modules.get(&found.path).copied();
+                diagnostics.push(BuildDiagnostic {
+                    diagnostic: driver::Diagnostic { file, ..found },
+                    effect: Effect::StopsBuild,
+                });
+            }
+        }
     }
 
     fn report_check_diagnostics(
@@ -694,6 +844,26 @@ impl Build<'_> {
                 }
             }
         }
+        let is_of_dependency =
+            |reported: &BuildDiagnostic| reported.effect == Effect::WithdrawsTrust;
+        match self.options.aot.dependency_type_errors {
+            DependencyTypeErrors::NotChecked => {}
+            DependencyTypeErrors::Listed => {
+                for reported in diagnostics.iter_mut().filter(|it| is_of_dependency(it)) {
+                    reported.effect = Effect::StopsBuild;
+                }
+            }
+            DependencyTypeErrors::Counted => {
+                let (of_dependencies, own): (Vec<_>, Vec<_>) =
+                    diagnostics.into_iter().partition(is_of_dependency);
+                diagnostics = own;
+                let file_count = self
+                    .diagnostics
+                    .add_dependency_type_errors(&of_dependencies);
+                let id = StatisticId::DependencyFilesNotVerified;
+                self.statistics.count(id, file_count as u64);
+            }
+        }
         self.diagnostics
             .add_build_diagnostics(Stage::Check, diagnostics);
         self.diagnostics.add_incomplete_files(incomplete);
@@ -702,8 +872,8 @@ impl Build<'_> {
     pub(crate) fn lowering_options(&self) -> LoweringOptions {
         LoweringOptions {
             platform: self.platform,
-            embeds_function_text: self.options.aot.embeds_function_source,
-            reads_function_texts_back: self.options.reads_back_what_it_writes(),
+            embeds_function_source: self.options.aot.embeds_function_source,
+            reparses_function_sources: self.options.reads_back_what_it_writes(),
             removable: self.options.removable,
             minifies_identifiers: self.options.minifies_identifiers,
             obfuscates: self.options.aot.hides_names(),
@@ -1051,7 +1221,7 @@ fn finish_lowered_file(keys: &KeyContext<'_>, lowered: LoweredFile) -> LoweredUn
         diagnostics,
         queries,
         known_helpers,
-        texts_read_back,
+        function_sources_reparsed,
         written_function_names,
     } = lowered;
     let functions = fragment.functions.iter().map(|(_, function)| function);
@@ -1067,7 +1237,7 @@ fn finish_lowered_file(keys: &KeyContext<'_>, lowered: LoweredFile) -> LoweredUn
         functions_lowered,
         values_lowered,
         known_helpers,
-        texts_read_back,
+        function_sources_reparsed,
         written_function_names,
         throws_at_load: false,
     }

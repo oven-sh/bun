@@ -1,4 +1,4 @@
-// STATISTIC: TestsThatRejoin >= 1
+// STATISTIC: SpeculationsEmitted >= 1
 declare const process: { readonly argv: readonly string[] };
 export {};
 enum Level { Debug, Info, Warn, Error }

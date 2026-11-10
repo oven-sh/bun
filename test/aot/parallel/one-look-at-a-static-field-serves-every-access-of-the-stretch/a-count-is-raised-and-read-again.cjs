@@ -1,5 +1,5 @@
 // The plain case: one look, the store goes without one, the read behind it is what was stored.
-// STATISTIC: StaticFieldsAccessedOnLookOfTheirArms >= 1
+// STATISTIC: StaticFieldGuardsReused >= 1
 "use strict";
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }

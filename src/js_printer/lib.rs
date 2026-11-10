@@ -1662,6 +1662,7 @@ pub(crate) mod __gated_printer {
         pub(crate) stack_overflowed: bool,
 
         pub(crate) was_lazy_export: bool,
+        pub(crate) requested_originals: &'a [js_ast::RequestedOriginals],
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub(crate) module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
@@ -2461,12 +2462,23 @@ pub(crate) mod __gated_printer {
             has_rest_arg: bool,
             // is_arrow can be used for minifying later
             _is_arrow: bool,
+            body_loc: bun_ast::Loc,
         ) {
             let wrap = true;
 
             if wrap {
                 if let Some(loc) = open_paren_loc {
                     self.add_source_mapping(loc);
+                }
+                if !self.requested_originals.is_empty()
+                    && let Ok(function) = self
+                        .requested_originals
+                        .binary_search_by_key(&body_loc.start, |function| function.body_loc.start)
+                {
+                    self.requested_originals[function].printed_at.store(
+                        self.writer.written() as u32,
+                        core::sync::atomic::Ordering::Relaxed,
+                    );
                 }
                 self.print(b"(");
             }
@@ -2500,6 +2512,7 @@ pub(crate) mod __gated_printer {
                 slice_of(func.args),
                 func.flags.contains(G::FnFlags::HasRestArg),
                 false,
+                func.body.loc,
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
@@ -3813,6 +3826,7 @@ pub(crate) mod __gated_printer {
                         &e.args,
                         e.has_rest_arg,
                         true,
+                        e.body.loc,
                     );
                     self.print_whitespacer(ws!(b" => "));
 
@@ -7026,6 +7040,7 @@ pub(crate) mod __gated_printer {
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,
+                requested_originals: &[],
                 module_info: None,
             }
         }
@@ -7069,6 +7084,7 @@ pub(crate) mod __gated_printer {
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
+                    func.body.loc,
                 );
                 self.print_space();
                 self.print(b"{\n");
@@ -7184,6 +7200,7 @@ pub(crate) mod __gated_printer {
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
+                    func.body.loc,
                 );
                 self.print(b" => {\n");
                 self.indent();
@@ -7792,6 +7809,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         source_map_builder,
     );
     printer.was_lazy_export = tree.has_lazy_export;
+    printer.requested_originals = tree.requested_originals.slice();
     // Borrowck: `opts` was moved into `Printer::init`; populate
     // `printer.module_info` by taking it back out of `printer.options`
     // (see `print_with_writer_and_platform`).
@@ -7875,6 +7893,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .map(|c| c.buffer.list.as_slice())
                 .unwrap_or(b""),
             &srlz_res,
+            &js_ast::RequestedOriginals::serialize(printer.requested_originals),
         );
     }
 

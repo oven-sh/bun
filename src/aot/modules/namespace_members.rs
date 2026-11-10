@@ -82,7 +82,7 @@ impl FileBinder<'_, '_> {
         let (hir, bound, context) = (self.hir, self.bound, self.context);
         if !hir.enums.is_empty()
             || !context.known_helpers.has_functions(self.file)
-            || context.modules.runs_again(self.file)
+            || context.modules.may_be_reevaluated(self.file)
         {
             return;
         }
@@ -411,7 +411,10 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
-        let may_answer_another_object = context.evicted.is_stored_in_cache(target)
+        let has_instances = matches!(target, ModuleRef::File(file) if context.modules.may_be_reevaluated(file))
+            && context.modules.interop(target).kind == ModuleKind::SourceText;
+        let may_answer_another_object = has_instances
+            || context.evicted.is_stored_in_cache(target)
             || (context.order.is_code_of_program(target)
                 && (context.evicted.contains(target)
                     || context.mocked.contains(target)

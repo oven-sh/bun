@@ -1,5 +1,5 @@
 // In the middle of the loop an accessor is defined under constructor on the prototype of one heir.
-// STATISTIC: ConstructorsReadOffObjectsOfClasses >= 1
+// STATISTIC: ConstructorReadsResolvedToClasses >= 1
 class Tree { k = 0; again() { return new this.constructor(); } }
 class Ash extends Tree { k = 1; }
 class Birch extends Tree { k = 20; }

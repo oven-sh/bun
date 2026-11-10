@@ -1,4 +1,4 @@
-// STATISTIC: SlotsShownFilledByTruthOfWhatWasReadOffThem >= 1
+// STATISTIC: SlotsProvenFilledByTruthiness >= 1
 interface Part { id: number }
 class Kind { flags: number; constructor(flags: number) { this.flags = flags; } }
 interface Whole extends Kind { part: Part; label: string }

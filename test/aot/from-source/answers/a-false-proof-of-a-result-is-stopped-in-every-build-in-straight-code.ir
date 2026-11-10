@@ -1,14 +1,16 @@
 # a-false-proof-of-a-result-is-stopped-in-every-build-in-walked-code.ir, its program and its lie, WITH EVERY BODY THAT HAS A STRAIGHT FORM WRITTEN STRAIGHT: StraightEmitter::returnToCaller() is the same door. Straight code has no types of its own:
 # whatever is no constant of the type is asked, and a misfit stops by name.
-# OPTIONS: testing=UnseenCodeAnswersUndefined,WritesBodiesStraight
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined,ForceStraightCompilation
 # RUN(RETURNS): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
 # RETURNS: got it
-# RETURNS-NEXT: AOT: f1 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# RETURNS-NEXT: bun: internal AOT error: type check failed at {{*}} (returnsIt)
+# RETURNS-NEXT: found int32 in a call result
 # RETURNS-NOT: went on
 # RETURNS: crashed with
 # RUN(THAT): run-in-shell mechanisms=all-Inlining globalThis.which = 3;
 # THAT: got it
-# THAT-NEXT: AOT: f1 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# THAT-NEXT: bun: internal AOT error: type check failed at {{*}} (returnsIt)
+# THAT-NEXT: found int32 in a call result
 # THAT-NOT: went on
 # THAT: crashed with
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;

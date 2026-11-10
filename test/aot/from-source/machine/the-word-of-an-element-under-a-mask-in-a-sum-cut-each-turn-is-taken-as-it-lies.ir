@@ -8,8 +8,8 @@
 # show that it is whole counts as an integer found too, and costs four to seven instructions more.
 # The sizes are what the loops of f1 hold (the turns laid out, the written turn, the closed copy), and two more. While the number of the element was a join they held 130, 20 and 30:
 # every count of the road stayed as it was, and the loops were a third slower.
-# RUN(COUNT): compile Int32ElementsBehindCutNumbers mechanisms=all
-# COUNT-NOT: statistic Int32ElementsBehindCutNumbers 0
+# RUN(COUNT): compile TruncatedElementsReadAsInt32 mechanisms=all
+# COUNT-NOT: statistic TruncatedElementsReadAsInt32 0
 # The first: the turns laid out behind the question whether the list is longer than the mask, without their bound.
 # RUN(X64): loops most:52,93,17,32 f1 mechanisms=all
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written

@@ -13,7 +13,7 @@ use bun_core::strings::{CodepointIterator, Cursor};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
-use bun_sema::erasure::{ReplacedText, TypeRanges};
+use bun_sema::erasure::ReplacedText;
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
 use bun_sema::hir_from_data::DataValue;
@@ -26,11 +26,10 @@ use self::shown_names::ShownNames;
 use super::class::{ClassState, find_fields_under_signed_members};
 use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
-use super::function::{ConstsOfPrefixes, StatementsThatNest, ValuesThatConstsWereFollowedTo};
 use super::layouts::{LayoutState, NamesCreatedOnExports};
 use super::module::{LibraryFunctions, ModuleState};
 use super::object::EnumsThatStayAsBorn;
-use super::quoted_text::QuotedTexts;
+use super::quoted_source::QuotedSources;
 use super::said_types::SaidTypes;
 use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
 use super::tables::TaskState;
@@ -117,8 +116,8 @@ impl FileInputs<'_> {
 #[derive(Copy, Clone, Debug)]
 pub struct LoweringOptions {
     pub platform: Platforms,
-    pub embeds_function_text: bool,
-    pub reads_function_texts_back: bool,
+    pub embeds_function_source: bool,
+    pub reparses_function_sources: bool,
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
     pub obfuscates: bool,
@@ -211,17 +210,13 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) stores_by_name_in_lists: RefCell<FxHashMap<u32, StoresByNameInList>>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
-    pub(in crate::lower) names_word_that_mock_looks_for: Option<bool>,
-    pub(in crate::lower) ranges_of_types: OnceCell<TypeRanges>,
-    pub(in crate::lower) statements_that_nest: OnceCell<StatementsThatNest>,
-    pub(in crate::lower) values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo,
-    pub(in crate::lower) consts_of_prefixes: ConstsOfPrefixes,
+    pub(in crate::lower) request_positions: OnceCell<Vec<u32>>,
     pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
-    pub(in crate::lower) quoted_texts: QuotedTexts,
+    pub(in crate::lower) quoted_sources: QuotedSources,
     pub(in crate::lower) written_path: Vec<u8>,
     pub(in crate::lower) known_helpers_lowered: KnownHelpersLowered,
-    pub(in crate::lower) texts_read_back: u64,
+    pub(in crate::lower) function_sources_reparsed: u64,
     pub(in crate::lower) declared_records_without_position:
         Vec<(hir::FnId, crate::ir::generated::DeclaredRecord)>,
     scratch: BuilderScratch,
@@ -325,17 +320,13 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             stores_by_name_in_lists: RefCell::default(),
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             enum_member_reads: FxHashMap::default(),
-            names_word_that_mock_looks_for: None,
-            ranges_of_types: OnceCell::new(),
-            statements_that_nest: OnceCell::new(),
-            values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo::default(),
-            consts_of_prefixes: ConstsOfPrefixes::default(),
+            request_positions: OnceCell::new(),
             enums_that_stay_as_born: None,
             counted_places,
-            quoted_texts: QuotedTexts::default(),
+            quoted_sources: QuotedSources::default(),
             written_path: Vec::new(),
             known_helpers_lowered: KnownHelpersLowered::default(),
-            texts_read_back: 0,
+            function_sources_reparsed: 0,
             declared_records_without_position: Vec::new(),
             scratch: BuilderScratch::default(),
         }
@@ -403,7 +394,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             layouts,
             functions,
             known_helpers_lowered,
-            texts_read_back,
+            function_sources_reparsed,
             shown_names,
             ..
         } = self;
@@ -414,7 +405,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             diagnostics,
             queries,
             known_helpers: known_helpers_lowered,
-            texts_read_back,
+            function_sources_reparsed,
             written_function_names: shown_names.written_function_names,
         }
     }

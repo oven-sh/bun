@@ -178,6 +178,9 @@ pub(crate) struct ParserSnapshot<'a> {
     symbols_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
+    original_requests_len: usize,
+    requested_originals_len: usize,
+    constants_len: usize,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -473,6 +476,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) did_apply_test_feature: bool,
     /// Also computed outside `bun test`, for `uses_test_api()`.
     pub(crate) has_hoisted_mock_stmt: bool,
+    /// Whether to record requests. A source without "Actual" has none: see `did_parse_call`.
+    pub(crate) may_request_originals: bool,
+    pub(crate) original_requests: List<'a, crate::lower::hoist_test_mocks::OriginalRequest<'a>>,
+    pub(crate) requested_originals: List<'a, crate::lower::hoist_test_mocks::FunctionRequests<'a>>,
+    pub(crate) constants: List<'a, crate::lower::hoist_test_mocks::Constant<'a>>,
 
     pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
     pub(crate) import_meta_glob_imports: List<'a, Stmt>,
@@ -8265,6 +8273,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols_len: self.symbols.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
+            original_requests_len: self.original_requests.len(),
+            requested_originals_len: self.requested_originals.len(),
+            constants_len: self.constants.len(),
         }
     }
 
@@ -8292,6 +8303,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.esm_import_keyword = snapshot.esm_import_keyword;
         self.esm_export_keyword = snapshot.esm_export_keyword;
         self.enclosing_class_keyword = snapshot.enclosing_class_keyword;
+        self.original_requests
+            .truncate(snapshot.original_requests_len);
+        self.requested_originals
+            .truncate(snapshot.requested_originals_len);
+        self.constants.truncate(snapshot.constants_len);
 
         // Every scope pushed since is a descendant of the then-current scope, appended
         // to its `children` (also by `pop_and_flatten_scope`) and to `scopes_in_order`.
@@ -9331,6 +9347,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
         let scope_uses = self.take_scope_uses();
+        let requested_originals = self.take_requested_originals();
 
         let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
@@ -9427,6 +9444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ts_enums,
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
+            requested_originals,
 
             symbols,
             parts: parts_list,
@@ -9804,6 +9822,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             chai_imports: Default::default(),
             did_apply_test_feature: false,
             has_hoisted_mock_stmt: false,
+            may_request_originals: false,
+            original_requests: BumpVec::new_in(arena),
+            requested_originals: BumpVec::new_in(arena),
+            constants: BumpVec::new_in(arena),
             import_meta_glob_use: Default::default(),
             import_meta_glob_imports: BumpVec::new_in(arena),
             import_meta_glob_eager_calls: BumpVec::new_in(arena),

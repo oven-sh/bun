@@ -1,4 +1,11 @@
 // Atomic reads, writes and read-modify-writes of each width on a shared memory, notify and wait, and addresses that are not aligned or not in the memory.
+// STATISTIC: WasmOptimizedCopies = 17
+// STATISTIC: WasmBaselineCopies = 17
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 17
+// COUNTER in every build: WasmInstancesUsingImageCode = 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

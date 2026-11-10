@@ -1,5 +1,5 @@
 // undefined, null and a number come through a cast: the read in the callee throws or answers as in plain.
-// STATISTIC: ParametersOfCopiesExpectedToBeWhatArgumentsAre >= 1
+// STATISTIC: ArgumentSpeculationsPassedToInlinees >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

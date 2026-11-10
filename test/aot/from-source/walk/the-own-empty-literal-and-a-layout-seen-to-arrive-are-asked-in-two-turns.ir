@@ -4,11 +4,11 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewObject layout=L0
-# CHECK: = ShapeTest {{*}}layouts=[L2] [refusesMarkedObjects]
+# CHECK: = ShapeTest {{*}}layouts=[L2] [rejectsMarkedObjects]
 # CHECK: = GetSlot {{*}}key="encoding" receivers=[L2] level=Proven
-# CHECK: = ShapeTest {{*}}layouts=[L0] [refusesMarkedObjects]
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
 # CHECK: = GetSlot {{*}}key="limit" receivers=[L2] level=Proven
-# CHECK: = ShapeTest {{*}}layouts=[L0] [refusesMarkedObjects]
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
 # -- source: the-own-empty-literal-and-a-layout-seen-to-arrive-are-asked-in-two-turns.cjs
 # function configure(stream, options) {
 #   var opts = options || {};

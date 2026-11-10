@@ -1,7 +1,7 @@
-// STATISTIC: TestsOfEnumeratorsThatTakeTheWordOfTheStep >= 1
+// STATISTIC: EnumeratorChecksReusingStepResult >= 1
 // Under: --aot-check=Validate: the operand that the test is handed is the step's own result
 // Under: --aot-harden=proof-checks: what the test has proven of the enumerator is asked of memory
-// Under: --aot-testing=FailGuesses: the test fails once and the read goes as it is written
+// Under: --aot-testing=FailSpeculations: the test fails once and the read goes as it is written
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: the read under the enumerator's index is held against the read by name
 // Under: --aot-testing=CheckEffectsAtRunTime: what stands between the step and the read writes no more than it declares
 'use strict';

@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: IterationsOverListsThatStepTextsBeside >= 1
+// STATISTIC: ArrayIterationsWithStringFallback >= 1
 const log = [];
 const outside = JSON.parse('["abc", "ab#cd", "a^bc", "a~bcd", "####", "a,b,c,d,e,f", "\\ud83d\\ude00#\\ud83d\\ude00", "xyz^#"]');
 const tally = input => { let total = 0, seen = ""; for (const ch of input) { if (ch === "#") total = total + "#"; else if (ch === "^") total = { valueOf() { return 7; } }; else if (ch === "~") total = 2 ** 53; else total = total + 1; seen += ch; } return String(total) + ":" + seen; };

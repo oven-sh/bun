@@ -1,5 +1,5 @@
 // A counter that is stepped behind a comparison is kept as an integer in a register, with no test of the step. Here it passes either end of int32 and of uint32, reaches what a double no longer counts, steps by two, is compared with what is no integer or no number, and stands in a loop that tests it at the end.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function turns(from, to) { let n = 0; for (let i = from; i < to; i++) n++; return n; }
 report(turns(0, 10));

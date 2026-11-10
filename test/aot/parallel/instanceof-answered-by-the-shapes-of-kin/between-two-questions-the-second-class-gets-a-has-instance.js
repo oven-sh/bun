@@ -1,5 +1,5 @@
 // Between two questions about one object a function that the build does not see lays Symbol.hasInstance on the class that the second question asks for.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 const sizes = JSON.parse("[1,2,3,4,5,6,7,8,9]");
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}

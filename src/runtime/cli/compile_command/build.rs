@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use bun_aot::engine::{
     EngineModuleId, ExecutableIdentity, TargetImageForm, describe_difference_of_runtime,
     has_compiler, image_alignment, used_features,
@@ -84,6 +82,7 @@ pub(crate) fn compile_to_executable(
     } else {
         target_base_public_path(request.executable.target.os, b"root/")
     };
+    let compiler_called_at = bun_core::time::nano_timestamp();
     let mut build = match build_program(request, bundler, target, module_prefix) {
         Ok(build) => build,
         Err(failure) => {
@@ -106,7 +105,8 @@ pub(crate) fn compile_to_executable(
         None => None,
     };
     log_part_outside_stages("behind the engine: used features, trimming");
-    let mut outcome = reports::collect_reports(&build, options, &used, &trimming);
+    let mut outcome =
+        reports::collect_reports(&build, options, &used, &trimming, compiler_called_at);
     log_part_outside_stages("behind the engine: reports");
 
     let outfile = match request.product {
@@ -144,7 +144,6 @@ fn write_product(
     product: ProductInputs<'_>,
     outcome: &mut CompileOutcome,
 ) -> Result<(), CompileFailure> {
-    let started = Instant::now();
     let options = request.options;
     let (assets_named_at_root, files_for_file_system_alone) = add_assets(
         request,
@@ -261,7 +260,6 @@ fn write_product(
         if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
             bun_core::print_errorln!("AOT test build | program bytes {}", length);
         }
-        outcome.executable_time = started.elapsed();
         return Ok(());
     };
 
@@ -290,7 +288,6 @@ fn write_product(
         });
         build.output_files.truncate(1);
         outcome.output_files = core::mem::take(&mut build.output_files);
-        outcome.executable_time = started.elapsed();
         return Ok(());
     }
 
@@ -342,7 +339,6 @@ fn write_product(
     // The main entry point's file stands for the executable among the artifacts.
     build.output_files.truncate(1);
     outcome.output_files = core::mem::take(&mut build.output_files);
-    outcome.executable_time = started.elapsed();
     Ok(())
 }
 
@@ -578,7 +574,7 @@ fn add_assets(
     );
     // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
     let log = unsafe { &mut *request.log };
-    warn_where_file_system_lacks(
+    emit_not_embedded_warnings(
         files_for_file_system,
         root_directory,
         &laid,
@@ -588,7 +584,7 @@ fn add_assets(
     Ok((named_at_root, encode_files_for_file_system_alone(laid)))
 }
 
-fn warn_where_file_system_lacks(
+fn emit_not_embedded_warnings(
     files_for_file_system: &FilesForFileSystem,
     root_directory: &[u8],
     laid: &[PathForFileSystemAlone],
@@ -603,7 +599,7 @@ fn warn_where_file_system_lacks(
     let with_text = with_text.filter(|file| !has_no_text(file));
     let with_text = with_text.map(|it| bun_core::strings::remove_leading_dot_slash(&it.dest_path));
     let found: std::collections::BTreeSet<&[u8]> = laid.chain(with_text).collect();
-    for (path, warning) in &files_for_file_system.warnings_if_lacking {
+    for (path, warning) in &files_for_file_system.warnings_if_not_embedded {
         let spelled = with_forward_slashes(path);
         if !found.contains(spelled.get(root.len() + 1..).unwrap_or_default()) {
             log.warnings += 1;
@@ -730,7 +726,7 @@ fn add_data_files_under_root(
     for data_file in data_files {
         let spelled = with_forward_slashes(data_file);
         let is_below_root = spelled.starts_with(&root) && spelled.get(root.len()) == Some(&b'/');
-        let under_root = path_under_root(root_directory, b"/", data_file);
+        let under_root = path_from_root(root_directory, b"/", data_file);
         if !is_below_root || under_root.is_none_or(|it| it != below_root(&spelled)) {
             continue;
         }
@@ -897,6 +893,7 @@ fn add_assets_under_root(
         bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
     let mut modules_without_text = modules_without_text(output_files);
     let mut paths_of_files_given: Vec<Box<[u8]>> = Vec::new();
+    let mut outside_folders: Vec<Box<[u8]>> = Vec::new();
     let mut taken: std::collections::BTreeMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
         .enumerate()
@@ -915,8 +912,8 @@ fn add_assets_under_root(
 
         let asset_path = trim_trailing_separators(asset);
         let asset_name = to_embedded_name(bun_paths::basename(asset_path));
-        let under_root = path_under_root(root_directory, working_directory.as_bytes(), asset_path);
-        let embedded_path = under_root.as_deref().unwrap_or(&asset_name);
+        let from_root = path_from_root(root_directory, working_directory.as_bytes(), asset_path);
+        let embedded_path = from_root.as_deref().unwrap_or(&asset_name);
         let first_name_length = bun_core::strings::index_of_char_usize(embedded_path, b'/')
             .unwrap_or(embedded_path.len());
         if &embedded_path[..first_name_length] == bun_paths::basename(entry_name) {
@@ -924,14 +921,22 @@ fn add_assets_under_root(
                 asset: asset.clone(),
             });
         }
+        // A folder outside the root directory was embedded under its base name before it kept its path.
+        let folder_given = from_root.as_deref().map(|it| graph_path(it, b""));
+        let is_folder = files
+            .iter()
+            .all(|file| file.dest_path[..] != asset_name[..]);
+        if let Some(folder) = folder_given.filter(|it| is_folder && it.starts_with(b"../")) {
+            outside_folders.push(folder.into_boxed_slice());
+        }
         for mut file in files {
             let is_file_given = file.dest_path[..] == asset_name[..];
-            if let Some(under_root) = &under_root {
+            if let Some(from_root) = &from_root {
                 let path_in_asset = file
                     .dest_path
                     .strip_prefix(&asset_name[..])
                     .expect("collect_compile_assets names files under the asset's name");
-                file.dest_path = graph_path(under_root, path_in_asset).into_boxed_slice();
+                file.dest_path = graph_path(from_root, path_in_asset).into_boxed_slice();
             }
             if is_file_given {
                 paths_of_files_given.push(file.dest_path.clone());
@@ -953,12 +958,15 @@ fn add_assets_under_root(
     }
     Ok(find_assets_named_at_root(
         &paths_of_files_given,
+        &outside_folders,
         output_files,
     ))
 }
 
+/// Folders may share a base name: the executable tries each.
 fn find_assets_named_at_root(
     paths_of_files_given: &[Box<[u8]>],
+    outside_folders: &[Box<[u8]>],
     output_files: &[OutputFile],
 ) -> Vec<u8> {
     let is_taken = |base_name: &[u8]| {
@@ -976,17 +984,21 @@ fn find_assets_named_at_root(
             .map(|path| bun_paths::basename(path));
         base_names.filter(|&name| name == base_name).count() > 1
     };
-    paths_of_files_given
+    let files = paths_of_files_given.iter().filter(|path| {
+        let base_name = bun_paths::basename(path);
+        !is_shared(base_name) && !is_taken(base_name)
+    });
+    let folders = outside_folders
         .iter()
-        .filter(|path| {
-            let base_name = bun_paths::basename(path);
-            !is_shared(base_name) && !is_taken(base_name)
-        })
+        .filter(|path| !is_taken(bun_paths::basename(path)));
+    files
+        .chain(folders)
         .flat_map(|path| path.iter().copied().chain([0]))
         .collect()
 }
 
-fn path_under_root(
+/// `a/config.json`, or `../lib/data.txt` for an asset outside the root directory. `None` where no relative path leads there, as on another Windows drive.
+fn path_from_root(
     root_directory: &[u8],
     working_directory: &[u8],
     asset_path: &[u8],
@@ -1004,9 +1016,16 @@ fn path_under_root(
         [b'/' | b'\\', folders @ ..] => Some([folders, b"/"].concat()),
         _ => None,
     };
+    let folders_above_root = |folder: &'_ [u8]| {
+        let relative = resolve_path::relative(root_directory, folder);
+        relative
+            .starts_with(b"..")
+            .then(|| [relative, b"/"].concat())
+    };
     let folders = real_folder
         .and_then(folders_below_root)
-        .or_else(|| folders_below_root(written_folder))?;
+        .or_else(|| folders_below_root(written_folder))
+        .or_else(|| folders_above_root(real_folder.unwrap_or(written_folder)))?;
     Some([&folders[..], bun_paths::basename(&written_path)].concat())
 }
 

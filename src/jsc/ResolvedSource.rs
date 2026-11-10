@@ -48,6 +48,8 @@ pub struct ResolvedSource {
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
     pub origin_path: BunString,
+    /// `bun_ast::RequestedOriginals::serialize()`
+    pub requested_originals: BunString,
 }
 
 /// The AST fields a `ResolvedSource` needs, copied out before the printer consumes the AST.
@@ -55,6 +57,8 @@ pub struct ResolvedSource {
 pub struct PrintedAst {
     pub is_commonjs_module: bool,
     depends_on_more_than_source: bool,
+    /// In the arena of the AST. The printer fills in `printed_at`.
+    requested_originals: bun_ast::StoreSlice<bun_ast::RequestedOriginals>,
 }
 
 impl PrintedAst {
@@ -63,17 +67,29 @@ impl PrintedAst {
             is_commonjs_module: ast.has_commonjs_export_names
                 || ast.exports_kind == bun_ast::ExportsKind::Cjs,
             depends_on_more_than_source: ast.depends_on_more_than_source,
+            requested_originals: ast.requested_originals,
         }
     }
 }
 
 impl ResolvedSource {
+    pub fn requested_originals_from(serialized: &[u8]) -> BunString {
+        match serialized.is_empty() {
+            true => BunString::EMPTY,
+            false => BunString::clone_utf8(serialized),
+        }
+    }
+
     /// Build every freshly transpiled `ResolvedSource` with this, so `depends_on_more_than_source` can't be forgotten.
+    /// Call it while the arena of the AST is alive.
     pub fn printed(ast: PrintedAst, source_code: BunString) -> Self {
         Self {
             source_code,
             is_commonjs_module: ast.is_commonjs_module,
             depends_on_more_than_source: ast.depends_on_more_than_source,
+            requested_originals: Self::requested_originals_from(
+                &bun_ast::RequestedOriginals::serialize(ast.requested_originals.slice()),
+            ),
             ..Default::default()
         }
     }
@@ -160,5 +176,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 160, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

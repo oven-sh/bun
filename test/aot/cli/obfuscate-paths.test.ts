@@ -1,35 +1,69 @@
 // One program for each way in which a program can come by the path of a module. Each has a subject, seenFolder/seenSubject, whose path that way reads or finds, and a bystander,
-// quietFolder/quietBystander, whose path nobody reads. Built with --obfuscate the program prints what it prints without, and the executable holds of the four names those that are listed:
-// all four where a name that is made when the program runs may be that of any file.
+// quietFolder/quietBystander, whose path nobody reads. Built with --obfuscate the program prints what it prints without, which its row stores, and the executable holds of the four names those that are listed:
+// all four where a name that is made when the program runs may be that of any file. What a build without the flag writes holds all four.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
 import { buildFlags } from "../harness/flags";
+import { withoutDebugInformation } from "../harness/without-debug-information";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const buildLimit = 300_000;
 const names = ["seenFolder", "seenSubject", "quietFolder", "quietBystander"];
+const ranToItsEnd = { stderr: "", exitCode: 0, signal: null };
 
 async function compile(folder: string, entry: string, name: string, ...flags: string[]) {
-  built(await spawned([bunExe(), "compile", entry, "--outfile", name, ...flags], folder, env));
+  built(
+    await spawned([bunExe(), "compile", entry, "--outfile", name, ...withoutDebugInformation, ...flags], folder, env),
+  );
   return join(folder, isWindows ? name + ".exe" : name);
 }
 
-async function buildBoth(files: Record<string, string>, folder: string) {
-  const entry = Object.keys(files).find(file => file.startsWith("main."))!;
-  const reference = await spawned([await compile(folder, entry, "reference")], folder, env);
-  const executable = await compile(folder, entry, "obfuscated", buildFlags.obfuscate);
-  const obfuscated = await spawned([executable], folder, env);
-  const bytes = readFileSync(executable);
-  return { reference, obfuscated, held: names.filter(name => bytes.includes(name)) };
+/** Which of the names a file holds. An executable is the size of Bun: it is read a piece at a time from its end, where the program lies, and a name that was found is not looked for again. */
+async function namesIn(path: string) {
+  const pieceSize = 1 << 22;
+  const overlap = Math.max(...names.map(name => name.length)) - 1;
+  const piece = Buffer.allocUnsafe(pieceSize + overlap);
+  const missing = new Set(names);
+  await using file = await open(path, "r");
+  const { size } = await file.stat();
+  for (let end = size; end > 0 && missing.size > 0;) {
+    const start = Math.max(0, end - pieceSize);
+    // A piece reaches into the one that was read before it, so a name that lies across both is whole in it.
+    const length = Math.min(end - start + overlap, size - start);
+    const { bytesRead } = await file.read(piece, 0, length, start);
+    if (bytesRead !== length) throw new Error(`read ${bytesRead} of ${length} bytes at ${start} of ${path}`);
+    const seen = piece.subarray(0, length);
+    for (const name of missing) if (seen.includes(name)) missing.delete(name);
+    end = start;
+  }
+  return names.filter(name => !missing.has(name));
 }
 
-const ways: Record<string, { held: string[]; files: Record<string, string> }> = {
+/** What a run printed, with <image> for the root of the image, which is B:\~BUN\root on Windows, and <sources> for the folder that the program was built in. */
+const shown = (printed: string, folder: string) =>
+  printed
+    .replaceAll("\\", "/")
+    .replaceAll(folder.replaceAll("\\", "/"), "<sources>")
+    .replace(/(?:\/\$bunfs|\/?B:\/~BUN)\/root/g, "<image>");
+
+async function buildBoth(files: Record<string, string>, folder: string) {
+  const entry = Object.keys(files).find(file => file.startsWith("main."))!;
+  const plain = await compile(folder, entry, "reference");
+  const reference = await spawned([plain], folder, env);
+  const executable = await compile(folder, entry, "obfuscated", buildFlags.obfuscate);
+  const obfuscated = await spawned([executable], folder, env);
+  return { reference, obfuscated, held: { reference: await namesIn(plain), obfuscated: await namesIn(executable) } };
+}
+
+// `prints`: what the program prints, built with the flag or without, as `shown` gives it.
+const ways: Record<string, { held: string[]; prints: string | RegExp; files: Record<string, string> }> = {
   "cache-entry-under-a-resolved-name": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 subject undefined undefined\n",
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value } = require("./seenFolder/seenSubject");\nconst entry = require.cache[require.resolve("./seenFolder/seenSubject")];\nconsole.log(quiet(1), value, entry && entry.id, entry && entry.filename);\n',
@@ -39,6 +73,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "cache-keys-of-require-cache": {
     held: [],
+    prints: "2 subject \n",
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value } = require("./seenFolder/seenSubject");\nconsole.log(quiet(1), value, Object.keys(require.cache).sort().join());\n',
@@ -48,6 +83,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "children-and-parent-of-module-objects": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject . <image>/seenFolder/seenSubject.cjs\n",
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value, up } = require("./seenFolder/seenSubject.cjs");\nconsole.log(quiet(1), value, up, module.children.map(child => child.id).sort().join());\n',
@@ -57,6 +93,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "get-builtin-module-of-a-made-name": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject string\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst name = Buffer.from("bm9kZTpvcw==", "base64").toString(); // @ts-expect-error\nconsole.log(quiet(1), value, typeof process.getBuiltinModule(name).EOL);\n',
@@ -66,6 +103,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-import-meta-require": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject subject\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = import.meta.require("./seenFolder/" + made).value; } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -75,6 +113,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-import-of-a-made-name": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = (await import("./seenFolder/" + made)).value; } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), found);\n',
@@ -84,6 +123,8 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-main-module-require": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints:
+      /^2 subject threw Cannot load '<image>\/seenFolder\/seenSubject\.ts': this executable can't load a module from a dynamic path\./,
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value } = require("./seenFolder/seenSubject");\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = process.mainModule.require("./seenFolder/" + made).value; } catch (e) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -93,6 +134,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-module-load": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject nothing\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nimport Module from "node:module";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { const loaded = (Module as any)._load(import.meta.dir + "/seenFolder/" + made + ".ts"); found = loaded === undefined ? "nothing" : loaded.value; } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -102,6 +144,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-module-require": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject subject\n",
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value } = require("./seenFolder/seenSubject");\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = module.require("./seenFolder/" + made).value; } catch (e) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -111,6 +154,8 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-require-let-go": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints:
+      /^2 subject threw Cannot load '<image>\/seenFolder\/seenSubject\.ts': this executable can't load a module from a dynamic path\./,
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nconst loader = [require][Number(made.length > 90)];\nlet found; try { found = loader("./seenFolder/" + made).value; } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -120,6 +165,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-require-of-a-made-name": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = require("./seenFolder/" + made).value; } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), found);\n',
@@ -129,6 +175,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "main-by-argv-bun-main-and-require-main": {
     held: [],
+    prints: "2 subject <image>/main.ts <image>/main.ts undefined true\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), value, process.argv[1], Bun.main, require.main && require.main.filename, import.meta.main);\n',
@@ -138,17 +185,22 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "message-of-a-require-of-a-module-that-awaits": {
     held: ["seenFolder", "seenSubject"],
+    prints:
+      '2 TypeError: require() async module "<image>/seenFolder/awaits.mjs" is unsupported. use "await import()" instead.\n',
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { ask } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), ask());\n',
       "quietFolder/quietBystander.ts": "export const quiet = (n: number) => n + 1;\n",
-      "seenFolder/awaits.mjs": "export const waited = await Promise.resolve(1);\n",
+      // require() hands over a module whose awaits all wait for settled promises. A job settles this one later.
+      "seenFolder/awaits.mjs":
+        "export const waited = await new Promise(resolve => queueMicrotask(() => resolve(1)));\n",
       "seenFolder/seenSubject.ts":
         'export const ask = () => { try { return require("./awaits.mjs"); } catch (e: any) { return e.name + ": " + e.message; } };\n',
     },
   },
   "message-of-a-require-that-finds-nothing": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 Cannot find module './nothing-here'\nRequire stack:\n- <image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { ask } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), ask());\n',
@@ -159,6 +211,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "message-of-an-import-that-finds-nothing": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 Cannot find module './nothing-seenSubject' imported from <image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { ask } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), await ask());\n',
@@ -169,6 +222,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "nobody-reads-anything": {
     held: [],
+    prints: "2 subject\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), value);\n',
@@ -178,6 +232,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "nobody-reads-anything-beside-a-text": {
     held: [],
+    prints: "2 subject true\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), value, new Function("a", "return a + " + process.argv.length)(1) > 0);\n',
@@ -187,6 +242,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-dirname-of-a-commonjs-file": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 <sources>/seenFolder\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport subject from "./seenFolder/seenSubject.cjs";\nconsole.log(quiet(1), subject.read);\n',
@@ -196,6 +252,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-filename-of-a-commonjs-file": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 <sources>/seenFolder/seenSubject.cjs\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport subject from "./seenFolder/seenSubject.cjs";\nconsole.log(quiet(1), subject.read);\n',
@@ -205,6 +262,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-import-meta-dir": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 <image>/seenFolder,<image>/seenFolder\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { read } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), read);\n',
@@ -214,6 +272,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-import-meta-file": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 seenSubject.ts,<image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { read } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), read);\n',
@@ -223,6 +282,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-import-meta-let-go": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 []\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { read } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), read);\n',
@@ -233,6 +293,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-import-meta-path": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 <image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { read } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), read);\n',
@@ -242,6 +303,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-import-meta-url": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 file://<image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { read } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), read);\n',
@@ -251,6 +313,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-module-id-filename-paths": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 .,<image>/seenFolder/seenSubject.cjs,<image>/seenFolder,true\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport subject from "./seenFolder/seenSubject.cjs";\nconsole.log(quiet(1), subject.read);\n',
@@ -261,6 +324,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-module-let-go": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: '2 ["exports","require"]\n',
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport subject from "./seenFolder/seenSubject.cjs";\nconsole.log(quiet(1), subject.read);\n',
@@ -271,6 +335,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "own-url-made-of-import-meta-url": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 file://<image>/seenFolder/beside.txt\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { read } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), read);\n',
@@ -280,6 +345,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-bun-resolve-of-a-made-name": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject <image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = await Bun.resolve("./seenFolder/" + made, import.meta.dir); } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -289,6 +355,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-bun-resolve-sync-of-a-made-name": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject <image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = Bun.resolveSync("./seenFolder/" + made, import.meta.dir); } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -298,6 +365,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-create-require": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject <sources>/seenFolder/seenSubject.ts subject\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nimport { createRequire } from "node:module";\nconst own = createRequire(import.meta.url);\nlet found; try { found = own.resolve("./seenFolder/" + made) + " " + own("./seenFolder/" + made).value; } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -307,6 +375,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-import-meta-resolve-of-a-constant": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject file://<image>/seenFolder/seenSubject\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), value, import.meta.resolve("./seenFolder/seenSubject"));\n',
@@ -316,6 +385,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-import-meta-resolve-of-a-made-name": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject file://<image>/seenFolder/seenSubject\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = import.meta.resolve("./seenFolder/" + made); } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -325,6 +395,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-import-meta-resolve-sync-of-a-made-name": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject <image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = import.meta.resolveSync("./seenFolder/" + made); } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -334,6 +405,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-module-resolve-filename": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject <image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nimport Module from "node:module";\nlet found; try { found = (Module as any)._resolveFilename("./seenFolder/" + made, { id: import.meta.path, filename: import.meta.path, paths: [] }); } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -343,6 +415,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-require-resolve-of-a-constant": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 subject <sources>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), value, require.resolve("./seenFolder/seenSubject"));\n',
@@ -352,6 +425,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-require-resolve-of-a-made-name": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject <sources>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = require.resolve("./seenFolder/" + made); } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -361,6 +435,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "resolve-by-require-resolve-taken-as-a-value": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints: "2 subject <image>/seenFolder/seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nconst resolve = require.resolve;\nlet found; try { found = resolve("./seenFolder/" + made); } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -370,6 +445,8 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "text-that-is-evaluated-requires-through-main-module": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    prints:
+      /^2 subject threw Cannot load '<image>\/quietFolder\/quietBystander\.ts': this executable can't load a module from a dynamic path\./,
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value } = require("./seenFolder/seenSubject");\nlet found; try { found = (0, eval)("process.mainModule.require(\'./quietFolder/quietBystander\').quiet(4)"); } catch (e) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -379,6 +456,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "worker-by-a-constant-path": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 worker says seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nconst worker = new Worker("./seenFolder/seenSubject.ts");\nconsole.log(quiet(1), await new Promise(resolve => { worker.onmessage = event => resolve(event.data); worker.onerror = event => resolve("error " + event.message); }));\nworker.terminate();\n',
@@ -388,6 +466,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "worker-by-a-made-path": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 worker says seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nconst worker = new Worker("./seenFolder/" + made + ".ts");\nconsole.log(quiet(1), await new Promise(resolve => { worker.onmessage = event => resolve(event.data); worker.onerror = event => resolve("error " + event.message); }));\nworker.terminate();\n',
@@ -397,6 +476,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "worker-by-a-url-of-import-meta-url": {
     held: ["seenFolder", "seenSubject"],
+    prints: "2 worker says seenSubject.ts\n",
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nconst worker = new Worker(new URL("./seenFolder/seenSubject.ts", import.meta.url).href);\nconsole.log(quiet(1), await new Promise(resolve => { worker.onmessage = event => resolve(event.data); worker.onerror = event => resolve("error " + event.message); }));\nworker.terminate();\n',
@@ -407,19 +487,20 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
 };
 
 describe.concurrent("by each way to the path of a module an obfuscated executable answers as one that is not", () => {
-  for (const [way, { held, files }] of Object.entries(ways)) {
+  for (const [way, { held, prints, files }] of Object.entries(ways)) {
     test(
       way,
       () =>
         slot(async () => {
           using dir = tempDir("aot-obfuscate-way", files);
           const both = await buildBoth(files, String(dir));
-          expect({ ...both.obfuscated }).toMatchObject({
-            stdout: both.reference.stdout,
-            exitCode: both.reference.exitCode,
+          const stdout = typeof prints === "string" ? prints : expect.stringMatching(prints);
+          expect({ ...both.reference, stdout: shown(both.reference.stdout, String(dir)) }).toEqual({
+            stdout,
+            ...ranToItsEnd,
           });
-          expect(both.reference.exitCode).toBe(0);
-          expect(both.held).toEqual(held);
+          expect(both.obfuscated).toEqual(both.reference);
+          expect(both.held).toEqual({ reference: names, obfuscated: held });
         }),
       buildLimit,
     );
@@ -441,8 +522,10 @@ describe.concurrent("an obfuscated executable says nothing about its sources:", 
         };
         using dir = tempDir("aot-obfuscate-walk", files);
         const both = await buildBoth(files, String(dir));
-        expect(both.reference.stdout).toBe("2 subject 0 main.ts,quietFolder,seenFolder true\n");
-        expect(both.obfuscated.stdout).toBe("2 subject 0 main.ts false\n");
+        expect(both.reference).toEqual({ stdout: "2 subject 0 main.ts,quietFolder,seenFolder true\n", ...ranToItsEnd });
+        expect(both.obfuscated).toEqual({ stdout: "2 subject 0 main.ts false\n", ...ranToItsEnd });
+        // The program spells the path of the bystander itself. No path of a module is left.
+        expect(both.held).toEqual({ reference: names, obfuscated: ["quietFolder", "quietBystander"] });
       }),
     buildLimit,
   );
@@ -460,9 +543,17 @@ describe.concurrent("an obfuscated executable says nothing about its sources:", 
         };
         using dir = tempDir("aot-obfuscate-text", files);
         const both = await buildBoth(files, String(dir));
-        expect(both.reference.stdout).toStartWith("2 subject threw Cannot load ");
-        expect(both.reference.stdout).toContain("this executable can't load a module from a dynamic path");
-        expect(both.obfuscated.stdout).toStartWith("2 subject threw Cannot find module ");
+        expect(both.reference).toEqual({
+          stdout: expect.stringMatching(
+            /^2 subject threw Cannot load '[^']*quietBystander\.ts': this executable can't load a module from a dynamic path\./,
+          ),
+          ...ranToItsEnd,
+        });
+        expect(both.obfuscated).toEqual({
+          stdout: expect.stringMatching(/^2 subject threw Cannot find module '[^']*quietBystander\.ts' /),
+          ...ranToItsEnd,
+        });
+        expect(both.held).toEqual({ reference: names, obfuscated: ["quietFolder", "quietBystander"] });
       }),
     buildLimit,
   );

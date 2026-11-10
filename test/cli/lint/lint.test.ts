@@ -1403,7 +1403,11 @@ describe.concurrent("bun lint", () => {
       [5, "try {} `a`", "1:8: Parsing error: Unexpected character '`'"],
       [2015, "try {} /a/s", "1:9: Parsing error: Invalid regular expression flag"],
       // Before ES2022 every member is a method.
-      [2021, "class A { static prototype }", "1:18: Parsing error: Classes may not have a static property named prototype"],
+      [
+        2021,
+        "class A { static prototype }",
+        "1:18: Parsing error: Classes may not have a static property named prototype",
+      ],
       [2021, 'class A { "constructor" }', "1:25: Parsing error: Unexpected token }"],
     ];
     const name = (i: number, extension: string) => `b${String(i).padStart(2, "0")}.${extension}`;

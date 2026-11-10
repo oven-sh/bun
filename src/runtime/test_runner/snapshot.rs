@@ -223,8 +223,7 @@ pub(crate) struct File {
     /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
     /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
     may_hold_entries_of_bun: bool,
-    /// Without `--update-snapshots`, an entry was found under Bun's key, or differs from what its test prints in the
-    /// file's format. That entry stays as it is, so it may be an older Bun's.
+    /// A run without `--update-snapshots` left an entry under Bun's key, or one that differs in the file's format.
     left_an_entry_alone: bool,
 }
 
@@ -246,8 +245,7 @@ fn snapshot_file_path(files: &FileList, file_id: FileId, buf: &mut [u8]) -> Opti
     Some((dir_path, dir_len, pos - 1))
 }
 
-/// jest-snapshot's `printBacktickString`. A carriage return is written as `\r`, as Vitest writes it:
-/// the character itself is read back as a line feed.
+/// jest-snapshot's `printBacktickString`. Like Vitest's, it writes a carriage return as `\r`: the character would read back as a line feed.
 #[optimize(size)]
 fn write_backtick_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'`');
@@ -743,8 +741,7 @@ impl Snapshots {
         let keys = self.values.keys();
         // Insertion sort: `natural_compare` may not be a total order, and `sort_by` can panic on one that isn't.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
-        // An entry that no test asked for, or that its test left alone, may be an older Bun's.
-        // Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
+        // Unchecked entries and entries left alone may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
         let stays_as_it_is = file.may_hold_entries_of_bun
             && (file.left_an_entry_alone || self.values.values().iter().any(|entry| !entry.checked));
         for (i, key) in keys.iter().enumerate() {

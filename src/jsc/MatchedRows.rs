@@ -105,7 +105,6 @@ impl MatchedPlace {
     }
 
     /// `JSValue::for_each_property_ordered_calling_getters` on the object of this place (not none). A row is passed in place of its property, which is not read.
-    #[inline(always)]
     #[allow(clippy::not_unsafe_ptr_arg_deref)] // `ctx` is not read here: C++ hands it back to `callback`
     pub fn for_each_property_ordered_calling_getters(
         self,
@@ -124,7 +123,6 @@ impl MatchedPlace {
     }
 
     /// `JSValue::for_each_property_ordered_with_non_enumerable` on the object of this place, with rows as above.
-    #[inline(always)]
     #[allow(clippy::not_unsafe_ptr_arg_deref)] // `ctx` is not read here: C++ hands it back to `callback`
     pub fn for_each_property_ordered_with_non_enumerable(
         self,

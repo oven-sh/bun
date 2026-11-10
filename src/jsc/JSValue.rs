@@ -2549,7 +2549,6 @@ impl JSValue {
         scope.return_if_exception()
     }
     /// `for_each_property_ordered_calling_getters` with the matched rows of `place`. SAFETY: `rows` is the live cell of a `jest_deep_match` call.
-    #[inline(always)]
     pub(crate) unsafe fn for_each_property_ordered_calling_getters_with_rows(
         self,
         global: &JSGlobalObject,
@@ -2579,7 +2578,6 @@ impl JSValue {
         scope.return_if_exception().map(|()| is_same)
     }
     /// `for_each_property_ordered_with_non_enumerable` with the matched rows of `place`. SAFETY: as above.
-    #[inline(always)]
     pub(crate) unsafe fn for_each_property_ordered_with_non_enumerable_with_rows(
         self,
         global: &JSGlobalObject,

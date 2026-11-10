@@ -2355,6 +2355,235 @@ test.concurrent.each(["bun:test", "vitest"])(
   },
 );
 
+// The first mock is written into the module that its importers are linked to: they were linked before the call ran, or the call isn't hoisted.
+// As in Vitest, they keep that mock when vi.doMock() replaces it. So its exports stay in that module until the file ends.
+describe.concurrent("a vi.mock() that was written into a loaded module stays for its importers when another mock replaces it", () => {
+  function ownModule(from: string, helperFirst: boolean) {
+    const imports = (helper: string) =>
+      helperFirst
+        ? `import ${JSON.stringify(helper)}; import { greet } from "./dep"; import { viaUses } from "./uses";`
+        : `import { greet } from "./dep"; import { viaUses } from "./uses"; import ${JSON.stringify(helper)};`;
+    // read(): the test file's import, a module's import, import(), and how often dep.ts ran since the file started.
+    const header = (helper = "./mocks") => `
+      import { expect, test, vi } from ${JSON.stringify(from)};
+      ${imports(helper)}
+      const start = globalThis.loads;
+      const read = async () => [greet(), viaUses(), (await import("./dep")).greet(), globalThis.loads - start];
+    `;
+    return {
+      "dep.ts": `
+        globalThis.loads = (globalThis.loads ?? 0) + 1;
+        export function greet() { return "real"; }
+      `,
+      "uses.ts": `import { greet } from "./dep"; export const viaUses = () => greet();`,
+      "mocks.ts": `
+        import { vi } from ${JSON.stringify(from)};
+        vi.mock("./dep", () => ({ greet: () => "helper" }));
+      `,
+      "mocks-later.ts": `
+        import { vi } from ${JSON.stringify(from)};
+        vi.mock("./dep", () => { const text = label.text; return { greet: () => text }; });
+        const label = { text: "later helper" };
+      `,
+      "mocks-async.ts": `
+        import { vi } from ${JSON.stringify(from)};
+        vi.mock("./dep", async () => (await null, { greet: () => "helper" }));
+      `,
+      "a.test.ts": `${header()}
+        test("vi.doMock(), then vi.doUnmock()", async () => {
+          globalThis.first = await import("./dep");
+          expect(await read()).toEqual(["helper", "helper", "helper", 0]);
+          vi.doMock("./dep", () => ({ greet: () => "file" }));
+          expect(await read()).toEqual(["helper", "helper", "file", 0]);
+          vi.doUnmock("./dep");
+          expect(await read()).toEqual(["helper", "helper", "real", 1]);
+        });
+        test("the next test", async () => {
+          expect(await read()).toEqual(["helper", "helper", "real", 1]);
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from ${JSON.stringify(from)};
+        import { greet } from "./dep";
+        import { viaUses } from "./uses";
+        test("the next file gets the module that was loaded first, with its own exports", async () => {
+          expect([greet(), viaUses(), globalThis.loads, (await import("./dep")) === globalThis.first]).toEqual(["real", "real", 2, true]);
+        });
+      `,
+      "c.test.ts": `${header()}
+        test("vi.importActual() evaluates the original once, and the next import gets that instance", async () => {
+          vi.doMock("./dep", () => ({ greet: () => "file" }));
+          const actual = await vi.importActual("./dep");
+          expect([actual.greet(), (await vi.importActual("./dep")) === actual]).toEqual(["real", true]);
+          expect(await read()).toEqual(["helper", "helper", "file", 1]);
+          vi.doUnmock("./dep");
+          expect(await import("./dep")).toBe(actual);
+          expect(await read()).toEqual(["helper", "helper", "real", 1]);
+        });
+      `,
+      "d.test.ts": `${header()}
+        vi.doMock("./dep", () => ({ greet: () => "file" }));
+        test("vi.doMock() at the top level", async () => {
+          expect(await read()).toEqual(["helper", "helper", "file", 0]);
+        });
+      `,
+      "e.test.ts": `${header()}
+        test("using, vi.doMock() over vi.doMock(), vi.resetModules()", async () => {
+          {
+            using _ = vi.doMock("./dep", () => ({ greet: () => "file" }));
+            expect(await read()).toEqual(["helper", "helper", "file", 0]);
+          }
+          expect(await read()).toEqual(["helper", "helper", "real", 1]);
+          vi.doMock("./dep", () => ({ greet: () => "second" }));
+          expect(await read()).toEqual(["helper", "helper", "second", 1]);
+          vi.doMock("./dep", () => ({ greet: () => "third" }));
+          expect(await read()).toEqual(["helper", "helper", "third", 1]);
+          vi.resetModules();
+          expect(await read()).toEqual(["helper", "helper", "third", 1]);
+          vi.doUnmock("./dep");
+          expect(await read()).toEqual(["helper", "helper", "real", 2]);
+        });
+      `,
+      "f.test.ts": `${header()}
+        import { mock } from "bun:test";
+        test("a mock that is written into the loaded module afterwards reaches the same importers", async () => {
+          vi.doMock("./dep", () => ({ greet: () => "file" }));
+          vi.doUnmock("./dep");
+          expect(await read()).toEqual(["helper", "helper", "real", 1]);
+          mock.module("./dep", () => ({ greet: () => "third" }));
+          expect(await read()).toEqual(["third", "third", "third", 1]);
+          vi.doUnmock("./dep");
+          expect(await read()).toEqual(["real", "real", "real", 1]);
+          (() => vi.mock("./dep", () => ({ greet: () => "fourth" })))();
+          expect(await read()).toEqual(["fourth", "fourth", "fourth", 1]);
+        });
+      `,
+      "g.test.ts": `${header()}
+        import "./mocks-later";
+        test("a hoisted factory that reads a later variable waits for the next import", async () => {
+          expect(await read()).toEqual(["helper", "helper", "later helper", 0]);
+        });
+      `,
+      "h.test.ts": `${header("./mocks-async")}
+        vi.doMock("./dep", () => ({ greet: () => "file" }));
+        test("a factory that was pending when the mock was replaced", async () => {
+          expect(await read()).toEqual(["helper", "helper", "file", 0]);
+          vi.doUnmock("./dep");
+          expect(await read()).toEqual(["helper", "helper", "real", 1]);
+        });
+      `,
+      "i.test.ts": `
+        import { expect, test, vi } from ${JSON.stringify(from)};
+        import { greet } from "./dep";
+        import { viaUses } from "./uses";
+        test("a vi.mock() inside a function", async () => {
+          (() => vi.mock("./dep", () => ({ greet: () => "nested" })))();
+          vi.doMock("./dep", () => ({ greet: () => "file" }));
+          expect([greet(), viaUses(), (await import("./dep")).greet()]).toEqual(["nested", "nested", "file"]);
+          vi.doUnmock("./dep");
+          expect([greet(), viaUses(), (await import("./dep")).greet()]).toEqual(["nested", "nested", "real"]);
+        });
+      `,
+      // mock.module(), jest.mock() and jest.doMock() mock a module for every importer, so what replaces one takes it away.
+      ...Object.fromEntries(
+        ["mock.module", "jest.doMock"].map((patch, i) => [
+          `${"jk"[i]}.test.ts`,
+          `
+            import { expect, test, vi } from ${JSON.stringify(from)};
+            import { jest, mock } from "bun:test";
+            import { greet } from "./dep";
+            import { viaUses } from "./uses";
+            test("${patch}() is undone", async () => {
+              ${patch}("./dep", () => ({ greet: () => "patch" }));
+              expect([greet(), viaUses()]).toEqual(["patch", "patch"]);
+              vi.doMock("./dep", () => ({ greet: () => "file" }));
+              expect([greet(), viaUses(), (await import("./dep")).greet()]).toEqual(["real", "real", "file"]);
+            });
+          `,
+        ]),
+      ),
+      "z.test.ts": `
+        import { expect, test } from ${JSON.stringify(from)};
+        import { greet } from "./dep";
+        import { viaUses } from "./uses";
+        test("the last file gets the real module", () => {
+          expect([greet(), viaUses()]).toEqual(["real", "real"]);
+        });
+      `,
+    };
+  }
+
+  // With "vitest" the file's imports run one at a time, so a helper that is imported first mocks the module before it is loaded.
+  test.each([
+    ["bun:test", true],
+    ["bun:test", false],
+    ["vitest", false],
+  ])("from %s, helper first: %p", async (from, helperFirst) => {
+    await expectFixturesToPass(ownModule(from, helperFirst), 13);
+  });
+
+  test("--isolate", async () => {
+    await expectFixturesToPass(ownModule("bun:test", true), 3, ["--isolate", "./a.test.ts", "./z.test.ts"]);
+  });
+
+  // A real package is one instance. While the later mock stands, its original is made of the exports that the first mock replaced.
+  test.each([[true], [false]])("a package, helper first: %p", async helperFirst => {
+    const imports = helperFirst
+      ? `import "./mocks"; import { greet } from "pkg"; import { viaUses } from "./uses";`
+      : `import { greet } from "pkg"; import { viaUses } from "./uses"; import "./mocks";`;
+    const header = `
+      import { expect, test, vi } from "bun:test";
+      ${imports}
+      const read = async () => [greet(), viaUses(), (await import("pkg")).greet(), globalThis.pkgLoads];
+    `;
+    await expectFixturesToPass(
+      {
+        "package.json": `{ "name": "own", "type": "module" }`,
+        "node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js" }`,
+        "node_modules/pkg/index.js": `
+          globalThis.pkgLoads = (globalThis.pkgLoads ?? 0) + 1;
+          export function greet() { return "real"; }
+          export let count = 0;
+          export function increment() { count++; }
+        `,
+        "uses.ts": `import { greet } from "pkg"; export const viaUses = () => greet();`,
+        "mocks.ts": `
+          import { vi } from "bun:test";
+          vi.mock("pkg", () => ({ greet: () => "helper" }));
+        `,
+        "a.test.ts": `${header}
+          test("vi.doMock(), vi.importActual(), vi.doUnmock()", async () => {
+            expect(await read()).toEqual(["helper", "helper", "helper", 1]);
+            vi.doMock("pkg", () => ({ greet: () => "file" }));
+            expect(await read()).toEqual(["helper", "helper", "file", 1]);
+            const actual = await vi.importActual("pkg");
+            expect(actual.greet()).toBe("real");
+            vi.doUnmock("pkg");
+            expect(await import("pkg")).toBe(actual);
+            expect(await read()).toEqual(["helper", "helper", "real", 1]);
+          });
+        `,
+        "b.test.ts": `${header}
+          test("vi.mock() inside a function", async () => {
+            (() => vi.mock("pkg", () => ({ greet: () => "file" })))();
+            expect(await read()).toEqual(["helper", "helper", "file", 1]);
+          });
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          import { count, greet, increment } from "pkg";
+          import { viaUses } from "./uses";
+          test("the next file gets the package itself", () => {
+            increment();
+            expect([greet(), viaUses(), count, globalThis.pkgLoads]).toEqual(["real", "real", 1, 1]);
+          });
+        `,
+      },
+      3,
+    );
+  });
+});
+
 describe.concurrent("resetModules", () => {
   test.each(isolationFlags)("vi.resetModules() keeps packages, jest.resetModules() doesn't %j", async args => {
     const counted = (name: string) => `globalThis.${name} = (globalThis.${name} ?? 0) + 1;`;

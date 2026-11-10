@@ -143,6 +143,9 @@ public:
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> fetchesOfModulesAskedFor = {};
         // Preload mocks that the running test file replaced or removed. Restored when the file ends.
         Vector<JSC::Strong<JSC::JSObject>> displacedPreloadModuleMocks = {};
+        // vi.mock()s of the running test file that a later mock replaced, and whose exports stay in the module that their importers are
+        // linked to (see unmockModule()). Undone when the file ends.
+        Vector<JSC::Strong<JSC::JSObject>> moduleMocksLeftToImporters = {};
         // Modules a preload loaded that the running test file evicted. Restored when the file ends.
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadModules = {};
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
@@ -182,6 +185,7 @@ public:
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
+            moduleMocksLeftToImporters.clear();
             runningModuleMocks.clear();
             waitingModuleMocks.clear();
             moduleMocksWithTurn.clear();

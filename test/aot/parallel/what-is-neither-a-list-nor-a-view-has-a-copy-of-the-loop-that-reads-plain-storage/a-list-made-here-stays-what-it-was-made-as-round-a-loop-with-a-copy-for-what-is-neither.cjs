@@ -1,4 +1,4 @@
-// STATISTIC: ElementsOfFreshListsKnownAgain >= 1
+// STATISTIC: FreshArrayElementReadsEliminated >= 1
 "use strict";
 // The list of three rows is made here and the loops only read it. The loop inside is told apart for lists and views over the weights, and one copy more is begun for what is neither.
 // Every copy, the closed one among them, begins with what was known at the end of the tests in front: a copy that began knowing nothing took the list from all of them where they meet behind the loop.

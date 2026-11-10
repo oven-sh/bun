@@ -69,11 +69,11 @@ impl WrapperSlots {
     pub(in crate::lower) fn of(
         bound: &Bound<'_>,
         decisions: &Decisions<'_>,
-        runs_again: bool,
+        may_be_reevaluated: bool,
     ) -> WrapperSlots {
         let mut direct_evals = bound.runtime.eval_scopes().iter();
         let mut scopes = bound.scopes.iter();
-        let holds_all = runs_again
+        let holds_all = may_be_reevaluated
             || bound.file_uses_arguments()
             || direct_evals.any(|&(call, _)| !decisions.is_dead_expr(call))
             || scopes.any(|scope| matches!(scope.kind, ScopeKind::With(_)));
@@ -204,7 +204,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn has_values_of_each_run(&self) -> bool {
-        self.body_form() == BodyForm::Plain && self.inputs.modules.runs_again(self.file)
+        self.body_form() == BodyForm::Plain && self.inputs.modules.may_be_reevaluated(self.file)
     }
 
     pub(super) fn is_passed_by_wrapper(&self, variable: CommonJsVariable) -> bool {
@@ -612,7 +612,7 @@ pub(in crate::lower) fn keeps_first_exports(
             | Binding::Free => {}
         }
     }
-    replaces_exports && names_exports && !modules.runs_again(file)
+    replaces_exports && names_exports && !modules.may_be_reevaluated(file)
 }
 
 pub(in crate::lower) fn keeps_wrapper(
@@ -809,7 +809,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.key != FunctionKey::ModuleBody(self.file.file) && self.file.has_values_of_each_run()
     }
 
-    pub(in crate::lower) fn find_module_object_of_run(&mut self) -> Option<ValueId> {
+    pub(in crate::lower) fn find_requirer_object(&mut self) -> Option<ValueId> {
         if let Some(made) = self.made_require_of_site {
             return Some(self.lower_expression(made));
         }

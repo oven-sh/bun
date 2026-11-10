@@ -13,7 +13,7 @@
 # `makers[i % makers.length]`: the read is built where the divisor is not zero, and once more under NaN where it is.
 # The loop of the module is tried, and the walk of a try is cut short inside the first of the two.
 # The compiler died here: behind the cut a constant was nothing, the key was bound to it, and the type of nothing was asked for. A cut is taken up in front of the next operation of the input.
-# STATISTIC: WalksOfLoopsCutShort >= 1
+# STATISTIC: LoopVisitsAborted >= 1
 # RUN: walk f0 mechanisms=all
 # CHECK: code f0:Body
 # RUN(ANSWERS): run-in-shell mechanisms=all

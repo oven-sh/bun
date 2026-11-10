@@ -15,7 +15,9 @@ use crate::load::test_runner_names::skip_to_written_use;
 use crate::lower::commonjs::BodyForm;
 use crate::lower::expression::is_link_in_brackets;
 use crate::lower::member::{self, KeyConversion, PropertyName};
-use crate::lower::quoted_text::{append_printed_name, append_printed_number, append_printed_text};
+use crate::lower::quoted_source::{
+    append_printed_name, append_printed_number, append_printed_string,
+};
 use crate::lower::{FileLowering, FunctionLowering};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -385,7 +387,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     append_printed_name(written_name(name), path);
                 } else {
                     path.extend_from_slice(if chain == Chain::Start { b"?.[" } else { b"[" });
-                    append_printed_text(name, path);
+                    append_printed_string(name, path);
                     path.push(b']');
                 }
             }
@@ -400,7 +402,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         append_printed_number(hir.numbers[key as usize], path);
                     }
                     (_, MemberKey::Name(key)) => {
-                        append_printed_text(self.queries.atom_bytes(key), path);
+                        append_printed_string(self.queries.atom_bytes(key), path);
                     }
                     _ => return false,
                 }

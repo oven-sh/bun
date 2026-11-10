@@ -241,14 +241,14 @@ pub(super) fn collect_folder_paths(
 pub(super) fn collect_source_texts(
     projects: &PerProject<ProgramView<'_, '_>>,
     modules: &[ProgramModule],
-    types_in_function_texts: &FxHashMap<ProgramFile, PackedTypeRanges>,
+    erased_ranges_by_file: &FxHashMap<ProgramFile, PackedTypeRanges>,
     in_parallel: InParallel<'_>,
 ) -> SourceTexts {
     let mut steps = StepClock::new(Stage::LinkAndEmit);
     let mut slots: Vec<(ProgramModule, Option<ModuleSource>)> =
         modules.iter().map(|&module| (module, None)).collect();
     for_each_mut(&mut slots, in_parallel, &|(module, source)| {
-        *source = create_module_source(projects, *module, types_in_function_texts);
+        *source = create_module_source(projects, *module, erased_ranges_by_file);
     });
     let texts = SourceTexts::new(slots.into_iter().map(|(_, source)| source).collect());
     steps.end_with(|| format!("source texts {} MB", texts.size_of_texts() >> 20));
@@ -258,7 +258,7 @@ pub(super) fn collect_source_texts(
 fn create_module_source(
     projects: &PerProject<ProgramView<'_, '_>>,
     module: ProgramModule,
-    types_in_function_texts: &FxHashMap<ProgramFile, PackedTypeRanges>,
+    erased_ranges_by_file: &FxHashMap<ProgramFile, PackedTypeRanges>,
 ) -> Option<ModuleSource> {
     let program_file = match module {
         ProgramModule::File(file) => file,
@@ -271,7 +271,7 @@ fn create_module_source(
         return None;
     }
     let text = &files.module(file).hir.text[..];
-    let types = types_in_function_texts.get(&program_file).cloned();
+    let types = erased_ranges_by_file.get(&program_file).cloned();
     let origin = find_module_origin(view, program_file);
     let path = view.sources.diagnostic_path(file);
     let path_on_disk = files.module(file).file_name();
@@ -282,7 +282,7 @@ fn create_module_source(
         true => ModuleSource::new_on_disk(path, path_on_disk, text),
         false => ModuleSource::new(path, text),
     };
-    Some(source.with_function_text(types).with_origin(origin))
+    Some(source.with_function_source(types).with_origin(origin))
 }
 
 fn find_module_origin(view: ProgramView<'_, '_>, file: ProgramFile) -> ModuleOrigin {

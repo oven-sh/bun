@@ -3,7 +3,7 @@
 # function count(rows) { var row, cell; let sum = 0; for (let i = 0; i < rows.length; i++) { row = rows[i]; cell = row.size(); sum = (sum + cell) | 0; } return sum; }
 # print(count([{ size() { return 2; } }, { size() { return 3; } }]), count([]));
 # -- end of source
-# STATISTIC: WalksOfLoopsUndone <= 0
+# STATISTIC: LoopVisitsUndone <= 0
 # RUN: walk f1 mechanisms=all
 # CHECK: code f1:Body
 # RUN(ANSWERS): run-in-shell mechanisms=all

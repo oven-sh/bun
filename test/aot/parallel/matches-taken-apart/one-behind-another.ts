@@ -1,5 +1,5 @@
 // One buffer holds where the last match lay. Matches stand inside one another, beside one another, in callees, in getters and across suspensions; each is read behind the others. What is printed is what plain Bun prints.
-// STATISTIC: MatchesTakenInParts >= 10
+// STATISTIC: RegExpMatchAllocationsElided >= 10
 const unseen = (x: any): any => [x][JSON.parse("0")];
 const told: string[] = [];
 function inner(text: string): string {

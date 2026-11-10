@@ -22,7 +22,7 @@
 # CHECK-NEXT: failed with 2 at 2 0
 # CHECK-NEXT: exited with 0
 # CHECK-NEXT: the source prints the same
-# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
 # FAILING: 0 65
 # FAILING-NEXT: failed with 1 at 1 5
 # FAILING-NEXT: failed with 2 at 2 0

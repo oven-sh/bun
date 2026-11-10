@@ -1,4 +1,4 @@
-// run-parallel.ts builds every stored program once more with --aot-testing=FailGuesses:<n>: one guess in n fails on purpose, so that the program walks the ways from its typed copies into the
+// run-parallel.ts builds every stored program once more with --aot-testing=FailSpeculations:<n>: one guess in n fails on purpose, so that the program walks the ways from its typed copies into the
 // closed ones, and it must print what plain Bun prints there too. No flag asks for that build: it is made wherever the builds behind the first are made.
 // And once more with --aot-harden=proof-checks, where a proof that does not hold stops the program by name. The builds of each way are counted on stderr, so that no flag drops a way without a word.
 import { expect } from "bun:test";
@@ -40,7 +40,7 @@ const inFourWays = (n: string) => ({
   ways: {
     compiled: "pass",
     "under --aot-erase-types": "pass",
-    [`under --aot-testing=FailGuesses:${n}`]: "pass",
+    [`under --aot-testing=FailSpeculations:${n}`]: "pass",
     "under --aot-harden=proof-checks": "pass",
   },
   exitCode: 0,
@@ -52,7 +52,7 @@ test("a program is built as written, with its types erased, where one guess in t
 
 test("the builds of each way are counted, and --no-erased is named where it leaves them out", async () => {
   expect((await driven([])).stderr).toContain(
-    "builds by way: compiled 1 | under --aot-erase-types 1 | under --aot-testing=FailGuesses:3 1 | under --aot-harden=proof-checks 1\n",
+    "builds by way: compiled 1 | under --aot-erase-types 1 | under --aot-testing=FailSpeculations:3 1 | under --aot-harden=proof-checks 1\n",
   );
   expect((await driven(["--no-erased"])).stderr).toContain(
     "builds by way: compiled 1 | --no-erased leaves out every build behind the first\n",
@@ -94,7 +94,7 @@ test("a program that prints what goes by the copy that runs is built and run the
     ways: {
       compiled: "pass",
       "under --aot-erase-types": "built and run, not compared",
-      "under --aot-testing=FailGuesses:3": "built and run, not compared",
+      "under --aot-testing=FailSpeculations:3": "built and run, not compared",
       "under --aot-harden=proof-checks": "built and run, not compared",
     },
     exitCode: 0,
@@ -122,13 +122,13 @@ test.each([
   ["names a way that this driver does not build", `${noBuild.replace("proof-checks", "proof-cheks")}: for the test\n`],
   [
     "names the way that goes by the number of CI's build",
-    "// No build under --aot-testing=FailGuesses:3: for the test\n",
+    "// No build under --aot-testing=FailSpeculations:3: for the test\n",
   ],
   ["says no reason", `${noBuild}:\n`],
   ["says blanks for a reason", `${noBuild}:   \n`],
   [
     "names the way that goes by the number of CI's build though the program asks for it itself",
-    "// Under: --aot-testing=FailGuesses:3: for the test\n// No build under --aot-testing=FailGuesses:3: for the test\n",
+    "// Under: --aot-testing=FailSpeculations:3: for the test\n// No build under --aot-testing=FailSpeculations:3: for the test\n",
   ],
   ["leaves every build behind the first uncompared and says no reason", "// Prints what goes by the copy that runs:\n"],
   ["stands below the head", `\n${noBuild}: for the test\n`],
@@ -154,7 +154,7 @@ test("another exit code in a way that is not compared fails it all the same", as
 
 test("a stop in a way that is not compared fails it all the same", async () => {
   const { ways, exitCode } = await waysUnder(
-    "// Flags: --aot-testing=EqualIntegersAreTakenToBeLess\n// Prints what goes by the copy that runs: nothing, for the test\n",
+    "// Flags: --aot-testing=TreatEqualIntegersAsLess\n// Prints what goes by the copy that runs: nothing, for the test\n",
     `const given: number[] = JSON.parse("[-9, 0, 4, 2, 7]");
 function tally(low: number, add: number, step: number, by: number, turns: number): unknown[] {
   const out: unknown[] = [];
@@ -188,13 +188,6 @@ test("the lines by which something of a stored program is not compared or not bu
     "gc/a-generator-lets-go-of-the-old-value-of-a-variable-assigned-again.mjs: Prints what the compiler saves",
     "gc/a-generator-lets-go-of-what-lives-only-across-a-yield-on-a-way-not-taken.mjs: Prints what the compiler saves",
     "gc/a-generator-that-has-ended-lets-go-of-what-it-stored.mjs: Prints what the compiler saves",
-    "gc/argument-that-waited-in-the-caller-is-let-go-by-a-callee-out-of-a-list.ts: Prints what the compiler saves",
-    "gc/argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts: Prints what the compiler saves",
-    "gc/argument-that-waited-in-the-caller-is-let-go-in-a-loop-whose-bound-nobody-knows.ts: Prints what the compiler saves",
-    "gc/generators-stepped-by-a-loop-let-go-beside-another-program/main.ts: Prints what the compiler saves",
-    "gc/object-made-by-a-copied-callee-is-let-go-by-the-callee.ts: Prints what the compiler saves",
-    "gc/parameter-kept-in-a-register-across-calls-set-to-null-lets-go.ts: Prints what the compiler saves",
-    "gc/parameter-set-to-null-lets-go.ts: Prints what the compiler saves",
     "lists-handed-to-apply/a-written-list-of-66000-elements-handed-to-a-function-in-sight.cjs: No build under --aot-harden=proof-checks",
   ]);
 }, 120_000);

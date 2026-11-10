@@ -1,18 +1,21 @@
-# has finds a key's place in a table and keeps it for the get behind it; as users build the read at that place has no bound.
-# THE LIE, testing=RowSaysLess:Builtin/Map.prototype.clear/CollectionStorage: clear is said not to write the table's storage: the place is kept across it and the get reads where nothing of the table lies any more.
-# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition), under proof-checks and where the emitters alone test every position the read is held: there is a table, the table lives, holds values of the width that the place says, the entry is in use and its key lives: or the process stops by name.
-# There is no run of the lie alone.
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# `has` finds the location of a key in a table and keeps it for the `get` that follows. In a user's build the read at that location has no bounds check.
+# Fault injection, testing=UnderstateEffects:Builtin/Map.prototype.clear/CollectionStorage: the effects of clear claim that it does not write the table's storage.
+# So the location is kept across the call to clear, and the get reads where nothing of the table is left.
+# The read is checked with --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), with proof-checks, and where only the emitters check every index.
+# The check requires that there is a table, that the table is live and holds values of the width that the location says, that the entry is in use, and that its key is live.
+# Otherwise the process crashes with a named error.
+# The test has no run with only the fault injected.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: 10 20 2 10 20 5 6 6 undefined 9 10 11 12 13 14 6
 # RIGHT-NEXT: exited with 0
-# RUN(RANGES): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Map.prototype.clear/CollectionStorage,TestsEveryPosition
-# RANGES: AOT: f{{*}}
+# RUN(RANGES): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Map.prototype.clear/CollectionStorage,CheckBoundsAtRunTime
+# RANGES: bun: internal AOT error:
 # RANGES: crashed with SIGABRT
-# RUN(PROOFS): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Map.prototype.clear/CollectionStorage,CheckProofsAtRunTime
-# PROOFS: AOT: f{{*}}
+# RUN(PROOFS): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Map.prototype.clear/CollectionStorage,CheckProofsAtRunTime
+# PROOFS: bun: internal AOT error:
 # PROOFS: crashed with SIGABRT
-# RUN(EMITTERS): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Map.prototype.clear/CollectionStorage,EmittersAloneTestEveryPosition
-# EMITTERS: AOT: f{{*}}
+# RUN(EMITTERS): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Map.prototype.clear/CollectionStorage,CheckBoundsInEmittersOnly
+# EMITTERS: bun: internal AOT error:
 # EMITTERS: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

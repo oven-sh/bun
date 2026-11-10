@@ -2,7 +2,7 @@
 // Where arguments stand between the read of a method and its call, and the receiver is proven to be of a built-in class and is as its class made it, the method is left unread and the call runs the built-in's own body. Under the word that checks the walk that decision is asked again of the receiver at the call; a receiver with a method of its own is read, and that read is asked again.
 // Thirty pushes onto the plain list are asked at the call, thirty reads off the list with a push of its own behind the read. Where the call no longer looks whether the receiver is as made, the first push onto the second list stops by name.
 // In a loop that can begin its turn again in its closed copy the receiver is tested in the turn itself and the push stands in line: no stub answers there, so nothing is asked again for the plain list. The same pushes are made without a loop too, where they go by the stub: thirty asked at the call, thirty behind the read.
-// COUNTER: AnswersAskedAgain >= 90
+// COUNTER: FastPathResultsVerified >= 90
 let calls = 0;
 function next(i: number): number { calls++; for (let k = 0; k < 2; k++) calls = (calls + k) | 0; return i * 2; }
 function fill(list: number[], n: number): number { let last = 0; for (let i = 0; i < n; i++) last = list.push(next(i)); return last; }

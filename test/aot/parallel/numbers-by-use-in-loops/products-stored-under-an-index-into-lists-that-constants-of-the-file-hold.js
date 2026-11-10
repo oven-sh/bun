@@ -1,7 +1,7 @@
 // A loop only stores products into a list that a constant of the file holds; nothing is known of the list. Fractions, whole numbers, holes, texts, views of several kinds, a list with a setter
 // under an index above it, a frozen and a sealed list, a list that grows, an object that is no list, and a store that lands behind the end.
 "use strict";
-// STATISTIC: ConstantsOfFilesReadInFrontOfLoops >= 12
+// STATISTIC: ModuleConstantReadsHoisted >= 12
 const make = text => JSON.parse(text), many = at => JSON.parse("[" + Array.from({ length: 40 }, (_, i) => JSON.stringify(at(i))).join() + "]");
 const fractions = many(() => 0.5), wholes = many(i => i), mixed = many(i => i % 3 ? i : i % 2 ? "two" : null), holed = many(i => i), short = make("[1]"), record = make('{"0":1,"length":1}');
 delete holed[1];

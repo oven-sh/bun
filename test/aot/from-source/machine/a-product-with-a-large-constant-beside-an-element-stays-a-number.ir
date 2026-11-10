@@ -7,5 +7,5 @@
 # The product of what comes round and a large constant is a 64-bit integer that would have to be asked in every turn whether it is an int32, and nearly never is: then the turn does the work
 # twice. Beside an element of a list it stays a number, as it was before the element was known for an int32.
 # f1 = mixed
-# RUN: compile ExactIntegersBehindNumbers mechanisms=all
-# CHECK: statistic ExactIntegersBehindNumbers 0
+# RUN: compile DoublesRecomputedAsIntegers mechanisms=all
+# CHECK: statistic DoublesRecomputedAsIntegers 0

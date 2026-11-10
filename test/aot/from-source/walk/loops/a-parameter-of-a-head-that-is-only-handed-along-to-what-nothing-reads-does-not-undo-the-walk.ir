@@ -3,6 +3,6 @@
 # function count(rows) { var row, cell; let sum = 0; for (let i = 0; i < rows.length; i++) { if (i & 1) { row = rows[i]; cell = row.size(); sum = (sum + cell) | 0; } } return sum; }
 # print(count([{ size() { return 2; } }, { size() { return 3; } }]), count([]));
 # -- end of source
-# STATISTIC: WalksOfLoopsUndone <= 1
+# STATISTIC: LoopVisitsUndone <= 1
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 3 0

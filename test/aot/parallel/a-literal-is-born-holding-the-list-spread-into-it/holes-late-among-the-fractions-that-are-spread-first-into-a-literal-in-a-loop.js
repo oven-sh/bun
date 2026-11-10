@@ -1,6 +1,6 @@
 // Lists of fractions with a hole late, last, first, at every second place, at every place are spread first into a literal in a loop: the copy holds the fractions as values and undefined at the holes;
 // so does the copy behind which a text is written. Each copy is then pushed onto, stored into, shortened and lengthened, and the list given stays as it was.
-// STATISTIC: LiteralsBornHoldingTheListSpreadRightBehind >= 3
+// STATISTIC: ArrayLiteralsAllocatedFromSpread >= 3
 const turns = JSON.parse("4");
 function copies(given) { const made = []; for (let i = 0; i < turns; i++) made.push([...given]); return made; }
 function grown(given, more) { const made = []; for (let i = 0; i < turns; i++) made.push([...given, more]); return made; }

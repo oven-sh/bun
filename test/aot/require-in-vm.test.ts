@@ -23,7 +23,7 @@ const files: Record<string, string> = {
   "quiet.mjs": `import vm from "node:vm";
     console.log(vm.runInNewContext("one + 1", { one: 1 }));`,
 };
-const warning = "TS100064: the program hands a require() to code that the compiler can't read";
+const warning = "TS100064: the program passes require() to code that the compiler can't read";
 
 /** Builds in a folder of the files, with the executable elsewhere. Answers how often the build warned. */
 function project() {

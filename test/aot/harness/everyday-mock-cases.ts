@@ -98,7 +98,8 @@ export function everydayMockCases(): EverydayMockCase[] {
                 (each, at) =>
                   `test(${JSON.stringify(each)}, async () => {\n${place === "in-the-test" ? `  ${lays}\n` : ""}  await look("${at + 1}");\n});`,
               ),
-              'afterAll(() => {\n  console.log("SAID " + (lines.join(" . ") || "nothing"));\n});',
+              // A branch that is never taken: a compiler that folds it the wrong way changes the line.
+              'afterAll(() => {\n  let text = lines.join(" . ") || "nothing";\n  if (process.argv.length > 99) text = "a long command line";\n  console.log("SAID " + text);\n});',
             ]
               .filter(Boolean)
               .join("\n");

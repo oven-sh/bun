@@ -14,12 +14,12 @@ console.log(run(own, "return Bun.inspect(child).length > 0;"), part.add(1), late
 // DECLARED: docs/compiler/compatibility.mdx, "Code from strings": the program only tests require.main, so part.cjs is compiled into the code that requires it and has no module object. bun run prints "object 2" and "1 101 101", and ends at the next line with a TypeError, because the code has replaced the exports.
 /* Output:
 object 2
-Error: Cannot get at the module object of 2 2
-Error: Cannot get at the module object of 2 2
-Error: Cannot get at the module object of 2 2
-Error: Cannot get at the module object of 2 2
-Error: Cannot get at the module object of 2 2
-Error: Cannot get at the module object of 2 2
-Error: Cannot get at the module object of 2 2
-Error: Cannot get at the module object of 2 2
+Error: Cannot access the module object of 2 2
+Error: Cannot access the module object of 2 2
+Error: Cannot access the module object of 2 2
+Error: Cannot access the module object of 2 2
+Error: Cannot access the module object of 2 2
+Error: Cannot access the module object of 2 2
+Error: Cannot access the module object of 2 2
+Error: Cannot access the module object of 2 2
 */

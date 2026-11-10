@@ -1,5 +1,5 @@
-// STATISTIC: RestsOfPatternsThatAreDefinitionsOneByOne >= 2
-// STATISTIC: CopiesThatAreDefinitionsOneByOne = 0
+// STATISTIC: ObjectRestsExpandedToDefines >= 2
+// STATISTIC: ObjectSpreadsExpandedToDefines = 0
 // Plain JavaScript: the rest of a pattern out of a default that stands in sight, out of a literal handed over, out of the members of a written list: the names that the pattern has taken stay out.
 function show(v) { console.log(Object.keys(v).join() + "|" + JSON.stringify(v) + "|" + Reflect.ownKeys(v).length + "|" + ("a" in v)); }
 var holder = { take({ a, ...r } = { a: 1, q: 2 }) { return r; } };

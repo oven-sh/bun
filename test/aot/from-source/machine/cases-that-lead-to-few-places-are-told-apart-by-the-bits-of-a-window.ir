@@ -22,8 +22,8 @@
 # The cases of isListed() lead to one place and lie within 64 values: one test of the range and one test of a bit of a written mask stand in the place of a jump through a table.
 # weightOf(): three places, three masks, and the last of them is not asked: the twelve values have no gap. isInRun(): a run without a gap to one place is the test of the range alone.
 # f1 = isListed, f2 = weightOf, f3 = isInRun
-# RUN: compile SwitchWindowsToldByBits mechanisms=none+TypedOperations+UnboxedNumbers+Folding
-# CHECK: statistic SwitchWindowsToldByBits 3
+# RUN: compile SwitchBitTestsEmitted mechanisms=none+TypedOperations+UnboxedNumbers+Folding
+# CHECK: statistic SwitchBitTestsEmitted 3
 # RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
 # RUNS: 700683
 # RUNS: 24

@@ -73,8 +73,8 @@ fn expected_record(change: impl FnOnce(&mut CompileOptions)) -> CompileOptions {
     };
     record.target.reference_width = ReferenceWidth::Narrow;
     fill_feature_bits(
-        &mut record.target.features_kept_only_when_named,
-        &bun_trim::features_kept_only_when_named(),
+        &mut record.target.features_retained_by_name,
+        &bun_trim::features_retained_by_name(),
     );
     change(&mut record);
     record
@@ -162,16 +162,6 @@ fn options_fill_record() {
         expected_record(|record| record.excluded_code = ExcludedCode::LIBRARY_TEXT)
     );
     assert_eq!(
-        filled_record(|options| {
-            options.loads_code_from_disk = true;
-            options.isolates_code_from_disk = true;
-        }),
-        expected_record(|record| {
-            record.excluded_code =
-                ExcludedCode::LIBRARY_TEXT | ExcludedCode::FILES_OF_IMAGE_FOR_CODE_OUTSIDE;
-        })
-    );
-    assert_eq!(
         filled_record(|options| options.embeds_function_source = false),
         expected_record(|record| record.excluded_code |= ExcludedCode::FUNCTION_SOURCE)
     );
@@ -186,10 +176,6 @@ fn options_fill_record() {
     assert_eq!(
         filled_record(|options| options.runs_in_several_realms = true),
         expected_record(|record| record.output = OutputOptions::RUNS_IN_SEVERAL_REALMS)
-    );
-    assert_eq!(
-        filled_record(|options| options.runs_in_place = true),
-        expected_record(|record| record.output = OutputOptions::RUNS_IN_PLACE_OF_FILES)
     );
 }
 
@@ -212,7 +198,7 @@ fn features_removed_by_request_fill_bits() {
 #[test]
 fn trimming_has_the_words_of_written_texts_looked_for_in_every_feature() {
     let looked_for =
-        |change: fn(&mut AotOptions)| filled_record(change).target.features_kept_only_when_named;
+        |change: fn(&mut AotOptions)| filled_record(change).target.features_retained_by_name;
     let bits_of = |features: &FeatureSet| {
         let mut bits = [0; 8];
         fill_feature_bits(&mut bits, features);
@@ -224,7 +210,7 @@ fn trimming_has_the_words_of_written_texts_looked_for_in_every_feature() {
     );
     assert_eq!(
         looked_for(|_| {}),
-        bits_of(&bun_trim::features_kept_only_when_named())
+        bits_of(&bun_trim::features_retained_by_name())
     );
 }
 
@@ -346,8 +332,6 @@ fn reports_follow_explain() {
     let cases = [
         (ExplainSet::TEXT, sites_and_counts),
         (ExplainSet::JSON, sites_and_counts),
-        (ExplainSet::ONLY_UNKNOWN_CODE, sites_and_counts),
-        (ExplainSet::ONLY_UNPROVEN_TYPE, sites_and_counts),
         (ExplainSet::CHECKS, ReportSet::FLOW),
         (ExplainSet::CHECKS_JSON, ReportSet::FLOW),
         (ExplainSet::FORMS, ReportSet::FLOW),
@@ -495,10 +479,10 @@ fn sections_are_read_as_typed_elements() {
 }
 
 #[test]
-fn engine_is_handed_the_function_text_of_the_module_that_it_names() {
+fn callbacks_return_function_source() {
     let types = bun_sema::erasure::PackedTypeRanges::default();
     let texts = SourceTexts::new(vec![
-        Some(ModuleSource::new(b"/p/a.js", TEXT).with_function_text(Some(types))),
+        Some(ModuleSource::new(b"/p/a.js", TEXT).with_function_source(Some(types))),
         None,
         Some(ModuleSource::new(b"/p/b.js", TEXT)),
     ]);
@@ -509,15 +493,15 @@ fn engine_is_handed_the_function_text_of_the_module_that_it_names() {
     };
     let owner = (&raw mut owner).cast::<c_void>();
     // SAFETY: `owner` is a `ProgramOwner` that outlives the calls, and nothing changes its `texts`.
-    let sizes = [0, 1, 2, 3].map(|module| unsafe { size_of_function_text(owner, module) });
+    let sizes = [0, 1, 2, 3].map(|module| unsafe { function_source_size(owner, module) });
     assert_eq!(sizes, [TEXT.len(), 0, 0, 0]);
     let mut destination = [0u8; TEXT.len()];
     for module in [1, 2, 3] {
-        // SAFETY: as above, and the function text of the module has no byte.
-        unsafe { copy_function_text(owner, module, destination.as_mut_ptr()) };
+        // SAFETY: as above, and the function source of the module is empty.
+        unsafe { copy_function_source(owner, module, destination.as_mut_ptr()) };
         assert_eq!(destination, [0; TEXT.len()]);
     }
-    // SAFETY: as above, and `destination` has room for the size that was answered.
-    unsafe { copy_function_text(owner, 0, destination.as_mut_ptr()) };
+    // SAFETY: as above, and `destination` has room for the size that was returned.
+    unsafe { copy_function_source(owner, 0, destination.as_mut_ptr()) };
     assert_eq!(destination, TEXT);
 }

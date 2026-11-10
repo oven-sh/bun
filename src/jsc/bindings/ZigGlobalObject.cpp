@@ -4375,7 +4375,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadKind::Import);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-        JSC::AOT::ModuleRequesterScope asker(globalObject, Bun::requesterForUncompiledImportCall(sourceOriginStringHolder));
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForUncompiledImportCall(sourceOriginStringHolder));
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
@@ -4440,7 +4440,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
-        JSC::AOT::ModuleRequesterScope asker(globalObject, Bun::requesterForImporter(referrer));
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(referrer));
         JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)

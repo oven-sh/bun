@@ -24,10 +24,10 @@ import {
   answering,
   comparedDeeply,
   deepComparison,
-  handedOver,
   matchedDeeply,
   mayAnswerWrapperKeptIn,
   promiseOf,
+  retainedByNativeCode,
 } from "./native-code.ts";
 import { convertedToString, iterated, sequencesOfTLSOptions, socketOptions, tlsOptionNames } from "./socket-options.ts";
 
@@ -1021,7 +1021,7 @@ const serverMembers = {
         }),
       ],
       request: [b.readsContents(), b.writesContents(), ...converted],
-      options: handedOver,
+      options: retainedByNativeCode,
     },
   },
   // Closing a connection runs the close handler of its WebSocket before the call returns.
@@ -1754,7 +1754,7 @@ export default b.declarations(
     closeCallback: {
       args: { callback: b.any.optional },
       capability: "heap",
-      uses: { callback: [...handedOver, b.definesName(["ptr"], b.strictNull)] },
+      uses: { callback: [...retainedByNativeCode, b.definesName(["ptr"], b.strictNull)] },
       reads: externalState,
       writes: externalState,
       implementation: b.generic,
@@ -1786,7 +1786,7 @@ export default b.declarations(
         toString: b.builtin("%NativeFunctions%.ErrorCodeCppNodeError_proto_toString"),
       },
       capability: "heap",
-      uses: { view: [...handedOver, b.readsContents(), b.writesContents()], byteOffset: b.inspected },
+      uses: { view: [...retainedByNativeCode, b.readsContents(), b.writesContents()], byteOffset: b.inspected },
       reads: viewHeaps,
       writes: externalState,
       implementation: b.generic,

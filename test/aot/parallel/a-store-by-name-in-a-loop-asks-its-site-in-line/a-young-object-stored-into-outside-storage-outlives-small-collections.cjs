@@ -1,5 +1,5 @@
 // The barrier behind the store outside the cell: the old object alone holds what the loop stores.
-// STATISTIC: StoresByNameThatAskTheirSitesInLine >= 2
+// STATISTIC: SiteCachedStoresEmittedInline >= 2
 "use strict";
 function fill(crates, turns, given) { let sum = 0; for (let i = 0; i < turns; i++) { const crate = crates[i % crates.length]; crate.lid = given === undefined ? i : given; sum = (sum + i) | 0; } return sum; }
 function plain(n) { return JSON.parse("[" + Array.from({ length: n }, () => '{"hinge":1,"lid":0}').join(",") + "]"); }

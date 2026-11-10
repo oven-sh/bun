@@ -1,5 +1,5 @@
 // An ordinary object has accessors of its own, laid by descriptors under computed names, so many that they lie outside its cell. Each is read by name again and again: the access table remembers where the GetterSetter lies. Between the reads the object changes: another getter, a value, a deletion, a setter alone, a child that inherits.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function log(...parts) { let text = ""; for (let i = 0;i < parts.length; i++) text += (i ? " " : "") + String(parts[i]); report(text); }
 const names = [];

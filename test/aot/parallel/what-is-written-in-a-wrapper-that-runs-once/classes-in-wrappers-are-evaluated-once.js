@@ -5,7 +5,7 @@
 // What leans on "once" is enforced: each of the two callbacks stops at a second entry, and says so once at its first.
 // COUNT: operation:operationAOTEnterBodyThatRunsOnce = 2
 // Both callbacks hold nothing that types make cheaper: they are written straight as before, and the straight form calls the stop itself.
-// STATISTIC: UnitsWrittenStraight >= 2
+// STATISTIC: StraightUnitsCompiled >= 2
 "use strict";
 var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 var Base, Heir;

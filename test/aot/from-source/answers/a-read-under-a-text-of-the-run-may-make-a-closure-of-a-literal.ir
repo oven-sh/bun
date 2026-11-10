@@ -16,4 +16,4 @@
 # CHECK-NEXT: exited with 0
 # RUN(WALK): walk f1:Body mechanisms=all
 # WALK: closureForm=Deferred
-# WALK: = ElemGet {{*}}traits=[mayThrow, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+# WALK: = ElemGet {{*}}traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]

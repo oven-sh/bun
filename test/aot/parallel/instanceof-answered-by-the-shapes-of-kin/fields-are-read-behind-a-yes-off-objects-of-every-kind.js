@@ -1,6 +1,6 @@
 // Behind a yes the fields are read off the shape that the question has tested. Beside objects of the class: one whose field was deleted and laid anew, one with a getter of its own, a frozen one,
 // one made by Object.create below the class, a proxy over one, one of a class below; and a function that the build does not see changes the object between the question and the read.
-// STATISTIC: QuestionsOfInstanceOfWhoseArmsEndWithBranch >= 2
+// STATISTIC: InstanceOfTestsJumpThreaded >= 2
 class UiEvent { constructor(x) { this.x = x; } }
 class TouchEvent extends UiEvent { constructor(x) { super(x); this.fingers = 2; } }
 class PenEvent extends TouchEvent { constructor(x) { super(x); this.tilt = 5; } }

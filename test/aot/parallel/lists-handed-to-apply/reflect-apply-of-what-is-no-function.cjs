@@ -1,5 +1,5 @@
 // The target is undefined, null, a number, a text, a plain object, an object below Function.prototype, a class: the error is the one of plain Bun.
-// STATISTIC: CallsForwardedBehindTestsOfTheirTargets >= 1
+// STATISTIC: CallsForwardedAfterTargetChecks >= 1
 const upTo = JSON.parse("[0,1,2,3,4,5,6,7,8]");
 class Made {}
 const others = [undefined, null, 5, "text", {}, Object.create(Function.prototype), Made];

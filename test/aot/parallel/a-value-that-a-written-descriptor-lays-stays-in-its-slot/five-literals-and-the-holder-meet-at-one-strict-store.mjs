@@ -1,4 +1,4 @@
-// COUNTER: FieldsLeftSlotByRedefinition = 1
+// COUNTER: FieldsEvictedByRedefinition = 1
 function double(n) { return (n * 2) | 0; }
 function triple(n) { return (n * 3) | 0; }
 const tools = {};

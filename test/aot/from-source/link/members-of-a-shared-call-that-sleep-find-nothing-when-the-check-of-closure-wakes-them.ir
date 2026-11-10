@@ -13,9 +13,9 @@
 # print(said);
 # -- end of source
 # C declares the name and E inherits it: they are awake from the start; the four others sleep to the end. Every run of this test asks whether Link's flow is closed: that check wakes them all, and nothing may grow.
-# RUN(COUNT): compile SharedCallsWhoseSilentMembersSleep SharedCallsWhoseSleepersWereWoken mechanisms=all
-# COUNT: statistic SharedCallsWhoseSilentMembersSleep 1
-# COUNT: statistic SharedCallsWhoseSleepersWereWoken 0
+# RUN(COUNT): compile SharedCallsWithDormantMembers SharedCallsWithActivatedMembers mechanisms=all
+# COUNT: statistic SharedCallsWithDormantMembers 1
+# COUNT: statistic SharedCallsWithActivatedMembers 0
 # RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # ANSWERS: none,none,late of C1,none,late of E1,none,
 

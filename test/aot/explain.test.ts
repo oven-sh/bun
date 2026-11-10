@@ -49,8 +49,6 @@ interface Cause extends Place, Wording {
   inLoops: number;
   function: string;
   types: string[];
-  family: "unproven-type" | "unknown-code";
-  why: Wording | null;
 }
 
 interface Report {
@@ -67,7 +65,7 @@ const maxShownCauses = 20;
 const textAndJSON = ["--explain", "--explain=json"];
 const membersOfCause =
   "rank reason file line column inDependency source message fix url accesses dependencyAccesses calls operators " +
-  "inLoops function types family why";
+  "inLoops function types";
 
 const pagePath = join(import.meta.dir, "..", "..", "docs", "compiler", "explain.mdx");
 const page = readFileSync(pagePath, "utf8").replaceAll("\r\n", "\n");
@@ -229,7 +227,6 @@ function linesDecidedBy(causes: Cause[]) {
         ...(cause.inLoops > 0
           ? [`note: ${counted(cause.inLoops, "of these runs in a loop", "of these run in a loop")}`]
           : []),
-        ...(cause.why ? [`note: why (${cause.why.reason}): ${cause.why.message}`] : []),
         `note: fix: ${cause.fix}`,
         `note: ${cause.url}`,
       ]),
@@ -247,10 +244,8 @@ function expectCountsToAgree({ lines, numbers, causes }: Report) {
     expect(operations).toBeGreaterThan(0);
     expect(cause.inLoops).toBeLessThanOrEqual(operations);
     if (cause.accesses > 0) expect(cause.inDependency).toBe(false);
-    for (const { reason, url } of cause.why ? [cause, cause.why] : [cause]) {
-      expect(url).toBe(`https://bun.com/docs/compiler/explain#${reason}`);
-      expect(page).toContain(`\n### ${reason}\n`);
-    }
+    expect(cause.url).toBe(`https://bun.com/docs/compiler/explain#${cause.reason}`);
+    expect(page).toContain(`\n### ${cause.reason}\n`);
   }
   const decided = linesDecidedBy(causes);
   expect(lines.filter(line => decided.includes(line))).toEqual(decided);

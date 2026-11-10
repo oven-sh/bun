@@ -5,8 +5,8 @@
 # KEPT: = FindKeyInMap
 # KEPT: inlineBuiltin=MapSet
 # KEPT: = GetValueAtPlaceInMap
-# RUN(EVENT): compile PlacesOfKeysThatStandBehindStoresWhereTestsFoundNoKey
-# EVENT: statistic PlacesOfKeysThatStandBehindStoresWhereTestsFoundNoKey 2
+# RUN(EVENT): compile MapEntryIndicesSurvivingInserts
+# EVENT: statistic MapEntryIndicesSurvivingInserts 2
 # RUN(SAID): run-in-shell mechanisms=all
 # SAID: 1024 8
 # SAID-NEXT: exited with 0

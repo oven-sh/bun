@@ -5547,7 +5547,9 @@ describe("expect()", () => {
 
         test("asymmetricMatch is ignored if it isn't a function", () => {
           expect(throwsRangeError).not.toThrow({ asymmetricMatch: true });
-          expect(() => expect(throwsRangeError).toThrow({ asymmetricMatch: true })).toThrow();
+          expect(() => expect(throwsRangeError).toThrow({ asymmetricMatch: true })).toThrow(
+            failure("Expected constructor: "),
+          );
         });
 
         test("an object is a matcher for toThrow() if it is one for toEqual()", () => {

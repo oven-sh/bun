@@ -1116,6 +1116,7 @@ describe("close handling", () => {
     ["undefined", () => ["ignore", "pipe", "inherit", undefined, undefined]],
     // eslint-disable-next-line no-sparse-arrays
     ["a hole", () => ["ignore", "pipe", "inherit", , "ignore"]],
+    ["an empty buffer", () => ["ignore", "pipe", "inherit", new Uint8Array(0), new ArrayBuffer(0)]],
   ] as const) {
     it(`stdio[N>=3] = ${label} is treated as ignore`, async () => {
       await using proc = spawn({
@@ -1215,6 +1216,50 @@ describe("close handling", () => {
         ).toThrow(msg);
       });
     }
+
+    // Only stdin has a writer for in-memory bytes, so a non-empty buffer at an extra slot is refused.
+    describe("non-empty buffer at index >= 3 throws", () => {
+      // What the call throws, or "spawned" when it does not throw.
+      async function outcome(call: () => any) {
+        try {
+          await call()[Symbol.asyncDispose]?.();
+          return "spawned";
+        } catch (e: any) {
+          return { name: e.name, code: e.code, message: e.message };
+        }
+      }
+
+      for (const [kind, make] of [
+        ["Uint8Array", () => new Uint8Array([1, 2, 3])],
+        ["Buffer", () => Buffer.from("abc")],
+        ["ArrayBuffer", () => new ArrayBuffer(3)],
+        ["SharedArrayBuffer", () => new SharedArrayBuffer(3)],
+        ["DataView", () => new DataView(new ArrayBuffer(3))],
+        ["Float64Array", () => new Float64Array(1)],
+      ] as const) {
+        for (const index of [3, 5]) {
+          it(`${kind} at index ${index}`, async () => {
+            // The child never reads the fd, so a build that accepts the buffer fails here at once.
+            const cmd = [bunExe(), "-e", ""];
+            const options = () => ({
+              env: bunEnv,
+              stdio: ["ignore", "ignore", "ignore", ...Array(index - 3).fill("ignore"), make()] as any,
+            });
+            const error = {
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: `ArrayBufferView cannot be used for stdio[${index}] yet`,
+            };
+            expect([
+              await outcome(() => spawn({ cmd, ...options() })),
+              await outcome(() => spawn(cmd, options())),
+              await outcome(() => spawnSync({ cmd, ...options() })),
+              await outcome(() => spawnSync(cmd, options())),
+            ]).toEqual([error, error, error, error]);
+          });
+        }
+      }
+    });
 
     it("'socket-fd' at index < 3 throws", () => {
       expect(() =>
@@ -1451,6 +1496,15 @@ it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
     `spawnSync:stderr:${message}`,
   ]);
   expect(exitCode).toBe(0);
+});
+
+it("treats an empty ArrayBufferView at stdout or stderr as ignore", () => {
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "-e", "console.log('out'); console.error('err')"],
+    env: bunEnv,
+    stdio: ["ignore", new Uint8Array(0), new Uint8Array(0)] as any,
+  });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: undefined, stderr: undefined, exitCode: 0 });
 });
 
 it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {

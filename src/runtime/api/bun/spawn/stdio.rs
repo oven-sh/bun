@@ -545,10 +545,19 @@ impl Stdio {
                 return Ok(());
             }
 
-            if i == 1 || i == 2 {
-                return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "ArrayBufferView cannot be used for stdout/stderr yet"
-                )));
+            match i {
+                0 => {}
+                1 | 2 => {
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
+                        "ArrayBufferView cannot be used for stdout/stderr yet"
+                    )));
+                }
+                // Only stdin has a writer for in-memory bytes.
+                _ => {
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
+                        "ArrayBufferView cannot be used for stdio[{i}] yet"
+                    )));
+                }
             }
 
             *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(

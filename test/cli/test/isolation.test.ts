@@ -3055,7 +3055,7 @@ describe.concurrent("the SourceProvider cache checks a source against its file a
 
   // The transpiler cache stores the output for each text of 4,096 bytes or more, in a file named by the hash of that
   // text. The entries that an emptied directory gets are therefore the files that were transpiled since. The test
-  // files are smaller than that, and leave none.
+  // files and the preload are smaller than that, and leave none.
   const padding = `\n//${Buffer.alloc(4096, "x").toString()}\n`;
   const esm = (text: string) => `export const text = "${text}";${padding}`;
   const cjs = (text: string) => `exports.text = "${text}";${padding}`;
@@ -3231,6 +3231,51 @@ describe.concurrent("the SourceProvider cache checks a source against its file a
         env,
       );
     });
+  });
+
+  // A test file loads its modules before its first test, so before the reset in the preload's hook, and loads nothing
+  // after it. The test file that runs next compares each source with its file, and transpiles only a file that changed.
+  test.each(modes)("%s: a reset in a preload's beforeEach() transpiles only a changed file", async (_, args, env) => {
+    // The three test files are one text and take turns, because a lone --parallel worker runs the last of three files
+    // second. What the first one loads is cached before the first reset of the process, and the second one transpiles
+    // all of it again, so the count is taken in the third.
+    const testFile = `
+      import { expect, test } from "bun:test";
+      import { text as a } from "./a.ts";
+      import { text as b } from "./b.ts";
+      ${countsTranspiles}
+      const c = require("./c.cjs");
+
+      test("the second test file to run writes a file, and the third one transpiles only that file", () => {
+        const turn = Number(readFileSync(join(import.meta.dir, "turn"), "utf8")) + 1;
+        writeFileSync(join(import.meta.dir, "turn"), String(turn));
+        expect([a, b, c.text]).toEqual([turn === 3 ? "a:1" : "a:0", "b:0", "c:0"]);
+        if (turn === 2) {
+          emptyCache();
+          rewrite("a.ts", ":0", ":1");
+        }
+        if (turn === 3) expect(transpiled()).toHaveLength(1);
+      });
+    `;
+    await passes(
+      {
+        "a.ts": esm("a:0"),
+        "b.ts": esm("b:0"),
+        "c.cjs": cjs("c:0"),
+        "turn": "0",
+        "preload.ts": `
+          import { beforeEach, jest } from "bun:test";
+          beforeEach(() => void jest.resetModules());
+        `,
+        "a.test.ts": testFile,
+        "b.test.ts": testFile,
+        "c.test.ts": testFile,
+      },
+      3,
+      [...args, "--preload", "./preload.ts"],
+      // As in a release build, the second test file gets its sources from the transpiler cache.
+      { ...env, BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1" },
+    );
   });
 
   // vi.resetModules() leaves a package loaded. One that threw is not loaded, in this test file or in the one before it.

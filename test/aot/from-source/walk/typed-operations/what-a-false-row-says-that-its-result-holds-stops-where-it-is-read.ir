@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function first(o: object): string { return typeof Object.keys(o)[0]; }
+# print(first(JSON.parse('{"abc":1}')));
+# print("went on");
+# -- end of source
+# A row's holding(..) seeds, in Link, the contents of the object that the row makes. Of the type of the holder itself the proven level reads no contents. Where Link's word types a read, the walk lays a test behind the read in every build.
+# THE LIE: Object.keys() is taken to make a list that holds null alone.
+# RUN: run-in-shell mechanisms=all
+# CHECK: string
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Object.keys/ContentsOfResult
+# LIE: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# LIE-NOT: went on
+# LIE: crashed

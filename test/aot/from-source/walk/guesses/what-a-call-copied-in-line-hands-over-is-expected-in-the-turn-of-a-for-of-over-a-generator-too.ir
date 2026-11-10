@@ -1,0 +1,24 @@
+# -- source: what-a-call-copied-in-line-hands-over-is-expected-in-the-turn-of-a-for-of-over-a-generator-too.js
+# function repeat(step, turns) {
+#   let s = 1;
+#   for (let i = 0; i < turns; i++) s = step(s) | 0;
+#   return s;
+# }
+# function* upTo(count) { for (let i = 0; i < count; i++) yield i; }
+# function main(rounds) {
+#   const steps = [x => x + 3, x => x * 5 + 1, x => x ^ (x >>> 3)];
+#   let total = 0;
+#   for (const round of upTo(rounds)) total = (total + repeat(steps[round % 3], 1024)) | 0;
+#   return total;
+# }
+# sink(main);
+# print(main(6));
+# -- end of source
+# While a generator is walked in its consumer, the frame below a frame is its caller but for one: the consumer's turn, which is laid over the generator's frames. A call copied in line inside that turn has
+# the turn below it, its caller: what it hands over by the text is expected of the copy's parameter there as anywhere.
+# f1 = repeat, f2 = upTo, f3 = main
+# RUN: walk f3:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=f4
+# CHECK: = TypeTest {{*}} testedType=f5
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 1723920390

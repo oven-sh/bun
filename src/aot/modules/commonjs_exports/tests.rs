@@ -86,6 +86,17 @@ var __export = (target, all) => {
 const IMPORT_DEFAULT: &str = r#"var __importDefault = (this && this.__importDefault) || function (mod) { return (mod && mod.__esModule) ? mod : { "default": mod }; };"#;
 
 const STAR_OF_K: &str = "__exportStar(require('./k.cjs'), exports);";
+const STAR_IN_LINE_OF_K: &str = r#"var _k = require('./k.cjs');
+Object.keys(_k).forEach(function (key) {
+  if (key === "default" || key === "__esModule") return;
+  if (key in exports && exports[key] === _k[key]) return;
+  Object.defineProperty(exports, key, {
+    enumerable: true,
+    get: function () {
+      return _k[key];
+    }
+  });
+});"#;
 const RE_EXPORT_OF_K: &str = "__reExport(exports, require('./k.cjs'));";
 const ASSIGN_OF_K: &str = "Object.assign(exports, require('./k.cjs'));";
 const BINDING_OF_B: &str = "__createBinding(exports, require('./k.cjs'), 'b', 'a');";
@@ -507,6 +518,7 @@ fn a_call_that_defines_names() {
         (SWC_EXPORT, SWC_NAMES, "get a, get b"),
         (ESBUILD_HELPERS, EXPORT_OF_A, "get a"),
         (EXPORT_STAR, STAR_OF_K, ALL_OF_K),
+        ("", STAR_IN_LINE_OF_K, ALL_OF_K),
         (EXPORT_STAR, &marked_star[..], "all of k.cjs, marker true"),
         (EXPORT_STAR, BINDING_OF_B, "get a"),
         (ESBUILD_HELPERS, RE_EXPORT_OF_K, ALL_OF_K),
@@ -811,7 +823,9 @@ fn the_file_keeps_its_object() {
         "exports.a = 1; Object.defineProperty(exports, 'b', { value: 1 }); exports.b = 2;",
         "Object.defineProperty(exports, 'a', { get() { return Math.random(); } });",
         "const b = 1; Object.defineProperty(exports, 'a', { get() { return b; }, set(v) {} });",
-        "Object.defineProperty(exports, 'a', { get() { return k.b; } }); var k = require('./k.cjs');",
+        "Object.defineProperty(exports, 'a', { get() { return k.b; } }); exports.a; var k = require('./k.cjs');",
+        "Object.defineProperty(exports, 'a', { get() { return k.b; } }); var k = require('./k.cjs'); exports.a;",
+        "Object.defineProperty(exports, 'a', { get() { return k.b; } }); require('./main.cjs'); var k = require('./k.cjs');",
         "Object.defineProperty(exports, 'a', { get() { return require('./k.cjs').b; } });",
         "if (Math.random()) var k = require('./k.cjs'); Object.defineProperty(exports, 'a', { get() { return k.b; } });",
         "var k = require('./k.cjs'); k = {}; Object.defineProperty(exports, 'a', { get() { return k.b; } });",
@@ -819,6 +833,120 @@ fn the_file_keeps_its_object() {
     ] {
         let keeps_names = with_required(module, |program| program.keeps_names("m.cjs"));
         assert!(!keeps_names, "{module}");
+    }
+}
+
+#[test]
+fn a_getter_written_in_front_of_the_load_is_that_name_where_nobody_asks_in_between() {
+    let module = "Object.defineProperty(exports, 'a', { get() { return k.b; } }); var k = require('./k.cjs');";
+    with_required(module, |program| {
+        assert!(program.keeps_names("m.cjs"));
+        assert_eq!(program.member("m.cjs", "a"), "k.cjs b");
+    });
+}
+
+#[test]
+fn a_getter_past_the_helper_is_a_name_of_a_file_that_says_a_fixed_marker() {
+    const BABEL_HELPER: &str =
+        "function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }";
+    let written_by_typescript = format!(
+        "{IMPORT_DEFAULT} {MARKER} var k_1 = require('./k.cjs'); Object.defineProperty(exports, 'a', {{ enumerable: true, get: function () {{ return __importDefault(k_1).default; }} }});"
+    );
+    let written_by_babel = format!(
+        "{MARKER} Object.defineProperty(exports, 'a', {{ enumerable: true, get: function () {{ return _k.default; }} }}); var _k = _interopRequireDefault(require('./k.cjs')); {BABEL_HELPER}"
+    );
+    let marked = format!("{MARKER} exports.default = 1;");
+    for module in [&written_by_typescript, &written_by_babel] {
+        let files = [
+            ("main.cjs", READS_A),
+            ("m.cjs", &module[..]),
+            ("k.cjs", &marked[..]),
+        ];
+        with_program(&files, |program| {
+            assert!(program.keeps_names("m.cjs"), "{module}");
+            assert!(program.keeps_names("k.cjs"), "{module}");
+            assert_eq!(program.member("m.cjs", "a"), "k.cjs default", "{module}");
+        });
+        for leaf in [
+            "exports.default = 1;",
+            "exports.__esModule = true; exports.default = 1;",
+            "module.exports = function () {};",
+        ] {
+            let files = [
+                ("main.cjs", READS_A),
+                ("m.cjs", &module[..]),
+                ("k.cjs", leaf),
+            ];
+            let keeps_names = with_program(&files, |program| program.keeps_names("m.cjs"));
+            assert!(!keeps_names, "{module} over {leaf}");
+        }
+    }
+}
+
+#[test]
+fn the_holder_handed_to_the_helper_in_ordinary_code_is_needed_as_a_value() {
+    let marked = format!("{MARKER} exports.default = 1;");
+    for module in [
+        "var k_1 = require('./k.cjs'); exports.a = __importDefault(k_1).default;",
+        "exports.a = peek(); var k_1 = require('./k.cjs'); function peek() { return __importDefault(k_1).default; }",
+        "var k_1 = require('./k.cjs'); Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return __importDefault(k_1).default; } }); exports.b = __importDefault(k_1).default;",
+    ] {
+        let module = format!("{IMPORT_DEFAULT} {MARKER} {module}");
+        let files = [
+            ("main.cjs", READS_A),
+            ("m.cjs", &module[..]),
+            ("k.cjs", &marked[..]),
+        ];
+        let keeps_names = with_program(&files, |program| program.keeps_names("k.cjs"));
+        assert!(!keeps_names, "{module}");
+    }
+}
+
+#[test]
+fn a_star_written_in_line_is_the_names_of_the_required_file() {
+    let main = "const m = require('./m.cjs'); console.log(m.b);";
+    let module = format!("{MARKER} {STAR_IN_LINE_OF_K}");
+    let marked = format!("{MARKER} exports.b = 1;");
+    let leaf = ("k.cjs", &marked[..]);
+    with_program(
+        &[("main.cjs", main), ("m.cjs", &module[..]), leaf],
+        |program| {
+            assert!(program.keeps_names("m.cjs"));
+            assert!(program.keeps_names("k.cjs"));
+            assert_eq!(program.member("m.cjs", "b"), "k.cjs b");
+        },
+    );
+    for changed in [
+        module.replace("key === \"default\"", "key === \"b\""),
+        module.replace("return _k[key];", "return _k.b;"),
+        module.replace("forEach(function (key) {", "map(function (key) {"),
+        module.replace("Object.keys(_k)", "Object.getOwnPropertyNames(_k)"),
+        module.replace(
+            "var _k = require('./k.cjs');",
+            "var _k = require('./k.cjs'); _k = {};",
+        ),
+        module.replace(
+            "var _k = require('./k.cjs');",
+            "var _k; _k = require('./k.cjs');",
+        ),
+        module.replace(
+            "var _k = require('./k.cjs');",
+            "exports.b = 2; var _k = require('./k.cjs');",
+        ),
+        module.replace(
+            "var _k = require('./k.cjs');",
+            "var Object = globalThis.Object; var _k = require('./k.cjs');",
+        ),
+        format!("{module} exports.b;"),
+        format!(
+            "{module} {}",
+            STAR_IN_LINE_OF_K.replace("var _k = require('./k.cjs');", "")
+        ),
+        STAR_IN_LINE_OF_K.to_string(),
+    ] {
+        let files = [("main.cjs", main), ("m.cjs", &changed[..]), leaf];
+        let keeps_names = with_program(&files, |program| program.keeps_names("m.cjs"));
+        assert!(!keeps_names, "{changed}");
     }
 }
 

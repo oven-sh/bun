@@ -1,0 +1,19 @@
+# -- source: a-pure-copy-of-a-record-with-fields-left-out-goes-by-its-words-in-a-loop.ts
+# declare function print(...values: unknown[]): void;
+# type Parcel = { weight: number; fragile?: number; insured?: number };
+# const parcels: Parcel[] = [{ weight: 1, fragile: 2 }, { weight: 3, insured: 4 }];
+# const kept: any[] = [];
+# function copy(turns: number) { for (let at = 0; at < turns; at++) { const one = { ...parcels[at & 1] }; kept[at & 3] = one; } return kept.length; }
+# print(copy(5), JSON.stringify(kept));
+# -- end of source
+# `{ ...parcel }` in a loop: the literal was filled behind tests of ONE key order, and the first parcel of another order left the typed copy of the loop for good.
+# A pure copy of the literal's own layout goes by the cell's words, whatever the order, as it did outside loops.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: TryCopyFields
+# RUN(ORDERS): walk f1 mechanisms=all
+# ORDERS-LABEL: code f1:Body
+# ORDERS-NOT: HasKeyOrder
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 4 [{"weight":1,"fragile":2},{"weight":3,"insured":4},{"weight":1,"fragile":2},{"weight":3,"insured":4}]

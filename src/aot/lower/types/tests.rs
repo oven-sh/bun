@@ -508,6 +508,108 @@ export function read(): number | undefined { return v?.list.first.next.list.firs
 }
 
 #[test]
+fn type_that_makes_itself_anew_without_rising_has_untyped_fields() {
+    let sources = [
+        ("key", "type Chain<K extends string> = { key: K; next?: Chain<`${K}a`> };
+export let v: Chain<\"a\"> = { key: \"a\" };
+"),
+        ("path", "interface Road<Base extends string> { path: Base; below?: Road<`${Base}/${string}`>[] }
+export let v: Road<\"/top\"> = { path: \"/top\" };
+"),
+        ("n", "type Count<N extends 0[]> = { n: N[\"length\"]; next?: Count<[...N, 0]> };
+export let v: Count<[]> = { n: 0 };
+"),
+        ("all", "type Marks<S extends string> = { all: S[]; more?: Marks<S | `${S}x`> };
+export let v: Marks<\"a\"> = { all: [\"a\"] };
+"),
+        ("or", "type Nest<T> = { inner: T } & { or?: Nest<{ inner: T }> };
+export let v: Nest<string> = { inner: \"a\" };
+"),
+        ("v", "type Wave<T, Up> = { v: T; next?: Up extends true ? Wave<[[T]], false> : Wave<T extends [infer U] ? U : never, true> };
+export let w: Wave<\"a\", true> = { v: \"a\" };
+"),
+        ("t", "type Swap<T, U> = { t: T; next?: Swap<U, [[T]]> };
+export let v: Swap<\"a\", \"b\"> = { t: \"a\" };
+"),
+        ("n", "type Build<N extends number, A extends 0[] = []> = A[\"length\"] extends N ? A : Build<N, [...A, 0]>;
+type Tally<N extends number> = { n: N; next?: Tally<[...Build<N>, 0][\"length\"] & number> };
+export let v: Tally<0> = { n: 0 };
+"),
+        ("n", "type Build<N extends number, A extends 0[] = []> = A[\"length\"] extends N ? A : Build<N, [...A, 0]>;
+type Below<N extends number> = `-${N}` extends `${infer M extends number}` ? M : never;
+type Above<N extends number> = `${N}` extends `-${infer M extends number}` ? M : N;
+type Ebb<N extends number> = { n: N; next?: Ebb<Below<[...Build<Above<N>>, 0][\"length\"] & number>> };
+export let v: Ebb<0> = { n: 0 };
+"),
+    ];
+    for (name, source) in sources {
+        let fields = declared_types_of_fields(&lower(source, None), name);
+        assert!(!fields.is_empty(), "{name}");
+        assert!(
+            fields.iter().all(|&field| field == DeclaredType::untyped()),
+            "{name}: {fields:?}"
+        );
+    }
+}
+
+#[test]
+fn written_refinements_of_one_type_keep_their_typed_fields() {
+    let source = "interface Plain { id: number; next?: Plain }
+type First = Plain & { next?: Second };
+type Second = Plain & { next?: Third };
+type Third = Plain & { next?: Fourth };
+type Fourth = Plain & { next?: undefined };
+export let v: First = { id: 1 };
+";
+    let fields = declared_types_of_fields(&lower(source, None), "id");
+    assert!(!fields.is_empty());
+    assert!(
+        fields.iter().all(|&field| field != DeclaredType::untyped()),
+        "{fields:?}"
+    );
+}
+
+#[test]
+fn instantiations_of_one_size_keep_their_typed_fields() {
+    let that_come_round =
+        "type After = { a: \"b\"; b: \"c\"; c: \"d\"; d: \"e\"; e: \"f\"; f: \"a\" };
+type Step<K extends keyof After> = { at: K; next?: Step<After[K]> };
+export let v: Step<\"a\"> = { at: \"a\", next: { at: \"b\" } };
+";
+    let in_a_row = "type Handle<T> = { id: number; value?: T };
+interface First { to: Handle<Second> }
+interface Second { to: Handle<Third> }
+interface Third { to: Handle<Fourth> }
+interface Fourth { last: number }
+export let v: Handle<First> = JSON.parse(\"{}\");
+";
+    for (source, name) in [(that_come_round, "at"), (in_a_row, "id")] {
+        let fields = declared_types_of_fields(&lower(source, None), name);
+        assert!(!fields.is_empty(), "{name}");
+        assert!(
+            fields.iter().all(|&field| field != DeclaredType::untyped()),
+            "{name}: {fields:?}"
+        );
+    }
+}
+
+#[test]
+fn instantiations_written_out_in_a_row_keep_their_typed_fields() {
+    let source = "type Handle<K, T> = { id: number; key?: K; value?: T };
+interface First { to: Handle<\"bb\", Second> }
+interface Second { to: Handle<\"ccc\", Third> }
+interface Third { to: Handle<\"dddd\", number> }
+export let v: Handle<\"a\", First> = JSON.parse(\"{}\");
+";
+    let fields = declared_types_of_fields(&lower(source, None), "id");
+    assert!(!fields.is_empty());
+    assert!(
+        fields.iter().all(|&field| field != DeclaredType::untyped()),
+        "{fields:?}"
+    );
+}
+
+#[test]
 fn part_beside_oversized_part_stays() {
     let source = format!("{EXPANDING_ALIAS}\nexport let v: Map<string, G<number>>;\n");
     let lowered = lower(&source, LOWERED_LIMIT);
@@ -629,8 +731,18 @@ fn variable_without_an_annotation_is_expected_to_hold_what_the_checker_infers_of
 }
 
 #[test]
-fn variable_without_an_annotation_is_untyped_where_the_file_is_not_checked() {
+fn variable_of_an_unchecked_file_is_expected_to_hold_what_a_function_of_the_file_answers() {
     let source = "function g() { return 1; }\nexport let v = g();\n";
+    let position = expand_variable(&lower_file("main.js", source, None), "v");
+    assert!(position.is_expected, "{position:?}");
+    let primitives = position.ty.primitives;
+    assert!(primitives.contains(Primitives::NUMBER), "{position:?}");
+    assert!(!primitives.contains(Primitives::STRING), "{position:?}");
+}
+
+#[test]
+fn variable_of_an_unchecked_file_is_untyped_where_the_file_does_not_declare_the_callee() {
+    let source = "export let v = Math.abs(1);\n";
     let position = expand_variable(&lower_file("main.js", source, None), "v");
     assert!(position.ty.is_anything(), "{position:?}");
     assert!(!position.is_expected, "{position:?}");

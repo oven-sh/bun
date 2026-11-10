@@ -10,15 +10,12 @@
 # As a CallBuiltin the arm kept a frame of spin for each turn: 300,000 turns with `{ length: 2, .. }` or a Float64Array for a list ended in a RangeError.
 # f1 = spin, f2 = kept
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = Call {{*}}calleeName="Reflect.apply"{{*}} tail
 # CHECK-NEXT: ReturnCall
 # RUN(NEVER): walk f1 mechanisms=all
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: = CallBuiltin
 # Where the frame stays anyway the function is named without a look at the callee, as before.
 # RUN(KEPT): walk f2 mechanisms=all
-# REQUIRES(KEPT): entries-of-bun
 # KEPT-LABEL: code f2:Body
 # KEPT: = CallBuiltin {{*}}overload=ReflectApply/0

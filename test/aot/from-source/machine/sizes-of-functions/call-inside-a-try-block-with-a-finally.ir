@@ -1,0 +1,24 @@
+# f2 = enter
+# -- source: call-inside-a-try-block-with-a-finally.ts
+# let depth = 0;
+# function enter(value: number): number {
+#   depth++;
+#   try {
+#     return work(value);
+#   } finally {
+#     depth--;
+#   }
+# }
+# function work(value: number): number {
+#   if (value < 0) throw new RangeError("negative");
+#   return value * 2 + depth;
+# }
+# declare const input: any;
+# (globalThis as any).answer = enter(+input);
+# -- end of source
+# The compiler before this one: 10 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 16, patches 2, moves 2, unlikely or rare 9.
+# RUN(X64): steps most:18 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 18

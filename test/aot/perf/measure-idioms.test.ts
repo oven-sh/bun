@@ -12,7 +12,7 @@ import {
   turnsOfCallThatWarmsUp,
 } from "./measure-idioms";
 
-// With all the pins measured at once, ./measure-idioms.ts took 13 benchmarks of 1,252 for programs that wait, other ones each time: the busy machine had let the run of 5,000 turns end over two
+// With all the benchmarks measured at once, ./measure-idioms.ts took 13 benchmarks of 1,252 for programs that wait, other ones each time: the busy machine had let the run of 5,000 turns end over two
 // seconds later than the run of 1,000. A conversion of 17 instructions a turn got 16,000 turns for its 20 million, and a benchmark whose cost comes in lumps did not get the turns that even them out.
 // The programs here are arithmetic, so this needs no counter of the processor.
 describe("a busy machine gives a measurement the same plan", () => {
@@ -27,17 +27,14 @@ describe("a busy machine gives a measurement the same plan", () => {
   /** Plans the program's measurement on a machine that keeps the first run, the second and so on from running for so many seconds. */
   function planOn(heldUp: number[], { aTurn, secondsATurn, blocksATurn, lump }: Program) {
     let run = 0;
-    return planOf(
-      async ({ turns, warmUp }) => {
-        const all = turns + 100 * warmUp;
-        return {
-          instructions: 60e6 + aTurn * all + (lump ? lump.instructions * Math.floor(all / lump.every) : 0),
-          seconds: 0.04 + secondsATurn * all + (heldUp[run++] ?? 0),
-          timesItGaveUpTheProcessor: 35 + Math.round(blocksATurn * all),
-        };
-      },
-      { underTheJit: false },
-    );
+    return planOf(async ({ turns, warmUp }) => {
+      const all = turns + 100 * warmUp;
+      return {
+        instructions: 60e6 + aTurn * all + (lump ? lump.instructions * Math.floor(all / lump.every) : 0),
+        seconds: 0.04 + secondsATurn * all + (heldUp[run++] ?? 0),
+        timesItGaveUpTheProcessor: 35 + Math.round(blocksATurn * all),
+      };
+    });
   }
 
   const busyMachines = [
@@ -51,8 +48,8 @@ describe("a busy machine gives a measurement the same plan", () => {
     "a conversion of 17 instructions a turn is repeated twenty million times, held up for %d and %d seconds",
     async (...heldUp) => {
       const conversion = { aTurn: 17, secondsATurn: 6e-9, blocksATurn: 0 };
-      expect(await planOn([], conversion)).toEqual({ turns: 20e6, warmUp: 1 });
-      expect(await planOn(heldUp, conversion)).toEqual({ turns: 20e6, warmUp: 1 });
+      expect(await planOn([], conversion)).toEqual({ turns: 20e6, warmUp: 5000 });
+      expect(await planOn(heldUp, conversion)).toEqual({ turns: 20e6, warmUp: 5000 });
     },
   );
 
@@ -96,7 +93,7 @@ describe("a busy machine gives a measurement the same plan", () => {
   });
 });
 
-// A pin went red and green by itself: ./measure-idioms.ts read 14,100 to 16,400 instructions a turn from one executable, depending on where its two runs ended among the lumps that follow a
+// A row moved by itself: ./measure-idioms.ts read 14,100 to 16,400 instructions a turn from one executable, depending on where its two runs ended among the lumps that follow a
 // full collection. The program here is arithmetic, so much a turn and a lump every so many turns, so this needs no counter of the processor.
 describe("a cost that comes in lumps reads the same from every plan", () => {
   type Program = { aTurn: number; lump: number; every: number };
@@ -218,37 +215,30 @@ describe("both runs of a reading take the same loop", () => {
   });
 });
 
-// The plan of ./measure-idioms.ts for a measurement that runs nothing under the JIT. Arithmetic: it needs no counter of the processor.
-describe("compiled code is measured without warming up", () => {
+// The short calls in front of a run of ./measure-idioms.ts. Arithmetic: it needs no counter of the processor.
+describe("the JIT is warmed up in front of what is measured", () => {
   const calls = Number(
     /new Array\((\d+)\)\.fill\(/.exec(readFileSync(join(import.meta.dir, "idioms", "host.ts"), "utf8"))![1],
   );
   const plannedTurns = (aTurn: number) => Math.min(20e6, Math.max(8000, 800e6 / aTurn));
   /** What one reading executes: a run of a quarter of the turns and a run of all of them, each behind its short calls. */
-  function reading(aTurn: number, underTheJit: boolean) {
-    const warmUp = 2 * calls * turnsOfCallThatWarmsUp({ aTurn, waits: false, underTheJit }) * aTurn;
+  function reading(aTurn: number) {
+    const warmUp = 2 * calls * turnsOfCallThatWarmsUp({ aTurn, waits: false }) * aTurn;
     return { warmUp, all: warmUp + 1.25 * plannedTurns(aTurn) * aTurn };
   }
 
   test("the program makes a hundred short calls", () => expect(calls).toBe(100));
 
-  test.each([4, 13, 400, 2000, 7000, 100_000, 3e6])("a turn of %d instructions, compiled", aTurn => {
-    const { warmUp, all } = reading(aTurn, false);
-    expect(warmUp / all).toBeLessThan(0.02);
-  });
-
   test("a call never takes no turns: the program ends at the first call that does", () => {
-    for (const underTheJit of [false, true])
-      for (const waits of [false, true])
-        for (const aTurn of [1, 2000, 1e9])
-          expect(turnsOfCallThatWarmsUp({ aTurn, waits, underTheJit })).toBeGreaterThan(0);
+    for (const waits of [false, true])
+      for (const aTurn of [1, 2000, 1e9]) expect(turnsOfCallThatWarmsUp({ aTurn, waits })).toBeGreaterThan(0);
   });
 
-  test("under the JIT a call takes ten million instructions, and 100 to 5,000 turns", () => {
-    expect(turnsOfCallThatWarmsUp({ aTurn: 13, waits: false, underTheJit: true })).toBe(5000);
-    expect(turnsOfCallThatWarmsUp({ aTurn: 7000, waits: false, underTheJit: true })).toBe(1429);
-    expect(turnsOfCallThatWarmsUp({ aTurn: 3e6, waits: false, underTheJit: true })).toBe(100);
-    expect(turnsOfCallThatWarmsUp({ aTurn: 7000, waits: true, underTheJit: true })).toBe(100);
-    expect(reading(7000, true).warmUp / reading(7000, true).all).toBeGreaterThan(0.6);
+  test("a call takes ten million instructions, and 100 to 5,000 turns", () => {
+    expect(turnsOfCallThatWarmsUp({ aTurn: 13, waits: false })).toBe(5000);
+    expect(turnsOfCallThatWarmsUp({ aTurn: 7000, waits: false })).toBe(1429);
+    expect(turnsOfCallThatWarmsUp({ aTurn: 3e6, waits: false })).toBe(100);
+    expect(turnsOfCallThatWarmsUp({ aTurn: 7000, waits: true })).toBe(100);
+    expect(reading(7000).warmUp / reading(7000).all).toBeGreaterThan(0.6);
   });
 });

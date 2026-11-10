@@ -1,0 +1,10 @@
+# the constructor has rows; the two ends are found by their names
+# -- source: the-body-of-a-request-piped-through-a-text-decoder-stream-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch(request) { return new Response(request.body!.pipeThrough(new TextDecoderStream())); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by TextDecoderStream
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

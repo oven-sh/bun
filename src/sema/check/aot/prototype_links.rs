@@ -13,6 +13,7 @@ use crate::hir::{
 use crate::program::FileId;
 use crate::session::Arena;
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use bun_threading::Guarded;
 use std::sync::OnceLock;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -99,9 +100,11 @@ pub(in crate::check) struct PrototypeLinks<'s> {
     functions_sharing_prototype_objects: &'s [FnId],
     pub(super) linked_functions: OnceLock<LinkedFunctions<'s>>,
     pub(super) declarations_used_like_constructors: OnceLock<&'s [SymbolId]>,
+    pub(super) declarations_named_by_new: OnceLock<&'s [SymbolId]>,
     pub(super) parameters_seen_to_be_constructors: OnceLock<&'s [(FnId, u32)]>,
     pub(super) parameters_used_like_constructors: OnceLock<&'s [(FnId, u32)]>,
     pub(super) functions_handing_this_on: OnceLock<&'s [FnId]>,
+    links_of_parameters_followed: Guarded<FxHashMap<FnId, &'s [PrototypeLink]>>,
 }
 
 fn entries_of<T>(entries: &[(FnId, T)], function: FnId) -> &[(FnId, T)] {
@@ -131,6 +134,27 @@ impl<'s> PrototypeLinks<'s> {
         entries_of(self.calls_passing_parameters, function)
     }
 
+    pub(super) fn links_of_parameters_followed_of(
+        &self,
+        function: FnId,
+    ) -> Option<&'s [PrototypeLink]> {
+        self.links_of_parameters_followed
+            .lock()
+            .get(&function)
+            .copied()
+    }
+
+    pub(super) fn keep_links_of_parameters_followed(
+        &self,
+        function: FnId,
+        links: &'s [PrototypeLink],
+    ) {
+        self.links_of_parameters_followed
+            .lock()
+            .entry(function)
+            .or_insert(links);
+    }
+
     pub(super) fn all_calls_passing_parameters(&self) -> &'s [(FnId, FunctionCall)] {
         self.calls_passing_parameters
     }
@@ -158,6 +182,15 @@ impl<'s> Program<'s> {
                 &*arena.alloc_slice_fill_default(self.files.modules.len())
             });
         &of_files[file.idx()]
+    }
+
+    pub(in crate::check) fn release_prototype_links(&mut self) {
+        let Some(of_files) = self.aot_prototype_links.get() else {
+            return;
+        };
+        for links in of_files.iter().filter_map(OnceLock::get) {
+            *links.links_of_parameters_followed.lock() = FxHashMap::default();
+        }
     }
 }
 
@@ -402,15 +435,26 @@ impl EndFinder<'_, '_, '_> {
         }
     }
 
-    pub(super) fn apply_to_arguments(
-        &self,
-        link: PrototypeLink,
-        call: FunctionCall,
-    ) -> Option<PrototypeLink> {
+    pub(super) fn find_ends_of_arguments(&self, call: FunctionCall) -> EndsOfArguments {
+        let arguments = self.arguments_in_front_of_spread(call.call);
+        EndsOfArguments {
+            callee: call.callee.function,
+            ends: arguments.map(|argument| self.find_end(argument)).collect(),
+        }
+    }
+}
+
+pub(super) struct EndsOfArguments {
+    callee: FnId,
+    ends: Vec<Option<LinkEnd>>,
+}
+
+impl EndsOfArguments {
+    pub(super) fn apply_to(&self, link: PrototypeLink) -> Option<PrototypeLink> {
         let find_argument_for = |end: LinkEnd| match end {
             LinkEnd::Declaration(_) | LinkEnd::LibraryDeclaration(_) => Some(end),
-            LinkEnd::Parameter { function, index } if function == call.callee.function => {
-                self.find_end_at(call.call, index)
+            LinkEnd::Parameter { function, index } if function == self.callee => {
+                self.ends.get(index as usize).copied().flatten()
             }
             LinkEnd::Parameter { .. } => None,
         };
@@ -720,9 +764,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             ),
             linked_functions: OnceLock::new(),
             declarations_used_like_constructors: OnceLock::new(),
+            declarations_named_by_new: OnceLock::new(),
             parameters_seen_to_be_constructors: OnceLock::new(),
             parameters_used_like_constructors: OnceLock::new(),
             functions_handing_this_on: OnceLock::new(),
+            links_of_parameters_followed: Guarded::default(),
         }
     }
 }

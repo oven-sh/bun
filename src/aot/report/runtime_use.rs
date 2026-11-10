@@ -114,7 +114,11 @@ fn find_removed_but_reachable<'a>(
             continue;
         };
         let is_removed = decision.unused.contains(feature) && !decision.requested.contains(feature);
-        if record.kind == FeatureUseKind::Named || !is_removed || seen.contains(feature) {
+        let is_named = matches!(
+            record.kind,
+            FeatureUseKind::Named | FeatureUseKind::FoundByName
+        );
+        if is_named || !is_removed || seen.contains(feature) {
             continue;
         }
         let position = position_of(record.witness.location);

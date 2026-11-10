@@ -1,4 +1,4 @@
-use super::answers::ClassRef;
+use super::answers::{ClassRef, FunctionRef};
 use super::builtin_types::{BuiltinTypeClass, Denotation};
 use super::trust::Trust;
 use crate::atom::Atom;
@@ -89,6 +89,7 @@ pub enum ShapeKind<'c> {
         arguments: &'c [TypeId],
     },
     Class(ClassRef),
+    ConstructorFunctionInstance(FunctionRef),
     Object,
     Union(&'c [TypeId]),
     Int32 {
@@ -121,7 +122,10 @@ impl<'c> TypeShape<'c> {
     }
 
     pub fn has_members(self) -> bool {
-        matches!(self.kind, ShapeKind::Object | ShapeKind::Class(_))
+        matches!(
+            self.kind,
+            ShapeKind::Object | ShapeKind::Class(_) | ShapeKind::ConstructorFunctionInstance(_)
+        )
     }
 
     pub(super) fn builtin_denotation(self) -> Option<Denotation> {

@@ -20,7 +20,9 @@ const withSteadyCollections = {
 const [few, many, times] = [100_000, 1_600_000, 3];
 
 const pairs: [baseline: string, other: string, allowance: number, today?: string][] = [
-  ["a method under a plain name", "a method under a symbol that the module creates", 4],
+  // Three goals that are not met yet. The loops round a call under a plain name that a class below overrides, or that some objects lack, are built a second time and their calls are told apart by the shape;
+  // the loops round the same calls under a symbol are not. Once one is met its case fails: take the fourth word out.
+  ["a method under a plain name", "a method under a symbol that the module creates", 4, "6 more today"],
   ["a method under a plain name", "a method under a symbol without a description", 4],
   ["a method under a plain name", "a method under a registered symbol", 4],
   ["a method under a plain name", "a method under a well-known symbol", 4],
@@ -29,14 +31,13 @@ const pairs: [baseline: string, other: string, allowance: number, today?: string
   ["a method under a plain name", "a method under a text of another module", 4],
   ["a getter under a plain name", "a getter under a symbol", 4],
   ["a getter and a setter under a plain name", "a getter and a setter under a symbol", 4],
-  // A goal that is not met yet: the loop round the call under a plain name is built a second time for its quiet turns, the loop round the call under a symbol is not.
-  // Once it is met this case fails: take the fourth word out.
-  ["a static method under a plain name", "a static method under a symbol", 4, "10 more today"],
-  ["a method of two classes under a plain name", "a method of two classes under a symbol", 4],
+  ["a static method under a plain name", "a static method under a symbol", 4],
+  ["a method of two classes under a plain name", "a method of two classes under a symbol", 4, "32 more today"],
   [
     "a method that some objects have, read under a plain name and called",
     "a method that some objects have, read under a symbol and called",
     4,
+    "17 more today",
   ],
   ["a field under a plain name", "a field under a symbol", 8],
 ];

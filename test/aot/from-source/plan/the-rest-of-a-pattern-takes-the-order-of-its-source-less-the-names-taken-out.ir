@@ -1,0 +1,20 @@
+# `const { alpha, ...others } = given` copies `given` without `alpha`. The layout of `others` does not list `alpha` because the pattern takes it out, not because the copy
+# would hold it beside its fields: the order in which an Entry is written, less `alpha`, is an order of `others`, also where that is not the order that the type declares.
+# -- source: main.ts
+# type Entry = { alpha: number; beta: number; gamma: number; delta: string };
+# function entry(i: number): Entry {
+#   return { delta: "d" + i, gamma: i + 2, beta: i + 1, alpha: i };
+# }
+# function without(given: Entry) {
+#   const { alpha, ...others } = given;
+#   return { alpha, others };
+# }
+# const taken = without(entry(1));
+# console.log(taken.alpha, Object.keys(taken.others).join(), JSON.stringify(taken.others));
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L2 CompiledObject {{*}} orders=2
+# PLAN-NEXT: slot 0 "beta"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 delta,gamma,beta {"delta":"d1","gamma":3,"beta":2}
+# ANSWERS-NEXT: exited with 0

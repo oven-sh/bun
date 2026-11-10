@@ -1,6 +1,6 @@
 # `await` reads `then` off what is no promise, asks whether it is a function and calls it: the name is called, and nobody has the function in hand
 # -- source: what-await-reads-under-then-off-what-the-host-hands-out-is-told-as-called.ts
-# console.log(await Bun.file("a.txt").exists());
+# console.log(await JSON.parse("{}"));
 # -- end of source
 # RUN(TOLD): link lookups mechanisms=all
 # TOLD: lookup name-called "then"

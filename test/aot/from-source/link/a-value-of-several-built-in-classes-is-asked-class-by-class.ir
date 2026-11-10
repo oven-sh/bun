@@ -1,0 +1,15 @@
+# -- source: main.ts
+# function emptied(which: number) { const held = which ? new Map<string, number>() : new Set<string>(); held.clear(); return held.size; }
+# console.log(emptied(Number(process.argv.length) % 2));
+# -- end of source
+# `held` is a Map or a Set. Link keeps the set of the classes, so a read or a call by name is looked up on each of them; before, two classes in one value were "some classes", the read was a read of a name off what nobody knows, and the call a call of it.
+# RUN: link lookups mechanisms=all
+# CHECK-NOT: lookup name-read "size"
+# CHECK-NOT: lookup name-called "clear"
+# CHECK: lookup read MapPrototypeSize
+# CHECK: lookup read SetPrototypeSize
+# CHECK: lookup called MapPrototypeClear
+# CHECK: lookup called SetPrototypeClear
+# Both getters answer an integer.
+# RUN(RESULT): link functions mechanisms=all
+# RESULT: function f1 {{*}}result=i32

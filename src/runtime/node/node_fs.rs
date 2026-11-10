@@ -512,7 +512,7 @@ fn read_file_in_graph(
     encoding: Encoding,
     string_type: ReadFileStringType,
 ) -> Option<Maybe<ret::ReadFileWithOptions>> {
-    if let Some(file) = graph.find_ref(path) {
+    if let Some(file) = graph.find_data(path) {
         let contents: &[u8] = file.utf8_contents();
         return Some(if encoding == Encoding::Buffer {
             Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
@@ -538,7 +538,7 @@ fn read_file_in_graph(
 }
 
 fn embedded_file_of_compiled_program(path: &[u8]) -> Option<&'static bun_standalone_graph::File> {
-    compiled_program_graph()?.find_ref(path)
+    compiled_program_graph()?.find_data(path)
 }
 
 fn is_embedded_in_compiled_program(path: &[u8]) -> bool {

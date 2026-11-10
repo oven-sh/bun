@@ -3,7 +3,7 @@
 // and make an object for `performance` with a function of Bun's own. All of that hung on the name `bun:test`: 166 functions in a run of one empty test.
 // Now each hangs on what can see it: the two modules on themselves, the tick on process.nextTick. The runner's function is never in a program.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildEnvironment } from "./harness/flags";
@@ -11,9 +11,12 @@ import { sayGoal } from "./harness/goals";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// The bound is not met yet. What a bare test file brings along today is the printer of values and what hangs on it: internal:util/inspect, node:util, the
-// primordials, the queue of ticks, and the engine's own iterator helpers. The three cases that hold the bound are marked as failing: they run every time, and
-// fail once the bound is met. That the runs do what plain Bun does is held by cases of their own, over the same runs.
+// The bound is not met yet. What a bare test file brings along today is of the engine's own JavaScript alone: functions of promises, of iterators and generators, and
+// of the disposable stacks. The three cases that hold the bound are marked as failing: they run every time, and fail once the bound is met. A mark does not see its
+// number grow: a case beside each holds the run to what is counted today, on Linux, where it was counted. That the runs do what plain Bun does is held by cases of
+// their own, over the same runs.
+const standToday = 21;
+
 function once<Result>(make: () => Promise<Result>) {
   let made: Promise<Result> | undefined;
   return () => (made ??= make());
@@ -92,11 +95,19 @@ test.concurrent(
 );
 
 test.failing(
-  "a run of one empty test holds the test file and nothing else: 485 functions of the library stand in it, the bound is none",
+  `a run of one empty test holds the test file and nothing else: ${standToday} functions of the library stand in it, the bound is none`,
   async () => {
     const standsInIt = (await runOfOneEmptyTest()).ofLibrary;
     sayGoal("a run of one empty test holds the test file and nothing else", standsInIt.length, 0);
     expect(standsInIt).toEqual([]);
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  `a run of one empty test holds the test file and nothing else: no more than ${standToday} functions of the library stand in it`,
+  async () => {
+    expect((await runOfOneEmptyTest()).ofLibrary.length).toBeLessThanOrEqual(standToday);
   },
   120_000,
 );
@@ -110,11 +121,19 @@ test.concurrent(
 );
 
 test.failing(
-  "nor does a run of one test that expects something: 485 functions of the library stand in it, the bound is none",
+  `nor does a run of one test that expects something: ${standToday} functions of the library stand in it, the bound is none`,
   async () => {
     const standsInIt = (await runOfOneTestThatExpects()).ofLibrary;
     sayGoal("nor does a run of one test that expects something", standsInIt.length, 0);
     expect(standsInIt).toEqual([]);
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  `nor does a run of one test that expects something: no more than ${standToday} functions of the library stand in it`,
+  async () => {
+    expect((await runOfOneTestThatExpects()).ofLibrary.length).toBeLessThanOrEqual(standToday);
   },
   120_000,
 );
@@ -132,12 +151,20 @@ test.concurrent(
 );
 
 test.failing(
-  "nor does a run with a describe block, hooks, an async test and a test that its callback ends: 485 functions of the library stand in it, the bound is none",
+  `nor does a run with a describe block, hooks, an async test and a test that its callback ends: ${standToday} functions of the library stand in it, the bound is none`,
   async () => {
     const standsInIt = (await runWithBlockAndHooks()).ofLibrary;
     const goal = "nor does a run with a describe block, hooks, an async test and a test that its callback ends";
     sayGoal(goal, standsInIt.length, 0);
     expect(standsInIt).toEqual([]);
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  `nor does a run with a describe block, hooks, an async test and a test that its callback ends: no more than ${standToday} functions of the library stand in it`,
+  async () => {
+    expect((await runWithBlockAndHooks()).ofLibrary.length).toBeLessThanOrEqual(standToday);
   },
   120_000,
 );

@@ -1,7 +1,7 @@
 // Programs of one or two lines, one question each, written out in full and not drawn. A build leaves out what a program does not reach, and finds what it reaches by the roads that it knows.
 // A road that it does not know shows only where nothing else in the program reaches the same thing, so each program is built alone and holds nothing but its line.
 //
-//   bun write-line-sweeps.ts <folder> [texts|species|methods|walks|handed|symbols|free|keys|words]      writes <folder>/<family>/<n>-<words>.mjs; the Bun that runs this file says which names, classes and methods there are
+//   bun write-line-sweeps.ts <folder> [texts|species|methods|walks|handed|symbols|free|keys|words|refusals|looped|made]      writes <folder>/<family>/<n>-<words>.mjs; the Bun that runs this file says which names, classes and methods there are
 //
 // texts     the name of a member or a global spelled as a value: a literal, a piece of a template, a join, a sum, a comparison, the key of a Map
 // species   a static method called off a class that came by `[Symbol.species]`, by a pattern, by `.constructor` of an instance or of the prototype
@@ -12,6 +12,9 @@
 // free      a name that nothing declares and that is spelled like a member of a built-in is asked for by `typeof`, read, called
 // keys      a member is read under a key that lies in a variable at the top of the file
 // words     a module of the library is loaded, under a word of `--aot-testing` that may only change cost and under many seeds
+// refusals  a function of the host or the library is handed one odd value that it cannot take, and its refusal prints the value
+// looped    a function of the host or the library is called in a loop at the top of the file, and the first turn is what loads it
+// made      a value that native code has made, of a class that the program never names, has one method called or goes through one protocol of the language
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -196,7 +199,7 @@ for (const [name, instance] of Object.entries(instances)) {
     "(function () { return arguments; })(...L)",
     "((...all) => all)(...L)",
     "(texts => texts)`a${1}b${2}a`",
-    "process.execArgv.concat(L)",
+    "process.execArgv.slice(0, 0).concat(L)",
     "Object.values(L)",
     "Object.entries(L)",
     "(function* () { yield* L; })()",
@@ -369,8 +372,18 @@ for (const [name, instance] of Object.entries(instances)) {
   }
   for (const name of [...names].sort()) {
     write("free", `typeof-${name}`, `console.log(typeof ${name});`);
-    write("free", `read-${name}`, `try {\n  console.log(${name});\n} catch (error) {\n  console.log(error.name);\n}`);
-    write("free", `called-${name}`, `try {\n  ${name}(1);\n} catch (error) {\n  console.log(error.name);\n}`);
+    write(
+      "free",
+      `read-${name}`,
+      `try {\n  console.log(String(${name}));\n} catch (error) {\n  console.log(String(error.name));\n}`,
+    );
+    // The name handed to the print as it is has stopped builds that its text did not, and it has the build keep the printer: both forms are asked.
+    write(
+      "free",
+      `printed-${name}`,
+      `try {\n  console.log(${name});\n} catch (error) {\n  console.log(String(error.name));\n}`,
+    );
+    write("free", `called-${name}`, `try {\n  ${name}(1);\n} catch (error) {\n  console.log(String(error.name));\n}`);
   }
 }
 // keys
@@ -436,5 +449,216 @@ for (const [name, instance] of Object.entries(instances)) {
           `all-of-${name}`,
           `import held from "node:${name}";\nconsole.log(typeof held, Object.keys(held).length > 0);`,
         );
+}
+// refusals
+{
+  // A function of the host or the library that is handed what it cannot take says so, and its words print the value: the printer of values is a large piece of the library that nothing in such a program names.
+  // Each program calls one function once with one odd value and prints the name of the error alone: the words are made where the error is made.
+  const odd: [string, string][] = [
+    ["a-list-without-a-constructor", `const odd = [new URL("http://made.up/a")];\nodd.constructor = undefined;`],
+    [
+      "a-table-whose-constructor-is-false",
+      `const odd = new Map([[1, new URL("http://made.up/a")]]);\nodd.constructor = false;`,
+    ],
+    ["a-list-below-nothing", `const odd = Object.setPrototypeOf([{ a: 1 }], null);`],
+  ];
+  // Nothing that ends or leaves the process, touches the disk or the network, waits for a person, or runs a text.
+  const left =
+    /exit|abort|kill|spawn|exec|fork|openInEditor|sleep|alert|prompt|confirm|chdir|umask|set[ug]id|setgroups|^rm|unlink|write|mkd|rename|^cp|copy|link|chmod|chown|utimes|trunc|append|listen|connect|fetch|serve|heap|snapshot|^gc$|shrink|debug|inspector|repl|watch|dlopen|binding|^load|require|^import|eval|^run|compile|Script|^build|install|plugin|upgrade|stdin|question|lookup|resolve[46A-Z]|reverse|Worker|cluster|dump|report|profile|coverage|^open|stream|^Bun$|^process$|mmap|^\$$|^sql|^s3|redis|postgres|Cookie|Terminal|cron|secrets|BroadcastChannel|udpSocket|ShadowRealm|^log$/i;
+  // Each look prints a text or a truth value. A value that nobody knows, printed as it is, has the build keep the printer: the name of the error printed so showed nothing where its text killed the executable.
+  const looks: [string, string][] = [
+    ["its-name", "String(error?.name)"],
+    ["as-a-text", "String(error).length > 0"],
+    ["its-words", "String(error?.message).length > 0"],
+  ];
+  let look = looks[0][1];
+  const ask = (call: string) =>
+    `try {\n  const answer = ${call};\n  if (answer && typeof answer.then === "function") answer.then(() => console.log("settled"), error => console.log(${look}));\n  else console.log("answered");\n} catch (error) {\n  console.log(${look});\n}`;
+  const callable = (holder: any) =>
+    ownNames(holder).filter(name => {
+      if (left.test(name)) return false;
+      const found = Object.getOwnPropertyDescriptor(holder, name);
+      return typeof found?.value === "function";
+    });
+  const isClass = (value: Function) =>
+    /^class\b/.test(Function.prototype.toString.call(value)) || /^[A-Z]/.test(value.name);
+  for (const [seen, looking] of looks)
+    for (const [value, made] of odd) {
+      look = looking;
+      const words = `${value}-${seen}`;
+      for (const name of callable(globalThis)) {
+        if (classOf(name) && name in instances) continue;
+        const value = (globalThis as any)[name];
+        write(
+          "refusals",
+          `global-${name}-${words}`,
+          `${made}\n${ask(isClass(value) ? `new ${name}(odd)` : `${name}(odd)`)}`,
+        );
+      }
+      for (const name of callable(Bun))
+        write(
+          "refusals",
+          `Bun-${name}-${words}`,
+          `${made}\n${ask(isClass((Bun as any)[name]) ? `new Bun.${name}(odd)` : `Bun.${name}(odd)`)}`,
+        );
+      for (const name of callable(process))
+        write("refusals", `process-${name}-${words}`, `${made}\n${ask(`process.${name}(odd)`)}`);
+      for (const module of [
+      "assert", "async_hooks", "buffer", "crypto", "diagnostics_channel", "events", "fs", "os", "path", "perf_hooks", "querystring", "string_decoder", "timers", "tty", "url", "util", "v8", "zlib",
+    ]) {
+      const held = require(`node:${module}`);
+      for (const name of callable(held))
+        write("refusals", `${module}-${name}-${words}`, `import { ${name} as asked } from "node:${module}";\n${made}\n${ask(isClass(held[name]) ? `new asked(odd)` : `asked(odd)`)}`);
+    } // prettier-ignore
+      for (const [label, fresh, prototype] of [
+        ["Buffer", "Buffer.alloc(1)", Buffer.prototype],
+        ["EventEmitter", `new (require("node:events"))()`, require("node:events").prototype],
+        ["URLSearchParams", `new URLSearchParams("a=1")`, URLSearchParams.prototype],
+        ["Headers", `new Headers()`, Headers.prototype],
+        ["TextDecoder", `new TextDecoder()`, TextDecoder.prototype],
+        ["TextEncoder", `new TextEncoder()`, TextEncoder.prototype],
+        ["Blob", `new Blob(["a"])`, Blob.prototype],
+        ["FormData", `new FormData()`, FormData.prototype],
+        ["EventTarget", `new EventTarget()`, EventTarget.prototype],
+        ["AbortController", `new AbortController()`, AbortController.prototype],
+        ["Response", `new Response("a")`, Response.prototype],
+        ["URL", `new URL("http://made.up/b")`, URL.prototype],
+      ] as const)
+        for (const name of callable(prototype))
+          write("refusals", `${label}-prototype-${name}-${words}`, `${made}\n${ask(`${fresh}.${name}(odd)`)}`);
+      for (const [label, holder] of [
+        ["Buffer", Buffer],
+        ["ReadableStream", ReadableStream],
+        ["AbortSignal", AbortSignal],
+        ["Response", Response],
+        ["URL", URL],
+        ["Blob", Blob],
+      ] as const)
+        for (const name of callable(holder))
+          write("refusals", `${label}-${name}-${words}`, `${made}\n${ask(`${label}.${name}(odd)`)}`);
+    }
+  // looped: the same functions, each called in a loop at the top of the file with three plain values. Nothing in front of the loop has touched the function or its module: the first turn is what loads them.
+  // What is printed is the kind of the answer alone, or the name of the error.
+  // No try round the call: with one in the turn `util.inspect` answered where the bare loop killed the executable. A function that cannot take a value ends both ways of running alike, so each value has a program of its own.
+  const plain: [string, string][] = [
+    ["a-record", "{}"],
+    ["a-text", '"a"'],
+    ["a-number", "1"],
+  ];
+  let given = plain[0];
+  const turns = (call: string) =>
+    `for (const value of [${given[1]}, ${given[1]}, ${given[1]}]) console.log(typeof ${call});`;
+  for (given of plain) {
+    for (const name of callable(globalThis)) {
+      if (classOf(name) && name in instances) continue;
+      write("looped", `global-${name}-${given[0]}`, turns(isClass((globalThis as any)[name]) ? `new ${name}(value)` : `${name}(value)`));
+    }
+    for (const name of callable(Bun))
+      write("looped", `Bun-${name}-${given[0]}`, turns(isClass((Bun as any)[name]) ? `new Bun.${name}(value)` : `Bun.${name}(value)`));
+    for (const module of [
+      "assert", "async_hooks", "buffer", "crypto", "diagnostics_channel", "events", "fs", "os", "path", "perf_hooks", "querystring", "string_decoder", "timers", "tty", "url", "util", "v8", "zlib",
+    ]) {
+      const held = require(`node:${module}`);
+      for (const name of callable(held)) {
+        write("looped", `${module}-${name}-by-its-name-${given[0]}`, `import { ${name} as asked } from "node:${module}";\n${turns(isClass(held[name]) ? `new asked(value)` : `asked(value)`)}`);
+        write("looped", `${module}-${name}-off-the-whole-${given[0]}`, `import held from "node:${module}";\n${turns(isClass(held[name]) ? `new held.${name}(value)` : `held.${name}(value)`)}`);
+      }
+    }
+  } // prettier-ignore
+}
+// made
+{
+  // A value of a class of the library or the host comes out of native code: the answer of a call, what a handler is handed, what a promise settles with. The program never names the class. Then it calls one method
+  // on the value, or puts it through one protocol of the language that ends in a method of the class. Each program holds one source and one use, AND THE USE STANDS WHERE THE VALUE ARRIVES: a chunk that was first
+  // handed on through a promise showed nothing where the same chunk used in its handler killed the executable.
+  type Source = [label: string, head: string, made: string, within?: (use: string) => string];
+  const sources: Source[] = [
+    ["random-bytes", `import crypto from "node:crypto";`, `crypto.randomBytes(2)`],
+    ["random-bytes-in-a-callback", `import crypto from "node:crypto";`, `crypto.randomBytes(2)`, use => `crypto.randomBytes(2, (error, value) => {\n${use}\n});`],
+    ["a-digest", `import crypto from "node:crypto";`, `crypto.createHash("md5").update("a").digest()`],
+    ["a-hash", `import crypto from "node:crypto";`, `crypto.createHash("md5")`],
+    ["a-secret-key", `import crypto from "node:crypto";`, `crypto.createSecretKey("ab", "utf8")`],
+    ["zipped", `import zlib from "node:zlib";`, `zlib.gzipSync("a")`],
+    ["zipped-in-a-callback", `import zlib from "node:zlib";`, `zlib.gzipSync("a")`, use => `zlib.gzip("a", (error, value) => {\n${use}\n});`],
+    ["a-file-read", `import fs from "node:fs";`, `fs.readFileSync("/dev/null")`],
+    ["a-file-read-in-a-callback", `import fs from "node:fs";`, `fs.readFileSync("/dev/null")`, use => `fs.readFile("/dev/null", (error, value) => {\n${use}\n});`],
+    ["a-file-read-by-a-promise", `import fs from "node:fs";`, `fs.readFileSync("/dev/null")`, use => `fs.promises.readFile("/dev/null").then(value => {\n${use}\n});`],
+    ["stats", `import fs from "node:fs";`, `fs.statSync("/")`],
+    ["stats-in-a-callback", `import fs from "node:fs";`, `fs.statSync("/")`, use => `fs.stat("/", (error, value) => {\n${use}\n});`],
+    ["an-entry-of-a-folder", `import fs from "node:fs";`, `fs.readdirSync("/", { withFileTypes: true })[0]`],
+    ["a-chunk-of-a-file", `import fs from "node:fs";`, `fs.readFileSync("/dev/null")`, use => `fs.createReadStream(process.execPath, { end: 1 }).once("data", value => {\n${use}\n});`],
+    ["an-error-of-the-system", `import fs from "node:fs";`, `(() => { try { fs.readFileSync("/made/up"); } catch (error) { return error; } })()`, use => `try {\n  fs.readFileSync("/made/up");\n} catch (value) {\n${use}\n}`],
+    ["an-error-of-assert", `import assert from "node:assert";`, `(() => { try { assert.equal(1, 2); } catch (error) { return error; } })()`, use => `try {\n  assert.equal(1, 2);\n} catch (value) {\n${use}\n}`],
+    ["a-datagram", ``, `Buffer.from("hi")`, use => `Bun.udpSocket({ hostname: "127.0.0.1", socket: { data(socket, value) {\n socket.close();\n${use}\n} } }).then(socket => { socket.send("hi", socket.port, "127.0.0.1"); });`],
+    ["a-chunk-of-a-socket", ``, `Buffer.from("hi")`, use => `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(socket, value) {\n socket.end();\n server.stop();\n${use}\n} } });\nBun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open(socket) { socket.write("hi"); }, data() {} } });`],
+    ["a-chunk-of-a-net-socket", `import net from "node:net";`, `Buffer.from("hi")`, use => `const server = net.createServer(socket => socket.once("data", value => {\n socket.destroy();\n server.close();\n${use}\n})).listen(0, "127.0.0.1", () => net.connect(server.address().port, "127.0.0.1").end("hi"));`],
+    ["headers-of-a-response", ``, `new Response("a").headers`],
+    ["the-body-of-a-response", ``, `new Response("a").body`],
+    ["the-blob-of-a-response", ``, `await new Response("a").blob()`, use => `new Response("a").blob().then(value => {\n${use}\n});`],
+    ["the-bytes-of-a-response", ``, `await new Response("a").bytes()`, use => `new Response("a").bytes().then(value => {\n${use}\n});`],
+    ["the-form-of-a-response", ``, `await new Response("a=1", { headers: { "content-type": "application/x-www-form-urlencoded" } }).formData()`, use => `new Response("a=1", { headers: { "content-type": "application/x-www-form-urlencoded" } }).formData().then(value => {\n${use}\n});`],
+    ["the-search-of-a-url", ``, `new URL("http://made.up/a?b=1").searchParams`],
+    ["a-url-of-a-path", `import url from "node:url";`, `url.pathToFileURL("/a")`],
+    ["a-url-in-the-old-way", `import url from "node:url";`, `url.parse("http://made.up/a?b=1")`],
+    ["a-signal", ``, `new AbortController().signal`],
+    ["a-mark", ``, `performance.mark("a")`],
+    ["a-timer", ``, `setTimeout(() => {}, 0)`],
+    ["a-timer-as-this", ``, `setTimeout(() => {}, 0)`, use => `setTimeout(function () {\n const value = this;\n${use}\n}, 0);`],
+    ["an-immediate", ``, `setImmediate(() => {})`],
+    ["a-file-of-bun", ``, `Bun.file("/dev/null")`],
+    ["a-stream-from-a-list", `import stream from "node:stream";`, `stream.Readable.from(["a"])`],
+    ["a-decoder", `import decoder from "node:string_decoder";`, `new decoder.StringDecoder()`],
+    ["what-was-parsed-of-a-query", `import querystring from "node:querystring";`, `querystring.parse("a=1")`],
+    ["an-event", ``, `new Event("x")`, use => `const target = new EventTarget();\ntarget.addEventListener("x", value => {\n${use}\n});\ntarget.dispatchEvent(new Event("x"));`],
+    ["the-controller-of-a-stream", ``, `await new Promise(resolve => new ReadableStream({ start: resolve }))`, use => `new ReadableStream({ start(value) {\n${use}\n} });`],
+    ["a-text-encoded", ``, `new TextEncoder().encode("a")`],
+    ["a-request-in-a-handler", ``, `new Request("http://made.up/")`, use => `const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(value) {\n${use}\n return new Response("ok");\n} });\nfetch(server.url).then(() => server.stop(true));`],
+    ["the-server-in-a-handler", ``, `(() => { const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") }); server.stop(true); return server; })()`, use => `const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request, value) {\n${use}\n return new Response("ok");\n} });\nfetch(server.url).then(() => server.stop(true));`],
+    ["a-response-that-was-fetched", ``, `new Response("ok")`, use => `const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });\nfetch(server.url).then(value => {\n server.stop(true);\n${use}\n});`],
+    ["a-request-of-node", `import http from "node:http";`, `new http.IncomingMessage(null)`, use => `const server = http.createServer((value, response) => {\n response.end("ok");\n server.close();\n${use}\n}).listen(0, "127.0.0.1", () => fetch("http://127.0.0.1:" + server.address().port));`],
+    ["a-response-of-node", `import http from "node:http";`, `new http.ServerResponse(new http.IncomingMessage(null))`, use => `const server = http.createServer((request, value) => {\n${use}\n value.end("ok");\n server.close();\n}).listen(0, "127.0.0.1", () => fetch("http://127.0.0.1:" + server.address().port));`],
+  ]; // prettier-ignore
+  const left =
+    /^(?:constructor|write\w*|end|destroy\w*|listen|connect|pipe\w*|cork|uncork|push|unshift|resume|pause|read|wrap|compose|delete|unlink|writer|stream|exists|stat|cancel|tee|getReader|pipeThrough|pipeTo|throwIfAborted|asIndexedPairs|drop|take|flatMap|map|filter|forEach|toArray|some|find|every|reduce|iterator|on|once|off|addListener|prependListener|prependOnceListener|removeListener|removeAllListeners|emit|setTimeout|close\w*|ref|unref|error|enqueue|stop|reload|upgrade|publish|subscribe\w*|unsubscribe|timeout|flushHeaders|assignSocket|detachSocket|setEncoding|json|text|arrayBuffer|bytes|blob|formData|clone|__\w+|_\w+)$/;
+  const protocols: [string, string][] = [
+    ["as-json", `typeof JSON.stringify(value)`],
+    ["as-a-text", `typeof String(value)`],
+    ["in-a-template", "typeof `${value}`"],
+    ["joined-to-a-text", `typeof (value + "")`],
+    ["its-keys", `typeof Object.keys(value).length`],
+    ["spread-into-a-record", `typeof { ...value }`],
+    ["walked", `typeof value[Symbol.iterator] === "function" ? typeof [...value].length : "cannot be walked"`],
+    ["its-tag", `Object.prototype.toString.call(value)`],
+    ["as-a-number", `typeof +value`],
+    ["compared", `value == "a"`],
+    // What goes to the other stream is not held against anything: only that the printer is there and does not die.
+    ["printed", `(console.error(value), "printed")`],
+  ];
+  const ask = ([, head, made, within]: Source, use: string) => {
+    // No catch, and what is printed is a text that the compiler knows to be one: see the looks of the refusals. A use that throws ends both ways of running it alike.
+    const lines = `console.log(${use});`;
+    return `${head ? head + "\n" : ""}${within ? within(lines) : `const value = ${made};\n${lines}`}`;
+  };
+  for (const source of sources) {
+    const [label, head, made] = source;
+    for (const [words, use] of protocols) write("made", `${label}-${words}`, ask(source, use));
+    let value: any;
+    try {
+      const names = [...head.matchAll(/^import (\w+) from "(node:\w+)";$/gm)];
+      value = await new (Object.getPrototypeOf(async function () {}).constructor)(...names.map(found => found[1]), `return ${made};`)(...names.map(found => require(found[2]))); // prettier-ignore
+    } catch {
+      continue;
+    }
+    const seen = new Set<string>();
+    for (let at = value; at && at !== Object.prototype && at !== Function.prototype; at = Object.getPrototypeOf(at))
+      for (const name of ownNames(at)) {
+        if (seen.has(name) || left.test(name)) continue;
+        seen.add(name);
+        const found = Object.getOwnPropertyDescriptor(at, name);
+        if (typeof found?.value === "function")
+          write("made", `${label}-calls-${name}`, ask(source, `typeof value.${name}()`));
+        else if (found?.get) write("made", `${label}-reads-${name}`, ask(source, `typeof value.${name}`));
+      }
+  }
 }
 console.log(`${count} programs`);

@@ -13,21 +13,36 @@ function fileOf(path: string) {
         : "";
 }
 
-/** `file position name form bytes` of each function that is written in the server's files or in a package, with a number where several are alike. */
+/**
+ * `file position name form bytes stubs` of each function that is written in the server's files or in a package, with a number where several are alike.
+ * The stubs: the row FC behind the rows F and FO of a function: each stub that its code calls, and how often. Another stub at a call changes no byte.
+ */
 export function functionsOfProgram(mapPath: string): Set<string> {
   const seen = new Map<string, number>();
   const functions = new Set<string>();
+  let current: string | undefined;
+  let sawStubs = false;
   for (const row of readFileSync(mapPath, "latin1").split("\n")) {
     const columns = row.split("\t");
+    if (columns[0] === "FC" && current) {
+      functions.add(`${current} ${columns.slice(1).join(" ")}`);
+      current = undefined;
+      sawStubs ||= columns.length > 1;
+      continue;
+    }
+    if (columns[0] !== "F") continue;
+    current = undefined;
     const path = columns[10] ?? "";
-    if (columns[0] !== "F" || path.includes(".test.ts")) continue;
+    if (path.includes(".test.ts")) continue;
     const file = fileOf(path);
     if (!file) continue;
     const key = `${file} ${columns[11]} ${columns[7]} ${columns[8]}`;
     const count = seen.get(key) ?? 0;
     seen.set(key, count + 1);
-    functions.add(`${key} #${count} ${columns[3]}`);
+    current = `${key} #${count} ${columns[3]}`;
   }
+  // Functions whose calls the build did not note would all count as calling the same stubs.
+  if (functions.size && !sawStubs) throw new Error(`No row FC names a stub in ${mapPath}`);
   return functions;
 }
 

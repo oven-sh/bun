@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+// `bun test --isolate=modules` takes a snapshot of the globals before the first file. In a debug build that is
+// over a second of CPU time, whatever the files hold.
+const optionsFor = (flags: string[]) => (isDebug && flags.includes("--isolate=modules") ? { timeout: 30_000 } : {});
 
 const prelude = `
   import { afterAll, afterEach, beforeAll, describe, expect, jest, test } from "bun:test";
@@ -607,7 +610,7 @@ describe.concurrent(".resolves and .rejects", () => {
           ]),
       );
 
-    test("the file waits for a matcher and reports its failure under that file", async () => {
+    test("the file waits for a matcher and reports its failure under that file", optionsFor(flags), async () => {
       const { stderr, exitCode } = await run(["test", ...flags, "./a.test.js", "./b.test.js"], {
         "a.test.js":
           prelude +
@@ -643,15 +646,17 @@ describe.concurrent(".resolves and .rejects", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("a matcher that never settles times out after the file's tests finish", async () => {
+    test("a matcher that never settles times out after the file's tests finish", optionsFor(flags), async () => {
+      // --timeout is how long the file waits for its matchers. It is also the limit of a test that has none of its
+      // own, and a stalled process takes longer than 250ms to run an empty test.
       const source = `
         expect(never()).resolves.toBe("not awaited");
         expect(never()).resolves.toBe("handled").catch(() => {});
-        test("a", () => {});
+        test("a", () => {}, 30_000);
       `;
       const { stderr, exitCode } = await run(["test", ...flags, "--timeout=250", "./a.test.js", "./b.test.js"], {
         "a.test.js": prelude + source,
-        "b.test.js": prelude + `test("b", () => {});`,
+        "b.test.js": prelude + `test("b", () => {}, 30_000);`,
       });
       expect(sections(stderr)).toEqual({
         a: [
@@ -665,7 +670,7 @@ describe.concurrent(".resolves and .rejects", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("in a preload", async () => {
+    test("in a preload", optionsFor(flags), async () => {
       const { stderr, exitCode } = await run(
         ["test", ...flags, "--preload=./preload.js", "./a.test.js", "./b.test.js"],
         {
@@ -1020,8 +1025,8 @@ describe.concurrent(".resolves and .rejects", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  test("a matcher left pending by its test never runs and isn't reported in a later file", async () => {
-    for (const [args] of isolationFlags) {
+  describe.each(isolationFlags)("a matcher left pending by its test: bun test %j", args => {
+    test("never runs and isn't reported in a later file", optionsFor(args), async () => {
       const { stdout, report, stderr, exitCode } = await run(["test", ...args, "./a.test.js", "./b.test.js"], {
         "a.test.js":
           prelude +
@@ -1040,7 +1045,7 @@ describe.concurrent(".resolves and .rejects", () => {
       expect(report).toEqual(["(fail) times out", "  ^ this test timed out after 20ms.", "(pass) goes on for a while"]);
       expect(stderr).not.toContain("Unhandled error");
       expect(exitCode).toBe(1);
-    }
+    });
   });
 
   test("survive garbage collection while they wait", async () => {

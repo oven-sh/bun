@@ -3,8 +3,8 @@ use bun_ast::op::Level;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
-    TypeFormatFlags,
+    Child, LiteralValue, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable,
+    TypeFlags, TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
@@ -4234,6 +4234,29 @@ fn target_of_declaration(
     })
 }
 
+/// The text of `ty` where it names nothing: a keyword, or a literal that is no member of an enum.
+fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> Option<Box<[u8]>> {
+    let flags = services.type_flags(ty);
+    let names_nothing = TypeFlags::STRING_LITERAL
+        | TypeFlags::NUMBER_LITERAL
+        | TypeFlags::BIG_INT_LITERAL
+        | TypeFlags::INTRINSIC;
+    if !flags.intersects(names_nothing) || flags.contains(TypeFlags::ENUM_LITERAL) {
+        return None;
+    }
+    let value = services.literal_value(ty);
+    Some(if flags.contains(TypeFlags::BOOLEAN) {
+        // The printer names an alias of `true | false`.
+        b"boolean"[..].into()
+    } else if matches!(value, Some(LiteralValue::Number(value)) if !value.is_finite()) {
+        // `number` and not `1e999`: the printer says `Infinity`, and the bundle has that value, which is a `number`.
+        b"number"[..].into()
+    } else {
+        let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;
+        services.type_to_string(ty, None, format).into()
+    })
+}
+
 pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
     if !is_project_source(checker, file) {
         return None;
@@ -4393,23 +4416,10 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 node: hir.node(id),
             });
             let flags = services.type_flags(ty);
-            let names_nothing = TypeFlags::STRING_LITERAL
-                | TypeFlags::NUMBER_LITERAL
-                | TypeFlags::BIG_INT_LITERAL
-                | TypeFlags::INTRINSIC;
             if flags.contains(TypeFlags::UNIQUE_ES_SYMBOL) {
                 constants.push((hir[declaration.pat].pos, b"unique symbol"[..].into()));
-            } else if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
-                constants.push((
-                    hir[declaration.pat].pos,
-                    services
-                        .type_to_string(
-                            ty,
-                            None,
-                            TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION,
-                        )
-                        .into(),
-                ));
+            } else if let Some(text) = text_that_names_nothing(services, ty) {
+                constants.push((hir[declaration.pat].pos, text));
             }
         }
         let mut functions_returning_undefined = Vec::new();

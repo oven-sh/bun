@@ -706,7 +706,7 @@ impl<'a> InterState<'a> {
 /// What prints in front of an instruction: the statements of its block, then in `outer` those around that block.
 #[derive(Clone, Copy)]
 struct Before<'a> {
-    /// The terminal behind `statements` that holds the inner block, unless it is a label. Its other blocks can run first too.
+    /// The terminal behind `statements` that holds the inner block, unless it is a label. All of it counts, the call too.
     terminal: Option<&'a ReactiveTerminalStatement>,
     statements: &'a [ReactiveStatement],
     outer: Option<&'a Before<'a>>,
@@ -1201,6 +1201,8 @@ fn promote_late_method(
         is_mutated, load, ..
     } = behind;
     let Some(load) = load else {
+        // A call in a value block prints in place, and the load of its method with it.
+        debug_assert!(inter_state.value_block_statements.is_some() || !env.has_stack());
         return;
     };
     if is_mutated && can_method_change(receiver, property, env) {

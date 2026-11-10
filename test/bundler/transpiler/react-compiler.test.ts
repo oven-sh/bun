@@ -4013,10 +4013,35 @@ describe("bundler", () => {
     // the receiver given. Without memo blocks the last three producers leave no statement.
     const replaced = (producerNames: string[]) =>
       Object.keys(callees).flatMap(calleeName => producerNames.map(producerName => calleeName + producerName));
+    // The forms by hand whose call stands in a block of its own, with the load of its method ahead of that block.
+    const formsWithTheReceiverGiven = [
+      "MethodAheadOfAMemoBlock",
+      "MethodAheadOfAMemoBlockWithAnEarlyReturn",
+      "MethodAheadOfAScopeThatAHookPrunes",
+      "MethodAheadOfAScopeThatALoopPrunes",
+      "MethodAheadOfASwitchThatHoldsTheCall",
+      "MethodAheadOfASwitchWithACaseThatFallsThrough",
+      "MethodAheadOfASwitchWithNothingBetween",
+      "MethodAheadOfTwoMemoBlocks",
+      "MethodAheadOfTwoScopesThatALoopPrunes",
+      "MethodBehindALoopAheadOfAScopeThatAHookPrunes",
+    ];
     const receiverGiven = {
-      browser: replaced(Object.keys(producers)),
-      bun: replaced(Object.keys(producers).slice(0, -3)),
+      browser: [...replaced(Object.keys(producers)), ...formsWithTheReceiverGiven],
+      bun: [...replaced(Object.keys(producers).slice(0, -3)), ...formsWithTheReceiverGiven],
     };
+    // The walk finds the load of these ahead of the block of the call, and nothing between mutates the receiver. The
+    // member call stays, with its key named.
+    const keyedCallsAheadOfABlock = [
+      "KeyAheadOfAMemoBlock",
+      "KeyAheadOfAMemoBlockWithAnEarlyReturn",
+      "KeyAheadOfAScopeThatAHookPrunes",
+      "KeyAheadOfAScopeThatALoopPrunes",
+      "KeyAheadOfASwitchThatHoldsTheCall",
+      "KeyThatMutatesTheReceiverAheadOfAMemoBlock",
+      "KeyThatMutatesTheReceiverAheadOfAScopeThatALoopPrunes",
+      "KeyWithAnEffectAheadOfAMemoBlock",
+    ];
     for (const [calleeName, { setup, target, callee }] of Object.entries(callees)) {
       for (const [producerName, producer] of Object.entries(producers)) {
         cells.push({
@@ -4103,6 +4128,9 @@ describe("bundler", () => {
       "KeyIsAMemberThatIsUpdated=A:first | A:first | C:first",
       "KeyIsReassigned=A:old | A:old | C:old",
       "KeyOfAMethodOfAProp=A:old | A:old | C:old",
+      "KeyThatMutatesTheReceiverAheadOfAMemoBlock=B:old;1 | B:old;1 | B:old;1",
+      "KeyThatMutatesTheReceiverAheadOfAScopeThatALoopPrunes=A1:old;2A2:old;2 | A1:old;2A2:old;2 | C1:old;2C2:old;2",
+      "KeyWithAnEffectAheadOfAMemoBlock=B:old;1i1 | B:old;1i2 | B:old;1i3",
       "LaterArgumentBehindADependency=A:old | A:old | C:old",
       "LaterArgumentBehindAStatement=A:old | A:old | C:old",
       "MemoBlocksAheadOfTheReceiver=A:old16 | A:old16 | C:old16",
@@ -4112,6 +4140,10 @@ describe("bundler", () => {
       "MethodAheadOfAScopeThatALoopPrunes=A1:old;2A2:old;2 | A1:old;2A2:old;2 | C1:old;2C2:old;2",
       "MethodAheadOfASwitchThatHoldsTheCall=A:old | A:old | C:old",
       "MethodAheadOfASwitchWithACaseThatFallsThrough=A:old | A:old | C:old",
+      "MethodAheadOfASwitchWithNothingBetween=A:old | A:old | C:old",
+      "MethodAheadOfTwoMemoBlocks=A:old;12 | A:old;12 | C:old;12",
+      "MethodAheadOfTwoScopesThatALoopPrunes=A1:old;22A2:old;22 | A1:old;22A2:old;22 | C1:old;22C2:old;22",
+      "MethodBehindALoopAheadOfAScopeThatAHookPrunes=A:old;2 | A:old;2 | C:old;2",
       "MethodHasItsOwnCall=A:old | A:old | C:old",
       "MethodInAMemoBlockAheadOfTheCall=A:old;1 | A:old;1 | C:old;1",
       "MethodIsAProxy=A:old | A:old | C:old",
@@ -4235,6 +4267,15 @@ describe("bundler", () => {
               return 1;
             };
             export const size = list => list.length;
+            // Counts its conversions to a property key. The hook reads the count in every render.
+            let conversions = 0;
+            export const countedKey = {
+              toString() {
+                conversions++;
+                return "who";
+              },
+            };
+            export const useConversions = () => conversions;
           `,
           "/cells.jsx":
             `
@@ -4243,7 +4284,7 @@ describe("bundler", () => {
             ` + cells.map(cell => cell.source).join(""),
           "/forms.jsx": /* jsx */ `
             import { useState } from "react";
-            import { make, other, pick, replace, same, size, tick, who } from "./helpers";
+            import { countedKey, make, other, pick, replace, same, size, tick, useConversions, who } from "./helpers";
 
             const withGetter = o =>
               Object.defineProperty(o, "who", {
@@ -4468,6 +4509,87 @@ describe("bundler", () => {
               let key = "who";
               return <div>{p.api[key]((() => { switch (p.n) { default: key = "alt"; return ""; } })())}</div>;
             }
+            // Nothing touches the receiver here. On the way out of a block of a terminal the whole terminal counts, the
+            // call too, so this call prints with the receiver given.
+            export function MethodAheadOfASwitchWithNothingBetween(p) {
+              const o = make(p.name);
+              const local = { n: 0 };
+              return <div>{o.who((() => { switch (p.n) { default: local.n = 1; return ""; } })())}</div>;
+            }
+            // The loop prunes both scopes: that of \`outerList\`, and that of \`last\` in it, which holds the call.
+            export function MethodAheadOfTwoScopesThatALoopPrunes(p) {
+              let out = "";
+              for (const suffix of ["1", "2"]) {
+                const o = make(p.name + suffix);
+                let outerList, last;
+                const result =
+                  o.who((() => { o.who = other; return <i>{o}</i>; })(), (outerList = [suffix], ""), (last = [suffix], "")) +
+                  ";";
+                last.push(result);
+                outerList.push(result);
+                out += result + last.length + outerList.length;
+              }
+              return <div>{out}</div>;
+            }
+            // The loop keeps the body of the function a statement with --minify-syntax too.
+            export function MethodBehindALoopAheadOfAScopeThatAHookPrunes(p) {
+              const o = make(p.name);
+              const [n] = useState(0);
+              let last;
+              const result =
+                o.who((() => { for (const key of ["who"]) o[key] = other; return <i>{o}{n}</i>; })(), (last = [], "")) + ";";
+              const [m] = useState(0);
+              last.push(result, m);
+              return <div>{result + last.length}</div>;
+            }
+            // The call stands in the memo block of \`last\`, and that block in the memo block of \`outerList\`.
+            export function MethodAheadOfTwoMemoBlocks(p) {
+              const o = make(p.name);
+              const [n] = useState(0);
+              let outerList, last;
+              const result =
+                o.who((() => { o.who = other; return <i>{o}{n}</i>; })(), (outerList = [], ""), (last = [], "")) + ";";
+              last.push(result);
+              outerList.push(last, p.n);
+              return <div>{result + last.length + outerList.length}</div>;
+            }
+            // No statement stands between the load and the call. The key has an effect, and the memo block of \`last\`
+            // must not hold it: the block runs once, and the source converts the key in every render.
+            export function KeyWithAnEffectAheadOfAMemoBlock(p) {
+              const o = make("B");
+              const frozen = <i>{o}</i>;
+              let last;
+              const result = o[String(countedKey)]((last = [], "")) + ";";
+              last.push(result);
+              const conversions = useConversions();
+              return <div>{result + last.length + frozen.type + conversions}</div>;
+            }
+            // The key mutates the receiver ahead of the load of the method, and nothing does between the load and the
+            // call. The walk finds the load ahead of the block of the call, and the member call stays.
+            export function KeyThatMutatesTheReceiverAheadOfAMemoBlock(p) {
+              const o = make("B");
+              let last;
+              const result =
+                o[(o.touched = true, same("who"))](
+                  (() => { const x = make("X"); x.who = other; return <i>{o}{x}</i>; })(),
+                  (last = [], ""),
+                ) + ";";
+              last.push(result);
+              return <div>{result + last.length}</div>;
+            }
+            export function KeyThatMutatesTheReceiverAheadOfAScopeThatALoopPrunes(p) {
+              let out = "";
+              for (const suffix of ["1", "2"]) {
+                const o = make(p.name + suffix);
+                const local = { n: 0 };
+                let last;
+                const result =
+                  o[(o.touched = true, "who")]((() => { local.n = 1; return <i>{o}</i>; })(), (last = [suffix], "")) + ";";
+                last.push(result);
+                out += result + last.length;
+              }
+              return <div>{out}</div>;
+            }
             // Without a hook the memo block of \`o\` holds the load of the method, and codegen cannot print the call behind it.
             export function MethodInAMemoBlockAheadOfTheCall(p) {
               const o = make(p.name);
@@ -4590,6 +4712,17 @@ describe("bundler", () => {
             [],
           );
           if (name !== "browser") return;
+          expect(
+            keyedCallsAheadOfABlock.filter(
+              form =>
+                bodies[form].includes("Function.prototype.call.call(") || !/\b(?:t\d+|o)\[t\d+\]\(/.test(bodies[form]),
+            ),
+          ).toEqual([]);
+          // The read of the method, or of the key, stands ahead of the memo block that holds the call.
+          expect(bodies.MethodAheadOfAMemoBlock).toMatch(
+            /const (t\d+) = t\d+\.who;[\s\S]*\bif \(\$\[\d+\] !== [\s\S]*Function\.prototype\.call\.call\(\1, /,
+          );
+          expect(bodies.KeyAheadOfAMemoBlock).toMatch(/const (t\d+) = key;[\s\S]*\bif \(\$\[\d+\] [\s\S]*\bo\[\1\]\(/);
           // A compiled function starts with its memo cache. In these three the load of the method is in a memo block
           // and the call is behind that block, which codegen cannot print.
           expect(Object.keys(bodies).filter(form => !/^\s*let \$ = c\(\d+\);/.test(bodies[form]))).toEqual([
@@ -4768,6 +4901,41 @@ describe("bundler", () => {
             log.push("argument");
             return "";
           };
+          // Each of these runs code of the receiver where the inference records no mutation of it.
+          const withIterator = name => ({
+            name,
+            who,
+            *[Symbol.iterator]() {
+              this.who = other;
+              yield "x";
+            },
+          });
+          const withGetter = name => ({
+            name,
+            who,
+            get swap() {
+              this.who = other;
+              return "g";
+            },
+          });
+          const withToString = name => ({
+            name,
+            who,
+            toString() {
+              this.who = other;
+              return "s";
+            },
+          });
+          const withTrap = name =>
+            new Proxy(
+              { name, who },
+              {
+                ownKeys(target) {
+                  target.who = other;
+                  return ["name"];
+                },
+              },
+            );
 
           // The pass does not run in a function inside the component: "A:second".
           function CallInACallback(p) {
@@ -4818,6 +4986,26 @@ describe("bundler", () => {
             }
             return <div>{out}</div>;
           }
+          // An array pattern runs the iterator of the receiver: "A:new".
+          function ArrayPatternOverTheReceiver(p) {
+            const o = withIterator(p.name);
+            return <div>{o.who((() => { const [x] = o; return x; })())}</div>;
+          }
+          // A getter of the receiver replaces the method: "A:new".
+          function GetterOfTheReceiverReplacesTheMethod(p) {
+            const o = withGetter(p.name);
+            return <div>{o.who((() => { const g = o.swap; return g; })())}</div>;
+          }
+          // The conversion to a string runs \`toString\` of the receiver: "A:new".
+          function ConversionOfTheReceiverToAString(p) {
+            const o = withToString(p.name);
+            return <div>{o.who((() => { const s = String(o); return s; })())}</div>;
+          }
+          // The head of the loop runs the \`ownKeys\` trap of the receiver: "A:new".
+          function TrapOfTheReceiverReplacesTheMethod(p) {
+            const o = withTrap(p.name);
+            return <div>{o.who((() => { for (const key in o) {} return ""; })())}</div>;
+          }
           for (const Form of [
             CallInACallback,
             MethodOfTheProps,
@@ -4826,6 +5014,10 @@ describe("bundler", () => {
             GetterReadsModuleState,
             SpreadIsIteratedBehindAStatement,
             MethodOfAPropThatIsNull,
+            ArrayPatternOverTheReceiver,
+            GetterOfTheReceiverReplacesTheMethod,
+            ConversionOfTheReceiverToAString,
+            TrapOfTheReceiverReplacesTheMethod,
           ]) {
             console.log(Form.name + "=" + Form({ name: "A", who }).props.children);
           }
@@ -4853,6 +5045,10 @@ describe("bundler", () => {
           GetterReadsModuleState=A:0
           SpreadIsIteratedBehindAStatement=A:oldx
           MethodOfAPropThatIsNull=TypeError, ran: nothing
+          ArrayPatternOverTheReceiver=A:oldx
+          GetterOfTheReceiverReplacesTheMethod=A:oldg
+          ConversionOfTheReceiverToAString=A:olds
+          TrapOfTheReceiverReplacesTheMethod=A:old
         `,
       },
     });

@@ -4914,7 +4914,7 @@ impl Formatter<'_> {
         Ok(false)
     }
 
-    /// What the serializers get for `value`: a plain object with its matched rows in place, if it has any.
+    /// What the serializers get for `value`: for an array, a plain object or a class instance that has matched rows, a plain stand-in with the rows in place.
     #[cold]
     fn value_for_serializers(&self, value: JSValue) -> JsResult<JSValue> {
         let place = self.place.current();

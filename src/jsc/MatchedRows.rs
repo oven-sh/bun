@@ -98,7 +98,7 @@ impl MatchedPlace {
         (!value.is_empty()).then_some((value, place))
     }
 
-    /// What snapshot serializers get for the object of this place (not none): a plain object or array with each row in place of its property.
+    /// What snapshot serializers get for the object of this place (not none): a plain stand-in with each row in place of its property, or the object itself.
     pub fn for_serializers(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let (rows, place) = self.cell_and_handle();
         crate::cpp::Bun__JestMatchedRows__forSerializers(global, rows, place)

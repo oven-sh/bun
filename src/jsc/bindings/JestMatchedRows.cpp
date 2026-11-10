@@ -4,6 +4,7 @@
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include "headers.h"
+#include <JavaScriptCore/AOTPropertyWalk.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
@@ -320,9 +321,10 @@ JSC::JSObject* JestMatchedRows::mergedOf(JSC::JSGlobalObject* globalObject, uint
         return merged;
     JSC::JSObject* holder = found.holder.get();
     JSC::JSObject* object = holder;
-    // A function and an object without a row are offered as they are, as in jest-snapshot's merge of the property matchers.
-    if (!holder->isCallable() && found.rowCount) {
-        if (dynamicDowncast<JSC::JSArray>(holder)) {
+    bool isArray = JSC::isJSArray(holder);
+    // A stand-in is for an array, a plain object or an instance of a class. A holder of another type, as a Map, a Response or a function, is offered as it is.
+    if (found.rowCount && (isArray || holder->type() == JSC::FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(holder))) {
+        if (isArray) {
             object = JSC::constructEmptyArray(globalObject, nullptr);
             RETURN_IF_EXCEPTION(scope, nullptr);
         } else
@@ -343,8 +345,7 @@ void JestMatchedRows::fillMergedOf(JSC::JSGlobalObject* globalObject, uint32_t p
 
     JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
     holder->methodTable()->getOwnPropertyNames(holder, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
-    // Nothing that the holder throws fails the print here. The printer meets it again if it comes to print the holder itself.
-    TRY_CLEAR_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, );
     WTF::Vector<JSC::Identifier> missing;
     appendMissingMatchedRowNames(this, place, names.data()->propertyNameVector().span(), missing);
     for (auto& name : missing)
@@ -419,7 +420,7 @@ extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValu
     return JSC::JSValue::encode(row.value);
 }
 
-// A plain object or array that snapshot serializers get in place of the object of `place`. Undefined if there is no such place.
+// What snapshot serializers get for the object of `place`: a plain stand-in with its rows in place, or the object itself. Undefined if there is no such place.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JestMatchedRows__forSerializers(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rows, uint32_t place)
 {
     auto* cell = Bun::JestMatchedRows::from(rows);

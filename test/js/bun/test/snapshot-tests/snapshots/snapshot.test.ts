@@ -2211,7 +2211,6 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
       `Claimed(fn=[Function])`,
       `Claimed(second=Any<Number>, first=Any<Number>)`,
       `Claimed(id=Any<Number>)`,
-      `\nClaimed(inner={\n  "id": Any<Number>,\n})\n`,
     ];
     // With a serializer that is for no value, Bun prints what it prints without one.
     const unclaimed = [
@@ -2292,9 +2291,6 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
               expect({ claimed: true, __proto__: { get second() { return a; }, get first() { return a; } } }).toMatchSnapshot({ second: number, first: number });
               // A getter that throws leaves its property out.
               expect({ claimed: true, id: a, get boom() { throw new Error("boom"); } }).toMatchSnapshot({ id: number });
-              // An object whose keys cannot be listed has only what matched.
-              const unlisted = new Proxy({ id: a }, { ownKeys() { throw new Error("ownKeys"); } });
-              expect({ claimed: true, inner: unlisted }).toMatchSnapshot({ inner: { id: number } });
             }
             expect(new Tagged(3, "print")).toMatchInlineSnapshot({ a: number }, \`print(Any<Number>)\`);
             expect(offered).toEqual(Array(15).fill({ isPlain: true, a: "the matcher" }));
@@ -2356,33 +2352,100 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("prints the same for a Headers or a URL with property matchers, whatever they matched", async () => {
-    const printed = [`Id(Any<String>)`, `Link(Any<String>)`, `\n{\n  "to": Link(Any<String>),\n}\n`];
-    using dir = tempDir("snapshot-serializer-matched", {
+  test("is offered a Response, a Map or a URL itself when a property matcher matched inside it", async () => {
+    const printed = [
+      `\n{\n  "response": Response<ok=true>,\n}\n`,
+      `\n{\n  "id": Any<Number>,\n  "map": Map<a,b>,\n}\n`,
+      `\n{\n  "url": URL<example.com>,\n}\n`,
+      `URL<example.com>`,
+      `\n{\n  "failure": Failure<failed>,\n}\n`,
+    ];
+    const written = headers.bun + printed.map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join("");
+    using dir = tempDir("snapshot-serializer-instance", {
       "a.test.js": `
           expect.addSnapshotSerializer({
-            test: value => value?.id !== undefined,
-            serialize: (value, config, indentation, depth, refs, printer) =>
-              "Id(" + printer(value.id, config, indentation, depth, refs) + ")",
+            test: value => value instanceof Response,
+            serialize: value => "Response<ok=" + value.ok + ">",
           });
           expect.addSnapshotSerializer({
-            test: value => value?.href !== undefined,
-            print: (value, print) => "Link(" + print(value.href) + ")",
+            test: value => value instanceof Map,
+            serialize: value => "Map<" + [...value.keys()].sort().join() + ">",
+          });
+          expect.addSnapshotSerializer({
+            test: value => value instanceof URL,
+            serialize: value => "URL<" + value.host + ">",
+          });
+          class Failure extends Error {
+            constructor(status) {
+              super("failed");
+              this.status = status;
+            }
+          }
+          expect.addSnapshotSerializer({
+            test: value => value instanceof Failure,
+            serialize: value => "Failure<" + value.message + ">",
+          });
+          // What the matchers match is another value in each run.
+          const run = Number(process.env.RUN);
+          test("t", () => {
+            const number = expect.any(Number);
+            const string = expect.any(String);
+            expect({ response: new Response("x", { status: 200 + run }) }).toMatchSnapshot({ response: { status: number } });
+            expect({ id: run, map: new Map([["a", run], ["b", run]]) }).toMatchSnapshot({ id: number, map: { size: number } });
+            expect({ url: new URL("http://example.com/" + run) }).toMatchSnapshot({ url: { href: string } });
+            expect(new URL("http://example.com/" + run)).toMatchSnapshot({ href: string });
+            // So is an instance of a class that extends one of them.
+            expect({ failure: new Failure(500 + run) }).toMatchSnapshot({ failure: { status: number } });
+          });
+        `,
+    });
+    const first = await runTests(String(dir), { CI: "false", RUN: "1" });
+    expect({ pass: first.pass, stderr: first.pass ? "" : first.stderr }).toEqual({ pass: 1, stderr: "" });
+    expect(snap(dir)).toBe(written);
+    const second = await runTests(String(dir), { CI: "true", RUN: "2" });
+    expect({ pass: second.pass, stderr: second.pass ? "" : second.stderr }).toEqual({ pass: 1, stderr: "" });
+    expect(snap(dir)).toBe(written);
+    expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+  });
+
+  test("is offered a plain object or array for an instance of a class that has a matched property, so a test of its class is not for it", async () => {
+    const printed = [
+      `\nMoney {\n  "amount": Any<Number>,\n  "currency": "EUR",\n}\n`,
+      `\n{\n  "price": Money {\n    "amount": Any<Number>,\n    "currency": "EUR",\n  },\n  "tax": 1 EUR,\n}\n`,
+      `\n{\n  "list": [\n    Any<Number>,\n    2,\n  ],\n  "rest": List<1>,\n}\n`,
+    ];
+    using dir = tempDir("snapshot-serializer-class", {
+      "a.test.js": `
+          ${money}
+          class List extends Array {}
+          expect.addSnapshotSerializer(${moneySerializer});
+          expect.addSnapshotSerializer({
+            test: value => value instanceof List,
+            serialize: value => "List<" + value.length + ">",
+          });
+          // Is asked first and is for no value. It keeps the class of what stands for each Money and List.
+          const offered = [];
+          expect.addSnapshotSerializer({
+            test(value) {
+              if (value?.currency || Array.isArray(value)) offered.push(value.constructor.name);
+              return false;
+            },
+            serialize: () => "",
           });
           test("t", () => {
-            const string = expect.any(String);
-            for (const id of ["first", "second"]) {
-              expect(Object.assign(new Headers(), { id })).toMatchSnapshot({ id: string });
-              expect(new URL("http://example.com/" + id)).toMatchSnapshot({ href: string });
-              expect({ to: new URL("http://example.com/" + id) }).toMatchSnapshot({ to: { href: string } });
-            }
+            const number = expect.any(Number);
+            expect(new Money(5, "EUR")).toMatchSnapshot({ amount: number });
+            // The tax and the rest have no matched property, so they are offered as they are.
+            expect({ price: new Money(5, "EUR"), tax: new Money(1, "EUR") }).toMatchSnapshot({ price: { amount: number } });
+            expect({ list: List.of(5, 2), rest: List.of(1) }).toMatchSnapshot({ list: [number, 2] });
+            expect(offered).toEqual(["Object", "Object", "Money", "Array", "List"]);
           });
         `,
     });
     const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
     expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
     expect(snap(dir)).toBe(
-      headers.bun + [...printed, ...printed].map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join(""),
+      headers.bun + printed.map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join(""),
     );
     expect(exitCode).toBe(0);
   });

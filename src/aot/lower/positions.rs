@@ -247,7 +247,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(crate) fn create_expected_position(&mut self, types: PositionTypes) -> DeclaredType {
+    pub(crate) fn create_expected_position(
+        &mut self,
+        types: PositionTypes,
+        admits_records: bool,
+    ) -> DeclaredType {
         let Some(source) = self.choose_source(types) else {
             return DeclaredType::untyped();
         };
@@ -259,7 +263,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 LayoutKey::Class(_) | LayoutKey::ConstructorFunction(_) | LayoutKey::Library(_)
             )
         });
-        if !names_classes_alone {
+        if !names_classes_alone && !admits_records {
             return DeclaredType::untyped();
         }
         let source = PositionSource {

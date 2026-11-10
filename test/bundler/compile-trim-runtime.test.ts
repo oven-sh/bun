@@ -324,8 +324,8 @@ test.concurrent("--trim requires --compile", async () => {
     const asks = await build("asks-for-the-checker.ts", "--trim");
     expect(await run([asks.executable], folder, inFolder)).toEqual({
       stdout:
-        "check: this executable doesn't include the type checker\n" +
-        "compile.aot isn't available in this build of Bun\n" +
+        `check: this executable doesn't include the type checker. To keep the type checker, build it with trim: { allow: ["bundler", "check"] }\n` +
+        `compile.aot: this executable doesn't include the ahead-of-time compiler. To keep the ahead-of-time compiler, build it with trim: { allow: ["bundler", "aot"] }\n` +
         "true\n",
       stderr: "",
       exitCode: 0,

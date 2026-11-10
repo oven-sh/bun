@@ -44,6 +44,13 @@ The errors are TypeScript 7's, whichever version of `typescript` you have instal
 | `TS100080: ... and doesn't ask it`              | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
 | `TS100088: ... These aren't code`               | [None needed](/compiler/compatibility#dynamic-imports)                            |
 | `TS100089: The executable doesn't embed ...`    | [Write the extension](/compiler/compatibility#dynamic-imports)                    |
+| `TS100091: ... doesn't run again`               | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
+| `TS100092: ... doesn't ask an entry`            | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
+| `TS100093: ... gets require.cache here`         | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
+| `TS100094: This call may load a module`         | [Import the module by name](/compiler/compatibility#dynamic-imports)              |
+| `TS100095: ... the folders that this call`      | Write the list under `paths` in the call, each folder as a path from `__dirname`  |
+| `TS100096: ... the require() that is made here` | Keep it in a `const`, made for `import.meta.url`, and call it by that name        |
+| `TS100097: ... the search goes on in the`       | List the folder that holds the module                                             |
 | `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                        |
 | `--aot does not apply to a package.json script` | Put `--aot` inside the script                                                     |
 | `can't run code compiled by this Bun`           | Pass a `bun` built from the same sources with the same configuration              |
@@ -60,6 +67,7 @@ A build looks for type errors in your own files. It doesn't report the ones in `
 | `Cannot find module`, only on another machine               | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
 | `Cannot find module` for a relative path to a data file     | [Name its folder or extension](/compiler/compatibility#dynamic-imports)           |
 | `... was not compiled into this executable`                 | Use that API once in your own code                                                |
+| `app: ... the build didn't see your code pass this option`  | Write `app` in the object that `Bun.serve()` is called with                       |
 | `EvalError: ... the compiler couldn't tell ...`             | Call `eval` or `new Function` directly                                            |
 | `--preload can't be used with this executable`              | Import the file from your entry point                                             |
 | `BUN_INSPECT can't be used with this executable`            | Build with `--compile-inspector`                                                  |

@@ -1,0 +1,18 @@
+# -- source: main.js
+# class O { constructor() { this.x = 1; } m() { return this.x; } }
+# const o = new O();
+# function Base(v) { this.held = v; }
+# class A extends Base { constructor(v) { super(v); this.y = 2; } }
+# const a = new A(o);
+# Base.call(globalThis.stranger, o);
+# print(a.y, o.m(), globalThis.stranger.held === o);
+# -- end of source
+# One caller hands `Base` an object that nobody sees. It arrives at `this` as what every other caller hands over does, and the store hands `o` to everybody.
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS-NOT: layout L0 changes=[] stays-with-compiled-code
+# RUN(ANSWER): run-in-shell globalThis.stranger = {};
+# ANSWER: 2 1 true
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.stranger = {};
+# CHECKED: 2 1 true
+# CHECKED-NEXT: exited with 0

@@ -1,0 +1,20 @@
+# -- source: main.ts
+# interface Span { readonly low: number; readonly high: number }
+# function count(items: any, span: Span | string): number { if (typeof span === "string") return -1; let n = 0; for (const item of items) if (item >= span.low || span.low < 0 || span.high > 100 || span.low > span.high) n++; return n; }
+# function weigh(items: any, span: Span | number): number { if (typeof span === "number") return -2; let n = 0; for (const item of items) if (item >= span.low || span.low < 0 || span.high > 100 || span.low > span.high) n++; return n; }
+# const odd = [5, 6] as any[];
+# const items: number[] = [];
+# function turn(t: number): number { let n = 0; for (let i = 0; i < 100; i++) n += count(items, odd[(i + t) & 1]) + weigh(items, odd[(i + t) & 1]); return n + (t < 0 ? count(items, { low: 1, high: 2 }) + weigh(items, { low: 1, high: 2 }) : 0); }
+# console.log(turn(1));
+# -- end of source
+# f1 = count, f2 = weigh, f3 = turn . L0 = Span
+# `span: Span | string` and the body asks `typeof span === "string"`: so the guard's test was widened to string|L0. But what is PROVEN to arrive is undefined|i32|L0: every number failed the
+# widened guard too and took the whole function written straight (137,949 instructions a round of a hundred calls against 6,632). A guard that the body widens stays only where the widened test
+# takes in every primitive that is proven to arrive.
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1 
+# CHECK: parameter 1 expected=undefined|null|string|L0 declared proven=undefined|i32|L0
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f1:GenericCallEntry -> f1:Body
+# PLAN-NOT: unit f1:ParameterGuard
+# PLAN: unit f2:GenericCallEntry -> f2:Body

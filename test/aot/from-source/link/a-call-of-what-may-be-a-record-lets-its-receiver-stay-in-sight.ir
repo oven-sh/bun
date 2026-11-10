@@ -1,0 +1,15 @@
+# `tools.first(..)` where the field holds a function or, later, a record: what an object literal makes cannot be called: that call throws and runs nothing, so the receiver goes to the function alone and stays in sight.
+# -- source: main.js
+# const tools = { check(value) { if (!value) throw new Error("no"); }, first(x) { tools.first = { level: 1 }; return x; } };
+# let said = "";
+# for (let i = 0; i < 3; i++) tools.check(i >= 0);
+# said += tools.first(1);
+# try { tools.first(1); } catch (e) { said += " " + e.constructor.name; }
+# print(said);
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[]
+# CHECK: layout L1 changes=[]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 TypeError
+# ANSWERS-NEXT: exited with 0

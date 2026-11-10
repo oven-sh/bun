@@ -1,0 +1,14 @@
+# The descriptor is written at the call and lays a value that is read only: on an object in sight the value lies under the name from then on, as behind a store, and does not go to unseen code. L0 = what is laid, L2 = the object. What is stored on made.inner is followed: the arrow function is the only thing under `run`.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.2 "run" appended proven=f2 writers-known
+# CHECK: field L2.0 "inner" proven=L0 writers-known
+# -- source: the-value-of-a-read-only-descriptor-lies-under-its-name-on-an-object-in-sight.js
+# function make(kind) {
+#   const made = {};
+#   Object.defineProperty(made, "inner", { value: { kind, seen: 0 }, enumerable: false });
+#   made.inner.run = payload => { made.inner.seen++; return payload.value + 1; };
+#   return made;
+# }
+# const one = make("first");
+# console.log(one.inner.run({ value: 1 }), one.inner.seen);
+# -- end of source

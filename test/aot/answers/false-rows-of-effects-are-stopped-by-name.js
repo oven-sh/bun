@@ -8,10 +8,10 @@
 // # NET-NEXT: exited with 0
 // # "Runs no other code": a getter behind a read by name, by the row of the operation and by that of the stub; a reviver behind JSON.parse, by the row of the built-in.
 // # RUN(OPERATION): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Operation/PropGet/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
-// # OPERATION: AOT: f{{*}} at {{*}}: the rows of effects of operation:PropGet and of stub:ReadSizeOfTableAtSite say that the call will run no other code, and compiled code was entered. This is a bug in Bun.
+// # OPERATION: AOT: f{{*}} at {{*}}: the rows of effects of operation:PropGet and of stub:GetSizeOfTable say that the call will run no other code, and compiled code was entered. This is a bug in Bun.
 // # OPERATION-NOT: end
-// # RUN(STUB): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Stub/ReadSizeOfTableAtSite/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
-// # STUB: AOT: f{{*}} at {{*}}: the rows of effects of operation:PropGet and of stub:ReadSizeOfTableAtSite say that the call will run no other code, and compiled code was entered. This is a bug in Bun.
+// # RUN(STUB): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Stub/GetSizeOfTable/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
+// # STUB: AOT: f{{*}} at {{*}}: the rows of effects of operation:PropGet and of stub:GetSizeOfTable say that the call will run no other code, and compiled code was entered. This is a bug in Bun.
 // # STUB-NOT: end
 // # RUN(REVIVER): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/JSON.parse/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
 // # REVIVER: AOT: f{{*}} at {{*}}: the rows of effects of operation:CallBuiltin and of built-in:JSON.parse say that the call will run no other code, and compiled code was entered. This is a bug in Bun.

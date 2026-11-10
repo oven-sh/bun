@@ -63,8 +63,14 @@ impl RequestOrigin {
 
 #[derive(Copy, Clone)]
 pub(crate) enum CompileProduct<'r> {
-    Executable { outfile: &'r [u8] },
+    Executable {
+        outfile: &'r [u8],
+    },
+    #[cfg_attr(all(unix, not(bun_fuzzilli), not(test)), expect(dead_code))]
     GraphBytes,
+    /// The same bytes in a file without a name, written while the image lies where the engine left it.
+    #[cfg(unix)]
+    UnnamedFile,
     ReportsOnly,
 }
 
@@ -109,8 +115,12 @@ pub(crate) struct CompileRequest<'r, 'a> {
 pub(crate) struct CompileOutcome {
     pub(crate) output_files: Vec<OutputFile>,
     pub(crate) graph_bytes: Option<Vec<u8>>,
+    #[cfg(unix)]
+    pub(crate) unnamed_file: Option<super::run_compiled::WrittenProgram>,
     pub(crate) metafile: Option<Vec<u8>>,
     pub(crate) summary: Vec<u8>,
+    /// The line of `summary` that names them, or nothing.
+    pub(crate) developer_options: Vec<u8>,
     pub(crate) report_messages: Vec<ReportMessage>,
     pub(crate) trim_log_lines: Vec<Vec<u8>>,
     pub(crate) executable: Option<ExecutableDetails>,

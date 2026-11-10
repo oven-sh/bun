@@ -4,12 +4,10 @@
 // # Where the mapper is seen to give integers the list is born for them, though its source holds texts.
 // # f1 = places
 // # RUN(FORM): walk f1 mechanisms=all
-// # REQUIRES(FORM): entries-of-bun
 // # FORM-LABEL: code f1:Body
 // # FORM: = NewArrayLike {{*}}arrayStorage=Int32
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 734 of 734 of 734
 // # CHECK-NEXT: exited with 0
 function tell(deed) { try { report(deed()); } catch (error) { report(error.constructor.name); } }

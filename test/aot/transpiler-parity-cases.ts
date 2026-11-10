@@ -282,10 +282,6 @@ export function parity(paths: string[]) {
 
 /** What is left out and why, and that every file that is named is there. */
 export function theLists() {
-  for (const [path, reason] of Object.entries(skipped)) {
-    test.todo(`${path}: ${reason}`);
-  }
-
   test("every listed file exists", () => {
     const paths = [...files.map(file => file.path), ...Object.keys(skipped)];
     expect(paths.filter(path => !existsSync(join(repoRoot, path)))).toEqual([]);

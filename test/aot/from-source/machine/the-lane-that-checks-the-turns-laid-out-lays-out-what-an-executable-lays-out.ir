@@ -1,0 +1,28 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d, table) { var h = 0; for (var i = 0; i < d.length; i++) h = (h >>> 8) ^ table[(h ^ d[i]) & 255]; return h; } };
+# var R = { go(ring, n) { var s = 0; for (var i = 0; i < n; i++) s += ring[i & 15]; return s; } };
+# var fill = function (made) { for (var k = 0; k < 256; k++) made[k] = (k * 2654435761) | 0; return made; };
+# var bytes = new Uint8Array(20).fill(7), list = [1, 2, 3, 250, 7, 9, 11, 13, 15, 17], ring = []; for (var k = 0; k < 16; k++) ring.push(k + 0.5);
+# print(T[key](bytes, fill(new Int32Array(256))), T[key](bytes, fill([])), T[key](list, fill(new Int32Array(256))), T[key](list, fill([])), R[key](ring, 40), R[key](ring.slice(0, 10), 10));
+# -- end of source
+# A lane that checks the turns laid out has to lay them out. testing=CheckProofsAtRunTime and testing=TestsEveryPosition write checks into each turn in the walk (CheckProof, Box, StrictEq, HasArrayStorage,
+# GetArrayLength), a turn that holds them is not laid out, and so every check of the emitters on what a front has found was text that never ran. Under testing=EmittersAloneTestEveryPosition the walk writes nothing
+# more: the same loops are laid out, in the same ways, as in an executable, and the checks stand in their turns.
+# RUN: compile LoopsWhoseTurnsAreLaidOut LoopsLaidOutBehindBoundsOfMaskedKeys LoopsLaidOutForEachKindOfView KindsOfListsReadInFrontOfTurnsLaidOut KindsFoundInFrontOfTurnsHeldAgainstCells mechanisms=all
+# CHECK: statistic LoopsWhoseTurnsAreLaidOut 65
+# CHECK: statistic LoopsLaidOutBehindBoundsOfMaskedKeys 5
+# CHECK: statistic LoopsLaidOutForEachKindOfView 5
+# CHECK: statistic KindsOfListsReadInFrontOfTurnsLaidOut 21
+# CHECK: statistic KindsFoundInFrontOfTurnsHeldAgainstCells 0
+# RUN(LANE): compile LoopsWhoseTurnsAreLaidOut LoopsLaidOutBehindBoundsOfMaskedKeys LoopsLaidOutForEachKindOfView KindsOfListsReadInFrontOfTurnsLaidOut KindsFoundInFrontOfTurnsHeldAgainstCells mechanisms=all testing=EmittersAloneTestEveryPosition
+# LANE: statistic LoopsWhoseTurnsAreLaidOut 65
+# LANE: statistic LoopsLaidOutBehindBoundsOfMaskedKeys 5
+# LANE: statistic LoopsLaidOutForEachKindOfView 5
+# LANE: statistic KindsOfListsReadInFrontOfTurnsLaidOut 21
+# LANE: statistic KindsFoundInFrontOfTurnsHeldAgainstCells 344
+# RUN(PROOFS): compile LoopsWhoseTurnsAreLaidOut mechanisms=all testing=CheckProofsAtRunTime
+# PROOFS: statistic LoopsWhoseTurnsAreLaidOut 0
+# RUN(ANSWERS): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# ANSWERS: 1834286507 1834286507 -1180011872 -1180011872 288 50
+# ANSWERS-NEXT: exited with 0

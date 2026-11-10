@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# "use strict";
+# function veil(value) { return JSON.parse("0", () => value); }
+# function text(n) { const out = []; out.push(1, 2, 3); const d = veil(out); let sum = 0; for (let i = 0; i < d.length && i < n; i++) { sum = (sum + d[i]) | 0; out.push("7"); } return sum + "/" + d.length; }
+# print(text(3), text(5), text(9));
+# -- end of source
+# Where a loop writes objects made here alone, what is known of every OTHER object outlives its head. Who is another is an argument of identity by the order of making: what stood before the first such object was made cannot be it;
+# of what came later nothing is known (Walker::isOtherThanRestOf()). Here the list that is read came later: it is the list made here, back through a veil: so it is not tested in front of the loop for a storage of numbers.
+# THE LIE, testing=ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere: it is taken for another: it is tested in front, and its elements are read as numbers all round the loop while the turn pushes a text into it.
+# As built the answers look right even so, because a list into which a written text is pushed is born with boxed storage and fails that front. THE WRONG NUMBERS SHOW UNDER COLLECTIONS, where it is born otherwise:
+# test/aot/parallel/a-push-into-a-list-made-here-writes-that-list-alone/a-written-text-is-pushed-into-the-list-whose-veiled-self-is-read-as-numbers.cjs, built with this word, is wrong in 105 of 144 cells, silently.
+# f2 = text
+# RUN: walk f2 mechanisms=all
+# CHECK-NOT: GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]
+# RUN(LIE): walk f2 mechanisms=all testing=ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere
+# LIE: HasArrayStorage {{*}} arrayStorage=Double [admitsInt32Storage]
+# LIE: isLoopHead=true
+# LIE: GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]
+# LIE: TryCallInline {{*}} inlineBuiltin=ArrayPush
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 6/6 677/8 6777777/12
+# RIGHT-NEXT: exited with 0

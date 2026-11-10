@@ -127,19 +127,18 @@ export const deeds = {
 // CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_2]]
 // CHECK-NEXT: v3 = NewObject v2 layout=[[L_2]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=[[L_2]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_3]]
-// CHECK-NEXT: PropSet v4, v1 key="x"
-// CHECK-NEXT: v7 = String string="p"
-// CHECK-NEXT: v8 = Add v7, v1
-// CHECK-NEXT: PropSet v4, v8 key="text"
-// CHECK-NEXT: PropSet v4, v1 key="id"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: v12 = TypeTest v11 testedType=object
-// CHECK-NEXT: Branch v12 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v13):
-// CHECK-NEXT: Jump -> next b2(v13)
-// CHECK-NEXT: b2(v14):
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: v5 = String string="p"
+// CHECK-NEXT: v6 = Add v5, v1
+// CHECK-NEXT: PropDefine v4, v1 key="x"
+// CHECK-NEXT: PropDefine v4, v6 key="text"
+// CHECK-NEXT: PropDefine v4, v1 key="id"
+// CHECK-NEXT: v10 = Undefined
+// CHECK-NEXT: v11 = TypeTest v10 testedType=object
+// CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b2(v4)
+// CHECK-NEXT: b1(v12):
+// CHECK-NEXT: Jump -> next b2(v12)
+// CHECK-NEXT: b2(v13):
+// CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="slowPaths"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {

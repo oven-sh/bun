@@ -1,0 +1,10 @@
+# -- source: main.mjs
+# function Node(tag, up) { this.tag = tag; this.flags = tag * 3; this.up = up; }
+# function climb(from) { let sum = 0; for (let at = from; at !== null; at = at.up) { if (at.flags & 1) sum += at.tag; else sum -= at.tag; } return sum; }
+# sink.kept = climb;
+# sink(climb(new Node(1, new Node(2, new Node(3, null)))));
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# CHECK: : L{{*}} @Cell{{*}}isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 2

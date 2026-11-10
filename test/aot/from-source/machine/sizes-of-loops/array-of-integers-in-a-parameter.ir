@@ -1,0 +1,28 @@
+# f1 = total
+# -- source: array-of-integers-in-a-parameter.ts
+# const counts: number[] = [];
+# for (let k = 0; k < 1000; k++) counts.push(k * 3);
+# function total(list: number[], first: number): number {
+#   let sum = first;
+#   for (let k = 0; k < list.length; k++) sum += list[k]!;
+#   return sum;
+# }
+# function turn(i: number): number {
+#   return total(counts, i & 1);
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 18 instructions, 0 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 52, patches 0, moves 0, unlikely 6 ; loop: operations 36, patches 0, moves 2, unlikely 12 ; loop: operations 18, patches 1, moves 1, unlikely 0 ; loop: operations 20, patches 2, moves 0, unlikely 0.
+# Since a whole number or nothing out of a list is read raw where its user takes a double, the loop as written (the copy that runs where the test in front fails) is laid out in eight turns too:
+# the fourth loop is those eight turns, the fifth the loop for the rest. The typed loop is the third, as before.
+# RUN(X64): loops most:52,38,19,242,33 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 52
+# X64-NEXT: loop: at most 38
+# X64-NEXT: loop: at most 19
+# X64-NEXT: loop: at most 242
+# X64-NEXT: loop: at most 33

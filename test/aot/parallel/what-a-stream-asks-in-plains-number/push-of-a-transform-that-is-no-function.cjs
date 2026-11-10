@@ -1,0 +1,1 @@
+const { Transform } = require("node:stream"); const t = new Transform({ transform(c, e, cb) { cb(null, c); } }); let reads = 0; Object.defineProperty(t, "push", { configurable: true, get() { reads++; return undefined; } }); try { t.write("a"); console.log("nothing"); } catch (e) { console.log(e.constructor.name, reads); }

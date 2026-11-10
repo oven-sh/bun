@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# const said = [];
+# function visit(skip) {
+#   said.push(typeof helper);
+#   block: { if (skip) break block; function helper() { return 1; } }
+#   said.push(typeof helper);
+# }
+# visit(false);
+# visit(true);
+# print(said.join());
+# -- end of source
+# In sloppy code a function of a block is stored in the variable of the function around it where the declaration is reached, not on entry to the block: a break above it leaves the variable undefined.
+# RUN: run-in-shell
+# CHECK: undefined,function,undefined,undefined
+# CHECK-NEXT: exited with 0

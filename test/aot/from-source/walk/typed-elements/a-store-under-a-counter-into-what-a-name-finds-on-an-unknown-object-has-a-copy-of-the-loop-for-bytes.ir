@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# "use strict";
+# function fill(t) { const b = globalThis.held; for (let i = 0; i < 14; i++) b[i] = i + t; return b[t & 7] & 255; }
+# const whole = new Uint8Array(32).fill(200);
+# globalThis.held = new Uint8Array(whole.buffer, 8, 12);
+# print(fill(3));
+# print(whole.join());
+# -- end of source
+# Nothing is known of what the name finds. That an element of it meets a number made the front end write "a list of numbers" over it, and the loop asked for that list alone.
+# In front of the loop a list is now told from the views, as for a read: bytes have a copy of the loop of their own. Fourteen stores go into twelve places in the middle of a larger buffer, and what lies on both sides stays.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: TypeTest {{*}} testedType=Buffer|Uint8Array
+# WALK: PutTypedArrayElement {{*}} level=Proven [keyIsIntegral, isInsideView]
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 6
+# RIGHT-NEXT: 200,200,200,200,200,200,200,200,3,4,5,6,7,8,9,10,11,12,13,14,200,200,200,200,200,200,200,200,200,200,200,200
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# HELD: 6
+# HELD-NEXT: 200,200,200,200,200,200,200,200,3,4,5,6,7,8,9,10,11,12,13,14,200,200,200,200,200,200,200,200,200,200,200,200
+# HELD-NEXT: exited with 0

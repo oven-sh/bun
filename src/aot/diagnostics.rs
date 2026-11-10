@@ -198,6 +198,18 @@ impl LoadMessages {
         self.lists.lock().internal_errors.push(error);
     }
 
+    pub(crate) fn hand_on_to(&self, heard: &LoadMessages) {
+        let LoadMessageLists {
+            mut log,
+            mut internal_errors,
+        } = std::mem::take(&mut *self.lists.lock());
+        let mut heard = heard.lists.lock();
+        if !log.msgs.is_empty() || log.warnings != 0 || log.errors != 0 {
+            log.append_to(&mut heard.log);
+        }
+        heard.internal_errors.append(&mut internal_errors);
+    }
+
     pub(crate) fn with_log<R>(&self, call: impl FnOnce(&mut Log) -> R) -> R {
         let mut log = Log::init();
         let result = call(&mut log);

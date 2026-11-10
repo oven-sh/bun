@@ -1,0 +1,18 @@
+# a Buffer that the program makes and that stays in sight behind its method calls: the comparison of the cell's Structure in front of the inline code asks the cell alone
+# every caller is in sight: Link proves the parameters Buffers
+# f1 = sumWords, f2 = fillWords, f3 = copyInto
+# -- source: methods-of-a-buffer-in-sight-are-found-behind-a-look-at-the-cell-alone.ts
+# declare function sink(...values: unknown[]): void;
+# function sumWords(buf: Buffer, n: number): number { let s = 0; for (let i = 0; i + 4 <= n; i += 4) s = (s + buf.readUInt32LE(i)) | 0; return s; }
+# function fillWords(buf: Buffer, n: number): void { for (let i = 0; i + 4 <= n; i += 4) buf.writeUInt32LE(i, i); }
+# function copyInto(from: Buffer, to: Buffer, n: number): number { let c = 0; for (let i = 0; i < n; i++) c += from.copy(to, 0, 0, 16); return c; }
+# const buf = Buffer.alloc(4096);
+# const other = Buffer.alloc(4096);
+# for (let turn = 0; turn < 3; turn++) { fillWords(buf, 4096); sink(sumWords(buf, 4096), copyInto(buf, other, 100)); }
+# -- end of source
+# RUN(READ): walk f1 mechanisms=all
+# READ: = IsPristine {{*}}builtinClass=Buffer aspects=[Names, CellAlone]
+# READ: TryCallInline {{*}}inlineBuiltin=BufferAccess
+# RUN(WRITE): walk f2 mechanisms=all
+# WRITE: = IsPristine {{*}}builtinClass=Buffer aspects=[Names, CellAlone]
+# WRITE: TryCallInline {{*}}inlineBuiltin=BufferAccess

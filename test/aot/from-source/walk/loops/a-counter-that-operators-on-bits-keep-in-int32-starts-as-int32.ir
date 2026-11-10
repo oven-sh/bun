@@ -1,0 +1,11 @@
+# `for (let at = 0; at < most; at = (at + 1) | 0) .. found = (found + 1) | 0;`: a head parameter that enters as one whole number was started at the end of the exact whole numbers; the walk fitted, what came round was an int32, and the loop was walked again for the narrower form.
+# Where operators on bits alone bring values round, the start is int32.
+# -- source: a-counter-that-operators-on-bits-keep-in-int32-starts-as-int32.cjs
+# function count(values, most) { let found = 0; for (let at = 0; at < most; at = (at + 1) | 0) if (values[at] > 2) found = (found + 1) | 0; return found; }
+# print(count([1, 2, 3, 4, 5], [].length + 5));
+# -- end of source
+# STATISTIC: WalksOfLoopsUndone <= 2
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 3

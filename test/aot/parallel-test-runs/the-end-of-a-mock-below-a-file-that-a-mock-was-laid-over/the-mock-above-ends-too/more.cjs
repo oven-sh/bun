@@ -1,0 +1,1 @@
+exports.triangle = 5;

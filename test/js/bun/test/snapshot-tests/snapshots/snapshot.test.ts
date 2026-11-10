@@ -1675,6 +1675,51 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect([adding.exitCode, all.exitCode]).toEqual([0, 0]);
       });
 
+      // In Vitest's format `x y 1` is the key of the test "x y", and Bun's key for "x" > "y". In Jest's format
+      // `hooks (unnamed) 1` is the key of the beforeAll snapshot, and Bun's key for a snapshot of beforeEach.
+      test.each([[[[], ["--update-snapshots"]]], [[["--update-snapshots"]]]])(
+        "the entry that another test has under its own key is not taken for it %j",
+        async runs => {
+          const name = (...names: string[]) => names.join(format === "vitest" ? " > " : " ");
+          const entry = ([key, value]: string[]) => "\nexports[`" + key + "`] = `" + value + "`;\n";
+          const loaded = [
+            ["x y 1", "1"],
+            ["a 1", "1"],
+            [name("hooks", "(unnamed)") + " 1", '"state"'],
+            [name("hooks", "t") + " 1", '"state"'],
+          ];
+          const written = [
+            ["a 1", "1"],
+            [name("hooks", "(unnamed)") + " 1", '"state"'],
+            [name("hooks", "t") + " 1", '"state"'],
+            [name("hooks", "u") + " 1", '"state"'],
+            ...(format === "vitest" ? [["x > y 1", "1"]] : []),
+            ["x y 1", "1"],
+            ...(format === "jest" ? [["x y 2", "1"]] : []),
+          ];
+          using dir = tempDir("snapshot-out-of-order", {
+            "a.test.js": `
+              test("x y", () => { expect(1).toMatchSnapshot(); });
+              test("a", () => { expect(1).toMatchSnapshot(); });
+              describe("hooks", () => {
+                beforeAll(() => { expect("state").toMatchSnapshot(); });
+                beforeEach(() => { expect("state").toMatchSnapshot(); });
+                test("t", () => {});
+                test("u", () => {});
+              });
+              describe("x", () => { test("y", () => { expect(1).toMatchSnapshot(); }); });
+            `,
+            "__snapshots__/a.test.js.snap": headers[format] + loaded.map(entry).join(""),
+          });
+          const exitCodes: number[] = [];
+          for (const args of runs) exitCodes.push((await runTests(String(dir), { CI: "false" }, ...args)).exitCode);
+          expect(snap(dir)).toBe(headers[format] + written.map(entry).join(""));
+          const all = await runTests(String(dir), { CI: "true" });
+          expect({ pass: all.pass, stderr: all.pass === 5 ? "" : all.stderr }).toEqual({ pass: 5, stderr: "" });
+          expect([...exitCodes, all.exitCode]).toEqual([...runs.map(() => 0), 0]);
+        },
+      );
+
       test("a file that holds none of it gets the runner's order in a run that adds entries and sees the others", async () => {
         using dir = tempDir("snapshot-out-of-order", {
           "a.test.js": tests + newTests,

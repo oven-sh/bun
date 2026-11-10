@@ -412,9 +412,9 @@ impl Snapshots {
             self.open_to_append(files)?;
         }
 
-        let (mut key, counter) = self.add_count(expect, format, hint)?;
+        let (mut key, count) = self.add_count(expect, format, hint)?;
         let mut counter_string_buf = [0u8; 32];
-        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
+        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, count);
         key.push(b' ');
         key.extend_from_slice(counter);
 
@@ -427,12 +427,14 @@ impl Snapshots {
             && let Some(file) = self._current_file.as_mut().filter(|file| file.may_hold_entries_of_bun)
         {
             let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
+            // A test that asked for this key under the file's own name has the entry: the two spellings clash.
+            let is_of_another_test = self.counts.get(key_of_bun.as_slice()).is_some_and(|asked| *asked >= count);
             key_of_bun.push(b' ');
             key_of_bun.extend_from_slice(counter);
-            // An entry that this run wrote is not an older Bun's.
-            if self.values.get(&key_of_bun).is_some_and(|entry| !entry.written) {
+            // An entry that this run wrote is not an older Bun's. `--update-snapshots` would rename the other test's entry.
+            if self.values.get(&key_of_bun).is_some_and(|entry| !entry.written) && !(is_of_another_test && self.update_snapshots) {
                 key_in_file = Some(key_of_bun);
-                file.left_an_entry_alone |= !self.update_snapshots;
+                file.left_an_entry_alone |= !is_of_another_test && !self.update_snapshots;
             }
         }
 
@@ -446,7 +448,9 @@ impl Snapshots {
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
-                if let Some(file) = self._current_file.as_mut() {
+                if key_in_file == key
+                    && let Some(file) = self._current_file.as_mut()
+                {
                     file.left_an_entry_alone = true;
                 }
                 return Ok(Outcome::Mismatch { saved: entry.value.clone() });

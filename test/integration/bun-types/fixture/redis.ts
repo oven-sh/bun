@@ -119,6 +119,90 @@ redis.wait(1);
 expectType(redis.lcs("a", "b")).is<Promise<any>>();
 expectType(redis.lcs("a", "b", "LEN")).is<Promise<any>>();
 
+// Sorted set ranges: a literal WITHSCORES among the options, in any position and letter case, types the reply as pairs
+declare const someOptions: string[];
+declare const withScores: boolean;
+declare const descending: boolean;
+declare const offset: number;
+expectType(redis.zrange("zset", 0, -1)).is<Promise<string[]>>();
+expectType(redis.zrange("zset", 0, -1, "REV")).is<Promise<string[]>>();
+expectType(redis.zrange("zset", "1", "10", "BYSCORE", "LIMIT", "0", "5")).is<Promise<string[]>>();
+expectType(redis.zrange("zset", 1, 10, "BYSCORE", "LIMIT", 0, 5)).is<Promise<string[]>>();
+expectType(redis.zrange("zset", 0, -1, "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", "0", "-1", "REV", "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", 0, -1, "WITHSCORES", "REV")).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", 0, 10, "BYSCORE", "WITHSCORES", "LIMIT", "0", "5")).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", 0, 10, "BYSCORE", "LIMIT", 0, 5, "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", 0, -1, "rev", "WithScores")).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", 0, -1, ...someOptions, "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", 0, -1, ...someOptions, "WITHSCORES", "REV")).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", 0, -1, "REV", "WITHSCORES", ...someOptions)).is<Promise<[string, number][]>>();
+expectType(redis.zrange("zset", 0, -1, ...(["REV", "WITHSCORES"] as const))).is<Promise<[string, number][]>>();
+expectType(redis.zrevrange("zset", 0, -1)).is<Promise<string[]>>();
+expectType(redis.zrevrange("zset", 0, -1, "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrevrange("zset", 0, -1, "withscores")).is<Promise<[string, number][]>>();
+expectType(redis.zrangebyscore("zset", 0, 10, "LIMIT", 0, 5)).is<Promise<string[]>>();
+expectType(redis.zrangebyscore("zset", 0, 10, "limit", "0", "5")).is<Promise<string[]>>();
+expectType(redis.zrangebyscore("zset", 0, 10, "WITHSCORES", "LIMIT", 0, 5)).is<Promise<[string, number][]>>();
+expectType(redis.zrangebyscore("zset", 0, 10, "LIMIT", 0, 5, "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrangebyscore("zset", 0, 10, "limit", 0, 5, "withscores")).is<Promise<[string, number][]>>();
+expectType(redis.zrevrangebyscore("zset", 10, 0, "LIMIT", 0, 5)).is<Promise<string[]>>();
+expectType(redis.zrevrangebyscore("zset", 10, 0, "WITHSCORES", "LIMIT", 0, 5)).is<Promise<[string, number][]>>();
+expectType(redis.zrevrangebyscore("zset", 10, 0, "LIMIT", 0, 5, "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrevrangebyscore("zset", 10, 0, "limit", 0, 5, "withscores")).is<Promise<[string, number][]>>();
+// An option typed `string` is not known to be WITHSCORES: the reply stays typed as members
+expectType(redis.zrange("zset", 0, -1, ...someOptions)).is<Promise<string[]>>();
+expectType(redis.zrange("zset", 0, -1, "REV", someOptions[0]!)).is<Promise<string[]>>();
+expectType(redis.zrevrange("zset", 0, -1, ...someOptions)).is<Promise<string[]>>();
+expectType(redis.zrangebyscore("zset", 0, 10, "LIMIT", someOptions[0]!, "5")).is<Promise<string[]>>();
+expectType(redis.zrevrangebyscore("zset", 10, 0, ...someOptions)).is<Promise<string[]>>();
+// An option that may or may not be the literal gives either reply
+expectType(redis.zrange("zset", 0, -1, ...(withScores ? ["WITHSCORES"] : []))).is<
+  Promise<string[] | [string, number][]>
+>();
+expectType(redis.zrange("zset", 0, -1, withScores ? "WITHSCORES" : "REV")).is<Promise<string[] | [string, number][]>>();
+expectType(redis.zrevrange("zset", 0, -1, ...(withScores ? ["WITHSCORES"] : []))).is<
+  Promise<string[] | [string, number][]>
+>();
+expectType(redis.zrangebyscore("zset", 0, 10, ...(withScores ? ["WITHSCORES"] : []))).is<
+  Promise<string[] | [string, number][]>
+>();
+expectType(redis.zrevrangebyscore("zset", 10, 0, ...(withScores ? ["WITHSCORES"] : []))).is<
+  Promise<string[] | [string, number][]>
+>();
+// A spread that the generic overload cannot take as one list still compiles, through the overload that is not generic
+expectType(
+  redis.zrange(
+    "zset",
+    0,
+    10,
+    ...(offset > 0 ? ["BYSCORE", "LIMIT", `${offset}`, "5"] : ["BYSCORE", "LIMIT", "0", "5"]),
+  ),
+).is<Promise<string[]>>();
+expectType(redis.zrevrange("zset", 0, -1, ...(descending ? [someOptions[0]!] : [someOptions[1]!]))).is<
+  Promise<string[]>
+>();
+expectType(redis.zrangebyscore("zset", 0, 10, ...(offset > 0 ? ["LIMIT", offset, 5] : ["LIMIT", 0, 5]))).is<
+  Promise<string[]>
+>();
+expectType(redis.zrevrangebyscore("zset", 10, 0, ...(offset > 0 ? ["LIMIT", offset, 5] : ["LIMIT", 0, 5]))).is<
+  Promise<string[]>
+>();
+// A call through a union of two methods. The generic overloads of the byscore pair are identical, so TypeScript
+// can use them. Those of zrange and zrevrange differ, so it uses the overloads that are not generic.
+expectType(redis[descending ? "zrevrangebyscore" : "zrangebyscore"]("zset", 0, 10, "LIMIT", 0, 5, "WITHSCORES")).is<
+  Promise<[string, number][]>
+>();
+expectType(redis[descending ? "zrevrangebyscore" : "zrangebyscore"]("zset", 0, 10, "LIMIT", 0, 5)).is<
+  Promise<string[]>
+>();
+expectType(redis[descending ? "zrevrange" : "zrange"]("zset", 0, -1, "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis[descending ? "zrevrange" : "zrange"]("zset", 0, -1, ...someOptions)).is<Promise<string[]>>();
+// @ts-expect-error - an explicit undefined option throws at runtime, so it is not accepted here either
+redis.zrange("zset", 0, -1, undefined);
+// @ts-expect-error - ZREVRANGE takes no numeric option
+redis.zrevrange("zset", 0, -1, 5);
+
 // Streams
 expectType(redis.xadd("stream", "*", "field", "value")).is<Promise<string | null>>();
 expectType(redis.xadd("stream", "MAXLEN", "~", 1000, "*", "field", "value")).is<Promise<string | null>>();

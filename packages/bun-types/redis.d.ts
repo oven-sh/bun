@@ -47,6 +47,30 @@ declare module "bun" {
     enableAutoPipelining?: boolean;
   }
 
+  namespace __internal {
+    /**
+     * The reply of `zrange`, `zrevrange`, `zrangebyscore` and `zrevrangebyscore`, computed from their options.
+     * Redis replies with `[member, score]` pairs when `WITHSCORES` is among the options, in any position and
+     * letter case, and with members otherwise. An option typed `string` is not known to be `WITHSCORES`, so it
+     * leaves the reply typed as members.
+     *
+     * The methods declare `Options` as a `const` type parameter with a `readonly` constraint. TypeScript 5.0 to
+     * 5.2 infer no literal types when that constraint is a mutable array.
+     */
+    type RedisZRangeReply<Options extends readonly unknown[]> = Options extends readonly [infer Option, ...infer Rest]
+      ? RedisZRangeReplyAfter<Option, Rest>
+      : Options extends readonly [...infer Rest, infer Option]
+        ? RedisZRangeReplyAfter<Option, Rest>
+        : string[];
+
+    /** Pairs when `Option` is `WITHSCORES`. Otherwise the other options, `Rest`, decide. */
+    type RedisZRangeReplyAfter<Option, Rest extends readonly unknown[]> = Option extends string
+      ? Uppercase<Option> extends "WITHSCORES"
+        ? [string, number][]
+        : RedisZRangeReply<Rest>
+      : RedisZRangeReply<Rest>;
+  }
+
   export namespace RedisClient {
     type KeyLike = string | ArrayBufferView | Blob;
     type StringPubSubListener = (message: string, channel: string) => void;
@@ -1693,7 +1717,10 @@ declare module "bun" {
      * @param start The starting value (index, score, or lex depending on options)
      * @param stop The stopping value
      * @param options Additional options (BYSCORE, BYLEX, REV, LIMIT offset count, WITHSCORES)
-     * @returns Promise that resolves with an array of members (or with scores if WITHSCORES)
+     * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
+     * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
+     * An option typed `string` counts as not "WITHSCORES", for example a `let` variable or an array literal
+     * that is spread into the call without `as const`.
      *
      * @example
      * ```ts
@@ -1703,6 +1730,26 @@ declare module "bun" {
      * // Get members in reverse order with scores
      * const reversed = await redis.zrange("myzset", "0", "-1", "REV", "WITHSCORES");
      * ```
+     */
+    zrange<const Options extends readonly (string | number)[] = []>(
+      key: RedisClient.KeyLike,
+      start: string | number,
+      stop: string | number,
+      ...options: Options
+    ): Promise<__internal.RedisZRangeReply<Options>>;
+
+    /**
+     * Return a range of members in a sorted set with various options
+     *
+     * The fallback for the overload above: the same call, with the return type fixed to an array of members.
+     * TypeScript takes it when it cannot use the overload above, for example for a call through
+     * `redis[reverse ? "zrevrange" : "zrange"]`.
+     *
+     * @param key The sorted set key
+     * @param start The starting value (index, score, or lex depending on options)
+     * @param stop The stopping value
+     * @param options Additional options (BYSCORE, BYLEX, REV, LIMIT offset count, WITHSCORES)
+     * @returns Promise that resolves with an array of members (or with scores if WITHSCORES)
      */
     zrange(
       key: RedisClient.KeyLike,
@@ -1778,6 +1825,29 @@ declare module "bun" {
 
     /**
      * Return a range of members in a sorted set with options, ordered from high to low
+     *
+     * @param key The sorted set key
+     * @param start The starting index
+     * @param stop The stopping index
+     * @param options Additional options (WITHSCORES)
+     * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
+     * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
+     * An option typed `string` counts as not "WITHSCORES", for example a `let` variable or an array literal
+     * that is spread into the call without `as const`.
+     */
+    zrevrange<const Options extends readonly string[] = []>(
+      key: RedisClient.KeyLike,
+      start: number,
+      stop: number,
+      ...options: Options
+    ): Promise<__internal.RedisZRangeReply<Options>>;
+
+    /**
+     * Return a range of members in a sorted set with options, ordered from high to low
+     *
+     * The fallback for the overload above: the same call, with the return type fixed to an array of members.
+     * TypeScript takes it when it cannot use the overload above, for example for a call through
+     * `redis[reverse ? "zrevrange" : "zrange"]`.
      *
      * @param key The sorted set key
      * @param start The starting index
@@ -2295,6 +2365,29 @@ declare module "bun" {
      * @param min Minimum score
      * @param max Maximum score
      * @param options Additional options (WITHSCORES, LIMIT offset count)
+     * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
+     * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
+     * An option typed `string` counts as not "WITHSCORES", for example a `let` variable or an array literal
+     * that is spread into the call without `as const`.
+     */
+    zrangebyscore<const Options extends readonly (string | number)[] = []>(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      ...options: Options
+    ): Promise<__internal.RedisZRangeReply<Options>>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, with various options
+     *
+     * The fallback for the overload above: the same call, with the return type fixed to an array of members.
+     * TypeScript takes it when it cannot use the overload above, for example for
+     * `redis.zrangebyscore.call(redis, ...)`.
+     *
+     * @param key The sorted set key
+     * @param min Minimum score
+     * @param max Maximum score
+     * @param options Additional options (WITHSCORES, LIMIT offset count)
      * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
      */
     zrangebyscore(
@@ -2374,6 +2467,29 @@ declare module "bun" {
 
     /**
      * Return members in a sorted set with scores within a given range, ordered from high to low, with options
+     *
+     * @param key The sorted set key
+     * @param max Maximum score
+     * @param min Minimum score
+     * @param options Additional options (WITHSCORES, LIMIT offset count)
+     * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
+     * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
+     * An option typed `string` counts as not "WITHSCORES", for example a `let` variable or an array literal
+     * that is spread into the call without `as const`.
+     */
+    zrevrangebyscore<const Options extends readonly (string | number)[] = []>(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      ...options: Options
+    ): Promise<__internal.RedisZRangeReply<Options>>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, ordered from high to low, with options
+     *
+     * The fallback for the overload above: the same call, with the return type fixed to an array of members.
+     * TypeScript takes it when it cannot use the overload above, for example for
+     * `redis.zrevrangebyscore.call(redis, ...)`.
      *
      * @param key The sorted set key
      * @param max Maximum score

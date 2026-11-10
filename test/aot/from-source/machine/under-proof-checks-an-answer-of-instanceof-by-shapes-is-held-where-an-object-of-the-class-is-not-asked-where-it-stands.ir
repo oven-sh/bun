@@ -1,14 +1,17 @@
-# In a loop `x instanceof Dog` says yes to the shape of a Dog only where the object still stands where it was made. Out of sight one Dog is laid below the prototype of Cat.
-# THE LIE, testing=ObjectsOfClassAskedForAreNotAskedWhereTheyStand: an object with the shape of the class asked for is not asked where it stands.
-# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) each answer taken from shapes is held to a walk of the chain that gives way at a trap and runs no code, or the process ends.
+# In a loop, `x instanceof Dog` is true for the shape of a Dog only if the object's prototype link is unchanged since its allocation.
+# Out of the compiler's sight, the prototype of one Dog is set to Cat.prototype.
+# Fault injection, testing=SkipPrototypeChecks: the prototype link of an object with the shape of the tested class is not checked.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime) each result derived from shapes is checked against a walk of the prototype chain that gives up at a trap and runs no code.
+# If they disagree, the process crashes.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: 2 1
 # RIGHT-NEXT: exited with 0
-# RUN(WRONG): run-in-shell mechanisms=all testing=ObjectsOfClassAskedForAreNotAskedWhereTheyStand
+# RUN(WRONG): run-in-shell mechanisms=all testing=SkipPrototypeChecks
 # WRONG: 2 2
 # WRONG-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=ObjectsOfClassAskedForAreNotAskedWhereTheyStand,CheckProofsAtRunTime
-# HELD: AOT: f{{*}}what an operation gives is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipPrototypeChecks,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: type check failed
+# HELD-NEXT: in the result of an operation
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

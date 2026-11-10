@@ -1,4 +1,4 @@
-// STATISTIC: CapturesOfClassesStoredForGoodPromoted = 0
+// STATISTIC: PermanentClassCapturesPromoted = 0
 "use strict";
 const hide = value => [value][JSON.parse("0")];
 function factory(exports, weight) {

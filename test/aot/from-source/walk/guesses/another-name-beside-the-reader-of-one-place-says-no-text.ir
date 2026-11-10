@@ -5,5 +5,5 @@
 # sink(named);
 # -- end of source
 # Where a name that no text has is read off the place too, its length says nothing
-# RUN(COUNT): compile TextsExpectedByNamesOfPlaces mechanisms=all
-# COUNT: statistic TextsExpectedByNamesOfPlaces 0
+# RUN(COUNT): compile StringsSpeculatedFromLocationUses mechanisms=all
+# COUNT: statistic StringsSpeculatedFromLocationUses 0

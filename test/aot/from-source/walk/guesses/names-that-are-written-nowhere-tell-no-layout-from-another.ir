@@ -11,6 +11,6 @@
 # CHECK: = GetSlot {{*}} key="label"
 # CHECK: = HasNoExtraProperties
 # CHECK: = HasLayoutPrototype
-# RUN(COUNT): compile LayoutsExpectedBesideOneWhoseOtherNamesAreNeverWritten mechanisms=all
-# COUNT-NOT: LayoutsExpectedBesideOneWhoseOtherNamesAreNeverWritten 0
-# COUNT: statistic LayoutsExpectedBesideOneWhoseOtherNamesAreNeverWritten
+# RUN(COUNT): compile AlternateShapesSpeculatedAtJoins mechanisms=all
+# COUNT-NOT: AlternateShapesSpeculatedAtJoins 0
+# COUNT: statistic AlternateShapesSpeculatedAtJoins

@@ -41,6 +41,36 @@ const programs: Record<string, Program> = {
     warnings: [],
     stdout: "0\n",
   },
+  "??= on members that Bun has": {
+    source: `Symbol.asyncDispose ??= Symbol("Symbol.asyncDispose");\nArray.prototype.at ??= function () {};\nNumber.NaN ??= 1;\nconsole.log(typeof Symbol.asyncDispose, [7].at(0), Number.NaN);\n`,
+    warnings: [],
+    stdout: "symbol 7 NaN\n",
+  },
+  "||= on members that are always truthy": {
+    source: `Symbol.dispose ||= Symbol("Symbol.dispose");\nObject.hasOwn ||= () => false;\nNumber.EPSILON ||= 1;\nconsole.log(typeof Symbol.dispose, Object.hasOwn({ a: 1 }, "a"), Number.EPSILON < 1);\n`,
+    warnings: [],
+    stdout: "symbol true true\n",
+  },
+  "||= on a member that is falsy": {
+    source: attempt(`Number.NaN ||= 1`),
+    warnings: ["main.mjs:2:3"],
+    stdout: "TypeError\n",
+  },
+  "&&= on a member that is falsy": {
+    source: `Number.NaN &&= 1;\nconsole.log(Number.NaN);\n`,
+    warnings: [],
+    stdout: "NaN\n",
+  },
+  "&&= on a member that is truthy": {
+    source: attempt(`Number.EPSILON &&= 1`),
+    warnings: ["main.mjs:2:3"],
+    stdout: "TypeError\n",
+  },
+  "??= behind a test of another member": {
+    source: attempt(`if (Symbol.missing == null) Symbol.dispose = Symbol("mine")`),
+    warnings: ["main.mjs:2:31"],
+    stdout: "TypeError\n",
+  },
   "Object.assign()": {
     source: attempt(`Object.assign(Date.prototype, { getTime: () => 7 })`),
     warnings: ["main.mjs:2:10"],

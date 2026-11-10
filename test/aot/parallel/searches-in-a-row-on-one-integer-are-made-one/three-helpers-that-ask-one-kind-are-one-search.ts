@@ -1,4 +1,4 @@
-// STATISTIC: SwitchesTakenIntoSwitchInFront >= 1
+// STATISTIC: SwitchesMergedIntoPredecessor >= 1
 function isLoud(kind: number): boolean {
   return kind === 253 || kind === 252 || kind === 260 || kind === 247 || kind === 245 || kind === 243 || kind === 250 || kind === 251 || kind === 249 || kind === 246 || kind === 257 || kind === 354;
 }

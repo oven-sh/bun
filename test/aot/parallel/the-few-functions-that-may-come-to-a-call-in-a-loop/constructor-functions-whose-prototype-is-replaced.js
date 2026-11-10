@@ -1,5 +1,5 @@
 // The prototype of each of two constructor functions is replaced in the middle of the loop that constructs them.
-// STATISTIC: ConstructionsToldApartByCallee >= 1
+// STATISTIC: ConstructsDispatchedByCallee >= 1
 function Ash() { this.k = 1; } function Birch() { this.k = 2; }
 Ash.prototype.more = function () { return 10; }; Birch.prototype.more = function () { return 20; };
 let sum = 0;

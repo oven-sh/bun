@@ -1,5 +1,5 @@
 // The prototype object of the class is laid below an object with a get, a has and a size of its own, and back below Map.prototype.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.hits = 0; } }
 const one = new H(); for (let k = 0; k < 8; k++) Map.prototype.set.call(one, k, k);

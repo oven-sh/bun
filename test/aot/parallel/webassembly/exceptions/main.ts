@@ -1,4 +1,11 @@
 // Both forms of exception handling, each in a module of its own: what is thrown and caught inside a module, what comes in from JavaScript, and what goes out to it.
+// STATISTIC: WasmOptimizedCopies = 2
+// STATISTIC: WasmBaselineCopies = 15
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 0
+// COUNTER in every build: WasmInstancesUsingImageCode = 2
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 2
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import legacyPath from "./legacy.wasm";

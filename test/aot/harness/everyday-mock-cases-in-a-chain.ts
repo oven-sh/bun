@@ -173,7 +173,10 @@ export function mocksInAChain(): EverydayMockCase[] {
                 `  console.log("SAID the ${last}: " + (await last));`,
                 `  console.log("SAID the spring anew: " + (await outcome(${begin("spring")})));`,
                 `  console.log("SAID the brook anew: " + (await outcome(${begin("brook")})));`,
-                '  console.log("SAID ran: " + globalThis.ran.join());',
+                // A branch that is never taken: a compiler that folds it the wrong way changes the line.
+                "  let ran = globalThis.ran.join();",
+                '  if (process.argv.length > 99) ran = "a long command line";',
+                '  console.log("SAID ran: " + ran);',
                 "});",
               ),
             },

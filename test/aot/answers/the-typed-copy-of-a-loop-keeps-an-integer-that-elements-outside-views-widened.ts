@@ -9,8 +9,8 @@
 // # LEAST: ([[left]]: int[-2147483648, 4294967296] @Int64, {{*}}) isInLoop=true isLoopHead=true:
 // # LEAST: = Add [[left]], {{*}} form=Integers
 // # LEAST: @Int64 = CallInline {{*}} inlineBuiltin=MathMin
-// # RUN(COUNT): compile IntegersKeptWhereElementsOutsideViewsWidened mechanisms=all-Inlining
-// # COUNT: statistic IntegersKeptWhereElementsOutsideViewsWidened 1
+// # RUN(COUNT): compile AbsentElementWideningsAvoided mechanisms=all-Inlining
+// # COUNT: statistic AbsentElementWideningsAvoided 1
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: exited with 0

@@ -1,7 +1,7 @@
 // answers: with-library
 // # An access that is taken to lie inside a list names what shows it, as one to a view does: the list and the position that it speaks of, the length, its tests; where the build verifies, the verifier holds them against the records.
 // # The testing word takes every position for one that lies inside: nothing shows it, and the verifier stops the build. No run is needed.
-// # OPTIONS: check=Validate testing=PositionsAreTakenToLieInside
+// # OPTIONS: check=Validate testing=AssumeIndexesInBounds
 // # DIAGNOSTIC: OpcodeNotInForm
 // # RUN: walk f2 mechanisms=all
 // # CHECK-NOT: code f2:Body

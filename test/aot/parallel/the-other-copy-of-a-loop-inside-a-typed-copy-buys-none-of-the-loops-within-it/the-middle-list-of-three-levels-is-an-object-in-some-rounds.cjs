@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 19
+// STATISTIC: WalkLoopsVersioned >= 19
 "use strict";
 // Where the middle loop's list is no list, the nest runs in the middle loop's other copy: the innermost loop there is bought as everywhere: without that the round took three times as long.
 const numbers = [];

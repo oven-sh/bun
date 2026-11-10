@@ -1,5 +1,5 @@
 // The usual way skips both conditions; the other ways take one or both: every order is the order of the stores as they ran.
-// STATISTIC: KeyOrdersAskedInFrontOfStores >= 17
+// STATISTIC: KeyOrderChecksBeforeStores >= 17
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

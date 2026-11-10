@@ -14,5 +14,5 @@
 # NAN-NOT: = ToNumber
 # RUN(TWICE): walk f2 mechanisms=all
 # TWICE: = ToNumber
-# RUN: compile LoopsLaidOutForOneKindOfStorage mechanisms=all
-# CHECK: statistic LoopsLaidOutForOneKindOfStorage 4
+# RUN: compile UnrolledLoopsForIndexingType mechanisms=all
+# CHECK: statistic UnrolledLoopsForIndexingType 4

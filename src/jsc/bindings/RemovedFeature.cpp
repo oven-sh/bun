@@ -283,6 +283,85 @@ extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobal
     return JSC::JSValue::encode(standIn);
 }
 
+namespace Bun {
+
+// Code asks any function for these, so they answer as on a function without such a member.
+static bool isProtocolKey(JSC::VM& vm, JSC::PropertyName key)
+{
+    if (key.isSymbol())
+        return key != vm.propertyNames->asyncDisposeSymbol;
+    return key == vm.propertyNames->then || key == vm.propertyNames->toJSON;
+}
+
+static JSC::JSObject* createRemovedFunctionHandler(JSC::JSGlobalObject* globalObject, ASCIILiteral api, uint16_t feature)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* handler = JSC::constructEmptyObject(globalObject);
+    auto addTrap = [&](ASCIILiteral name, unsigned length, WTF::Function<JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::CallFrame*)>&& trap) {
+        auto* function = JSC::JSNativeStdFunction::create(vm, globalObject, length, WTF::String(name), WTF::move(trap));
+        handler->putDirect(vm, JSC::Identifier::fromString(vm, name), function);
+    };
+    addTrap("get"_s, 3, [api, feature](JSC::JSGlobalObject* realm, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        auto& vm = JSC::getVM(realm);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* target = JSC::asObject(callFrame->argument(0));
+        auto key = callFrame->argument(1).toPropertyKey(realm);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::PropertySlot slot(target, JSC::PropertySlot::InternalMethodType::Get);
+        bool isKnown = target->getPropertySlot(realm, key, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isKnown)
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(realm, key)));
+        if (isProtocolKey(vm, key))
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        RELEASE_AND_RETURN(scope, throwFeatureRemovedError(realm, api, feature));
+    });
+    addTrap("has"_s, 2, [api, feature](JSC::JSGlobalObject* realm, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        auto& vm = JSC::getVM(realm);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto key = callFrame->argument(1).toPropertyKey(realm);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool isKnown = JSC::asObject(callFrame->argument(0))->hasProperty(realm, key);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isKnown || isProtocolKey(vm, key))
+            return JSC::JSValue::encode(JSC::jsBoolean(isKnown));
+        RELEASE_AND_RETURN(scope, throwFeatureRemovedError(realm, api, feature));
+    });
+    addTrap("getOwnPropertyDescriptor"_s, 2, [api, feature](JSC::JSGlobalObject* realm, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        auto& vm = JSC::getVM(realm);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto key = callFrame->argument(1).toPropertyKey(realm);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::PropertyDescriptor descriptor;
+        bool isKnown = JSC::asObject(callFrame->argument(0))->getOwnPropertyDescriptor(realm, key, descriptor);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isKnown)
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::constructObjectFromPropertyDescriptor(realm, descriptor)));
+        if (isProtocolKey(vm, key))
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        RELEASE_AND_RETURN(scope, throwFeatureRemovedError(realm, api, feature));
+    });
+    for (auto name : { "ownKeys"_s, "set"_s, "defineProperty"_s, "deleteProperty"_s, "setPrototypeOf"_s, "preventExtensions"_s }) {
+        addTrap(name, 1, [api, feature](JSC::JSGlobalObject* realm, JSC::CallFrame*) -> JSC::EncodedJSValue {
+            return throwFeatureRemovedError(realm, api, feature);
+        });
+    }
+    return handler;
+}
+
+// A function whose code was removed, for a getter that would load the removed code: reading the getter returns this function, and using it throws.
+JSC::JSValue createRemovedFunction(JSC::JSGlobalObject* globalObject, JSC::RemovableFeature feature, const RemovedFunction& function)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto index = static_cast<uint16_t>(feature);
+    auto api = function.api;
+    auto* target = JSC::JSNativeStdFunction::create(vm, globalObject, function.length, WTF::String(function.name), [api, index](JSC::JSGlobalObject* realm, JSC::CallFrame*) { return throwFeatureRemovedError(realm, api, index); }, JSC::NoIntrinsic, JSC::NativeFunction(constructRemovedBinding));
+    if (function.hasPrototype)
+        target->putDirect(vm, vm.propertyNames->prototype, JSC::constructEmptyObject(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    return JSC::ProxyObject::create(globalObject, target, createRemovedFunctionHandler(globalObject, api, index));
+}
+
+}
 extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobalObject* globalObject, Bun::ErrorCode code, const BunString* specifier)
 {
     // --trim took out what reads a file, so nothing here can say why the module fails to load. The compiled program then says that it was not found.

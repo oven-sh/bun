@@ -19,7 +19,7 @@ same("unsubscribe", named_unsubscribe === space.unsubscribe, named_unsubscribe =
 
 // GENERATED: same
 // CHECK-LABEL: function {{*}}name="same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: Array):
 // CHECK-NEXT: v2 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]

@@ -9,14 +9,16 @@
 # print(all());
 # print("went on");
 # -- end of source
-# THE DOOR OF AN ARGUMENT THAT GOES THROUGH THE METHOD TABLE, AS A USER BUILDS: no word that checks proofs. THE LIE, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves `factor` undefined in both methods, and a text comes.
-# A row of the table holds the direct entry of its method only where the method believes nothing of its arguments. These two believe something, so their rows hold entries of the table, and an entry asks what it hands on.
-# BELIEVED, `1 * "3"` gave NaN for 3 and the program went on.
+# The entry check on an argument that is passed through the method table, in a user's build: no switch that checks proofs is set.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so it proves that `factor` is undefined in both methods, but a string arrives.
+# A slot of the table holds the direct entry point of its method only if the method assumes nothing about its arguments.
+# These two methods assume something, so their slots hold table entry points, and a table entry point checks what it passes on.
+# When the proof was trusted unchecked, `1 * "3"` gave NaN instead of 3 and the program continued.
 # f1 = all
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f1 mechanisms=all-Inlining
 # FORM: = CallTable
 # RUN(STOPS): run-in-shell mechanisms=all-Inlining
-# STOPS: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# STOPS: found string in an argument
 # STOPS-NOT: went on
 # STOPS: crashed with

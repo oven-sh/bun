@@ -39,20 +39,20 @@ module m21 path="/$bun/js/engine/SetPrototype.ts" displayPath="/$bun/js/engine/S
 module m22 path="/$bun/js/engine/TypedArrayConstructor.ts" displayPath="/$bun/js/engine/TypedArrayConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m22)
 module m23 path="/$bun/js/engine/TypedArrayPrototype.ts" displayPath="/$bun/js/engine/TypedArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m23)
 module m24 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m24)
-module m25 path="internal:primordials" displayPath="internal:primordials" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalPrimordials body=f122 namespaceLayout=L(m25)
-module m26 path="internal:shared" displayPath="internal:shared" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalShared body=f150 namespaceLayout=L(m26)
-module m27 path="internal:url" displayPath="internal:url" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUrl body=f180 namespaceLayout=L(m27)
-module m28 path="internal:validators" displayPath="internal:validators" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalValidators body=f184 namespaceLayout=L(m28)
-module m29 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f194 namespaceLayout=L(m29)
-module m30 path="node:path" displayPath="node:path" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f295 namespaceLayout=L(m30)
-module m31 path="node:url" displayPath="node:url" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUrl body=f298 namespaceLayout=L(m31)
-module m32 path="node:util" displayPath="node:util" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtil body=f317 otherNames=["sys", "node:sys"] namespaceLayout=L(m32)
+module m25 path="internal:primordials" displayPath="internal:primordials" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalPrimordials body=f122 namespaceLayout=L(m25)
+module m26 path="internal:shared" displayPath="internal:shared" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalShared body=f150 namespaceLayout=L(m26)
+module m27 path="internal:url" displayPath="internal:url" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUrl body=f180 namespaceLayout=L(m27)
+module m28 path="internal:validators" displayPath="internal:validators" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalValidators body=f184 namespaceLayout=L(m28)
+module m29 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f194 namespaceLayout=L(m29)
+module m30 path="node:path" displayPath="node:path" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f295 namespaceLayout=L(m30)
+module m31 path="node:url" displayPath="node:url" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUrl body=f298 namespaceLayout=L(m31)
+module m32 path="node:util" displayPath="node:util" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtil body=f317 otherNames=["sys", "node:sys"] namespaceLayout=L(m32)
 module m33 path="/$bun/js/prelude/array-search.ts" displayPath="/$bun/js/prelude/array-search.ts" flags=[IsLibrary] namespaceLayout=L(m33)
 module m34 path="/$bun/js/prelude/array-sort.ts" displayPath="/$bun/js/prelude/array-sort.ts" flags=[IsLibrary] namespaceLayout=L(m34)
 module m35 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary] namespaceLayout=L(m35)
-module m36 path="node:buffer" displayPath="node:buffer" kind=Runtime flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeBuffer
-module m37 path="node:util/types" displayPath="node:util/types" kind=Runtime flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtilTypes
-module m38 path="node:module" displayPath="node:module" kind=Runtime flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+module m36 path="node:buffer" displayPath="node:buffer" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeBuffer
+module m37 path="node:util/types" displayPath="node:util/types" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtilTypes
+module m38 path="node:module" displayPath="node:module" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
 entry module=m0
 layout L0 module=m0 position=43 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] place=43 ownFieldCount=1
 layout L1 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
@@ -614,7 +614,7 @@ function f3 module=m1 position=273 kind=Method role=Library flags=[HasThis, IsCh
     v11 = Call v10 calleeName="iter" @449
     ReturnCall v11 @449
 }
-function f4 name="iter" module=m1 position=177 role=Library flags=[IsAsync, IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] syntax=[HasWrittenAwait] enclosingRuntimeFunction=GlobScan captures=[{type=anything variableName="valuesPromise"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+function f4 name="iter" module=m1 position=177 role=Library flags=[IsAsync, IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] syntax=[HasLiveAwait] enclosingRuntimeFunction=GlobScan captures=[{type=anything variableName="valuesPromise"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
   b0(v0: anything, v1: anything, v2: function):
     InitialYield v1 @177
     v4 = Await v0, v1 @208
@@ -1232,7 +1232,7 @@ function f15 name="from" module=m5 position=1338 kind=Method role=Library flags=
     v136 = ThrowNewError errorKind=TypeError message="Array.from requires that the second argument, when provided, be a function" @1535
     Unreachable @1535
 }
-function f16 name="defaultAsyncFromAsyncIterator" module=m5 position=4058 kind=Method role=Library flags=[IsAsync, HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 syntax=[HasWrittenAwait] enclosingRuntimeFunction=ArrayConstructorDefaultAsyncFromAsyncIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+function f16 name="defaultAsyncFromAsyncIterator" module=m5 position=4058 kind=Method role=Library flags=[IsAsync, HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 syntax=[HasLiveAwait] enclosingRuntimeFunction=ArrayConstructorDefaultAsyncFromAsyncIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything):
     v4 = Undefined @4127
     v5 = TypeTest v1 testedType=object @4166
@@ -1352,7 +1352,7 @@ function f16 name="defaultAsyncFromAsyncIterator" module=m5 position=4058 kind=M
     v71 = ThrowNewError errorKind=TypeError message="Iterator result interface is not an object." @4195
     Unreachable @4195
 }
-function f17 name="defaultAsyncFromAsyncArrayLike" module=m5 position=5704 kind=Method role=Library flags=[IsAsync, HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 syntax=[HasWrittenAwait] enclosingRuntimeFunction=ArrayConstructorDefaultAsyncFromAsyncArrayLike thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+function f17 name="defaultAsyncFromAsyncArrayLike" module=m5 position=5704 kind=Method role=Library flags=[IsAsync, HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 syntax=[HasLiveAwait] enclosingRuntimeFunction=ArrayConstructorDefaultAsyncFromAsyncArrayLike thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything):
     v4 = Undefined @5776
     v5 = ToObject v1 message="Array.fromAsync requires an array-like object - not null or undefined" @5826
@@ -12828,1226 +12828,1225 @@ function f214 name="formatRaw" module=m29 position=44240 role=Library flags=[IsC
     v29 = NarrowByField v24, v28 key="length" @44686
     v30 = Undefined @44708
     v31 = Convert v30 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @44695
-    ReleaseHint v29 @44695
     Jump -> next b9(v31) @44695
-  b8(v33):
-    v34 = NarrowByField v24, v33 key="length" @44686
-    Jump -> next b9(v34) @44686
-  b9(v35: undefined|null|Array<undefined|null|string>):
-    v36 = GetModuleVariable variable=g196 @44742
-    v37 = ElemGet v1, v36 @44736
-    v38 = TypeTest v37 testedType=string @44885
-    Branch v38 -> taken b10(| 0), notTaken b15() @44885
-  b10(v39):
-    v40 = NarrowByTest v37, v39 @44885
-    v41 = String string="" @44925
-    v42 = StrictEq v40, v41 @44925
-    Branch v42 -> taken b16(v40), notTaken b11() @44925
+  b8(v32):
+    v33 = NarrowByField v24, v32 key="length" @44686
+    Jump -> next b9(v33) @44686
+  b9(v34: undefined|null|Array<undefined|null|string>):
+    v35 = GetModuleVariable variable=g196 @44742
+    v36 = ElemGet v1, v35 @44736
+    v37 = TypeTest v36 testedType=string @44885
+    Branch v37 -> taken b10(| 0), notTaken b15() @44885
+  b10(v38):
+    v39 = NarrowByTest v36, v38 @44885
+    v40 = String string="" @44925
+    v41 = StrictEq v39, v40 @44925
+    Branch v41 -> taken b16(v39), notTaken b11() @44925
   b11():
-    v43 = PropGet v0 key="showHidden" @44938
-    v44 = ToBoolean v43 @44938
-    Branch v44 -> taken b12(| 0), notTaken b13(| 0) @44938
-  b12(v45):
-    v46 = GetModuleVariable variable=g165 @44955
-    Jump -> next b14(v46) @44955
-  b13(v47):
-    v48 = GetModuleVariable variable=g166 @44987
-    Jump -> next b14(v48) @44987
-  b14(v49):
-    v50 = GetModuleVariable variable=g196 @45054
-    v51 = Call v49, v1, v50 @44937
-    v52 = ToBoolean v51 @44937
-    Branch v52 -> taken b15(), notTaken b16(v40) @44937
+    v42 = PropGet v0 key="showHidden" @44938
+    v43 = ToBoolean v42 @44938
+    Branch v43 -> taken b12(| 0), notTaken b13(| 0) @44938
+  b12(v44):
+    v45 = GetModuleVariable variable=g165 @44955
+    Jump -> next b14(v45) @44955
+  b13(v46):
+    v47 = GetModuleVariable variable=g166 @44987
+    Jump -> next b14(v47) @44987
+  b14(v48):
+    v49 = GetModuleVariable variable=g196 @45054
+    v50 = Call v48, v1, v49 @44937
+    v51 = ToBoolean v50 @44937
+    Branch v51 -> taken b15(), notTaken b16(v39) @44937
   b15():
-    v53 = String string="" @45098
-    Jump -> next b16(v53) @45092
-  b16(v54):
-    v55 = String string="" @45119
-    v56 = Convert v55 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @45119
-    v57 = GetModuleVariable variable=g59 @45152
-    v58 = Convert v57 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @45152
-    v59 = Undefined @45175
-    v60 = Convert v59 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @45175
-    v61 = Undefined @45198
-    v62 = Convert v61 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @45198
-    v63 = Boolean boolean=true @45254
-    v64 = Convert v63 declared={type=boolean} @45254
-    v65 = Integer @45270
-    v66 = Convert v65 declared={type=number} @45270
-    v67 = PropGet v0 key="showHidden" @45290
-    v68 = ToBoolean v67 @45290
-    Branch v68 -> taken b17(| 0), notTaken b18(| 0) @45290
-  b17(v69):
-    v70 = GetModuleVariable variable=g201 @45307
-    v71 = Integer @45307
-    Jump -> next b19(v71) @45307
-  b18(v72):
-    v73 = GetModuleVariable variable=g202 @45324
-    Jump -> next b19(v73) @45324
-  b19(v74):
-    v75 = GetModuleVariable variable=g237 @45361
-    v76 = Integer @45361
-    v77 = Convert v76 declared={type=number} @45361
-    v78 = GetModuleVariable variable=g195 @45579
-    v79 = ElemHas v1, v78 @45594
-    v80 = ToBoolean v79 @45579
-    Branch v80 -> taken b21(), notTaken b20(| 0) @45579
-  b20(v81):
-    v82 = TypeTest v19 testedType=null @45606
-    Branch v82 -> taken b21(), notTaken b76(v64, v1, v3, v58, v62, v5, v77, v60) @45606
+    v52 = String string="" @45098
+    Jump -> next b16(v52) @45092
+  b16(v53):
+    v54 = String string="" @45119
+    v55 = Convert v54 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @45119
+    v56 = GetModuleVariable variable=g59 @45152
+    v57 = Convert v56 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @45152
+    v58 = Undefined @45175
+    v59 = Convert v58 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @45175
+    v60 = Undefined @45198
+    v61 = Convert v60 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @45198
+    v62 = Boolean boolean=true @45254
+    v63 = Convert v62 declared={type=boolean} @45254
+    v64 = Integer @45270
+    v65 = Convert v64 declared={type=number} @45270
+    v66 = PropGet v0 key="showHidden" @45290
+    v67 = ToBoolean v66 @45290
+    Branch v67 -> taken b17(| 0), notTaken b18(| 0) @45290
+  b17(v68):
+    v69 = GetModuleVariable variable=g201 @45307
+    v70 = Integer @45307
+    Jump -> next b19(v70) @45307
+  b18(v71):
+    v72 = GetModuleVariable variable=g202 @45324
+    Jump -> next b19(v72) @45324
+  b19(v73):
+    v74 = GetModuleVariable variable=g237 @45361
+    v75 = Integer @45361
+    v76 = Convert v75 declared={type=number} @45361
+    v77 = GetModuleVariable variable=g195 @45579
+    v78 = ElemHas v1, v77 @45594
+    v79 = ToBoolean v78 @45579
+    Branch v79 -> taken b21(), notTaken b20(| 0) @45579
+  b20(v80):
+    v81 = TypeTest v19 testedType=null @45606
+    Branch v81 -> taken b21(), notTaken b76(v63, v1, v3, v57, v61, v5, v76, v59) @45606
   b21():
-    v83 = Boolean @45647
-    v84 = Convert v83 declared={type=boolean} @45634
-    v85 = HasJSType v1 @45662
-    v86 = ToBoolean v85 @45662
-    Branch v86 -> taken b22(| 0), notTaken b33(| 0) @45662
-  b22(v87):
-    v88 = String string="Array" @45803
-    v89 = StrictEq v19, v88 @45803
-    Branch v89 -> taken b23(), notTaken b25() @45803
+    v82 = Boolean @45647
+    v83 = Convert v82 declared={type=boolean} @45634
+    v84 = HasJSType v1 @45662
+    v85 = ToBoolean v84 @45662
+    Branch v85 -> taken b22(| 0), notTaken b33(| 0) @45662
+  b22(v86):
+    v87 = String string="Array" @45803
+    v88 = StrictEq v19, v87 @45803
+    Branch v88 -> taken b23(), notTaken b25() @45803
   b23():
-    v90 = String string="" @45822
-    v91 = StrictEq v54, v90 @45822
-    Branch v91 -> taken b24(), notTaken b25() @45822
+    v89 = String string="" @45822
+    v90 = StrictEq v53, v89 @45822
+    Branch v90 -> taken b24(), notTaken b25() @45822
   b24():
-    v92 = String string="" @45887
-    Jump -> next b26(v92) @45887
+    v91 = String string="" @45887
+    Jump -> next b26(v91) @45887
   b25():
-    v93 = GetModuleVariable variable=g64 @45827
-    v94 = String string="Array" @45855
-    v95 = String string="(" @45864
-    v96 = PropGet v1 key="length" @45868
-    v97 = ToString v96 @45868
-    v98 = String string=")" @45868
-    v99 = Strcat v95, v97, v98 @45864
-    v100 = Call v93, -, v19, v54, v94, v99 calleeName="getPrefix" @45827
-    Jump -> next b26(v100) @45827
-  b26(v101):
-    v102 = GetModuleVariable variable=g266 @45904
-    v103 = Call v102, -, v1, v74 calleeName="getOwnNonIndexProperties" @45904
-    v104 = Convert v103 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @45897
-    v105 = ToString v101 @45964
-    v106 = String string="[" @45964
-    v107 = Strcat v105, v106 @45961
-    v108 = String string="]" @45975
-    v109 = NewArray v107, v108 contents=undefined|null|string @45960
-    v110 = Convert v109 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @45951
-    v111 = PropGet v1 key="length" @45991
-    v112 = Integer @46008
-    v113 = StrictEq v111, v112 @46008
-    Branch v113 -> taken b27(| 0), notTaken b31(| 0) @46008
-  b27(v114):
-    v115 = NarrowByField v1, v114 key="length" @46008
-    v116 = PropGet v104 key="length" @46013
-    v117 = Integer @46029
-    v118 = StrictEq v116, v117 @46029
-    Branch v118 -> taken b28(| 0), notTaken b30(| 0) @46029
-  b28(v119):
-    v120 = NarrowByField v104, v119 key="length" @46029
-    v121 = TypeTest v35 testedType=undefined @46034
-    Branch v121 -> taken b29(| 0), notTaken b32(v115, v120) @46034
-  b29(v122):
-    v123 = Integer @46070
-    v124 = ElemGet v110, v123 @46070
-    v125 = ToString v124 @46070
-    v126 = String string="]" @46070
-    v127 = Strcat v125, v126 @46067
-    v128 = Convert v127 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @46067
-    Return v128 @46067
-  b30(v129):
-    v130 = NarrowByField v104, v129 key="length" @46029
-    Jump -> next b32(v115, v130) @46029
-  b31(v131):
-    v132 = NarrowByField v1, v131 key="length" @46008
-    Jump -> next b32(v132, v104) @46008
-  b32(v133, v134: undefined|null|Array<undefined|null|string|symbol>):
-    v135 = GetModuleVariable variable=g239 @46103
-    v136 = Convert v135 declared={type=number} @46090
-    v137 = GetModuleVariable variable=g94 @46139
-    v138 = Convert v137 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @46127
-    Jump -> next b75(v84, v133, v3, v138, v62, v134, v136, v110) @46127
-  b33(v139):
-    v140 = GetModuleVariable variable=g219 @46167
-    v141 = Call v140, -, v1 calleeName="isSet" @46167
-    v142 = Convert v141 declared={type=boolean} illTypedCause=DeclarationWithoutBody @46167
-    v143 = ToBoolean v142 @46167
-    Branch v143 -> taken b34(| 0), notTaken b42(| 0) @46167
-  b34(v144):
-    v145 = GetModuleVariable variable=g119 @46202
-    v146 = Call v145, -, v1 calleeName="SetPrototypeGetSize" @46202
-    v147 = GetModuleVariable variable=g64 @46251
-    v148 = String string="Set" @46279
-    v149 = String string="(" @46286
-    v150 = ToString v146 @46290
-    v151 = String string=")" @46290
-    v152 = Strcat v149, v150, v151 @46286
-    v153 = Call v147, -, v19, v54, v148, v152 calleeName="getPrefix" @46251
-    v154 = GetModuleVariable variable=g65 @46313
-    v155 = PropGet v0 key="showHidden" @46328
-    v156 = Call v154, -, v1, v155 calleeName="getKeys" @46313
-    v157 = Convert v156 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @46306
-    v158 = TypeTest v19 testedType=null @46367
-    Branch v158 -> taken b35(| 0), notTaken b36(v1) @46367
-  b35(v159):
-    v160 = GetModuleVariable variable=g175 @46398
-    v161 = Call v160, v1 @46398
-    Jump -> next b36(v161) @46398
-  b36(v162):
-    v163 = NewClosure v162 function=f282 @46449
-    v164 = Convert v163 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @46437
-    v165 = Integer @46605
-    v166 = StrictEq v146, v165 @46605
-    Branch v166 -> taken b37(), notTaken b41(v157) @46605
+    v92 = GetModuleVariable variable=g64 @45827
+    v93 = String string="Array" @45855
+    v94 = String string="(" @45864
+    v95 = PropGet v1 key="length" @45868
+    v96 = ToString v95 @45868
+    v97 = String string=")" @45868
+    v98 = Strcat v94, v96, v97 @45864
+    v99 = Call v92, -, v19, v53, v93, v98 calleeName="getPrefix" @45827
+    Jump -> next b26(v99) @45827
+  b26(v100):
+    v101 = GetModuleVariable variable=g266 @45904
+    v102 = Call v101, -, v1, v73 calleeName="getOwnNonIndexProperties" @45904
+    v103 = Convert v102 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @45897
+    v104 = ToString v100 @45964
+    v105 = String string="[" @45964
+    v106 = Strcat v104, v105 @45961
+    v107 = String string="]" @45975
+    v108 = NewArray v106, v107 contents=undefined|null|string @45960
+    v109 = Convert v108 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @45951
+    v110 = PropGet v1 key="length" @45991
+    v111 = Integer @46008
+    v112 = StrictEq v110, v111 @46008
+    Branch v112 -> taken b27(| 0), notTaken b31(| 0) @46008
+  b27(v113):
+    v114 = NarrowByField v1, v113 key="length" @46008
+    v115 = PropGet v103 key="length" @46013
+    v116 = Integer @46029
+    v117 = StrictEq v115, v116 @46029
+    Branch v117 -> taken b28(| 0), notTaken b30(| 0) @46029
+  b28(v118):
+    v119 = NarrowByField v103, v118 key="length" @46029
+    v120 = TypeTest v34 testedType=undefined @46034
+    Branch v120 -> taken b29(| 0), notTaken b32(v114, v119) @46034
+  b29(v121):
+    v122 = Integer @46070
+    v123 = ElemGet v109, v122 @46070
+    v124 = ToString v123 @46070
+    v125 = String string="]" @46070
+    v126 = Strcat v124, v125 @46067
+    v127 = Convert v126 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @46067
+    Return v127 @46067
+  b30(v128):
+    v129 = NarrowByField v103, v128 key="length" @46029
+    Jump -> next b32(v114, v129) @46029
+  b31(v130):
+    v131 = NarrowByField v1, v130 key="length" @46008
+    Jump -> next b32(v131, v103) @46008
+  b32(v132, v133: undefined|null|Array<undefined|null|string|symbol>):
+    v134 = GetModuleVariable variable=g239 @46103
+    v135 = Convert v134 declared={type=number} @46090
+    v136 = GetModuleVariable variable=g94 @46139
+    v137 = Convert v136 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @46127
+    Jump -> next b75(v83, v132, v3, v137, v61, v133, v135, v109) @46127
+  b33(v138):
+    v139 = GetModuleVariable variable=g219 @46167
+    v140 = Call v139, -, v1 calleeName="isSet" @46167
+    v141 = Convert v140 declared={type=boolean} illTypedCause=DeclarationWithoutBody @46167
+    v142 = ToBoolean v141 @46167
+    Branch v142 -> taken b34(| 0), notTaken b42(| 0) @46167
+  b34(v143):
+    v144 = GetModuleVariable variable=g119 @46202
+    v145 = Call v144, -, v1 calleeName="SetPrototypeGetSize" @46202
+    v146 = GetModuleVariable variable=g64 @46251
+    v147 = String string="Set" @46279
+    v148 = String string="(" @46286
+    v149 = ToString v145 @46290
+    v150 = String string=")" @46290
+    v151 = Strcat v148, v149, v150 @46286
+    v152 = Call v146, -, v19, v53, v147, v151 calleeName="getPrefix" @46251
+    v153 = GetModuleVariable variable=g65 @46313
+    v154 = PropGet v0 key="showHidden" @46328
+    v155 = Call v153, -, v1, v154 calleeName="getKeys" @46313
+    v156 = Convert v155 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @46306
+    v157 = TypeTest v19 testedType=null @46367
+    Branch v157 -> taken b35(| 0), notTaken b36(v1) @46367
+  b35(v158):
+    v159 = GetModuleVariable variable=g175 @46398
+    v160 = Call v159, v1 @46398
+    Jump -> next b36(v160) @46398
+  b36(v161):
+    v162 = NewClosure v161 function=f282 @46449
+    v163 = Convert v162 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @46437
+    v164 = Integer @46605
+    v165 = StrictEq v145, v164 @46605
+    Branch v165 -> taken b37(), notTaken b41(v156) @46605
   b37():
-    v167 = PropGet v157 key="length" @46610
-    v168 = Integer @46626
-    v169 = StrictEq v167, v168 @46626
-    Branch v169 -> taken b38(| 0), notTaken b40(| 0) @46626
-  b38(v170):
-    v171 = NarrowByField v157, v170 key="length" @46626
-    v172 = TypeTest v35 testedType=undefined @46631
-    Branch v172 -> taken b39(| 0), notTaken b41(v171) @46631
-  b39(v173):
-    v174 = ToString v153 @46667
-    v175 = String string="{}" @46667
-    v176 = Strcat v174, v175 @46664
-    v177 = Convert v176 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @46664
-    Return v177 @46664
-  b40(v178):
-    v179 = NarrowByField v157, v178 key="length" @46626
-    Jump -> next b41(v179) @46626
-  b41(v180: undefined|null|Array<undefined|null|string|symbol>):
-    v181 = ToString v153 @46698
-    v182 = String string="{" @46698
-    v183 = Strcat v181, v182 @46695
-    v184 = String string="}" @46709
-    v185 = NewArray v183, v184 contents=undefined|null|string @46694
-    v186 = Convert v185 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @46685
-    Jump -> next b74(v84, v1, v3, v164, v62, v180, v77, v186) @46685
-  b42(v187):
-    v188 = GetModuleVariable variable=g214 @46730
-    v189 = Call v188, -, v1 calleeName="isMap" @46730
-    v190 = Convert v189 declared={type=boolean} illTypedCause=DeclarationWithoutBody @46730
-    v191 = ToBoolean v190 @46730
-    Branch v191 -> taken b43(| 0), notTaken b51(| 0) @46730
-  b43(v192):
-    v193 = GetModuleVariable variable=g116 @46765
-    v194 = Call v193, -, v1 calleeName="MapPrototypeGetSize" @46765
-    v195 = GetModuleVariable variable=g64 @46814
-    v196 = String string="Map" @46842
-    v197 = String string="(" @46849
-    v198 = ToString v194 @46853
-    v199 = String string=")" @46853
-    v200 = Strcat v197, v198, v199 @46849
-    v201 = Call v195, -, v19, v54, v196, v200 calleeName="getPrefix" @46814
-    v202 = GetModuleVariable variable=g65 @46876
-    v203 = PropGet v0 key="showHidden" @46891
-    v204 = Call v202, -, v1, v203 calleeName="getKeys" @46876
-    v205 = Convert v204 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @46869
-    v206 = TypeTest v19 testedType=null @46930
-    Branch v206 -> taken b44(| 0), notTaken b45(v1) @46930
-  b44(v207):
-    v208 = GetModuleVariable variable=g143 @46961
-    v209 = Call v208, v1 @46961
-    Jump -> next b45(v209) @46961
-  b45(v210):
-    v211 = NewClosure v210 function=f283 @47013
-    v212 = Convert v211 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @47001
-    v213 = Integer @47169
-    v214 = StrictEq v194, v213 @47169
-    Branch v214 -> taken b46(), notTaken b50(v205) @47169
+    v166 = PropGet v156 key="length" @46610
+    v167 = Integer @46626
+    v168 = StrictEq v166, v167 @46626
+    Branch v168 -> taken b38(| 0), notTaken b40(| 0) @46626
+  b38(v169):
+    v170 = NarrowByField v156, v169 key="length" @46626
+    v171 = TypeTest v34 testedType=undefined @46631
+    Branch v171 -> taken b39(| 0), notTaken b41(v170) @46631
+  b39(v172):
+    v173 = ToString v152 @46667
+    v174 = String string="{}" @46667
+    v175 = Strcat v173, v174 @46664
+    v176 = Convert v175 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @46664
+    Return v176 @46664
+  b40(v177):
+    v178 = NarrowByField v156, v177 key="length" @46626
+    Jump -> next b41(v178) @46626
+  b41(v179: undefined|null|Array<undefined|null|string|symbol>):
+    v180 = ToString v152 @46698
+    v181 = String string="{" @46698
+    v182 = Strcat v180, v181 @46695
+    v183 = String string="}" @46709
+    v184 = NewArray v182, v183 contents=undefined|null|string @46694
+    v185 = Convert v184 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @46685
+    Jump -> next b74(v83, v1, v3, v163, v61, v179, v76, v185) @46685
+  b42(v186):
+    v187 = GetModuleVariable variable=g214 @46730
+    v188 = Call v187, -, v1 calleeName="isMap" @46730
+    v189 = Convert v188 declared={type=boolean} illTypedCause=DeclarationWithoutBody @46730
+    v190 = ToBoolean v189 @46730
+    Branch v190 -> taken b43(| 0), notTaken b51(| 0) @46730
+  b43(v191):
+    v192 = GetModuleVariable variable=g116 @46765
+    v193 = Call v192, -, v1 calleeName="MapPrototypeGetSize" @46765
+    v194 = GetModuleVariable variable=g64 @46814
+    v195 = String string="Map" @46842
+    v196 = String string="(" @46849
+    v197 = ToString v193 @46853
+    v198 = String string=")" @46853
+    v199 = Strcat v196, v197, v198 @46849
+    v200 = Call v194, -, v19, v53, v195, v199 calleeName="getPrefix" @46814
+    v201 = GetModuleVariable variable=g65 @46876
+    v202 = PropGet v0 key="showHidden" @46891
+    v203 = Call v201, -, v1, v202 calleeName="getKeys" @46876
+    v204 = Convert v203 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @46869
+    v205 = TypeTest v19 testedType=null @46930
+    Branch v205 -> taken b44(| 0), notTaken b45(v1) @46930
+  b44(v206):
+    v207 = GetModuleVariable variable=g143 @46961
+    v208 = Call v207, v1 @46961
+    Jump -> next b45(v208) @46961
+  b45(v209):
+    v210 = NewClosure v209 function=f283 @47013
+    v211 = Convert v210 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @47001
+    v212 = Integer @47169
+    v213 = StrictEq v193, v212 @47169
+    Branch v213 -> taken b46(), notTaken b50(v204) @47169
   b46():
-    v215 = PropGet v205 key="length" @47174
-    v216 = Integer @47190
-    v217 = StrictEq v215, v216 @47190
-    Branch v217 -> taken b47(| 0), notTaken b49(| 0) @47190
-  b47(v218):
-    v219 = NarrowByField v205, v218 key="length" @47190
-    v220 = TypeTest v35 testedType=undefined @47195
-    Branch v220 -> taken b48(| 0), notTaken b50(v219) @47195
-  b48(v221):
-    v222 = ToString v201 @47231
-    v223 = String string="{}" @47231
-    v224 = Strcat v222, v223 @47228
-    v225 = Convert v224 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @47228
-    Return v225 @47228
-  b49(v226):
-    v227 = NarrowByField v205, v226 key="length" @47190
-    Jump -> next b50(v227) @47190
-  b50(v228: undefined|null|Array<undefined|null|string|symbol>):
-    v229 = ToString v201 @47262
-    v230 = String string="{" @47262
-    v231 = Strcat v229, v230 @47259
-    v232 = String string="}" @47273
-    v233 = NewArray v231, v232 contents=undefined|null|string @47258
-    v234 = Convert v233 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @47249
-    Jump -> next b73(v84, v1, v3, v212, v62, v228, v77, v234) @47249
-  b51(v235):
-    v236 = GetModuleVariable variable=g225 @47294
-    v237 = Call v236, -, v1 calleeName="isTypedArray" @47294
-    v238 = Convert v237 declared={type=boolean} illTypedCause=DeclarationWithoutBody @47294
-    v239 = ToBoolean v238 @47294
-    Branch v239 -> taken b52(| 0), notTaken b65(| 0) @47294
-  b52(v240):
-    v241 = GetModuleVariable variable=g266 @47330
-    v242 = Call v241, -, v1, v74 calleeName="getOwnNonIndexProperties" @47330
-    v243 = Convert v242 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @47323
-    v244 = String string="" @47392
-    v245 = Convert v244 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @47392
-    v246 = TypeTest v19 testedType=null @47406
-    Branch v246 -> taken b53(| 0), notTaken b54(v245) @47406
-  b53(v247):
-    v248 = GetModuleVariable variable=g121 @47449
-    v249 = Call v248, -, v1 calleeName="TypedArrayPrototypeGetSymbolToStringTag" @47449
-    v250 = Convert v249 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @47438
-    Jump -> next b54(v250) @47438
-  b54(v251: undefined|null|string):
-    v252 = TypeTest v19 testedType=null @47569
-    Branch v252 -> taken b55(| 0), notTaken b56(v1) @47569
-  b55(v253):
-    v254 = GetModuleVariable variable=g70 @47592
-    v255 = Call v254, -, v251, v1 calleeName="copyTypedArray" @47592
-    Jump -> next b56(v255) @47592
-  b56(v256):
-    v257 = GetModuleVariable variable=g120 @47652
-    v258 = Call v257, -, v1 calleeName="TypedArrayPrototypeGetLength" @47652
-    v259 = GetModuleVariable variable=g64 @47710
-    v260 = String string="(" @47748
-    v261 = ToString v258 @47752
-    v262 = String string=")" @47752
-    v263 = Strcat v260, v261, v262 @47748
-    v264 = Call v259, -, v19, v54, v251, v263 calleeName="getPrefix" @47710
-    v265 = ToString v264 @47781
-    v266 = String string="[" @47781
-    v267 = Strcat v265, v266 @47778
-    v268 = String string="]" @47792
-    v269 = NewArray v267, v268 contents=undefined|null|string @47777
-    v270 = Convert v269 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @47768
-    v271 = PropGet v1 key="length" @47808
-    v272 = Integer @47825
-    v273 = StrictEq v271, v272 @47825
-    Branch v273 -> taken b57(| 0), notTaken b61(| 0) @47825
-  b57(v274):
-    v275 = NarrowByField v1, v274 key="length" @47825
-    v276 = PropGet v243 key="length" @47830
-    v277 = Integer @47846
-    v278 = StrictEq v276, v277 @47846
-    Branch v278 -> taken b58(| 0), notTaken b60(| 0) @47846
-  b58(v279):
-    v280 = NarrowByField v243, v279 key="length" @47846
-    v281 = PropGet v0 key="showHidden" @47852
-    v282 = ToBoolean v281 @47852
-    Branch v282 -> taken b62(v275, v280), notTaken b59(| 0) @47852
-  b59(v283):
-    v284 = Integer @47878
-    v285 = ElemGet v270, v284 @47878
-    v286 = ToString v285 @47878
-    v287 = String string="]" @47878
-    v288 = Strcat v286, v287 @47875
-    v289 = Convert v288 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @47875
-    Return v289 @47875
-  b60(v290):
-    v291 = NarrowByField v243, v290 key="length" @47846
-    Jump -> next b62(v275, v291) @47846
-  b61(v292):
-    v293 = NarrowByField v1, v292 key="length" @47825
-    Jump -> next b62(v293, v243) @47825
-  b62(v294, v295: undefined|null|Array<undefined|null|string|symbol>):
-    v296 = NewClosure v256, v258 function=f284 @48049
-    v297 = Convert v296 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @48037
-    v298 = GetModuleVariable variable=g239 @48216
-    v299 = Convert v298 declared={type=number} @48203
-    v300 = PropGet v0 key="showHidden" @48245
-    v301 = ToBoolean v300 @48245
-    Branch v301 -> taken b63(| 0), notTaken b64(v3, v62) @48245
-  b63(v302):
-    v303 = Data data=d66 @48283
-    v304 = Convert v303 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @48271
-    v305 = Boolean boolean=true @48375
-    v306 = Convert v305 declared={type=undefined|boolean} @48362
-    Jump -> next b64(v306, v304) @48362
-  b64(v307: undefined|boolean, v308: undefined|null|Array<undefined|null|string>):
-    Jump -> next b72(v84, v294, v307, v297, v308, v295, v299, v270) @48362
-  b65(v309):
-    v310 = GetModuleVariable variable=g226 @48404
-    v311 = Call v310, -, v1 calleeName="isMapIterator" @48404
-    v312 = ToBoolean v311 @48404
-    Branch v312 -> taken b66(| 0), notTaken b67(| 0) @48404
-  b66(v313):
-    v314 = GetModuleVariable variable=g65 @48441
-    v315 = PropGet v0 key="showHidden" @48456
-    v316 = Call v314, -, v1, v315 calleeName="getKeys" @48441
-    v317 = Convert v316 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @48434
-    v318 = GetModuleVariable variable=g71 @48512
-    v319 = String string="Map" @48530
-    v320 = Call v318, -, v319, v54 calleeName="getIteratorBraces" @48512
-    v321 = Convert v320 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @48503
-    v322 = NewClosure v321 function=f285 @48611
-    v323 = Convert v322 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @48599
-    Jump -> next b71(v84, v323, v317, v321) @48599
-  b67(v324):
-    v325 = GetModuleVariable variable=g227 @48771
-    v326 = Call v325, -, v1 calleeName="isSetIterator" @48771
-    v327 = ToBoolean v326 @48771
-    Branch v327 -> taken b68(| 0), notTaken b69(| 0) @48771
-  b68(v328):
-    v329 = GetModuleVariable variable=g65 @48808
-    v330 = PropGet v0 key="showHidden" @48823
-    v331 = Call v329, -, v1, v330 calleeName="getKeys" @48808
-    v332 = Convert v331 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @48801
-    v333 = GetModuleVariable variable=g71 @48879
-    v334 = String string="Set" @48897
-    v335 = Call v333, -, v334, v54 calleeName="getIteratorBraces" @48879
-    v336 = Convert v335 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @48870
-    v337 = NewClosure v336 function=f286 @48978
-    v338 = Convert v337 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @48966
-    Jump -> next b70(v84, v338, v332, v336) @48966
-  b69(v339):
-    v340 = Boolean boolean=true @49155
-    v341 = Convert v340 declared={type=boolean} @49142
-    Jump -> next b70(v341, v58, v5, v60) @49142
-  b70(v342: boolean, v343: undefined|null|function, v344: undefined|null|Array<undefined|null|string|symbol>, v345: undefined|null|Array<undefined|null|string>):
-    Jump -> next b71(v342, v343, v344, v345) @49142
-  b71(v346: boolean, v347: undefined|null|function, v348: undefined|null|Array<undefined|null|string|symbol>, v349: undefined|null|Array<undefined|null|string>):
-    Jump -> next b72(v346, v1, v3, v347, v62, v348, v77, v349) @49142
-  b72(v350: boolean, v351, v352: undefined|boolean, v353: undefined|null|function, v354: undefined|null|Array<undefined|null|string>, v355: undefined|null|Array<undefined|null|string|symbol>, v356: number, v357: undefined|null|Array<undefined|null|string>):
-    Jump -> next b73(v350, v351, v352, v353, v354, v355, v356, v357) @49142
-  b73(v358: boolean, v359, v360: undefined|boolean, v361: undefined|null|function, v362: undefined|null|Array<undefined|null|string>, v363: undefined|null|Array<undefined|null|string|symbol>, v364: number, v365: undefined|null|Array<undefined|null|string>):
-    Jump -> next b74(v358, v359, v360, v361, v362, v363, v364, v365) @49142
-  b74(v366: boolean, v367, v368: undefined|boolean, v369: undefined|null|function, v370: undefined|null|Array<undefined|null|string>, v371: undefined|null|Array<undefined|null|string|symbol>, v372: number, v373: undefined|null|Array<undefined|null|string>):
-    Jump -> next b75(v366, v367, v368, v369, v370, v371, v372, v373) @49142
-  b75(v374: boolean, v375, v376: undefined|boolean, v377: undefined|null|function, v378: undefined|null|Array<undefined|null|string>, v379: undefined|null|Array<undefined|null|string|symbol>, v380: number, v381: undefined|null|Array<undefined|null|string>):
-    Jump -> next b76(v374, v375, v376, v377, v378, v379, v380, v381) @49142
-  b76(v382: boolean, v383, v384: undefined|boolean, v385: undefined|null|function, v386: undefined|null|Array<undefined|null|string>, v387: undefined|null|Array<undefined|null|string|symbol>, v388: number, v389: undefined|null|Array<undefined|null|string>):
-    v390 = ToBoolean v382 @49177
-    Branch v390 -> taken b77(| 0), notTaken b175(v385, v386, v387, v56, v389) @49177
-  b77(v391):
-    v392 = GetModuleVariable variable=g65 @49202
-    v393 = PropGet v0 key="showHidden" @49217
-    v394 = Call v392, -, v383, v393 calleeName="getKeys" @49202
-    v395 = Convert v394 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @49195
-    v396 = Data data=d67 @49247
-    v397 = Convert v396 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @49238
-    v398 = TypeTest v383 testedType=function @49267
-    Branch v398 -> taken b78(| 0), notTaken b83(| 0) @49267
-  b78(v399):
-    v400 = NarrowByTest v383, v399 @49267
-    v401 = GetModuleVariable variable=g74 @49311
-    v402 = Call v401, -, v0, v400, v19, v54 calleeName="getFunctionBase" @49311
-    v403 = Convert v402 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @49304
-    v404 = PropGet v395 key="length" @49368
-    v405 = Integer @49384
-    v406 = StrictEq v404, v405 @49384
-    Branch v406 -> taken b79(| 0), notTaken b81(| 0) @49384
-  b79(v407):
-    v408 = NarrowByField v395, v407 key="length" @49384
-    v409 = TypeTest v35 testedType=undefined @49389
-    Branch v409 -> taken b80(| 0), notTaken b82(v408) @49389
-  b80(v410):
-    v411 = PropGet v0 key="stylize" @49422
-    v412 = String string="special" @49440
-    v413 = Call v411, v0, v403, v412 calleeKey="stylize" calleeName="ctx.stylize" @49426
-    ReturnCall v413 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @49426
-  b81(v414):
-    v415 = NarrowByField v395, v414 key="length" @49384
-    Jump -> next b82(v415) @49384
-  b82(v416: undefined|null|Array<undefined|null|string|symbol>):
-    Jump -> next b174(v385, v386, v416, v403) @49426
-  b83(v417):
-    v418 = NarrowByTest v383, v417 @49267
-    v419 = String string="Object" @49483
-    v420 = StrictEq v19, v419 @49483
-    Branch v420 -> taken b84(), notTaken b93() @49483
+    v214 = PropGet v204 key="length" @47174
+    v215 = Integer @47190
+    v216 = StrictEq v214, v215 @47190
+    Branch v216 -> taken b47(| 0), notTaken b49(| 0) @47190
+  b47(v217):
+    v218 = NarrowByField v204, v217 key="length" @47190
+    v219 = TypeTest v34 testedType=undefined @47195
+    Branch v219 -> taken b48(| 0), notTaken b50(v218) @47195
+  b48(v220):
+    v221 = ToString v200 @47231
+    v222 = String string="{}" @47231
+    v223 = Strcat v221, v222 @47228
+    v224 = Convert v223 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @47228
+    Return v224 @47228
+  b49(v225):
+    v226 = NarrowByField v204, v225 key="length" @47190
+    Jump -> next b50(v226) @47190
+  b50(v227: undefined|null|Array<undefined|null|string|symbol>):
+    v228 = ToString v200 @47262
+    v229 = String string="{" @47262
+    v230 = Strcat v228, v229 @47259
+    v231 = String string="}" @47273
+    v232 = NewArray v230, v231 contents=undefined|null|string @47258
+    v233 = Convert v232 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @47249
+    Jump -> next b73(v83, v1, v3, v211, v61, v227, v76, v233) @47249
+  b51(v234):
+    v235 = GetModuleVariable variable=g225 @47294
+    v236 = Call v235, -, v1 calleeName="isTypedArray" @47294
+    v237 = Convert v236 declared={type=boolean} illTypedCause=DeclarationWithoutBody @47294
+    v238 = ToBoolean v237 @47294
+    Branch v238 -> taken b52(| 0), notTaken b65(| 0) @47294
+  b52(v239):
+    v240 = GetModuleVariable variable=g266 @47330
+    v241 = Call v240, -, v1, v73 calleeName="getOwnNonIndexProperties" @47330
+    v242 = Convert v241 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @47323
+    v243 = String string="" @47392
+    v244 = Convert v243 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @47392
+    v245 = TypeTest v19 testedType=null @47406
+    Branch v245 -> taken b53(| 0), notTaken b54(v244) @47406
+  b53(v246):
+    v247 = GetModuleVariable variable=g121 @47449
+    v248 = Call v247, -, v1 calleeName="TypedArrayPrototypeGetSymbolToStringTag" @47449
+    v249 = Convert v248 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @47438
+    Jump -> next b54(v249) @47438
+  b54(v250: undefined|null|string):
+    v251 = TypeTest v19 testedType=null @47569
+    Branch v251 -> taken b55(| 0), notTaken b56(v1) @47569
+  b55(v252):
+    v253 = GetModuleVariable variable=g70 @47592
+    v254 = Call v253, -, v250, v1 calleeName="copyTypedArray" @47592
+    Jump -> next b56(v254) @47592
+  b56(v255):
+    v256 = GetModuleVariable variable=g120 @47652
+    v257 = Call v256, -, v1 calleeName="TypedArrayPrototypeGetLength" @47652
+    v258 = GetModuleVariable variable=g64 @47710
+    v259 = String string="(" @47748
+    v260 = ToString v257 @47752
+    v261 = String string=")" @47752
+    v262 = Strcat v259, v260, v261 @47748
+    v263 = Call v258, -, v19, v53, v250, v262 calleeName="getPrefix" @47710
+    v264 = ToString v263 @47781
+    v265 = String string="[" @47781
+    v266 = Strcat v264, v265 @47778
+    v267 = String string="]" @47792
+    v268 = NewArray v266, v267 contents=undefined|null|string @47777
+    v269 = Convert v268 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @47768
+    v270 = PropGet v1 key="length" @47808
+    v271 = Integer @47825
+    v272 = StrictEq v270, v271 @47825
+    Branch v272 -> taken b57(| 0), notTaken b61(| 0) @47825
+  b57(v273):
+    v274 = NarrowByField v1, v273 key="length" @47825
+    v275 = PropGet v242 key="length" @47830
+    v276 = Integer @47846
+    v277 = StrictEq v275, v276 @47846
+    Branch v277 -> taken b58(| 0), notTaken b60(| 0) @47846
+  b58(v278):
+    v279 = NarrowByField v242, v278 key="length" @47846
+    v280 = PropGet v0 key="showHidden" @47852
+    v281 = ToBoolean v280 @47852
+    Branch v281 -> taken b62(v274, v279), notTaken b59(| 0) @47852
+  b59(v282):
+    v283 = Integer @47878
+    v284 = ElemGet v269, v283 @47878
+    v285 = ToString v284 @47878
+    v286 = String string="]" @47878
+    v287 = Strcat v285, v286 @47875
+    v288 = Convert v287 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @47875
+    Return v288 @47875
+  b60(v289):
+    v290 = NarrowByField v242, v289 key="length" @47846
+    Jump -> next b62(v274, v290) @47846
+  b61(v291):
+    v292 = NarrowByField v1, v291 key="length" @47825
+    Jump -> next b62(v292, v242) @47825
+  b62(v293, v294: undefined|null|Array<undefined|null|string|symbol>):
+    v295 = NewClosure v255, v257 function=f284 @48049
+    v296 = Convert v295 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @48037
+    v297 = GetModuleVariable variable=g239 @48216
+    v298 = Convert v297 declared={type=number} @48203
+    v299 = PropGet v0 key="showHidden" @48245
+    v300 = ToBoolean v299 @48245
+    Branch v300 -> taken b63(| 0), notTaken b64(v3, v61) @48245
+  b63(v301):
+    v302 = Data data=d66 @48283
+    v303 = Convert v302 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @48271
+    v304 = Boolean boolean=true @48375
+    v305 = Convert v304 declared={type=undefined|boolean} @48362
+    Jump -> next b64(v305, v303) @48362
+  b64(v306: undefined|boolean, v307: undefined|null|Array<undefined|null|string>):
+    Jump -> next b72(v83, v293, v306, v296, v307, v294, v298, v269) @48362
+  b65(v308):
+    v309 = GetModuleVariable variable=g226 @48404
+    v310 = Call v309, -, v1 calleeName="isMapIterator" @48404
+    v311 = ToBoolean v310 @48404
+    Branch v311 -> taken b66(| 0), notTaken b67(| 0) @48404
+  b66(v312):
+    v313 = GetModuleVariable variable=g65 @48441
+    v314 = PropGet v0 key="showHidden" @48456
+    v315 = Call v313, -, v1, v314 calleeName="getKeys" @48441
+    v316 = Convert v315 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @48434
+    v317 = GetModuleVariable variable=g71 @48512
+    v318 = String string="Map" @48530
+    v319 = Call v317, -, v318, v53 calleeName="getIteratorBraces" @48512
+    v320 = Convert v319 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @48503
+    v321 = NewClosure v320 function=f285 @48611
+    v322 = Convert v321 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @48599
+    Jump -> next b71(v83, v322, v316, v320) @48599
+  b67(v323):
+    v324 = GetModuleVariable variable=g227 @48771
+    v325 = Call v324, -, v1 calleeName="isSetIterator" @48771
+    v326 = ToBoolean v325 @48771
+    Branch v326 -> taken b68(| 0), notTaken b69(| 0) @48771
+  b68(v327):
+    v328 = GetModuleVariable variable=g65 @48808
+    v329 = PropGet v0 key="showHidden" @48823
+    v330 = Call v328, -, v1, v329 calleeName="getKeys" @48808
+    v331 = Convert v330 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @48801
+    v332 = GetModuleVariable variable=g71 @48879
+    v333 = String string="Set" @48897
+    v334 = Call v332, -, v333, v53 calleeName="getIteratorBraces" @48879
+    v335 = Convert v334 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @48870
+    v336 = NewClosure v335 function=f286 @48978
+    v337 = Convert v336 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @48966
+    Jump -> next b70(v83, v337, v331, v335) @48966
+  b69(v338):
+    v339 = Boolean boolean=true @49155
+    v340 = Convert v339 declared={type=boolean} @49142
+    Jump -> next b70(v340, v57, v5, v59) @49142
+  b70(v341: boolean, v342: undefined|null|function, v343: undefined|null|Array<undefined|null|string|symbol>, v344: undefined|null|Array<undefined|null|string>):
+    Jump -> next b71(v341, v342, v343, v344) @49142
+  b71(v345: boolean, v346: undefined|null|function, v347: undefined|null|Array<undefined|null|string|symbol>, v348: undefined|null|Array<undefined|null|string>):
+    Jump -> next b72(v345, v1, v3, v346, v61, v347, v76, v348) @49142
+  b72(v349: boolean, v350, v351: undefined|boolean, v352: undefined|null|function, v353: undefined|null|Array<undefined|null|string>, v354: undefined|null|Array<undefined|null|string|symbol>, v355: number, v356: undefined|null|Array<undefined|null|string>):
+    Jump -> next b73(v349, v350, v351, v352, v353, v354, v355, v356) @49142
+  b73(v357: boolean, v358, v359: undefined|boolean, v360: undefined|null|function, v361: undefined|null|Array<undefined|null|string>, v362: undefined|null|Array<undefined|null|string|symbol>, v363: number, v364: undefined|null|Array<undefined|null|string>):
+    Jump -> next b74(v357, v358, v359, v360, v361, v362, v363, v364) @49142
+  b74(v365: boolean, v366, v367: undefined|boolean, v368: undefined|null|function, v369: undefined|null|Array<undefined|null|string>, v370: undefined|null|Array<undefined|null|string|symbol>, v371: number, v372: undefined|null|Array<undefined|null|string>):
+    Jump -> next b75(v365, v366, v367, v368, v369, v370, v371, v372) @49142
+  b75(v373: boolean, v374, v375: undefined|boolean, v376: undefined|null|function, v377: undefined|null|Array<undefined|null|string>, v378: undefined|null|Array<undefined|null|string|symbol>, v379: number, v380: undefined|null|Array<undefined|null|string>):
+    Jump -> next b76(v373, v374, v375, v376, v377, v378, v379, v380) @49142
+  b76(v381: boolean, v382, v383: undefined|boolean, v384: undefined|null|function, v385: undefined|null|Array<undefined|null|string>, v386: undefined|null|Array<undefined|null|string|symbol>, v387: number, v388: undefined|null|Array<undefined|null|string>):
+    v389 = ToBoolean v381 @49177
+    Branch v389 -> taken b77(| 0), notTaken b175(v384, v385, v386, v55, v388) @49177
+  b77(v390):
+    v391 = GetModuleVariable variable=g65 @49202
+    v392 = PropGet v0 key="showHidden" @49217
+    v393 = Call v391, -, v382, v392 calleeName="getKeys" @49202
+    v394 = Convert v393 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull]} @49195
+    v395 = Data data=d67 @49247
+    v396 = Convert v395 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @49238
+    v397 = TypeTest v382 testedType=function @49267
+    Branch v397 -> taken b78(| 0), notTaken b83(| 0) @49267
+  b78(v398):
+    v399 = NarrowByTest v382, v398 @49267
+    v400 = GetModuleVariable variable=g74 @49311
+    v401 = Call v400, -, v0, v399, v19, v53 calleeName="getFunctionBase" @49311
+    v402 = Convert v401 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @49304
+    v403 = PropGet v394 key="length" @49368
+    v404 = Integer @49384
+    v405 = StrictEq v403, v404 @49384
+    Branch v405 -> taken b79(| 0), notTaken b81(| 0) @49384
+  b79(v406):
+    v407 = NarrowByField v394, v406 key="length" @49384
+    v408 = TypeTest v34 testedType=undefined @49389
+    Branch v408 -> taken b80(| 0), notTaken b82(v407) @49389
+  b80(v409):
+    v410 = PropGet v0 key="stylize" @49422
+    v411 = String string="special" @49440
+    v412 = Call v410, v0, v402, v411 calleeKey="stylize" calleeName="ctx.stylize" @49426
+    ReturnCall v412 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @49426
+  b81(v413):
+    v414 = NarrowByField v394, v413 key="length" @49384
+    Jump -> next b82(v414) @49384
+  b82(v415: undefined|null|Array<undefined|null|string|symbol>):
+    Jump -> next b174(v384, v385, v415, v402) @49426
+  b83(v416):
+    v417 = NarrowByTest v382, v416 @49267
+    v418 = String string="Object" @49483
+    v419 = StrictEq v19, v418 @49483
+    Branch v419 -> taken b84(), notTaken b93() @49483
   b84():
-    v421 = GetModuleVariable variable=g208 @49505
-    v422 = Call v421, -, v418 calleeName="isArgumentsObject" @49505
-    v423 = Convert v422 declared={type=boolean} illTypedCause=DeclarationWithoutBody @49505
-    v424 = ToBoolean v423 @49505
-    Branch v424 -> taken b85(| 0), notTaken b86(| 0) @49505
-  b85(v425):
-    v426 = Integer @49541
-    v427 = String string="[Arguments] {" @49553
-    ElemSet v397, v426, v427 @49541
+    v420 = GetModuleVariable variable=g208 @49505
+    v421 = Call v420, -, v417 calleeName="isArgumentsObject" @49505
+    v422 = Convert v421 declared={type=boolean} illTypedCause=DeclarationWithoutBody @49505
+    v423 = ToBoolean v422 @49505
+    Branch v423 -> taken b85(| 0), notTaken b86(| 0) @49505
+  b85(v424):
+    v425 = Integer @49541
+    v426 = String string="[Arguments] {" @49553
+    ElemSet v396, v425, v426 @49541
     Jump -> next b88() @49541
-  b86(v429):
-    v430 = String string="" @49595
-    v431 = StrictEq v54, v430 @49595
-    Branch v431 -> taken b88(), notTaken b87() @49595
+  b86(v428):
+    v429 = String string="" @49595
+    v430 = StrictEq v53, v429 @49595
+    Branch v430 -> taken b88(), notTaken b87() @49595
   b87():
-    v432 = Integer @49609
-    v433 = GetModuleVariable variable=g64 @49624
-    v434 = String string="Object" @49652
-    v435 = Call v433, -, v19, v54, v434 calleeName="getPrefix" @49624
-    v436 = ToString v435 @49624
-    v437 = String string="{" @49624
-    v438 = Strcat v436, v437 @49621
-    ElemSet v397, v432, v438 @49609
+    v431 = Integer @49609
+    v432 = GetModuleVariable variable=g64 @49624
+    v433 = String string="Object" @49652
+    v434 = Call v432, -, v19, v53, v433 calleeName="getPrefix" @49624
+    v435 = ToString v434 @49624
+    v436 = String string="{" @49624
+    v437 = Strcat v435, v436 @49621
+    ElemSet v396, v431, v437 @49609
     Jump -> next b88() @49609
   b88():
-    v440 = PropGet v395 key="length" @49684
-    v441 = Integer @49700
-    v442 = StrictEq v440, v441 @49700
-    Branch v442 -> taken b89(| 0), notTaken b91(| 0) @49700
-  b89(v443):
-    v444 = NarrowByField v395, v443 key="length" @49700
-    v445 = TypeTest v35 testedType=undefined @49705
-    Branch v445 -> taken b90(| 0), notTaken b92(v444) @49705
-  b90(v446):
-    v447 = Integer @49751
-    v448 = ElemGet v397, v447 @49751
-    v449 = ToString v448 @49751
-    v450 = String string="}" @49751
-    v451 = Strcat v449, v450 @49748
-    v452 = Convert v451 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @49748
-    Return v452 @49748
-  b91(v453):
-    v454 = NarrowByField v395, v453 key="length" @49700
-    Jump -> next b92(v454) @49700
-  b92(v455: undefined|null|Array<undefined|null|string|symbol>):
-    Jump -> next b173(v385, v386, v455, v56) @49748
+    v439 = PropGet v394 key="length" @49684
+    v440 = Integer @49700
+    v441 = StrictEq v439, v440 @49700
+    Branch v441 -> taken b89(| 0), notTaken b91(| 0) @49700
+  b89(v442):
+    v443 = NarrowByField v394, v442 key="length" @49700
+    v444 = TypeTest v34 testedType=undefined @49705
+    Branch v444 -> taken b90(| 0), notTaken b92(v443) @49705
+  b90(v445):
+    v446 = Integer @49751
+    v447 = ElemGet v396, v446 @49751
+    v448 = ToString v447 @49751
+    v449 = String string="}" @49751
+    v450 = Strcat v448, v449 @49748
+    v451 = Convert v450 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @49748
+    Return v451 @49748
+  b91(v452):
+    v453 = NarrowByField v394, v452 key="length" @49700
+    Jump -> next b92(v453) @49700
+  b92(v454: undefined|null|Array<undefined|null|string|symbol>):
+    Jump -> next b173(v384, v385, v454, v55) @49748
   b93():
-    v456 = GetModuleVariable variable=g223 @49788
-    v457 = Call v456, -, v418 calleeName="isRegExp" @49788
-    v458 = Convert v457 declared={type=boolean} illTypedCause=DeclarationWithoutBody @49788
-    v459 = ToBoolean v458 @49788
-    Branch v459 -> taken b94(| 0), notTaken b104(| 0) @49788
-  b94(v460):
-    v461 = GetModuleVariable variable=g173 @49868
-    v462 = TypeTest v19 testedType=null @49898
-    Branch v462 -> taken b95(| 0), notTaken b96(v418) @49898
-  b95(v463):
-    v464 = Builtin builtin=RegExp [isNotReadFromHolder] @49933
-    v465 = Construct v464, -, v418 calleeName="RegExp" @49933
-    v466 = Convert v465 declared={type=undefined|null|RegExp flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @49929
-    Jump -> next b96(v466) @49929
-  b96(v467):
-    v468 = Call v461, v467 @49868
-    v469 = Convert v468 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @49861
-    v470 = GetModuleVariable variable=g64 @49970
-    v471 = String string="RegExp" @49998
-    v472 = Call v470, -, v19, v54, v471 calleeName="getPrefix" @49970
-    v473 = String string="RegExp " @50030
-    v474 = StrictEq v472, v473 @50030
-    Branch v474 -> taken b98(v469), notTaken b97() @50030
+    v455 = GetModuleVariable variable=g223 @49788
+    v456 = Call v455, -, v417 calleeName="isRegExp" @49788
+    v457 = Convert v456 declared={type=boolean} illTypedCause=DeclarationWithoutBody @49788
+    v458 = ToBoolean v457 @49788
+    Branch v458 -> taken b94(| 0), notTaken b104(| 0) @49788
+  b94(v459):
+    v460 = GetModuleVariable variable=g173 @49868
+    v461 = TypeTest v19 testedType=null @49898
+    Branch v461 -> taken b95(| 0), notTaken b96(v417) @49898
+  b95(v462):
+    v463 = Builtin builtin=RegExp [isNotReadFromHolder] @49933
+    v464 = Construct v463, -, v417 calleeName="RegExp" @49933
+    v465 = Convert v464 declared={type=undefined|null|RegExp flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @49929
+    Jump -> next b96(v465) @49929
+  b96(v466):
+    v467 = Call v460, v466 @49868
+    v468 = Convert v467 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @49861
+    v469 = GetModuleVariable variable=g64 @49970
+    v470 = String string="RegExp" @49998
+    v471 = Call v469, -, v19, v53, v470 calleeName="getPrefix" @49970
+    v472 = String string="RegExp " @50030
+    v473 = StrictEq v471, v472 @50030
+    Branch v473 -> taken b98(v468), notTaken b97() @50030
   b97():
-    v475 = ToString v472 @50051
-    v476 = ToString v469 @50060
-    v477 = Strcat v475, v476 @50048
-    v478 = Convert v477 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @50041
-    Jump -> next b98(v478) @50041
-  b98(v479: undefined|null|string):
-    v480 = PropGet v395 key="length" @50079
-    v481 = Integer @50095
-    v482 = StrictEq v480, v481 @50095
-    Branch v482 -> taken b99(| 0), notTaken b100(| 0) @50095
-  b99(v483):
-    v484 = NarrowByField v395, v483 key="length" @50095
-    v485 = TypeTest v35 testedType=undefined @50100
-    Branch v485 -> taken b103(), notTaken b101(v484) @50100
-  b100(v486):
-    v487 = NarrowByField v395, v486 key="length" @50095
-    Jump -> next b101(v487) @50095
-  b101(v488: undefined|null|Array<undefined|null|string|symbol>):
-    v489 = PropGet v0 key="depth" @50145
-    v490 = Greater v2, v489 @50145
-    Branch v490 -> taken b102(), notTaken b172(v385, v386, v488, v479) @50145
+    v474 = ToString v471 @50051
+    v475 = ToString v468 @50060
+    v476 = Strcat v474, v475 @50048
+    v477 = Convert v476 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @50041
+    Jump -> next b98(v477) @50041
+  b98(v478: undefined|null|string):
+    v479 = PropGet v394 key="length" @50079
+    v480 = Integer @50095
+    v481 = StrictEq v479, v480 @50095
+    Branch v481 -> taken b99(| 0), notTaken b100(| 0) @50095
+  b99(v482):
+    v483 = NarrowByField v394, v482 key="length" @50095
+    v484 = TypeTest v34 testedType=undefined @50100
+    Branch v484 -> taken b103(), notTaken b101(v483) @50100
+  b100(v485):
+    v486 = NarrowByField v394, v485 key="length" @50095
+    Jump -> next b101(v486) @50095
+  b101(v487: undefined|null|Array<undefined|null|string|symbol>):
+    v488 = PropGet v0 key="depth" @50145
+    v489 = Greater v2, v488 @50145
+    Branch v489 -> taken b102(), notTaken b172(v384, v385, v487, v478) @50145
   b102():
-    v491 = PropGet v0 key="depth" @50159
-    v492 = TypeTest v491 testedType=null @50159
-    Branch v492 -> taken b172(v385, v386, v488, v479), notTaken b103() @50159
+    v490 = PropGet v0 key="depth" @50159
+    v491 = TypeTest v490 testedType=null @50159
+    Branch v491 -> taken b172(v384, v385, v487, v478), notTaken b103() @50159
   b103():
-    v493 = PropGet v0 key="stylize" @50197
-    v494 = String string="regexp" @50215
-    v495 = Call v493, v0, v479, v494 calleeKey="stylize" calleeName="ctx.stylize" @50201
-    ReturnCall v495 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @50201
-  b104(v496):
-    v497 = GetModuleVariable variable=g224 @50249
-    v498 = Call v497, -, v418 calleeName="isDate" @50249
-    v499 = Convert v498 declared={type=boolean} illTypedCause=DeclarationWithoutBody @50249
-    v500 = ToBoolean v499 @50249
-    Branch v500 -> taken b105(| 0), notTaken b115(| 0) @50249
-  b105(v501):
-    v502 = GetModuleVariable variable=g152 @50334
-    v503 = GetModuleVariable variable=g137 @50346
-    v504 = Call v503, v418 @50346
-    v505 = Call v502, -, v504 calleeName="NumberIsNaN" @50334
-    v506 = Convert v505 declared={type=boolean} illTypedCause=DeclarationWithoutBody @50334
-    v507 = ToBoolean v506 @50334
-    Branch v507 -> taken b106(| 0), notTaken b107(| 0) @50334
-  b106(v508):
-    v509 = GetModuleVariable variable=g139 @50391
-    v510 = Call v509, v418 @50391
-    Jump -> next b108(v510) @50391
-  b107(v511):
-    v512 = GetModuleVariable variable=g138 @50436
-    v513 = Call v512, v418 @50436
-    Jump -> next b108(v513) @50436
-  b108(v514):
-    v515 = Convert v514 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @50327
-    v516 = GetModuleVariable variable=g64 @50496
-    v517 = String string="Date" @50524
-    v518 = Call v516, -, v19, v54, v517 calleeName="getPrefix" @50496
-    v519 = String string="Date " @50554
-    v520 = StrictEq v518, v519 @50554
-    Branch v520 -> taken b110(v515), notTaken b109() @50554
+    v492 = PropGet v0 key="stylize" @50197
+    v493 = String string="regexp" @50215
+    v494 = Call v492, v0, v478, v493 calleeKey="stylize" calleeName="ctx.stylize" @50201
+    ReturnCall v494 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @50201
+  b104(v495):
+    v496 = GetModuleVariable variable=g224 @50249
+    v497 = Call v496, -, v417 calleeName="isDate" @50249
+    v498 = Convert v497 declared={type=boolean} illTypedCause=DeclarationWithoutBody @50249
+    v499 = ToBoolean v498 @50249
+    Branch v499 -> taken b105(| 0), notTaken b115(| 0) @50249
+  b105(v500):
+    v501 = GetModuleVariable variable=g152 @50334
+    v502 = GetModuleVariable variable=g137 @50346
+    v503 = Call v502, v417 @50346
+    v504 = Call v501, -, v503 calleeName="NumberIsNaN" @50334
+    v505 = Convert v504 declared={type=boolean} illTypedCause=DeclarationWithoutBody @50334
+    v506 = ToBoolean v505 @50334
+    Branch v506 -> taken b106(| 0), notTaken b107(| 0) @50334
+  b106(v507):
+    v508 = GetModuleVariable variable=g139 @50391
+    v509 = Call v508, v417 @50391
+    Jump -> next b108(v509) @50391
+  b107(v510):
+    v511 = GetModuleVariable variable=g138 @50436
+    v512 = Call v511, v417 @50436
+    Jump -> next b108(v512) @50436
+  b108(v513):
+    v514 = Convert v513 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @50327
+    v515 = GetModuleVariable variable=g64 @50496
+    v516 = String string="Date" @50524
+    v517 = Call v515, -, v19, v53, v516 calleeName="getPrefix" @50496
+    v518 = String string="Date " @50554
+    v519 = StrictEq v517, v518 @50554
+    Branch v519 -> taken b110(v514), notTaken b109() @50554
   b109():
-    v521 = ToString v518 @50573
-    v522 = ToString v515 @50582
-    v523 = Strcat v521, v522 @50570
-    v524 = Convert v523 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @50563
-    Jump -> next b110(v524) @50563
-  b110(v525: undefined|null|string):
-    v526 = PropGet v395 key="length" @50600
-    v527 = Integer @50616
-    v528 = StrictEq v526, v527 @50616
-    Branch v528 -> taken b111(| 0), notTaken b113(| 0) @50616
-  b111(v529):
-    v530 = NarrowByField v395, v529 key="length" @50616
-    v531 = TypeTest v35 testedType=undefined @50621
-    Branch v531 -> taken b112(| 0), notTaken b114(v530) @50621
-  b112(v532):
-    v533 = PropGet v0 key="stylize" @50664
-    v534 = String string="date" @50682
-    v535 = Call v533, v0, v525, v534 calleeKey="stylize" calleeName="ctx.stylize" @50668
-    ReturnCall v535 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @50668
-  b113(v536):
-    v537 = NarrowByField v395, v536 key="length" @50616
-    Jump -> next b114(v537) @50616
-  b114(v538: undefined|null|Array<undefined|null|string|symbol>):
-    Jump -> next b171(v385, v386, v538, v525) @50668
-  b115(v539):
-    v540 = GetModuleVariable variable=g216 @50714
-    v541 = Call v540, -, v418 calleeName="isNativeError" @50714
-    v542 = Convert v541 declared={type=boolean} illTypedCause=DeclarationWithoutBody @50714
-    v543 = ToBoolean v542 @50714
-    Branch v543 -> taken b117(), notTaken b116(| 0) @50714
-  b116(v544):
-    v545 = Builtin builtin=GlobalThis @50755
-    v546 = PropGet v545 key="Error" @50755
-    v547 = Convert v546 declared={type=builtin(Error) flags=[IsExpected]} @50755
-    v548 = InstanceOf v418, v547 @50744
-    v549 = ToBoolean v548 @50738
-    Branch v549 -> taken b117(), notTaken b122(| 0) @50738
+    v520 = ToString v517 @50573
+    v521 = ToString v514 @50582
+    v522 = Strcat v520, v521 @50570
+    v523 = Convert v522 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @50563
+    Jump -> next b110(v523) @50563
+  b110(v524: undefined|null|string):
+    v525 = PropGet v394 key="length" @50600
+    v526 = Integer @50616
+    v527 = StrictEq v525, v526 @50616
+    Branch v527 -> taken b111(| 0), notTaken b113(| 0) @50616
+  b111(v528):
+    v529 = NarrowByField v394, v528 key="length" @50616
+    v530 = TypeTest v34 testedType=undefined @50621
+    Branch v530 -> taken b112(| 0), notTaken b114(v529) @50621
+  b112(v531):
+    v532 = PropGet v0 key="stylize" @50664
+    v533 = String string="date" @50682
+    v534 = Call v532, v0, v524, v533 calleeKey="stylize" calleeName="ctx.stylize" @50668
+    ReturnCall v534 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @50668
+  b113(v535):
+    v536 = NarrowByField v394, v535 key="length" @50616
+    Jump -> next b114(v536) @50616
+  b114(v537: undefined|null|Array<undefined|null|string|symbol>):
+    Jump -> next b171(v384, v385, v537, v524) @50668
+  b115(v538):
+    v539 = GetModuleVariable variable=g216 @50714
+    v540 = Call v539, -, v417 calleeName="isNativeError" @50714
+    v541 = Convert v540 declared={type=boolean} illTypedCause=DeclarationWithoutBody @50714
+    v542 = ToBoolean v541 @50714
+    Branch v542 -> taken b117(), notTaken b116(| 0) @50714
+  b116(v543):
+    v544 = Builtin builtin=GlobalThis @50755
+    v545 = PropGet v544 key="Error" @50755
+    v546 = Convert v545 declared={type=builtin(Error) flags=[IsExpected]} @50755
+    v547 = InstanceOf v417, v546 @50744
+    v548 = ToBoolean v547 @50738
+    Branch v548 -> taken b117(), notTaken b122(| 0) @50738
   b117():
-    v550 = GetModuleVariable variable=g83 @50777
-    v551 = Call v550, -, v418, v19, v54, v0, v395 calleeName="formatError" @50777
-    v552 = Convert v551 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @50770
-    v553 = PropGet v395 key="length" @50836
-    v554 = Integer @50852
-    v555 = StrictEq v553, v554 @50852
-    Branch v555 -> taken b118(| 0), notTaken b120(| 0) @50852
-  b118(v556):
-    v557 = NarrowByField v395, v556 key="length" @50852
-    v558 = TypeTest v35 testedType=undefined @50857
-    Branch v558 -> taken b119(| 0), notTaken b121(v557) @50857
-  b119(v559):
-    Return v552 @50890
-  b120(v560):
-    v561 = NarrowByField v395, v560 key="length" @50852
-    Jump -> next b121(v561) @50852
-  b121(v562: undefined|null|Array<undefined|null|string|symbol>):
-    Jump -> next b170(v385, v386, v562, v552) @50890
-  b122(v563):
-    v564 = GetModuleVariable variable=g206 @50911
-    v565 = Call v564, -, v418 calleeName="isAnyArrayBuffer" @50911
-    v566 = Convert v565 declared={type=boolean} illTypedCause=DeclarationWithoutBody @50911
-    v567 = ToBoolean v566 @50911
-    Branch v567 -> taken b123(| 0), notTaken b134(| 0) @50911
-  b123(v568):
-    v569 = GetModuleVariable variable=g207 @51146
-    v570 = Call v569, -, v418 calleeName="isArrayBuffer" @51146
-    v571 = Convert v570 declared={type=boolean} illTypedCause=DeclarationWithoutBody @51146
-    v572 = ToBoolean v571 @51146
-    Branch v572 -> taken b124(| 0), notTaken b125(| 0) @51146
-  b124(v573):
-    v574 = String string="ArrayBuffer" @51169
-    Jump -> next b126(v574) @51169
-  b125(v575):
-    v576 = String string="SharedArrayBuffer" @51185
-    Jump -> next b126(v576) @51185
-  b126(v577):
-    v578 = GetModuleVariable variable=g64 @51227
-    v579 = Call v578, -, v19, v54, v577 calleeName="getPrefix" @51227
-    v580 = TypeTest v384 testedType=undefined @51277
-    Branch v580 -> taken b127(| 0), notTaken b128(| 0) @51277
-  b127(v581):
-    v582 = GetModuleVariable variable=g93 @51325
-    v583 = Convert v582 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @51313
-    Jump -> next b133(v583, v395) @51313
-  b128(v584):
-    v585 = PropGet v395 key="length" @51361
-    v586 = Integer @51377
-    v587 = StrictEq v585, v586 @51377
-    Branch v587 -> taken b129(| 0), notTaken b131(| 0) @51377
-  b129(v588):
-    v589 = NarrowByField v395, v588 key="length" @51377
-    v590 = TypeTest v35 testedType=undefined @51382
-    Branch v590 -> taken b130(| 0), notTaken b132(v589) @51382
-  b130(v591):
-    v592 = String string="{ [byteLength]: " @51434
-    v593 = GetModuleVariable variable=g87 @51453
-    v594 = PropGet v0 key="stylize" @51466
-    v595 = PropGet v418 key="byteLength" @51479
-    v596 = Boolean @51497
-    v597 = Call v593, -, v594, v595, v596 calleeName="formatNumber" @51453
-    v598 = ToString v597 @51453
-    v599 = String string=" }" @51453
-    v600 = Strcat v592, v598, v599 @51434
-    v601 = Add v579, v600 @51434
-    v602 = Convert v601 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @51434
-    Return v602 @51434
-  b131(v603):
-    v604 = NarrowByField v395, v603 key="length" @51377
-    Jump -> next b132(v604) @51377
-  b132(v605: undefined|null|Array<undefined|null|string|symbol>):
-    Jump -> next b133(v385, v605) @51434
-  b133(v606: undefined|null|function, v607: undefined|null|Array<undefined|null|string|symbol>):
-    v608 = Integer @51523
-    v609 = ToString v579 @51538
-    v610 = String string="{" @51538
-    v611 = Strcat v609, v610 @51535
-    ElemSet v397, v608, v611 @51523
-    v613 = Data data=d68 @51567
-    v614 = Convert v613 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @51555
-    Jump -> next b169(v606, v614, v607, v56) @51555
-  b134(v615):
-    v616 = GetModuleVariable variable=g212 @51598
-    v617 = Call v616, -, v418 calleeName="isDataView" @51598
-    v618 = Convert v617 declared={type=boolean} illTypedCause=DeclarationWithoutBody @51598
-    v619 = ToBoolean v618 @51598
-    Branch v619 -> taken b135(| 0), notTaken b136(| 0) @51598
-  b135(v620):
-    v621 = Integer @51625
-    v622 = GetModuleVariable variable=g64 @51640
-    v623 = String string="DataView" @51668
-    v624 = Call v622, -, v19, v54, v623 calleeName="getPrefix" @51640
-    v625 = ToString v624 @51640
-    v626 = String string="{" @51640
-    v627 = Strcat v625, v626 @51637
-    ElemSet v397, v621, v627 @51625
-    v629 = Data data=d69 @51768
-    v630 = Convert v629 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @51756
-    Jump -> next b168(v385, v630, v395, v56) @51756
-  b136(v631):
-    v632 = GetModuleVariable variable=g218 @51823
-    v633 = Call v632, -, v418 calleeName="isPromise" @51823
-    v634 = Convert v633 declared={type=boolean} illTypedCause=DeclarationWithoutBody @51823
-    v635 = ToBoolean v634 @51823
-    Branch v635 -> taken b137(| 0), notTaken b138(| 0) @51823
-  b137(v636):
-    v637 = Integer @51849
-    v638 = GetModuleVariable variable=g64 @51864
-    v639 = String string="Promise" @51892
-    v640 = Call v638, -, v19, v54, v639 calleeName="getPrefix" @51864
-    v641 = ToString v640 @51864
-    v642 = String string="{" @51864
-    v643 = Strcat v641, v642 @51861
-    ElemSet v397, v637, v643 @51849
-    v645 = GetModuleVariable variable=g104 @51925
-    v646 = Convert v645 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @51913
-    Jump -> next b167(v646, v395, v56) @51913
-  b138(v647):
-    v648 = GetModuleVariable variable=g222 @51955
-    v649 = Call v648, -, v418 calleeName="isWeakSet" @51955
-    v650 = Convert v649 declared={type=boolean} illTypedCause=DeclarationWithoutBody @51955
-    v651 = ToBoolean v650 @51955
-    Branch v651 -> taken b139(| 0), notTaken b143(| 0) @51955
-  b139(v652):
-    v653 = Integer @51981
-    v654 = GetModuleVariable variable=g64 @51996
-    v655 = String string="WeakSet" @52024
-    v656 = Call v654, -, v19, v54, v655 calleeName="getPrefix" @51996
-    v657 = ToString v656 @51996
-    v658 = String string="{" @51996
-    v659 = Strcat v657, v658 @51993
-    ElemSet v397, v653, v659 @51981
-    v661 = PropGet v0 key="showHidden" @52057
-    v662 = ToBoolean v661 @52057
-    Branch v662 -> taken b140(| 0), notTaken b141(| 0) @52057
-  b140(v663):
-    v664 = GetModuleVariable variable=g101 @52074
-    Jump -> next b142(v664) @52074
-  b141(v665):
-    v666 = GetModuleVariable variable=g100 @52090
-    Jump -> next b142(v666) @52090
-  b142(v667):
-    v668 = Convert v667 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @52045
-    Jump -> next b166(v668, v395, v56) @52045
-  b143(v669):
-    v670 = GetModuleVariable variable=g221 @52127
-    v671 = Call v670, -, v418 calleeName="isWeakMap" @52127
-    v672 = Convert v671 declared={type=boolean} illTypedCause=DeclarationWithoutBody @52127
-    v673 = ToBoolean v672 @52127
-    Branch v673 -> taken b144(| 0), notTaken b148(| 0) @52127
-  b144(v674):
-    v675 = Integer @52153
-    v676 = GetModuleVariable variable=g64 @52168
-    v677 = String string="WeakMap" @52196
-    v678 = Call v676, -, v19, v54, v677 calleeName="getPrefix" @52168
-    v679 = ToString v678 @52168
-    v680 = String string="{" @52168
-    v681 = Strcat v679, v680 @52165
-    ElemSet v397, v675, v681 @52153
-    v683 = PropGet v0 key="showHidden" @52229
-    v684 = ToBoolean v683 @52229
-    Branch v684 -> taken b145(| 0), notTaken b146(| 0) @52229
-  b145(v685):
-    v686 = GetModuleVariable variable=g102 @52246
-    Jump -> next b147(v686) @52246
-  b146(v687):
-    v688 = GetModuleVariable variable=g100 @52262
-    Jump -> next b147(v688) @52262
-  b147(v689):
-    v690 = Convert v689 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @52217
-    Jump -> next b165(v690, v395, v56) @52217
-  b148(v691):
-    v692 = GetModuleVariable variable=g215 @52299
-    v693 = Call v692, -, v418 calleeName="isModuleNamespaceObject" @52299
-    v694 = Convert v693 declared={type=boolean} illTypedCause=DeclarationWithoutBody @52299
-    v695 = ToBoolean v694 @52299
-    Branch v695 -> taken b149(| 0), notTaken b150(| 0) @52299
-  b149(v696):
-    v697 = Integer @52339
-    v698 = GetModuleVariable variable=g64 @52354
-    v699 = String string="Module" @52382
-    v700 = Call v698, -, v19, v54, v699 calleeName="getPrefix" @52354
-    v701 = ToString v700 @52354
-    v702 = String string="{" @52354
-    v703 = Strcat v701, v702 @52351
-    ElemSet v397, v697, v703 @52339
-    v705 = NewClosure v395 function=f287 @52500
-    v706 = Convert v705 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @52488
-    Jump -> next b164(v706, v395, v56) @52488
-  b150(v707):
-    v708 = GetModuleVariable variable=g211 @52666
-    v709 = Call v708, -, v418 calleeName="isBoxedPrimitive" @52666
-    v710 = Convert v709 declared={type=boolean} illTypedCause=DeclarationWithoutBody @52666
-    v711 = ToBoolean v710 @52666
-    Branch v711 -> taken b151(| 0), notTaken b156(| 0) @52666
-  b151(v712):
-    v713 = GetModuleVariable variable=g72 @52706
-    v714 = Call v713, -, v418, v0, v395, v19, v54 calleeName="getBoxedBase" @52706
-    v715 = Convert v714 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @52699
-    v716 = PropGet v395 key="length" @52766
-    v717 = Integer @52782
-    v718 = StrictEq v716, v717 @52782
-    Branch v718 -> taken b152(| 0), notTaken b154(| 0) @52782
-  b152(v719):
-    v720 = NarrowByField v395, v719 key="length" @52782
-    v721 = TypeTest v35 testedType=undefined @52787
-    Branch v721 -> taken b153(| 0), notTaken b155(v720) @52787
-  b153(v722):
-    Return v715 @52830
-  b154(v723):
-    v724 = NarrowByField v395, v723 key="length" @52782
-    Jump -> next b155(v724) @52782
-  b155(v725: undefined|null|Array<undefined|null|string|symbol>):
-    Jump -> next b163(v725, v715) @52830
-  b156(v726):
-    v727 = PropGet v395 key="length" @52867
-    v728 = Integer @52883
-    v729 = StrictEq v727, v728 @52883
-    Branch v729 -> taken b157(| 0), notTaken b161(| 0) @52883
-  b157(v730):
-    v731 = NarrowByField v395, v730 key="length" @52883
-    v732 = TypeTest v35 testedType=undefined @52888
-    Branch v732 -> taken b158(| 0), notTaken b162(v731) @52888
-  b158(v733):
-    v734 = GetModuleVariable variable=g213 @52928
-    v735 = Call v734, -, v418 calleeName="isExternal" @52928
-    v736 = Convert v735 declared={type=boolean} illTypedCause=DeclarationWithoutBody @52928
-    v737 = ToBoolean v736 @52928
-    Branch v737 -> taken b159(| 0), notTaken b160(| 0) @52928
-  b159(v738):
-    v739 = String string="0" @52975
-    v740 = PropGet v0 key="stylize" @53037
-    v741 = String string="[External: 0]" @53049
-    v742 = String string="special" @53075
-    v743 = Call v740, v0, v741, v742 calleeKey="stylize" calleeName="ctx.stylize" @53041
-    ReturnCall v743 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @53041
-  b160(v744):
-    v745 = GetModuleVariable variable=g66 @53115
-    v746 = Call v745, -, v418, v19, v54 calleeName="getCtxStyle" @53115
-    v747 = ToString v746 @53115
-    v748 = String string="{}" @53115
-    v749 = Strcat v747, v748 @53112
-    v750 = Convert v749 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @53112
-    Return v750 @53112
-  b161(v751):
-    v752 = NarrowByField v395, v751 key="length" @52883
-    Jump -> next b162(v752) @52883
-  b162(v753: undefined|null|Array<undefined|null|string|symbol>):
-    v754 = Integer @53171
-    v755 = GetModuleVariable variable=g66 @53186
-    v756 = Call v755, -, v418, v19, v54 calleeName="getCtxStyle" @53186
-    v757 = ToString v756 @53186
-    v758 = String string="{" @53186
-    v759 = Strcat v757, v758 @53183
-    ElemSet v397, v754, v759 @53171
-    Jump -> next b163(v753, v56) @53171
-  b163(v761: undefined|null|Array<undefined|null|string|symbol>, v762: undefined|null|string):
-    Jump -> next b164(v385, v761, v762) @53171
-  b164(v763: undefined|null|function, v764: undefined|null|Array<undefined|null|string|symbol>, v765: undefined|null|string):
-    Jump -> next b165(v763, v764, v765) @53171
-  b165(v766: undefined|null|function, v767: undefined|null|Array<undefined|null|string|symbol>, v768: undefined|null|string):
-    Jump -> next b166(v766, v767, v768) @53171
-  b166(v769: undefined|null|function, v770: undefined|null|Array<undefined|null|string|symbol>, v771: undefined|null|string):
-    Jump -> next b167(v769, v770, v771) @53171
-  b167(v772: undefined|null|function, v773: undefined|null|Array<undefined|null|string|symbol>, v774: undefined|null|string):
-    Jump -> next b168(v772, v386, v773, v774) @53171
-  b168(v775: undefined|null|function, v776: undefined|null|Array<undefined|null|string>, v777: undefined|null|Array<undefined|null|string|symbol>, v778: undefined|null|string):
-    Jump -> next b169(v775, v776, v777, v778) @53171
-  b169(v779: undefined|null|function, v780: undefined|null|Array<undefined|null|string>, v781: undefined|null|Array<undefined|null|string|symbol>, v782: undefined|null|string):
-    Jump -> next b170(v779, v780, v781, v782) @53171
-  b170(v783: undefined|null|function, v784: undefined|null|Array<undefined|null|string>, v785: undefined|null|Array<undefined|null|string|symbol>, v786: undefined|null|string):
-    Jump -> next b171(v783, v784, v785, v786) @53171
-  b171(v787: undefined|null|function, v788: undefined|null|Array<undefined|null|string>, v789: undefined|null|Array<undefined|null|string|symbol>, v790: undefined|null|string):
-    Jump -> next b172(v787, v788, v789, v790) @53171
-  b172(v791: undefined|null|function, v792: undefined|null|Array<undefined|null|string>, v793: undefined|null|Array<undefined|null|string|symbol>, v794: undefined|null|string):
-    Jump -> next b173(v791, v792, v793, v794) @53171
-  b173(v795: undefined|null|function, v796: undefined|null|Array<undefined|null|string>, v797: undefined|null|Array<undefined|null|string|symbol>, v798: undefined|null|string):
-    Jump -> next b174(v795, v796, v797, v798) @53171
-  b174(v799: undefined|null|function, v800: undefined|null|Array<undefined|null|string>, v801: undefined|null|Array<undefined|null|string|symbol>, v802: undefined|null|string):
-    Jump -> next b175(v799, v800, v801, v802, v397) @53171
-  b175(v803: undefined|null|function, v804: undefined|null|Array<undefined|null|string>, v805: undefined|null|Array<undefined|null|string|symbol>, v806: undefined|null|string, v807: undefined|null|Array<undefined|null|string>):
-    v808 = PropGet v0 key="depth" @53259
-    v809 = Greater v2, v808 @53259
-    Branch v809 -> taken b176(), notTaken b180() @53259
+    v549 = GetModuleVariable variable=g83 @50777
+    v550 = Call v549, -, v417, v19, v53, v0, v394 calleeName="formatError" @50777
+    v551 = Convert v550 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @50770
+    v552 = PropGet v394 key="length" @50836
+    v553 = Integer @50852
+    v554 = StrictEq v552, v553 @50852
+    Branch v554 -> taken b118(| 0), notTaken b120(| 0) @50852
+  b118(v555):
+    v556 = NarrowByField v394, v555 key="length" @50852
+    v557 = TypeTest v34 testedType=undefined @50857
+    Branch v557 -> taken b119(| 0), notTaken b121(v556) @50857
+  b119(v558):
+    Return v551 @50890
+  b120(v559):
+    v560 = NarrowByField v394, v559 key="length" @50852
+    Jump -> next b121(v560) @50852
+  b121(v561: undefined|null|Array<undefined|null|string|symbol>):
+    Jump -> next b170(v384, v385, v561, v551) @50890
+  b122(v562):
+    v563 = GetModuleVariable variable=g206 @50911
+    v564 = Call v563, -, v417 calleeName="isAnyArrayBuffer" @50911
+    v565 = Convert v564 declared={type=boolean} illTypedCause=DeclarationWithoutBody @50911
+    v566 = ToBoolean v565 @50911
+    Branch v566 -> taken b123(| 0), notTaken b134(| 0) @50911
+  b123(v567):
+    v568 = GetModuleVariable variable=g207 @51146
+    v569 = Call v568, -, v417 calleeName="isArrayBuffer" @51146
+    v570 = Convert v569 declared={type=boolean} illTypedCause=DeclarationWithoutBody @51146
+    v571 = ToBoolean v570 @51146
+    Branch v571 -> taken b124(| 0), notTaken b125(| 0) @51146
+  b124(v572):
+    v573 = String string="ArrayBuffer" @51169
+    Jump -> next b126(v573) @51169
+  b125(v574):
+    v575 = String string="SharedArrayBuffer" @51185
+    Jump -> next b126(v575) @51185
+  b126(v576):
+    v577 = GetModuleVariable variable=g64 @51227
+    v578 = Call v577, -, v19, v53, v576 calleeName="getPrefix" @51227
+    v579 = TypeTest v383 testedType=undefined @51277
+    Branch v579 -> taken b127(| 0), notTaken b128(| 0) @51277
+  b127(v580):
+    v581 = GetModuleVariable variable=g93 @51325
+    v582 = Convert v581 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @51313
+    Jump -> next b133(v582, v394) @51313
+  b128(v583):
+    v584 = PropGet v394 key="length" @51361
+    v585 = Integer @51377
+    v586 = StrictEq v584, v585 @51377
+    Branch v586 -> taken b129(| 0), notTaken b131(| 0) @51377
+  b129(v587):
+    v588 = NarrowByField v394, v587 key="length" @51377
+    v589 = TypeTest v34 testedType=undefined @51382
+    Branch v589 -> taken b130(| 0), notTaken b132(v588) @51382
+  b130(v590):
+    v591 = String string="{ [byteLength]: " @51434
+    v592 = GetModuleVariable variable=g87 @51453
+    v593 = PropGet v0 key="stylize" @51466
+    v594 = PropGet v417 key="byteLength" @51479
+    v595 = Boolean @51497
+    v596 = Call v592, -, v593, v594, v595 calleeName="formatNumber" @51453
+    v597 = ToString v596 @51453
+    v598 = String string=" }" @51453
+    v599 = Strcat v591, v597, v598 @51434
+    v600 = Add v578, v599 @51434
+    v601 = Convert v600 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @51434
+    Return v601 @51434
+  b131(v602):
+    v603 = NarrowByField v394, v602 key="length" @51377
+    Jump -> next b132(v603) @51377
+  b132(v604: undefined|null|Array<undefined|null|string|symbol>):
+    Jump -> next b133(v384, v604) @51434
+  b133(v605: undefined|null|function, v606: undefined|null|Array<undefined|null|string|symbol>):
+    v607 = Integer @51523
+    v608 = ToString v578 @51538
+    v609 = String string="{" @51538
+    v610 = Strcat v608, v609 @51535
+    ElemSet v396, v607, v610 @51523
+    v612 = Data data=d68 @51567
+    v613 = Convert v612 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @51555
+    Jump -> next b169(v605, v613, v606, v55) @51555
+  b134(v614):
+    v615 = GetModuleVariable variable=g212 @51598
+    v616 = Call v615, -, v417 calleeName="isDataView" @51598
+    v617 = Convert v616 declared={type=boolean} illTypedCause=DeclarationWithoutBody @51598
+    v618 = ToBoolean v617 @51598
+    Branch v618 -> taken b135(| 0), notTaken b136(| 0) @51598
+  b135(v619):
+    v620 = Integer @51625
+    v621 = GetModuleVariable variable=g64 @51640
+    v622 = String string="DataView" @51668
+    v623 = Call v621, -, v19, v53, v622 calleeName="getPrefix" @51640
+    v624 = ToString v623 @51640
+    v625 = String string="{" @51640
+    v626 = Strcat v624, v625 @51637
+    ElemSet v396, v620, v626 @51625
+    v628 = Data data=d69 @51768
+    v629 = Convert v628 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @51756
+    Jump -> next b168(v384, v629, v394, v55) @51756
+  b136(v630):
+    v631 = GetModuleVariable variable=g218 @51823
+    v632 = Call v631, -, v417 calleeName="isPromise" @51823
+    v633 = Convert v632 declared={type=boolean} illTypedCause=DeclarationWithoutBody @51823
+    v634 = ToBoolean v633 @51823
+    Branch v634 -> taken b137(| 0), notTaken b138(| 0) @51823
+  b137(v635):
+    v636 = Integer @51849
+    v637 = GetModuleVariable variable=g64 @51864
+    v638 = String string="Promise" @51892
+    v639 = Call v637, -, v19, v53, v638 calleeName="getPrefix" @51864
+    v640 = ToString v639 @51864
+    v641 = String string="{" @51864
+    v642 = Strcat v640, v641 @51861
+    ElemSet v396, v636, v642 @51849
+    v644 = GetModuleVariable variable=g104 @51925
+    v645 = Convert v644 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @51913
+    Jump -> next b167(v645, v394, v55) @51913
+  b138(v646):
+    v647 = GetModuleVariable variable=g222 @51955
+    v648 = Call v647, -, v417 calleeName="isWeakSet" @51955
+    v649 = Convert v648 declared={type=boolean} illTypedCause=DeclarationWithoutBody @51955
+    v650 = ToBoolean v649 @51955
+    Branch v650 -> taken b139(| 0), notTaken b143(| 0) @51955
+  b139(v651):
+    v652 = Integer @51981
+    v653 = GetModuleVariable variable=g64 @51996
+    v654 = String string="WeakSet" @52024
+    v655 = Call v653, -, v19, v53, v654 calleeName="getPrefix" @51996
+    v656 = ToString v655 @51996
+    v657 = String string="{" @51996
+    v658 = Strcat v656, v657 @51993
+    ElemSet v396, v652, v658 @51981
+    v660 = PropGet v0 key="showHidden" @52057
+    v661 = ToBoolean v660 @52057
+    Branch v661 -> taken b140(| 0), notTaken b141(| 0) @52057
+  b140(v662):
+    v663 = GetModuleVariable variable=g101 @52074
+    Jump -> next b142(v663) @52074
+  b141(v664):
+    v665 = GetModuleVariable variable=g100 @52090
+    Jump -> next b142(v665) @52090
+  b142(v666):
+    v667 = Convert v666 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @52045
+    Jump -> next b166(v667, v394, v55) @52045
+  b143(v668):
+    v669 = GetModuleVariable variable=g221 @52127
+    v670 = Call v669, -, v417 calleeName="isWeakMap" @52127
+    v671 = Convert v670 declared={type=boolean} illTypedCause=DeclarationWithoutBody @52127
+    v672 = ToBoolean v671 @52127
+    Branch v672 -> taken b144(| 0), notTaken b148(| 0) @52127
+  b144(v673):
+    v674 = Integer @52153
+    v675 = GetModuleVariable variable=g64 @52168
+    v676 = String string="WeakMap" @52196
+    v677 = Call v675, -, v19, v53, v676 calleeName="getPrefix" @52168
+    v678 = ToString v677 @52168
+    v679 = String string="{" @52168
+    v680 = Strcat v678, v679 @52165
+    ElemSet v396, v674, v680 @52153
+    v682 = PropGet v0 key="showHidden" @52229
+    v683 = ToBoolean v682 @52229
+    Branch v683 -> taken b145(| 0), notTaken b146(| 0) @52229
+  b145(v684):
+    v685 = GetModuleVariable variable=g102 @52246
+    Jump -> next b147(v685) @52246
+  b146(v686):
+    v687 = GetModuleVariable variable=g100 @52262
+    Jump -> next b147(v687) @52262
+  b147(v688):
+    v689 = Convert v688 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @52217
+    Jump -> next b165(v689, v394, v55) @52217
+  b148(v690):
+    v691 = GetModuleVariable variable=g215 @52299
+    v692 = Call v691, -, v417 calleeName="isModuleNamespaceObject" @52299
+    v693 = Convert v692 declared={type=boolean} illTypedCause=DeclarationWithoutBody @52299
+    v694 = ToBoolean v693 @52299
+    Branch v694 -> taken b149(| 0), notTaken b150(| 0) @52299
+  b149(v695):
+    v696 = Integer @52339
+    v697 = GetModuleVariable variable=g64 @52354
+    v698 = String string="Module" @52382
+    v699 = Call v697, -, v19, v53, v698 calleeName="getPrefix" @52354
+    v700 = ToString v699 @52354
+    v701 = String string="{" @52354
+    v702 = Strcat v700, v701 @52351
+    ElemSet v396, v696, v702 @52339
+    v704 = NewClosure v394 function=f287 @52500
+    v705 = Convert v704 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @52488
+    Jump -> next b164(v705, v394, v55) @52488
+  b150(v706):
+    v707 = GetModuleVariable variable=g211 @52666
+    v708 = Call v707, -, v417 calleeName="isBoxedPrimitive" @52666
+    v709 = Convert v708 declared={type=boolean} illTypedCause=DeclarationWithoutBody @52666
+    v710 = ToBoolean v709 @52666
+    Branch v710 -> taken b151(| 0), notTaken b156(| 0) @52666
+  b151(v711):
+    v712 = GetModuleVariable variable=g72 @52706
+    v713 = Call v712, -, v417, v0, v394, v19, v53 calleeName="getBoxedBase" @52706
+    v714 = Convert v713 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @52699
+    v715 = PropGet v394 key="length" @52766
+    v716 = Integer @52782
+    v717 = StrictEq v715, v716 @52782
+    Branch v717 -> taken b152(| 0), notTaken b154(| 0) @52782
+  b152(v718):
+    v719 = NarrowByField v394, v718 key="length" @52782
+    v720 = TypeTest v34 testedType=undefined @52787
+    Branch v720 -> taken b153(| 0), notTaken b155(v719) @52787
+  b153(v721):
+    Return v714 @52830
+  b154(v722):
+    v723 = NarrowByField v394, v722 key="length" @52782
+    Jump -> next b155(v723) @52782
+  b155(v724: undefined|null|Array<undefined|null|string|symbol>):
+    Jump -> next b163(v724, v714) @52830
+  b156(v725):
+    v726 = PropGet v394 key="length" @52867
+    v727 = Integer @52883
+    v728 = StrictEq v726, v727 @52883
+    Branch v728 -> taken b157(| 0), notTaken b161(| 0) @52883
+  b157(v729):
+    v730 = NarrowByField v394, v729 key="length" @52883
+    v731 = TypeTest v34 testedType=undefined @52888
+    Branch v731 -> taken b158(| 0), notTaken b162(v730) @52888
+  b158(v732):
+    v733 = GetModuleVariable variable=g213 @52928
+    v734 = Call v733, -, v417 calleeName="isExternal" @52928
+    v735 = Convert v734 declared={type=boolean} illTypedCause=DeclarationWithoutBody @52928
+    v736 = ToBoolean v735 @52928
+    Branch v736 -> taken b159(| 0), notTaken b160(| 0) @52928
+  b159(v737):
+    v738 = String string="0" @52975
+    v739 = PropGet v0 key="stylize" @53037
+    v740 = String string="[External: 0]" @53049
+    v741 = String string="special" @53075
+    v742 = Call v739, v0, v740, v741 calleeKey="stylize" calleeName="ctx.stylize" @53041
+    ReturnCall v742 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @53041
+  b160(v743):
+    v744 = GetModuleVariable variable=g66 @53115
+    v745 = Call v744, -, v417, v19, v53 calleeName="getCtxStyle" @53115
+    v746 = ToString v745 @53115
+    v747 = String string="{}" @53115
+    v748 = Strcat v746, v747 @53112
+    v749 = Convert v748 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @53112
+    Return v749 @53112
+  b161(v750):
+    v751 = NarrowByField v394, v750 key="length" @52883
+    Jump -> next b162(v751) @52883
+  b162(v752: undefined|null|Array<undefined|null|string|symbol>):
+    v753 = Integer @53171
+    v754 = GetModuleVariable variable=g66 @53186
+    v755 = Call v754, -, v417, v19, v53 calleeName="getCtxStyle" @53186
+    v756 = ToString v755 @53186
+    v757 = String string="{" @53186
+    v758 = Strcat v756, v757 @53183
+    ElemSet v396, v753, v758 @53171
+    Jump -> next b163(v752, v55) @53171
+  b163(v760: undefined|null|Array<undefined|null|string|symbol>, v761: undefined|null|string):
+    Jump -> next b164(v384, v760, v761) @53171
+  b164(v762: undefined|null|function, v763: undefined|null|Array<undefined|null|string|symbol>, v764: undefined|null|string):
+    Jump -> next b165(v762, v763, v764) @53171
+  b165(v765: undefined|null|function, v766: undefined|null|Array<undefined|null|string|symbol>, v767: undefined|null|string):
+    Jump -> next b166(v765, v766, v767) @53171
+  b166(v768: undefined|null|function, v769: undefined|null|Array<undefined|null|string|symbol>, v770: undefined|null|string):
+    Jump -> next b167(v768, v769, v770) @53171
+  b167(v771: undefined|null|function, v772: undefined|null|Array<undefined|null|string|symbol>, v773: undefined|null|string):
+    Jump -> next b168(v771, v385, v772, v773) @53171
+  b168(v774: undefined|null|function, v775: undefined|null|Array<undefined|null|string>, v776: undefined|null|Array<undefined|null|string|symbol>, v777: undefined|null|string):
+    Jump -> next b169(v774, v775, v776, v777) @53171
+  b169(v778: undefined|null|function, v779: undefined|null|Array<undefined|null|string>, v780: undefined|null|Array<undefined|null|string|symbol>, v781: undefined|null|string):
+    Jump -> next b170(v778, v779, v780, v781) @53171
+  b170(v782: undefined|null|function, v783: undefined|null|Array<undefined|null|string>, v784: undefined|null|Array<undefined|null|string|symbol>, v785: undefined|null|string):
+    Jump -> next b171(v782, v783, v784, v785) @53171
+  b171(v786: undefined|null|function, v787: undefined|null|Array<undefined|null|string>, v788: undefined|null|Array<undefined|null|string|symbol>, v789: undefined|null|string):
+    Jump -> next b172(v786, v787, v788, v789) @53171
+  b172(v790: undefined|null|function, v791: undefined|null|Array<undefined|null|string>, v792: undefined|null|Array<undefined|null|string|symbol>, v793: undefined|null|string):
+    Jump -> next b173(v790, v791, v792, v793) @53171
+  b173(v794: undefined|null|function, v795: undefined|null|Array<undefined|null|string>, v796: undefined|null|Array<undefined|null|string|symbol>, v797: undefined|null|string):
+    Jump -> next b174(v794, v795, v796, v797) @53171
+  b174(v798: undefined|null|function, v799: undefined|null|Array<undefined|null|string>, v800: undefined|null|Array<undefined|null|string|symbol>, v801: undefined|null|string):
+    Jump -> next b175(v798, v799, v800, v801, v396) @53171
+  b175(v802: undefined|null|function, v803: undefined|null|Array<undefined|null|string>, v804: undefined|null|Array<undefined|null|string|symbol>, v805: undefined|null|string, v806: undefined|null|Array<undefined|null|string>):
+    v807 = PropGet v0 key="depth" @53259
+    v808 = Greater v2, v807 @53259
+    Branch v808 -> taken b176(), notTaken b180() @53259
   b176():
-    v810 = PropGet v0 key="depth" @53273
-    v811 = TypeTest v810 testedType=null @53273
-    Branch v811 -> taken b180(), notTaken b177(| 0) @53273
-  b177(v812):
-    v813 = GetModuleVariable variable=g186 @53321
-    v814 = GetModuleVariable variable=g66 @53348
-    v815 = Call v814, -, v383, v19, v54 calleeName="getCtxStyle" @53348
-    v816 = Integer @53386
-    v817 = Integer integer=-1 @53389
-    v818 = Call v813, v815, v816, v817 @53321
-    v819 = Convert v818 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @53321
-    v820 = TypeTest v19 testedType=null @53402
-    Branch v820 -> taken b179(v819), notTaken b178(| 0) @53402
-  b178(v821):
-    v822 = String string="[" @53442
-    v823 = ToString v819 @53446
-    v824 = String string="]" @53446
-    v825 = Strcat v822, v823, v824 @53442
-    v826 = Convert v825 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @53424
-    Jump -> next b179(v826) @53424
-  b179(v827: undefined|null|string):
-    v828 = PropGet v0 key="stylize" @53477
-    v829 = String string="special" @53506
-    v830 = Call v828, v0, v827, v829 calleeKey="stylize" calleeName="ctx.stylize" @53481
-    ReturnCall v830 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @53481
+    v809 = PropGet v0 key="depth" @53273
+    v810 = TypeTest v809 testedType=null @53273
+    Branch v810 -> taken b180(), notTaken b177(| 0) @53273
+  b177(v811):
+    v812 = GetModuleVariable variable=g186 @53321
+    v813 = GetModuleVariable variable=g66 @53348
+    v814 = Call v813, -, v382, v19, v53 calleeName="getCtxStyle" @53348
+    v815 = Integer @53386
+    v816 = Integer integer=-1 @53389
+    v817 = Call v812, v814, v815, v816 @53321
+    v818 = Convert v817 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @53321
+    v819 = TypeTest v19 testedType=null @53402
+    Branch v819 -> taken b179(v818), notTaken b178(| 0) @53402
+  b178(v820):
+    v821 = String string="[" @53442
+    v822 = ToString v818 @53446
+    v823 = String string="]" @53446
+    v824 = Strcat v821, v822, v823 @53442
+    v825 = Convert v824 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @53424
+    Jump -> next b179(v825) @53424
+  b179(v826: undefined|null|string):
+    v827 = PropGet v0 key="stylize" @53477
+    v828 = String string="special" @53506
+    v829 = Call v827, v0, v826, v828 calleeKey="stylize" calleeName="ctx.stylize" @53481
+    ReturnCall v829 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @53481
   b180():
-    v831 = Integer integer=1 @53540
-    v832 = Add v2, v831 @53540
-    v833 = Convert v832 declared={type=number} @53524
-    v834 = PropGet v0 key="seen" @53546
-    v835 = PropGet v834 key="push" @53550
-    v836 = Call v835, v834, v383 calleeKey="push" calleeName="ctx.seen.push" @53555
-    v837 = Convert v836 declared={type=number} illTypedCause=DeclarationWithoutBody @53546
-    PropSet v0, v833 key="currentDepth" @53570
-    v839 = Undefined @53605
-    v840 = Convert v839 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @53605
-    v841 = PropGet v0 key="indentationLvl" @53652
+    v830 = Integer integer=1 @53540
+    v831 = Add v2, v830 @53540
+    v832 = Convert v831 declared={type=number} @53524
+    v833 = PropGet v0 key="seen" @53546
+    v834 = PropGet v833 key="push" @53550
+    v835 = Call v834, v833, v382 calleeKey="push" calleeName="ctx.seen.push" @53555
+    v836 = Convert v835 declared={type=number} illTypedCause=DeclarationWithoutBody @53546
+    PropSet v0, v832 key="currentDepth" @53570
+    v838 = Undefined @53605
+    v839 = Convert v838 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @53605
+    v840 = PropGet v0 key="indentationLvl" @53652
     Jump -> next b181() @53674
   b181() handler=b226():
-    v842 = PropGet v0 key="currentDepth" @53749
-    v843 = Integer integer=1000 @53768
-    v844 = Greater v842, v843 @53768
-    Branch v844 -> taken b182(), notTaken b183() @53768
+    v841 = PropGet v0 key="currentDepth" @53749
+    v842 = Integer integer=1000 @53768
+    v843 = Greater v841, v842 @53768
+    Branch v843 -> taken b182(), notTaken b183() @53768
   b182() handler=b226():
-    v845 = Builtin builtin=RangeError [isNotReadFromHolder] @53784
-    v846 = GetModuleVariable variable=g234 @53795
-    v847 = Construct v845, -, v846 calleeName="RangeError" @53784
-    v848 = Convert v847 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @53780
-    Throw v848 @53819
+    v844 = Builtin builtin=RangeError [isNotReadFromHolder] @53784
+    v845 = GetModuleVariable variable=g234 @53795
+    v846 = Construct v844, -, v845 calleeName="RangeError" @53784
+    v847 = Convert v846 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @53780
+    Throw v847 @53819
   b183() handler=b226():
-    v849 = Call v803, -, v0, v383, v833 calleeName="formatter" @53835
-    v850 = Convert v849 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @53826
-    v851 = TypeTest v804 testedType=undefined @53880
-    Branch v851 -> taken b184(| 0), notTaken b185(| 0) @53880
-  b184(v852) handler=b226():
+    v848 = Call v802, -, v0, v382, v832 calleeName="formatter" @53835
+    v849 = Convert v848 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} @53826
+    v850 = TypeTest v803 testedType=undefined @53880
+    Branch v850 -> taken b184(| 0), notTaken b185(| 0) @53880
+  b184(v851) handler=b226():
     Jump -> next b191() @53880
-  b185(v853) handler=b226():
-    v854 = NarrowByTest v804, v853 @53880
-    v855 = Integer @53922
-    v856 = Convert v855 declared={type=number} @53918
-    Jump -> next b186(v856) @53918
-  b186(v857: number) handler=b226():
+  b185(v852) handler=b226():
+    v853 = NarrowByTest v803, v852 @53880
+    v854 = Integer @53922
+    v855 = Convert v854 declared={type=number} @53918
+    Jump -> next b186(v855) @53918
+  b186(v856: number) handler=b226():
     LoopHint @53918
-    v859 = PropGet v854 key="length" @53929
-    v860 = Less v857, v859 @53929
-    Branch v860 -> taken b187(), notTaken b191() @53929
+    v858 = PropGet v853 key="length" @53929
+    v859 = Less v856, v858 @53929
+    Branch v859 -> taken b187(), notTaken b191() @53929
   b187() handler=b226():
-    v861 = Undefined @53962
-    v862 = Convert v861 declared={type=undefined|null|string flags=[OmitsNull]} @53962
+    v860 = Undefined @53962
+    v861 = Convert v860 declared={type=undefined|null|string flags=[OmitsNull]} @53962
     Jump -> next b188() @53993
   b188() handler=b189():
-    v863 = GetModuleVariable variable=g105 @54021
-    v864 = ElemGet v854, v857 @54069
-    v865 = Call v863, -, v0, v383, v833, v864, v384 calleeName="formatExtraProperties" @54021
-    v866 = Convert v865 declared={type=undefined|null|string flags=[OmitsNull]} @54009
-    Jump -> next b190(v866) @54009
+    v862 = GetModuleVariable variable=g105 @54021
+    v863 = ElemGet v853, v856 @54069
+    v864 = Call v862, -, v0, v382, v832, v863, v383 calleeName="formatExtraProperties" @54021
+    v865 = Convert v864 declared={type=undefined|null|string flags=[OmitsNull]} @54009
+    Jump -> next b190(v865) @54009
   b189() role=CatchHandler handler=b226():
-    v867 = CatchValue @54112
-    v868 = ElemGet v854, v857 @54145
-    v869 = ToPropertyKey v868 @54145
-    v870 = PropGet v383 key="buffer" @54160
-    v871 = ElemGet v854, v857 @54173
-    v872 = ElemGet v870, v871 @54166
-    v873 = NewObject layout=L26 @54144
-    ElemDefine v873, v869, v872 @54144
-    v875 = FinishObject v873 @54142
-    v876 = GetModuleVariable variable=g105 @54212
-    v877 = ElemGet v854, v857 @54264
-    v878 = Call v876, -, v0, v875, v833, v877, v384 calleeName="formatExtraProperties" @54212
-    v879 = Convert v878 declared={type=undefined|null|string flags=[OmitsNull]} @54200
-    Jump -> next b190(v879) @54200
-  b190(v880: undefined|null|string) handler=b226():
-    v881 = GetModuleVariable variable=g131 @54309
-    v882 = Call v881, v850, v880 @54309
-    v883 = Increment v857 @53947
-    v884 = Convert v883 declared={type=number} @53947
-    Jump -> next b186(v884) @53947
+    v866 = CatchValue @54112
+    v867 = ElemGet v853, v856 @54145
+    v868 = ToPropertyKey v867 @54145
+    v869 = PropGet v382 key="buffer" @54160
+    v870 = ElemGet v853, v856 @54173
+    v871 = ElemGet v869, v870 @54166
+    v872 = NewObject layout=L26 @54144
+    ElemDefine v872, v868, v871 @54144
+    v874 = FinishObject v872 @54142
+    v875 = GetModuleVariable variable=g105 @54212
+    v876 = ElemGet v853, v856 @54264
+    v877 = Call v875, -, v0, v874, v832, v876, v383 calleeName="formatExtraProperties" @54212
+    v878 = Convert v877 declared={type=undefined|null|string flags=[OmitsNull]} @54200
+    Jump -> next b190(v878) @54200
+  b190(v879: undefined|null|string) handler=b226():
+    v880 = GetModuleVariable variable=g131 @54309
+    v881 = Call v880, v849, v879 @54309
+    v882 = Increment v856 @53947
+    v883 = Convert v882 declared={type=number} @53947
+    Jump -> next b186(v883) @53947
   b191() handler=b226():
-    v885 = Integer @54381
-    v886 = Convert v885 declared={type=number} @54377
-    Jump -> next b192(v886) @54377
-  b192(v887: number) handler=b226():
+    v884 = Integer @54381
+    v885 = Convert v884 declared={type=number} @54377
+    Jump -> next b192(v885) @54377
+  b192(v886: number) handler=b226():
     LoopHint @54377
-    v889 = PropGet v805 key="length" @54388
-    v890 = Less v887, v889 @54388
-    Branch v890 -> taken b193(), notTaken b194() @54388
+    v888 = PropGet v804 key="length" @54388
+    v889 = Less v886, v888 @54388
+    Branch v889 -> taken b193(), notTaken b194() @54388
   b193() handler=b226():
-    v891 = GetModuleVariable variable=g131 @54414
-    v892 = GetModuleVariable variable=g106 @54447
-    v893 = ElemGet v805, v887 @54488
-    v894 = Call v892, -, v0, v383, v833, v893, v388 calleeName="formatProperty" @54447
-    v895 = Call v891, v850, v894 @54414
-    v896 = Increment v887 @54401
-    v897 = Convert v896 declared={type=number} @54401
-    Jump -> next b192(v897) @54401
+    v890 = GetModuleVariable variable=g131 @54414
+    v891 = GetModuleVariable variable=g106 @54447
+    v892 = ElemGet v804, v886 @54488
+    v893 = Call v891, -, v0, v382, v832, v892, v387 calleeName="formatProperty" @54447
+    v894 = Call v890, v849, v893 @54414
+    v895 = Increment v886 @54401
+    v896 = Convert v895 declared={type=number} @54401
+    Jump -> next b192(v896) @54401
   b194() handler=b226():
-    v898 = TypeTest v35 testedType=undefined @54525
-    Branch v898 -> taken b195(| 0), notTaken b196(| 0) @54525
-  b195(v899) handler=b226():
+    v897 = TypeTest v34 testedType=undefined @54525
+    Branch v897 -> taken b195(| 0), notTaken b196(| 0) @54525
+  b195(v898) handler=b226():
     Jump -> next b197() @54525
-  b196(v900) handler=b226():
-    v901 = NarrowByTest v35, v900 @54525
-    v902 = GetModuleVariable variable=g131 @54559
-    v903 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @54559
-    v904 = Call v903, v902, v850, v901 [isDoneInPlace] @54559
+  b196(v899) handler=b226():
+    v900 = NarrowByTest v34, v899 @54525
+    v901 = GetModuleVariable variable=g131 @54559
+    v902 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @54559
+    v903 = Call v902, v901, v849, v900 [isDoneInPlace] @54559
     Jump -> next b197() @54559
   b197() handler=b226():
     Jump -> next b198() @54559
   b198():
-    v905 = PropGet v0 key="circular" @55160
-    v906 = TypeTest v905 testedType=undefined @55180
-    Branch v906 -> taken b211(v0, v806), notTaken b199(| 0) @55180
-  b199(v907):
-    v908 = NarrowByTest v905, v907 @55180
-    v909 = PropGet v908 key="get" @55224
-    v910 = Call v909, v908, v383 calleeKey="get" calleeName="circular.get" @55233
-    v911 = Convert v910 declared={type=undefined|number} illTypedCause=FromLooseType @55224
-    v912 = TypeTest v911 testedType=undefined @55253
-    Branch v912 -> taken b210(v0, v806), notTaken b200(| 0) @55253
-  b200(v913):
-    v914 = NarrowByTest v911, v913 @55253
-    v915 = PropGet v0 key="seenRefs" @55282
-    v916 = TypeTest v915 testedType=undefined|null @55282
-    Branch v916 -> taken b201(| 0), notTaken b202() @55282
-  b201(v917):
-    v918 = Builtin builtin=Set @55303
-    v919 = Construct v918 calleeName="Set" @55303
-    v920 = Convert v919 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @55299
-    PropSet v0, v920 key="seenRefs" @55282
+    v904 = PropGet v0 key="circular" @55160
+    v905 = TypeTest v904 testedType=undefined @55180
+    Branch v905 -> taken b211(v0, v805), notTaken b199(| 0) @55180
+  b199(v906):
+    v907 = NarrowByTest v904, v906 @55180
+    v908 = PropGet v907 key="get" @55224
+    v909 = Call v908, v907, v382 calleeKey="get" calleeName="circular.get" @55233
+    v910 = Convert v909 declared={type=undefined|number} illTypedCause=FromLooseType @55224
+    v911 = TypeTest v910 testedType=undefined @55253
+    Branch v911 -> taken b210(v0, v805), notTaken b200(| 0) @55253
+  b200(v912):
+    v913 = NarrowByTest v910, v912 @55253
+    v914 = PropGet v0 key="seenRefs" @55282
+    v915 = TypeTest v914 testedType=undefined|null @55282
+    Branch v915 -> taken b201(| 0), notTaken b202() @55282
+  b201(v916):
+    v917 = Builtin builtin=Set @55303
+    v918 = Construct v917 calleeName="Set" @55303
+    v919 = Convert v918 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @55299
+    PropSet v0, v919 key="seenRefs" @55282
     Jump -> next b202() @55282
   b202():
-    v922 = PropGet v0 key="seenRefs" @55329
-    v923 = PropGet v922 key="has" @55333
-    v924 = Call v923, v922, v914 calleeKey="has" calleeName="ctx.seenRefs.has" @55342
-    v925 = Convert v924 declared={type=boolean} illTypedCause=DeclarationWithoutBody @55329
-    v926 = ToBoolean v925 @55365
-    Branch v926 -> taken b203(| 0), notTaken b204(| 0) @55365
-  b203(v927):
-    v928 = PropGet v0 key="stylize" @56025
-    v929 = String string="[Circular *" @56037
-    v930 = ToString v914 @56051
-    v931 = String string="]" @56051
-    v932 = Strcat v929, v930, v931 @56037
-    v933 = String string="special" @56061
-    v934 = Call v928, v0, v932, v933 calleeKey="stylize" calleeName="ctx.stylize" @56029
-    ReturnCall v934 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @56029
-  b204(v935):
-    v936 = PropGet v0 key="seenRefs" @55381
-    v937 = PropGet v936 key="add" @55385
-    v938 = Call v937, v936, v914 calleeKey="add" calleeName="ctx.seenRefs.add" @55394
-    v939 = Convert v938 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @55381
-    v940 = PropGet v0 key="stylize" @55432
-    v941 = String string="<ref *" @55444
-    v942 = ToString v914 @55453
-    v943 = String string=">" @55453
-    v944 = Strcat v941, v942, v943 @55444
-    v945 = String string="special" @55463
-    v946 = Call v940, v0, v944, v945 calleeKey="stylize" calleeName="ctx.stylize" @55436
-    v947 = PropGet v0 key="compact" @55556
-    v948 = Boolean boolean=true @55572
-    v949 = StrictEq v947, v948 @55572
-    Branch v949 -> taken b205(| 0), notTaken b206(| 0) @55572
-  b205(v950):
-    v951 = NarrowByField v0, v950 key="compact" @55572
-    v952 = Integer @55674
-    v953 = ToString v946 @55689
-    v954 = String string=" " @55689
-    v955 = Integer @55702
-    v956 = ElemGet v807, v955 @55702
-    v957 = ToString v956 @55702
-    v958 = Strcat v953, v954, v957 @55686
-    ElemSet v807, v952, v958 @55674
-    Jump -> next b209(v951, v806) @55674
-  b206(v960):
-    v961 = NarrowByField v0, v960 key="compact" @55572
-    v962 = String string="" @55606
-    v963 = StrictEq v806, v962 @55606
-    Branch v963 -> taken b208(v946), notTaken b207() @55606
+    v921 = PropGet v0 key="seenRefs" @55329
+    v922 = PropGet v921 key="has" @55333
+    v923 = Call v922, v921, v913 calleeKey="has" calleeName="ctx.seenRefs.has" @55342
+    v924 = Convert v923 declared={type=boolean} illTypedCause=DeclarationWithoutBody @55329
+    v925 = ToBoolean v924 @55365
+    Branch v925 -> taken b203(| 0), notTaken b204(| 0) @55365
+  b203(v926):
+    v927 = PropGet v0 key="stylize" @56025
+    v928 = String string="[Circular *" @56037
+    v929 = ToString v913 @56051
+    v930 = String string="]" @56051
+    v931 = Strcat v928, v929, v930 @56037
+    v932 = String string="special" @56061
+    v933 = Call v927, v0, v931, v932 calleeKey="stylize" calleeName="ctx.stylize" @56029
+    ReturnCall v933 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @56029
+  b204(v934):
+    v935 = PropGet v0 key="seenRefs" @55381
+    v936 = PropGet v935 key="add" @55385
+    v937 = Call v936, v935, v913 calleeKey="add" calleeName="ctx.seenRefs.add" @55394
+    v938 = Convert v937 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @55381
+    v939 = PropGet v0 key="stylize" @55432
+    v940 = String string="<ref *" @55444
+    v941 = ToString v913 @55453
+    v942 = String string=">" @55453
+    v943 = Strcat v940, v941, v942 @55444
+    v944 = String string="special" @55463
+    v945 = Call v939, v0, v943, v944 calleeKey="stylize" calleeName="ctx.stylize" @55436
+    v946 = PropGet v0 key="compact" @55556
+    v947 = Boolean boolean=true @55572
+    v948 = StrictEq v946, v947 @55572
+    Branch v948 -> taken b205(| 0), notTaken b206(| 0) @55572
+  b205(v949):
+    v950 = NarrowByField v0, v949 key="compact" @55572
+    v951 = Integer @55674
+    v952 = ToString v945 @55689
+    v953 = String string=" " @55689
+    v954 = Integer @55702
+    v955 = ElemGet v806, v954 @55702
+    v956 = ToString v955 @55702
+    v957 = Strcat v952, v953, v956 @55686
+    ElemSet v806, v951, v957 @55674
+    Jump -> next b209(v950, v805) @55674
+  b206(v959):
+    v960 = NarrowByField v0, v959 key="compact" @55572
+    v961 = String string="" @55606
+    v962 = StrictEq v805, v961 @55606
+    Branch v962 -> taken b208(v945), notTaken b207() @55606
   b207():
-    v964 = ToString v946 @55626
-    v965 = String string=" " @55626
-    v966 = ToString v806 @55639
-    v967 = Strcat v964, v965, v966 @55623
-    Jump -> next b208(v967) @55623
-  b208(v968):
-    v969 = Convert v968 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @55590
-    Jump -> next b209(v961, v969) @55590
-  b209(v970: undefined|null|L34, v971: undefined|null|string):
-    Jump -> next b210(v970, v971) @55674
-  b210(v972: undefined|null|L34, v973: undefined|null|string):
-    Jump -> next b211(v972, v973) @56211
-  b211(v974: undefined|null|L34, v975: undefined|null|string):
-    v976 = PropGet v974 key="seen" @56242
-    v977 = PropGet v976 key="pop" @56246
-    v978 = Call v977, v976 calleeKey="pop" calleeName="ctx.seen.pop" @56251
-    v979 = PropGet v974 key="sorted" @56279
-    v980 = ToBoolean v979 @56297
-    Branch v980 -> taken b212(| 0), notTaken b220() @56297
-  b212(v981):
-    v982 = Boolean boolean=true @56347
-    v983 = StrictEq v979, v982 @56347
-    Branch v983 -> taken b213(), notTaken b214(v979) @56347
+    v963 = ToString v945 @55626
+    v964 = String string=" " @55626
+    v965 = ToString v805 @55639
+    v966 = Strcat v963, v964, v965 @55623
+    Jump -> next b208(v966) @55623
+  b208(v967):
+    v968 = Convert v967 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @55590
+    Jump -> next b209(v960, v968) @55590
+  b209(v969: undefined|null|L34, v970: undefined|null|string):
+    Jump -> next b210(v969, v970) @55674
+  b210(v971: undefined|null|L34, v972: undefined|null|string):
+    Jump -> next b211(v971, v972) @56211
+  b211(v973: undefined|null|L34, v974: undefined|null|string):
+    v975 = PropGet v973 key="seen" @56242
+    v976 = PropGet v975 key="pop" @56246
+    v977 = Call v976, v975 calleeKey="pop" calleeName="ctx.seen.pop" @56251
+    v978 = PropGet v973 key="sorted" @56279
+    v979 = ToBoolean v978 @56297
+    Branch v979 -> taken b212(| 0), notTaken b220() @56297
+  b212(v980):
+    v981 = Boolean boolean=true @56347
+    v982 = StrictEq v978, v981 @56347
+    Branch v982 -> taken b213(), notTaken b214(v978) @56347
   b213():
-    v984 = Undefined @56354
-    Jump -> next b214(v984) @56354
-  b214(v985):
-    v986 = GetModuleVariable variable=g237 @56400
-    v987 = Integer @56400
-    v988 = StrictEq v388, v987 @56400
-    Branch v988 -> taken b215(), notTaken b216() @56400
+    v983 = Undefined @56354
+    Jump -> next b214(v983) @56354
+  b214(v984):
+    v985 = GetModuleVariable variable=g237 @56400
+    v986 = Integer @56400
+    v987 = StrictEq v387, v986 @56400
+    Branch v987 -> taken b215(), notTaken b216() @56400
   b215():
-    v989 = GetModuleVariable variable=g134 @56421
-    v990 = Call v989, v850, v985 @56421
+    v988 = GetModuleVariable variable=g134 @56421
+    v989 = Call v988, v849, v984 @56421
     Jump -> next b220() @56421
   b216():
-    v991 = PropGet v805 key="length" @56505
-    v992 = Integer integer=1 @56541
-    v993 = Greater v991, v992 @56541
-    Branch v993 -> taken b217(), notTaken b220() @56541
+    v990 = PropGet v804 key="length" @56505
+    v991 = Integer integer=1 @56541
+    v992 = Greater v990, v991 @56541
+    Branch v992 -> taken b217(), notTaken b220() @56541
   b217():
-    v994 = PropGet v850 key="length" @56568
-    v995 = Sub v994, v991 @56584
-    v996 = GetModuleVariable variable=g134 @56619
-    v997 = GetModuleVariable variable=g132 @56644
-    v998 = Call v997, v850, v995 @56644
-    v999 = Call v996, v998, v985 @56619
-    v1000 = Integer @56716
-    v1001 = Convert v1000 declared={type=number} @56712
-    Jump -> next b218(v1001) @56712
-  b218(v1002: number):
+    v993 = PropGet v849 key="length" @56568
+    v994 = Sub v993, v990 @56584
+    v995 = GetModuleVariable variable=g134 @56619
+    v996 = GetModuleVariable variable=g132 @56644
+    v997 = Call v996, v849, v994 @56644
+    v998 = Call v995, v997, v984 @56619
+    v999 = Integer @56716
+    v1000 = Convert v999 declared={type=number} @56712
+    Jump -> next b218(v1000) @56712
+  b218(v1001: number):
     LoopHint @56712
-    v1004 = Less v1002, v991 @56723
-    Branch v1004 -> taken b219(), notTaken b220() @56723
+    v1003 = Less v1001, v990 @56723
+    Branch v1003 -> taken b219(), notTaken b220() @56723
   b219():
-    v1005 = Add v995, v1002 @56755
-    v1006 = ElemGet v999, v1002 @56760
-    ElemSet v850, v1005, v1006 @56740
-    v1008 = Increment v1002 @56735
-    v1009 = Convert v1008 declared={type=number} @56735
-    Jump -> next b218(v1009) @56735
+    v1004 = Add v994, v1001 @56755
+    v1005 = ElemGet v998, v1001 @56760
+    ElemSet v849, v1004, v1005 @56740
+    v1007 = Increment v1001 @56735
+    v1008 = Convert v1007 declared={type=number} @56735
+    Jump -> next b218(v1008) @56735
   b220():
-    v1010 = GetModuleVariable variable=g108 @56804
-    v1011 = Call v1010, -, v974, v850, v975, v807, v388, v833, v383 calleeName="reduceToSingleString" @56804
-    v1012 = PropGet v974 key="budget" @56903
-    v1013 = PropGet v974 key="indentationLvl" @56914
-    v1014 = ElemGet v1012, v1013 @56907
-    v1015 = ToBoolean v1014 @56903
-    Branch v1015 -> taken b221(| 0), notTaken b222(| 0) @56903
-  b221(v1016):
-    Jump -> next b223(v1016) @56903
-  b222(v1017):
-    v1018 = Integer @56937
-    Jump -> next b223(v1018) @56937
-  b223(v1019):
-    v1020 = PropGet v1011 key="length" @56969
-    v1021 = Add v1019, v1020 @56969
-    v1022 = PropGet v974 key="budget" @56983
-    v1023 = PropGet v974 key="indentationLvl" @56994
-    ElemSet v1022, v1023, v1021 @56987
-    v1025 = Integer integer=134217728 @57531
-    v1026 = Greater v1021, v1025 @57531
-    Branch v1026 -> taken b224(), notTaken b225() @57531
+    v1009 = GetModuleVariable variable=g108 @56804
+    v1010 = Call v1009, -, v973, v849, v974, v806, v387, v832, v382 calleeName="reduceToSingleString" @56804
+    v1011 = PropGet v973 key="budget" @56903
+    v1012 = PropGet v973 key="indentationLvl" @56914
+    v1013 = ElemGet v1011, v1012 @56907
+    v1014 = ToBoolean v1013 @56903
+    Branch v1014 -> taken b221(| 0), notTaken b222(| 0) @56903
+  b221(v1015):
+    Jump -> next b223(v1015) @56903
+  b222(v1016):
+    v1017 = Integer @56937
+    Jump -> next b223(v1017) @56937
+  b223(v1018):
+    v1019 = PropGet v1010 key="length" @56969
+    v1020 = Add v1018, v1019 @56969
+    v1021 = PropGet v973 key="budget" @56983
+    v1022 = PropGet v973 key="indentationLvl" @56994
+    ElemSet v1021, v1022, v1020 @56987
+    v1024 = Integer integer=134217728 @57531
+    v1025 = Greater v1020, v1024 @57531
+    Branch v1025 -> taken b224(), notTaken b225() @57531
   b224():
-    v1027 = Integer integer=-1 @57558
-    PropSet v974, v1027 key="depth" @57546
+    v1026 = Integer integer=-1 @57558
+    PropSet v973, v1026 key="depth" @57546
     Jump -> next b225() @57546
   b225():
-    v1029 = Convert v1011 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @57575
-    Return v1029 @57575
+    v1028 = Convert v1010 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @57575
+    Return v1028 @57575
   b226() role=CatchHandler:
-    v1030 = CatchValue @54628
-    v1031 = Builtin builtin=RangeError [isNotReadFromHolder] @54653
-    v1032 = InstanceOf v1030, v1031 @54642
-    v1033 = ToBoolean v1032 @54638
-    Branch v1033 -> taken b227(| 0), notTaken b230(v1030) @54638
-  b227(v1034):
-    v1035 = PropGet v1030 key="message" @54667
-    v1036 = GetModuleVariable variable=g234 @54683
-    v1037 = StrictEq v1035, v1036 @54683
-    Branch v1037 -> taken b228(| 0), notTaken b229(| 0) @54683
-  b228(v1038):
-    v1039 = NarrowByField v1030, v1038 key="message" @54683
-    v1040 = GetModuleVariable variable=g186 @54741
-    v1041 = GetModuleVariable variable=g66 @54768
-    v1042 = Call v1041, -, v383, v19, v54 calleeName="getCtxStyle" @54768
-    v1043 = Integer @54806
-    v1044 = Integer integer=-1 @54809
-    v1045 = Call v1040, v1042, v1043, v1044 @54741
-    v1046 = PropGet v0 key="seen" @54820
-    v1047 = PropGet v1046 key="pop" @54824
-    v1048 = Call v1047, v1046 calleeKey="pop" calleeName="ctx.seen.pop" @54829
-    PropSet v0, v841 key="indentationLvl" @54842
-    v1050 = PropGet v0 key="stylize" @54892
-    v1051 = String string="[" @54913
-    v1052 = ToString v1045 @54917
-    v1053 = String string=": Inspection interrupted prematurely. Maximum call stack size exceeded.]" @54917
-    v1054 = Strcat v1051, v1052, v1053 @54913
-    v1055 = String string="special" @55016
-    v1056 = Call v1050, v0, v1054, v1055 calleeKey="stylize" calleeName="ctx.stylize" @54896
-    ReturnCall v1056 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @54896
-  b229(v1057):
-    v1058 = NarrowByField v1030, v1057 key="message" @54683
-    Jump -> next b230(v1058) @54683
-  b230(v1059):
-    v1060 = GetModuleVariable variable=g228 @55056
-    v1061 = CheckInitialized v1060 name="AssertionError" @55056
-    v1062 = String string="handleMaxCallStackSize assertion failed: " @55071
-    v1063 = Builtin builtin=String [isNotReadFromHolder] @55117
-    v1064 = Builtin builtin=GlobalThis [isNotReadFromHolder] @55117
-    v1065 = Call v1063, v1064, v1059 @55117
-    v1066 = Add v1062, v1065 @55117
-    v1067 = Boolean boolean=true @55130
-    v1068 = Construct v1061, -, v1066, v1067 calleeName="AssertionError" @55056
-    Throw v1068 @55134
+    v1029 = CatchValue @54628
+    v1030 = Builtin builtin=RangeError [isNotReadFromHolder] @54653
+    v1031 = InstanceOf v1029, v1030 @54642
+    v1032 = ToBoolean v1031 @54638
+    Branch v1032 -> taken b227(| 0), notTaken b230(v1029) @54638
+  b227(v1033):
+    v1034 = PropGet v1029 key="message" @54667
+    v1035 = GetModuleVariable variable=g234 @54683
+    v1036 = StrictEq v1034, v1035 @54683
+    Branch v1036 -> taken b228(| 0), notTaken b229(| 0) @54683
+  b228(v1037):
+    v1038 = NarrowByField v1029, v1037 key="message" @54683
+    v1039 = GetModuleVariable variable=g186 @54741
+    v1040 = GetModuleVariable variable=g66 @54768
+    v1041 = Call v1040, -, v382, v19, v53 calleeName="getCtxStyle" @54768
+    v1042 = Integer @54806
+    v1043 = Integer integer=-1 @54809
+    v1044 = Call v1039, v1041, v1042, v1043 @54741
+    v1045 = PropGet v0 key="seen" @54820
+    v1046 = PropGet v1045 key="pop" @54824
+    v1047 = Call v1046, v1045 calleeKey="pop" calleeName="ctx.seen.pop" @54829
+    PropSet v0, v840 key="indentationLvl" @54842
+    v1049 = PropGet v0 key="stylize" @54892
+    v1050 = String string="[" @54913
+    v1051 = ToString v1044 @54917
+    v1052 = String string=": Inspection interrupted prematurely. Maximum call stack size exceeded.]" @54917
+    v1053 = Strcat v1050, v1051, v1052 @54913
+    v1054 = String string="special" @55016
+    v1055 = Call v1049, v0, v1053, v1054 calleeKey="stylize" calleeName="ctx.stylize" @54896
+    ReturnCall v1055 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @54896
+  b229(v1056):
+    v1057 = NarrowByField v1029, v1056 key="message" @54683
+    Jump -> next b230(v1057) @54683
+  b230(v1058):
+    v1059 = GetModuleVariable variable=g228 @55056
+    v1060 = CheckInitialized v1059 name="AssertionError" @55056
+    v1061 = String string="handleMaxCallStackSize assertion failed: " @55071
+    v1062 = Builtin builtin=String [isNotReadFromHolder] @55117
+    v1063 = Builtin builtin=GlobalThis [isNotReadFromHolder] @55117
+    v1064 = Call v1062, v1063, v1058 @55117
+    v1065 = Add v1061, v1064 @55117
+    v1066 = Boolean boolean=true @55130
+    v1067 = Construct v1060, -, v1065, v1066 calleeName="AssertionError" @55056
+    Throw v1067 @55134
 }
 function f215 name="copyTypedArray" module=m29 position=57583 role=Library flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|string, v1: anything):

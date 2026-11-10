@@ -11,6 +11,7 @@
 // A compiler of patterns compares several neighboring letters by one load and one mask, and takes the load apart differently for texts of one and of two bytes a character. How the letters are grouped hangs on where the
 // classes stand between them.
 import { mkdirSync, writeFileSync } from "node:fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 const letters = "ghijklmnopqrstuvwxy";
 const classes = ["\\d", "[^z]", "[a-f]", "."];
@@ -242,7 +243,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && written < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     written++;
   }
   console.log(written);
@@ -252,7 +253,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

@@ -13,5 +13,5 @@ function reenters(list) { let got; for (let turn = 0; turn < turns; turn++) got 
 for (let round = 0; round < 2; round++) { const a = source.slice(), b = source.slice(), c = source.slice(), holder = { got: [] };
   console.log(say(grows(a)), say(a), say(shrinks(b)), say(b), say(stores(c)), say(c), say(viaThis(source.slice(), holder)), say(holder.got), say(viaClosure(source.slice())), log.length, say(reenters(source.slice())));
   for (const f of [fails, failsLater]) { try { console.log(say(f(source.slice()))); } catch (e) { console.log(e.constructor.name, e.message); } } }
-// STATISTIC: NewListsInPlaceOfSpecies >= 1
-// STATISTIC: NumbersStoredByKindOfStorageInCopiedRuns <= 2
+// STATISTIC: ArraySpeciesLookupsElided >= 1
+// STATISTIC: NumberStoresDispatchedByIndexingType <= 2

@@ -8,7 +8,7 @@
 # print(all);
 # -- end of source
 # The list that `kept` holds is read in front of its loop. `source` holds a text: nothing is tested in front of a loop for it, so nothing is read there either.
-# RUN(COUNT): compile CapturedListsReadInFrontOfLoops mechanisms=all
-# COUNT: statistic CapturedListsReadInFrontOfLoops 1
+# RUN(COUNT): compile CapturedArrayReadsHoisted mechanisms=all
+# COUNT: statistic CapturedArrayReadsHoisted 1
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 862

@@ -475,6 +475,11 @@ pub struct TranspilerJob {
     pub(crate) next: unbounded_queue::Link<TranspilerJob>,
 }
 
+// Every VM holds `TRANSPILER_JOB_HIVE_CAP` of these inline. `Ticket` is one word larger in a build with debug assertions.
+const _: () = assert!(
+    core::mem::size_of::<TranspilerJob>() == if cfg!(debug_assertions) { 360 } else { 352 }
+);
+
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
 unsafe impl unbounded_queue::Linked for TranspilerJob {
     #[inline]

@@ -250,7 +250,8 @@ extern "C" fn Bun__fetchBuiltinModule(
         return true;
     }
     match __bun_fetch_builtin_module(jsc_vm, global_object, specifier) {
-        Some(resolved) => {
+        Some(mut resolved) => {
+            SourceValidator::NOT_A_FILE.apply(&mut resolved);
             *ret = ErrorableResolvedSource::ok(resolved);
             true
         }

@@ -4,7 +4,13 @@
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { Chrome } from "./cdp.ts";
-import { cases } from "./cases.ts";
+import { cases as cases1 } from "./cases.ts";
+import { cases as cases3 } from "./cases3.ts";
+import { cases as cases5 } from "./cases5.ts";
+import { cases as cases6 } from "./cases6.ts";
+import { cases as cases7 } from "./cases7.ts";
+import { cases as cases8 } from "./cases8.ts";
+const cases = { ...cases1, ...cases3, ...cases5, ...cases6, ...cases7, ...cases8 };
 
 const bunBin = process.argv[2];
 const filter = process.argv[3];

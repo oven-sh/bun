@@ -30,6 +30,7 @@ export const cases: Record<string, Case> = {
   },
   // item 2
   item2_asset_layer_condition: {
+    expectBuildError: true,
     files: {
       "entry.css": `@import "./a.svg" layer(w) screen;\n@import "EXT/ext.css" layer(v);\n@layer v { .t { color: green } }\n@layer w { .t { color: red } }\n`,
       "a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
@@ -60,12 +61,14 @@ export const cases: Record<string, Case> = {
   },
   // item 4
   item4_svg: {
+    expectBuildError: true,
     files: {
       "entry.css": `@import "./a.svg";\n.t { color: green }\n`,
       "a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
     },
   },
   item4_unknown_extension: {
+    expectBuildError: true,
     files: {
       "entry.css": `@import "./theme.foo";\n`,
       "theme.foo": `.t { color: green }`,
@@ -81,6 +84,7 @@ export const cases: Record<string, Case> = {
     external: { "ext.css": `.u { color: blue }` },
   },
   sib_asset_layer_then_external_layer: {
+    expectBuildError: true,
     files: {
       "entry.css": `@import "./a.svg" layer(w);\n@import "EXT/ext.css" layer(v);\n@layer v { .t { color: green } }\n@layer w { .t { color: red } }\n`,
       "a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,

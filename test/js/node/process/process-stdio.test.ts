@@ -13,6 +13,7 @@ describe.concurrent("process-stdio", () => {
         `
           const fs = require("node:fs");
           const original = new Error("stdio constructor sentinel");
+          const Constructor = fs[${JSON.stringify(name === "stdin" ? "ReadStream" : "WriteStream")}];
           let calls = 0;
           fs[${JSON.stringify(name === "stdin" ? "ReadStream" : "WriteStream")}] = function () {
             calls++;
@@ -21,6 +22,8 @@ describe.concurrent("process-stdio", () => {
           let caughtOriginal = false;
           try { void process.${name}; } catch (error) { caughtOriginal = error === original; }
           fs.writeSync(1, JSON.stringify({ calls, caughtOriginal }) + "\\n");
+          fs[${JSON.stringify(name === "stdin" ? "ReadStream" : "WriteStream")}] = Constructor;
+          ${name === "stdin" ? "" : `process.${name}.write("recovered ${name}\\n");`}
           process.exitCode = calls === 1 && caughtOriginal ? 0 : 1;
         `,
       ],
@@ -32,8 +35,8 @@ describe.concurrent("process-stdio", () => {
     proc.stdin.end();
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: '{"calls":1,"caughtOriginal":true}\n',
-      stderr: "",
+      stdout: '{"calls":1,"caughtOriginal":true}\n' + (name === "stdout" ? "recovered stdout\n" : ""),
+      stderr: name === "stderr" ? "recovered stderr\n" : "",
       exitCode: 0,
     });
   });

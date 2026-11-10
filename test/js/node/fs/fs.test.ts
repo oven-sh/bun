@@ -3173,6 +3173,250 @@ describe("writeFileSync", () => {
   });
 });
 
+// Node's sync forms type-check `options.signal` and never read it again:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L340-L342
+describe("readFileSync / writeFileSync / appendFileSync with an aborted options.signal", () => {
+  const aborted = (): any => ({ signal: AbortSignal.abort() });
+  const codeOf = (fn: () => unknown) => {
+    try {
+      fn();
+      return "ok";
+    } catch (e: any) {
+      return e.code;
+    }
+  };
+
+  it("readFileSync reads a path", () => {
+    // More than the 256 KB that one read takes before the stat.
+    const big = Buffer.alloc(300_000, "b").toString();
+    using dir = tempDir("fs-sync-signal-read", { text: "hello", empty: "", big });
+    const at = (name: string) => join(String(dir), name);
+    expect({
+      utf8: readFileSync(at("text"), { encoding: "utf8", ...aborted() }),
+      buffer: readFileSync(at("text"), aborted()).toString("latin1"),
+      empty: readFileSync(at("empty"), { encoding: "utf8", ...aborted() }),
+      big: readFileSync(at("big"), { encoding: "utf8", ...aborted() }) === big,
+    }).toEqual({ utf8: "hello", buffer: "hello", empty: "", big: true });
+  });
+
+  it("readFileSync reads a file descriptor from its position and leaves it open", () => {
+    using dir = tempDir("fs-sync-signal-read-fd", { text: "ABCDEF" });
+    const fd = openSync(join(String(dir), "text"), "r");
+    try {
+      readSync(fd, Buffer.alloc(2), 0, 2, null);
+      expect({
+        first: readFileSync(fd, { encoding: "utf8", ...aborted() }),
+        second: readFileSync(fd, { encoding: "utf8", ...aborted() }),
+        size: fstatSync(fd).size,
+      }).toEqual({ first: "CDEF", second: "", size: 6 });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("writeFileSync writes a path", () => {
+    using dir = tempDir("fs-sync-signal-write", { existing: "hello", append: "x", inPlace: "hello" });
+    const at = (name: string) => join(String(dir), name);
+    writeFileSync(at("string"), "W", aborted());
+    writeFileSync(at("buffer"), Buffer.from("B"), aborted());
+    writeFileSync(at("existing"), "W", aborted());
+    writeFileSync(at("append"), "A", { flag: "a", ...aborted() });
+    writeFileSync(at("inPlace"), "J", { flag: "r+", ...aborted() });
+    // A call that stops after its open leaves an empty file, and then the first retry fails.
+    const exclusive = [
+      codeOf(() => writeFileSync(at("exclusive"), "X", { flag: "wx", ...aborted() })),
+      codeOf(() => writeFileSync(at("exclusive"), "Y", { flag: "wx", ...aborted() })),
+    ];
+    expect({
+      string: readFileSync(at("string"), "utf8"),
+      buffer: readFileSync(at("buffer"), "utf8"),
+      existing: readFileSync(at("existing"), "utf8"),
+      append: readFileSync(at("append"), "utf8"),
+      inPlace: readFileSync(at("inPlace"), "utf8"),
+      exclusive: [...exclusive, readFileSync(at("exclusive"), "utf8")],
+    }).toEqual({
+      string: "W",
+      buffer: "B",
+      existing: "W",
+      append: "xA",
+      inPlace: "Jello",
+      exclusive: ["ok", "EEXIST", "X"],
+    });
+  });
+
+  it("writeFileSync writes a file descriptor at its position", () => {
+    using dir = tempDir("fs-sync-signal-write-fd", { text: "ABCDEF" });
+    const path = join(String(dir), "text");
+    const fd = openSync(path, "r+");
+    try {
+      readSync(fd, Buffer.alloc(2), 0, 2, null);
+      writeFileSync(fd, "xy", aborted());
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(path, "utf8")).toBe("ABxyEF");
+  });
+
+  it("appendFileSync appends to a path and to a file descriptor", () => {
+    using dir = tempDir("fs-sync-signal-append", { path: "x", fd: "x" });
+    const at = (name: string) => join(String(dir), name);
+    fs.appendFileSync(at("path"), "A", aborted());
+    const fd = openSync(at("fd"), "a");
+    try {
+      fs.appendFileSync(fd, "A", aborted());
+    } finally {
+      closeSync(fd);
+    }
+    expect({ path: readFileSync(at("path"), "utf8"), fd: readFileSync(at("fd"), "utf8") }).toEqual({
+      path: "xA",
+      fd: "xA",
+    });
+  });
+
+  it("an aborted signal from AbortSignal.any()", () => {
+    using dir = tempDir("fs-sync-signal-any", {});
+    const path = join(String(dir), "file");
+    const options: any = { encoding: "utf8", signal: AbortSignal.any([AbortSignal.abort()]) };
+    writeFileSync(path, "W", options);
+    expect({ aborted: options.signal.aborted, read: readFileSync(path, options) }).toEqual({
+      aborted: true,
+      read: "W",
+    });
+  });
+
+  // The parser reads `encoding`, `flag` and `mode` before `signal`, and `flush` after it.
+  it.each(["encoding", "flag", "mode", "flush"])("an options.%s getter that aborts the controller", key => {
+    using dir = tempDir("fs-sync-signal-getter", { file: "hello" });
+    const path = join(String(dir), "file");
+    const controller = new AbortController();
+    const options: any = {
+      signal: controller.signal,
+      get [key]() {
+        controller.abort();
+        return undefined;
+      },
+    };
+    writeFileSync(path, "W", options);
+    expect({ aborted: controller.signal.aborted, read: readFileSync(path, options).toString("latin1") }).toEqual({
+      aborted: true,
+      read: "W",
+    });
+  });
+
+  it("a call from inside the abort listener of the signal", () => {
+    using dir = tempDir("fs-sync-signal-listener", { file: "hello" });
+    const path = join(String(dir), "file");
+    const controller = new AbortController();
+    const options: any = { encoding: "utf8", signal: controller.signal };
+    let seen: unknown;
+    controller.signal.addEventListener("abort", () => {
+      try {
+        const before = readFileSync(path, options);
+        writeFileSync(path, "W", options);
+        fs.appendFileSync(path, "A", options);
+        seen = [before, readFileSync(path, options)];
+      } catch (e) {
+        seen = e;
+      }
+    });
+    controller.abort();
+    expect(seen).toEqual(["hello", "WA"]);
+  });
+
+  it("the error is the error of the operation", () => {
+    using dir = tempDir("fs-sync-signal-errors", {});
+    expect({
+      directory: codeOf(() => readFileSync(String(dir), aborted())),
+      missing: codeOf(() => readFileSync(join(String(dir), "missing"), aborted())),
+    }).toEqual({ directory: "EISDIR", missing: "ENOENT" });
+  });
+
+  it("the promise forms still reject with the same options object", async () => {
+    using dir = tempDir("fs-sync-signal-shared", { read: "hello" });
+    const at = (name: string) => join(String(dir), name);
+    const options: any = { encoding: "utf8", signal: AbortSignal.abort() };
+    const abortError = { name: "AbortError", code: "ABORT_ERR" };
+    const before = readFileSync(at("read"), options);
+    await expect(promises.readFile(at("read"), options)).rejects.toMatchObject(abortError);
+    await expect(promises.writeFile(at("write"), "W", options)).rejects.toMatchObject(abortError);
+    const created = existsSync(at("write"));
+    writeFileSync(at("write"), "W", options);
+    expect({ before, created, after: readFileSync(at("write"), options) }).toEqual({
+      before: "hello",
+      created: false,
+      after: "W",
+    });
+  });
+
+  it.each([[{}], [1]])("a signal that is not an AbortSignal (%p) fails every form before any I/O", async signal => {
+    using dir = tempDir("fs-sync-signal-invalid", { read: "hello" });
+    const at = (name: string) => join(String(dir), name);
+    const options: any = { signal };
+    const unreachable = () => {
+      throw new Error("the callback must not run");
+    };
+    const rejected = async (promise: Promise<unknown>) => {
+      try {
+        await promise;
+        return "resolved";
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+    expect({
+      readFileSync: codeOf(() => readFileSync(at("read"), options)),
+      writeFileSync: codeOf(() => writeFileSync(at("w1"), "W", options)),
+      appendFileSync: codeOf(() => fs.appendFileSync(at("w2"), "A", options)),
+      readFile: codeOf(() => fs.readFile(at("read"), options, unreachable)),
+      writeFile: codeOf(() => fs.writeFile(at("w3"), "W", options, unreachable)),
+      appendFile: codeOf(() => fs.appendFile(at("w4"), "A", options, unreachable)),
+      "promises.readFile": await rejected(promises.readFile(at("read"), options)),
+      "promises.writeFile": await rejected(promises.writeFile(at("w5"), "W", options)),
+      "promises.appendFile": await rejected(promises.appendFile(at("w6"), "A", options)),
+      files: readdirSync(String(dir)),
+    }).toEqual({
+      readFileSync: "ERR_INVALID_ARG_TYPE",
+      writeFileSync: "ERR_INVALID_ARG_TYPE",
+      appendFileSync: "ERR_INVALID_ARG_TYPE",
+      readFile: "ERR_INVALID_ARG_TYPE",
+      writeFile: "ERR_INVALID_ARG_TYPE",
+      appendFile: "ERR_INVALID_ARG_TYPE",
+      "promises.readFile": "ERR_INVALID_ARG_TYPE",
+      "promises.writeFile": "ERR_INVALID_ARG_TYPE",
+      "promises.appendFile": "ERR_INVALID_ARG_TYPE",
+      files: ["read"],
+    });
+  });
+
+  it("a sync call leaves no signal on the heap", async () => {
+    using dir = tempDir("fs-sync-signal-heap", { read: "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+        for (let i = 0; i < 1000; i++) {
+          const { signal } = new AbortController();
+          // The wrapper of a live signal with a listener stays on the heap while native code counts a pending activity on it.
+          signal.addEventListener("abort", () => {});
+          fs.readFileSync("read", { signal });
+          fs.writeFileSync("write", "W", { signal });
+          fs.appendFileSync("append", "A", { signal });
+        }
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.AbortSignal ?? 0);`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toMatch(/^\d+\n$/);
+    expect(Number(stdout)).toBeLessThanOrEqual(10);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("writeFile/appendFile data argument", () => {
   it("rejects a String wrapper object on the sync and callback paths, like node", () => {
     // Node only accepts primitive strings here (`new String("x")` is an

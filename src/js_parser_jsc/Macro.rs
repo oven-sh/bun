@@ -791,6 +791,16 @@ impl<'a> Run<'a> {
                 }
                 return Ok(expr);
             }
+            T::Object if value.is_decimal() => {
+                self.log.add_error_fmt(
+                    Some(self.source),
+                    self.caller.loc,
+                    format_args!(
+                        "cannot coerce Decimal to Bun's AST. Return its toString() instead"
+                    ),
+                );
+                return Err(MacroError::MacroFailed);
+            }
             // TODO: optimize this
             T::Object => {
                 self.is_top_level = false;

@@ -218,7 +218,7 @@ enum Space {
 impl Space {
     /// Same interpretation as `JSON.stringify`'s `space`.
     fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
-        let space = space_value.unwrap_boxed_primitive(global)?;
+        let space = space_value.unwrap_boxed_indent(global)?;
         if space.is_number() {
             let n = space.as_number();
             if n.is_nan() || n < 1.0 {
@@ -325,7 +325,7 @@ impl Stringifier {
 
         if let Some(attributes) = node.get(global, "attributes")? {
             if !attributes.is_null() {
-                if !attributes.is_object() || attributes.is_array() {
+                if !attributes.is_object() || attributes.is_array() || attributes.is_decimal() {
                     return Err(global
                         .throw(format_args!(
                             "XML.stringify: a node's attributes must be an object"

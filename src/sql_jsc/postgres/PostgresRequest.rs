@@ -145,6 +145,9 @@ fn parameter_text(
         if is_list(js_type) && tag.array_element().is_some() {
             return array_literal(global, value, tag).map(Some);
         }
+        if let Some(text) = value.text_of_decimal() {
+            return Ok(Some(text.into_js(global)?));
+        }
         if is_list(js_type) || value.implements_to_string(global)? {
             return Ok(Some(value.to_js_string(global)?.to_js()));
         }

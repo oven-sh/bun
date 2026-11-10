@@ -824,7 +824,9 @@ fn write_json(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> J
             title.extend_from_slice(b"[Circular]");
             return Ok(());
         }
-        if message.eq_ascii(b"JSON.stringify cannot serialize BigInt.") {
+        if message.eq_ascii(b"JSON.stringify cannot serialize BigInt.")
+            || message.eq_ascii(b"Decimal cannot be serialized as JSON")
+        {
             return write_inspected(global, value, title);
         }
     }
@@ -849,7 +851,7 @@ fn write_placeholder(
         b'c' => return Ok(()),
         b'd' | b'i' if value.is_big_int() => return write_inspected(global, value, title),
         b'd' | b'i' | b'f' if value.is_symbol() => f64::NAN,
-        b'd' => value.to_number(global)?,
+        b'd' => value.to_number_to_print(global)?,
         b'i' => parse_int(value.to_utf8(global)?.slice(), 0).unwrap_or(f64::NAN),
         b'f' => parse_float(value.to_utf8(global)?.slice()),
         _ => return write_inspected(global, value, title),

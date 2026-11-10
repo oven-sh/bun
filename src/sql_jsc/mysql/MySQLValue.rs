@@ -137,6 +137,11 @@ impl<'a> Value<'a> {
                 )));
             }
 
+            // JSON would have quotes around it.
+            if let Some(text) = value.text_of_decimal() {
+                return Ok(Value::String(text.into_utf8()));
+            }
+
             // It's something internal
             if !tag.is_indexable() {
                 return Err(global_object.throw_invalid_arguments(format_args!(

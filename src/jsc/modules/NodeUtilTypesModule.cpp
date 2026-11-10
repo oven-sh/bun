@@ -5,6 +5,7 @@
 #include "node/crypto/JSKeyObject.h"
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSMapIterator.h>
+#include "BunDecimal.h"
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/BooleanObject.h>
 #include <JavaScriptCore/JSWrapperObject.h>
@@ -83,6 +84,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsArgumentsObject,
 
     __builtin_unreachable();
 }
+
+// The text, or undefined if the argument is not a Decimal.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionTextOfDecimal, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue value = callFrame->argument(0);
+    if (!Bun::isDecimal(value))
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(JSC::jsString(globalObject->vm(), Bun::textOfDecimal(value)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBigIntObject,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe))
@@ -815,6 +826,9 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
             return false;
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }
+
+    if (!Bun::decimalsDequal(actual, expected))
+        return false;
 
     // Boxed primitives: [[*Data]] compared via Object.is, then own props as a subset — node
     // unwraps the slot before the property walk. Concrete classes only (JSWrapperObject has no

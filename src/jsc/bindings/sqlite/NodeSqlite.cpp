@@ -42,6 +42,7 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #endif
 
 #include "NodeSqlite.h"
+#include "BunDecimal.h"
 #include "SqliteUserFunction.h"
 
 #include "ZigGlobalObject.h"
@@ -386,6 +387,10 @@ static SqliteFromJS sqliteFromJS(JSGlobalObject* globalObject, ThrowScope& scope
         r = sink.int64(v);
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         r = sink.blob(view->span());
+    } else if (Bun::isDecimal(value)) {
+        // As text: REAL has fewer digits.
+        auto text = Bun::textOfDecimal(value).utf8();
+        r = sink.text(byteCast<char>(text.span()));
     } else {
         return SqliteFromJS::Unsupported;
     }
@@ -2230,7 +2235,7 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
     // ("0", "1", …) through the named-param path.
     if (argc > 0) {
         JSValue arg0 = callFrame->argument(0);
-        if (arg0.isObject() && !dynamicDowncast<JSArrayBufferView>(arg0)) {
+        if (arg0.isObject() && !dynamicDowncast<JSArrayBufferView>(arg0) && !Bun::isDecimal(arg0)) {
             JSObject* named = arg0.getObject();
             if (m_allowBareNamedParams && !m_bareNamedParams.has_value()) {
                 // Build into a local first so a mid-loop failure (conflicting

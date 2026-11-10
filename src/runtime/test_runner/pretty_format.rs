@@ -907,7 +907,8 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
-        if !value.js_type().is_function() {
+        let decimal = value.printed_decimal(global_this)?;
+        if decimal.is_none() && !value.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
             let name_str = value.get_name_property(global_this)?;
             if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
@@ -928,9 +929,14 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if self.formatter.indent == 0 {
             let _ = self.writer.write_all(b"\n");
         }
-        let classname = value.get_class_name(global_this)?;
-        if !classname.is_empty() && !classname.eq_ascii(b"Object") {
-            let _ = self.writer.write_fmt(format_args!("{} ", classname));
+        if let Some(decimal) = decimal {
+            let _ = self.writer.write_all(&decimal);
+            let _ = self.writer.write_all(b" ");
+        } else {
+            let classname = value.get_class_name(global_this)?;
+            if !classname.is_empty() && !classname.eq_ascii(b"Object") {
+                let _ = self.writer.write_fmt(format_args!("{} ", classname));
+            }
         }
 
         let _ = self.writer.write_all(b"{\n");
@@ -2399,7 +2405,9 @@ impl<'a> Formatter<'a> {
                     if iter_i == 0 {
                         let object_name = value.get_class_name(self.global_this)?;
 
-                        if !object_name.eq_ascii(b"Object") {
+                        if let Some(text) = value.printed_decimal(self.global_this)? {
+                            writer.write_all(&text);
+                        } else if !object_name.eq_ascii(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));
                         } else {
                             // don't write "Object"
@@ -3128,6 +3136,9 @@ fn length_of(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
 
 /// `Number(value)`, so a BigInt converts instead of throwing.
 pub(crate) fn to_number(global: &JSGlobalObject, value: JSValue) -> JsResult<f64> {
+    if value.is_decimal() {
+        return value.to_number_to_print(global);
+    }
     unsafe extern "C" {
         safe fn SnapshotFormat__toNumber(global: &JSGlobalObject, value: JSValue) -> f64;
     }
@@ -3975,6 +3986,22 @@ impl Formatter<'_> {
     ) -> JsResult<()> {
         let global = self.global_this;
         let hit_max_depth = self.depth > self.max_depth;
+        // pretty-format knows none. Its toJSON() throws.
+        if let Some(text) = value.printed_decimal(global)? {
+            out.extend_from_slice(&text);
+            if !hit_max_depth {
+                let without_properties = out.len();
+                out.extend_from_slice(b" {");
+                let empty = out.len();
+                self.print_object_properties(out, value)?;
+                if out.len() == empty {
+                    out.truncate(without_properties);
+                } else {
+                    out.push(b'}');
+                }
+            }
+            return Ok(());
+        }
         // Only Bun gives these a `toJSON()`. Node doesn't.
         let is_bun_extension = matches!(value.get_class_info_name(), Some(b"Headers" | b"FormData" | b"URLSearchParams"));
         if self.call_to_json && !hit_max_depth && !has_called_to_json && !is_bun_extension {

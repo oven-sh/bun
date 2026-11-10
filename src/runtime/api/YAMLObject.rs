@@ -84,7 +84,7 @@ enum Space {
 
 impl Space {
     fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
-        let space = space_value.unwrap_boxed_primitive(global)?;
+        let space = space_value.unwrap_boxed_indent(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
             // toInt32() wraps large values and Infinity to 0, which is wrong.

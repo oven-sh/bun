@@ -1,6 +1,7 @@
 
 
 #include "root.h"
+#include "BunDecimal.h"
 
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/JSBigInt.h"
@@ -883,6 +884,8 @@ void JSSQLStatement::destroy(JSC::JSCell* cell)
 // A Date, a Map or a Promise is a value (one that cannot be bound), not an object of named parameters.
 static bool holdsNamedParameters(JSC::JSObject* object)
 {
+    if (Bun::isDecimal(object)) [[unlikely]]
+        return false;
     switch (object->type()) {
     case FinalObjectType:
     case ObjectType:
@@ -940,6 +943,11 @@ static int fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Sin
         return sink.blob(view->span());
     if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(value))
         return sink.blob(buffer->impl()->span());
+    // As text: REAL has fewer digits. SQLite gives a column of type DECIMAL or NUMERIC what its affinity makes of it.
+    if (Bun::isDecimal(value)) [[unlikely]] {
+        auto text = Bun::textOfDecimal(value).utf8();
+        return sink.text(byteCast<char>(text.span()));
+    }
     return kUnsupportedValue;
 }
 

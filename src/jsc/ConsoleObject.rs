@@ -2427,7 +2427,7 @@ pub mod formatter {
                                         if !(next_value.is_number() || !next_value.is_symbol()) {
                                             break 'double_convert;
                                         }
-                                        let mut value = next_value.to_number(global)?;
+                                        let mut value = next_value.to_number_to_print(global)?;
 
                                         if !value.is_finite() {
                                             // for NaN and the string Infinity and
@@ -2508,7 +2508,7 @@ pub mod formatter {
                                     // parseFloat, because spec says to convert the
                                     // value to a string and then parse as a number,
                                     // but we are just coercing a number.
-                                    break 'brk next_value.to_number(global)?;
+                                    break 'brk next_value.to_number_to_print(global)?;
                                 };
 
                                 let abs = converted.abs();
@@ -2924,7 +2924,17 @@ pub mod formatter {
                     estimated_line_length: &mut self.formatter.estimated_line_length,
                 };
 
-                if let Some(name_str) = get_object_name(global_this, value)? {
+                if let Some(text) = value.printed_decimal(global_this)? {
+                    if C {
+                        // Not through `print`, which would count them as text.
+                        let _ = writer.ctx.write_all(pfmt!("<r><yellow>", true).as_bytes());
+                    }
+                    writer.write_all(&text);
+                    if C {
+                        let _ = writer.ctx.write_all(pfmt!("<r>", true).as_bytes());
+                    }
+                    writer.write_all(b" ");
+                } else if let Some(name_str) = get_object_name(global_this, value)? {
                     writer.print(format_args!("{name_str} "));
                 }
             }
@@ -5373,6 +5383,12 @@ pub mod formatter {
             let always_newline =
                 !single_line && (self.always_newline_scope || self.good_time_for_a_new_line());
             if self.depth > self.max_depth {
+                if let Some(text) = value.printed_decimal(self.global_this)? {
+                    let _ = writer_.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                    let _ = writer_.write_all(&text);
+                    let _ = writer_.write_all(pfmt!("<r>", C).as_bytes());
+                    return Ok(());
+                }
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
@@ -5490,6 +5506,11 @@ pub mod formatter {
                         self.map.insert(value, ());
                     }
                     result?;
+                } else if let Some(text) = value.printed_decimal(self.global_this)? {
+                    self.add_for_new_line(text.len());
+                    let _ = writer_.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                    let _ = writer_.write_all(&text);
+                    let _ = writer_.write_all(pfmt!("<r>", C).as_bytes());
                 } else {
                     if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");

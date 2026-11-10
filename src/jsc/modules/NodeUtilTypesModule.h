@@ -29,6 +29,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionIsExternal);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsDate);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsArgumentsObject);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBigIntObject);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionTextOfDecimal);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBooleanObject);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsNumberObject);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStringObject);

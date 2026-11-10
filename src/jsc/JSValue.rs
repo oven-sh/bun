@@ -1549,6 +1549,46 @@ impl JSValue {
     pub fn temporal_type(self) -> TemporalType {
         crate::cpp::Bun__JSValue__temporalType(self)
     }
+
+    /// What `toString()` of a `Decimal` is, or `None` if this is not one.
+    pub fn text_of_decimal(self) -> Option<bun_core::String> {
+        if !self.is_cell() {
+            return None;
+        }
+        let mut out = bun_core::String::EMPTY;
+        // SAFETY: `out` is a valid place for the one string that it writes.
+        let is_decimal = unsafe { crate::cpp::Bun__JSValue__textOfDecimal(self, &mut out) };
+        is_decimal.then_some(out)
+    }
+
+    /// `ToNumber`, but what `Number()` is of a `Decimal`, which refuses `ToNumber`.
+    pub fn to_number_to_print(self, global: &JSGlobalObject) -> JsResult<f64> {
+        if self.is_decimal() {
+            return Ok(crate::cpp::Bun__JSValue__numberOfDecimal(self));
+        }
+        self.to_number(global)
+    }
+
+    pub fn is_decimal(self) -> bool {
+        self.is_cell() && crate::cpp::Bun__JSValue__isDecimal(self)
+    }
+
+    /// `[Decimal: 1.5]`, or `[Decimal (Money): 1.5]` of a subclass. `None` if this is not a `Decimal`.
+    pub fn printed_decimal(self, global: &JSGlobalObject) -> JsResult<Option<Vec<u8>>> {
+        let Some(text) = self.text_of_decimal() else {
+            return Ok(None);
+        };
+        let name = self.get_class_name(global)?;
+        let mut out = Vec::new();
+        use std::io::Write;
+        // "Object" is what an anonymous subclass or a null prototype gives.
+        let _ = if name.is_empty() || name.eq_ascii(b"Decimal") || name.eq_ascii(b"Object") {
+            write!(out, "[Decimal: {text}]")
+        } else {
+            write!(out, "[Decimal ({name}): {text}]")
+        };
+        Ok(Some(out))
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2251,6 +2291,14 @@ impl JSValue {
     /// Boolean, String, and BigInt objects to their primitive forms.
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
+    }
+    /// `unwrap_boxed_primitive` of the `space` argument of a `stringify()`. A `Decimal` is not an indent, like any
+    /// object that is not a Number or a String, but it is not to be written either, so it does not throw.
+    pub fn unwrap_boxed_indent(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if self.is_decimal() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        self.unwrap_boxed_primitive(global)
     }
     /// `JSValue.getPrototype`; runs a Proxy's `getPrototypeOf` trap, so it may throw.
     pub fn get_prototype(self, global: &JSGlobalObject) -> JsResult<JSValue> {

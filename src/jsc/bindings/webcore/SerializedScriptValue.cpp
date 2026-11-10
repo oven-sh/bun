@@ -48,6 +48,7 @@
 #include "OpenSSLUtilities.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "BunDecimal.h"
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/BooleanObject.h>
 #include <JavaScriptCore/DateInstance.h>
@@ -203,6 +204,7 @@ enum SerializationTag {
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
     Bun__NodePerformanceHooksHistogramTag = 250,
+    Bun__DecimalTag = 249,
 
     ErrorTag = 255
 };
@@ -1191,6 +1193,13 @@ private:
                 ASSERT(bigIntValue.isBigInt());
                 write(BigIntObjectTag);
                 dumpBigIntData(bigIntValue);
+                return true;
+            }
+            if (Bun::isDecimal(obj)) [[unlikely]] {
+                if (!startObjectInternal(obj)) // handle duplicates
+                    return true;
+                write(Bun__DecimalTag);
+                write(Bun::cloneTextOfDecimal(obj));
                 return true;
             }
             if (auto* regExp = dynamicDowncast<RegExpObject>(obj)) {
@@ -3736,6 +3745,18 @@ private:
                 return JSValue();
             ASSERT(bigInt.isBigInt());
             BigIntObject* obj = BigIntObject::create(m_lexicalGlobalObject->vm(), m_globalObject, bigInt);
+            addToObjectPool(obj);
+            return obj;
+        }
+        case Bun__DecimalTag: {
+            CachedStringRef text;
+            if (!readStringData(text))
+                return JSValue();
+            JSObject* obj = Bun::tryCreateDecimal(m_globalObject, text->string());
+            if (!obj) {
+                fail();
+                return JSValue();
+            }
             addToObjectPool(obj);
             return obj;
         }

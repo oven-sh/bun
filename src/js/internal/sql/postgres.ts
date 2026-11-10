@@ -127,6 +127,12 @@ function hex(bytes: Buffer) {
   return quoteElement("\\x" + bytes.toString("hex"));
 }
 
+const textOfDecimal: (value: unknown) => string | undefined = $newCppFunction(
+  "NodeUtilTypesModule.cpp",
+  "jsFunctionTextOfDecimal",
+  1,
+);
+
 function jsonElement(value: unknown) {
   const text = typeof value === "bigint" ? String(value) : JSON.stringify(value);
   return text === undefined ? "NULL" : quoteElement(text);
@@ -136,6 +142,7 @@ function jsonElement(value: unknown) {
 function arrayLiteral(values: ArrayLike<unknown>, kind: ArrayKind): string {
   const delimiter = kind === ArrayKind.box ? ";" : ",";
   let literal = "{";
+  let text: string | undefined;
   for (let i = 0, length = values.length; i < length; i++) {
     if (i > 0) literal += delimiter;
     const value = values[i];
@@ -145,6 +152,7 @@ function arrayLiteral(values: ArrayLike<unknown>, kind: ArrayKind): string {
     else if (kind === ArrayKind.json) literal += jsonElement(value);
     else if (typeof value !== "object") literal += quoteElement(String(value));
     else if (value instanceof Date) literal += quoteElement(value.toISOString());
+    else if ((text = textOfDecimal(value)) !== undefined) literal += quoteElement(text);
     else if (ArrayBuffer.isView(value)) literal += hex(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
     else if (value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) literal += hex(Buffer.from(value));
     else literal += jsonElement(value);

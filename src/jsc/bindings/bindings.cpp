@@ -54,6 +54,7 @@
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
+#include "BunDecimal.h"
 #include "JavaScriptCore/BigIntObject.h"
 #include "JavaScriptCore/SymbolObject.h"
 #include "JavaScriptCore/JSOrderedHashTableHelper.h"
@@ -2460,6 +2461,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         JSObject* obj1 = c1->getObject();
         JSObject* obj2 = c2->getObject();
         if (obj1 && obj2) {
+            if (!Bun::decimalsDequal(obj1, obj2))
+                return false;
+
             std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
             if (temporalEqual.has_value())
                 return temporalEqual;
@@ -2601,6 +2605,10 @@ bool Bun__deepMatch(
                 return *nodesEqual;
         }
     }
+
+    // A pattern that is no Decimal names properties, which a Decimal can have.
+    if (Bun::isDecimal(subsetValue) && !Bun::decimalsDequal(objValue, subsetValue))
+        return false;
 
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
@@ -3162,6 +3170,14 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = asObject(value);
+
+    // The formats would all write an empty object. They call no toJSON() of the program, as they call none of other objects.
+    if (Bun::isDecimal(object)) [[unlikely]] {
+        if (Bun::decimalIsWrittenAsString())
+            return JSValue::encode(jsString(globalObject->vm(), Bun::textOfDecimal(object)));
+        throwTypeError(globalObject, scope, "Decimal cannot be serialized. Use its toString()"_s);
+        return {};
+    }
 
     if (object->inherits<NumberObject>()) {
         double number = object->toNumber(globalObject);
@@ -6021,7 +6037,8 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
 {
     auto* realm = prototype->realmMayBeNull();
     return (realm && (prototype == realm->objectPrototype() || prototype == realm->functionPrototype()))
-        || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
+        || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject)
+        || Bun::isPrototypeOfDecimal(prototype);
 }
 
 template<bool nonIndexedOnly>
@@ -6096,7 +6113,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
 
             JSValue proto = object->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, );
-            if (proto) {
+            if (proto && !(proto.isObject() && Bun::isPrototypeOfDecimal(asObject(proto)))) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
                     fast = canWalkQuickly(asObject(proto));
@@ -6847,6 +6864,28 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateT
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(result);
     return JSValue::encode(result);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__JSValue__isDecimal(JSC::EncodedJSValue encodedValue)
+{
+    return Bun::isDecimal(JSC::JSValue::decode(encodedValue));
+}
+
+// What Number() of it is, or NaN if the value is not a Decimal.
+extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__JSValue__numberOfDecimal(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    return Bun::isDecimal(value) ? Bun::numberOfDecimal(value) : PNaN;
+}
+
+// False, and `out` is left alone, if the value is not a Decimal.
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__JSValue__textOfDecimal(JSC::EncodedJSValue encodedValue, BunString* out)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!Bun::isDecimal(value))
+        return false;
+    *out = Bun::toStringRef(Bun::textOfDecimal(value));
+    return true;
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::TemporalType Bun__JSValue__temporalType(JSC::EncodedJSValue encodedValue)

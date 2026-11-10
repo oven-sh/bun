@@ -192,6 +192,12 @@ export default b.declarations(
 
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator"), testOf("isMapIterator")),
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator"), testOf("isSetIterator")),
+  // Reads the internal slot of a Decimal.
+  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionTextOfDecimal"), {
+    ...testsKindOfCell,
+    capability: "heap",
+    returns: b.union(b.string, b.undefined),
+  }),
   // It looks for @@toStringTag without running a getter, and asks for the prototype, which a proxy answers with its trap.
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsError"), {
     ...operandCodeOnly,

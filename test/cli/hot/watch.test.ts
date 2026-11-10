@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isBroken, isWindows, scriptLines, tempDir } from "harness";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -24,11 +24,7 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
 
       // `--watch` reports the end of each run and each restart on stdout; the
       // assertions are about the script's own lines.
-      const iter = (async function* () {
-        for await (const line of forEachLine(stdout)) {
-          if (!/^(Restarting|Completed running|Failed running) /.test(line)) yield line;
-        }
-      })();
+      const iter = scriptLines(stdout);
       let { value: line, done } = await iter.next();
       expect(done).toBe(false);
       expect(line).toBe("hello #1");

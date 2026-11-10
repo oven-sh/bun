@@ -1857,12 +1857,26 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates() || self.has_immediates()
     }
 
-    /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error, and for
-    /// the end of a `--watch` run.
-    pub fn is_event_loop_alive_despite_errors(&self) -> bool {
+    /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error.
+    pub(crate) fn is_event_loop_alive_despite_errors(&self) -> bool {
         self.is_platform_loop_active()
             || self.has_queued_work_excluding_immediates()
             || self.has_immediates()
+    }
+
+    /// Whether a `--watch` run has ended: nothing is left that can run JS. A server that survives
+    /// an uncaught error keeps the run alive. After an uncaught error the loop fires no timer, so
+    /// the loop ref of the timers does not count then.
+    pub fn watch_run_has_ended(&self) -> bool {
+        if self.unhandled_error_counter == 0 {
+            return !self.is_event_loop_alive_despite_errors();
+        }
+        if self.has_queued_work_excluding_immediates() || self.has_immediates() {
+            return false;
+        }
+        let timers =
+            runtime_hooks().map_or_else(TimersLeft::default, |hooks| (hooks.timers_left)());
+        !self.has_handles(timers.holds_loop_ref) && !self.has_handles_off_the_loop()
     }
 
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.

@@ -23599,11 +23599,13 @@ describe.concurrent("--check", () => {
   };
 
   // The error is in an imported file, which only the type checker has loaded so far.
+  // A run says on stdout that it failed and waits. `bun test` says nothing there.
+  const failedLine = "Failed running 'a.ts'. Waiting for file changes before restarting...\n";
   test.each([
-    [["--watch", "--check", "a.ts"], "stdout", "ran 1"],
-    [["--hot", "--check", "a.ts"], "stdout", "ran 1"],
-    [["test", "--watch", "--check", "a.test.ts"], "stderr", "1 pass"],
-  ] as const)("bun %j waits until the error is fixed", async (cmd, stream, expected) => {
+    [["--watch", "--check", "a.ts"], "stdout", "ran 1", failedLine],
+    [["--hot", "--check", "a.ts"], "stdout", "ran 1", failedLine],
+    [["test", "--watch", "--check", "a.test.ts"], "stderr", "1 pass", ""],
+  ] as const)("bun %j waits until the error is fixed", async (cmd, stream, expected, statusLine) => {
     using dir = project({
       "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
       "imported.ts": `export const n: number = "1";\n`,
@@ -23612,6 +23614,12 @@ describe.concurrent("--check", () => {
     });
     await using bun = watching(dir, cmd);
     await bun.until(() => bun.output.stderr.includes("TS2322"));
+    if (statusLine) {
+      await bun.until(() => bun.output.stdout.includes(statusLine));
+      expect(bun.output.stdout).toBe(statusLine);
+    } else {
+      expect(bun.output.stdout).not.toContain("Waiting for file changes");
+    }
     expect(bun.output[stream]).not.toContain(expected);
     await bun.until(
       () => bun.output[stream].includes(expected),

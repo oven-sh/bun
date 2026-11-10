@@ -13,15 +13,10 @@ pub(crate) struct WatchStatus {
 }
 
 impl WatchStatus {
-    /// Builds the command text and hands the `Restarting` line to `bun_core::reload_process`,
-    /// which prints it on every restart. `script` is the positional as typed.
-    pub(crate) fn install(script: &[u8], args: &[Box<[u8]>]) -> Self {
-        let mut joined = script.to_vec();
-        for arg in args {
-            joined.push(b' ');
-            joined.extend_from_slice(arg);
-        }
-        let command = inspect_quote(&joined).into_boxed_slice();
+    /// Quotes `command` (see `RunCommand::watch_command`) and hands the `Restarting` line to
+    /// `bun_core::reload_process`, which prints it on every restart.
+    pub(crate) fn install(command: &[u8]) -> Self {
+        let command = inspect_quote(command).into_boxed_slice();
         let [c, r] = color("\x1b[32m");
         let mut banner =
             Vec::with_capacity(c.len() + "Restarting ".len() + command.len() + r.len() + 1);
@@ -44,7 +39,7 @@ impl WatchStatus {
             ("Completed", color("\x1b[34m"))
         };
         Output::print(format_args!(
-            "{c}{verb} running {}{r}. Waiting for file changes before restarting...\n",
+            "{c}{verb} running {}. Waiting for file changes before restarting...{r}\n",
             bstr::BStr::new(&self.command)
         ));
         Output::flush();

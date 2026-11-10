@@ -4214,6 +4214,44 @@ pub fn set_watch_restart_banner(line: Box<[u8]>) {
     WATCH_RESTART_BANNER.get_or_init(|| line);
 }
 
+/// Writes the banner to stdout. The restart must not wait on a reader: stdout is non-blocking
+/// once `process.stdout` exists, and when the pipe stays full for 200 ms the rest of the line is
+/// dropped. Node's watcher writes to a pipe without waiting too.
+#[cfg(unix)]
+fn write_watch_restart_banner(mut bytes: &[u8]) {
+    const STEP_MS: i32 = 50;
+    let mut waited_ms = 0;
+    while !bytes.is_empty() {
+        // SAFETY: `bytes` is a live slice, and `write` reads at most `bytes.len()` of it.
+        let written = unsafe { libc::write(1, bytes.as_ptr().cast(), bytes.len()) };
+        if written > 0 {
+            bytes = &bytes[written as usize..];
+            continue;
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EINTR) if written < 0 => {}
+            Some(libc::EAGAIN) if written < 0 && waited_ms < 200 => {
+                let mut polls = [libc::pollfd {
+                    fd: 1,
+                    events: libc::POLLOUT,
+                    revents: 0,
+                }];
+                // SAFETY: `polls` is a valid one-element array.
+                unsafe { libc::poll(polls.as_mut_ptr(), 1, STEP_MS) };
+                waited_ms += STEP_MS;
+            }
+            _ => return,
+        }
+    }
+}
+
+/// The child of the watcher manager writes to the console it inherited.
+#[cfg(windows)]
+fn write_watch_restart_banner(bytes: &[u8]) {
+    crate::output::print_bytes(bytes);
+    crate::output::flush();
+}
+
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
 /// `announce_restart` prints the banner of `set_watch_restart_banner`: a restart on a file change
 /// does, a restart after a crash does not.
@@ -4245,8 +4283,8 @@ pub fn reload_process(clear_terminal: bool, may_return: bool, announce_restart: 
     // Only the elected thread gets here, so the banner prints once per restart. It follows the
     // clear, which would erase it, and precedes the exec, which would drop a buffered write.
     if announce_restart && let Some(line) = WATCH_RESTART_BANNER.get() {
-        crate::output::print_bytes(line);
         crate::output::flush();
+        write_watch_restart_banner(line);
     }
     crate::output::stdio::restore();
 

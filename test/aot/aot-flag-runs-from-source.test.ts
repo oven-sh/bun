@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, WATCH_STATUS_LINE } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
@@ -478,18 +478,19 @@ describe.concurrent("--watch", () => {
   };
   // A run under --watch starts again in a second or two, ten times that under a sanitizer.
   const secondsToSayIt = isASAN ? 90 : 30;
-  // The lines `--watch` prints between the runs: the tests are about what the program says.
-  const statusLines = /^(Restarting|Completed running|Failed running) .*\n/gm;
   // What a stream has said so far. `until` returns when that holds, and throws if the stream ends first: then it says how the process ended.
+  // `raw` is all of it. `text` leaves out the status lines `--watch` prints between the runs: the tests are about what the program says.
   function listen(stream: ReadableStream<Uint8Array>, getEnd: () => Promise<string>) {
-    const heard = { text: "", ended: false };
+    const heard = { text: "", raw: "", ended: false };
     let wake = () => {};
     (async () => {
       const decoder = new TextDecoder();
-      let raw = "";
       for await (const chunk of stream) {
-        raw += decoder.decode(chunk, { stream: true });
-        heard.text = raw.replace(statusLines, "");
+        heard.raw += decoder.decode(chunk, { stream: true });
+        heard.text = heard.raw
+          .split("\n")
+          .filter(line => !WATCH_STATUS_LINE.test(line))
+          .join("\n");
         wake();
       }
       heard.ended = true;
@@ -497,10 +498,10 @@ describe.concurrent("--watch", () => {
     })();
     return {
       heard,
-      async until(holds: (text: string) => boolean) {
+      async until(holds: (text: string, raw: string) => boolean) {
         // What is never said is not waited for until the limit of the test: five such cases, tried four times, took two shards of CI with them.
         const deadline = Date.now() + secondsToSayIt * 1000;
-        while (!holds(heard.text)) {
+        while (!holds(heard.text, heard.raw)) {
           if (heard.ended) throw new Error(`the stream ended after:\n${heard.text}\n${await getEnd()}`);
           const left = deadline - Date.now();
           if (left <= 0) throw new Error(`it is not said within ${secondsToSayIt} s. So far:\n${heard.text}`);
@@ -568,6 +569,14 @@ describe.concurrent("--watch", () => {
     writeFileSync(join(String(dir), "value.ts"), value("1"));
     await watched.out.until(text => text.endsWith("run 1 1 locked\n"));
     expect(watched.out.heard.text).toBe("run 1 1 locked\n");
+    // The status lines come from the build, the restart on the change, and the program that the build handed over to.
+    await watched.out.until((_, raw) => raw.includes("Completed running"));
+    expect(watched.out.heard.raw).toBe(
+      "Failed running 'main.ts'. Waiting for file changes before restarting...\n" +
+        "Restarting 'main.ts'\n" +
+        "run 1 1 locked\n" +
+        "Completed running 'main.ts'. Waiting for file changes before restarting...\n",
+    );
   });
   test("--hot starts the process again like --watch, so that nothing runs unchecked", async () => {
     const counts = `\nconst state = globalThis as unknown as { runs?: number };\nstate.runs = (state.runs ?? 0) + 1;\nconsole.log("runs", state.runs);`;

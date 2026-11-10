@@ -519,7 +519,6 @@ export class Heap {
   }
 }
 
-
 // ASAN's quarantine pins freed blocks and keeps RSS at peak.
 export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
   return {
@@ -781,7 +780,11 @@ export function tempDirWithBunTypes(
 ): string & DisposableString & AsyncDisposable {
   const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
   fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
-  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
+  fs.symlinkSync(
+    join(import.meta.dir, "..", "packages", "bun-types"),
+    join(String(dir), "node_modules", "@types", "bun"),
+    "junction",
+  );
   return dir;
 }
 
@@ -1761,6 +1764,20 @@ export function writeShebangScript(path: string, program: string, data: string) 
   }
 }
 
+/**
+ * A status line that `bun <file> --watch` prints to stdout between the runs of the script:
+ * `Restarting 'x.ts'`, `Completed running 'x.ts'. Waiting for file changes before restarting...` or
+ * `Failed running ...`.
+ */
+export const WATCH_STATUS_LINE = /^(Restarting|Completed running|Failed running) /;
+
+/** The lines of a stdout stream of `bun <file> --watch`, without its status lines. */
+export async function* scriptLines(stream: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
+  for await (const line of forEachLine(stream)) {
+    if (!WATCH_STATUS_LINE.test(line)) yield line;
+  }
+}
+
 export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
   var decoder = new (require("string_decoder").StringDecoder)("utf8");
   var str = "";
@@ -2573,18 +2590,14 @@ export const rss: () => number = process.memoryUsage.rss;
  */
 export function testThatMeasuresOwnMemory(file: string): typeof test {
   if (!isASAN || process.env.ASAN_OPTIONS?.includes("quarantine_size_mb=0")) return test;
-  test(
-    "in a child without ASAN's quarantine",
-    async () => {
-      await using child = Bun.spawn({
-        cmd: [bunExe(), "test", "--timeout=270000", file],
-        env: withoutAsanQuarantine(bunEnv),
-        stdio: ["ignore", "inherit", "inherit"],
-      });
-      expect(await child.exited).toBe(0);
-    },
-    270_000,
-  );
+  test("in a child without ASAN's quarantine", async () => {
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "test", "--timeout=270000", file],
+      env: withoutAsanQuarantine(bunEnv),
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    expect(await child.exited).toBe(0);
+  }, 270_000);
   return test.skip as typeof test;
 }
 

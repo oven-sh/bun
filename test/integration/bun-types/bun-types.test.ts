@@ -796,6 +796,54 @@ describe("@types/bun integration test", () => {
   });
 
   // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("Mocked", () => {
+    // The compiler writes the return type of each function into the declaration file. It can only name what
+    // "bun:test" exports, and it reports TS7056 for a recursive type that it has to write out in full.
+    test("a generic function that returns jest.mocked() emits a declaration", async () => {
+      const checkDir = join(TEMP_DIR, "mocked-declaration-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["mocked-helpers.ts"];
+      Object.assign(tsconfig.compilerOptions, {
+        typeRoots: [join(BASE_FIXTURE_DIR, "node_modules", "@types")],
+        noEmit: false,
+        declaration: true,
+        emitDeclarationOnly: true,
+        rootDir: ".",
+        outDir: "out",
+      });
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "mocked-helpers.ts": `import { jest, vi } from "bun:test";
+           export function mockedList<T>(items: T[]) {
+             return jest.mocked(items);
+           }
+           export function mockedService<T>(service: { repository: T; log(message: string): void }) {
+             return jest.mocked(service);
+           }
+           export function mockedClass<T extends new (...args: any[]) => object>(Class: T) {
+             return vi.mocked(Class);
+           }`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(checkDir, "out", "mocked-helpers.d.ts")).text()).toContain("Mocked<T>");
+    });
+  });
+
+  // Runs on debug builds too, same as the Bun.mmap block above.
   describe("import.meta.glob", () => {
     // fixture/vite-client/client.d.ts also declares `ImportMeta.glob`, so it needs its own tsc program.
     // tsc loads the declarations in `files` order.

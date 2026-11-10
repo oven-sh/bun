@@ -17,17 +17,51 @@ declare module "bun:test" {
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   /**
-   * `T` with every nested function and class typed as a {@link Mock}.
+   * `T` with every nested function and class typed as a {@link Mock}. It's still a `T`, because `jest.mocked(value)`
+   * returns `value` itself.
+   *
+   * Below the top level, a member or an array element whose type is a union of object types keeps that type.
    */
-  export type Mocked<T> = T extends new (...args: infer Args) => infer Instance
-    ? Mock<(...args: Args) => Mocked<Instance>> & { prototype: Mocked<Instance> } & {
-        [K in Exclude<keyof T, "prototype">]: Mocked<T[K]>;
-      }
-    : T extends (...args: any[]) => any
-      ? Mock<T> & { [K in keyof T]: Mocked<T[K]> }
-      : T extends object
-        ? { [K in keyof T]: Mocked<T[K]> }
-        : T;
+  export type Mocked<T> = T extends readonly unknown[]
+    ? // The mocked elements come first, so that a callback of `forEach()` or `map()` receives them.
+      { [K in keyof T]: [T[K]] extends [object] ? Mocked<T[K]> : T[K] } & T
+    : T extends object
+      ? // `T` comes first, so that a call uses the signatures of `T`: its overloads, type parameters and `this`.
+        T & __internal.MocksOf<T>
+      : T;
+
+  export namespace __internal {
+    // What `Mocked<T>` adds to `T`. It isn't a `T` by itself: a mapped type has no private members, and a `Mock` has
+    // one call signature. A hand-made object of mocks fits it, which `mockImplementation()` of a mocked class takes.
+    type MocksOf<T> = T extends { _isMockFunction: true }
+      ? // A mock stays as it is, so that mocking a mocked value again adds nothing.
+        T
+      : T extends new (...args: any) => any
+        ? // TypeScript treats a constructor type whose only parameter is `...args: any[]` as a mixin: `new` keeps the
+          // signatures of `T`, and this instance type is added to what each of them returns. `mock.instances` holds
+          // what `new` returned.
+          //
+          // The instance type is named in each member and not inferred in the condition above. So TypeScript works
+          // it out only for a class that is used, not for every class in a mocked module: for some that is costly.
+          { new (...args: any[]): MocksOf<InstanceType<T>> } & {
+            mock: { instances: Mocked<InstanceType<T>>[] };
+          } & jest.SpiedClass<new (...args: ConstructorParameters<T>) => MocksOf<InstanceType<T>>> & {
+              prototype: MocksOf<InstanceType<T>>;
+            } & { [K in Exclude<keyof T, "prototype">]: MocksOfMember<T[K]> }
+        : T extends (...args: any[]) => any
+          ? Mock<T> & { [K in keyof T]: MocksOfMember<T[K]> }
+          : T extends readonly unknown[]
+            ? { [K in keyof T]: MocksOfElement<T[K]> }
+            : T extends object
+              ? { [K in keyof T]: MocksOfMember<T[K]> }
+              : T;
+    // A union of object types is left as it is. Intersected with the member of `T`, a union of N mocked types would
+    // make N * N types.
+    type MocksOfMember<V> = IsUnion<Extract<V, object>> extends true ? V : MocksOf<V>;
+    // So is an element that isn't one object type, which also ends a type like `type Json = string | Json[]`.
+    type MocksOfElement<E> = [E] extends [object] ? (IsUnion<E> extends true ? E : MocksOf<E>) : E;
+    type IsUnion<T, Whole = T> = T extends unknown ? ([Whole] extends [T] ? false : true) : never;
+  }
 
   /**
    * Returns a mocked module's exports, or a promise for them. Call `importOriginal()` to load the real module.
@@ -986,7 +1020,7 @@ declare module "bun:test" {
     repeats?: number;
   }
 
-  namespace __internal {
+  export namespace __internal {
     type IfNeverThenElse<T, Else> = [T] extends [never] ? Else : T;
 
     type IsTuple<T> = T extends readonly unknown[]

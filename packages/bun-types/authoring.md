@@ -131,9 +131,11 @@ So a declaration of bun-types for a global of lib.dom must add nothing when lib.
 
 - A `var` is typed with `Bun.__internal.UseLibDomIfAvailable<"Name", TypeWithoutLibDom>`.
 
-The case "checks with lib.dom.d.ts" of `test/integration/bun-types/bun-types.test.ts` finds every declaration of bun-types that is not gated. It compares the result with the list `expectedLibOverlapWithLibDom` in that file, and it fails when the two differ. The comment on `libOverlap` in that file says how to read an entry. The list also has the members that bun-types adds to the interfaces of lib.es, such as `ArrayBuffer` and `Error`.
+A member that only Bun has does not go behind the gate, because a project that loads lib.dom then does not get it. Put it in a base that is always on, as `BunHeadersOverride` in [`./fetch.d.ts`](./fetch.d.ts) does for `Headers.toJSON()`.
 
-When the test fails for a declaration that you added, gate the declaration. Add an entry to the list only when the declaration cannot be gated, for example a function overload or a member that only Bun has. Put it in the section whose reason holds for it.
+The case "checks with lib.dom.d.ts" of `test/integration/bun-types/bun-types.test.ts` finds every declaration of bun-types that is not gated. It also finds every gated member that lib.dom does not have. It compares the result with the list `expectedLibOverlapWithLibDom` in that file, and it fails when the two differ. The comment on `libOverlap` in that file says how to read an entry. The list also has the members that bun-types adds to the interfaces of lib.es, such as `ArrayBuffer` and `Error`.
+
+When the test fails for a declaration that you added, gate the declaration. Add an entry to the list only when the declaration cannot be gated, for example a function overload or a member that only Bun has. Put it in the section whose reason holds for it. When the new entry says `only without the lib`, move the member to a base that is always on.
 
 The list says which declarations land on a lib symbol, not what they say. A changed signature of a member that is already listed is a diff in the inventory.
 

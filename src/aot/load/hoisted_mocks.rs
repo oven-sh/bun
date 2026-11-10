@@ -1,18 +1,27 @@
+use core::cell::Cell;
+
 use bun_ast::import_record::is_test_module;
+use bun_js_parser::Jest;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Decl, SymbolId};
+use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
-    BinOp, Chain, ExportSpecId, ExprFlags, ExprId, ExprKind, FAR_IN_BRACKETS, File, FileBuilder,
-    Flags, Import, ImportEqualsId, ImportId, PatKind, PropKind, ResolutionMode, Span,
-    SpecifierKind, SpecifierUse, StmtId, StmtKind, TypeNodeId, UnOp, VarDecl, VarKind, rare,
+    BinOp, Branches, Call, CallId, Chain, ExportSpecId, ExprFlags, ExprId, ExprKind,
+    FAR_IN_BRACKETS, File, FileBuilder, Flags, FnId, FnKind, Import, ImportEqualsId, ImportId,
+    Keyword, ListAt, PatKind, PropKind, ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtId,
+    StmtKind, TypeNodeId, TypeNodeKind, UnOp, VarDecl, VarKind, names_bound_by, rare,
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::TransformRequest;
-use bun_sema::util::FxHashMap;
+use bun_sema::util::{FxHashMap, FxHashSet};
 
 use crate::builtins::{RuntimeModule, table};
 
 const NAMESPACE_PREFIX: &str = "%import:";
+/// An expression or statement nested deeper than this is not followed: what it reads stays unknown.
+const DEEPEST_READ_FOLLOWED: u32 = 64;
+/// `vi` of "bun:test", for the calls that `Plan::apply()` writes for the factories that read later variables.
+pub(crate) const VI_OF_HOISTED_FACTORIES: &[u8] = b"%test:vi of hoisted factories";
 
 fn text_of<'a>(atoms: &'a Interner<'_>, text: Atom) -> &'a [u8] {
     match text.is_none() {
@@ -58,6 +67,9 @@ pub(crate) struct Plan {
     named_implicitly: Vec<ImportId>,
     exported_namespaces: Vec<(ExportSpecId, ImportId)>,
     paths_written_as_imports: Vec<(ExprId, ExprId)>,
+    /// Each hoisted `vi.mock()` or `jest.mock()` call whose factory reads a variable that the file declares below it, with
+    /// that factory as it is written. As `run_factories_that_read_later_variables_at_end()` of the transpiler's hoister.
+    factories_that_read_later_variables: Vec<(CallId, ExprId)>,
 }
 
 struct Planner<'a, 'r, 's> {
@@ -157,6 +169,196 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
                 _ => return None,
             }
         }
+    }
+
+    /// The call of a `vi.mock(path, factory)` or `jest.mock(path, factory)` statement, the factory as it is written, and its function.
+    fn find_factory(&self, statement: StmtId) -> Option<(CallId, ExprId, FnId)> {
+        let StmtKind::Expr(value) = self.hir[statement].kind else {
+            return None;
+        };
+        let ExprKind::Call(id) = self.hir[self.without_type_syntax(value)].kind else {
+            return None;
+        };
+        let call = self.hir[id];
+        let ExprKind::Dot {
+            obj,
+            name: known::mock,
+            chain: Chain::No,
+            name_before_end,
+        } = self.hir[self.without_type_syntax(call.callee)].kind
+        else {
+            return None;
+        };
+        if call.chain != Chain::No || name_before_end == FAR_IN_BRACKETS {
+            return None;
+        }
+        self.find_api(self.without_type_syntax(obj))?;
+        let written = self.hir.ids(call.args).nth(1)?;
+        let ExprKind::Fn(function) = self.hir[self.without_type_syntax(written)].kind else {
+            return None;
+        };
+        matches!(self.hir[function].kind, FnKind::Arrow | FnKind::Expr)
+            .then_some((id, written, function))
+    }
+
+    /// Whether running `node` reads one of `variables` before it awaits. What a function or a class in it reads is read when
+    /// that runs, and what comes behind an `await` is read when the file has run: `awaited` says that one has been passed.
+    /// As `reads_any()` of the transpiler's hoister.
+    fn reads_any(
+        &self,
+        node: TreeNode,
+        variables: &FxHashSet<SymbolId>,
+        depth: u32,
+        awaited: &Cell<bool>,
+    ) -> bool {
+        if depth > DEEPEST_READ_FOLLOWED || awaited.get() {
+            return false;
+        }
+        let bound = self.request.bound;
+        let reads = |node: TreeNode| self.reads_any(node, variables, depth + 1, awaited);
+        // What may not run: an `await` in it may not be passed.
+        let may_read =
+            |node: TreeNode| self.reads_any(node, variables, depth + 1, &Cell::new(false));
+        let (expr, stmt) = (TreeNode::Expr, TreeNode::Stmt);
+        match node {
+            TreeNode::Function(_) | TreeNode::Class(_) => return false,
+            TreeNode::Pattern(_) => {}
+            TreeNode::Expr(expression) => match self.hir[expression].kind {
+                ExprKind::Ident(_) => {
+                    let is_later = matches!(bound.binding(expression), Binding::Symbol(symbol) if variables.contains(&symbol));
+                    return is_later && bound.is_evaluated_ident(expression);
+                }
+                ExprKind::Await(operand) => {
+                    let read = reads(expr(operand));
+                    awaited.set(true);
+                    return read;
+                }
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } => return reads(expr(left)) || may_read(expr(right)),
+                ExprKind::Cond { test, branches } => {
+                    let Branches { yes, no } = self.hir.branches(branches);
+                    return reads(expr(test)) || may_read(expr(yes)) || may_read(expr(no));
+                }
+                _ => {}
+            },
+            TreeNode::Stmt(statement) => match self.hir[statement].kind {
+                StmtKind::If { test, yes, no } => {
+                    let mut branches = [yes, no].into_iter().filter(|it| it.is_some());
+                    return reads(expr(test)) || branches.any(|it| may_read(stmt(it)));
+                }
+                StmtKind::For {
+                    init,
+                    test,
+                    update,
+                    body,
+                } => {
+                    return (init.is_some() && reads(stmt(init)))
+                        || (test.is_some() && reads(expr(test)))
+                        || (update.is_some() && may_read(expr(update)))
+                        || may_read(stmt(body));
+                }
+                StmtKind::ForIn {
+                    expr: object, body, ..
+                }
+                | StmtKind::ForOf {
+                    expr: object, body, ..
+                } => return reads(expr(object)) || may_read(stmt(body)),
+                StmtKind::While { test, body } => {
+                    return reads(expr(test)) || may_read(stmt(body));
+                }
+                StmtKind::Switch { expr: value, cases } => {
+                    return reads(expr(value))
+                        || cases.iter().any(|case| {
+                            let case = &self.hir[case];
+                            (case.test.is_some() && may_read(expr(case.test)))
+                                || self.hir.ids(case.body).any(|it| may_read(stmt(it)))
+                        });
+                }
+                StmtKind::Try {
+                    block,
+                    handler,
+                    finalizer,
+                    ..
+                } => {
+                    return reads(stmt(block))
+                        || (handler.is_some() && may_read(stmt(handler)))
+                        || (finalizer.is_some() && reads(stmt(finalizer)));
+                }
+                _ => {}
+            },
+        }
+        let mut children = Vec::new();
+        push_children(self.hir, node, &mut children);
+        children.into_iter().any(reads)
+    }
+
+    /// Whether a call of `factory` reads one of `variables` before it awaits.
+    fn factory_reads_any(&self, factory: FnId, variables: &FxHashSet<SymbolId>) -> bool {
+        let mut parts = Vec::new();
+        push_children(self.hir, TreeNode::Function(factory), &mut parts);
+        let awaited = Cell::new(false);
+        parts
+            .into_iter()
+            .any(|part| self.reads_any(part, variables, 0, &awaited))
+    }
+
+    fn returns_at_top_level(&self, body: &[StmtId]) -> bool {
+        let mut stack: Vec<TreeNode> = body.iter().map(|&it| TreeNode::Stmt(it)).collect();
+        while let Some(node) = stack.pop() {
+            match node {
+                TreeNode::Function(_) | TreeNode::Class(_) | TreeNode::Expr(_) => continue,
+                TreeNode::Stmt(statement) => {
+                    if matches!(self.hir[statement].kind, StmtKind::Return(_)) {
+                        return true;
+                    }
+                }
+                TreeNode::Pattern(_) => {}
+            }
+            push_children(self.hir, node, &mut stack);
+        }
+        false
+    }
+
+    fn find_factories_that_read_later_variables(
+        &self,
+        places: &[(StmtId, Place)],
+    ) -> Vec<(CallId, ExprId)> {
+        let bound = self.request.bound;
+        let declare =
+            |later: &mut FxHashSet<SymbolId>, statement: StmtId| match self.hir[statement].kind {
+                StmtKind::Var(declarations) => {
+                    let declarations = declarations.iter().map(|it| self.hir[it]);
+                    let lexical =
+                        declarations.filter(|it| matches!(it.kind, VarKind::Const | VarKind::Let));
+                    let mut names = Vec::new();
+                    lexical.for_each(|it| names_bound_by(self.hir, it.pat, &mut names));
+                    later.extend(
+                        names
+                            .iter()
+                            .map(|it| bound.declared_symbol(Decl::Var(it.1))),
+                    );
+                }
+                StmtKind::Class(class) => {
+                    later.insert(bound.declared_symbol(Decl::Class(class)));
+                }
+                _ => {}
+            };
+        let mut later = FxHashSet::default();
+        let in_place = places.iter().filter(|it| it.1 == Place::InPlace);
+        in_place.for_each(|it| declare(&mut later, it.0));
+        let mut found = Vec::new();
+        for &(statement, _) in places.iter().rev().filter(|it| it.1 == Place::Hoisted) {
+            if let Some((call, written, function)) = self.find_factory(statement)
+                && self.factory_reads_any(function, &later)
+            {
+                found.push((call, written));
+            }
+            declare(&mut later, statement);
+        }
+        found
     }
 
     fn is_hoisted(&self, statement: StmtId) -> bool {
@@ -401,6 +603,7 @@ pub(crate) fn plan<'s>(
             named_implicitly: Vec::new(),
             exported_namespaces: Vec::new(),
             paths_written_as_imports,
+            factories_that_read_later_variables: Vec::new(),
         });
     }
     let exported = planner.find_names_in_export_clauses(&body);
@@ -456,13 +659,42 @@ pub(crate) fn plan<'s>(
         lowered.any(|it| import_of(it.0) == Some(import))
     };
     uses.retain(|it| is_lowered(it.import));
+    // A file that awaits at its top level ends too late: a module that is imported beside it runs while it waits.
+    let awaits = places.iter().any(|it| it.1 == Place::LoweredImport)
+        || request.analysis.has_live_top_level_await;
+    let factories_that_read_later_variables = match awaits || planner.returns_at_top_level(&body) {
+        true => Vec::new(),
+        false => planner.find_factories_that_read_later_variables(&places),
+    };
     Some(Plan {
         places,
         uses,
         named_implicitly,
         exported_namespaces,
         paths_written_as_imports,
+        factories_that_read_later_variables,
     })
+}
+
+fn write_call_of_vi(file: &mut FileBuilder, atoms: &Interner<'_>, name: &[u8], pos: u32) -> ExprId {
+    let vi = atoms.intern(VI_OF_HOISTED_FACTORIES);
+    let mut vi = file.expr(ExprKind::Ident(vi), pos, pos);
+    if !file.is_js {
+        let ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), pos, pos);
+        vi = file.expr(ExprKind::As { expr: vi, ty }, pos, pos);
+    }
+    let callee = file.dot((vi, Chain::No), (atoms.intern(name), pos), pos);
+    let callee = file.expr(callee, pos, pos);
+    let args = file.list(&[]);
+    let call = file.add_call(Call {
+        callee,
+        args,
+        type_args: ListAt::EMPTY,
+        close_pos: pos,
+        chain: Chain::No,
+        is_pure: false,
+    });
+    file.expr(ExprKind::Call(call), pos, pos)
 }
 
 fn find_callees(file: &FileBuilder) -> Vec<ExprId> {
@@ -583,10 +815,27 @@ fn keep_for_types_alone(
 }
 
 impl Plan {
+    /// `apply()` writes calls of `VI_OF_HOISTED_FACTORIES`, which the file has to import.
+    pub(crate) fn calls_vi_of_hoisted_factories(&self) -> bool {
+        !self.factories_that_read_later_variables.is_empty()
+    }
+
     pub(crate) fn apply(&self, file: &mut FileBuilder, atoms: &Interner<'_>) {
         for &(written, path) in &self.paths_written_as_imports {
             let path = file[path];
             file[written] = path;
+        }
+        for &(call, factory) in &self.factories_that_read_later_variables {
+            let (pos, end) = (file[factory].pos, file[factory].end);
+            let left = write_call_of_vi(file, atoms, Jest::HOISTED_FACTORY, pos);
+            let op = BinOp::Comma;
+            let right = factory;
+            let marked = file.expr(ExprKind::Binary { op, left, right }, pos, end);
+            file.parens.push((marked, pos, end));
+            file.add_flags(marked, ExprFlags::PARENTHESIZED);
+            let mut args: Vec<ExprId> = file.ids(file[call].args).collect();
+            args[1] = marked;
+            file[call].args = file.list(&args);
         }
         let lowered = self.places.iter().filter(|it| it.1 == Place::LoweredImport);
         let lowered = lowered.filter_map(|it| match file[it.0].kind {
@@ -665,13 +914,17 @@ impl Plan {
             let statements = self.places.iter().filter(move |it| it.1 == place);
             statements.map(|it| it.0).collect::<Vec<StmtId>>()
         };
-        let statements = [
+        let mut statements = [
             at(Place::BeforeHoisted),
             at(Place::Hoisted),
             loads,
             at(Place::InPlace),
         ]
         .concat();
+        if self.calls_vi_of_hoisted_factories() {
+            let run = write_call_of_vi(file, atoms, Jest::RUN_HOISTED_FACTORIES, 0);
+            statements.push(file.stmt(StmtKind::Expr(run), 0));
+        }
         file.body = file.list(&statements);
         if !lowered.is_empty() {
             file.rare_syntax |= rare::TOP_LEVEL_AWAIT;
@@ -815,6 +1068,76 @@ mod tests {
                 "a.test.js",
                 r#"import "./side"; import { file } from "bun"; import { vi } from "bun:test"; vi.mock("./mod", () => ({})); console.log(file);"#,
                 "import 1 | import 1 | mock() | await import ./side | log()",
+            ),
+        ];
+        for (name, text, expected) in rows {
+            assert_eq!(describe(name, text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_factory_that_reads_a_later_variable_runs_at_the_end_of_a_file_that_does_not_await() {
+        let rows = [
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; const impl = () => 1; vi.mock("./mod", () => ({ value: impl }));"#,
+                "import 1 | import 1 | mock() | declaration | runHoistedFactories()",
+            ),
+            (
+                "mocks.ts",
+                r#"import { jest } from "bun:test"; let impl: () => number = () => 1; jest.mock("./mod", function () { return { value: impl }; });"#,
+                "import 1 | import 1 | mock() | declaration | runHoistedFactories()",
+            ),
+            (
+                "mocks.cjs",
+                r#"const impl = () => 1; jest.mock("./mod", () => ({ value: impl })); module.exports = impl;"#,
+                "pattern | pattern | declaration | declaration | mock() | declaration | expression | runHoistedFactories()",
+            ),
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; const impl = () => 1; vi.mock("./mod", () => ({ value: () => impl() }));"#,
+                "import 1 | mock() | declaration",
+            ),
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; var impl = () => 1; function make() { return impl; } vi.mock("./mod", () => ({ value: impl, make }));"#,
+                "import 1 | mock() | declaration | statement",
+            ),
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; const early = "a"; vi.mock("./mod", () => ({ value: early }));"#,
+                "import 1 | declaration | mock()",
+            ),
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; import "./side"; const impl = () => 1; vi.mock("./mod", () => ({ value: impl }));"#,
+                "import 1 | mock() | await import ./side | declaration",
+            ),
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; const impl = () => 1; vi.mock("./mod", () => ({ value: impl })); await 0;"#,
+                "import 1 | mock() | declaration | expression",
+            ),
+            // What comes behind an `await` of the factory is read when the file has run.
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; const impl = () => 1; vi.mock("./mod", async () => ({ ...(await vi.importActual("./mod")), value: impl }));"#,
+                "import 1 | mock() | declaration",
+            ),
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; const impl = () => 1; vi.mock("./mod", async () => { const original = await vi.importActual("./mod"); return { ...original, value: impl }; });"#,
+                "import 1 | mock() | declaration",
+            ),
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; const impl = () => 1; vi.mock("./mod", async () => ({ value: impl, ...(await vi.importActual("./mod")) }));"#,
+                "import 1 | import 1 | mock() | declaration | runHoistedFactories()",
+            ),
+            (
+                "mocks.js",
+                r#"import { vi } from "bun:test"; const impl = () => 1; vi.mock("./mod", async () => { if (globalThis.wide) await 0; return { value: impl }; });"#,
+                "import 1 | import 1 | mock() | declaration | runHoistedFactories()",
             ),
         ];
         for (name, text, expected) in rows {

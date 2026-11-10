@@ -581,9 +581,21 @@ pub(crate) fn import_used_names<'s>(
     if let Some(hoisting) = &hoisting {
         hoisting.apply(&mut file, atoms);
     }
+    let mut added = Vec::new();
+    if hoisting.is_some_and(|it| it.calls_vi_of_hoisted_factories()) {
+        let vi = [(
+            known::vi,
+            atoms.intern(hoisted_mocks::VI_OF_HOISTED_FACTORIES),
+        )];
+        added.push(match request.analysis.module_format {
+            ModuleFormat::Esm => write_import(&mut file, atoms, MODULE, vi.into_iter()),
+            ModuleFormat::CommonJs => write_require(&mut file, (atoms, request.bound), MODULE, &vi),
+        });
+    }
     let of_chai = names_of_chai.take_out_of(&mut file, atoms);
     if uses.is_empty() {
-        put_around_body(&mut file, &of_chai, &[]);
+        added.extend(of_chai);
+        put_around_body(&mut file, &added, &[]);
         *request.hir = finish_file(file, arena, atoms);
         return TreeChange::Changed;
     }
@@ -678,7 +690,6 @@ pub(crate) fn import_used_names<'s>(
     let imported = used.iter().map(|&name| (names[name], of_runner[name]));
     let imported: Vec<(Atom, Atom)> = imported.collect();
     let tables = (atoms, request.bound);
-    let mut added = Vec::new();
     if !imported.is_empty() {
         added.push(match request.analysis.module_format {
             ModuleFormat::Esm => write_import(&mut file, atoms, module, imported.iter().copied()),

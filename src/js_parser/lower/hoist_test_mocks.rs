@@ -1,6 +1,8 @@
 //! `bun test` hoists top-level `vi.mock()`, `jest.mock()` and `vi.hoisted()` above imports, which become `await import()`.
 //! A Vitest test file's imports become `await import()` even without such a call, because one import may mock what the next loads.
 
+use core::cell::Cell;
+
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
@@ -57,6 +59,118 @@ pub(crate) fn drop_namespace_of_lowered_callee(
         .join_with_comma(*callee);
     }
     is_lowered
+}
+
+/// An expression or statement nested deeper than this is not followed: what it reads stays unknown.
+const DEEPEST_READ_FOLLOWED: u32 = 64;
+
+/// Whether evaluating `expr` reads one of `variables` before it awaits. What a function or a class in it reads is read when
+/// that runs, and what comes behind an `await` is read when the file has run: `awaited` says that one has been passed.
+#[optimize(size)]
+fn reads_any(expr: &Expr, variables: &RefMap, depth: u32, awaited: &Cell<bool>) -> bool {
+    if depth > DEEPEST_READ_FOLLOWED || awaited.get() {
+        return false;
+    }
+    let reads = |expr: &Expr| reads_any(expr, variables, depth + 1, awaited);
+    // An operand that may not be evaluated: an `await` in it may not be passed.
+    let may_read = |expr: &Expr| reads_any(expr, variables, depth + 1, &Cell::new(false));
+    match expr.data {
+        ExprData::EIdentifier(id) => variables.contains_key(&id.ref_),
+        ExprData::EUnary(e) => reads(&e.value),
+        ExprData::EBinary(e) => {
+            let short_circuits = matches!(
+                e.op,
+                js_ast::OpCode::BinLogicalAnd
+                    | js_ast::OpCode::BinLogicalOr
+                    | js_ast::OpCode::BinNullishCoalescing
+            );
+            reads(&e.left)
+                || if short_circuits {
+                    may_read(&e.right)
+                } else {
+                    reads(&e.right)
+                }
+        }
+        ExprData::ENew(e) => reads(&e.target) || e.args.slice().iter().any(reads),
+        ExprData::ECall(e) => reads(&e.target) || e.args.slice().iter().any(reads),
+        ExprData::EDot(e) => reads(&e.target),
+        ExprData::EIndex(e) => reads(&e.target) || reads(&e.index),
+        ExprData::EArray(e) => e.items.slice().iter().any(reads),
+        ExprData::EObject(e) => e.properties.slice().iter().any(|property| {
+            [&property.key, &property.value, &property.initializer]
+                .into_iter()
+                .flatten()
+                .any(reads)
+        }),
+        ExprData::ESpread(e) => reads(&e.value),
+        ExprData::ETemplate(e) => {
+            e.tag.as_ref().is_some_and(reads) || e.parts().iter().any(|part| reads(&part.value))
+        }
+        ExprData::EAwait(e) => {
+            let read = reads(&e.value);
+            awaited.set(true);
+            read
+        }
+        ExprData::EYield(e) => e.value.as_ref().is_some_and(reads),
+        ExprData::EIf(e) => reads(&e.test) || may_read(&e.yes) || may_read(&e.no),
+        ExprData::EInlinedEnum(e) => reads(&e.value),
+        _ => false,
+    }
+}
+
+/// As `reads_any()`, of running `stmt`.
+#[optimize(size)]
+fn stmt_reads_any(stmt: &Stmt, variables: &RefMap, depth: u32, awaited: &Cell<bool>) -> bool {
+    if depth > DEEPEST_READ_FOLLOWED || awaited.get() {
+        return false;
+    }
+    let reads = |expr: &Expr| reads_any(expr, variables, depth + 1, awaited);
+    let runs = |stmt: &Stmt| stmt_reads_any(stmt, variables, depth + 1, awaited);
+    // What may not run: an `await` in it may not be passed.
+    let may_read = |expr: &Expr| reads_any(expr, variables, depth + 1, &Cell::new(false));
+    let may_run = |stmt: &Stmt| stmt_reads_any(stmt, variables, depth + 1, &Cell::new(false));
+    match stmt.data {
+        StmtData::SExpr(s) => reads(&s.value),
+        StmtData::SReturn(s) => s.value.as_ref().is_some_and(reads),
+        StmtData::SThrow(s) => reads(&s.value),
+        StmtData::SLocal(s) => {
+            let mut values = s
+                .decls
+                .slice()
+                .iter()
+                .filter_map(|decl| decl.value.as_ref());
+            values.any(reads)
+        }
+        StmtData::SIf(s) => reads(&s.test) || may_run(&s.yes) || s.no.as_ref().is_some_and(may_run),
+        StmtData::SBlock(s) => s.stmts.iter().any(runs),
+        StmtData::STry(s) => {
+            s.body.iter().any(runs)
+                || s.catch
+                    .as_ref()
+                    .is_some_and(|catch| catch.body.iter().any(may_run))
+                || s.finally
+                    .as_ref()
+                    .is_some_and(|finally| finally.stmts.iter().any(runs))
+        }
+        StmtData::SFor(s) => {
+            s.init.as_ref().is_some_and(runs)
+                || s.test.as_ref().is_some_and(reads)
+                || s.update.as_ref().is_some_and(may_read)
+                || may_run(&s.body)
+        }
+        StmtData::SForIn(s) => reads(&s.value) || may_run(&s.body),
+        StmtData::SForOf(s) => reads(&s.value) || may_run(&s.body),
+        StmtData::SWhile(s) => reads(&s.test) || may_run(&s.body),
+        StmtData::SDoWhile(s) => runs(&s.body) || reads(&s.test),
+        StmtData::SSwitch(s) => {
+            reads(&s.test)
+                || s.cases.iter().any(|case| {
+                    case.value.as_ref().is_some_and(may_read) || case.body.iter().any(may_run)
+                })
+        }
+        StmtData::SLabel(s) => runs(&s.stmt),
+        _ => false,
+    }
 }
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
@@ -323,6 +437,226 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         MockHoistOrder::LoweredImport
     }
 
+    /// The factory of a visited `vi.mock(path, factory)` or `jest.mock(path, factory)` statement.
+    #[optimize(size)]
+    fn factory_of_visited_mock_stmt(
+        &self,
+        stmt: &Stmt,
+    ) -> Option<(js_ast::StoreRef<E::Call>, Expr)> {
+        let StmtData::SExpr(expr) = stmt.data else {
+            return None;
+        };
+        let ExprData::ECall(call) = expr.value.data else {
+            return None;
+        };
+        let ExprData::EDot(dot) = call.target.data else {
+            return None;
+        };
+        if dot.name.slice() != b"mock"
+            || call.optional_chain.is_some()
+            || dot.optional_chain.is_some()
+        {
+            return None;
+        }
+        match dot.target.data {
+            ExprData::EIdentifier(id) => self.mock_api(id.ref_),
+            ExprData::EImportIdentifier(id) => self.mock_api(id.ref_),
+            _ => None,
+        }?;
+        let factory = *call.args.slice().get(1)?;
+        matches!(factory.data, ExprData::EArrow(_) | ExprData::EFunction(_))
+            .then_some((call, factory))
+    }
+
+    /// `vi` of "bun:test" under a name that the file does not have: it may call its own `vi` anything, or import none.
+    #[optimize(size)]
+    fn import_vi_for_hoisted_factories(
+        &mut self,
+        before: &mut BumpVec<'a, js_ast::Part>,
+        exports_kind: js_ast::ExportsKind,
+    ) -> Result<Ref, crate::Error> {
+        let name = self.temp_var_name(b"vi");
+        let vi = self.new_symbol(js_ast::symbol::Kind::Other, name);
+        if exports_kind != js_ast::ExportsKind::Cjs {
+            self.generate_import_stmt(
+                b"bun:test",
+                &[(b"vi", vi)],
+                before,
+                None,
+                b"import_",
+                false,
+                js_ast::PartTag::BunTest,
+            )?;
+            return Ok(vi);
+        }
+        let import_record_index =
+            self.add_import_record(ImportKind::Require, js_ast::Loc::EMPTY, b"bun:test");
+        let key = self.new_expr(E::String::init(b"vi"), js_ast::Loc::EMPTY);
+        let value = self.b(B::Identifier { r#ref: vi }, js_ast::Loc::EMPTY);
+        let mut properties = BumpVec::<B::Property>::with_capacity_in(1, self.arena);
+        properties.push(B::Property {
+            flags: js_ast::flags::PROPERTY_NONE,
+            key,
+            value,
+            default_value: None,
+        });
+        let binding = self.b(
+            B::Object {
+                properties: js_ast::StoreSlice::from_bump(properties),
+                is_single_line: true,
+                close_brace_loc: js_ast::Loc::EMPTY,
+            },
+            js_ast::Loc::EMPTY,
+        );
+        let required = self.new_expr(
+            E::RequireString {
+                import_record_index,
+                ..Default::default()
+            },
+            js_ast::Loc::EMPTY,
+        );
+        let stmt = self.s(
+            S::Local {
+                kind: S::Kind::KConst,
+                decls: G::DeclList::init_one(G::Decl {
+                    binding,
+                    value: Some(required),
+                }),
+                ..Default::default()
+            },
+            js_ast::Loc::EMPTY,
+        );
+        before.push(js_ast::Part {
+            stmts: self.arena.alloc_slice_copy(&[stmt]).into(),
+            declared_symbols: js_ast::DeclaredSymbolList::from_slice(&[js_ast::DeclaredSymbol {
+                ref_: vi,
+                is_top_level: true,
+            }])?,
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_index),
+            tag: js_ast::PartTag::BunTest,
+            ..Default::default()
+        });
+        Ok(vi)
+    }
+
+    fn call_vi_of_hoisted_factories(
+        &mut self,
+        vi: Ref,
+        name: &'static [u8],
+        loc: js_ast::Loc,
+    ) -> Expr {
+        self.symbols[vi.inner_index() as usize].use_count_estimate += 1;
+        if TS {
+            self.ts_use_counts[vi.inner_index() as usize] += 1;
+        }
+        let target = self.new_expr(E::Identifier::init(vi), loc);
+        let target = self.new_expr(
+            E::Dot {
+                target,
+                name: js_ast::StoreStr::new(name),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        );
+        self.new_expr(
+            E::Call {
+                target,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// Vitest and Jest call a factory at the first import of the mocked module. `bun test` also calls it from the hoisted call,
+    /// where that has to update a loaded module in place. There a factory throws if it reads a `const`, `let` or `class` of the
+    /// file itself, which no statement has run yet. `vi.hoistedFactory()` is written in front of such a factory, and the file
+    /// ends with `vi.runHoistedFactories()`, which makes the call again: see `mockModule()` in BunPlugin.cpp.
+    #[optimize(size)]
+    fn run_factories_that_read_later_variables_at_end(
+        &mut self,
+        before: &mut BumpVec<'a, js_ast::Part>,
+        hoisted: &mut BumpVec<'a, js_ast::Part>,
+        in_place: &[js_ast::Part],
+        after: &mut BumpVec<'a, js_ast::Part>,
+        exports_kind: js_ast::ExportsKind,
+    ) -> Result<(), crate::Error> {
+        let mut later = RefMap::default();
+        let declares = |p: &Self, later: &mut RefMap, part: &js_ast::Part| {
+            for &declared in part.declared_symbols.refs() {
+                let kind = p.symbols[declared.inner_index() as usize].kind;
+                if matches!(
+                    kind,
+                    js_ast::symbol::Kind::Constant
+                        | js_ast::symbol::Kind::Other
+                        | js_ast::symbol::Kind::Class
+                ) {
+                    later.insert(declared, ());
+                }
+            }
+        };
+        for part in in_place {
+            declares(self, &mut later, part);
+        }
+        let mut vi = None;
+        for index in (0..hoisted.len()).rev() {
+            let stmts = hoisted[index].stmts;
+            for stmt in stmts.iter() {
+                let Some((mut call, factory)) = self.factory_of_visited_mock_stmt(stmt) else {
+                    continue;
+                };
+                let awaited = Cell::new(false);
+                let reads_later = match factory.data {
+                    ExprData::EArrow(arrow) => {
+                        let mut defaults = arrow.args.iter().filter_map(|arg| arg.default.as_ref());
+                        defaults.any(|default| reads_any(default, &later, 0, &awaited))
+                            || (arrow.body.stmts.iter())
+                                .any(|stmt| stmt_reads_any(stmt, &later, 0, &awaited))
+                    }
+                    ExprData::EFunction(function) => {
+                        let mut defaults = function
+                            .func
+                            .args
+                            .iter()
+                            .filter_map(|arg| arg.default.as_ref());
+                        defaults.any(|default| reads_any(default, &later, 0, &awaited))
+                            || (function.func.body.stmts.iter())
+                                .any(|stmt| stmt_reads_any(stmt, &later, 0, &awaited))
+                    }
+                    _ => false,
+                };
+                if !reads_later {
+                    continue;
+                }
+                let vi = match vi {
+                    Some(vi) => vi,
+                    None => *vi.insert(self.import_vi_for_hoisted_factories(before, exports_kind)?),
+                };
+                call.args.slice_mut()[1] = self
+                    .call_vi_of_hoisted_factories(vi, Jest::HOISTED_FACTORY, factory.loc)
+                    .join_with_comma(factory);
+            }
+            declares(self, &mut later, &hoisted[index]);
+        }
+        let Some(vi) = vi else {
+            return Ok(());
+        };
+        let value =
+            self.call_vi_of_hoisted_factories(vi, Jest::RUN_HOISTED_FACTORIES, js_ast::Loc::EMPTY);
+        let stmt = self.s(
+            S::SExpr {
+                value,
+                ..Default::default()
+            },
+            js_ast::Loc::EMPTY,
+        );
+        after.push(js_ast::Part {
+            stmts: self.arena.alloc_slice_copy(&[stmt]).into(),
+            ..Default::default()
+        });
+        Ok(())
+    }
+
     /// `ImportKind::Dynamic` on an `S::Import`'s record tells `ImportScanner` to lower it.
     #[optimize(size)]
     pub(crate) fn append_hoisted_mocks(
@@ -330,8 +664,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         before: &mut BumpVec<'a, js_ast::Part>,
         hoisted: &mut BumpVec<'a, js_ast::Part>,
         imports: &mut BumpVec<'a, js_ast::Part>,
+        in_place: &[js_ast::Part],
+        after: &mut BumpVec<'a, js_ast::Part>,
         exports_kind: js_ast::ExportsKind,
-    ) {
+    ) -> Result<(), crate::Error> {
         if exports_kind != js_ast::ExportsKind::Cjs {
             for stmt in imports.iter().flat_map(|part| part.stmts.iter()) {
                 if let StmtData::SImport(import) = stmt.data {
@@ -340,8 +676,20 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 }
             }
         }
+        // A file that awaits at its top level ends too late: a module that is imported beside it runs while it waits.
+        let awaits = !imports.is_empty() || !self.top_level_await_keyword.is_empty();
+        if !hoisted.is_empty() && !awaits && !self.has_top_level_return {
+            self.run_factories_that_read_later_variables_at_end(
+                before,
+                hoisted,
+                in_place,
+                after,
+                exports_kind,
+            )?;
+        }
         before.append(hoisted);
         before.append(imports);
+        Ok(())
     }
 
     #[optimize(size)]

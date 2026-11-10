@@ -7237,6 +7237,232 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       1,
     );
   });
+
+  // Vitest and Jest call a factory at the first import of the mocked module, which comes when mocks.ts has run. Here service.ts is
+  // linked to the module before mocks.ts runs, and imports nothing again: the call is made again at the end of mocks.ts.
+  describe("a hoisted factory that reads a variable which its file declares below the call", () => {
+    const called = (name: string) => `(globalThis.calls ??= []).push(${JSON.stringify(name)})`;
+    function readsBelow(name: string, target: string, mock: string, more: Record<string, string> = {}) {
+      return {
+        [`${name}/service.ts`]: `
+          import { send } from ${JSON.stringify(target)};
+          export const atLoad = send();
+          export const notify = () => send();
+        `,
+        [`${name}/mocks.ts`]: `
+          import { jest, vi } from "bun:test";
+          export const impl = vi.fn(() => "mock");
+          ${mock.replaceAll("CALLED", called(name))}
+        `,
+        [`${name}/below.test.ts`]: `
+          import { expect, test } from "bun:test";
+          import { impl } from "./mocks";
+          import { atLoad, notify } from "./service";
+          test(${JSON.stringify(name)}, async () => {
+            expect([atLoad, notify(), (await import(${JSON.stringify(target)})).send()]).toEqual(["mock", "mock", "mock"]);
+            expect(impl).toHaveBeenCalledTimes(3);
+            expect(globalThis.calls.filter(call => call === ${JSON.stringify(name)})).toHaveLength(1);
+          });
+        `,
+        ...more,
+      };
+    }
+    const cjsPackage = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, main: "index.js" }),
+      [`node_modules/${name}/index.js`]: `exports.send = () => "real";`,
+    });
+    const esPackage = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, type: "module", main: "index.js" }),
+      [`node_modules/${name}/index.js`]: `export const send = () => "real";`,
+    });
+    const ownModule = (name: string) => ({ [`${name}/mail.ts`]: `export const send = () => "real";` });
+    const factory = `() => (CALLED, { send: impl })`;
+
+    test.each(isolationFlags)("is called when the body of the file has run %j", async args => {
+      const files = {
+        ...readsBelow("vi-commonjs-package", "mail-a", `vi.mock("mail-a", ${factory});`, cjsPackage("mail-a")),
+        ...readsBelow("jest-own-module", "./mail", `jest.mock("./mail", ${factory});`, ownModule("jest-own-module")),
+      };
+      await expectFixturesToPass(files, 2, args);
+    });
+
+    test("whatever the module and the factory are, from a CommonJS file, and for the test file itself", async () => {
+      const files = {
+        ...readsBelow("vi-es-package", "mail-b", `vi.mock("mail-b", ${factory});`, esPackage("mail-b")),
+        ...readsBelow("vi-own-module", "./mail", `vi.mock("./mail", ${factory});`, ownModule("vi-own-module")),
+        ...readsBelow("vi-own-commonjs-module", "./mail.cjs", `vi.mock("./mail.cjs", ${factory});`, {
+          "vi-own-commonjs-module/mail.cjs": `exports.send = () => "real";`,
+        }),
+        ...readsBelow("jest-commonjs-package", "mail-c", `jest.mock("mail-c", ${factory});`, cjsPackage("mail-c")),
+        ...readsBelow("jest-es-package", "mail-d", `jest.mock("mail-d", ${factory});`, esPackage("mail-d")),
+        ...readsBelow(
+          "async-factory",
+          "./mail",
+          `vi.mock("./mail", async () => (CALLED, { send: impl }));`,
+          ownModule("async-factory"),
+        ),
+        ...readsBelow(
+          "function-expression",
+          "./mail",
+          `vi.mock("./mail", function () { CALLED; return { send: impl }; });`,
+          ownModule("function-expression"),
+        ),
+        // A CommonJS file has no import to wait for either. mocks.ts requires it while the modules of the test file run.
+        ...readsBelow("commonjs-file", "./mail", "", {
+          ...ownModule("commonjs-file"),
+          "commonjs-file/mocks.ts": `export const { impl } = require("./mocks.cjs");`,
+          "commonjs-file/mocks.cjs": `
+            const impl = jest.fn(() => "mock");
+            jest.mock("./mail", () => (${called("commonjs-file")}, { send: impl }));
+            module.exports = { impl };
+          `,
+        }),
+        // The test file is linked to the module too, and reads it before its tests run.
+        "test-file/mail.ts": `export const send = () => "real";`,
+        "test-file/mocks.ts": `
+          import { vi } from "bun:test";
+          const impl = () => "mock";
+          vi.mock("./mail", () => ({ send: impl }));
+        `,
+        "test-file/own.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { send } from "./mail";
+          const atLoad = send();
+          test("the test file reads the module while it loads", () => expect([atLoad, send()]).toEqual(["mock", "mock"]));
+        `,
+        // What a factory reads behind an await, it reads when the file has run. Such a factory is still called from the hoisted call.
+        "awaits-first/mail.ts": `export const send = () => "real";`,
+        "awaits-first/service.ts": `import { send } from "./mail"; export const atLoad = send(); export const notify = () => send();`,
+        "awaits-first/mocks.ts": `
+          import { vi } from "bun:test";
+          const impl = () => "mock";
+          vi.mock("./mail", async () => {
+            (globalThis.order ??= []).push("factory");
+            await 0;
+            return { send: impl };
+          });
+          (globalThis.order ??= []).push("mocks.ts");
+        `,
+        "awaits-first/awaits.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { atLoad, notify } from "./service";
+          test("a factory that awaits first", () => {
+            expect(globalThis.order).toEqual(["factory", "mocks.ts"]);
+            expect([atLoad, notify()]).toEqual(["real", "mock"]);
+          });
+        `,
+      };
+      await expectFixturesToPass(files, 10);
+    });
+
+    // The file is linked to the module before its own body runs, and such an import loads nothing again.
+    test.each([
+      [
+        "hands on",
+        {
+          "mod.ts": `export const value = "real";`,
+          "own.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            import { value } from "./mod";
+            export { value };
+            const fake = String("mock");
+            vi.mock("./mod", () => ({ value: fake }));
+            test("an import that the file hands on", () => expect(value).toBe("mock"));
+          `,
+        },
+      ],
+      [
+        "gives attributes",
+        {
+          "data.json": `{ "value": "real" }`,
+          "own.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            import data from "./data.json" with { type: "json" };
+            const fake = { value: String("mock") };
+            vi.mock("./data.json", () => ({ default: fake }));
+            test("an import with attributes", () => expect(data.value).toBe("mock"));
+          `,
+        },
+      ],
+    ])("is called for what the file itself imports with a statement that it %s", async (_, files) => {
+      await expectFixturesToPass(files, 1);
+    });
+
+    test("is not called where a later call or vi.unmock() of the file takes its place", async () => {
+      const files = {
+        "twice/mail.ts": `export const send = () => "real";`,
+        "twice/service.ts": `import { send } from "./mail"; export const atLoad = send();`,
+        "twice/mocks.ts": `
+          import { vi } from "bun:test";
+          const first = () => "first", second = () => "second";
+          vi.mock("./mail", () => (${called("first of two")}, { send: first }));
+          vi.mock("./mail", () => ({ send: second }));
+        `,
+        "twice/twice.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { atLoad } from "./service";
+          test("the second of two", () => expect([atLoad, (globalThis.calls ?? []).includes("first of two")]).toEqual(["second", false]));
+        `,
+        "unmocked/mail.ts": `export const send = () => "real";`,
+        "unmocked/service.ts": `import { send } from "./mail"; export const atLoad = send();`,
+        "unmocked/mocks.ts": `
+          import { vi } from "bun:test";
+          const impl = () => "mock";
+          vi.mock("./mail", () => (${called("unmocked")}, { send: impl }));
+          vi.unmock("./mail");
+        `,
+        "unmocked/unmocked.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import "./mocks";
+          import { atLoad } from "./service";
+          test("a mock that the file takes back", () => {
+            expect([atLoad, (globalThis.calls ?? []).includes("unmocked")]).toEqual(["real", false]);
+            // What the hoister calls is no part of the API.
+            expect(Object.keys(vi).filter(name => name.includes("oisted"))).toEqual(["hoisted"]);
+          });
+        `,
+      };
+      await expectFixturesToPass(files, 2);
+    });
+
+    // A module that is imported beside mocks.ts runs while mocks.ts waits for its own import, so the end of mocks.ts comes too late.
+    test("throws where the file has an import of its own above the variable, or reads the variable in a function that it calls", async () => {
+      const note =
+        "\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted().";
+      using dir = tempDir("mock-module-reads-below", {
+        ...readsBelow(
+          "awaits",
+          "./mail",
+          `import { tag } from "./tag"; const awaited = () => tag; vi.mock("./mail", () => ({ send: awaited }));`,
+          {
+            ...ownModule("awaits"),
+            "awaits/tag.ts": `export const tag = "mock";`,
+          },
+        ),
+        ...readsBelow(
+          "calls",
+          "./mail",
+          `const called = () => "mock"; function make() { return { send: called }; } vi.mock("./mail", () => make());`,
+          ownModule("calls"),
+        ),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`ReferenceError: Cannot access 'awaited' before initialization.${note}`);
+      expect(stderr).toContain(`ReferenceError: Cannot access 'called' before initialization.${note}`);
+      expect(stderr).toContain(" 0 pass\n 2 fail\n 2 errors\n");
+      expect(exitCode).toBe(1);
+    });
+  });
 });
 
 // In a URL, the "%de" in "50%deposit.ts" escapes the byte 0xDE, which isn't valid UTF-8. Windows decodes it to U+FFFD.

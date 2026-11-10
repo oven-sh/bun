@@ -84,11 +84,7 @@ test/cli/test/test-changed.test.ts: bun test --changed --watch > trigger file pa
 test/cli/test/test-environment.test.ts: test environment > without --isolate > switching environments works even if a file leaves builtins patched
 test/cli/test/test-shard.test.ts: --timings > --parallel with --timings cuts chunks by duration and dispatches each chunk slowest-first
 test/cli/test/test-shard.test.ts: --timings > --shard with --timings cuts path-sorted files into runs of equal total time
-test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: ["--isolate"]
-test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: ["--isolate=modules"]
 test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: []
-test/js/bun/test/mock/mock-hoist.test.ts: errors > a vi.mock() factory can read a later const though an earlier file or a preload loaded the module: ["--isolate"]
-test/js/bun/test/mock/mock-hoist.test.ts: errors > a vi.mock() factory can read a later const though an earlier file or a preload loaded the module: ["--isolate=modules"]
 test/js/bun/test/mock/mock-hoist.test.ts: errors > a vi.mock() factory can read a later const though an earlier file or a preload loaded the module: []
 test/js/bun/test/mock/mock-hoist.test.ts: errors > an import statement in a CommonJS file is still rejected
 test/js/bun/test/mock/mock-hoist.test.ts: imports that stay static > export from, and an import that an export clause names
@@ -108,6 +104,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > is called for what the file itself imports with a statement that it gives attributes
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept

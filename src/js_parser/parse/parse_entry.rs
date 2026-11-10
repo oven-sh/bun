@@ -2555,8 +2555,10 @@ impl<'a> Parser<'a> {
             &mut before,
             &mut hoisted_mocks,
             &mut imports_after_hoisted_mocks,
+            &parts,
+            &mut after,
             exports_kind,
-        );
+        )?;
 
         if !before.is_empty() || !after.is_empty() {
             // Single up-front reserve; the inner

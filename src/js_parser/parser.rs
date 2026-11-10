@@ -1660,6 +1660,11 @@ impl Jest {
     pub fn is_of_vitest_only(global: &str) -> bool {
         matches!(global, "suite" | "vitest" | "onTestFailed" | "assertType")
     }
+
+    /// `vi` of "bun:test" has these two for the code that the hoisters write: `jsFunctionHoistedFactory` and
+    /// `jsFunctionRunHoistedFactories` in BunPlugin.cpp.
+    pub const HOISTED_FACTORY: &'static [u8] = b"hoistedFactory";
+    pub const RUN_HOISTED_FACTORIES: &'static [u8] = b"runHoistedFactories";
 }
 
 impl Default for Jest {

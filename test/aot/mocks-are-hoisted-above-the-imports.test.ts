@@ -12,8 +12,8 @@ const laterConst = "factory can read a later const though an earlier file or a p
 
 // A case that comes to agree turns this test red: take it out of its list.
 const differs = {
-  "a compiled module stays loaded for the next test file": ["jest", "vi"].flatMap(api =>
-    isolations.map(flags => `errors > a ${api}.mock() ${laterConst}: ${flags}`),
+  "a compiled module stays loaded for the next test file": ["jest", "vi"].map(
+    api => `errors > a ${api}.mock() ${laterConst}: []`,
   ),
   "the transpiler's cache holds no compiled code": isolations.map(
     flags => `modes > a file restored from the transpiler cache: ${flags}`,
@@ -35,7 +35,7 @@ const sections = {
   "modes": 7,
   "a top-level variable in a factory of jest.mock": 18,
   "a top-level variable in a factory of vi.mock": 18,
-  "errors": 3,
+  "errors": 7,
   "source locations": 4,
 };
 

@@ -158,6 +158,17 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // The hoister has written into this file that the factory of its next vi.mock() or jest.mock() call reads a variable which the file declares below the call. That call takes it out.
+        String fileOfFactoryThatReadsLaterVariables;
+        // Such a call for a module that a module which has yet to run is linked to. It is made again once the body of `file` has run: the hoister ends that body with a call for it.
+        struct ModuleMockCallToMakeAgain {
+            String file;
+            String key;
+            uint8_t function;
+            JSC::Strong<JSC::Unknown> specifier;
+            JSC::Strong<JSC::Unknown> factory;
+        };
+        Vector<ModuleMockCallToMakeAgain> moduleMockCallsToMakeAgain = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -190,6 +201,8 @@ public:
             fetchesOfModulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
+            fileOfFactoryThatReadsLaterVariables = String();
+            moduleMockCallsToMakeAgain.clear();
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
             factoriesOfCompiledMocks.clear();

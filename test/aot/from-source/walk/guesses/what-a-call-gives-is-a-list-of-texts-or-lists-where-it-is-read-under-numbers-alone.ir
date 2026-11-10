@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# const G = JSON.parse("[[1,5,2],[4,3,6],[7,0,8]]");
+# function higher() { let s = 0; for (let y = 1; y < 3; y++) for (let x = 0; x < 3; x++) if (G[y - 1][x] > G[y][x]) s++; return s; }
+# const data = JSON.parse('{"rows":[3,1,2]}'), w = JSON.parse('"rows"');
+# function under() { let s = 0; for (let i = 1; i < 3; i++) if (data[w][i - 1] > data[w][i]) s++; return s; }
+# print(higher(), under());
+# -- end of source
+# `G[y - 1][x] > G[y][x]` fits rows that are texts as well as rows that are lists. G is read under counters and their sums alone: what the parse gives is expected to be a list of texts or lists.
+# data is read under w, of which nothing is known but that what it finds is read under a number: it may as well be a record, and here it is one: it gets no such word.
+# f1 = higher, f2 = under
+# RUN(HIGHER): walk f1 mechanisms=all
+# HIGHER-LABEL: code f1:Body
+# HIGHER: TypeTest {{*}}testedType=Array<undefined|null|string|Array>
+# RUN(UNDER): walk f2 mechanisms=all
+# UNDER-LABEL: code f2:Body
+# UNDER-NOT: testedType=Array<undefined|null|string|Array>
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2 1

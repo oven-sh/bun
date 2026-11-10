@@ -2,6 +2,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Decl, InitialState, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ExprId, ExprKind, FnId, MemberKey, PatKind, PropKey, PropKind, StmtId};
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use super::variables::BodyForm;
@@ -238,7 +239,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     _ => None,
                 };
                 let binding = ImportBinding::Variable(symbol);
-                return Some(module::emit_import_binding_asked(
+                return Some(module::emit_binding_asked_by_call(
                     self, binding, declared, asked,
                 ));
             }
@@ -250,7 +251,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     _ => None,
                 };
                 let name = self.file.intern_atom(name);
-                return Some(module::emit_import_binding_asked(
+                return Some(module::emit_binding_asked_by_call(
                     self, binding, name, asked,
                 ));
             }
@@ -369,9 +370,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(View::Namespace(module)) if self.file.inputs.modules.is_left_out(module) => None,
             Some(View::Namespace(module)) => Some(self.emit_evaluated_namespace(module)),
             Some(View::Exports(module)) => emit_module_value(self, module),
-            None => None,
+            None => self.lower_object_that_stands_for_no_module(access),
         };
         receiver.unwrap_or_else(|| self.builder.undefined())
+    }
+
+    fn lower_object_that_stands_for_no_module(&mut self, access: ExprId) -> Option<ValueId> {
+        let file = &*self.file;
+        let Some(Member::Binding(bound)) = file.inputs.modules.member(file.file, access) else {
+            return None;
+        };
+        let (object, _) = file.hir.member_key(access)?;
+        let object = file.skip_type_syntax(object);
+        let ExprKind::Ident(_) = file.hir[object].kind else {
+            return None;
+        };
+        let Binding::Symbol(symbol) = file.bound.binding(object) else {
+            return None;
+        };
+        if bound.file != file.file || file.scopes.form(symbol) != BindingForm::Stored {
+            return None;
+        }
+        Some(self.lower_identifier(object))
     }
 
     fn is_inner_parameter(&self, symbol: SymbolId) -> bool {
@@ -596,9 +616,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 _ => self.lower_named_evaluation(property.value, key),
             };
-            stores.retain(|store| store.0 != export);
             stores.push((export, value));
         }
+        let mut is_last = FxHashSet::default();
+        stores.reverse();
+        stores.retain(|store| is_last.insert(store.0));
+        stores.reverse();
         self.set_position(hir[literal].pos);
         for (export, value) in stores {
             let key = VariableKey::SyntheticExport(export);

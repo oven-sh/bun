@@ -1,0 +1,10 @@
+# a controller and its signal
+# -- source: a-controller-that-aborts-brings-no-other-feature.ts
+# const controller = new AbortController(); controller.abort(); console.log(String(controller.signal.aborted));
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by AbortController
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

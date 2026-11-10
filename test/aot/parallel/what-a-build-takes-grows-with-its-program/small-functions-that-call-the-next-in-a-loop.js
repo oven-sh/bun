@@ -1,6 +1,7 @@
 // In a loop a small function without a loop is called that calls the next, SIZE deep: the chain that is copied today.
 // It writes a program: SIZE says how large, PASSES how many copies of its function under names of their own.
-// Sizes: 1 3 6
+// Up to the third level the levels cost unevenly, from there on each costs the same: the sizes begin there.
+// Sizes: 3 6 12
 // Passes: 60
 // Grows: the build, linear
 const size = Number(process.env.SIZE ?? 2),

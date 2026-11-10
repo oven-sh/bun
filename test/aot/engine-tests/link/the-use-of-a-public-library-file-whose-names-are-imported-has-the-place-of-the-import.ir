@@ -1,0 +1,33 @@
+# import { Database } from "bun:sqlite";  new Database(":memory:");
+# The file stays in sight, so nothing lets its object go. The report still says where the program asks for the file: the use of the object, and of each name that the loader reads off it,
+# has the place of the file that imports it. Without a place the line reads `used (bun:sqlite)` and nobody can find the import.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: features
+# CHECK: by BunSqlite unnamed at f0
+# CHECK: by BunSqliteDatabase unnamed at f0
+
+layout L0 module=m1 fields=[{key="Database" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="Database" module=m1 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSqlite body=f1 syntheticExports=[{name="Database" variable=g0 isKnownMember=true}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = String string=":memory:"
+    v2 = Call v0, -, v1 calleeName="Database"
+    v3 = Undefined
+    Return v3
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="Database" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

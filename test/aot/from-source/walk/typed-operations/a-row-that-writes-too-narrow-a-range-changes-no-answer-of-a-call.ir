@@ -1,0 +1,17 @@
+# -- source: main.js
+# function make(n) { const list = []; for (let i = 0; i < n; i++) list.push(i & 1 ? 6 : 5 + i); return list; }
+# function ask(list) { return list.lastIndexOf(6); }
+# function direct(list) { return [ask(list), ask(list) + 1, ask(list) > 0].join(); }
+# function local(list) { const v = list.lastIndexOf(6); return [v, v + 1, v > 0, [10, 20, 30, 40][v & 3]].join(); }
+# print(direct(make(id(4))), local(make(id(4))), local(make(id(1))));
+# -- end of source
+# f1 = make, f2 = ask, f3 = direct, f4 = local. THE LIE: the row of Array.prototype.lastIndexOf writes the least integer of its range alone: -1. The door behind a call of a built-in asked "a number" and the record said what the
+# row writes: so `v + 1` was 0 and `v > 0` was false while the program was compiled, and nothing was left that looked at the value: 3,0,false for 3,4,true, no stop, as users build and under both checking words.
+# The record says of its numbers what its door asks: an int32, an integer or a number. What the row writes beyond that is believed by nobody, so a row that writes too little changes no answer.
+# OPTIONS: testing=RowSaysLess:Builtin/Array.prototype.lastIndexOf/RangeOfResult
+# RUN(RECORD): walk f4 mechanisms=all
+# RECORD: : i32 @{{*}} = CallBuiltin {{*}} overload=ArrayPrototypeLastIndexOf/0
+# RUN(ANSWERS): run-in-shell globalThis.id = (x) => x;
+# ANSWERS: 3,4,true 3,4,true,40 -1,0,false,40
+# ANSWERS-NEXT: exited with 0
+# ANSWERS-NEXT: the source prints the same

@@ -4761,3 +4761,297 @@ it.concurrent("the path passed to onLoad is still valid after the module is free
     exitCode: 0,
   });
 });
+
+it("an onResolve is told the kind of the request, the namespace of the importer and its folder", async () => {
+  using dir = tempDir("plugin-on-resolve-is-told", {
+    "other.mjs": `export const here = 1;
+`,
+    "static.mjs": `import "made-up-import-statement";
+export * from "made-up-export-from";
+import "made-up-outer.js";
+`,
+    "main.mjs": `import { createRequire } from "node:module";
+const dir = import.meta.dir;
+Bun.plugin({
+  name: "is told",
+  setup(build) {
+    build.onResolve({ filter: /^made-up-/ }, args => {
+      const folder = args.resolveDir === dir ? "the folder of the importer" : String(args.resolveDir);
+      console.log(args.path.slice("made-up-".length) + ":", args.kind, "|", args.namespace, "|", folder, "|", Object.keys(args).sort().join());
+      if (args.path === "made-up-outer.js") Bun.resolveSync("made-up-inner.js", dir);
+      return { path: dir + "/other.mjs" };
+    });
+    build.onResolve({ filter: /^in-a-namespace$/ }, () => ({ path: "entry", namespace: "virtual" }));
+    build.onLoad({ filter: /./, namespace: "virtual" }, () => ({ contents: \`import "made-up-from-a-namespace";\`, loader: "js" }));
+  },
+});
+const name = road => "made-up-" + road;
+await import("./static.mjs");
+await import(name("import-call"));
+const require = createRequire(import.meta.url);
+require(name("require-call"));
+require.resolve(name("require-resolve"));
+import.meta.resolve(name("import-meta-resolve"));
+Bun.resolveSync(name("resolve-sync"), dir);
+import.meta.resolveSync(name("import-meta-resolve-sync"));
+await import("in-a-namespace");
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: `import-statement: import-statement | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+export-from: import-statement | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+outer.js: import-statement | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+inner.js: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+import-call: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+require-call: require-call | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+require-resolve: require-resolve | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+import-meta-resolve: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+resolve-sync: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+import-meta-resolve-sync: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+from-a-namespace: import-statement | virtual | undefined | importer,kind,namespace,path,resolveDir
+`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.skipIf(isWindows)("an importer in a folder whose name holds a colon is a file", async () => {
+  using dir = tempDir("plugin-importer-with-a-colon", {
+    "kept.mjs": `export const here = 1;`,
+    "with:colon/inner.mjs": `import "../kept.mjs"; await import("../kept.mjs");`,
+    "main.mjs": `
+      Bun.plugin({
+        name: "is told",
+        setup(build) {
+          build.onResolve({ filter: /kept\\.mjs$/ }, args => {
+            console.log(args.kind, args.namespace, args.resolveDir === import.meta.dir + "/with:colon");
+          });
+        },
+      });
+      await import("./with:colon/inner.mjs");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "import-statement file true\ndynamic-import file true\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("a module in a namespace is told as the importer by a statement and by import() alike", async () => {
+  using dir = tempDir("plugin-importer-in-a-namespace", {
+    "kept.mjs": `export const here = 1;`,
+    "main.mjs": `
+      Bun.plugin({
+        name: "is told",
+        setup(build) {
+          build.onResolve({ filter: /^enter$/ }, () => ({ path: "entry", namespace: "virtual" }));
+          build.onLoad({ filter: /./, namespace: "virtual" }, () => ({
+            contents: 'import "made-up-statement"; await import("made-up-call");',
+            loader: "js",
+          }));
+          build.onResolve({ filter: /^made-up-/ }, args => {
+            console.log(args.kind, args.namespace, args.resolveDir);
+            return { path: import.meta.dir + "/kept.mjs" };
+          });
+        },
+      });
+      await import("enter");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "import-statement virtual undefined\ndynamic-import virtual undefined\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("an absolute path that an onResolve answers with stands where nothing is loaded", async () => {
+  using dir = tempDir("plugin-answers-with-a-path-that-is-not-on-disk", {
+    "main.mjs": `
+      import { createRequire } from "node:module";
+      import { join } from "node:path";
+      import { pathToFileURL } from "node:url";
+      const missing = join(import.meta.dir, "not-on-disk.mjs");
+      Bun.plugin({
+        name: "answers",
+        setup(build) {
+          build.onResolve({ filter: /^made-up-name$/ }, () => ({ path: missing }));
+        },
+      });
+      const require = createRequire(import.meta.url);
+      console.log(import.meta.resolve("made-up-name") === pathToFileURL(missing).href);
+      console.log(require.resolve("made-up-name") === missing);
+      console.log(Bun.resolveSync("made-up-name", import.meta.dir) === missing);
+      console.log(import.meta.resolveSync("made-up-name") === missing);
+      console.log(await import("made-up-name").catch(error => error.code));
+      try {
+        require("made-up-name");
+      } catch (error) {
+        console.log(error.code);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "true\ntrue\ntrue\ntrue\nERR_MODULE_NOT_FOUND\nMODULE_NOT_FOUND\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.skipIf(isWindows)("an importer whose first folder has a colon in its name is a file", async () => {
+  using dir = tempDir("plugin-importer-below-a-top-level-folder-with-a-colon", {
+    "kept.mjs": `export const here = 1;`,
+    // Nothing is read from /made:up: a callback is told the importer before anything is looked up.
+    "main.mjs": `
+      import { createRequire } from "node:module";
+      Bun.plugin({
+        name: "is told",
+        setup(build) {
+          build.onResolve({ filter: /^made-up-name$/ }, args => {
+            console.log(args.kind, args.importer, args.namespace, args.resolveDir);
+            return { path: import.meta.dir + "/kept.mjs" };
+          });
+        },
+      });
+      Bun.resolveSync("made-up-name", "/made:up/src");
+      import.meta.resolve("made-up-name", "/made:up/src/a.ts");
+      createRequire("/made:up/src/a.ts").resolve("made-up-name");
+      createRequire("/made:up/src/a.ts")("made-up-name");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      "dynamic-import /made:up/src file /made:up/src\n" +
+      "dynamic-import /made:up/src/a.ts file /made:up/src\n" +
+      "require-resolve /made:up/src/a.ts file /made:up/src\n" +
+      "require-call /made:up/src/a.ts file /made:up/src\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("a module in a namespace is told as the importer on every road", async () => {
+  using dir = tempDir("plugin-every-road-from-inside-a-namespace", {
+    "kept.cjs": `exports.here = 1;`,
+    "main.mjs": `const roads = \`
+  await import("made-up-import-call");
+  require("made-up-require-call");
+  require.resolve("made-up-require-resolve");
+  import.meta.resolve("made-up-import-meta-resolve");
+  import.meta.resolveSync("made-up-import-meta-resolve-sync");
+\`;
+Bun.plugin({
+  name: "is told",
+  setup(build) {
+    build.onResolve({ filter: /^enter-/ }, args => ({ path: args.path.slice("enter-".length), namespace: "virtual" }));
+    build.onLoad({ filter: /^esm/, namespace: "virtual" }, () => ({ contents: 'import "made-up-statement";' + roads, loader: "js" }));
+    build.onLoad({ filter: /^cjs/, namespace: "virtual" }, () => ({
+      contents: 'exports.a = 1; require("made-up-require-call"); require.resolve("made-up-require-resolve");',
+      loader: "js",
+    }));
+    build.onResolve({ filter: /^made-up-/ }, args => {
+      console.log(args.path.slice("made-up-".length) + ":", args.kind, "|", args.importer, "|", args.namespace, "|", args.resolveDir);
+      return { path: import.meta.dir + "/kept.cjs" };
+    });
+  },
+});
+console.log("== a module"); await import("enter-esm");
+console.log("== the same under a query"); await import("enter-esm?v=1");
+console.log("== a CommonJS module"); await import("enter-cjs");
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const told = stdout.split("\n").filter(line => line.includes(" | "));
+  expect(told.map(line => line.split(" | ").slice(2).join(" "))).toEqual(Array(told.length).fill("virtual undefined"));
+  expect({ told: told.length, stderr, exitCode }).toEqual({ told: 14, stderr: "", exitCode: 0 });
+});
+
+it.each([[[]], [["--isolate"]], [["--isolate=modules"]]])(
+  "a required CommonJS module in a namespace is told as the importer: bun test %p",
+  async flags => {
+    using dir = tempDir("plugin-required-module-of-a-namespace-in-a-test-run", {
+      "kept.cjs": `exports.here = 1;`,
+      "a.test.js": `
+      import { plugin } from "bun";
+      import { test } from "bun:test";
+      test("is told", async () => {
+        plugin({
+          name: "is told",
+          setup(build) {
+            build.onResolve({ filter: /^enter$/ }, () => ({ path: "cjs", namespace: "virtual" }));
+            build.onLoad({ filter: /./, namespace: "virtual" }, () => ({
+              contents: 'exports.loading = import("made-up-call");',
+              loader: "js",
+            }));
+            build.onResolve({ filter: /^made-up-/ }, args => {
+              console.log("SAID", args.kind, args.namespace, args.resolveDir);
+              return { path: import.meta.dir + "/kept.cjs" };
+            });
+          },
+        });
+        await require("enter").loading;
+      });
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags, "./a.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ said: stdout.split("\n").filter(line => line.startsWith("SAID")), exitCode }).toEqual({
+      said: ["SAID dynamic-import virtual undefined"],
+      exitCode: 0,
+    });
+  },
+);

@@ -121,7 +121,7 @@ fn kind_at(hir: &File<'_>, e: ExprId) -> Option<ExprKind> {
     hir.exprs.get(e.idx()).map(|node| node.kind)
 }
 
-fn outermost_cast<'s>(hir: &File<'s>, bound: &Bound<'s>, mut e: ExprId) -> ExprId {
+pub(crate) fn outermost_cast(hir: &File<'_>, bound: &Bound<'_>, mut e: ExprId) -> ExprId {
     while let Parent::Expr(above) = bound.parent_of_expr(e)
         && hir.type_assertion_operand(above).is_some()
     {

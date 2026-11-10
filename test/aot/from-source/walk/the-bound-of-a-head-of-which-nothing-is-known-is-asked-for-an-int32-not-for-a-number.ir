@@ -1,0 +1,15 @@
+# `for (let i = 0; i < d.length; i++)`, d an object of the program's own whose `length` is a field of which nothing is known: the looks at the loop count on an int32 there, and the typed copy asks for one in front: the counter is an Int32, the relation is made of integers. A rule that asks a value beside a number for a NUMBER must come behind that question: in front of it the counter stayed wide (Less in form Numbers behind IntegerToNumber, Increment CheckedIntegers): three times the instructions a turn.
+# f4 = fold, f1 = all
+# -- source: the-bound-of-a-head-of-which-nothing-is-known-is-asked-for-an-int32-not-for-a-number.js
+# const key = JSON.parse('"fold"');
+# const table = { fold(d) { let h = 7; for (let i = 0; i < d.length; i++) h = (h * 31 + d.charCodeAt(i)) | 0; return h >>> 1; } };
+# class Strip { constructor(s) { this.s = s; this.length = s.length; } charCodeAt(i) { return this.s.length ^ i; } }
+# const strip = new Strip("x".repeat(40));
+# function all(t) { return table[key](strip) + t % 2; }
+# let sum = 0; for (let t = 0; t < 3; t++) sum = (sum + all(t)) % 1000003; print(sum);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 439750
+# RUN(FORM): walk f4 mechanisms=all
+# FORM-LABEL: code f4:Body
+# FORM: = Less {{*}} form=Integers

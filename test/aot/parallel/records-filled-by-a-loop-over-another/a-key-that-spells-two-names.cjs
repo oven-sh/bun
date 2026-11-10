@@ -1,0 +1,16 @@
+// STATISTIC: FlowAppendedFields = 0
+"use strict";
+function add(a, b) { return (a + b) | 0; }
+function mul(a, b) { return (a * b) % 1009; }
+function low(a) { return a & 15; }
+function attempt(run) { try { return String(run()); } catch (error) { return error instanceof TypeError ? "TypeError" : "another"; } }
+function call(which) { try { return which === 0 ? N.add(2, 3) : which === 1 ? N.mul(4, 5) : N.low(19); } catch (error) { return error instanceof TypeError ? "TypeError" : "another"; } }
+function tell() { return call(0) + " " + call(1) + " " + call(2) + " " + typeof N.add + " " + typeof N.mul + " " + typeof N.low + " " + (N.add === add) + " " + (N.mul === mul) + " " + (N.low === low) + " " + (N.mul === low) + " " + (N.mul === add); }
+const out = [];
+let asked = 0;
+const key = { toString() { return asked++ & 1 ? "mul" : "add"; } };
+const N = {}, impl = { add: add, mul: mul, low: low };
+N[key] = impl[key];
+for (let turn = 0; turn < 40; turn++) out.push(attempt(() => N.mul(4, 5)), typeof N.add);
+for (let round = 0; round < 12; round++) out.push(tell());
+console.log([...new Set(out.map(String))].join("\n"));

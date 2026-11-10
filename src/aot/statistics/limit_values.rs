@@ -42,7 +42,6 @@ impl LimitValues {
 pub fn limit_of_queries(limit: QueryLimit) -> LimitId {
     match limit {
         QueryLimit::ConstructorParentsFollowed => LimitId::MaxConstructorParentsFollowed,
-        QueryLimit::HelpersFollowedToPrototypeLink => LimitId::MaxHelpersFollowedToPrototypeLink,
         QueryLimit::FunctionsGivenThis => LimitId::MaxFunctionsGivenThis,
         QueryLimit::TermsReadForProduct => LimitId::MaxTermsReadForProduct,
         QueryLimit::DeclaredSignatureDepth => LimitId::MaxDeclaredSignatureDepth,

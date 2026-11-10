@@ -56,6 +56,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             }
             | FoundCode::NotFound(_)) => self.answer_search(&search, found),
         };
@@ -80,6 +81,7 @@ impl<'h> Resolver<'h> {
                 path,
                 required,
                 links_followed,
+                has_side_effects,
             } => {
                 let module_path = |found: Vec<u8>| match links_followed {
                     true => found,
@@ -87,6 +89,14 @@ impl<'h> Resolver<'h> {
                 };
                 let path = module_path(path);
                 let required = required.map(module_path);
+                let found = std::iter::once(&path).chain(&required);
+                for file in found.filter(|_| has_side_effects) {
+                    if self.declared_side_effects(file) != DeclaredSideEffects::Unspecified {
+                        let state = self.code_state();
+                        let mut files = state.files_found_with_side_effects.lock();
+                        files.insert(self.keep(file));
+                    }
+                }
                 if let Some(required) = required.filter(|required| *required != path) {
                     let (imported, required) = (self.keep(&path), self.keep(&required));
                     let mut required_files = self.code_state().required_files.lock();
@@ -126,6 +136,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             } => return file,
             found @ (FoundCode::External(_) | FoundCode::NotFound(_)) => found,
         };
@@ -138,6 +149,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             } => file,
             FoundCode::External(_) | FoundCode::NotFound(_) => found,
         }
@@ -707,6 +719,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
                     path: found,
                     required: main,
                     links_followed: false,
+                    has_side_effects: false,
                 },
             });
         }
@@ -764,6 +777,7 @@ fn found_file(path: Vec<u8>) -> FoundCode {
         path,
         required: None,
         links_followed: false,
+        has_side_effects: false,
     }
 }
 

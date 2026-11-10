@@ -254,14 +254,10 @@ impl Resolver<'_, '_> {
         variable: SymbolId,
         object: ResolvedValue,
     ) -> bool {
-        let (hir, bound) = (self.input.hir, self.input.bound);
+        let bound = self.input.bound;
         let mut stores = bound.stores_to(variable).iter();
-        let mut names = (0..hir.exprs.len() as u32).map(ExprId).filter(|&name| {
-            matches!(hir[name].kind, ExprKind::Ident(_))
-                && bound.binding(name) == Binding::Symbol(variable)
-        });
         stores.all(|it| self.stores_object(it.target, object))
-            && names.all(|name| {
+            && self.names_of(variable).all(|name| {
                 bound.dynamic_lookup_scope(NodeData::Expr(name)).is_none()
                     && (bound.is_store_target(name)
                         || self.is_asked_for_unlisted_member(name, object))

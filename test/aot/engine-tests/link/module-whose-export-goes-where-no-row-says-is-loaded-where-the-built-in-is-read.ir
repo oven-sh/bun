@@ -1,0 +1,25 @@
+# typeof Bun.sql.unsafe
+# Native code makes the value of Bun.sql at the first read: it loads bun:sql and takes the export `default`. The table knows of the load and of the export, from the line of native code that asks for them,
+# and no row says what native code does with the export. What hangs on a function waits until the function may run, but only where the row says all that becomes of what is read out of the module:
+# silence is not "it is not the value of the entry". If the load waited for a call, nothing of the module would be in the program and the members that its code lays on the function would read as absent.
+# The controls: module-of-which-no-export-is-read-waits-for-a-call-of-the-built-in.ir, module-of-which-no-export-is-read-is-loaded-where-the-built-in-is-called.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="bun:sql" displayPath="bun:sql" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSql body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="sql"
+    v2 = PropGet v1 key="unsafe"
+    v3 = TypeOf v2
+    Return v3
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

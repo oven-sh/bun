@@ -67,8 +67,16 @@ describe("compile/aot/an executable keeps the text at the top level that an erro
     expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
 
-  test("its bytes hold the statement that may fail and nothing else of the top level a second time", () => {
-    const bytes = readFileSync(path("with-text"));
+  // The text that errors quote and the text of functions lie compressed in the file. The printer of stored strings opens them.
+  const storedStrings = async (name: string) =>
+    Buffer.from((await spawned([bunExe(), "build", "--aot-stored-strings", path(name)], root, bunEnv)).stdout);
+
+  test("its bytes hold the statement that may fail and nothing else of the top level a second time", async () => {
+    const file = readFileSync(path("with-text"));
+    expect([inBlockAroundIt, betweenStatements, inFunctionNobodyEnters].map(text => count(file, text))).toEqual([
+      0, 0, 0,
+    ]);
+    const bytes = await storedStrings("with-text");
     expect({
       statementThatFails: count(bytes, statementThatFails),
       inBlockAroundIt: count(bytes, inBlockAroundIt),
@@ -88,6 +96,7 @@ describe("compile/aot/an executable keeps the text at the top level that an erro
 
   test("built without the text of functions it holds none of it", async () => {
     expect(count(readFileSync(path("without-text")), statementThatFails)).toBe(0);
+    expect(count(await storedStrings("without-text"), statementThatFails)).toBe(0);
     const run = await spawned([path("without-text")], root, bunEnv);
     expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({
       stdout: `null is not an Object.\n${longText} ${inTable}\n`,

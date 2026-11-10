@@ -1,7 +1,7 @@
 // answers: without-library
 // # One access at a written index off a field that is only written to hold an Int32Array or a Uint8Array opens no guess outside of loops: it stays a call of five bytes.
 // # The call names what is expected: the stub asks for that kind of view first, and goes on to the stub that takes everything where something else has arrived.
-// # A Float64Array has no such stub: the access expects nothing.
+// # So does a Float64Array.
 // # f1 = put, f2 = get, f3 = byte, f4 = wide
 // # RUN(PUT): walk f1 mechanisms=all
 // # PUT: = ElemSet {{*}}expectedElements=Int32Array
@@ -10,7 +10,7 @@
 // # RUN(BYTE): walk f3 mechanisms=all
 // # BYTE: = ElemGet {{*}}expectedElements=Uint8Array
 // # RUN(WIDE): walk f4 mechanisms=all
-// # WIDE-NOT: expectedElements
+// # WIDE: = ElemGet {{*}}expectedElements=Float64Array
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 19 of 19 of 19

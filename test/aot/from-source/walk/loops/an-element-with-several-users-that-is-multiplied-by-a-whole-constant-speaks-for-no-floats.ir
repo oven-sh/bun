@@ -1,0 +1,19 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { var n = 0, h = 0; for (var i = 0; i < d.length; i++) { var c = d[i]; n += c * 256; h += c; } return n + h; } };
+# print(T[key](new Uint8Array(3).fill(7)), T[key](new Float64Array(3).fill(1.5)), T[key](new Float32Array(2).fill(2.5)), T[key](new Int16Array(2).fill(-3)), T[key]([1, 2, 3]));
+# -- end of source
+# Floats have their copies behind the front of a loop where the loop's own text multiplies or divides an element of the holder. Where every product is asked for its factors, more loops
+# were built twice, for nothing: elements with several users, multiplied by a whole constant: what is read is being taken apart. Such a product speaks for no floats.
+# An element whose ONLY use is a product speaks for them whatever the factor (`s + held[i] * 2`), and so does one with several users that is multiplied by anything else (`v * v`), and a quotient.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK-NOT: builtinClass=Float64Array
+# CHECK-NOT: builtinClass=Float32Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 5397 1156.5 1285 -1542 1542
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 5397 1156.5 1285 -1542 1542
+# NONE-NEXT: exited with 0

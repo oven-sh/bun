@@ -333,14 +333,37 @@ pub(crate) mod js_bundler {
         Ok(())
     }
 
-    fn ensure_type_checker(global_this: &JSGlobalObject, option: &str) -> JsResult<()> {
-        use bun_removable_features::{Feature, Removal, removal_of};
-        if removal_of(Feature::Check) == Removal::Present {
+    fn ensure_included(
+        global_this: &JSGlobalObject,
+        feature: bun_removable_features::Feature,
+        option: &str,
+        part: &str,
+        name: &str,
+    ) -> JsResult<()> {
+        use bun_removable_features::{Removal, removal_of};
+        if removal_of(feature) == Removal::Present {
             return Ok(());
         }
         Err(global_this.throw_invalid_arguments(format_args!(
-            "{option}: this executable doesn't include the type checker"
+            "{option}: this executable doesn't include {part}. To keep {part}, build it with trim: {{ allow: [\"bundler\", \"{name}\"] }}"
         )))
+    }
+
+    fn ensure_type_checker(global_this: &JSGlobalObject, option: &str) -> JsResult<()> {
+        let check = bun_removable_features::Feature::Check;
+        ensure_included(global_this, check, option, "the type checker", "check")
+    }
+
+    fn ensure_compiler(global_this: &JSGlobalObject) -> JsResult<()> {
+        let compiler = bun_removable_features::Feature::AotCompiler;
+        let part = "the ahead-of-time compiler";
+        ensure_included(global_this, compiler, "compile.aot", part, "aot")
+    }
+
+    // The executable that is written is a copy of this one. A program that is not compiled ahead of time runs on the JIT compilers.
+    fn ensure_jit_compilers(global_this: &JSGlobalObject) -> JsResult<()> {
+        let jit = bun_removable_features::Feature::Jit;
+        ensure_included(global_this, jit, "compile", "the JIT compilers", "jit")
     }
 
     fn check_compile_keys(global_this: &JSGlobalObject, compile: JSValue) -> JsResult<()> {
@@ -1692,9 +1715,14 @@ pub(crate) mod js_bundler {
                 if !is_standalone_html {
                     this.target = Target::Bun;
                     if compile.aot.is_some() {
+                        ensure_compiler(global_this)?;
                         this.bytecode = false;
                         this.format = options::Format::Esm;
                         compile.compile_target = CompileTarget::default();
+                    } else if compile.executable_path.list.is_empty()
+                        && compile.compile_target.is_default()
+                    {
+                        ensure_jit_compilers(global_this)?;
                     }
 
                     let define_keys = compile.compile_target.define_keys();

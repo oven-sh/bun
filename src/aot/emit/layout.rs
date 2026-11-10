@@ -164,7 +164,8 @@ fn plan_sections(totals: &ListCounts) -> Result<SectionPlan, EmitError> {
     let sections = ProgramList::ALL.map(|list| Section {
         offset_in_bytes: u32::try_from(starts[list as usize])
             .expect("a section starts before the end"),
-        count: totals[list as usize] as u32,
+        count: u32::try_from(totals[list as usize])
+            .expect("a list has no more elements than bytes"),
     });
     Ok(SectionPlan {
         sections,

@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function drain(list: number[], at: number): string { let turns = 0; for (let i = 0; i < list.length; i++) { turns++; if (i === at) list.length = 0; } return turns + ":" + list.length; }
+# const at: number = JSON.parse("1");
+# print(drain([1.5, 2.5, 3.5, 4.5], at));
+# -- end of source
+# The head of the loop goes by the length of the list, and one turn stores nought under `length`. The store is an operation that says what it writes, so the loop has its typed copy, and the length is read in every turn.
+# The lie, testing=StorageAndLengthsAreTakenToBeAsInFront: the turns of a loop are taken to leave the storage of lists, and so their lengths, as they were in front of it. The loop has as many turns as the list was long. No turn reads an element.
+# Under testing=TestsEveryPosition (--aot-harden=ignore-told-ranges) and testing=CheckProofsAtRunTime (--aot-harden=proof-checks) what was read in front is held against the cell in the turn: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 2:0
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime
+# HELD: 2:0
+# HELD-NEXT: exited with 0
+# RUN(SILENT): run-in-shell mechanisms=all testing=StorageAndLengthsAreTakenToBeAsInFront
+# SILENT: 4:
+# SILENT-NEXT: exited with 0
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=TestsEveryPosition,StorageAndLengthsAreTakenToBeAsInFront
+# POSITIONS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# POSITIONS: crashed with
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,StorageAndLengthsAreTakenToBeAsInFront
+# PROOFS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# PROOFS: crashed with

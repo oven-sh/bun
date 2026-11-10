@@ -1,6 +1,6 @@
 // run-parallel.ts: `// Todo on <process.platform> <process.arch>: <why>` is a `// Todo:` on that platform and nothing on any other.
-// `// Skip on <process.platform> <process.arch>: <why>` is held to nothing that it prints on that platform, right or wrong, and is nothing on any other.
 // `// Todo under ASAN: <why>` is one where Bun is built with the address sanitizer and nothing anywhere else.
+// Each says in front of its reason what differs, and stands for that alone: a program that fails otherwise fails, and so does one whose line does not say it.
 // A bound may end with ` Todo: <why>`, ` Todo on <process.platform>: <why>` or ` Todo on <process.platform> <process.arch>: <why>`: it is asked all the same, fails once it is met, and the line of its file says what was counted,
 // so that tools/goals-that-grew.ts can tell a goal that moves further off from one that stands still.
 import { expect } from "bun:test";
@@ -13,33 +13,51 @@ import { test } from "./supported";
 const here = `${process.platform} ${process.arch}`;
 const right = "console.log(true);\n/* Output:\ntrue\n*/\n";
 const wrong = "console.log(true);\n/* Output:\nfalse\n*/\n";
-const skipped = "skip: skipped on this platform: now one way, now the other";
+const oneForTheOther = '"true" | "false"';
+const notMeant = "its `// Todo` does not stand for that";
+const compiled = 'const compiled = Bun.main.startsWith("/$bunfs/") || Bun.main.includes("~BUN");\n';
 const expected = {
-  "wrong-here.js": "skip: todo: some day",
+  "wrong-here.js": `skip: todo: ${oneForTheOther}: some day`,
   "wrong-elsewhere.js": "compare: it does not print what its last comment says",
   "right-here.js": "todo: it passes: its `// Todo:` line goes out",
   "right-elsewhere.js": "pass",
-  "the-line-for-here-goes-first.js": "skip: todo: another day",
-  "skipped-here-and-right.js": `${skipped} | in this run the executable printed what the reference printed`,
-  "skipped-here-and-wrong.js": `${skipped} | in this run the reference printed "false\\n" and the executable "true\\n"`,
-  "skipped-elsewhere-and-wrong.js": "compare: it does not print what its last comment says",
-  "wrong-under-asan.js": isASAN ? "skip: todo: some day" : "compare: it does not print what its last comment says",
+  "the-line-for-here-goes-first.js": `skip: todo: ${oneForTheOther}: another day`,
+  "wrong-under-asan.js": isASAN
+    ? `skip: todo: ${oneForTheOther}: some day`
+    : "compare: it does not print what its last comment says",
   "right-under-asan.js": isASAN ? "todo: it passes: its `// Todo:` line goes out" : "pass",
+  "wrong-in-another-line-too.js": `compare: it does not print what its last comment says: ${notMeant}`,
+  "wrong-in-other-words.js": `compare: it does not print what its last comment says: ${notMeant}`,
+  "ends-otherwise.js": `compare: it does not print what its last comment says: ${notMeant}`,
+  "its-build-says-otherwise.js": `compile: the build prints 0 x nothing like it, not 1 x: ${notMeant}`,
+  "wrong-where-it-is-said-to-grow.js": `compare: it does not print what its last comment says: ${notMeant}`,
+  "not-as-plain-bun.js": `skip: todo: ${oneForTheOther}: some day`,
+  "not-as-plain-bun-in-another-line-too.js": `compare: it does not exit and print as plain Bun does: ${notMeant}`,
+  "does-not-say-what-differs.js":
+    'read: not of the form `// Todo..: it grows: <why>`, `// Todo..: "<a word>" | "<the word for it>": <why>` or `// Todo: only frames (..): <why>`: // Todo: some day',
+  "does-not-say-what-differs-elsewhere.js":
+    'read: not of the form `// Todo..: it grows: <why>`, `// Todo..: "<a word>" | "<the word for it>": <why>` or `// Todo: only frames (..): <why>`: // Todo on plan9 mips: some day',
 };
 
 test("a todo for one platform counts there alone", async () => {
   using dir = tempDir("a-todo-for-one-platform-counts-there-alone", {
     "tsconfig.json": "{}",
-    "wrong-here.js": `// Todo on ${here}: some day\n${wrong}`,
-    "wrong-elsewhere.js": `// Todo on plan9 mips: some day\n${wrong}`,
-    "right-here.js": `// Todo on ${here}: some day\n${right}`,
-    "right-elsewhere.js": `// Todo on plan9 mips: some day\n${right}`,
-    "the-line-for-here-goes-first.js": `// Todo: some day\n// Todo on ${here}: another day\n${wrong}`,
-    "skipped-here-and-right.js": `// Skip on ${here}: now one way, now the other\n${right}`,
-    "skipped-here-and-wrong.js": `// Skip on ${here}: now one way, now the other\n${wrong}`,
-    "skipped-elsewhere-and-wrong.js": `// Skip on plan9 mips: now one way, now the other\n${wrong}`,
-    "wrong-under-asan.js": `// Todo under ASAN: some day\n${wrong}`,
-    "right-under-asan.js": `// Todo under ASAN: some day\n${right}`,
+    "wrong-here.js": `// Todo on ${here}: ${oneForTheOther}: some day\n${wrong}`,
+    "wrong-elsewhere.js": `// Todo on plan9 mips: ${oneForTheOther}: some day\n${wrong}`,
+    "right-here.js": `// Todo on ${here}: ${oneForTheOther}: some day\n${right}`,
+    "right-elsewhere.js": `// Todo on plan9 mips: ${oneForTheOther}: some day\n${right}`,
+    "the-line-for-here-goes-first.js": `// Todo: ${oneForTheOther}: some day\n// Todo on ${here}: ${oneForTheOther}: another day\n${wrong}`,
+    "wrong-under-asan.js": `// Todo under ASAN: ${oneForTheOther}: some day\n${wrong}`,
+    "right-under-asan.js": `// Todo under ASAN: ${oneForTheOther}: some day\n${right}`,
+    "wrong-in-another-line-too.js": `// Todo: ${oneForTheOther}: some day\nconsole.log(true);\nconsole.log(1);\n/* Output:\nfalse\n2\n*/\n`,
+    "wrong-in-other-words.js": `// Todo: "collected" | "KEPT": some day\n${wrong}`,
+    "ends-otherwise.js": `// Todo: ${oneForTheOther}: some day\nconsole.log(true);\nprocess.exit(3);\n/* Output:\nfalse\n*/\n`,
+    "its-build-says-otherwise.js": `// Todo: ${oneForTheOther}: some day\n// Build prints: 1 x nothing like it\n${wrong}`,
+    "wrong-where-it-is-said-to-grow.js": `// Todo: it grows: some day\n${wrong}`,
+    "not-as-plain-bun.js": `// Todo: ${oneForTheOther}: some day\n${compiled}console.log("it is", compiled);\nconsole.log(1);\n`,
+    "not-as-plain-bun-in-another-line-too.js": `// Todo: ${oneForTheOther}: some day\n${compiled}console.log("it is", compiled);\nconsole.log(compiled ? 1 : 2);\n`,
+    "does-not-say-what-differs.js": `// Todo: some day\n${wrong}`,
+    "does-not-say-what-differs-elsewhere.js": `// Todo on plan9 mips: some day\n${right}`,
   });
   const root = String(dir);
   const files = Object.keys(expected).map(name => join(root, name));

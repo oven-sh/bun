@@ -1,6 +1,5 @@
 # The list is stored into the literal that the call hands over, so it has left. Nothing has written a list since, and the state still holds its length and its element: the steps of the callee's pattern are answered by the state.
 # RUN: walk f2 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: GetArrayLength
 # CHECK-NOT: GetArrayElement

@@ -1,0 +1,19 @@
+# -- source: the-guard-of-a-constructor-does-not-ask-its-parameter-for-the-class-that-it-makes.js
+# const rows = JSON.parse('[{"x":1,"y":2},{"x":3,"y":4}]');
+# function Point(row) { this.x = row.x; this.y = row.y; }
+# function make(o) { return new Point(o); }
+# function all() { let s = 0; for (let i = 0; i < rows.length; i++) s += new Point(rows[i]).x + make(rows[i]).y; return s; }
+# print(all());
+# -- end of source
+# The only layout in sight that bears `x` and `y` is Point's own, and it bears them because this very code lays them: that says nothing of `row`. Asked for at the entry, every parsed row failed the guard and the whole constructor ran in its
+# slow version, where each store into `this` is a closed one. Nothing is seen to arrive here but what nobody knows, so there is no guard and no slow version: who is no Point pays one closed read at each name.
+# f1 = Point
+# RUN(GUARD): walk f1:ParameterGuard mechanisms=all
+# GUARD: the plan has no such unit
+# RUN(SLOW): walk f1:SlowBody mechanisms=all
+# SLOW: the plan has no such unit
+# RUN(BODY): walk f1:Body mechanisms=all
+# BODY: = PutSlotOrAdd {{*}} key="x"
+# BODY: = PutSlotOrAdd {{*}} key="y"
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 10

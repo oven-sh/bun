@@ -1,0 +1,26 @@
+# f1 = sumOf, f2 = cut
+# -- source: the-turns-of-a-list-method-over-numbers-are-laid-out-and-a-hole-leaves-any-of-them.ts
+# declare function print(...values: unknown[]): void;
+# function sumOf(list: number[], rounds: number) { let total = 0; for (let r = 0; r < rounds; r++) list.forEach(x => { total += x; }); return total; }
+# function cut(list: number[], at: number) { const head = list.slice(0, at); head.length = 10; return head; }
+# let said = "";
+# for (let at = 0; at <= 10; at++) said += sumOf(cut([0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5], at), 2) + "," + sumOf(cut([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], at), 2) + ";";
+# print(said);
+# -- end of source
+# A list method's copied loop over a list of numbers is IsElementPresent > Branch > GetArrayElement [isPresent] > the arrow. The test is an operation of a turn laid out: eight turns stand in a row, and the kind
+# of a list in either storage of numbers is asked once in front of them. A hole leaves the loop: the first one lies at every index of ten, and nowhere: each of the eight turns, and the written loop behind them,
+# is the one that leaves.
+# RUN: walk f1 mechanisms=all
+# CHECK: = IsElementPresent {{*}}arrayStorage=Double {{*}}admitsInt32Storage
+# CHECK: = GetArrayElement {{*}}arrayStorage=Double level=Proven {{*}}isPresent
+# The eighth turn reads its element seven elements behind the first, in either storage.
+# RUN(EMIT): emit f1 mechanisms=all
+# EMIT: = Load({{*}}offset = 56, indexedDoubleProperties
+# EMIT: = Load({{*}}offset = 56, indexedContiguousProperties
+# What plain Bun prints.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0,0;1,2;4,6;9,12;16,20;25,30;36,42;49,56;64,72;81,90;100,110;
+# ANSWERS-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell testing=CheckProofsAtRunTime,TestsEveryPosition
+# HARDENED: 0,0;1,2;4,6;9,12;16,20;25,30;36,42;49,56;64,72;81,90;100,110;
+# HARDENED-NEXT: exited with 0

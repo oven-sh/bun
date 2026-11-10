@@ -249,6 +249,28 @@ declare module "bun:test" {
      * run again.
      */
     function resetModules(): typeof jest;
+    /**
+     * Call `fn` with a module registry of its own. A module that `fn` loads is evaluated again, even if it's already
+     * loaded. When `fn` returns, the modules that were loaded before are back. Mocked modules stay mocked.
+     *
+     * @example
+     * let config;
+     * jest.isolateModules(() => {
+     *   config = require("./config");
+     * });
+     */
+    function isolateModules(fn: () => void): typeof jest;
+    /**
+     * Like {@link isolateModules}, for a `fn` that returns a promise. The registry of `fn` lasts until that promise
+     * settles, so await the promise that this returns.
+     *
+     * @example
+     * let config;
+     * await jest.isolateModulesAsync(async () => {
+     *   config = await import("./config");
+     * });
+     */
+    function isolateModulesAsync(fn: () => Promise<void>): Promise<void>;
     function setSystemTime(now?: number | Date | string): void;
     function setTimeout(milliseconds: number): void;
     /**

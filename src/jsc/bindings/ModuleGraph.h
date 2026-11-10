@@ -146,7 +146,7 @@ JSC::JSMap* requireMapOf(Zig::GlobalObject*, JSModuleGraph*);
 // Throws ERR_INVALID_STATE once the graph (null: none) is disposed.
 void throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSModuleGraph*);
 // As above (and returns null).
-JSC::JSModuleLoader* moduleLoaderOf(JSC::JSGlobalObject*, JSC::ThrowScope&, JSModuleGraph*);
+JSC::JSModuleLoader* moduleLoaderOf(Zig::GlobalObject*, JSC::ThrowScope&, JSModuleGraph*);
 // dispose() of the graph `context` was made for (its context is stopped with it); just the stop
 // if the graph has been collected.
 void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
@@ -156,6 +156,16 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
 JSModuleGraph* testFileModuleGraph(Zig::GlobalObject*);
 JSC::JSModuleLoader* testFileModuleLoader(Zig::GlobalObject*);
 JSC::JSMap* testFileRequireMap(Zig::GlobalObject*);
+
+// ── jest.isolateModules() ────────────────────────────────────────────────────────────
+// While its callback runs, a loader of its own loads in place of the running test file's, and the file's require map has what the
+// callback loads: testFileModuleLoader() and testFileRequireMap() are then the callback's registry.
+// The test file's own loader, also while a callback runs.
+JSC::JSModuleLoader* mainTestFileModuleLoader(Zig::GlobalObject*);
+// The loader that loads now for code that `loader` would load for otherwise.
+JSC::JSModuleLoader* activeModuleLoader(Zig::GlobalObject*, JSC::JSModuleLoader*);
+// What `requireMap` had under `key` when the callback that is running started. Undefined also where none is running, or the map is not the one that it took over.
+JSC::JSValue moduleOutsideIsolation(Zig::GlobalObject*, JSC::JSMap* requireMap, JSC::JSValue key);
 
 // ── The graph's context ──────────────────────────────────────────────────────────────
 // What runs while this is alive runs inside a graph's context: an async context frame naming

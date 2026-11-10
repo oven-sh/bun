@@ -505,6 +505,45 @@ As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a
 
 `mock.restore()` doesn't remove module mocks.
 
+### Isolating Modules
+
+`jest.isolateModules(fn)` calls `fn` with a module registry of its own. A module that `fn` loads is evaluated again, even if the test file has loaded it. When `fn` returns, the test file has the modules that it had before, and the objects that `fn` loaded stay valid.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, jest } from "bun:test";
+
+test("each call loads its own counter", () => {
+  let first, second;
+  jest.isolateModules(() => {
+    first = require("./counter");
+  });
+  jest.isolateModules(() => {
+    second = require("./counter");
+  });
+
+  first.increment();
+  expect(first.count()).toBe(1);
+  expect(second.count()).toBe(0);
+});
+```
+
+If the callback awaits an `import()`, use `await jest.isolateModulesAsync(async () => { ... })`. The callback's registry lasts until the promise that the callback returns settles, and until the modules that the callback began to import have loaded.
+
+As in Jest:
+
+- A call inside another call throws. `jest.isolateModulesAsync()` rejects.
+- `jest.resetModules()` inside the callback ends the callback's registry and resets the test file's registry.
+- A `require()` or `import()` that runs after the callback uses the test file's registry, also in a module that the callback loaded.
+- An `import()` in the callback of `jest.isolateModules()` uses the test file's registry, because the callback returns before the import starts to load. To import into the callback's registry, await the import in the callback of `jest.isolateModulesAsync()`.
+- Mocked modules stay mocked inside the callback. A mock whose factory has run gives the callback the same exports. A factory that runs for the first time inside the callback runs again for the next import outside.
+- `jest.doMock()` and `jest.dontMock()` inside the callback stay in effect after it. A module that the test file loaded before keeps what it imported.
+- A native addon (a `.node` file) is loaded once. The callback gets the addon that the test file loaded.
+
+Unlike Jest:
+
+- After `jest.doMock()` inside the callback and `jest.dontMock()` after it, a module that imported the mock meanwhile is evaluated again at its next import, as after any `jest.dontMock()`.
+- With `bun test --aot`, the compiled program has one instance of each file. `jest.isolateModules(fn)` resets the modules as `jest.resetModules()` does, calls `fn`, and resets them again.
+
 ### Module Mocks Are Removed After Each Test File
 
 Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. So is a module that made a mock, so a helper that calls `vi.mock()` mocks for every test file that imports it. Other modules stay cached between files.
@@ -755,7 +794,7 @@ test("vitest compatibility", () => {
 
 `vi.mocked(fn)` returns `fn` typed as a mock. `vi.isMockFunction(fn)` returns whether `fn` is a mock.
 
-For module mocks, `vi` has `mock`, `doMock`, `unmock`, `doUnmock`, `importActual`, `importMock`, `resetModules` and `hoisted`. `jest` has `mock`, `doMock`, `unmock`, `dontMock`, `requireActual`, `requireMock`, `createMockFromModule` and `resetModules`.
+For module mocks, `vi` has `mock`, `doMock`, `unmock`, `doUnmock`, `importActual`, `importMock`, `resetModules` and `hoisted`. `jest` has `mock`, `doMock`, `unmock`, `dontMock`, `requireActual`, `requireMock`, `createMockFromModule`, `resetModules`, `isolateModules` and `isolateModulesAsync`.
 
 ### Stubs and Waiting
 

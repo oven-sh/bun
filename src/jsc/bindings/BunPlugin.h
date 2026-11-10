@@ -148,6 +148,8 @@ public:
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
         // Starts at 1 so that a missing testFileOfModule entry (0) means a preload fetched the module.
         unsigned testFile = 1;
+        // The number of the call of jest.isolateModules() whose callback runs: a callback of an earlier call that settles late ends nothing.
+        unsigned moduleIsolationCall = 0;
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
@@ -158,6 +160,55 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+
+        // jest.isolateModules(): while its callback runs, loads go to a registry of its own, and the test file's registry stays as it is.
+        struct ModuleIsolation {
+            WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModuleIsolation);
+
+        public:
+            struct ModuleMockAtStart {
+                String specifier;
+                JSC::Strong<JSC::JSObject> mock;
+                // What it had saved of the module that it patched in place, kept in a mock of its own: the callback finds nothing loaded, so nothing saved.
+                JSC::Strong<JSC::JSObject> saved;
+                bool hadRun { false };
+            };
+
+            // A callback is running.
+            bool isOpen { false };
+            // An import() that waited to see whether the callback ends first starts its load now.
+            bool isPickingLoaderOfImport { false };
+            // The test file's loader, and the one that loads in its place while a callback runs. The second one has the module scope of the
+            // first, and the next callback uses it again.
+            JSC::Strong<JSC::JSCell> shadowedLoader;
+            JSC::Strong<JSC::JSCell> loader;
+            // Every reader of the test file's require map holds the map itself. While a callback runs the map has what the callback loads,
+            // and `outerModules` has what the map had.
+            JSC::Strong<JSC::JSObject> requireMap;
+            JSC::Strong<JSC::JSObject> outerModules;
+            // The mocks that were registered when the callback started.
+            Vector<ModuleMockAtStart> mocks;
+            // The fetches of the modules that import() asked the callback's loader for: the loader registers such a module once its fetch has settled.
+            WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> fetchesOfImports;
+            // What the loads of a registry keep by module key, under the names that OnLoad has for it: the same key names another module in
+            // the other registry. While a callback runs, this is what the test file's registry keeps.
+            struct KeptByModuleKey {
+                WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule;
+                WTF::ListHashSet<String> modulesToEvictOnceLoaded;
+                WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict;
+                VirtualModuleMap moduleMocksBeingLoaded;
+                WTF::UncheckedKeyHashSet<String> loadedByImportActual;
+                WTF::ListHashSet<String> modulesAskedFor;
+                WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> fetchesOfModulesAskedFor;
+                WTF::UncheckedKeyHashSet<String> modulesGivenTimeToRequestImports;
+                WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadModules;
+                WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules;
+            };
+            KeptByModuleKey ofTestFile;
+        };
+        // Stays once jest.isolateModules() has been called: the loader in it is the same for every callback.
+        std::unique_ptr<ModuleIsolation> moduleIsolation;
+        bool isIsolatingModules() const { return moduleIsolation && moduleIsolation->isOpen; }
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -190,6 +241,7 @@ public:
             fetchesOfModulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
+            moduleIsolation = nullptr;
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
             factoriesOfCompiledMocks.clear();
@@ -316,8 +368,11 @@ class GlobalObject;
 } // namespace Zig
 
 namespace JSC {
+class JSModuleLoader;
 class JSModuleNamespaceObject;
 class JSSourceCode;
+class ScriptFetchParameters;
+class SourceOrigin;
 }
 
 namespace Bun {
@@ -357,6 +412,11 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC
 #endif
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
+// For an import() that `loader` got while a callback of jest.isolateModules() runs: the promise of the load, which starts once the callback may have
+// ended. Null otherwise: the caller starts the load.
+JSC::JSPromise* importModuleOnceIsolationMayHaveEnded(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&);
+// For process.dlopen() into `module`. True: a callback of jest.isolateModules() runs, the test file's registry has the addon, and `module` now has its exports.
+bool loadNativeAddonOfTestFile(Zig::GlobalObject*, JSC::JSObject* module);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

@@ -103,3 +103,12 @@ expectType(vi.spyOn(repository, "size", "get")).is<Mock<() => number>>();
 spyOn(repository, "size", "both");
 // @ts-expect-error
 spyOn(repository, "nope");
+
+expectType(jest.isolateModules(() => {})).is<typeof jest>();
+expectType(jest.isolateModulesAsync(async () => {})).is<Promise<void>>();
+// @ts-expect-error
+jest.isolateModules();
+// @ts-expect-error
+jest.isolateModulesAsync(() => {});
+// @ts-expect-error
+vi.isolateModules(() => {});

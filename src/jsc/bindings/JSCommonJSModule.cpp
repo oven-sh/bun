@@ -161,11 +161,17 @@ static JSCommonJSModule* requirerOf(JSValue require)
 // import, from the graph's cache: an own accessor on the function, shadowing the prototype's.
 JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphRequireMainGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto* requirer = requirerOf(JSValue::decode(thisValue));
     JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
     if (!graph || graph->mainPath().isUndefined())
         return JSValue::encode(jsUndefined());
-    return JSValue::encode(graph->requireMap()->get(globalObject, graph->mainPath()));
+    JSValue main = graph->requireMap()->get(globalObject, graph->mainPath());
+    RETURN_IF_EXCEPTION(scope, {});
+    // A callback of jest.isolateModules() runs: the main module is the one from before it.
+    if (main.isUndefined()) [[unlikely]]
+        main = Bun::moduleOutsideIsolation(defaultGlobalObject(globalObject), graph->requireMap(), graph->mainPath());
+    RELEASE_AND_RETURN(scope, JSValue::encode(main));
 }
 
 static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCommonJSModule* requirer)
@@ -612,6 +618,21 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireMainOfExecutableSetter, (JSC::JSGlobalObject*,
     return true;
 }
 
+// As the getter in CommonJS.ts. While a callback of jest.isolateModules() runs, the require map has what the callback loads, and the main module is the one from before it.
+JSC_DEFINE_CUSTOM_GETTER(jsRequireMainOfTestRunGetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue path = globalObject->bunObject()->get(globalObject, WebCore::builtinNames(vm).mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue main = globalObject->requireMap()->get(globalObject, path);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (main.isUndefined())
+        main = Bun::moduleOutsideIsolation(globalObject, globalObject->requireMap(), path);
+    RELEASE_AND_RETURN(scope, JSValue::encode(main));
+}
+
 void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -621,6 +642,10 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
     Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
     if (Bun::hasCompiledModules()) {
         this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, jsRequireMainOfExecutableSetter), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
+        return;
+    }
+    if (isBunTest) {
+        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfTestRunGetter, jsRequireMainOfExecutableSetter), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
         return;
     }
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
@@ -1769,8 +1794,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         } else {
             dirname = jsEmptyString(vm);
         }
-        // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        // The process's entry point is module "."; a graph has no such module, and neither has a callback of jest.isolateModules().
+        if (!graph && requireMap->size() == 0 && !globalObject->onLoadPlugins.isIsolatingModules()) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1834,6 +1859,11 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 JSMap* requireMap = requireMapOf(globalObject, graph.get());
                 JSValue entry = requireMap->get(globalObject, keyValue);
                 RETURN_IF_EXCEPTION(scope, void());
+                // A callback of jest.isolateModules() has started since the fetch made the module: it is in the registry from before it.
+                if (entry.isUndefined()) [[unlikely]] {
+                    entry = Bun::moduleOutsideIsolation(globalObject, requireMap, keyValue);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
@@ -1901,8 +1931,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         } else {
             dirname = jsEmptyString(vm);
         }
-        // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        // The process's entry point is module "."; a graph has no such module, and neither has a callback of jest.isolateModules().
+        if (!graph && requireMap->size() == 0 && !globalObject->onLoadPlugins.isIsolatingModules()) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 

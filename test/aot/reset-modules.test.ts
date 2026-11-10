@@ -145,6 +145,32 @@ test("resets from a file that the test writes", async () => {
   expect(exitCode).toBe(0);
 });
 
+// A compiled program has one instance of each file and no second registry to load into. There the callback runs between two resets.
+test("jest.isolateModules() resets the modules before its callback and behind it", async () => {
+  using dir = tempDir("reset-modules-isolate", {
+    "package.json": `{}`,
+    "counter.ts": project["counter.ts"],
+    "counter.cjs": project["counter.cjs"],
+    "isolate.test.ts": `import { jest, test } from "bun:test";
+test("isolates", async () => {
+  const required = require("./counter.cjs").evaluated;
+  const inside: number[] = [];
+  jest.isolateModules(() => void inside.push(require("./counter.cjs").evaluated, require("./counter.cjs").evaluated));
+  console.log("require():", required, ...inside, require("./counter.cjs").evaluated);
+  const imported = (await import("./counter")).evaluated;
+  await jest.isolateModulesAsync(async () => void inside.push((await import("./counter")).evaluated));
+  console.log("import():", imported, inside[2], (await import("./counter")).evaluated);
+});`,
+  });
+  const plain = await runTests(String(dir), {});
+  const compiled = await runTests(String(dir), {}, "--aot");
+  expect({ plain: plain.printed, compiled: compiled.printed, exitCodes: [plain.exitCode, compiled.exitCode] }).toEqual({
+    plain: ["require(): 1 2 2 1", "import(): 1 2 1"],
+    compiled: ["require(): 1 2 2 3", "import(): 1 2 3"],
+    exitCodes: [0, 0],
+  });
+});
+
 for (const isolation of [["--isolate"], []]) {
   for (const [way, env] of ways) {
     const name = `modules load again behind resetModules(), ${way}`;

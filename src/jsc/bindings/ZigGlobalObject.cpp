@@ -1061,7 +1061,7 @@ static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalOb
 {
     auto* module = dynamicDowncast<Bun::JSCommonJSModule>(requirer);
     if (auto* graph = module ? module->moduleGraph() : nullptr)
-        return graph->disposed() ? nullptr : graph->loader();
+        return graph->disposed() ? nullptr : Bun::activeModuleLoader(defaultGlobalObject(globalObject), graph->loader());
     return Bun::testFileModuleLoader(defaultGlobalObject(globalObject));
 }
 
@@ -4340,6 +4340,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 
+    if (globalObject->onLoadPlugins.moduleIsolation) [[unlikely]] {
+        JSC::JSPromise* later = Bun::importModuleOnceIsolationMayHaveEnded(globalObject, loader, moduleNameValue, parameters, sourceOrigin);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (later)
+            return later;
+        loader = Bun::activeModuleLoader(globalObject, loader);
+    }
+
     // Not `auto` (GCOwnedDataScope): importModule below can drive moduleLoaderFetch synchronously; see that function for why no scope may be live.
     WTF::String moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -4546,6 +4554,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         // JSC doesn't add a registry entry for the module passed to import() until this settles.
         if (!entry && plugins.modulesAskedFor.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
             plugins.fetchesOfModulesAskedFor.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
+        // A callback of jest.isolateModulesAsync() ends once what it began to import has loaded.
+        if (!entry && plugins.isIsolatingModules() && loader == plugins.moduleIsolation->loader.get()) [[unlikely]]
+            plugins.moduleIsolation->fetchesOfImports.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
         return unlessFetchedMeanwhile(promise);
     }
     return unlessFetchedMeanwhile(rejectedInternalPromise(globalObject, result));

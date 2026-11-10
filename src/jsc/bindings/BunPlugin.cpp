@@ -26,6 +26,7 @@
 #include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSSourceCode.h>
@@ -38,6 +39,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/SymbolTableInlines.h>
 #include <JavaScriptCore/SyntheticModuleRecord.h>
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/WTFString.h>
 
@@ -3064,6 +3066,13 @@ static bool isInNodeModules(const String& path)
     return path.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP));
 }
 
+// A native addon can only be loaded once per process.
+static bool isNativeAddon(StringView path)
+{
+    size_t query = path.find('?');
+    return (query == notFound ? path : path.left(query)).endsWith(".node"_s);
+}
+
 extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
 
 // Vitest externalizes packages: Node loads them, outside the module graph that Vitest mocks and resets.
@@ -3105,7 +3114,11 @@ struct ModulesToEvict {
     // An end that `bun test` does not make: the pass is for the books of the compiled program, and what failed stays failed.
     bool keepsFailuresOfCompiledProgram { false };
 #endif
+    // Only what is listed leaves. What imports it stays registered, linked to the record that it imported.
+    bool withoutImporters { false };
 };
+
+static void takeOutOfRegistry(Zig::GlobalObject*, ModulesToEvict&, const UncheckedKeyHashMap<String, JSC::JSPromise*>& loading, const UncheckedKeyHashSet<String>& staysInRegistry, const UncheckedKeyHashSet<String>& staysInRequireCache, const Vector<String>& neverLoads);
 
 static JSC::JSPromise* pendingLoadOf(JSC::JSGlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
 {
@@ -3275,6 +3288,16 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     ModuleImporters importersOf;
     UncheckedKeyHashMap<String, JSC::JSPromise*> loading;
     MarkedArgumentBuffer pendingLoads;
+    if (evict.withoutImporters) {
+        for (auto& key : keys) {
+            auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
+            if (JSC::JSPromise* pendingLoad = entry ? pendingLoadOf(globalObject, entry) : nullptr) {
+                loading.set(key, pendingLoad);
+                pendingLoads.append(pendingLoad);
+            }
+        }
+        RELEASE_AND_RETURN(scope, takeOutOfRegistry(globalObject, evict, loading, staysInRegistry, staysInRequireCache, {}));
+    }
     Vector<std::pair<JSC::AbstractModuleRecord*, JSC::JSPromise*>> asking;
     UncheckedKeyHashSet<JSC::AbstractModuleRecord*> asks;
     // After moveLoadedModule() a record's own key is not the one it is registered under.
@@ -3351,9 +3374,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 continue;
             String path = asString(requireKey)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, );
-            // A native addon can only be loaded once per process.
-            size_t query = path.find('?');
-            if (!(query == notFound ? StringView(path) : StringView(path).left(query)).endsWith(".node"_s) && !(evict.exceptPackages && isInNodeModules(path)))
+            if (!isNativeAddon(path) && !(evict.exceptPackages && isInNodeModules(path)))
                 keys.append(path);
             continue;
         }
@@ -3419,6 +3440,20 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 keys.append(importer);
         }
     }
+
+    RELEASE_AND_RETURN(scope, takeOutOfRegistry(globalObject, evict, loading, staysInRegistry, staysInRequireCache, neverLoads));
+}
+
+// `loading`: the load that each of `evict.modules` waits for. It holds the promises, which its caller keeps alive.
+__attribute__((minsize)) static void takeOutOfRegistry(Zig::GlobalObject* globalObject, ModulesToEvict& evict, const UncheckedKeyHashMap<String, JSC::JSPromise*>& loading, const UncheckedKeyHashSet<String>& staysInRegistry, const UncheckedKeyHashSet<String>& staysInRequireCache, const Vector<String>& neverLoads)
+{
+    UNUSED_PARAM(neverLoads);
+    auto& plugins = globalObject->onLoadPlugins;
+    Vector<String>& keys = evict.modules;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
 
     bool isTestFileRunning = Bun::isBunTest && !JSMock__isInPreload(globalObject);
     auto keepPreloadModule = [&](const String& key, JSC::ModuleRegistryEntry* entry) {
@@ -6178,12 +6213,37 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateMockFromModule, (JSC::JSGlobalObject * 
     return requireMockModule(globalObject, callframe, "createMockFromModule(module)"_s, true);
 }
 
-// Jest calls every mock's factory again after resetModules(), and loads packages again. Vitest keeps the exports and the packages.
-__attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool callFactoriesAgain)
+// Modules already linked to a mock keep reading from it, so a new one takes its place, and the factory runs again for it.
+static JSModuleMock* moduleMockToRunAgain(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto* again = JSModuleMock::create(vm, mock->structure(), mock->factory.get(), mock->specifier.get(), mock->writtenSpecifier.get(), mock->function);
+    again->spy = mock->spy;
+    again->isFromPreload = mock->isFromPreload && JSMock__isInPreload(globalObject);
+    if (mock->isFromPreload && !again->isFromPreload)
+        globalObject->onLoadPlugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, mock });
+    again->importsOriginal = mock->importsOriginal;
+    again->patchedNamespace.setMayBeNull(vm, again, mock->patchedNamespace.get());
+    again->originalExportsOfEvictedModule.setMayBeNull(vm, again, mock->originalExportsOfEvictedModule.get());
+    again->patchOrder = mock->patchOrder;
+#if ENABLE(AOT)
+    again->lostCommonJSExportsToReset = true;
+    for (auto& waiting : globalObject->onLoadPlugins.compiledMocksToRun) {
+        if (waiting.second.get() != mock)
+            continue;
+        again->compiledModuleThatNeverRan = mock->compiledModuleThatNeverRan;
+        waiting.second.set(vm, again);
+    }
+#endif
+    return again;
+}
+
+// Jest calls every mock's factory again after resetModules(), and loads packages again. Vitest keeps the exports and the packages.
+// `call` names who resets, for the error of a compiled file that cannot load again.
+__attribute__((minsize)) static void resetLoadedModules(Zig::GlobalObject* globalObject, ASCIILiteral call, bool callFactoriesAgain)
+{
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     ModulesToEvict evict;
     evict.all = true;
@@ -6199,13 +6259,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             if (!file)
                 continue;
             JSValue stored = requireMap->get(globalObject, mock->specifier.get());
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, );
             if (!stored.isUndefined() || !JSC::AOT::isEvicted(globalObject, *file))
                 mock->lostCommonJSExportsToReset = true;
         }
     }
-    Bun::willResetModules(globalObject, callFactoriesAgain ? "jest.resetModules()"_s : "vi.resetModules()"_s, evict.exceptPackages);
-    RETURN_IF_EXCEPTION(scope, {});
+    Bun::willResetModules(globalObject, call, evict.exceptPackages);
+    RETURN_IF_EXCEPTION(scope, );
     globalObject->onLoadPlugins.compiledImportersLinkedBeforeMocks.removeAllMatching([&](const auto& linked) { return !evict.exceptPackages || !isInNodeModules(linked.importer); });
     forEachMockOfPreload(globalObject, [&](JSModuleMock* mock) {
         if (mock->isUnderActualKey && !(evict.exceptPackages && isInNodeModules(mock->specifier->tryGetValue().data)))
@@ -6234,13 +6294,15 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
     }
     for (size_t i = 0; i < mocksOfPreloadsThatCameBack.size(); ++i) {
         displaceMockOfPreloadAgain(globalObject, uncheckedDowncast<JSModuleMock>(mocksOfPreloadsThatCameBack.at(i)));
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, );
     }
     for (auto& factory : globalObject->onLoadPlugins.factoriesOfCompiledMocks)
         uncheckedDowncast<JSModuleMock>(factory.mock.get())->forgetFailureKeptForImports();
+#else
+    UNUSED_PARAM(call);
 #endif
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, );
     // As in Vitest, vi.dynamicImportSettled() doesn't wait for what was being loaded before.
     globalObject->mockModule.dynamicImports.clear();
 
@@ -6250,28 +6312,395 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             auto* mock = dynamicDowncast<JSModuleMock>(value.get());
             if (!mock || mock->state != JSModuleMock::State::Settled)
                 continue;
-            auto* again = JSModuleMock::create(vm, mock->structure(), mock->factory.get(), mock->specifier.get(), mock->writtenSpecifier.get(), mock->function);
-            again->spy = mock->spy;
-            again->isFromPreload = mock->isFromPreload && JSMock__isInPreload(globalObject);
-            if (mock->isFromPreload && !again->isFromPreload)
-                globalObject->onLoadPlugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, mock });
-            again->importsOriginal = mock->importsOriginal;
-            again->patchedNamespace.setMayBeNull(vm, again, mock->patchedNamespace.get());
-            again->originalExportsOfEvictedModule.setMayBeNull(vm, again, mock->originalExportsOfEvictedModule.get());
-            again->patchOrder = mock->patchOrder;
+            value.set(vm, moduleMockToRunAgain(globalObject, mock));
+        }
+    }
+}
+
+// What a mock keeps of the loaded module that it patched in place.
+static bool hasSavedLoadedModule(const JSModuleMock* mock)
+{
+    return mock->originalExports || mock->originalCommonJSExports || mock->originalNamespace || mock->patchedNamespace || mock->originalExportsOfEvictedModule || mock->hasSetLoadedModuleAside;
+}
+
+static void forgetSavedLoadedModule(JSModuleMock* mock)
+{
+    mock->originalExports.clear();
+    mock->originalCommonJSExports.clear();
+    mock->originalNamespace.clear();
+    mock->patchedNamespace.clear();
+    mock->originalExportsOfEvictedModule.clear();
+    mock->patchOrder = 0;
+    mock->hasSetLoadedModuleAside = false;
+}
+
+static void moveSavedLoadedModule(JSC::VM& vm, JSModuleMock* from, JSModuleMock* to)
+{
+    to->originalExports.setMayBeNull(vm, to, from->originalExports.get());
+    if (JSValue exports = from->originalCommonJSExports.get())
+        to->originalCommonJSExports.set(vm, to, exports);
+    else
+        to->originalCommonJSExports.clear();
+    to->originalNamespace.setMayBeNull(vm, to, from->originalNamespace.get());
+    to->patchedNamespace.setMayBeNull(vm, to, from->patchedNamespace.get());
+    to->originalExportsOfEvictedModule.setMayBeNull(vm, to, from->originalExportsOfEvictedModule.get());
+    to->patchOrder = from->patchOrder;
+    to->hasSetLoadedModuleAside = from->hasSetLoadedModuleAside;
+    forgetSavedLoadedModule(from);
+}
+
+// What the loads of one registry keep by module key is that registry's.
+static void exchangeKeptByModuleKey(BunPlugin::OnLoad& plugins, BunPlugin::OnLoad::ModuleIsolation::KeptByModuleKey& other)
+{
+    std::swap(plugins.testFileOfModule, other.testFileOfModule);
+    std::swap(plugins.modulesToEvictOnceLoaded, other.modulesToEvictOnceLoaded);
+    std::swap(plugins.loadsOfModulesToEvict, other.loadsOfModulesToEvict);
+    std::swap(plugins.moduleMocksBeingLoaded, other.moduleMocksBeingLoaded);
+    std::swap(plugins.loadedByImportActual, other.loadedByImportActual);
+    std::swap(plugins.modulesAskedFor, other.modulesAskedFor);
+    std::swap(plugins.fetchesOfModulesAskedFor, other.fetchesOfModulesAskedFor);
+    std::swap(plugins.modulesGivenTimeToRequestImports, other.modulesGivenTimeToRequestImports);
+    std::swap(plugins.evictedPreloadModules, other.evictedPreloadModules);
+    std::swap(plugins.evictedPreloadCommonJSModules, other.evictedPreloadCommonJSModules);
+}
+
+// Every reader of the require map holds the map, so its content changes places with that of `outerModules`.
+static void exchangeRequireMapContent(JSC::VM& vm, BunPlugin::OnLoad::ModuleIsolation& isolation)
+{
+    auto* map = uncheckedDowncast<JSC::JSMap>(isolation.requireMap.get());
+    auto* other = uncheckedDowncast<JSC::JSMap>(isolation.outerModules.get());
+    JSC::JSCell* inMap = map->m_storage.get();
+    map->m_storage.setMayBeNull(vm, map, other->m_storage.get());
+    other->m_storage.setMayBeNull(vm, other, inMap);
 #if ENABLE(AOT)
-            again->lostCommonJSExportsToReset = true;
-            for (auto& waiting : globalObject->onLoadPlugins.compiledMocksToRun) {
-                if (waiting.second.get() != mock)
-                    continue;
-                again->compiledModuleThatNeverRan = mock->compiledModuleThatNeverRan;
-                waiting.second.set(vm, again);
-            }
+    std::swap(map->m_deletedPrefix, other->m_deletedPrefix);
 #endif
-            value.set(vm, again);
+}
+
+// A load of the callback's loader that has yet to settle, or null.
+static JSC::JSPromise* loadInFlightOfCallback(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::ModuleIsolation& isolation)
+{
+    // Where a compiled program runs the callback between two resets, the callback has no loader.
+    if (!isolation.loader)
+        return nullptr;
+    auto* loader = uncheckedDowncast<JSC::JSModuleLoader>(isolation.loader.get());
+    for (auto& entry : loader->moduleMap().values()) {
+        if (JSC::JSPromise* pending = pendingLoadOf(globalObject, entry.get()))
+            return pending;
+    }
+    // JSC registers the module that import() asks for in a microtask behind its fetch, so a fetch that has brought its text counts for one more turn.
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSPromise* fetching = nullptr;
+    isolation.fetchesOfImports.removeIf([&](auto& fetch) {
+        auto* promise = uncheckedDowncast<JSC::JSPromise>(fetch.value.get());
+        if (promise->status() == JSC::JSPromise::Status::Pending) {
+            fetching = promise;
+            return false;
+        }
+        if (promise->status() == JSC::JSPromise::Status::Fulfilled && !loader->registryEntry(JSC::Identifier::fromString(vm, fetch.key)))
+            fetching = promise;
+        return true;
+    });
+    return fetching;
+}
+
+__attribute__((minsize)) static void beginModuleIsolation(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& plugins = globalObject->onLoadPlugins;
+    if (!plugins.moduleIsolation)
+        plugins.moduleIsolation = makeUnique<BunPlugin::OnLoad::ModuleIsolation>();
+    auto& isolation = *plugins.moduleIsolation;
+#if ENABLE(AOT)
+    // A compiled program holds one instance of each of its files, and has no second registry. There the callback runs between two resets.
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        resetLoadedModules(globalObject, "jest.isolateModules()"_s, true);
+        RETURN_IF_EXCEPTION(scope, );
+        isolation.isOpen = true;
+        plugins.moduleIsolationCall++;
+        return;
+    }
+#else
+    UNUSED_VARIABLE(scope);
+#endif
+
+    auto* shadowed = Bun::mainTestFileModuleLoader(globalObject);
+    if (isolation.shadowedLoader.get() != shadowed) {
+        auto* loader = JSC::JSModuleLoader::create(globalObject, vm, shadowed->moduleScope());
+        loader->setAsyncContext(vm, shadowed->asyncContext());
+        isolation.shadowedLoader.set(vm, shadowed);
+        isolation.loader.set(vm, loader);
+    }
+    if (!isolation.outerModules)
+        isolation.outerModules.set(vm, JSC::JSMap::create(vm, globalObject->mapStructure()));
+    isolation.requireMap.set(vm, Bun::testFileRequireMap(globalObject));
+
+    // As in Jest, a mock whose factory has run keeps its exports for what the callback loads. What it saved is of a module that the callback doesn't find.
+    if (auto* virtualModules = plugins.virtualModules) {
+        for (auto& [specifier, registered] : *virtualModules) {
+            auto* mock = dynamicDowncast<JSModuleMock>(registered.get());
+            if (!mock)
+                continue;
+            BunPlugin::OnLoad::ModuleIsolation::ModuleMockAtStart atStart { specifier, registered, {}, mock->state == JSModuleMock::State::Settled };
+            if (hasSavedLoadedModule(mock)) {
+                auto* saved = JSModuleMock::create(vm, mock->structure(), JSValue(), mock->specifier.get(), mock->writtenSpecifier.get(), mock->function);
+                moveSavedLoadedModule(vm, mock, saved);
+                atStart.saved.set(vm, saved);
+            }
+            isolation.mocks.append(WTF::move(atStart));
         }
     }
 
+    exchangeRequireMapContent(vm, isolation);
+    exchangeKeptByModuleKey(plugins, isolation.ofTestFile);
+    isolation.isOpen = true;
+    plugins.moduleIsolationCall++;
+}
+
+// `runsNoScript`: a termination exception is pending. The test file's registry is back in place all the same.
+__attribute__((minsize)) static void endModuleIsolation(Zig::GlobalObject* globalObject, bool runsNoScript = false)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    // jest.resetModules() or the end of the test file has ended it already.
+    if (!plugins.isIsolatingModules())
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    auto& isolation = *plugins.moduleIsolation;
+    isolation.isOpen = false;
+#if ENABLE(AOT)
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        if (runsNoScript)
+            return;
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        RELEASE_AND_RETURN(scope, resetLoadedModules(globalObject, "jest.isolateModules()"_s, true));
+    }
+#endif
+    exchangeRequireMapContent(vm, isolation);
+    exchangeKeptByModuleKey(plugins, isolation.ofTestFile);
+    isolation.ofTestFile = {};
+    auto* requireMap = uncheckedDowncast<JSC::JSMap>(isolation.requireMap.get());
+    isolation.requireMap.clear();
+    // Nothing that was taken out of the callback keeps the rest of what it loaded alive.
+    auto* callbackModules = uncheckedDowncast<JSC::JSMap>(isolation.outerModules.get());
+    auto forgetCallbackModules = WTF::makeScopeExit([&] {
+        callbackModules->m_storage.clear();
+#if ENABLE(AOT)
+        callbackModules->m_deletedPrefix = 0;
+#endif
+    });
+    // jest.resetModules() or the end of the test file ends it with a load in flight. That load keeps its entries and its loader, and
+    // the next callback gets a loader of its own.
+    if (loadInFlightOfCallback(globalObject, isolation)) {
+        isolation.loader.clear();
+        isolation.shadowedLoader.clear();
+    } else
+        uncheckedDowncast<JSC::JSModuleLoader>(isolation.loader.get())->clearAll();
+    isolation.fetchesOfImports.clear();
+
+    // As in Jest, a mock that was laid or removed inside holds afterwards, and a factory that ran inside runs again for the next load.
+    // A mock that had run before keeps its exports.
+    auto* virtualModules = plugins.virtualModules;
+    auto runAgain = [&](const String& specifier, JSModuleMock* mock) {
+        if (mock->state != JSModuleMock::State::Settled)
+            return;
+        auto* again = moduleMockToRunAgain(globalObject, mock);
+        moveSavedLoadedModule(vm, mock, again);
+        virtualModules->set(specifier, JSC::Strong<JSC::JSObject> { vm, again });
+    };
+    UncheckedKeyHashSet<String> mockedAtStart;
+    Vector<String> laidInside;
+    Vector<std::pair<String, JSC::Strong<JSC::JSObject>>> removedInside;
+    for (auto& atStart : std::exchange(isolation.mocks, {})) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(atStart.mock.get());
+        // What it saved inside was of a module of the callback.
+        if (atStart.saved)
+            moveSavedLoadedModule(vm, uncheckedDowncast<JSModuleMock>(atStart.saved.get()), mock);
+        else
+            forgetSavedLoadedModule(mock);
+        mockedAtStart.add(atStart.specifier);
+        JSObject* registered = virtualModules ? virtualModules->get(atStart.specifier).get() : nullptr;
+        if (registered == mock) {
+            if (!atStart.hadRun)
+                runAgain(atStart.specifier, mock);
+        } else if (auto* laid = registered ? dynamicDowncast<JSModuleMock>(registered) : nullptr) {
+            // As for a mock that mockModule() lays over another: what is loaded is not the original.
+            moveSavedLoadedModule(vm, mock, laid);
+            laidInside.append(atStart.specifier);
+        } else if (!registered)
+            removedInside.append({ atStart.specifier, atStart.mock });
+    }
+    if (virtualModules) {
+        for (auto& [specifier, registered] : *virtualModules) {
+            auto* mock = dynamicDowncast<JSModuleMock>(registered.get());
+            if (!mock || mockedAtStart.contains(specifier))
+                continue;
+            forgetSavedLoadedModule(mock);
+            laidInside.append(specifier);
+        }
+        for (auto& specifier : laidInside)
+            runAgain(specifier, uncheckedDowncast<JSModuleMock>(virtualModules->get(specifier).get()));
+    }
+    if (runsNoScript)
+        return;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Two kinds of module go to the test file's registry. A native addon, as after jest.resetModules(). And a CommonJS file that an
+    // ES load of the test file has fetched meanwhile and not run yet: the load looks for it under its key when it makes the record.
+    if (callbackModules->size()) {
+        auto* entries = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), callbackModules, JSC::IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, );
+        JSValue key, value;
+        while (entries->nextKeyValue(globalObject, key, value)) {
+            auto* module = dynamicDowncast<Bun::JSCommonJSModule>(value);
+            if (!module || !key.isString())
+                continue;
+            // As in Jest, a module of the test file's registry that required it inside doesn't list it as a child: the list would keep it alive.
+            if (auto* parent = module->m_parent.get()) {
+                JSValue ofCallback = callbackModules->get(globalObject, parent->filename());
+                RETURN_IF_EXCEPTION(scope, );
+                if (ofCallback != parent) {
+                    // The newest children stand last.
+                    WTF::Locker locker { parent->cellLock() };
+                    parent->m_children.removeLastMatching([&](auto& child) { return child.get() == module; });
+                }
+            }
+            if (module->hasEvaluated || module->sourceCode.isNull()) {
+                String path = asString(key)->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                if (!isNativeAddon(path))
+                    continue;
+            }
+            JSValue loadedOutside = requireMap->get(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!loadedOutside.isUndefined())
+                continue;
+            requireMap->set(globalObject, key, module);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+
+    // The module that was loaded under the key of such a mock before leaves the registry, and stays with what imported it.
+    ModulesToEvict evict;
+    evict.withoutImporters = true;
+    for (auto& [specifier, mock] : removedInside) {
+        unmockModule(globalObject, uncheckedDowncast<JSModuleMock>(mock.get()), specifier, evict);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    for (auto& specifier : laidInside) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(virtualModules->get(specifier).get());
+        LoadedModule loaded = mockedAtStart.contains(specifier) ? LoadedModule {} : findLoadedModule(globalObject, mock->specifier.get());
+        RETURN_IF_EXCEPTION(scope, );
+        if (loaded.esmNamespace || loaded.commonJSModule) {
+            // As for a package that vi.mock() mocks: it stays one instance, under the key of the original, and unmockModule() brings it back.
+            setLoadedModuleAside(globalObject, specifier);
+            RETURN_IF_EXCEPTION(scope, );
+            mock->hasSetLoadedModuleAside = true;
+        } else
+            evict.modules.append(specifier);
+    }
+    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+    RETURN_IF_EXCEPTION(scope, );
+    // A load of the test file's own registry may have settled meanwhile.
+    RELEASE_AND_RETURN(scope, Bun::evictModulesThatHaveLoaded(globalObject));
+}
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionIsolatedCallbackDidSettle);
+
+// The callback's promise has settled, or a load that the end of its registry waited for. The context: the number of the call, and that promise.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsolatedCallbackDidSettle, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& plugins = globalObject->onLoadPlugins;
+    auto* call = uncheckedDowncast<JSC::InternalFieldTuple>(callframe->argument(1));
+    // jest.resetModules() may have ended the registry of this callback, and another call may have started since.
+    if (plugins.isIsolatingModules() && call->getInternalField(0).asUInt32() == plugins.moduleIsolationCall) {
+        // What the callback began to import loads into its registry to the end: a load has one registry.
+        if (JSC::JSPromise* loading = loadInFlightOfCallback(globalObject, *plugins.moduleIsolation))
+            RELEASE_AND_RETURN(scope, JSValue::encode(thenWithContext(globalObject, loading, jsFunctionIsolatedCallbackDidSettle, jsFunctionIsolatedCallbackDidSettle, call)));
+        endModuleIsolation(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    auto* promise = uncheckedDowncast<JSC::JSPromise>(call->getInternalField(1));
+    if (promise->status() == JSC::JSPromise::Status::Rejected) {
+        scope.throwException(lexicalGlobalObject, promise->result());
+        return {};
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+__attribute__((minsize)) static JSC::EncodedJSValue isolateModules(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool async)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue callback = callframe->argument(0);
+
+    // The messages are jest-runtime's. Its async function hands every error over in the promise.
+    JSValue error;
+    if (globalObject->onLoadPlugins.isIsolatingModules())
+        error = JSC::createError(globalObject, async ? "isolateModulesAsync cannot be nested inside another isolateModulesAsync or isolateModules."_s : "isolateModules cannot be nested inside another isolateModules or isolateModulesAsync."_s);
+    else if (!callback.isCallable())
+        error = JSC::createTypeError(globalObject, "fn is not a function"_s);
+
+    JSC::Exception* thrown = nullptr;
+    if (!error) {
+        beginModuleIsolation(globalObject);
+        JSC::JSPromise* promise = nullptr;
+        if (!scope.exception()) {
+            JSValue returned = JSC::call(globalObject, callback, JSC::getCallData(callback), jsUndefined(), ArgList());
+            if (async && !scope.exception())
+                promise = JSC::JSPromise::resolvedPromise(globalObject, returned);
+        }
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException()) {
+                endModuleIsolation(globalObject, true);
+                return {};
+            }
+            thrown = exception;
+        } else if (promise) {
+            auto* call = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsNumber(globalObject->onLoadPlugins.moduleIsolationCall), promise);
+            RELEASE_AND_RETURN(scope, JSValue::encode(thenWithContext(globalObject, promise, jsFunctionIsolatedCallbackDidSettle, jsFunctionIsolatedCallbackDidSettle, call)));
+        }
+        endModuleIsolation(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (thrown && !async) {
+        scope.throwException(globalObject, thrown);
+        return {};
+    }
+    if (thrown)
+        error = thrown->value();
+    if (error && async)
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, error)));
+    if (error) {
+        scope.throwException(globalObject, error);
+        return {};
+    }
+    return JSValue::encode(callframe->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
+}
+
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionJestIsolateModules, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return isolateModules(globalObject, callframe, false);
+}
+
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionJestIsolateModulesAsync, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return isolateModules(globalObject, callframe, true);
+}
+
+__attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool callFactoriesAgain)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    // As in Jest, it ends a callback's registry of jest.isolateModules(), and then resets the test file's.
+    endModuleIsolation(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    resetLoadedModules(globalObject, callFactoriesAgain ? "jest.resetModules()"_s : "vi.resetModules()"_s, callFactoriesAgain);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(callframe->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
 }
 
@@ -6320,6 +6749,8 @@ extern "C" __attribute__((minsize)) void JSMock__putModuleMockFunctions(Zig::Glo
     put(encodedJest, "requireMock"_s, 1, jsFunctionRequireMockModule);
     put(encodedJest, "createMockFromModule"_s, 1, jsFunctionCreateMockFromModule);
     put(encodedJest, "resetModules"_s, 0, jsFunctionJestResetModules);
+    put(encodedJest, "isolateModules"_s, 1, jsFunctionJestIsolateModules);
+    put(encodedJest, "isolateModulesAsync"_s, 1, jsFunctionJestIsolateModulesAsync);
 }
 
 static bool isRegisteredModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier)
@@ -6467,6 +6898,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules)
 {
     auto& plugins = globalObject->onLoadPlugins;
+    // The callback of jest.isolateModulesAsync() never settled. The next test file gets the registry from before it.
+    if (plugins.isIsolatingModules()) [[unlikely]] {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+        endModuleIsolation(globalObject);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+    }
     plugins.testFile++;
 #if ENABLE(AOT)
     if (globalObject->vm().hasCompiledCode()) {
@@ -7692,6 +8130,57 @@ bool isModuleMockInUse(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMoc
     return Zig::registeredModuleMock(globalObject, key) == mock;
 }
 
+// In Jest import() finds its registry after the call has returned. So while a callback of jest.isolateModules() runs, import() starts its
+// load two turns later: the callback that returns without waiting for it has ended by then, and the load is the test file's.
+__attribute__((minsize)) JSC::JSPromise* importModuleOnceIsolationMayHaveEnded(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin)
+{
+    auto* isolation = globalObject->onLoadPlugins.moduleIsolation.get();
+    if (!isolation || !isolation->isOpen || isolation->isPickingLoaderOfImport || activeModuleLoader(globalObject, loader) != isolation->loader.get())
+        return nullptr;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSPromise* now = JSC::JSPromise::resolvedPromise(globalObject, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* start = JSC::JSNativeStdFunction::create(vm, globalObject, 2, String(), [parameters = WTF::move(parameters), sourceOrigin](JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe) -> JSC::EncodedJSValue {
+        auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        auto* asked = uncheckedDowncast<JSC::InternalFieldTuple>(callframe->argument(1));
+        bool unused = false;
+        auto* isolation = globalObject->onLoadPlugins.moduleIsolation.get();
+        SetForScope isPickingLoaderOfImport(isolation ? isolation->isPickingLoaderOfImport : unused, true);
+        RELEASE_AND_RETURN(scope, JSValue::encode(Zig::GlobalObject::moduleLoaderImportModule(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(asked->getInternalField(0)), asString(asked->getInternalField(1)), parameters, sourceOrigin, false)));
+    });
+    JSC::JSPromise* turn = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    now->performPromiseThenWithContext(vm, globalObject, jsUndefined(), jsUndefined(), turn, jsUndefined());
+    JSC::JSPromise* imported = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    turn->performPromiseThenWithContext(vm, globalObject, start, jsUndefined(), imported, JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), loader, moduleName));
+    return imported;
+}
+
+bool loadNativeAddonOfTestFile(Zig::GlobalObject* globalObject, JSC::JSObject* module)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto* addon = dynamicDowncast<Bun::JSCommonJSModule>(module);
+    auto* isolation = globalObject->onLoadPlugins.moduleIsolation.get();
+    JSC::JSString* id = addon ? addon->m_id.get() : nullptr;
+    // Nothing to look in where a compiled program runs the callback between two resets.
+    if (!id || !isolation || !isolation->isOpen || !isolation->requireMap)
+        return false;
+    String path = id->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!Zig::isNativeAddon(path))
+        return false;
+    JSValue loaded = uncheckedDowncast<JSC::JSMap>(isolation->outerModules.get())->get(globalObject, id);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto* loadedOutside = dynamicDowncast<Bun::JSCommonJSModule>(loaded);
+    if (!loadedOutside)
+        return false;
+    JSValue exports = loadedOutside->exportsObject();
+    RETURN_IF_EXCEPTION(scope, false);
+    addon->setExportsObject(exports);
+    return true;
+}
+
 void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject)
 {
     if (globalObject->onLoadPlugins.modulesToEvictOnceLoaded.isEmpty() || globalObject->vm().m_synchronousModuleQueue) [[likely]]
@@ -8114,7 +8603,9 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     auto runningModuleMocks = std::exchange(plugins.runningModuleMocks, {});
     auto waitingModuleMocks = std::exchange(plugins.waitingModuleMocks, {});
     auto moduleMocksWithTurn = std::exchange(plugins.moduleMocksWithTurn, {});
+    auto moduleIsolation = std::exchange(plugins.moduleIsolation, nullptr);
     plugins.clear();
+    plugins.moduleIsolation = WTF::move(moduleIsolation);
     plugins.moduleMocksBeingLoaded = WTF::move(moduleMocksBeingLoaded);
     plugins.runningModuleMocks = WTF::move(runningModuleMocks);
     plugins.waitingModuleMocks = WTF::move(waitingModuleMocks);

@@ -171,11 +171,11 @@ void throwIfModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope,
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_INVALID_STATE, "ModuleGraph has been disposed"_s));
 }
 
-JSModuleLoader* moduleLoaderOf(JSGlobalObject* globalObject, ThrowScope& scope, JSModuleGraph* graph)
+JSModuleLoader* moduleLoaderOf(Zig::GlobalObject* globalObject, ThrowScope& scope, JSModuleGraph* graph)
 {
     throwIfModuleGraphDisposed(globalObject, scope, graph);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    return graph ? graph->loader() : globalObject->moduleLoader();
+    return activeModuleLoader(globalObject, graph ? graph->loader() : globalObject->moduleLoader());
 }
 
 // The graph whose onError is given the errors of `graph`'s code: a graph that was given no onError
@@ -747,10 +747,47 @@ JSModuleGraph* testFileModuleGraph(Zig::GlobalObject* globalObject)
     return globalObject->hasModuleGraphs() ? globalObject->m_moduleGraphs->testFile.get() : nullptr;
 }
 
-JSModuleLoader* testFileModuleLoader(Zig::GlobalObject* globalObject)
+JSModuleLoader* mainTestFileModuleLoader(Zig::GlobalObject* globalObject)
 {
     auto* graph = testFileModuleGraph(globalObject);
     return graph ? graph->loader() : globalObject->moduleLoader();
+}
+
+// Out of line, so that a run that never calls jest.isolateModules() pays one test for it.
+static NEVER_INLINE JSModuleLoader* activeModuleLoaderOnceIsolated(Zig::GlobalObject* globalObject, JSModuleLoader* loader)
+{
+    auto& isolation = *globalObject->onLoadPlugins.moduleIsolation;
+    // A module keeps the loader that loaded it, and its import() asks with that one. The loader of a callback has the module scope of the
+    // loader that it stood in for, and what the callback loaded asks as that one.
+    if (loader != globalObject->moduleLoader()) {
+        if (auto* graph = moduleGraphOfOverlay(globalObject->vm(), loader->moduleScope()))
+            loader = graph->loader();
+        else if (loader->moduleScope() == globalObject->moduleLoader()->moduleScope())
+            loader = globalObject->moduleLoader();
+    }
+    if (isolation.isOpen && loader == isolation.shadowedLoader.get())
+        return uncheckedDowncast<JSModuleLoader>(isolation.loader.get());
+    return loader;
+}
+
+JSModuleLoader* activeModuleLoader(Zig::GlobalObject* globalObject, JSModuleLoader* loader)
+{
+    if (!globalObject->onLoadPlugins.moduleIsolation) [[likely]]
+        return loader;
+    return activeModuleLoaderOnceIsolated(globalObject, loader);
+}
+
+JSValue moduleOutsideIsolation(Zig::GlobalObject* globalObject, JSMap* requireMap, JSValue key)
+{
+    auto* isolation = globalObject->onLoadPlugins.moduleIsolation.get();
+    if (!isolation || !isolation->isOpen || isolation->requireMap.get() != requireMap)
+        return jsUndefined();
+    return uncheckedDowncast<JSMap>(isolation->outerModules.get())->get(globalObject, key);
+}
+
+JSModuleLoader* testFileModuleLoader(Zig::GlobalObject* globalObject)
+{
+    return activeModuleLoader(globalObject, mainTestFileModuleLoader(globalObject));
 }
 
 JSMap* testFileRequireMap(Zig::GlobalObject* globalObject)

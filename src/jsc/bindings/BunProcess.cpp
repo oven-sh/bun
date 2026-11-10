@@ -555,6 +555,14 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         filename = fileURL.fileSystemPath();
     }
 
+    // An addon is loaded once per process. A callback of jest.isolateModules() gets the one that the test file has loaded.
+    if (globalObject->onLoadPlugins.isIsolatingModules()) [[unlikely]] {
+        bool isLoaded = Bun::loadNativeAddonOfTestFile(globalObject, moduleObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isLoaded)
+            return JSValue::encode(jsUndefined());
+    }
+
     UTF8CString utf8;
 
     // Support embedded .node files
@@ -5722,7 +5730,13 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
         RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mainModuleOfExecutable(globalObject)));
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
+    JSValue mainModule = requireMap->get(globalObject, main);
+    RETURN_IF_EXCEPTION(scope, {});
+    // A callback of jest.isolateModules() runs: the main module is the one from before it.
+    if (mainModule.isUndefined())
+        mainModule = Bun::moduleOutsideIsolation(globalObject, requireMap, main);
+    RELEASE_AND_RETURN(scope, JSValue::encode(mainModule));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessMainModuleOfTestFile, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))

@@ -134,7 +134,16 @@ const onJestAndOnVi = [
   "unmock",
 ];
 
-const onJestAlone = ["createMockFromModule", "dontMock", "now", "requireActual", "requireMock", "setTimeout"];
+const onJestAlone = [
+  "createMockFromModule",
+  "dontMock",
+  "isolateModules",
+  "isolateModulesAsync",
+  "now",
+  "requireActual",
+  "requireMock",
+  "setTimeout",
+];
 
 const onViAlone = [
   "doUnmock",

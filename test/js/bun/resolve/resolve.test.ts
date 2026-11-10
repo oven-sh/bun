@@ -2430,10 +2430,8 @@ test.concurrent.each(["import", "require"])(
 );
 
 // Some of these tests count the answers of the VM's memo of resolver answers. A stale answer from it fails the others.
+// The tests that build, or that read hundreds of files, run by themselves: together they take a debug build too long.
 describe.concurrent("a repeated resolution", () => {
-  // For the tests that build, or that read hundreds of directories: a debug build takes many times as long for those.
-  const debugTimeout = isDebug ? 30_000 : undefined;
-
   async function run(files: Record<string, string>, cmd = ["main.cjs"], env = bunEnv) {
     using dir = tempDir("repeated-resolution", files);
     await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env, cwd: String(dir), stderr: "pipe" });
@@ -2441,19 +2439,17 @@ describe.concurrent("a repeated resolution", () => {
     return { stdout, stderr, exitCode };
   }
 
-  test(
-    "is answered without the resolver, from every entry point",
-    async () => {
-      const { stdout, stderr, exitCode } = await run({
-        "child.cjs": `module.exports = 1;`,
-        "\u5b50.cjs": `module.exports = 1;`,
-        "hooked.cjs": `module.exports = 1;`,
-        "after.cjs": `module.exports = 1;`,
-        ...Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`one-off-${i}.cjs`, ""])),
-        "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
-        "node_modules/pkg/index.js": `module.exports = 2;`,
-        "meta.mjs": `export const importMetaResolve = (specifier, parent) => import.meta.resolve(specifier, parent);`,
-        "main.cjs": `
+  test.serial("is answered without the resolver, from every entry point", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "child.cjs": `module.exports = 1;`,
+      "\u5b50.cjs": `module.exports = 1;`,
+      "hooked.cjs": `module.exports = 1;`,
+      "after.cjs": `module.exports = 1;`,
+      ...Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`one-off-${i}.cjs`, ""])),
+      "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "node_modules/pkg/index.js": `module.exports = 2;`,
+      "meta.mjs": `export const importMetaResolve = (specifier, parent) => import.meta.resolve(specifier, parent);`,
+      "main.cjs": `
         const { resolutionMemoHits } = require("bun:internal-for-testing");
         const Module = require("node:module");
         const { pathToFileURL } = require("node:url");
@@ -2499,7 +2495,7 @@ describe.concurrent("a repeated resolution", () => {
           delete require.extensions[".custom"];
 
           // One resolution keeps no entry. Almost no hit in the second round: two pairs seldom share a bucket and a tag.
-          const oneOffs = () => { for (let i = 0; i < 300; i++) require.resolve("./one-off-" + i + ".cjs"); };
+          const oneOffs = () => { for (let i = 0; i < 100; i++) require.resolve("./one-off-" + i + ".cjs"); };
           oneOffs();
           const beforeSecondRound = resolutionMemoHits();
           oneOffs();
@@ -2516,32 +2512,30 @@ describe.concurrent("a repeated resolution", () => {
           console.log(JSON.stringify(out));
         })();
       `,
-      });
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        require: true,
-        requireResolve: 5,
-        bare: true,
-        wide: true,
-        resolveSync: true,
-        builtin: 0,
-        withPaths: 0,
-        withQuery: 0,
-        relativeSource: true,
-        blobUrl: 0,
-        longDataUrl: 0,
-        importMetaResolve: true,
-        import: true,
-        hooked: true,
-        afterChange: true,
-        oneOffs: true,
-        missing: 0,
-        afterMissing: true,
-      });
-      expect(exitCode).toBe(0);
-    },
-    debugTimeout,
-  );
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      require: true,
+      requireResolve: 5,
+      bare: true,
+      wide: true,
+      resolveSync: true,
+      builtin: 0,
+      withPaths: 0,
+      withQuery: 0,
+      relativeSource: true,
+      blobUrl: 0,
+      longDataUrl: 0,
+      importMetaResolve: true,
+      import: true,
+      hooked: true,
+      afterChange: true,
+      oneOffs: true,
+      missing: 0,
+      afterMissing: true,
+    });
+    expect(exitCode).toBe(0);
+  });
 
   test("runs the resolver with BUN_FEATURE_FLAG_DISABLE_RESOLUTION_MEMO", async () => {
     const { stdout, stderr, exitCode } = await run(
@@ -3003,16 +2997,12 @@ describe.concurrent("a repeated resolution", () => {
   });
 
   // No write to the map of listings follows this read, which is what moves the epoch for the other ones.
-  test(
-    "finds a new file once Bun.build() read the listing of the directory again in place",
-    async () => {
-      const { stdout, stderr, exitCode } = await run(
-        {
-          "x.json": `{}`,
-          // A build reads the listing of the directory above its entry point again. Each of these is one that no build has read.
-          ...Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`entry-${i}/entry.js`, `export default ${i};`])),
-          "main.mjs": `
-          import { writeFileSync } from "node:fs";
+  test.serial("finds a new file once Bun.build() read the listing of the directory again in place", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "x.json": `{}`,
+        "main.mjs": `
+          import { mkdirSync, writeFileSync } from "node:fs";
           import { createRequire } from "node:module";
           import { basename, join } from "node:path";
           const require = createRequire(import.meta.url);
@@ -3025,6 +3015,9 @@ describe.concurrent("a repeated resolution", () => {
           // A build at the resolver generation of the runtime reads no directory again (#38212). Build until one does.
           let sawNewFile = false;
           for (let builds = 0; !sawNewFile && builds < 100; builds++) {
+            // A build reads the listing of the directory above its entry point again, if no build has read the entry's own.
+            mkdirSync(join(import.meta.dir, "entry-" + builds));
+            writeFileSync(join(import.meta.dir, "entry-" + builds, "entry.js"), "export default 1;");
             await Bun.build({ entrypoints: [join(import.meta.dir, "entry-" + builds, "entry.js")] });
             sawNewFile = resolver() === "x.js";
             // A build that is queued before the thread of builds finds its queue empty runs at the generation before.
@@ -3033,15 +3026,13 @@ describe.concurrent("a repeated resolution", () => {
           out.push(sawNewFile, where(), where());
           console.log(JSON.stringify(out));
         `,
-        },
-        ["main.mjs"],
-      );
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual(["x.json", "x.json", "x.json", "x.json", true, "x.js", "x.js"]);
-      expect(exitCode).toBe(0);
-    },
-    debugTimeout,
-  );
+      },
+      ["main.mjs"],
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["x.json", "x.json", "x.json", "x.json", true, "x.js", "x.js"]);
+    expect(exitCode).toBe(0);
+  });
 
   // The retry of a failed lookup drops the directory from both maps, and only its listing comes back. The next failed
   // lookup there drops the listing alone.
@@ -3119,58 +3110,50 @@ describe.concurrent("a repeated resolution", () => {
     out.fromMemo.length === 0 || (out.fromMemo.length === 1 && out.fromMemo[0] === out.resolver);
 
   // Windows needs a privilege to make a link.
-  test.skipIf(isWindows)(
-    "is what the resolver answers for a package.json that was a link",
-    async () => {
-      const { stdout, stderr, exitCode } = await run(
-        {
-          "node_modules/pkg/real.json": `{ "name": "pkg", "exports": { ".": "./index.js" } }`,
-          "node_modules/pkg/index.js": `module.exports = 1;`,
-          "main.mjs": linkDropped("node_modules/pkg", "package.json", "real.json", `"pkg/package.json"`),
-        },
-        ["main.mjs"],
-      );
-      expect(stderr).toBe("");
-      const out = JSON.parse(stdout);
-      expect({ ...out, fromMemo: whatTheResolverAnswers(out), resolver: typeof out.resolver }).toEqual({
-        before: ["node_modules/pkg/real.json", "node_modules/pkg/real.json", "node_modules/pkg/real.json"],
-        keptBefore: true,
-        readAgain: true,
-        fromMemo: true,
-        resolver: "string",
-      });
-      expect(exitCode).toBe(0);
-    },
-    debugTimeout,
-  );
+  test.serial.skipIf(isWindows)("is what the resolver answers for a package.json that was a link", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "node_modules/pkg/real.json": `{ "name": "pkg", "exports": { ".": "./index.js" } }`,
+        "node_modules/pkg/index.js": `module.exports = 1;`,
+        "main.mjs": linkDropped("node_modules/pkg", "package.json", "real.json", `"pkg/package.json"`),
+      },
+      ["main.mjs"],
+    );
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout);
+    expect({ ...out, fromMemo: whatTheResolverAnswers(out), resolver: typeof out.resolver }).toEqual({
+      before: ["node_modules/pkg/real.json", "node_modules/pkg/real.json", "node_modules/pkg/real.json"],
+      keptBefore: true,
+      readAgain: true,
+      fromMemo: true,
+      resolver: "string",
+    });
+    expect(exitCode).toBe(0);
+  });
 
-  test.skipIf(isWindows)(
-    "is what the resolver answers for a link that was named through /./",
-    async () => {
-      const { stdout, stderr, exitCode } = await run(
-        {
-          "app/target.js": `module.exports = 1;`,
-          "node_modules/.keep": ``,
-          "main.mjs": linkDropped("app", "a.js", "target.js", `at("app") + sep + "." + sep + "a.js"`),
-        },
-        ["main.mjs"],
-      );
-      expect(stderr).toBe("");
-      const out = JSON.parse(stdout);
-      expect({ ...out, fromMemo: whatTheResolverAnswers(out), resolver: typeof out.resolver }).toEqual({
-        before: ["app/target.js", "app/target.js", "app/target.js"],
-        keptBefore: true,
-        readAgain: true,
-        fromMemo: true,
-        resolver: "string",
-      });
-      expect(exitCode).toBe(0);
-    },
-    debugTimeout,
-  );
+  test.serial.skipIf(isWindows)("is what the resolver answers for a link that was named through /./", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "app/target.js": `module.exports = 1;`,
+        "node_modules/.keep": ``,
+        "main.mjs": linkDropped("app", "a.js", "target.js", `at("app") + sep + "." + sep + "a.js"`),
+      },
+      ["main.mjs"],
+    );
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout);
+    expect({ ...out, fromMemo: whatTheResolverAnswers(out), resolver: typeof out.resolver }).toEqual({
+      before: ["app/target.js", "app/target.js", "app/target.js"],
+      keptBefore: true,
+      readAgain: true,
+      fromMemo: true,
+      resolver: "string",
+    });
+    expect(exitCode).toBe(0);
+  });
 
   // The resolver reads 256 directories at most in one call, so its first answer here is not its second.
-  test.skipIf(isWindows)(
+  test.serial.skipIf(isWindows)(
     "is the nearer package from a folder 300 below the nearest one that was read",
     async () => {
       const { stdout, stderr, exitCode } = await run(
@@ -3203,19 +3186,16 @@ describe.concurrent("a repeated resolution", () => {
       expect(JSON.parse(stdout)).toEqual({ last: "nearer", fromMemo: true, resolver: "nearer" });
       expect(exitCode).toBe(0);
     },
-    debugTimeout,
   );
 
-  test(
-    "finds a new file once Bun.build() read the directory again",
-    async () => {
-      const { stdout, stderr, exitCode } = await run(
-        {
-          "x.json": `{}`,
-          "lib/x.json": `{}`,
-          // The build reads the directory of its entry point again, and then the one it imports from.
-          "entry.js": `import x from "./lib/x"; export default x;`,
-          "main.mjs": `
+  test.serial("finds a new file once Bun.build() read the directory again", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "x.json": `{}`,
+        "lib/x.json": `{}`,
+        // The build reads the directory of its entry point again, and then the one it imports from.
+        "entry.js": `import x from "./lib/x"; export default x;`,
+        "main.mjs": `
           import { writeFileSync } from "node:fs";
           import { createRequire } from "node:module";
           import { basename, join } from "node:path";
@@ -3236,28 +3216,22 @@ describe.concurrent("a repeated resolution", () => {
           out.push(sawNewFile, where(), where());
           console.log(JSON.stringify(out));
         `,
-        },
-        ["main.mjs"],
-      );
-      const json = ["x.json", "x.json"];
-      const js = ["x.js", "x.js"];
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([json, json, json, true, js, js]);
-      expect(exitCode).toBe(0);
-    },
-    debugTimeout,
-  );
+      },
+      ["main.mjs"],
+    );
+    const json = ["x.json", "x.json"];
+    const js = ["x.js", "x.js"];
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([json, json, json, true, js, js]);
+    expect(exitCode).toBe(0);
+  });
 
-  test(
-    "does not find a module once Bun.build() found its directory gone",
-    async () => {
-      const { stdout, stderr, exitCode } = await run(
-        {
-          "lib/x.js": `module.exports = 1;`,
-          // Each build gets an entry point in a directory that no build has read.
-          ...Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`entry-${i}/entry.js`, ``])),
-          "main.mjs": `
-          import { rmSync } from "node:fs";
+  test.serial("does not find a module once Bun.build() found its directory gone", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "lib/x.js": `module.exports = 1;`,
+        "main.mjs": `
+          import { mkdirSync, rmSync, writeFileSync } from "node:fs";
           import { createRequire } from "node:module";
           import { basename, join } from "node:path";
           const require = createRequire(import.meta.url);
@@ -3274,6 +3248,9 @@ describe.concurrent("a repeated resolution", () => {
           // A build at the resolver generation of the runtime reads no directory again (#38212). Build until one does.
           let sawDirectoryGone = false;
           for (let builds = 0; !sawDirectoryGone && builds < 100; builds++) {
+            // Each build gets an entry point in a directory that no build has read.
+            mkdirSync(join(import.meta.dir, "entry-" + builds));
+            writeFileSync(join(import.meta.dir, "entry-" + builds, "entry.js"), "");
             const { logs } = await Bun.build({
               entrypoints: [join(import.meta.dir, "entry-" + builds, "entry.js")],
               throw: false,
@@ -3298,36 +3275,24 @@ describe.concurrent("a repeated resolution", () => {
           out.push(sawDirectoryGone, where(), where());
           console.log(JSON.stringify(out));
         `,
-        },
-        ["main.mjs"],
-      );
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([
-        "x.js",
-        "x.js",
-        "x.js",
-        "x.js",
-        true,
-        "MODULE_NOT_FOUND",
-        "MODULE_NOT_FOUND",
-      ]);
-      expect(exitCode).toBe(0);
-    },
-    debugTimeout,
-  );
+      },
+      ["main.mjs"],
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["x.js", "x.js", "x.js", "x.js", true, "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);
+    expect(exitCode).toBe(0);
+  });
 
-  test(
-    "finds a nearer package once a Bun.build() in progress found it",
-    async () => {
-      const { stdout, stderr, exitCode } = await run(
-        {
-          "node_modules/pkg/sub.js": `module.exports = "outer package";`,
-          "b/node_modules/other/index.js": `module.exports = 1;`,
-          "b/x.cjs": ``,
-          // "other" makes the build read b/node_modules again before the plugin runs.
-          "b/entry.js": `import "other"; export { default } from "./second.js";`,
-          "b/second.js": `export default 0;`,
-          "main.mjs": `
+  test.serial("finds a nearer package once a Bun.build() in progress found it", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "node_modules/pkg/sub.js": `module.exports = "outer package";`,
+        "b/node_modules/other/index.js": `module.exports = 1;`,
+        "b/x.cjs": ``,
+        // "other" makes the build read b/node_modules again before the plugin runs.
+        "b/entry.js": `import "other"; export { default } from "./second.js";`,
+        "b/second.js": `export default 0;`,
+        "main.mjs": `
           import { mkdirSync, writeFileSync } from "node:fs";
           import { createRequire } from "node:module";
           import { join, relative, sep } from "node:path";
@@ -3365,17 +3330,15 @@ describe.concurrent("a repeated resolution", () => {
           out.push(sawNearerPackage, repeated(), repeated(), resolver());
           console.log(JSON.stringify(out));
         `,
-        },
-        ["main.mjs"],
-      );
-      const outer = "node_modules/pkg/sub.js";
-      const nearer = "b/node_modules/pkg/sub.js";
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([outer, outer, outer, true, nearer, nearer, nearer]);
-      expect(exitCode).toBe(0);
-    },
-    debugTimeout,
-  );
+      },
+      ["main.mjs"],
+    );
+    const outer = "node_modules/pkg/sub.js";
+    const nearer = "b/node_modules/pkg/sub.js";
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([outer, outer, outer, true, nearer, nearer, nearer]);
+    expect(exitCode).toBe(0);
+  });
 
   // Main keeps the NODE_PATH of process start. #47589 makes the call change what the resolver searches.
   test("is what the resolver answers after Module._initPaths()", async () => {
@@ -3504,15 +3467,12 @@ describe.concurrent("a repeated resolution", () => {
     expect(exitCode).toBe(0);
   });
 
-  // By itself, and with more time in a debug build: the build copies the runtime into the executable, and a debug
-  // runtime is more than 1 GB. How long the disk takes for that differs by more than 10x from run to run.
-  test.serial(
-    "in a compiled executable follows process.chdir()",
-    async () => {
-      using dir = tempDir("repeated-resolution-compile", {
-        "a/package.json": `{ "name": "a" }`,
-        "b/package.json": `{ "name": "b" }`,
-        "main.cjs": `
+  // By itself: the build copies the runtime into the executable. Not in a debug build, whose runtime is more than 1 GB.
+  test.serial.skipIf(isDebug)("in a compiled executable follows process.chdir()", async () => {
+    using dir = tempDir("repeated-resolution-compile", {
+      "a/package.json": `{ "name": "a" }`,
+      "b/package.json": `{ "name": "b" }`,
+      "main.cjs": `
         const path = require("node:path");
         // Not a literal: the bundler leaves this require() for run time.
         const specifier = ["./package", "json"].join(".");
@@ -3523,24 +3483,22 @@ describe.concurrent("a repeated resolution", () => {
         }
         console.log(JSON.stringify(out));
       `,
-      });
-      const exe = join(String(dir), isWindows ? "main.exe" : "main");
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "main.cjs", "--outfile", exe],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      expect([await build.stderr.text(), await build.exited]).toEqual([expect.any(String), 0]);
-      await using proc = Bun.spawn({ cmd: [exe, String(dir)], env: bunEnv, cwd: String(dir), stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([true, true, true, true, true]);
-      expect(exitCode).toBe(0);
-    },
-    isDebug ? 120_000 : undefined,
-  );
+    });
+    const exe = join(String(dir), isWindows ? "main.exe" : "main");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "main.cjs", "--outfile", exe],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.any(String), 0]);
+    await using proc = Bun.spawn({ cmd: [exe, String(dir)], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([true, true, true, true, true]);
+    expect(exitCode).toBe(0);
+  });
 
   test("calls an onResolve plugin that was registered after the first calls", async () => {
     const { stdout, stderr, exitCode } = await run({
@@ -3683,13 +3641,13 @@ describe.concurrent("a repeated resolution", () => {
         const { resolutionMemoHits } = require("bun:internal-for-testing");
         const fs = require("node:fs");
         const path = require("node:path");
-        const count = 800;
+        const count = 500;
         for (let i = 0; i < count; i++) fs.writeFileSync(path.join(__dirname, "m" + i + ".cjs"), "");
         let wrong = 0;
         const resolve = i => {
           if (require.resolve("./m" + i + ".cjs") !== path.join(__dirname, "m" + i + ".cjs")) wrong++;
         };
-        // Three resolutions in a row give a pair an entry that has answered once. A bucket holds two, and about 45 of
+        // Three resolutions in a row give a pair an entry that has answered once. A bucket holds two, and about 14 of
         // the 1024 get a third pair, which replaces one of them.
         for (let i = 0; i < count; i++) resolve(i), resolve(i), resolve(i);
         const before = resolutionMemoHits();

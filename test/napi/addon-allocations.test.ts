@@ -146,5 +146,5 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
       blocksOnLoanAfterCollecting: 0,
       answersACopyFromMemory: true,
     });
-  }, 120_000);
+  });
 });

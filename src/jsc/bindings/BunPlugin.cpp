@@ -598,6 +598,8 @@ public:
     // `bun test` calls such a factory once the original has come. Compiled code calls it at once: only while this is pending does it stand where `bun test` has yet to call it.
     WriteBarrier<JSC::JSPromise> originalThatFactoryAskedFor;
     bool wasAskedFor { false };
+    bool wasLoadedByRequire { false };
+    bool isRetriedAfterMockEnd { false };
     bool keepsFailureForImports { false };
     bool decidesWhetherFailureIsKept { false };
     bool mockThatStoodAtFailureHadSettled { false };
@@ -3797,12 +3799,19 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
         evict.patchedCommonJSModules.append(specifier);
 }
 
+#if ENABLE(AOT)
+static void scheduleDetachedLoadRetry(Zig::GlobalObject*, JSModuleMock*, JSC::AOT::ModuleID, bool isEndOfMock = false);
+#endif
+
 static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier, JSModuleMock* laterMock = nullptr, bool endsUnderPlainToo = true)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ModulesToEvict evict;
 #if ENABLE(AOT)
+    // The end of a mock that a require() has loaded drops the entry that detached loads wait on.
+    if (auto module = mock->wasLoadedByRequire ? Bun::compiledModuleForPath(specifier) : std::nullopt)
+        scheduleDetachedLoadRetry(globalObject, mock, *module, true);
     // What the other unmockModule() asks for packagesToBringBack.
     bool bringsBack = bringsBackCompiledFile(mock, specifier) || endsPreloadPackagePatch(mock, specifier);
     bool movesCompiledFile = vm.hasCompiledCode() && endsUnderPlainToo;
@@ -4267,12 +4276,13 @@ static void decideInNextJobWhetherFailureIsKept(Zig::GlobalObject* globalObject,
 }
 
 // A factory that fails under require() drops the entry that detached loads wait on.
-static void scheduleDetachedLoadRetry(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::AOT::ModuleID module)
+static void scheduleDetachedLoadRetry(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::AOT::ModuleID module, bool isEndOfMock)
 {
     auto& vm = JSC::getVM(globalObject);
     for (const auto& earlier : globalObject->onLoadPlugins.factoriesOfCompiledMocks) {
         if (earlier.module != module.index() || uncheckedDowncast<JSModuleMock>(earlier.mock.get())->factory.get() == mock->factory.get() || !earlier.isAwaitedByDetachedLoad || earlier.patched->status() != JSC::JSPromise::Status::Pending)
             continue;
+        uncheckedDowncast<JSModuleMock>(earlier.mock.get())->isRetriedAfterMockEnd |= isEndOfMock;
         JSC::AOT::retryMockInDetachedLoads(globalObject, module);
         JSC::JSPromise* job = JSC::JSPromise::create(vm, globalObject->promiseStructure());
         job->fulfill(vm, jsUndefined());
@@ -4570,13 +4580,22 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
             scheduleDetachedLoadRetry(globalObject, mock, module);
         // The next load asks the mock again.
         waiting.append({ module.index(), JSC::Strong<JSC::JSObject> { vm, mock } });
-        // The load that `bun test` leaves behind such a require() fails with the factory, and nobody hears it.
-        if (comesToFetchInFlight && !JSC::AOT::isRequestedByDetachedLoad(globalObject, module) && !vm.isTerminationException(thrown) && scope.tryClearException()) {
+        // The load that `bun test` leaves behind such a require() fails with the factory, and nobody hears it. A load that calls the factory again because a mock has ended is heard if its own call had come to a fetch in flight. The loads resume in the order of their calls.
+        bool isRequestedByDetachedLoad = JSC::AOT::isRequestedByDetachedLoad(globalObject, module);
+        bool isReportedRetry = false;
+        for (const auto& factory : globalObject->onLoadPlugins.factoriesOfCompiledMocks) {
+            if (!isRequestedByDetachedLoad || factory.module != module.index() || !std::exchange(uncheckedDowncast<JSModuleMock>(factory.mock.get())->isRetriedAfterMockEnd, false))
+                continue;
+            isReportedRetry = factory.cameToFetchInFlightWhenCalled;
+            break;
+        }
+        if ((isReportedRetry || (comesToFetchInFlight && !isRequestedByDetachedLoad)) && !vm.isTerminationException(thrown) && scope.tryClearException()) {
             JSC::JSPromise::rejectedPromise(globalObject, thrown->value())->performPromiseThen(vm, globalObject, JSC::jsUndefined(), JSC::jsUndefined(), JSC::JSPromise::create(vm, globalObject->promiseStructure()));
             throwException(globalObject, scope, thrown);
         }
         return false;
     }
+    mock->wasLoadedByRequire |= !pendingFactory && JSC::AOT::requireRunsMocks(vm);
     if (pendingFactory) {
         auto& plugins = globalObject->onLoadPlugins;
         // The job behind the factory settles its own promise whatever that holds, so what may be settled from two sides is another one.
@@ -5618,7 +5637,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     auto ranBy = loaded.compiledModule ? JSC::AOT::evaluatedBy(globalObject, *loaded.compiledModule) : JSC::AOT::LoadedBy::Nobody;
     bool ranAheadOfThisTestFile = ranBy == JSC::AOT::LoadedBy::EarlierTestFile || ranBy == JSC::AOT::LoadedBy::Preload;
     // moveLoadedModule() leaves the entry of the root of an import() that failed under its key, where `bun test` takes it for stale and makes the pass.
-    bool hasEntryThatFailedUnderPlain = loaded.compiledModule && mock->isOfVitest() && JSC::AOT::isFailedImportRoot(globalObject, *loaded.compiledModule);
+    // A mock that leaves the loaded module alone takes any failed entry for stale, where it does not set the entry aside.
+    bool hasEntryThatFailedUnderPlain = loaded.compiledModule && mock->isOfVitest() && (JSC::AOT::isFailedImportRoot(globalObject, *loaded.compiledModule) || (leavesLoadedModuleAlone && !staysTheOriginal && JSC::AOT::hasFailedESModule(globalObject, *loaded.compiledModule)));
     // evictModulesAndTheirImporters() finds no compiled module with the loader. One that it would have taken out has run, and the mock comes ahead of its next load all the same.
     bool isOutOfLoader = loaded.compiledModule && (waitsBehindMockThatNobodyLoaded || JSC::AOT::wasReleasedByLoader(globalObject, *loaded.compiledModule));
     bool leavesCompiledModuleAlone = (leavesLoadedModuleAlone || isOutOfLoader) && loaded.compiledModule && !placeOfMockThatEnds && !loaded.esmNamespace && !loaded.commonJSModule && hasLoaded(*loaded.compiledModule)
@@ -5915,8 +5935,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             }
             // That eviction takes the key itself out where the mock neither patches what lies under it nor sets it aside, to bring it back at its end. From there on `bun test` finds nothing
             // under it, or what this test file has fetched: either way no later mock of this test file makes the eviction of what an earlier one has loaded.
-            if (fileWhoseKeyThisLayingTakesOut)
+            if (fileWhoseKeyThisLayingTakesOut) {
                 JSC::AOT::markEntryOwnedByTestFile(globalObject, *fileWhoseKeyThisLayingTakesOut);
+                JSC::AOT::releaseFailedESModule(globalObject, *fileWhoseKeyThisLayingTakesOut);
+            }
         }
 #endif
     }

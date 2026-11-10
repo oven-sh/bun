@@ -3330,6 +3330,22 @@ if (isBun) {
         expect(await instance).toBe(options ? "resolved" : instance);
       });
 
+      test("{ spy: true }: what a method makes through Symbol.species is of the class, and no call of the mock", async () => {
+        class Deferred extends Promise {}
+        class List extends Array {}
+        const spied = vi.mockObject({ Deferred, List }, { spy: true });
+
+        const then = new spied.Deferred(resolve => resolve(1)).then(value => value + 1);
+        expect(await then).toBe(2);
+        expect(then).toBeInstanceOf(Deferred);
+        expect(spied.Deferred).toHaveBeenCalledTimes(1);
+
+        const mapped = new spied.List(1, 2, 3).map(value => value * 2);
+        expect(mapped).toBeInstanceOf(List);
+        expect(Object.keys(mapped)).toEqual(["0", "1", "2"]);
+        expect(spied.List).toHaveBeenCalledTimes(1);
+      });
+
       test("a bound class with a built-in base class", () => {
         class Store extends Map {}
         const Mocked = vi.mockObject(Store.bind(null));

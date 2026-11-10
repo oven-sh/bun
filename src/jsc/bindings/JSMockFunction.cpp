@@ -2571,8 +2571,7 @@ AutomockKind Automocker::kindOf(JSValue value, AutomockRole role)
     // A global object has no Symbol.toStringTag that would make the check below keep it.
     if (asObject(value)->isGlobalObject() || asObject(value)->type() == JSC::GlobalProxyType)
         return AutomockKind::Keep;
-    // What the checks below find on a class's `prototype` describes the instances: the Symbol.toStringTag they inherit
-    // (own, or that of a Map or Promise base class), or that they are arrays.
+    // Array.isArray() and the Symbol.toStringTag (own, or of a base class such as Map) of a class's `prototype` describe the instances.
     if (role == AutomockRole::ClassPrototype && !value.isCallable())
         return AutomockKind::Object;
 
@@ -2720,14 +2719,12 @@ static bool isUserFunction(JSObject* object)
     auto* function = dynamicDowncast<JSC::JSFunction>(object);
     if (!function || function->isHostOrBuiltinFunction())
         return false;
-    // The engine makes the constructor of a class that declares none, and that one is no builtin function
-    // even where a built-in module declares the class.
+    // The engine makes the constructor of a class that declares none, and never marks that one as builtin.
     auto* classSource = function->jsExecutable()->classSource().provider();
     return !classSource || !classSource->sourceOrigin().url().protocolIs("builtin"_s);
 }
 
-// Whether a class's `prototype` is a plain object of the tested code. The rest of the process shares the prototype of
-// a class that the runtime provides, a runtime object such as Math, and what `F.prototype = Map.prototype` borrows.
+// Whether a class's `prototype` is a plain object of the tested code, not one that the whole process shares such as Math or Map.prototype.
 static bool ownsPrototype(JSC::VM& vm, JSObject* constructor, JSValue prototype)
 {
     auto* object = prototype.getObject();
@@ -2796,6 +2793,10 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
                     descriptor.setGetter(accessor);
                     if (descriptor.setter().isObject())
                         descriptor.setSetter(accessor);
+                } else if (isFunction && key == vm.propertyNames->speciesSymbol) {
+                    // What a method of a spied class constructs through Symbol.species is the class, not the mock that records `new`.
+                    descriptor.setGetter(JSC::JSBoundFunction::create(vm, globalObject, asObject(descriptor.getter()), original, ArgList(), 0, nullptr, makeSource(String(), SourceOrigin(), SourceTaintedOrigin::Untainted)));
+                    RETURN_IF_EXCEPTION(scope, );
                 }
                 putOwnProperty(globalObject, replacement, key, descriptor);
                 RETURN_IF_EXCEPTION(scope, );
@@ -2804,10 +2805,11 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
 
             AutomockRole role = AutomockRole::Member;
             if (isFunction && key == vm.propertyNames->prototype) {
-                // Instances come from the `prototype` of a constructor, not from that of a generator function.
-                // With `spy`, only a prototype of the tested code stops going by its tag: the tag is what keeps
-                // a spy off a prototype that the whole process shares, such as Map.prototype.
-                bool isOfClass = original->isConstructor() && (!spy || ownsPrototype(vm, original, value));
+                // Only a constructor makes instances from its `prototype`: a generator function does not.
+                bool isOfClass = original->isConstructor();
+                // With `spy`, the tag still keeps a spy off a prototype that the tested code does not own, such as Map.prototype.
+                if (isOfClass && spy)
+                    isOfClass = ownsPrototype(vm, original, value);
                 role = isOfClass ? AutomockRole::ClassPrototype : AutomockRole::Prototype;
             }
             JSValue mocked = replacementFor(value, role);

@@ -1305,7 +1305,7 @@ declare namespace $Node {
       data: string | ArrayBufferView,
       encoding: string | undefined,
       close: boolean,
-      callback: (error?: Error | null) => void,
+      callback?: (error?: Error | null) => void,
       deferCallback?: boolean,
     ): number | false;
     sendTrailers(streamId: number, headers: object, sensitiveNames: object): void;

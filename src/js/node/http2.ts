@@ -2278,7 +2278,7 @@ function endErroredStream(stream: Http2Stream) {
   stream[bunHTTP2StreamStatus] = status | StreamState.EndStreamSent;
   const settled = native.writeStream(stream.id, "", "ascii", true);
   native.flush();
-  if (settled === 5) onEndStreamSettled(stream);
+  if (settled === 5) markWritableDone(stream);
 }
 // The 'ready' listeners of a _write or _writev that found the stream without an id.
 function writeWhenReady(this: Http2Stream, chunk, encoding, callback) {

@@ -60,7 +60,7 @@ describe("does not return zero", () => {
 });
 
 // jest-each spreads the rows of a table only if every row is an array: `table.every(Array.isArray)`.
-// The expected calls are what Jest 30.5.2 prints for these files.
+// The expected calls are what Jest 30.5.2 prints for these files, but for the table with a hole.
 it("passes each row as one argument if a row of the table is not an array", async () => {
   const values = (name: string) =>
     `test.each(["", [1, 2]])("${name} %p", function () { console.log("${name} " + JSON.stringify(Array.from(arguments))); });`;
@@ -68,7 +68,7 @@ it("passes each row as one argument if a row of the table is not an array", asyn
     "bun-test.test.js": `
       import { afterAll, describe, test } from "bun:test";
 
-      const calls = { value: [], done: [], table: [], proxy: [], describe: [] };
+      const calls = { value: [], done: [], table: [], proxy: [], hole: [], describe: [] };
       const record = (label, args) =>
         calls[label].push(Array.from(args, arg => (typeof arg === "function" ? "<done>" : arg)));
       afterAll(() => console.log("bun:test " + JSON.stringify(calls)));
@@ -90,6 +90,10 @@ it("passes each row as one argument if a row of the table is not an array", asyn
       // A Proxy of an array is an array for Array.isArray(), so this table is spread.
       test.each([[1, 2], new Proxy([3, 4], {})])("proxy %#", function () {
         record("proxy", arguments);
+      });
+      // \`every()\` skips a hole, so this table is spread too. The hole is an \`undefined\` row. Jest fails on it.
+      test.each([[1, 2], , [3, 4]])("hole %#", function () {
+        record("hole", arguments);
       });
       describe.each([0, [5, 6]])("describe %p", function () {
         record("describe", arguments);
@@ -134,6 +138,7 @@ it("passes each row as one argument if a row of the table is not an array", asyn
           [1, 2],
           [3, 4],
         ],
+        hole: [[1, 2], [null], [3, 4]],
         describe: [[0], [[5, 6]]],
       },
     ],
@@ -151,6 +156,9 @@ it("passes each row as one argument if a row of the table is not an array", asyn
       "(pass) table 1",
       "(pass) proxy 0",
       "(pass) proxy 1",
+      "(pass) hole 0",
+      "(pass) hole 1",
+      "(pass) hole 2",
       "(pass) describe 0 > inner",
       "(pass) describe [ 5, 6 ] > inner",
       '(pass) globals ""',
@@ -445,6 +453,8 @@ describe.concurrent("titles", () => {
         // In a table of arrays, `$name` reads the first value of the row. Jest leaves these two titles as written.
         ["$0 $# $length", `[[[5, 6], 1]]`],
         ["case $#", `[[["a"], 1], [["b"], 2]]`],
+        // An array that is the whole row is a value, also behind a Proxy. Jest leaves these titles as written too.
+        ["$0 $#", `[0, [7], new Proxy([8], {})]`],
         ["$a $#", `[1, "s", null, [1]]`],
       ]),
     ).toEqual({
@@ -479,6 +489,9 @@ describe.concurrent("titles", () => {
         "5 0 2",
         "case 0",
         "case 1",
+        "$0 $#",
+        "$0 $#",
+        "$0 $#",
         "$a $#",
         "$a $#",
         "$a $#",

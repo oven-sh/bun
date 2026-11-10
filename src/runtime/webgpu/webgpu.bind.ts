@@ -1,6 +1,6 @@
 /**
  * WebGPU (https://gpuweb.github.io/gpuweb/), in the order of its IDL, without what needs a window or a DOM: canvases,
- * external textures and images, XR. Only in a build with `--webgpu=on`.
+ * importing external textures and images, XR. Only in a build with `--webgpu=on`.
  */
 import * as b from "../../codegen/bindgen-lib.ts";
 import type { Type } from "../../codegen/bindgen-lib-internal.ts";
@@ -493,6 +493,7 @@ export const GPUStorageTextureBindingLayout = dictionary({
   format: GPUTextureFormat,
   viewDimension: GPUTextureViewDimension.default("2d"),
 });
+export const GPUExternalTextureBindingLayout = dictionary({});
 export const GPUBindGroupLayoutEntry = dictionary({
   binding: GPUIndex32,
   visibility: GPUFlags,
@@ -500,12 +501,20 @@ export const GPUBindGroupLayoutEntry = dictionary({
   sampler: GPUSamplerBindingLayout.optional,
   texture: GPUTextureBindingLayout.optional,
   storageTexture: GPUStorageTextureBindingLayout.optional,
+  externalTexture: GPUExternalTextureBindingLayout.optional,
 });
 export const GPUBindGroupLayoutDescriptor = dictionary(GPUObjectDescriptorBase, {
   entries: b.sequence(GPUBindGroupLayoutEntry),
 });
 
 export const GPUBindGroup = b.class({ ...gpuObject, rustPath: rustPath("GPUBindGroup"), proto: GPUObjectBase });
+
+/** Nothing makes one: it is imported from a video. `instanceof` needs the interface, and a view binds where one would. */
+export const GPUExternalTexture = b.class({
+  ...webInterface,
+  rustPath: rustPath("GPUExternalTexture"),
+  proto: GPUObjectBase,
+});
 
 export const GPUBufferBinding = dictionary({
   buffer: GPUBuffer.ref,

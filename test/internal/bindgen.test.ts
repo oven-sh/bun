@@ -3456,6 +3456,26 @@ describe("WebIDL's numbers", () => {
     ).toThrow("no iterator");
   });
 
+  it("a dictionary with no members is there or is not", () => {
+    const { describeMarks } = bindgen as any;
+    expect(describeMarks({ before: 7, after: 4000000000 })).toEqual([7, 4000000000, 0, 0]);
+    expect(describeMarks({ before: 7, mark: {}, after: 4000000000 }, { ignored: 1 })).toEqual([7, 4000000000, 1, 1]);
+    expect(describeMarks({ before: 7, mark: undefined, after: 1 }, {})).toEqual([7, 1, 0, 1]);
+    for (const mark of [1, "", [], null]) {
+      expect(() => describeMarks({ before: 7, mark, after: 1 })).toThrow(TypeError);
+      expect(() => describeMarks({ before: 7, after: 1 }, mark)).toThrow(TypeError);
+    }
+  });
+
+  it("what comes after a dictionary with no members is still itself", () => {
+    const { countNothing } = bindgen as any;
+    expect(countNothing({}, 4000000000, 7)).toEqual([4000000000, 0.5, 0, 7]);
+    expect(countNothing({}, 1, {}, {}, 2.25, [{}, { ignored: 1 }, {}])).toEqual([1, 2.25, 3, -1]);
+    expect(countNothing({}, 1, -3, undefined, 2.25)).toEqual([1, 2.25, 0, -3]);
+    expect(() => countNothing(undefined, 1, 7)).toThrow(TypeError);
+    expect(() => countNothing({}, 1, 7, {}, 0, [{}, 1])).toThrow(TypeError);
+  });
+
   it("b.sequence by itself refuses what cannot be iterated", () => {
     const { sumOfSequence } = bindgen as any;
     expect(sumOfSequence()).toBe(0);

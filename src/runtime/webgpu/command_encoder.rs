@@ -6,8 +6,8 @@ use super::pass_encoder::debug_commands;
 use super::texture::DefaultViews;
 use super::{
     GPUBuffer, GPUComputePassEncoder, GPUDevice, GPUQuerySet, GPURenderPassEncoder, WebEnum as _,
-    color_to_sys, extent_to_sys, gpu_object, new_object, optional_to_sys, origin_to_sys,
-    string_view, sys, to_sys_bool,
+    color_to_sys, extent_to_sys, gpu_object, new_object, optional_to_sys, optional_u32,
+    origin_to_sys, string_view, sys, to_sys_bool,
 };
 use crate::generated_bindgen::webgpu::{
     GPUCommandBufferDescriptor, GPUCommandEncoderDescriptor, GPUComputePassDescriptor, GPUExtent3D,
@@ -68,8 +68,8 @@ pub(super) fn buffer_layout_to_sys(
 ) -> sys::WGPUTexelCopyBufferLayout {
     sys::WGPUTexelCopyBufferLayout {
         offset,
-        bytesPerRow: bytes_per_row.unwrap_or(sys::WGPU_COPY_STRIDE_UNDEFINED),
-        rowsPerImage: rows_per_image.unwrap_or(sys::WGPU_COPY_STRIDE_UNDEFINED),
+        bytesPerRow: optional_u32(bytes_per_row),
+        rowsPerImage: optional_u32(rows_per_image),
     }
 }
 
@@ -116,8 +116,8 @@ fn timestamp_writes_to_sys(
 ) -> sys::WGPUPassTimestampWrites {
     sys::WGPUPassTimestampWrites {
         querySet: query_set.handle,
-        beginningOfPassWriteIndex: beginning.unwrap_or(sys::WGPU_QUERY_SET_INDEX_UNDEFINED),
-        endOfPassWriteIndex: end.unwrap_or(sys::WGPU_QUERY_SET_INDEX_UNDEFINED),
+        beginningOfPassWriteIndex: optional_u32(beginning),
+        endOfPassWriteIndex: optional_u32(end),
         ..sys::WGPUPassTimestampWrites::INIT
     }
 }
@@ -139,9 +139,7 @@ impl GPUCommandEncoder {
             };
             color_attachments.push(sys::WGPURenderPassColorAttachment {
                 view: view_of(&attachment.view, &mut views),
-                depthSlice: attachment
-                    .depth_slice
-                    .unwrap_or(sys::WGPU_DEPTH_SLICE_UNDEFINED),
+                depthSlice: optional_u32(attachment.depth_slice),
                 resolveTarget: match &attachment.resolve_target {
                     Some(target) => view_of(target, &mut views),
                     None => core::ptr::null_mut(),

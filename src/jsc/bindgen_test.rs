@@ -10,12 +10,12 @@ use crate::bindgen::{
 };
 use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
-    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
-    TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
-    TestOuter, TestPingEventInit, TestRecords, TestRefOrInteger, TestRefs, TestSize,
-    TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
-    js_TestNonFinal, js_TestNote, js_TestPingEvent, js_TestRefCounted, js_TestRefCountedNote,
-    js_TestShape, js_TestSquare,
+    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestMarks,
+    TestNames, TestNodeOptions, TestNothing, TestNothingOrInteger, TestObjectOrRest, TestOptions,
+    TestOptionsEcho, TestOtherAsNullOptions, TestOuter, TestPingEventInit, TestRecords,
+    TestRefOrInteger, TestRefs, TestSize, TestTextOrBytes, TestValue, js_TestCounter, js_TestError,
+    js_TestMemberFunctions, js_TestNonFinal, js_TestNote, js_TestPingEvent, js_TestRefCounted,
+    js_TestRefCountedNote, js_TestShape, js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -153,6 +153,35 @@ pub(crate) fn describe_records(
         .chain(counted)
         .map(String::into_bytes)
         .collect()
+}
+
+pub(crate) fn describe_marks(marks: &TestMarks, mark: Option<&TestNothing>) -> Vec<f64> {
+    vec![
+        f64::from(marks.before),
+        f64::from(marks.after),
+        f64::from(u8::from(marks.mark.is_some())),
+        f64::from(u8::from(mark.is_some())),
+    ]
+}
+
+pub(crate) fn count_nothing(
+    _nothing: &TestNothing,
+    first: u32,
+    either: TestNothingOrInteger,
+    _by_default: &TestNothing,
+    second: f64,
+    rest: Vec<TestNothing>,
+) -> Vec<f64> {
+    let either = match either {
+        TestNothingOrInteger::Nothing(nothing) => {
+            let TestNothing {} = nothing;
+            -1
+        }
+        TestNothingOrInteger::Integer(integer) => integer,
+    };
+    let count = rest.len();
+    drop(rest);
+    vec![f64::from(first), second, count as f64, f64::from(either)]
 }
 
 pub(crate) fn sum_of_sequence(numbers: Vec<f64>) -> f64 {

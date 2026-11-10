@@ -749,6 +749,27 @@ export const describeRecords = b.fn({
 export const TestSizeDict = b.dictionary({ width: b.u32.enforceRange(), height: b.u32.enforceRange().default(1) });
 export const TestSize = b.union({ sequence: b.sequence(b.u32.enforceRange()), dict: TestSizeDict });
 export const areaOf = b.fn({ args: { size: TestSize }, returns: b.f64 });
+/** A dictionary with no members, which says something by being there. */
+export const TestNothing = b.dictionary({});
+export const TestMarks = b.dictionary({ before: b.u8, mark: TestNothing.optional, after: b.u32 });
+/** `before`, `after`, and whether each mark is there. */
+export const describeMarks = b.fn({
+  args: { marks: TestMarks, mark: TestNothing.optional },
+  returns: b.array(b.f64),
+});
+export const TestNothingOrInteger = b.union({ nothing: TestNothing, integer: b.i32 });
+/** `first`, `second`, how many are in `rest`, and `either` or -1: an argument after one with no members is still itself. */
+export const countNothing = b.fn({
+  args: {
+    nothing: TestNothing,
+    first: b.u32,
+    either: TestNothingOrInteger,
+    byDefault: TestNothing.default({}),
+    second: b.f64.default(0.5),
+    rest: b.sequence(TestNothing).default([]),
+  },
+  returns: b.array(b.f64),
+});
 /** `b.sequence` by itself. */
 export const sumOfSequence = b.fn({ args: { numbers: b.sequence(b.f64.loose).default([]) }, returns: b.f64 });
 

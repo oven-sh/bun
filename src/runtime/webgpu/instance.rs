@@ -289,27 +289,39 @@ impl Instance {
         this.poll_timer
             .with_mut(|timer| timer.state = EventLoopTimerState::FIRED);
         bun_core::scoped_log!(webgpu, "poll: {} pending", this.pending.get());
-        let (Some(handle), Some(context)) = (this.handle(), this.abort_handle.context_id()) else {
+        let Some(context) = this.abort_handle.context_id() else {
             return;
         };
         {
             // What the promises' reactions do, they do when this scope ends.
             let _event_loop = vm.enter_event_loop_scope();
             let _context = vm.enter_context(context);
-            // SAFETY: a live instance, on the one thread that uses it.
-            unsafe { sys::wgpuInstanceProcessEvents(handle) };
-            for device in this.devices_with_errors.take() {
-                if this.is_script_gone(vm) {
-                    device.forget_errors();
-                } else {
-                    device.report_errors(vm);
-                }
-                this.finished_one();
+            // What has happened to a device by now comes before what Dawn answers knowing of it: a device that is lost
+            // makes what it would have refused to.
+            this.report_errors(vm);
+            if let Some(handle) = this.handle()
+                && !this.is_script_gone(vm)
+            {
+                // SAFETY: a live instance, on the one thread that uses it.
+                unsafe { sys::wgpuInstanceProcessEvents(handle) };
             }
+            this.report_errors(vm);
         }
         if this.pending.get() > 0 && this.poll_timer.get().state != EventLoopTimerState::ACTIVE {
             this.poll_after(this.poll_interval_ms());
             this.idle_polls.set(this.idle_polls.get().saturating_add(1));
+        }
+    }
+
+    /// Runs JavaScript.
+    fn report_errors(&self, vm: &VirtualMachine) {
+        for device in self.devices_with_errors.take() {
+            if self.is_script_gone(vm) {
+                device.forget_errors();
+            } else {
+                device.report_errors(vm);
+            }
+            self.finished_one();
         }
     }
 

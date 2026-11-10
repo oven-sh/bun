@@ -264,6 +264,8 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   webidlNumbers: $bindgen("bindgen_test.bind.ts", "webidlNumbers"),
   areaOf: $bindgen("bindgen_test.bind.ts", "areaOf"),
   sumOfSequence: $bindgen("bindgen_test.bind.ts", "sumOfSequence"),
+  describeMarks: $bindgen("bindgen_test.bind.ts", "describeMarks"),
+  countNothing: $bindgen("bindgen_test.bind.ts", "countNothing"),
   describeRecords: $bindgen("bindgen_test.bind.ts", "describeRecords"),
   TestFlags: $bindgen("bindgen_test.bind.ts", "TestFlags"),
   overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),

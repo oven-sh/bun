@@ -41,6 +41,12 @@ impl GPUDevice {
         heap: &JsHeap<'a>,
         descriptor: &GPUBufferDescriptor,
     ) -> bindgen::Result<'a, JSValue> {
+        if descriptor.mapped_at_creation && !descriptor.size.is_multiple_of(4) {
+            return Err(heap.range_error(format_args!(
+                "size is {}, and that of a buffer that is mapped at creation is a multiple of 4",
+                descriptor.size
+            )));
+        }
         let label = descriptor.label.to_utf8();
         let sys_descriptor = sys::WGPUBufferDescriptor {
             label: string_view(&label),

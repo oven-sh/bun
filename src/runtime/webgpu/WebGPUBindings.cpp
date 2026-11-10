@@ -123,6 +123,7 @@ static constexpr LazyWebGPUProperty webGPUGlobals[] = {
     { "GPUDevice"_s, getGPUDeviceConstructor },
     { "GPUDeviceLostInfo"_s, getGPUDeviceLostInfoConstructor },
     { "GPUError"_s, getGPUErrorConstructor },
+    { "GPUExternalTexture"_s, getGPUExternalTextureConstructor },
     { "GPUInternalError"_s, getGPUInternalErrorConstructor },
     { "GPUMapMode"_s, createGPUMapMode },
     { "GPUOutOfMemoryError"_s, getGPUOutOfMemoryErrorConstructor },

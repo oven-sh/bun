@@ -3,8 +3,8 @@ use bun_jsc::bindgen::{self, JsHeap};
 
 use super::device::DeviceRef;
 use super::{
-    GPUDevice, WebEnum as _, extent_to_sys, gpu_object, new_object, optional_to_sys, string_view,
-    sys,
+    GPUDevice, WebEnum as _, extent_to_sys, gpu_object, new_object, optional_to_sys, optional_u32,
+    string_view, sys,
 };
 use crate::generated_bindgen::webgpu::{
     GPUQuerySetDescriptor, GPUQueryType, GPUSamplerDescriptor, GPUTextureDescriptor,
@@ -158,13 +158,9 @@ impl GPUTexture {
             format: optional_to_sys!(descriptor.format, WGPUTextureFormat),
             dimension: optional_to_sys!(descriptor.dimension, WGPUTextureViewDimension),
             baseMipLevel: descriptor.base_mip_level,
-            mipLevelCount: descriptor
-                .mip_level_count
-                .unwrap_or(sys::WGPU_MIP_LEVEL_COUNT_UNDEFINED),
+            mipLevelCount: optional_u32(descriptor.mip_level_count),
             baseArrayLayer: descriptor.base_array_layer,
-            arrayLayerCount: descriptor
-                .array_layer_count
-                .unwrap_or(sys::WGPU_ARRAY_LAYER_COUNT_UNDEFINED),
+            arrayLayerCount: optional_u32(descriptor.array_layer_count),
             aspect: descriptor.aspect.to_sys(),
             usage: descriptor.usage.into(),
             ..sys::WGPUTextureViewDescriptor::INIT

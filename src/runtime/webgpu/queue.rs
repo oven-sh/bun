@@ -68,12 +68,6 @@ impl GPUQueue {
         let bytes_per_element = bytes_per_element(data.to_js());
         data.with_bytes(heap, |bytes| {
             let bytes = slice_of_data(heap, bytes, bytes_per_element, data_offset, size)?;
-            if bytes.len() % 4 != 0 {
-                return Err(super::operation_error(
-                    heap,
-                    "The number of bytes to write is not a multiple of 4",
-                ));
-            }
             // SAFETY: live objects, and bytes that outlive the call.
             unsafe {
                 sys::wgpuQueueWriteBuffer(

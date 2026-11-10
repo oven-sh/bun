@@ -28,7 +28,9 @@ mod texture;
 pub(crate) use adapter::{
     GPU, GPUAdapter, GPUAdapterInfo, GPUSupportedLimits, create_gpu, use_null_backend_for_testing,
 };
-pub(crate) use bind_group::{GPUBindGroup, GPUBindGroupLayout, GPUPipelineLayout};
+pub(crate) use bind_group::{
+    GPUBindGroup, GPUBindGroupLayout, GPUExternalTexture, GPUPipelineLayout,
+};
 pub(crate) use buffer::GPUBuffer;
 pub(crate) use command_encoder::{GPUCommandBuffer, GPUCommandEncoder};
 pub(crate) use device::{GPUDevice, GPUDeviceLostInfo};
@@ -206,6 +208,20 @@ macro_rules! optional_to_sys {
 }
 use optional_to_sys;
 
+/// The largest `u32` is how `webgpu.h` says that a member is absent. JavaScript can pass that number too, and Dawn is
+/// given the number before it: what refuses one refuses the other, and a stride of either is of rows of 4 GiB.
+#[inline]
+fn optional_u32(value: Option<u32>) -> u32 {
+    value.map_or(u32::MAX, |value| value.min(u32::MAX - 1))
+}
+const _: () = assert!(
+    sys::WGPU_COPY_STRIDE_UNDEFINED == u32::MAX
+        && sys::WGPU_QUERY_SET_INDEX_UNDEFINED == u32::MAX
+        && sys::WGPU_DEPTH_SLICE_UNDEFINED == u32::MAX
+        && sys::WGPU_MIP_LEVEL_COUNT_UNDEFINED == u32::MAX
+        && sys::WGPU_ARRAY_LAYER_COUNT_UNDEFINED == u32::MAX
+);
+
 #[inline]
 fn to_sys_bool(value: bool) -> sys::WGPUBool {
     sys::WGPUBool::from(value)
@@ -322,7 +338,14 @@ fn slice_of_data<'a, 'b>(
         ));
     }
     let start = (offset * bytes_per_element) as usize;
-    Ok(&bytes[start..start + (size * bytes_per_element) as usize])
+    let bytes = &bytes[start..start + (size * bytes_per_element) as usize];
+    if !bytes.len().is_multiple_of(4) {
+        return Err(operation_error(
+            heap,
+            "The number of bytes is not a multiple of 4",
+        ));
+    }
+    Ok(bytes)
 }
 
 // ───────────────────────────── colors, origins, extents ─────────────────────────────

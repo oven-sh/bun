@@ -106,6 +106,7 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
           "GPUDevice",
           "GPUDeviceLostInfo",
           "GPUError",
+          "GPUExternalTexture",
           "GPUInternalError",
           "GPUMapMode",
           "GPUOutOfMemoryError",
@@ -774,6 +775,14 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
       });
     });
 
+    test("the size of a buffer that is mapped at creation is a multiple of 4", () => {
+      const usage = GPUBufferUsage.COPY_SRC;
+      for (const size of [2, 6])
+        expect(thrown(() => device.createBuffer({ size, usage, mappedAtCreation: true }))).toBeInstanceOf(RangeError);
+      for (const size of [0, 4, 8]) device.createBuffer({ size, usage, mappedAtCreation: true }).destroy();
+      device.createBuffer({ size: 6, usage }).destroy();
+    });
+
     test("a buffer that is not valid is still mapped at creation", async () => {
       let buffer: any;
       const descriptor = { mappedAtCreation: true, size: 16, usage: 0xffff_ffff };
@@ -790,7 +799,8 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
         device.createBuffer({ size: 32 << 20, usage: GPUBufferUsage.COPY_DST }),
         device.createTexture({ size: [2048, 2048, 2], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST }),
       ];
-      expect(extraMemorySize() - before).toBeGreaterThanOrEqual(64 << 20);
+      // 32 MiB each. It is a number of the whole process, where small things come and go.
+      expect(extraMemorySize() - before).toBeGreaterThan(63 << 20);
       for (const object of held) object.destroy();
     });
 
@@ -1141,6 +1151,29 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
       );
     });
 
+    test("a device that is lost makes the pipelines that it would have refused, and says first that it is lost", async () => {
+      for (const kind of ["Compute", "Render"]) {
+        const other = await newDevice();
+        const module = other.createShaderModule({ code });
+        const stage = { module, entryPoint: "nothing" };
+        const create = () =>
+          other[`create${kind}PipelineAsync`]({ layout: "auto", [kind === "Compute" ? "compute" : "vertex"]: stage });
+        expect((await rejection(create())).reason).toBe("validation");
+
+        const order: string[] = [];
+        const outcomeOf = (when: string) =>
+          create().then(
+            (pipeline: object) => order.push(`${pipeline.constructor.name} ${when}`),
+            () => order.push(`refused ${when}`),
+          );
+        const before = outcomeOf("before");
+        other.lost.then(() => order.push("lost"));
+        other.destroy();
+        await Promise.all([before, outcomeOf("after")]);
+        expect(order).toEqual(["lost", `GPU${kind}Pipeline before`, `GPU${kind}Pipeline after`]);
+      }
+    });
+
     test("what is wrong with a descriptor throws, or rejects", async () => {
       const module = device.createShaderModule({ code });
       for (const descriptor of [
@@ -1421,6 +1454,80 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
       expect(() => encoder.copyTextureToTexture({ texture: a }, { texture: b }, [])).toThrow(TypeError);
     });
 
+    test("the largest number that a member can hold is not the same as leaving it out", async () => {
+      const device = await newDevice({ requiredFeatures: ["timestamp-query"] });
+      const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING;
+      const texture = device.createTexture({ size: [4, 1], format: "rgba8unorm", usage });
+      const buffer = device.createBuffer({ size: 1024, usage: GPUBufferUsage.COPY_SRC });
+      const querySet = device.createQuerySet({ type: "timestamp", count: 2 });
+      const encode = (commands: (encoder: any) => unknown) => {
+        const encoder = device.createCommandEncoder();
+        commands(encoder);
+        encoder.finish();
+      };
+      const timestamps = (timestampWrites: object) =>
+        encode(encoder => encoder.beginComputePass({ timestampWrites: { querySet, ...timestampWrites } }).end());
+      const cases: Record<string, (value: number | undefined) => unknown> = {
+        depthSlice: depthSlice =>
+          encode(encoder =>
+            encoder
+              .beginRenderPass({ colorAttachments: [{ view: texture, loadOp: "clear", storeOp: "store", depthSlice }] })
+              .end(),
+          ),
+        mipLevelCount: mipLevelCount => texture.createView({ mipLevelCount }),
+        arrayLayerCount: arrayLayerCount => texture.createView({ arrayLayerCount }),
+        // A copy of one row needs none, and one that is there is a multiple of 256.
+        bytesPerRow: bytesPerRow =>
+          encode(encoder => encoder.copyBufferToTexture({ buffer, bytesPerRow }, { texture }, [4, 1])),
+        beginningOfPassWriteIndex: beginningOfPassWriteIndex =>
+          timestamps({ beginningOfPassWriteIndex, endOfPassWriteIndex: 1 }),
+        endOfPassWriteIndex: endOfPassWriteIndex => timestamps({ beginningOfPassWriteIndex: 0, endOfPassWriteIndex }),
+      };
+      const outcomes: Record<string, unknown> = {};
+      for (const [member, use] of Object.entries(cases)) {
+        outcomes[member] = [
+          await validationErrorOf(device, () => use(undefined)),
+          (await validationErrorOf(device, () => use(2 ** 32 - 1)))?.constructor,
+        ];
+      }
+      expect(outcomes).toEqual(
+        Object.fromEntries(Object.keys(cases).map(member => [member, [null, g.GPUValidationError]])),
+      );
+      device.destroy();
+    });
+
+    test("a view is bound where a layout has an external texture", async () => {
+      const visibility = GPUShaderStage.COMPUTE;
+      const layoutOf = (...entries: object[]) =>
+        device.createBindGroupLayout({ entries: entries.map((entry, binding) => ({ binding, visibility, ...entry })) });
+      expect(thrown(() => layoutOf({ externalTexture: 1 }))).toBeInstanceOf(TypeError);
+      expect(await validationErrorOf(device, () => layoutOf({ externalTexture: {}, sampler: {} }))).toBeInstanceOf(
+        g.GPUValidationError,
+      );
+      const texture = device.createTexture({ size: [1], format: "rgba8unorm", usage: GPUTextureUsage.TEXTURE_BINDING });
+      expect(texture instanceof g.GPUExternalTexture).toBe(false);
+      const bind = (layout: unknown, ...resources: unknown[]) =>
+        validationErrorOf(device, () =>
+          device.createBindGroup({ layout, entries: resources.map((resource, binding) => ({ binding, resource })) }),
+        );
+      const layout = layoutOf({ externalTexture: {} }, { externalTexture: {} }, { sampler: {} });
+      expect(await bind(layout, texture.createView(), texture, device.createSampler())).toBeNull();
+      expect(await bind(layout, texture.createView(), device.createSampler(), device.createSampler())).toBeInstanceOf(
+        g.GPUValidationError,
+      );
+    });
+
+    test("immediates are set 4 bytes at a time", () => {
+      const pass = device.createCommandEncoder().beginComputePass();
+      pass.setImmediates(0, new Uint8Array(8));
+      pass.setImmediates(0, new Uint8Array(10), 2);
+      pass.setImmediates(0, new Uint16Array(8), 1, 2);
+      expect(thrown(() => pass.setImmediates(0, new Uint8Array(10))).name).toBe("OperationError");
+      expect(thrown(() => pass.setImmediates(0, new Uint16Array(8), 0, 3)).name).toBe("OperationError");
+      expect(thrown(() => pass.setImmediates(0, new Uint8Array(8), 9)).name).toBe("OperationError");
+      pass.end();
+    });
+
     test("a command buffer is submitted once", async () => {
       const commands = device.createCommandEncoder().finish();
       device.queue.submit([commands]);
@@ -1544,6 +1651,74 @@ describe.skipIf(deviceOfGPU === null)("WebGPU on a GPU", () => {
     const result = new Float32Array(readback.getMappedRange());
     expect([result[0], result[1], result[count - 1]]).toEqual([0, 3, (count - 1) * 3]);
     readback.unmap();
+  });
+
+  test("a shader reads a view where it has an external texture", async () => {
+    const texture = device.createTexture({
+      size: [2, 1],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    device.queue.writeTexture({ texture }, new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]), {}, [2, 1]);
+    const visibility = GPUShaderStage.COMPUTE;
+    const layout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility, externalTexture: {} },
+        { binding: 1, visibility, buffer: { type: "storage" } },
+      ],
+    });
+    const pipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+      compute: {
+        module: device.createShaderModule({
+          code: `@group(0) @binding(0) var source: texture_external;
+                 @group(0) @binding(1) var<storage, read_write> texels: array<vec4f, 2>;
+                 @compute @workgroup_size(2) fn main(@builtin(local_invocation_id) id: vec3u) {
+                   texels[id.x] = textureLoad(source, vec2u(id.x, 0));
+                 }`,
+        }),
+      },
+    });
+    const storage = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const readback = device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(
+      0,
+      device.createBindGroup({
+        layout,
+        entries: [
+          { binding: 0, resource: texture.createView() },
+          { binding: 1, resource: storage },
+        ],
+      }),
+    );
+    pass.dispatchWorkgroups(1);
+    pass.end();
+    encoder.copyBufferToBuffer(storage, readback);
+    device.queue.submit([encoder.finish()]);
+    await readback.mapAsync(GPUMapMode.READ);
+    expect([...new Float32Array(readback.getMappedRange())]).toEqual([1, 0, 0, 1, 0, 0, 1, 1]);
+    readback.unmap();
+  });
+
+  test("offsets are aligned to no less than 32 bytes, whatever the driver can do", async () => {
+    webgpuUseNullBackend(false);
+    try {
+      for (const limit of ["minUniformBufferOffsetAlignment", "minStorageBufferOffsetAlignment"]) {
+        const adapter = await navigator.gpu.requestAdapter();
+        const alignment = adapter.limits[limit];
+        expect([limit, alignment >= 32]).toEqual([limit, true]);
+        const error = await rejection(adapter.requestDevice({ requiredLimits: { [limit]: 16 } }));
+        expect([limit, error.name]).toEqual([limit, "OperationError"]);
+        const made = await adapter.requestDevice({ requiredLimits: { [limit]: alignment } });
+        expect([limit, made.limits[limit]]).toEqual([limit, alignment]);
+        made.destroy();
+      }
+    } finally {
+      webgpuUseNullBackend(true);
+    }
   });
 
   test("a render pass draws", async () => {

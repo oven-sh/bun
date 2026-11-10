@@ -2693,7 +2693,6 @@ export class DictionaryType extends NamedType {
     super();
     this.options = options;
     this.members = Object.entries(members).map(([name, spec]) => new Member(name, spec));
-    assert(this.members.length > 0, "a dictionary needs at least one member");
     assertDistinct(
       this.members.map(member => member.fieldName),
       "fields",
@@ -2819,8 +2818,11 @@ export class DictionaryType extends NamedType {
     });
     return `${this.path(scope, this.name)} { ${fields.join(", ")} }`;
   }
+  /** An empty struct has a size in C++ and none in Rust, and is no argument in C++, so with no members it holds a byte. */
   layout(): Layout {
-    return structLayout(this.members.map(member => member.type.layout()));
+    return this.members.length === 0
+      ? { size: 1, align: 1 }
+      : structLayout(this.members.map(member => member.type.layout()));
   }
   rustExternType(scope: RustScope): string {
     return this.path(scope, `Extern${this.name}`);

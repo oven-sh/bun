@@ -189,6 +189,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
           tables.memberNames.push(...type.names);
         }
         if (type.returned) {
+          assert(type.members.length > 0, `${type.name}: a dictionary that is returned needs at least one member`);
           type.returnedIndex = tables.returnedDictionaries.push(type) - 1;
           type.firstReturnedMemberNameIndex = tables.memberNames.length;
           tables.memberNames.push(...type.members.map(member => member.name));
@@ -423,7 +424,7 @@ ${cppDefaultConstructor(type)}
 ${type.members.map(member => `    ${implementationType(member.type)} ${member.fieldName};`).join("\n")}
 };
 struct Extern${name} {
-${type.members.map(member => `    ${externType(member.type)} ${member.fieldName};`).join("\n")}
+${type.members.map(member => `    ${externType(member.type)} ${member.fieldName};`).join("\n") || "    uint8_t empty;"}
 };
 ${layoutAssert(`Extern${name}`, type)}
 }
@@ -675,9 +676,13 @@ ${
         return false;
     }
 `
-}    Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, object, ${type.firstMemberNameIndex}, ${count});
+}${
+    count === 0
+      ? ""
+      : `    Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, object, ${type.firstMemberNameIndex}, ${count});
 ${members.join("\n")}
-    return true;
+`
+  }    return true;
 }
 ${
   type.needsLifetime || !type.convertedByValue
@@ -2174,20 +2179,24 @@ ${type.members.map(member => `            ${member.rustName}: ${value(member.typ
     text += `#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Extern${type.name} {
-${type.members.map(member => `    ${member.rustName}: ${member.type.rustExternType(scope)},`).join("\n")}
+${type.members.map(member => `    ${member.rustName}: ${member.type.rustExternType(scope)},`).join("\n") || "    _empty: core::mem::MaybeUninit<u8>,"}
 }
 ${rustLayoutAssert(`Extern${type.name}`, type)}
 impl${lifetime} ${type.name}${lifetime} {
     /// # Safety
     /// \`value\` was just filled in by generated C++${lifetime && " for the call `heap` belongs to"} and is read once.
     #[doc(hidden)]
-    pub unsafe fn from_extern(value: &Extern${type.name}${lifetime && ", heap: &bindgen::JsHeap<'a>"}) -> Self {
-        // SAFETY: as above, member by member.
+    pub unsafe fn from_extern(${type.members.length === 0 ? "_" : ""}value: &Extern${type.name}${lifetime && ", heap: &bindgen::JsHeap<'a>"}) -> Self {
+${
+  type.members.length === 0
+    ? "        Self {}"
+    : `        // SAFETY: as above, member by member.
         unsafe {
             Self {
 ${type.members.map(member => `                ${member.rustName}: ${member.type.rustFromExtern(`value.${member.rustName}`, scope)},`).join("\n")}
             }
-        }
+        }`
+}
     }
 }
 `;

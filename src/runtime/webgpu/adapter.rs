@@ -228,17 +228,21 @@ pub(crate) struct GPUSupportedLimits {
 enum LimitError {
     Unknown,
     TooLarge,
+    TooSmall,
 }
 
 macro_rules! limits {
-    ($($getter:ident, $name:literal, $part:ident.$field:ident: $Type:ty;)*) => {
+    ($($getter:ident, $name:literal, $part:ident.$field:ident: $Type:ty $(, at_least $least:literal)?;)*) => {
         impl GPUSupportedLimits {
             $(pub(crate) fn $getter(&self) -> $Type {
-                self.$part.$field
+                self.$part.$field $(.max($least))?
             })*
 
             fn set(&mut self, name: &bun_core::String, value: u64) -> Result<(), LimitError> {
                 $(if name.eq_ascii($name.as_bytes()) {
+                    $(if value < $least {
+                        return Err(LimitError::TooSmall);
+                    })?
                     // The largest number of the type is how `webgpu.h` says that a limit is undefined.
                     self.$part.$field = <$Type>::try_from(value)
                         .ok()
@@ -252,6 +256,7 @@ macro_rules! limits {
     };
 }
 
+// `at_least`: WebGPU has no adapter go lower. Dawn reports what the driver does, which can be lower.
 limits! {
     get_max_texture_dimension1_d, "maxTextureDimension1D", limits.maxTextureDimension1D: u32;
     get_max_texture_dimension2_d, "maxTextureDimension2D", limits.maxTextureDimension2D: u32;
@@ -274,8 +279,8 @@ limits! {
     get_max_uniform_buffers_per_shader_stage, "maxUniformBuffersPerShaderStage", limits.maxUniformBuffersPerShaderStage: u32;
     get_max_uniform_buffer_binding_size, "maxUniformBufferBindingSize", limits.maxUniformBufferBindingSize: u64;
     get_max_storage_buffer_binding_size, "maxStorageBufferBindingSize", limits.maxStorageBufferBindingSize: u64;
-    get_min_uniform_buffer_offset_alignment, "minUniformBufferOffsetAlignment", limits.minUniformBufferOffsetAlignment: u32;
-    get_min_storage_buffer_offset_alignment, "minStorageBufferOffsetAlignment", limits.minStorageBufferOffsetAlignment: u32;
+    get_min_uniform_buffer_offset_alignment, "minUniformBufferOffsetAlignment", limits.minUniformBufferOffsetAlignment: u32, at_least 32;
+    get_min_storage_buffer_offset_alignment, "minStorageBufferOffsetAlignment", limits.minStorageBufferOffsetAlignment: u32, at_least 32;
     get_max_vertex_buffers, "maxVertexBuffers", limits.maxVertexBuffers: u32;
     get_max_buffer_size, "maxBufferSize", limits.maxBufferSize: u64;
     get_max_vertex_attributes, "maxVertexAttributes", limits.maxVertexAttributes: u32;
@@ -460,6 +465,7 @@ impl GPUAdapter {
                 let problem = match error {
                     LimitError::Unknown => "is not a limit",
                     LimitError::TooLarge => "is more than the adapter has",
+                    LimitError::TooSmall => "is less than the adapter has",
                 };
                 global.throw_dom_exception(
                     DOMExceptionCode::OperationError,

@@ -36,6 +36,18 @@ gpu_object! {
     }
 }
 
+pub(crate) enum GPUExternalTexture {}
+
+impl GPUExternalTexture {
+    pub(crate) fn get_label(&self) -> bun_core::String {
+        match *self {}
+    }
+
+    pub(crate) fn set_label(&self, _label: bun_core::String) {
+        match *self {}
+    }
+}
+
 impl GPUDevice {
     pub(crate) fn create_bind_group_layout<'a>(
         &self,
@@ -48,11 +60,12 @@ impl GPUDevice {
             }
         }
         let label = descriptor.label.to_utf8();
+        let mut external_texture = sys::WGPUExternalTextureBindingLayout::INIT;
         let entries: Vec<sys::WGPUBindGroupLayoutEntry> = descriptor
             .entries
             .iter()
             .map(|entry| {
-                // In `INIT` none of the four is used.
+                // In `INIT` none of the five is used.
                 let mut sys_entry = sys::WGPUBindGroupLayoutEntry {
                     binding: entry.binding,
                     visibility: entry.visibility.into(),
@@ -87,6 +100,9 @@ impl GPUDevice {
                         viewDimension: storage_texture.view_dimension.to_sys(),
                         ..sys::WGPUStorageTextureBindingLayout::INIT
                     };
+                }
+                if entry.external_texture.is_some() {
+                    sys_entry.nextInChain = (&raw mut external_texture).cast();
                 }
                 sys_entry
             })

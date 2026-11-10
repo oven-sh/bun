@@ -1,4 +1,4 @@
-// STATISTIC: ReceiversReadOffVariablesToldApartInFrontOfLoops >= 1
+// STATISTIC: VariableReceiverGuardsHoisted >= 1
 const q = Number(process.argv[2] ?? 3);
 var rows = JSON.parse('[]');
 function f(t) { let s = t & 1; for (let i = 0; i < rows.length; i++) s = s + rows[i]; return s; }

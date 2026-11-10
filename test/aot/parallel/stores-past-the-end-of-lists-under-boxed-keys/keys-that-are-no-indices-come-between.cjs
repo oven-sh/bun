@@ -1,4 +1,4 @@
-// STATISTIC: StoresUnderAnyKeyThatRaiseTheLengthInLine >= 1
+// STATISTIC: UntypedKeyStoresAppendingInline >= 1
 "use strict";
 const keys = JSON.parse('[0,1,"2",3,"x",4,-1,5,1.5,6,"07",7,null,8]');
 const list = [];

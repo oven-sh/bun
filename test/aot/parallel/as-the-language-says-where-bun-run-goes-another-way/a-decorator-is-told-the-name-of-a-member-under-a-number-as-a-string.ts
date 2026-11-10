@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". `bun run` hands the literal on: "number 1". Node has no decorators to ask.
+// `bun run` hands the literal on: "number 1". Node has no decorators to ask.
 function mark(value: unknown, context: { name: string | symbol }) {
   console.log(typeof context.name, String(context.name));
 }

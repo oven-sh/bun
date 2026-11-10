@@ -1,6 +1,6 @@
 // The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
-import { answering, constructing, handedOver } from "./native-code.ts";
+import { answering, constructing, retainedByNativeCode } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
@@ -90,23 +90,23 @@ export default b.declarations(
   bagOfFunctions(httpFunctions, {
     // The two callbacks are called for each client error and each connection.
     setServerCustomOptions: configuresServer({
-      server: handedOver,
+      server: retainedByNativeCode,
       requireHostHeader: b.inspected,
       useStrictMethodValidation: b.inspected,
       lenientHttpFlags: converted,
       maxHeaderSize: converted,
-      onClientError: handedOver,
-      onConnection: handedOver,
+      onClientError: retainedByNativeCode,
+      onConnection: retainedByNativeCode,
       httpAllowHalfOpen: b.inspected,
     }),
     setServerAppFlags: configuresServer({
-      server: handedOver,
+      server: retainedByNativeCode,
       requireHostHeader: b.inspected,
       useStrictMethodValidation: b.inspected,
       lenientHttpFlags: converted,
       httpAllowHalfOpen: b.inspected,
     }),
-    setServerMaxHeadersCount: configuresServer({ server: handedOver, maxHeadersCount: converted }),
+    setServerMaxHeadersCount: configuresServer({ server: retainedByNativeCode, maxHeadersCount: converted }),
     drainMicrotasks: { returns: b.undefined, capability: "js", throws: true, implementation: b.generic },
   }),
   answers("native:Cpp:NodeHTTP.cpp:createNodeHTTPInternalBinding", b.builtin(httpFunctions)),

@@ -1,5 +1,5 @@
 // A class below Error: the first read of the stack lays names on the object late.
-// COUNT: counter:StructuresOfHeirsRemembered >= 2
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 2
 "use strict";
 class E extends Error { constructor(message) { super(message); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const one = new E("m");

@@ -87,7 +87,7 @@ module.exports = { twice: x => x * 2 };
 
 // GENERATED: shadowed anotherFunctionUnderTheName declared Declared
 // CHECK-LABEL: function {{*}}name="shadowed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: int[0, 4294967295], v3: undefined|null|string, v4: Array):
 // CHECK-NEXT: v5 = CreateUnmappedArguments v2, v4, v3
 // CHECK-NEXT: v6 = NewObject -, v3 layout=[[L_1]] fields=[0]
@@ -108,7 +108,7 @@ module.exports = { twice: x => x * 2 };
 // CHECK-NEXT: Return v16
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="anotherFunctionUnderTheName"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: int[0, 4294967295], v3: Array):
 // CHECK-NEXT: v4 = CreateUnmappedArguments v2, v3
 // CHECK-NEXT: v5 = String string="the binding"
@@ -157,13 +157,13 @@ module.exports = { twice: x => x * 2 };
 // CHECK-NEXT: Throw v33
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="declared"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Integer integer=4
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Declared"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]

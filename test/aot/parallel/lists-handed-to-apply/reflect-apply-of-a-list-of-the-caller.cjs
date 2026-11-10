@@ -1,5 +1,5 @@
 // A helper hands on a list that its caller holds and reads behind the call; what is called changes nothing of it, for it is handed the elements.
-// STATISTIC: CallsForwardedBehindTestsOfTheirTargets >= 1
+// STATISTIC: CallsForwardedAfterTargetChecks >= 1
 const table = { add(a, b) { return this.base + a + b; }, count() { return this.base + arguments.length; }, join(...all) { return this.base + all.join(); } };
 const names = JSON.parse('["add","count","join"]');
 const holder = { base: 100 };

@@ -1,9 +1,9 @@
 // RUN: link
 // CHECK-LABEL: function {{*}}name="used"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="replaced"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 
 // RUN(ABSENT): link

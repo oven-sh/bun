@@ -1,23 +1,31 @@
 # -- source: main.js
 # function label(id, rest) { let text = ""; for (let i = 0; i < 2; i++) text += `#${id}|${rest}`; return text; }
 # function more(a, b) { let n = 0; for (let i = 0; i < 3; i++) n += (a > b) - (b > a); return n; }
+# function same(input, bits, mask) { return input.charCodeAt(1) === (bits & mask) ? 1 : 2; }
 # print(label(7, 0.5));
 # print(label(8, 1.5));
 # print(more(2, 1));
 # print(more(1, 5));
+# print(same("abc", JSON.parse("98"), JSON.parse("127")));
+# print(same("abc", BigInt(JSON.parse("98")), BigInt(JSON.parse("127"))));
 # -- end of source
-# f1 = label, f2 = more
+# f1 = label, f2 = more, f3 = same
 # OPTIONS: check=Validate
 # Where the build verifies, an operation that stands for one of the input takes, at each operand, what lies within the row of the input operand's maker
-# (Walker::takesWhatRowOfInputOperandCannotGive(), walk/AOTWalk.cpp): an Add over a ToString never becomes an Add over a number. Two things are legal and must not ring:
-# a Strcat makes a text of every operand itself, so the ToString in front of it may be left out and the number kept; an operator in a form of numbers takes the truth of a comparison as 0 or 1.
+# (Walker::takesWhatRowOfInputOperandCannotGive(), walk/AOTWalk.cpp): an Add over a ToString never becomes an Add over a number. Three things are legal and must not ring:
+# a Strcat makes a text of every operand itself, so the ToString in front of it may be left out and the number kept; an operator in a form of numbers takes the truth of a comparison as 0 or 1; a strict comparison with a number reads its other operand through NumberOrNaN, and the value that is read is what is judged.
 # RUN(TEXT): walk f1 mechanisms=all
 # TEXT: code f1:Body
 # RUN(TRUTH): walk f2 mechanisms=all
 # TRUTH: code f2:Body
 # TRUTH: Sub {{*}} form=Integers
+# RUN(NUMBER): walk f3 mechanisms=all
+# NUMBER: code f3:Body
+# NUMBER: NumberOrNaN
 # RUN(ANSWER): run-in-shell mechanisms=all
 # ANSWER: #7|0.5#7|0.5
 # ANSWER: #8|1.5#8|1.5
 # ANSWER: 3
 # ANSWER: -3
+# ANSWER: 1
+# ANSWER: 2

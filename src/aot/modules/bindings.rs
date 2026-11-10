@@ -140,7 +140,7 @@ pub struct RequiredName {
     pub asked_by: Option<ExportStatement>,
     pub is_found_unless_mocked: bool,
     pub drops_export_if_absent: bool,
-    pub is_asked_for_by_star: bool,
+    pub is_requested_by_star_export: bool,
 }
 
 impl RequiredName {
@@ -151,7 +151,7 @@ impl RequiredName {
             asked_by: None,
             is_found_unless_mocked: false,
             drops_export_if_absent: false,
-            is_asked_for_by_star: false,
+            is_requested_by_star_export: false,
         }
     }
 }

@@ -1,6 +1,6 @@
 // Rows of whole numbers, rows of fractions, and a row that holds both.
-// STATISTIC: LoopsBuiltTwice = 2
-// STATISTIC: TurnsThatBeginAgain = 0
+// STATISTIC: WalkLoopsVersioned = 2
+// STATISTIC: IterationRestartsEmitted = 0
 let seed = 7;
 function draw(most) { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return Math.round(seed / 0x7fffffff * most * 100) / 100; }
 function listOf(count, make) { const list = []; for (let i = 0; i < count; i++) list.push(make(i)); return list; }

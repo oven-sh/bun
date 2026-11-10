@@ -1,5 +1,5 @@
 // In the middle of the loop constructor is deleted from the prototype of one heir, so that the one above is found.
-// STATISTIC: ConstructorsReadOffObjectsOfClasses >= 1
+// STATISTIC: ConstructorReadsResolvedToClasses >= 1
 class Tree { k = 0; again() { return new this.constructor(); } }
 class Ash extends Tree { k = 1; }
 class Birch extends Tree { k = 20; }

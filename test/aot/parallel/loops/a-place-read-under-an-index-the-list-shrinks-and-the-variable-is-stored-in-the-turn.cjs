@@ -1,4 +1,4 @@
-// STATISTIC: ListsExpectedOfPlaces >= 1
+// STATISTIC: ArraysSpeculatedFromLocationUses >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const L = JSON.parse('[1,2,3,4,5,6]'); var rows = JSON.parse('[1,2,3]'); const other = JSON.parse('{"0":"a","1":"b","2":"c","3":"d","length":4}'), cut = JSON.parse('"cut"'), swap = JSON.parse('"swap"');

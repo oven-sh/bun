@@ -9,7 +9,7 @@ import {
   printsErrorWithCodeCell,
   requireMapCell,
 } from "./native-cells.ts";
-import { handedOver } from "./native-code.ts";
+import { retainedByNativeCode } from "./native-code.ts";
 
 const promiseState = ["PromiseState"];
 
@@ -18,7 +18,7 @@ const changesNothing = (returns: b.TableType): b.FunctionField => ({
   returns,
   capability: "js",
   throws: true,
-  uses: { operands: handedOver },
+  uses: { operands: retainedByNativeCode },
   implementation: b.hostCall,
 });
 
@@ -85,7 +85,7 @@ const makesErrorWithCode = [
   {
     ...changesNothing(newErrorWithCode),
     resultIsDeclaredOnly: true,
-    uses: { operands: [...handedOver, b.reachableValuesStoredIn(b.result)] },
+    uses: { operands: [...retainedByNativeCode, b.reachableValuesStoredIn(b.result)] },
   },
 ];
 
@@ -136,7 +136,12 @@ const resolvesName = [
     returns: b.string,
     capability: "js",
     throws: true,
-    uses: { name: handedOver, from: handedOver, isESM: b.inspected, operands: handedOver },
+    uses: {
+      name: retainedByNativeCode,
+      from: retainedByNativeCode,
+      isESM: b.inspected,
+      operands: retainedByNativeCode,
+    },
     implementation: b.hostCall,
   },
   changesNothing(b.any),
@@ -148,7 +153,7 @@ const evaluatesModule = {
   returns: b.any,
   capability: "js",
   throws: true,
-  uses: { module: handedOver, referrer: [...handedOver, b.readByKey(b.keysNamed("children"))] },
+  uses: { module: retainedByNativeCode, referrer: [...retainedByNativeCode, b.readByKey(b.keysNamed("children"))] },
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
@@ -158,7 +163,12 @@ const createsModuleObject = {
   returns: b.builtin("%ModuleObject%"),
   capability: "js",
   throws: true,
-  uses: { id: handedOver, exports: handedOver, hasEvaluated: b.inspected, requirer: handedOver },
+  uses: {
+    id: retainedByNativeCode,
+    exports: retainedByNativeCode,
+    hasEvaluated: b.inspected,
+    requirer: retainedByNativeCode,
+  },
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
@@ -168,7 +178,11 @@ const loadsIntoModuleObject = {
   returns: b.any,
   capability: "js",
   throws: true,
-  uses: { id: handedOver, module: [...handedOver, b.definesName(["exports"], b.any)], operands: handedOver },
+  uses: {
+    id: retainedByNativeCode,
+    module: [...retainedByNativeCode, b.definesName(["exports"], b.any)],
+    operands: retainedByNativeCode,
+  },
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
@@ -278,7 +292,7 @@ export default b.declarations(
         uses: {
           this: [
             b.createdIn(requireMap.fresh, b.nativeCell(requireMapCell)),
-            b.handedOutFrom(requireMapCell),
+            b.exposedFrom(requireMapCell),
             b.returnedFrom(requireMapCell),
           ],
         },
@@ -307,9 +321,9 @@ export default b.declarations(
       capability: "js",
       throws: true,
       uses: {
-        target: [...handedOver, b.prototypeSetTo("base"), b.definesName(["prototype", "name"], b.any)],
-        name: handedOver,
-        base: handedOver,
+        target: [...retainedByNativeCode, b.prototypeSetTo("base"), b.definesName(["prototype", "name"], b.any)],
+        name: retainedByNativeCode,
+        base: retainedByNativeCode,
       },
       implementation: b.hostCall,
     },

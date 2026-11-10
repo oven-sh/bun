@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const turns: number = JSON.parse("4");
+# function sum(list: number[], turns: number): number { let total = 0; for (let i = 0; i < turns; i++) { if (i === 2) { list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.fill(9.5); } total += list[i]!; } return total; }
+# const list = [1.5, 2.5, 3.5, 4.5];
+# print(sum(list, turns), list.length);
+# -- end of source
+# f1 = sum. One iteration pushes until the array runs out of capacity and its elements move. The later iterations read elements.
+# Fault injection, testing=AssumeInvariantArrayStorage: the pointer into the array's storage is read once, before the loop, although an iteration moves the storage.
+# The code verifier walks back from an access to the read of the storage pointer that it uses. It rejects the code where the storage of the same array is written on the path.
+# OPTIONS: testing=AssumeInvariantArrayStorage
+# DIAGNOSTIC: OpcodeNotInForm f1
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: code f1:Body

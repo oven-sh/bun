@@ -131,7 +131,7 @@ struct LookInput<'a, 's> {
     files: &'a Files<'s>,
     is_test_run: bool,
     whose: &'a [WhoseFile],
-    loads_compiled_files_alone: &'a [bool],
+    rejects_uncompiled_code: &'a [bool],
 }
 
 fn mocks_module_that_it_does_not_spell(files: &Files<'_>, file: FileId) -> bool {
@@ -241,7 +241,7 @@ impl FoundInFiles {
             false => {
                 let loads =
                     LoadsByUnknown::new(names.loads_by_unknown_name, names.loads_by_unknown_path);
-                match input.loads_compiled_files_alone.get(file.idx()) {
+                match input.rejects_uncompiled_code.get(file.idx()) {
                     Some(true) => loads - LoadsByUnknown::PATH_OF_CODE_ON_DISK,
                     Some(false) | None => loads,
                 }
@@ -473,7 +473,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         files,
         is_test_run,
         whose: whose_files.as_ref().map_or(&[], |(whose, _)| whose),
-        loads_compiled_files_alone: whose_files.as_ref().map_or(&[], |(_, alone)| alone),
+        rejects_uncompiled_code: whose_files.as_ref().map_or(&[], |(_, alone)| alone),
     };
     let runs = files.compiled_files().chunks(FILES_LOOKED_AT_IN_A_RUN);
     let mut runs: Vec<(&[FileId], FoundInFiles)> =

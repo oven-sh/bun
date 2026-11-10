@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 2
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 2
 // What is neither a list, a Buffer nor a Uint8Array but a view of another kind of numbers takes one copy for all kinds, and each access switches over the kind of the cell. Such a turn is not written out eight times: eight switches an access for the counter's three instructions.
 const key = JSON.parse('"go"');
 const read = { go(d) { let h = 7; for (let i = 0; i <= d.length; i++) h = (h * 31 + d[i]) | 0; return h; } };

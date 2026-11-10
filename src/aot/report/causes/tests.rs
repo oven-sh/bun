@@ -3,18 +3,16 @@ use bstr::BString;
 use super::*;
 use crate::engine::testing::ResultRecords;
 use crate::engine::{AccessCountRecord, SourceLocation};
-use crate::ir::generated::{KnowledgeLevel, Witness};
+use crate::ir::generated::KnowledgeLevel;
 use crate::ir::ids::ABSENT_WORD;
 use crate::report::testing::{
     DEPENDENCY, LINE_1_COLUMN_5, LINE_2_COLUMN_14, PROGRAM, RUNTIME, ReportFixture,
 };
-use crate::report::wording::IllTypedWording;
 
 const NO_LOCATION: SourceLocation = SourceLocation {
     module: ABSENT_WORD,
     position: 0,
 };
-const EVERY_FAMILY: ExplainSet = ExplainSet::empty();
 const COST_BY_NAME: u64 = 28;
 const COST_TESTED: u64 = 2;
 const DOUBLE: u32 = 0;
@@ -22,7 +20,7 @@ const ITEM: u32 = 0;
 const ORDER: u32 = 1;
 const UNNAMED_LAYOUT: u32 = 9;
 
-type Collector = fn(&ReportInput<'_>, ExplainSet, &mut Vec<ReportEntry>);
+type Collector = fn(&ReportInput<'_>, &mut Vec<ReportEntry>);
 
 fn location(module: u32, position: u32) -> SourceLocation {
     SourceLocation { module, position }
@@ -35,13 +33,7 @@ fn at(module: u32, offset: u32) -> Option<Position> {
     })
 }
 
-fn access(
-    module: u32,
-    offset: u32,
-    level: KnowledgeLevel,
-    cause: UnprovenCause,
-    witness_offset: u32,
-) -> AccessRecord {
+fn access(module: u32, offset: u32, level: KnowledgeLevel, cause: UnprovenCause) -> AccessRecord {
     AccessRecord {
         location: location(module, offset),
         kind: AccessKind::Read,
@@ -49,13 +41,7 @@ fn access(
         cause,
         layout: ABSENT_WORD,
         copies: 1,
-        witness: Witness {
-            function: ABSENT_WORD,
-            value: ABSENT_WORD,
-            location: location(PROGRAM, witness_offset),
-        },
         function: ABSENT_WORD,
-        ill_typed_cause: IllTypedCause::None,
         cost: match level {
             KnowledgeLevel::Unknown => AccessCost::ByName,
             KnowledgeLevel::Expected => AccessCost::TestsReceiver,
@@ -65,39 +51,21 @@ fn access(
     }
 }
 
-fn by_name(module: u32, offset: u32, cause: UnprovenCause, witness_offset: u32) -> AccessRecord {
-    let level = KnowledgeLevel::Unknown;
-    access(module, offset, level, cause, witness_offset)
+fn by_name(module: u32, offset: u32, cause: UnprovenCause) -> AccessRecord {
+    access(module, offset, KnowledgeLevel::Unknown, cause)
 }
 
-fn unknown_object(module: u32, offset: u32, witness_offset: u32) -> AccessRecord {
-    by_name(module, offset, UnprovenCause::UnknownObject, witness_offset)
+fn unknown_object(module: u32, offset: u32) -> AccessRecord {
+    by_name(module, offset, UnprovenCause::UnknownObject)
 }
 
-fn unknown_objects(module: u32, count: u32, witness_offset: u32) -> Vec<AccessRecord> {
-    (0..count)
-        .map(|offset| unknown_object(module, offset, witness_offset))
-        .collect()
-}
-
-fn passed_to_untyped_code(module: u32, offset: u32) -> AccessRecord {
-    let cause = UnprovenCause::ReachesUnknownJavaScript;
-    by_name(module, offset, cause, LINE_2_COLUMN_14)
+fn unknown_objects(module: u32, count: usize, offset: u32) -> Vec<AccessRecord> {
+    vec![unknown_object(module, offset); count]
 }
 
 fn in_loop(record: AccessRecord) -> AccessRecord {
     AccessRecord {
         loop_depth: 1,
-        ..record
-    }
-}
-
-fn with_witness_location(record: AccessRecord, location: SourceLocation) -> AccessRecord {
-    AccessRecord {
-        witness: Witness {
-            location,
-            ..record.witness
-        },
         ..record
     }
 }
@@ -122,7 +90,7 @@ fn origin_of(module: ModuleId) -> ModuleOrigin {
 }
 
 fn collect(records: &[AccessRecord]) -> Vec<Cause> {
-    collect_causes(records, &origin_of, EVERY_FAMILY)
+    collect_causes(records, &origin_of)
 }
 
 fn ranked(records: &[AccessRecord]) -> Vec<(Option<Position>, OriginCounts)> {
@@ -143,7 +111,6 @@ fn counts(program: u64, dependencies: u64) -> OriginCounts {
 fn expected_cause(position: Option<Position>, accesses: OriginCounts) -> Cause {
     Cause {
         cause: UnprovenCause::UnknownObject,
-        ill_typed_cause: IllTypedCause::None,
         position,
         function: None,
         layouts: Vec::new(),
@@ -156,37 +123,28 @@ fn expected_cause(position: Option<Position>, accesses: OriginCounts) -> Cause {
             accesses.dependencies * COST_BY_NAME,
         ),
         cost_in_loops: OriginCounts::default(),
-        is_in_runtime: false,
     }
 }
 
 struct FullCause {
-    accesses: [AccessRecord; 5],
+    accesses: [AccessRecord; 4],
     access_counts: [AccessCountRecord; 3],
 }
 
 impl FullCause {
     fn new() -> FullCause {
-        let operation = |module, offset, kind, layout| {
-            let record = passed_to_untyped_code(module, offset);
-            AccessRecord {
-                kind,
-                layout,
-                witness: Witness {
-                    function: DOUBLE,
-                    ..record.witness
-                },
-                ill_typed_cause: IllTypedCause::OutsideData,
-                ..record
-            }
+        let operation = |kind, layout| AccessRecord {
+            kind,
+            layout,
+            function: DOUBLE,
+            ..by_name(PROGRAM, LINE_2_COLUMN_14, UnprovenCause::UnknownCallee)
         };
         FullCause {
             accesses: [
-                in_loop(operation(PROGRAM, 0, AccessKind::Read, ORDER)),
-                operation(PROGRAM, 4, AccessKind::Store, ITEM),
-                in_loop(operation(PROGRAM, 8, AccessKind::Call, ABSENT_WORD)),
-                operation(PROGRAM, 12, AccessKind::Arithmetic, UNNAMED_LAYOUT),
-                operation(DEPENDENCY, 0, AccessKind::Read, ITEM),
+                in_loop(operation(AccessKind::Read, ORDER)),
+                operation(AccessKind::Store, ITEM),
+                in_loop(operation(AccessKind::Call, ABSENT_WORD)),
+                operation(AccessKind::Arithmetic, UNNAMED_LAYOUT),
             ],
             access_counts: [
                 AccessCountRecord {
@@ -215,24 +173,20 @@ fn accesses(records: &[AccessRecord]) -> ResultRecords<'_> {
     }
 }
 
-fn entries_of(
-    collect: Collector,
-    records: ResultRecords<'_>,
-    families: ExplainSet,
-) -> Vec<ReportEntry> {
+fn entries_of(collect: Collector, records: ResultRecords<'_>) -> Vec<ReportEntry> {
     let mut entries = Vec::new();
-    ReportFixture::new(records).with_input(|input| collect(input, families, &mut entries));
+    ReportFixture::new(records).with_input(|input| collect(input, &mut entries));
     entries
 }
 
 fn text_entries(records: ResultRecords<'_>) -> Vec<ReportEntry> {
-    let entries = entries_of(collect_text, records, EVERY_FAMILY);
+    let entries = entries_of(collect_text, records);
     assert!(entries.iter().all(|entry| entry.kind == ExplainSet::TEXT));
     entries
 }
 
 fn json_lines(records: ResultRecords<'_>) -> Vec<String> {
-    let entries = entries_of(collect_json, records, EVERY_FAMILY);
+    let entries = entries_of(collect_json, records);
     assert!(entries.iter().all(|entry| entry.kind == ExplainSet::JSON));
     let lines = entries.iter();
     lines.map(|entry| text_of(entry).to_string()).collect()
@@ -244,22 +198,24 @@ fn text_of(entry: &ReportEntry) -> BString {
 
 fn note_texts(entry: &ReportEntry) -> Vec<BString> {
     let notes = entry.notes.iter();
-    notes.map(|note| BString::from(&note.text[..])).collect()
-}
-
-fn why(cause: IllTypedCause) -> IllTypedWording {
-    ill_typed_cause_wording(cause).expect("every cause but None has a wording")
+    notes.map(|note| BString::from(&note[..])).collect()
 }
 
 #[test]
-fn accesses_with_one_witness_share_cause() {
-    let records = [
-        unknown_object(PROGRAM, 0, 100),
-        unknown_object(PROGRAM, 40, 100),
-        unknown_object(DEPENDENCY, 8, 100),
-    ];
-    let shared = expected_cause(at(PROGRAM, 100), counts(2, 1));
-    assert_eq!(collect(&records), [shared]);
+fn accesses_at_one_place_share_cause() {
+    let read = unknown_object(PROGRAM, 100);
+    let store = AccessRecord {
+        kind: AccessKind::Store,
+        ..read
+    };
+    let records = [read, store, unknown_object(DEPENDENCY, 100)];
+    assert_eq!(
+        collect(&records),
+        [
+            expected_cause(at(PROGRAM, 100), counts(2, 0)),
+            expected_cause(at(DEPENDENCY, 100), counts(0, 1)),
+        ]
+    );
 }
 
 #[test]
@@ -269,7 +225,7 @@ fn only_slow_operations_have_a_cause() {
             let record = AccessRecord {
                 kind,
                 cost,
-                ..unknown_object(PROGRAM, 0, 100)
+                ..unknown_object(PROGRAM, 100)
             };
             collect(&[record]).len()
         };
@@ -284,7 +240,7 @@ fn every_kind_of_operation_counts_in_one_column() {
     for kind in AccessKind::ALL {
         let record = AccessRecord {
             kind,
-            ..unknown_object(PROGRAM, 0, 100)
+            ..unknown_object(PROGRAM, 100)
         };
         let causes = collect(&[record]);
         let Some(class) = operation_class(kind) else {
@@ -303,19 +259,17 @@ fn every_kind_of_operation_counts_in_one_column() {
 
 #[test]
 fn copies_count_once_and_an_access_without_location_counts_as_program() {
-    let record = unknown_object(PROGRAM, 0, 100);
-    let records = [
-        AccessRecord {
-            copies: 5,
-            ..record
-        },
-        AccessRecord {
-            location: NO_LOCATION,
-            ..record
-        },
-    ];
-    for record in records {
-        let counted = expected_cause(at(PROGRAM, 100), counts(1, 0));
+    let record = unknown_object(PROGRAM, 100);
+    let copied = AccessRecord {
+        copies: 5,
+        ..record
+    };
+    let unlocated = AccessRecord {
+        location: NO_LOCATION,
+        ..record
+    };
+    for (record, position) in [(copied, at(PROGRAM, 100)), (unlocated, None)] {
+        let counted = expected_cause(position, counts(1, 0));
         assert_eq!(collect(&[record]), [counted]);
     }
 }
@@ -323,17 +277,13 @@ fn copies_count_once_and_an_access_without_location_counts_as_program() {
 #[test]
 fn operations_in_runtime_modules_are_not_counted() {
     let records = [
-        unknown_object(RUNTIME, 0, LINE_1_COLUMN_5),
-        unknown_object(RUNTIME, 4, LINE_1_COLUMN_5),
-        unknown_object(PROGRAM, 0, LINE_1_COLUMN_5),
+        unknown_object(RUNTIME, 0),
+        unknown_object(RUNTIME, 4),
+        unknown_object(PROGRAM, LINE_1_COLUMN_5),
     ];
     let counted = expected_cause(at(PROGRAM, LINE_1_COLUMN_5), counts(1, 0));
     assert_eq!(collect(&records), [counted]);
     assert!(collect(&records[..2]).is_empty());
-
-    let only = ExplainSet::ONLY_UNKNOWN_CODE;
-    let list = entries_of(collect_list, accesses(&records[..2]), only);
-    assert!(list.is_empty(), "{list:?}");
 }
 
 #[test]
@@ -341,18 +291,18 @@ fn cost_sums_every_operation_and_separately_those_in_loops() {
     let (tested, cause) = (KnowledgeLevel::Expected, UnprovenCause::UnknownObject);
     let deep_in_loops = AccessRecord {
         loop_depth: 9,
-        ..unknown_object(PROGRAM, 4, 100)
+        ..unknown_object(PROGRAM, 100)
     };
     let records = [
-        unknown_object(PROGRAM, 0, 100),
+        unknown_object(PROGRAM, 100),
         deep_in_loops,
-        in_loop(access(DEPENDENCY, 0, tested, cause, 100)),
+        in_loop(access(PROGRAM, 100, tested, cause)),
     ];
     let expected = Cause {
         in_loops: 2,
-        cost: counts(2 * COST_BY_NAME, COST_TESTED),
-        cost_in_loops: counts(COST_BY_NAME, COST_TESTED),
-        ..expected_cause(at(PROGRAM, 100), counts(2, 1))
+        cost: counts(2 * COST_BY_NAME + COST_TESTED, 0),
+        cost_in_loops: counts(COST_BY_NAME + COST_TESTED, 0),
+        ..expected_cause(at(PROGRAM, 100), counts(3, 0))
     };
     assert_eq!(collect(&records), [expected]);
 }
@@ -377,43 +327,34 @@ fn rank_prefers_the_program() {
         unknown_objects(DEPENDENCY, 5, 100),
         unknown_objects(PROGRAM, 2, 400),
         unknown_objects(DEPENDENCY, 6, 200),
-        unknown_objects(PROGRAM, 1, 350),
-        unknown_objects(DEPENDENCY, 1, 350),
-        vec![in_loop(unknown_object(DEPENDENCY, 9, 500))],
+        vec![in_loop(unknown_object(DEPENDENCY, 500))],
     ]
     .concat();
     assert_eq!(
         ranked(&records),
         [
             (at(PROGRAM, 400), counts(2, 0)),
-            (at(PROGRAM, 350), counts(1, 1)),
             (at(PROGRAM, 300), counts(1, 0)),
-            (at(PROGRAM, 500), counts(0, 1)),
-            (at(PROGRAM, 200), counts(0, 6)),
-            (at(PROGRAM, 100), counts(0, 5)),
+            (at(DEPENDENCY, 500), counts(0, 1)),
+            (at(DEPENDENCY, 200), counts(0, 6)),
+            (at(DEPENDENCY, 100), counts(0, 5)),
         ]
     );
 }
 
 #[test]
 fn ties_are_broken_by_position_then_cause() {
-    type Rank = (Option<Position>, UnprovenCause, IllTypedCause);
+    type Rank = (Option<Position>, UnprovenCause);
     let mut records = [
-        by_name(PROGRAM, 0, UnprovenCause::UnprovenContents, 10),
-        by_name(PROGRAM, 0, UnprovenCause::OtherNewTarget, 10),
-        unknown_object(PROGRAM, 0, 10),
-        unknown_object(PROGRAM, 0, 5),
-        AccessRecord {
-            ill_typed_cause: IllTypedCause::Assertion,
-            ..unknown_object(PROGRAM, 0, 10)
-        },
+        by_name(PROGRAM, 10, UnprovenCause::Untracked),
+        by_name(PROGRAM, 10, UnprovenCause::UnknownCallee),
+        unknown_object(PROGRAM, 10),
+        unknown_object(PROGRAM, 5),
     ];
     let rank = |records: &[AccessRecord]| -> Vec<Rank> {
         let causes = collect(records);
         let ranks = causes.iter();
-        ranks
-            .map(|it| (it.position, it.cause, it.ill_typed_cause))
-            .collect()
+        ranks.map(|it| (it.position, it.cause)).collect()
     };
     let ranked = rank(&records);
     let mut ascending = ranked.clone();
@@ -426,66 +367,29 @@ fn ties_are_broken_by_position_then_cause() {
 
 #[test]
 fn what_the_program_cannot_fix_ranks_last() {
-    let from_runtime = unknown_object(PROGRAM, 8, 0);
     let records = [
-        in_loop(by_name(PROGRAM, 0, UnprovenCause::Unknown, 100)),
-        in_loop(by_name(PROGRAM, 4, UnprovenCause::ResultDisabled, 100)),
-        in_loop(with_witness_location(from_runtime, location(RUNTIME, 7))),
-        unknown_object(PROGRAM, 12, 200),
+        in_loop(by_name(PROGRAM, 100, UnprovenCause::Unknown)),
+        unknown_object(PROGRAM, 200),
     ];
-    let found: Vec<(UnprovenCause, Option<Position>, bool)> = collect(&records)
+    let found: Vec<(UnprovenCause, Option<Position>)> = collect(&records)
         .iter()
-        .map(|it| (it.cause, it.position, it.is_in_runtime))
+        .map(|it| (it.cause, it.position))
         .collect();
     assert_eq!(
         found,
         [
-            (UnprovenCause::UnknownObject, at(PROGRAM, 200), false),
-            (UnprovenCause::Unknown, at(PROGRAM, 100), false),
-            (UnprovenCause::ResultDisabled, at(PROGRAM, 100), false),
-            (UnprovenCause::UnknownObject, at(RUNTIME, 7), true),
+            (UnprovenCause::UnknownObject, at(PROGRAM, 200)),
+            (UnprovenCause::Unknown, at(PROGRAM, 100)),
         ]
     );
 }
 
 #[test]
-fn families_filter() {
-    let families = [
-        (
-            UnprovenCause::UnprovenContents,
-            ExplainSet::ONLY_UNPROVEN_TYPE,
-        ),
-        (UnprovenCause::UnknownObject, ExplainSet::ONLY_UNKNOWN_CODE),
-    ];
-    let kinds = families.map(|(kind, _)| kind);
-    assert_eq!(kinds.map(UnprovenCause::family), UnprovenCauseFamily::ALL);
-    let records = [0, 1].map(|index| by_name(PROGRAM, 0, kinds[index], index as u32));
-    let collected = |families| -> Vec<UnprovenCause> {
-        let causes = collect_causes(&records, &origin_of, families);
-        causes.iter().map(|cause| cause.cause).collect()
-    };
-
-    assert_eq!(collected(EVERY_FAMILY), kinds);
-    for (kind, only) in families {
-        assert_eq!(collected(only), [kind], "{kind:?}");
-    }
-    let both_families = ExplainSet::ONLY_UNPROVEN_TYPE | ExplainSet::ONLY_UNKNOWN_CODE;
-    assert_eq!(collected(both_families), kinds);
-}
-
-#[test]
 fn text_matches_the_example_in_the_documentation() {
-    let cause = UnprovenCause::DataFromOutside;
-    let from_json = |offset, kind, layout| AccessRecord {
-        kind,
-        layout,
-        ill_typed_cause: IllTypedCause::OutsideData,
-        ..in_loop(by_name(PROGRAM, offset, cause, LINE_2_COLUMN_14))
-    };
-    let records = [
-        from_json(30, AccessKind::Arithmetic, ABSENT_WORD),
-        from_json(36, AccessKind::Read, ITEM),
-    ];
+    let records = [in_loop(AccessRecord {
+        layout: ITEM,
+        ..unknown_object(PROGRAM, LINE_2_COLUMN_14)
+    })];
     let access_counts = [module_counts(PROGRAM, [1, 0, 0, 0])];
     let entries = text_entries(ResultRecords {
         access_counts: &access_counts,
@@ -497,19 +401,18 @@ fn text_matches_the_example_in_the_documentation() {
     assert_eq!(
         text_of(&entries[1]),
         concat!(
-            "1. external-data: The value comes from outside the program ",
-            "(JSON.parse, response.json(), a file loaded at run time).",
+            "1. unknown-object: The compiler doesn't know the shape of this object, ",
+            "so the access is a lookup or needs a shape check.",
         )
     );
     assert_eq!(
         note_texts(&entries[1]),
         [
             "1 of 1 untyped access",
-            "1 untyped operator",
-            "2 of these run in a loop",
+            "1 of these runs in a loop",
             "types: 'Item'",
-            "fix: check its fields, and build a new object of this type from them.",
-            "https://bun.com/docs/compiler/explain#external-data",
+            "fix: that depends on where the object comes from. See the table at the link below.",
+            "https://bun.com/docs/compiler/explain#unknown-object",
         ]
     );
 }
@@ -517,29 +420,25 @@ fn text_matches_the_example_in_the_documentation() {
 #[test]
 fn text_entry_orders_notes() {
     let entries = text_entries(FullCause::new().records());
-    let wording = cause_wording(UnprovenCause::ReachesUnknownJavaScript);
+    let wording = cause_wording(UnprovenCause::UnknownCallee);
     assert_eq!(entries.len(), 2);
     let entry = &entries[1];
 
     assert_eq!(entry.position, at(PROGRAM, LINE_2_COLUMN_14));
     assert_eq!(
         text_of(entry),
-        format!("1. passed-to-untyped-code: {}", wording.message)
+        format!("1. unknown-callee: {}", wording.message)
     );
     assert_eq!(
         note_texts(entry),
         [
-            "2 of 11 untyped accesses, and 1 of 4 in dependencies".to_owned(),
+            "2 of 11 untyped accesses".to_owned(),
             "1 indirect call, 1 untyped operator".to_owned(),
             "2 of these run in a loop".to_owned(),
             "in function 'double'".to_owned(),
             "types: 'Item', 'Order'".to_owned(),
-            format!(
-                "why (external-data): {}",
-                why(IllTypedCause::OutsideData).message
-            ),
             format!("fix: {}", wording.fix),
-            "https://bun.com/docs/compiler/explain#passed-to-untyped-code".to_owned(),
+            "https://bun.com/docs/compiler/explain#unknown-callee".to_owned(),
         ]
     );
 }
@@ -547,8 +446,8 @@ fn text_entry_orders_notes() {
 #[test]
 fn one_operation_in_a_loop_is_singular() {
     let records = [
-        in_loop(unknown_object(PROGRAM, 0, LINE_2_COLUMN_14)),
-        unknown_object(PROGRAM, 4, LINE_2_COLUMN_14),
+        in_loop(unknown_object(PROGRAM, LINE_2_COLUMN_14)),
+        unknown_object(PROGRAM, LINE_2_COLUMN_14),
     ];
     let notes = note_texts(&text_entries(accesses(&records))[1]);
     assert_eq!(notes[1], "1 of these runs in a loop");
@@ -569,7 +468,7 @@ fn absent_notes_are_omitted_and_share_can_cover_only_dependencies() {
         note_texts(&entries[1]),
         [
             "3 of 40 untyped accesses in dependencies",
-            "fix: build a new object of this type from it where it enters typed code.",
+            "fix: that depends on where the object comes from. See the table at the link below.",
             "https://bun.com/docs/compiler/explain#unknown-object",
         ]
     );
@@ -597,7 +496,7 @@ fn twenty_causes_are_shown() {
     let footer = "not shown. Use --explain=json to print all of them, one JSON object per line.";
     let lines = |count: u32| -> Vec<BString> {
         let records: Vec<AccessRecord> = (0..count)
-            .map(|offset| unknown_object(PROGRAM, offset, offset))
+            .map(|offset| unknown_object(PROGRAM, offset))
             .collect();
         let entries = text_entries(accesses(&records));
         entries.iter().map(text_of).collect()
@@ -618,7 +517,7 @@ fn twenty_causes_are_shown() {
 
 #[test]
 fn no_cause_sentences() {
-    let sentence = |costs_in_dependency, families| {
+    let sentence = |costs_in_dependency| {
         let access_counts = [
             module_counts(PROGRAM, [0, 0, 0, 7]),
             module_counts(DEPENDENCY, costs_in_dependency),
@@ -627,68 +526,17 @@ fn no_cause_sentences() {
             access_counts: &access_counts,
             ..ResultRecords::default()
         };
-        let entries = entries_of(collect_text, records, families);
+        let entries = entries_of(collect_text, records);
         assert_eq!(entries.len(), 1);
         text_of(&entries[0])
     };
-    let (typed, untyped) = ([0, 0, 0, 2], [0, 1, 0, 0]);
     assert_eq!(
-        sentence(typed, EVERY_FAMILY),
+        sentence([0, 0, 0, 2]),
         "Every property access is typed. Nothing to fix."
     );
     assert_eq!(
-        sentence(untyped, EVERY_FAMILY),
+        sentence([0, 1, 0, 0]),
         "The compiler recorded no cause for the untyped property accesses."
-    );
-    for costs in [typed, untyped] {
-        let only = ExplainSet::ONLY_UNPROVEN_TYPE;
-        assert_eq!(sentence(costs, only), "No causes of this kind.");
-    }
-}
-
-#[test]
-fn list_has_one_line_per_cause() {
-    let only = ExplainSet::ONLY_UNKNOWN_CODE;
-    let list = entries_of(collect_list, FullCause::new().records(), only);
-    assert_eq!(list.len(), 1);
-    assert_eq!(list[0].kind, only);
-    assert_eq!(list[0].position, at(PROGRAM, LINE_2_COLUMN_14));
-    assert!(list[0].notes.is_empty());
-    assert_eq!(
-        text_of(&list[0]),
-        concat!(
-            "unknown-code: passed-to-untyped-code at src/a.ts:2:14, 3 accesses, ",
-            "1 indirect call, 1 untyped operator, types 'Item', 'Order', why external-data",
-        )
-    );
-}
-
-#[test]
-fn list_is_labeled_by_family_and_ends_with_the_cause_without_position() {
-    let records = [
-        with_witness_location(unknown_object(PROGRAM, 0, 0), NO_LOCATION),
-        passed_to_untyped_code(PROGRAM, 4),
-        by_name(PROGRAM, 8, UnprovenCause::UnprovenContents, LINE_1_COLUMN_5),
-    ];
-    let (unproven_type, unknown_code) = (
-        ExplainSet::ONLY_UNPROVEN_TYPE,
-        ExplainSet::ONLY_UNKNOWN_CODE,
-    );
-    let list = entries_of(
-        collect_list,
-        accesses(&records),
-        unproven_type | unknown_code,
-    );
-    let kinds: Vec<ExplainSet> = list.iter().map(|entry| entry.kind).collect();
-    let lines: Vec<BString> = list.iter().map(text_of).collect();
-    assert_eq!(kinds, [unproven_type, unknown_code, unknown_code]);
-    assert_eq!(
-        lines,
-        [
-            "unproven-type: untyped-collection at src/a.ts:1:5, 1 access",
-            "unknown-code: passed-to-untyped-code at src/a.ts:2:14, 1 access",
-            "unknown-code: unknown-object at (no location), 1 access",
-        ]
     );
 }
 
@@ -707,23 +555,14 @@ fn json_has_numbers_then_every_member_of_a_cause() {
         )
     );
 
-    let wording = cause_wording(UnprovenCause::ReachesUnknownJavaScript);
-    let IllTypedWording { message, fix, .. } = why(IllTypedCause::OutsideData);
-    let members_of_why = [
-        r#""reason":"external-data""#,
-        &format!(r#""message":"{message}""#),
-        &format!(r#""fix":"{fix}""#),
-        r#""url":"https://bun.com/docs/compiler/explain#external-data""#,
-    ]
-    .join(",");
+    let wording = cause_wording(UnprovenCause::UnknownCallee);
     let members = [
-        r#""rank":1,"reason":"passed-to-untyped-code","file":"src/a.ts","line":2,"column":14"#,
+        r#""rank":1,"reason":"unknown-callee","file":"src/a.ts","line":2,"column":14"#,
         r#""inDependency":false,"source":"let second = first.size;""#,
         &format!(r#""message":"{}","fix":"{}""#, wording.message, wording.fix),
-        r#""url":"https://bun.com/docs/compiler/explain#passed-to-untyped-code""#,
-        r#""accesses":2,"dependencyAccesses":1,"calls":1,"operators":1,"inLoops":2"#,
-        r#""function":"double","types":["Item","Order"],"family":"unknown-code""#,
-        &format!(r#""why":{{{members_of_why}}}"#),
+        r#""url":"https://bun.com/docs/compiler/explain#unknown-callee""#,
+        r#""accesses":2,"dependencyAccesses":0,"calls":1,"operators":1,"inLoops":2"#,
+        r#""function":"double","types":["Item","Order"]"#,
     ]
     .join(",");
     assert_eq!(json[1], format!("{{{members}}}"));
@@ -731,11 +570,10 @@ fn json_has_numbers_then_every_member_of_a_cause() {
 
 #[test]
 fn json_lists_causes_by_rank() {
-    let in_dependency = unknown_object(DEPENDENCY, 0, 0);
     let records = [
-        unknown_object(PROGRAM, 0, LINE_1_COLUMN_5),
-        in_loop(unknown_object(PROGRAM, 4, LINE_2_COLUMN_14)),
-        with_witness_location(in_dependency, location(DEPENDENCY, 0)),
+        unknown_object(PROGRAM, LINE_1_COLUMN_5),
+        in_loop(unknown_object(PROGRAM, LINE_2_COLUMN_14)),
+        unknown_object(DEPENDENCY, 0),
     ];
     let json = json_lines(accesses(&records));
     let expected = [
@@ -749,35 +587,5 @@ fn json_lists_causes_by_rank() {
         let rank = index + 1;
         let start = format!(r#"{{"rank":{rank},"reason":"unknown-object",{members}"#);
         assert!(json[rank].starts_with(&start), "{}", json[rank]);
-        assert!(json[rank].ends_with(r#","why":null}"#), "{}", json[rank]);
     }
-}
-
-#[test]
-fn why_with_the_same_code_as_the_entry_is_omitted() {
-    let shown = |ill_typed_cause| {
-        let cause = UnprovenCause::DataFromOutside;
-        let records = [AccessRecord {
-            ill_typed_cause,
-            ..by_name(PROGRAM, 0, cause, LINE_2_COLUMN_14)
-        }];
-        let records = accesses(&records);
-        let mut notes = note_texts(&text_entries(records)[1]);
-        notes.retain(|note| note.starts_with(b"why ("));
-        let list = entries_of(collect_list, records, ExplainSet::ONLY_UNKNOWN_CODE);
-        (notes, json_lines(records).remove(1), text_of(&list[0]))
-    };
-    let list_without_why = "unknown-code: external-data at src/a.ts:2:14, 1 access";
-
-    let (notes, json, list) = shown(IllTypedCause::OutsideData);
-    assert!(notes.is_empty(), "{notes:?}");
-    assert!(json.ends_with(r#","why":null}"#), "{json}");
-    assert_eq!(list, list_without_why);
-
-    let (notes, json, list) = shown(IllTypedCause::Assertion);
-    let message = why(IllTypedCause::Assertion).message;
-    let member = r#","why":{"reason":"unsound-cast","#;
-    assert_eq!(notes, [format!("why (unsound-cast): {message}")]);
-    assert!(json.contains(member), "{json}");
-    assert_eq!(list, format!("{list_without_why}, why unsound-cast"));
 }

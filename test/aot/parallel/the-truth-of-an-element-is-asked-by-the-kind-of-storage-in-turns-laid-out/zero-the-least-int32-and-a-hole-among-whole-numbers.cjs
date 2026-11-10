@@ -1,5 +1,5 @@
-// STATISTIC: TruthsAskedOfRawElementsInTurnsLaidOut >= 2
-// STATISTIC: LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked >= 1
+// STATISTIC: UnrolledLoopRawTruthinessTests >= 2
+// STATISTIC: UnrolledLoopsForInt32Truthiness >= 1
 "use strict";
 // A list of whole numbers holds 0, the least and the greatest int32, -1 and holes: the word as it lies is asked; the empty word of a hole is as false as undefined.
 const said = [];

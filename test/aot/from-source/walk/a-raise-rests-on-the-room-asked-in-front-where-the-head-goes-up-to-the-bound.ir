@@ -4,8 +4,8 @@
 # -- end of source
 # f1 = upTo. The room is asked once in front: `m + 1 <= room`. No relation is noted between the key and m + 1: the raise rests on the head's own `i <= m` and on the test in front.
 # Where that ground is lost the turn asks for the room itself again: the answers stay, the loop only gets slower. So the count is held.
-# STATISTIC: ListsLengthenedOnRoomAskedInFront = 1
-# STATISTIC: StoresThatLengthenTheirListInEveryTurn = 1
+# STATISTIC: AppendsUsingLoopCapacityGuards = 1
+# STATISTIC: IndexedStoresCompiledAsAppends = 1
 # RUN: walk f1:Body mechanisms=all
 # CHECK: ExtendArrayLength
 # CHECK-NEXT: Put{{*}}Index

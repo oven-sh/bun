@@ -1,4 +1,4 @@
-# Where every position is tested (testing=TestsEveryPosition), what a read is told about its position is held against the view. The code below is told that `k`, held as a number, lies inside. A number that is NaN becomes the least integer on x86-64 and zero on arm64, and zero lies below the length of every view that holds anything: so the number is first asked whether it equals itself, on both. Without the word nothing is asked.
+# Where every position is tested (testing=CheckBoundsAtRunTime), what a read is told about its position is held against the view. The code below is told that `k`, held as a number, lies inside. A number that is NaN becomes the least integer on x86-64 and zero on arm64, and zero lies below the length of every view that holds anything: so the number is first asked whether it equals itself, on both. Without the word nothing is asked.
 # f1 = inView
 # -- source: position-held-as-a-number-is-asked-whether-it-is-one-where-every-position-is-tested.ts
 # declare function sink(...values: unknown[]): void;
@@ -19,7 +19,7 @@
 #     Return v5
 # }
 # -- end of code
-# RUN: emit-code mechanisms=all testing=TestsEveryPosition
+# RUN: emit-code mechanisms=all testing=CheckBoundsAtRunTime
 # CHECK: Double @[[position]] = ArgumentReg(
 # CHECK: = Equal(@[[position]], @[[position]],
 # CHECK-NEXT: = Branch(

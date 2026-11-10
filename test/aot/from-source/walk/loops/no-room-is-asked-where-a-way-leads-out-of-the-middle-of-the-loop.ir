@@ -11,13 +11,13 @@
 # A loop that its own text may leave at any turn says nothing of how far it fills its list: 25 places for a list of two were kept for as long as the list lived, and cost four times the fill. A list
 # born empty has the profile of its site, which has learned what its lists reach.
 # f1 = breaks, f2 = returns, f3 = born
-# RUN(COUNT): compile RoomAskedAsFarAsAProfileMayAsk mechanisms=all
-# COUNT: statistic RoomAskedAsFarAsAProfileMayAsk 0
+# RUN(COUNT): compile ClampedCapacitiesReserved mechanisms=all
+# COUNT: statistic ClampedCapacitiesReserved 0
 # RUN(BREAKS): walk f1 mechanisms=all
-# BREAKS-NOT: ReserveArrayRoom
+# BREAKS-NOT: ReserveArrayCapacity
 # RUN(RETURNS): walk f2 mechanisms=all
-# RETURNS-NOT: ReserveArrayRoom
+# RETURNS-NOT: ReserveArrayCapacity
 # RUN(BORN): walk f3 mechanisms=all
-# BORN-NOT: ReserveArrayRoom
+# BORN-NOT: ReserveArrayCapacity
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 50447

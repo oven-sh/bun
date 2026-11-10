@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutForOneKindOfStorage >= 1
+// STATISTIC: UnrolledLoopsForIndexingType >= 1
 function even(cells: number[]): number { let t = 0; for (let j = 0; j < cells.length; j++) { const cell = cells[j]!; if ((cell & 1) === 0) t++; } return t; }
 function forOf(cells: number[]): number { let t = 0; for (const cell of cells) if ((cell & 1) === 0) t++; return t; }
 function and(cells: number[]): number { let t = 0; for (let j = 0; j < cells.length; j++) t += cells[j]! & 5; return t; }

@@ -2,8 +2,8 @@
 # function store(list: number[], from: number): any { let key = 1; try { for (let i = from | 0; i < 3; i++) { key = i % 4; list[key] = i; } } catch { return Object.is(key, -0); } return "none"; }
 # console.log(store([1, 2, 3, 4], 0), store(Object.freeze([1, 2, 3, 4]) as any, Number(process.env.NO_SUCH ?? -4)));
 # -- end of source
-# The store under `i % 4` is walked while the key is bound to the remainder of integers, which is 0 where the key is -0. The edge to the handler hands on the key as it was written:
-# plain Bun prints none true; until then the compiled program printed none false. The same program under the lie:
+# The store at `i % 4` is visited while the key is bound to the integer remainder, which is 0 where the key is -0. The edge to the handler passes the key as it was written.
+# Plain Bun prints none true. Until the edge did that, the compiled program printed none false. The same program with the fault injected is in
 # an-edge-to-a-handler-that-takes-a-whole-remainder-for-a-key-of-minus-zero-stops-the-build-though-a-try-of-the-loop-is-undone.ir.
 # OPTIONS: check=Validate
 # RUN: walk f1 mechanisms=all

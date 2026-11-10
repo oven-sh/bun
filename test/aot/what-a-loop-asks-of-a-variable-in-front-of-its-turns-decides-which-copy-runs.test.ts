@@ -1,46 +1,47 @@
 // A loop that is built twice reads some variables in front of its turns and asks each one thing: is it a whole number above zero, where the turns divide by it; a record of the one layout; one of a few
 // functions; the one function of another file; a number, where the turns add to it. Who fails the question takes the loop as it is written.
 // `fuzz/fuzzilli/write-variable-that-a-loop-uses-sweep.ts` writes programs whose variable holds something else when the loop begins. Here is one for each question. A counter says that the read was laid.
-// `--aot-testing=WhatLoopsAskOfVariablesInFrontIsTakenToHold` sends both answers into the typed copy. Under `--aot-harden=proof-checks` what a test has let pass is asked again at run time: with both the
-// program stops by name. `FailGuesses` stands beside the word on both sides: it lays a road of its own to the loop as written, which the word would leave without one.
+// `--aot-testing=IgnoreVariableChecks` sends both answers into the typed copy. Under `--aot-harden=proof-checks` what a test has let pass is asked again at run time: with both the
+// program stops by name. `FailSpeculations` stands beside the word on both sides: it lays a road of its own to the loop as written, which the word would leave without one.
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "path";
 import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
 import { test } from "./harness/default-timeout";
+import { expectFaultyBuild } from "./harness/fault-injection";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const writer = join(import.meta.dir, "fuzz", "fuzzilli", "write-variable-that-a-loop-uses-sweep.ts");
 const CHECKED = "--aot-harden=proof-checks";
-const GUESSES = "FailGuesses:7:97";
-const WORD = "WhatLoopsAskOfVariablesInFrontIsTakenToHold";
-const letPass = "what a test has let pass is not of the type that the compiler has proven of it.";
+const GUESSES = "FailSpeculations:7:97";
+const WORD = "IgnoreVariableChecks";
+const letPass = "in a value narrowed by a branch";
 const questions = {
   "a number that the turns divide by": {
     cell: "divides-the-turn--a-var--never-stored-in-front--for--a-second-of-its-kind-later.cjs",
-    counter: "DivisorsInVariablesReadInFrontOfLoops",
+    counter: "DivisorVariableReadsHoisted",
     stops: letPass,
   },
   "a private static field that holds a record": {
     cell: "asked-by-an-if--a-private-static-field--never-stored-in-front--for-in-a-function--a-second-of-its-kind-later.mjs",
-    counter: "VariablesAskedWhetherTheyAreThereReadInFrontOfLoops",
+    counter: "AbsenceTestedVariableReadsHoisted",
     stops: letPass,
   },
   "one of a few functions": {
     cell: "called--a-let--another-kind-in-front-and-its-own-in-the-turn--for-in-a-function-behind-its-caller--a-second-of-its-kind-later.cjs",
-    counter: "FewClosuresInVariablesReadInFrontOfLoops",
+    counter: "CalleeVariableReadsHoisted",
     stops: letPass,
   },
   "the function of a file that has not run": {
     cell: "handed-on--a-name-of-the-exports-of-a-file-required-in-the-turn--stored-in-front--for--nothing-later.cjs",
-    counter: "FunctionsOfOtherFilesReadInFrontOfLoops",
-    stops: "what a variable holds is not of the type that the compiler has proven of it.",
+    counter: "ImportedFunctionReadsHoisted",
+    stops: "in a local variable",
   },
   "a number that the turns add to": {
     cell: "added-to--a-var--never-stored-in-front--for--nothing-later.cjs",
-    counter: "VariablesThatQuietTurnsStoreReadInFrontOfLoops",
+    counter: "LoopStoredVariableReadsHoisted",
     stops: letPass,
   },
 };
@@ -102,13 +103,7 @@ describe.skipIf(!!unsupported)("what a loop asks of a variable in front of its t
           exitCode: plain.exitCode,
         });
         const built = await build("held", `--aot-testing=${WORD},${GUESSES}`);
-        // A Bun that is built with assertions or a sanitizer verifies the code of every unit: there the build itself refuses what the word lays.
-        if (isASAN || isDebug) {
-          expect(built.stderr).toContain("a Narrowed stands in a block that has not exactly one incoming edge");
-          expect(built.exitCode).toBe(1);
-          return;
-        }
-        expect(built.exitCode).toBe(0);
+        if (!expectFaultyBuild(built, "a Narrowed stands in a block that has not exactly one incoming edge")) return;
         const held = await spawned([executable("held")], folder, { ...env, ...withoutCrashReport });
         expect(held.stderr).toContain(stops);
         expect(held.exitCode).not.toBe(0);

@@ -1015,9 +1015,9 @@ test("an executable that prints as plain is a finding where its build says that 
       { build: ran("", said), run: ran(compiled) },
     );
   expect(verdict("")).toEqual({ kind: "same" });
-  expect(verdict("  [12ms]  bundle  1 modules\n")).toEqual({ kind: "same" });
+  expect(verdict("   [12ms]  bundle  1 module\n")).toEqual({ kind: "same" });
   const words = "AOT: the walk of fN Body failed, in fN: made up";
-  expect(verdict("  [12ms]  bundle  1 modules\nAOT: the walk of f11 Body failed, in f11: made up\n")).toEqual({
+  expect(verdict("   [12ms]  bundle  1 module\nAOT: the walk of f11 Body failed, in f11: made up\n")).toEqual({
     kind: "internal compiler error",
     detail: words,
     signature: words,

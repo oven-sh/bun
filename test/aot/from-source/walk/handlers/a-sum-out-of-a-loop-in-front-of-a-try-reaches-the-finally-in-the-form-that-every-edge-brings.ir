@@ -24,7 +24,7 @@
 # CHECK: 0,7
 # CHECK-NEXT: exited with 0
 # CHECK-NEXT: the source prints the same
-# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
 # FAILING: 0,7
 # FAILING-NEXT: exited with 0
 # RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime

@@ -1,6 +1,6 @@
 "use strict";
-// STATISTIC: LoopsLaidOutForEachKindOfView >= 3
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
+// STATISTIC: UnrolledLoopsForTypedArrays >= 3
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the turns are laid out as users build them, and every raw access asks its position at the run
 // Short counted loops that store into what nobody has typed. The eight turns laid out in a row stand once for each kind of view, and in them a store is the store of that kind: it wraps, clamps or rounds as the kind does.
 // A turn reads what the turn before it stored; a turn reads what a later turn will store; every kind, every length from 0 to 40, views that begin in the middle of their memory.
 var key = JSON.parse('"go"');

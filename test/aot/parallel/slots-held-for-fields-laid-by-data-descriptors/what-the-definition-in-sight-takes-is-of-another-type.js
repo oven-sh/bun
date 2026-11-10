@@ -1,6 +1,6 @@
 // The constructor lays `works` by a data descriptor, read-only and not configurable: what the object has under the name already, or else new works. Code out of a text lays a text on the prototype, so the definition in sight takes the text.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 1
+// STATISTIC: FieldTypesEnforced >= 2
+// COUNTER: FieldsEvictedByTypeMismatch >= 1
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 function Clock(teeth) {

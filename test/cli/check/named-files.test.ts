@@ -24,6 +24,30 @@ test.each([
     "a script with an export in a namespace",
     { "script.ts": "namespace Kept {\n  export const one = 1;\n}\nvar declaredElsewhere: number;\n" },
   ],
+  [
+    "a script with a name that contains import",
+    { "script.ts": "var declaredElsewhere: number;\nvar important = 1;\n" },
+  ],
+  ["a script with a name that contains export", { "script.ts": "var declaredElsewhere: number;\nvar exported = 1;\n" }],
+  [
+    "a script with a string that says export",
+    { "script.ts": `var declaredElsewhere: number;\nvar said = "export";\n` },
+  ],
+  ["a script with a comment that says import", { "script.ts": "var declaredElsewhere: number;\n// import\n" }],
+  [
+    "a script that imports on demand",
+    { "script.ts": `var declaredElsewhere: number;\nvar later = import("./main");\n` },
+  ],
+  [
+    "a JavaScript script with a comment that says required",
+    {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, noEmit: true, types: [], allowJs: true },
+        include: ["*.ts", "*.js"],
+      }),
+      "script.js": "var declaredElsewhere = 1;\n// required\n",
+    },
+  ],
   ["declare global", { "rest.ts": "export {};\ndeclare global { var declaredElsewhere: number; }\n" }],
   [
     "a file outside include that an unreached file imports",

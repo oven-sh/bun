@@ -4331,11 +4331,12 @@ fn has_no_installed_dependencies(host: &dyn Host, config: &[u8]) -> bool {
     !is_installed(first) && !names.any(is_installed)
 }
 
-/// True if the root file at `path` can add to its program's globals. That's a declaration file, a script (which has
-/// neither `import` nor `export`, nor `require` in JavaScript), or a file with `declare global` or a `/// <reference`.
-/// Judged by its text, because a false positive only costs a parse. In a script `export` stands in a namespace alone. It
-/// misses a script that has one of those words in a comment, and a comment between `declare` and `global`. `imports` is called with the name of each package the file
-/// imports for its side effects, which may include declaring globals.
+/// True if the root file at `path` can add to its program's globals. That's a declaration file, a script, or a file with
+/// `declare global` or a `/// <reference`. Judged by its text, because a false positive only costs a parse: a file is only
+/// a module if a line starts with `import` or `export`, or if it's JavaScript with `require(`. In a script `export` stands
+/// in a namespace alone. It misses a script with such a line in a comment or a template, and a comment between `declare`
+/// and `global`. `imports` is called with the name of each package the file imports for its side effects, which may
+/// include declaring globals.
 fn may_declare_a_global(
     host: &dyn Host,
     path: &[u8],
@@ -4376,9 +4377,9 @@ fn text_may_declare_a_global(
             from += found + word.len();
         }
     }
-    let (mut from, mut has_import) = (0, false);
+    let mut from = 0;
     while let Some(found) = strings::index_of(&text[from..], b"import") {
-        (from, has_import) = (from + found + b"import".len(), true);
+        from += found + b"import".len();
         if let [quote @ (b'"' | b'\''), name @ ..] = text[from..].trim_ascii_start()
             && let Some(end) = strings::index_of_char_usize(name, *quote)
             && !is_relative(&name[..end])
@@ -4387,9 +4388,28 @@ fn text_may_declare_a_global(
         }
     }
     !every_file_is_a_module
-        && !has_import
-        && (!has(b"export") || has(b"namespace"))
-        && !(is_javascript(path) && has(b"require"))
+        && !has_line_that_starts_with(text, b"import")
+        && (!has_line_that_starts_with(text, b"export") || has(b"namespace"))
+        && !(is_javascript(path) && has(b"require("))
+}
+
+/// True if a line of `text` starts with the word `word`.
+fn has_line_that_starts_with(text: &[u8], word: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(found) = strings::index_of(&text[from..], word) {
+        let start = from + found;
+        from = start + word.len();
+        let before = text[..start].trim_ascii_end();
+        let is_first_in_line =
+            before.is_empty() || strings::contains_char(&text[before.len()..start], b'\n');
+        let is_part_of_name = |next: &u8| {
+            next.is_ascii_alphanumeric() || matches!(next, b'_' | b'$') || !next.is_ascii()
+        };
+        if is_first_in_line && !text.get(from).is_some_and(is_part_of_name) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Calls `visit` with each string that stands behind `from`, `import` or `require`, in any form. Judged by the text: a false

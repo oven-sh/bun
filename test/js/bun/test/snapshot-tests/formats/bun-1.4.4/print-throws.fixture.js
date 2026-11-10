@@ -115,6 +115,19 @@ test("with property matchers", () => {
     }
   `);
 });
+test("with property matchers that a frozen array did not keep", () => {
+  const value = Object.assign(bad(), { list: Object.freeze([1, 2]) });
+  expect(value).toMatchInlineSnapshot({ list: [expect.any(Number), 2] }, `
+    {
+      "bad": [native code],
+      "list": [
+        1,
+        2,
+      ],
+      "ok": 1,
+    }
+  `);
+});
 test("a thrown object", () => {
   expect(thrower(bad())).toThrowErrorMatchingInlineSnapshot(`undefined`);
 });

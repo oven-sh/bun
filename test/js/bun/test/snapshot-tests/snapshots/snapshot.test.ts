@@ -2422,7 +2422,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   // The format of the test does, and throws. To add a case, run it under that version.
   describe("inline, of a value that the format of its test cannot print", () => {
     const fixtures = [
-      ["print-throws.fixture.js", 14, 18],
+      ["print-throws.fixture.js", 15, 19],
       ["print-throws-bun-format.fixture.js", 4, 4],
     ] as const;
     function copy() {
@@ -2443,6 +2443,8 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
         let calls = 0;
         const bad = () => ({ ok: 1, get bad() { calls++; throw marker; } });
         const proxy = () => new Proxy({}, { ownKeys() { calls++; throw marker; } });
+        const index = () => Object.defineProperty([], 0, { get() { calls++; throw marker; } });
+        const tagged = () => ({ get [Symbol.toStringTag]() { calls++; throw marker; } });
         const thrower = error => () => { throw error; };
       `;
     const olderBun = '`\n{\n  "bad": [native code],\n  "ok": 1,\n}\n`';
@@ -2500,11 +2502,16 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             });
             test("one more print", () => {
               const counted = call => { calls = 0; return [caught(call) === marker, calls]; };
+              // It prints as an older Bun did: through a Proxy, an index and Symbol.toStringTag, and through no getter at a key.
               expect([
                 counted(() => expect(proxy()).toMatchInlineSnapshot(\`other\`)),
-                counted(() => expect(proxy()).toMatchInlineSnapshot()),
+                counted(() => expect(index()).toMatchInlineSnapshot(\`other\`)),
+                counted(() => expect(tagged()).toMatchInlineSnapshot(\`other\`)),
                 counted(() => expect(bad()).toMatchInlineSnapshot(\`other\`)),
-              ]).toEqual([[true, 2], [true, 1], [true, 1]]);
+                counted(() => expect(proxy()).toMatchInlineSnapshot()),
+                counted(() => expect(index()).toMatchInlineSnapshot()),
+                counted(() => expect(tagged()).toMatchInlineSnapshot()),
+              ]).toEqual([[true, 2], [true, 2], [true, 2], [true, 1], [true, 1], [true, 1], [true, 1]]);
             });
             test("a new snapshot beside them", () => { expect("new").toMatchSnapshot(); });
           `,

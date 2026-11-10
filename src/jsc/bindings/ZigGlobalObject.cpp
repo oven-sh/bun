@@ -2614,6 +2614,17 @@ void GlobalObject::finishCreation(VM& vm)
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
 
     m_bindgenAdditions.initialize();
+    // `subtle` is written by hand: its getter checks the receiver as Node does. Node has it on Crypto.prototype before anything reads `crypto`.
+    m_bindgenAdditions.m_classes[Bun::Bindgen::Generated::JSCrypto::classIndex].initLater([](LazyClassStructure::Initializer& init) {
+        Bun::Bindgen::Generated::setupCryptoClassStructure(init);
+        // A program compiled ahead of time counts `subtle` among what the prototype has, and has made those names immutable by now.
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(init.vm);
+        init.prototype->putDirectCustomAccessor(
+            init.vm,
+            Identifier::fromString(init.vm, "subtle"_s),
+            JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, setterSubtleCrypto),
+            static_cast<unsigned>(PropertyAttribute::CustomAccessor));
+    });
     m_markdownTagStrings.initialize();
 
     static const LazyClassStructureInit lazyClassStructureInits[] = {
@@ -3011,20 +3022,7 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(fileConstructor);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_cryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             JSC::JSGlobalObject* globalObject = init.owner;
-             JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();
-             // Node defines `subtle` on Crypto.prototype with a brand check, not on
-             // the instance; the getter above enforces the brand.
-             JSObject* prototype = crypto->getPrototypeDirect().getObject();
-             // A program compiled ahead of time counts `subtle` among what the prototype has, and may have made it immutable before this first read of `crypto`.
-             AllowLazyMaterializationOfImmutableProperties allowMaterialization(init.vm);
-             prototype->putDirectCustomAccessor(
-                 init.vm,
-                 Identifier::fromString(init.vm, "subtle"_s),
-                 JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, setterSubtleCrypto),
-                 PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor);
-
-             init.set(crypto);
+             init.set(JSValue::decode(CryptoObject__create(init.owner)).getObject());
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_lazyTestModuleObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, Abort, void)

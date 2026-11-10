@@ -714,6 +714,10 @@ also have the same `rustName`. The getter of `x` is `get_x` and its setter is `s
 accessor of `static` ignores its receiver, so a subclass inherits it. `configurable` and `enumerable` on a getter
 or a constant override the class's.
 
+The class of a web interface, like `TextDecoder` or `Response`, sets `configurable: true`: Web IDL makes the operations
+and attributes of an interface configurable. `test/js/web/web-globals.test.js` fails for a global interface that has a
+member which is not.
+
 A key that starts with `@@` is a well-known symbol: `"@@dispose"` defines `prototype[Symbol.dispose]`. The function is
 writable, configurable and not enumerable, like the built-in ones, whatever the class says. Its `name` is
 `[Symbol.dispose]` and its Rust function is `dispose`. `name` overrides the function's `name`: Node's
@@ -984,7 +988,8 @@ own arguments out of that list, so they're all `b.any`, the last one possibly `.
 `collect-bindgen.ts` makes the rows of a schema from the schema itself: the types of the arguments and of the result,
 `capability`, `throws`, `cache`, `invalidThis`, `forBind`, `prototypeBase`. Nothing has to be written twice. Where every
 argument is one that needs no conversion (`b.any`, `b.any.variadic`, `b.bool`, `b.i32`, `b.f64`, `b.string.local`,
-`b.callable`), compiled code calls the Rust thunk itself and skips the host function.
+`b.callable`), compiled code calls the Rust thunk itself and skips the host function. It reads a getter with `cache` from
+the field of the object if the accessor is not `configurable`, or if the class has `lockedMembers: ["prototype"]`.
 
 A few things a schema cannot say with bindgen's own keys:
 

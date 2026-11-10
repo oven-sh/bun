@@ -67,6 +67,40 @@ const mathTest = [
   "",
 ].join("\n");
 
+// vitest defines a spy on the object, with the attributes of the member that the object inherits, and
+// vi.restoreAllMocks() removes it with Reflect.deleteProperty(), which answers false where that member is not
+// configurable. The same file passes under Node.js.
+const spiesTest = [
+  'import { expect, it, vi } from "vitest";',
+  "",
+  'it("undoes a spy on a method that a web interface defines", () => {',
+  '  vi.spyOn(crypto, "randomUUID").mockReturnValue("spied");',
+  '  expect(crypto.randomUUID()).toBe("spied");',
+  "  vi.restoreAllMocks();",
+  '  expect(crypto.randomUUID()).not.toBe("spied");',
+  '  expect(Object.hasOwn(crypto, "randomUUID")).toBe(false);',
+  "});",
+  "",
+  'it("undoes a spy on a getter that a web interface defines", () => {',
+  '  const response = new Response("body");',
+  '  vi.spyOn(response, "ok", "get").mockReturnValue(false);',
+  "  expect(response.ok).toBe(false);",
+  "  vi.restoreAllMocks();",
+  "  expect(response.ok).toBe(true);",
+  '  expect(Object.hasOwn(response, "ok")).toBe(false);',
+  "});",
+  "",
+  'it("undoes a spy on a getter of the prototype", () => {',
+  '  const real = Object.getOwnPropertyDescriptor(TextDecoder.prototype, "encoding");',
+  '  vi.spyOn(TextDecoder.prototype, "encoding", "get").mockReturnValue("spied");',
+  '  expect(new TextDecoder().encoding).toBe("spied");',
+  "  vi.restoreAllMocks();",
+  '  expect(new TextDecoder().encoding).toBe("utf-8");',
+  '  expect(Object.getOwnPropertyDescriptor(TextDecoder.prototype, "encoding")).toEqual(real);',
+  "});",
+  "",
+].join("\n");
+
 const vitestConfig = [
   'import { defineConfig } from "vitest/config";',
   "",
@@ -85,12 +119,11 @@ const vitestConfig = [
 // vitest resolves itself, its plugins, and the project's "vitest" import
 // through node_modules, so link the packages installed in test/node_modules
 // into the temporary project.
-function createVitestProject() {
+function createVitestProject(files = { "src/math.ts": mathSource, "test/math.test.ts": mathTest }) {
   const dir = tempDir("vitest-project", {
     "package.json": JSON.stringify({ name: "vitest-fixture", private: true, type: "module" }),
     "vitest.config.ts": vitestConfig,
-    "src/math.ts": mathSource,
-    "test/math.test.ts": mathTest,
+    ...files,
   });
   mkdirSync(join(String(dir), "node_modules", "@vitest"), { recursive: true });
   symlinkSync(join(testNodeModules, "vitest"), join(String(dir), "node_modules", "vitest"), "junction");
@@ -141,4 +174,15 @@ describe.concurrent("vitest", () => {
     // classify() are covered, the negative branch and neverCalled() are not.
     expect(stdout).toMatch(/math\.ts\s*\|\s*50\s*\|\s*75\s*\|\s*66\.66\s*\|\s*55\.55\s*\|\s*7,15-18/);
   }, 120_000);
+
+  test("restores spies on members of the web interfaces", async () => {
+    using dir = createVitestProject({ "test/spies.test.js": spiesTest });
+    const { stdout, stderr, exitCode } = await runVitest(String(dir), []);
+
+    expect({ exitCode, stderr: exitCode === 0 ? "" : stderr, stdout }).toMatchObject({
+      exitCode: 0,
+      stderr: "",
+      stdout: expect.stringMatching(/Tests\s+3 passed/),
+    });
+  }, 90_000);
 });

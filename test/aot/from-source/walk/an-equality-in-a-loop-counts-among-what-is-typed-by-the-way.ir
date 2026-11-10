@@ -1,0 +1,12 @@
+# -- source: main.ts
+# class Knot { above: Knot | Bead | undefined; mark: number; constructor(above: Knot | Bead | undefined, mark: number) { this.above = above; this.mark = mark; } }
+# class Bead { mark: number; tint = "red"; above: Knot | Bead | undefined; constructor(above: Knot | Bead | undefined, mark: number) { this.mark = mark; this.above = above; } }
+# type Link = Knot | Bead;
+# function isBelow(knot: Link | undefined, top: Link): boolean { while (knot) { if (knot === top) return true; knot = knot.above; } return false; }
+# (globalThis as any).kept = isBelow;
+# const a = new Knot(undefined, 1), b = new Knot(a, 1), c = new Bead(b, 3);
+# console.log(isBelow(c, a), isBelow(a, c));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: TypeTest {{*}} testedType=undefined|null

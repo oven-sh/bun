@@ -1,4 +1,4 @@
-// `export * from "./dep.cjs"` and `export { flag as renamed } from "./dep.cjs"`: ES modules see the CommonJS file through its face. The file is mocked before anything is loaded.
+// `export * from "./dep.cjs"` and `export { flag as renamed } from "./dep.cjs"`: ES modules see the CommonJS file through its facade. The file is mocked before anything is loaded.
 import { test, vi } from "bun:test";
 
 test("a mock of a CommonJS file behind a barrel", async () => {

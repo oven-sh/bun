@@ -1,0 +1,46 @@
+# -- source: main.js
+# function pushed(n) { const m = n | 0, a = []; for (let i = 0; i < m; i++) a.push(i & 3); return a; }
+# function fractions(n) { const m = n | 0, a = []; for (let i = 0; i < m; i++) a.push(i * 0.5); return a; }
+# function answerIsRead(n) { const m = n | 0, a = []; let s = 0; for (let i = 0; i < m; i++) s += a.push(i & 3); return a.join("") + ":" + s; }
+# function inHead(n) { const m = n | 0, a = []; for (let i = 0; (a.push(i & 3), i < m); i++); return a; }
+# function texts(n) { const m = n | 0, a = []; for (let i = 0; i < m; i++) a.push("t" + i); return a; }
+# function twice(n) { const m = n | 0, a = []; for (let i = 0; i < m; i++) { a.push(i & 3); a.push(7); } return a; }
+# print(pushed(7).join(""), pushed(8).join(""), pushed(0).length, pushed(-2).length, fractions(3).join(), fractions(9).length, answerIsRead(4), answerIsRead(9), inHead(7).join(""), inHead(8).join(""), inHead(-1).join(""), texts(3).join(), texts(9).length, twice(3).join(""), twice(9).length);
+# -- end of source
+# f1 = pushed, f2 = fractions, f3 = answerIsRead, f4 = inHead, f5 = texts, f6 = twice. A loop that fills a literal from its own end by `a.push(x)` read storage, length and room anew in every turn and stored the length,
+# though the list is as long as the counter is great at every head, as where the loop stores under the counter. One push in every turn, behind the test of the head, whose answer nobody reads and that pushes a number,
+# is built in the typed copy as that store: the room is asked once in front, the turn raises the length and stores. The closed copy holds the push as written.
+# Where the answer is read, the push stands in the head, a text is pushed or a turn pushes twice, the push stays as written in every copy.
+# RUN(PUSHED): walk f1:Body mechanisms=all
+# PUSHED: ReserveArrayCapacity
+# PUSHED: [[room]]: {{*}} = GetArrayCapacity
+# PUSHED: LessEq {{*}}, [[room]]
+# PUSHED: isLoopHead=true
+# PUSHED-NOT: ArrayPush
+# PUSHED: ExtendArrayLength
+# PUSHED-NEXT: Put{{*}}Index
+# RUN(FRACTIONS): walk f2:Body mechanisms=all
+# FRACTIONS: [[room]]: {{*}} = GetArrayCapacity
+# FRACTIONS: LessEq {{*}}, [[room]]
+# FRACTIONS: isLoopHead=true
+# FRACTIONS-NOT: ArrayPush
+# FRACTIONS: ExtendArrayLength
+# FRACTIONS-NEXT: Put{{*}}Index
+# RUN(ANSWERISREAD): walk f3:Body mechanisms=all
+# ANSWERISREAD: isLoopHead=true
+# ANSWERISREAD-NOT: ExtendArrayLength
+# RUN(INHEAD): walk f4:Body mechanisms=all
+# INHEAD: isLoopHead=true
+# INHEAD-NOT: ExtendArrayLength
+# RUN(TEXTS): walk f5:Body mechanisms=all
+# TEXTS: isLoopHead=true
+# TEXTS-NOT: ExtendArrayLength
+# RUN(TWICE): walk f6:Body mechanisms=all
+# TWICE: isLoopHead=true
+# TWICE-NOT: ExtendArrayLength
+# RUN(COUNT): compile PushesCompiledAsAppends mechanisms=all
+# COUNT: statistic PushesCompiledAsAppends 2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0123012 01230123 0 0 0,0.5,1 9 0123:10 012301230:45 01230123 012301230 0 t0,t1,t2 9 071727 18
+# ANSWERS-NEXT: exited with 0
+# ANSWERS-NEXT: the source prints the same

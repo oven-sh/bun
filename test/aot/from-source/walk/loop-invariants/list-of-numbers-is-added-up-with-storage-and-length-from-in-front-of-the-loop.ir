@@ -1,5 +1,5 @@
 # a list that is written as numbers is asked once for storage of doubles or of int32. The look at the typed copy knows that a read out of such storage gives a number or undefined, so the sum comes round as a number and runs no code,
-# the length of the test at the head and the pointer of the read stand in front of the head, and behind `i < list.length` the read looks at no length
+# the length of the test at the head and the pointer of the read stand in front of the head, and behind `i < list.length` the read looks at no length; whether the list holds fractions is asked there too, and the read takes the answer
 # f1 = sum
 # -- source: list-of-numbers-is-added-up-with-storage-and-length-from-in-front-of-the-loop.ts
 # declare function sink(...values: unknown[]): void; // @ts-expect-error
@@ -13,9 +13,10 @@
 # CHECK: = HasArrayStorage {{*}}arrayStorage=Double {{*}}admitsInt32Storage
 # CHECK: frequency=Rare isLoopHead=true
 # CHECK: [[storage]]: {{*}}= GetArrayStorage
+# CHECK-NEXT: [[kind]]: {{*}}= HasArrayStorage {{*}}arrayStorage=Double traits
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = GetArrayLength
-# CHECK: = GetArrayElement {{*}}[[storage]] arrayStorage=Double level=Proven {{*}}isInBounds
+# CHECK: = GetArrayElement {{*}}[[storage]], [[kind]] arrayStorage=Double level=Proven {{*}}isInBounds
 # RUN(ROUND): walk f1 mechanisms=all
 # ROUND-LABEL: code f1:Body
 # ROUND: : number @Double{{*}}isInLoop=true isLoopHead=true

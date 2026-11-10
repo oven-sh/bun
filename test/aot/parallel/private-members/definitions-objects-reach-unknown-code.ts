@@ -1,6 +1,6 @@
 // The objects of these classes reach run-time text, so nothing is known about what happens to them later. The definitions of a class without a parent still fill the slots of the object
 // that its constructor has just allocated; those of a class below a parent find what the parent returns.
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 1 Todo: a private name's slot is held to nothing (facts/AOTEnforcedFields.cpp, holdsPlainValueInEnforcedFields()): the slot itself says who has the name, so a value that does not fit has nowhere to go
+// COUNTER: FieldsEvictedByTypeMismatch >= 1 Todo: a private name's slot is held to nothing (facts/AOTEnforcedFields.cpp, holdsPlainValueInEnforcedFields()): the slot itself says who has the name, so a value that does not fit has nowhere to go
 const seen: unknown[] = [];
 function note(value: unknown): void { seen.push(value === undefined ? "undefined" : value); }
 const unknownCode = new Function("value", process.argv[2] ?? "return value") as <V>(value: V) => V;

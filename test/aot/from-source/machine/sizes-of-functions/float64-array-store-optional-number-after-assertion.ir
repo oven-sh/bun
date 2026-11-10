@@ -1,0 +1,14 @@
+# f1 = put
+# -- source: float64-array-store-optional-number-after-assertion.ts
+# function put(list: Float64Array, at: number, value?: number): void { list[at] = value!; }
+# declare const input: any;
+# const cells = new Float64Array(input);
+# put(cells, input | 0, input ? 1.5 : undefined);
+# (globalThis as any).answer = cells;
+# -- end of source
+# The compiler before this one: 17 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 18, patches 0, moves 1, unlikely or rare 12.
+# RUN(X64): steps most:19 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 19

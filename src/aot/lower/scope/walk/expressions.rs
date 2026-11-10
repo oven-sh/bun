@@ -17,6 +17,7 @@ use crate::builtins::table::{self, Scope};
 use crate::builtins::{Intrinsic, Mutability, Resolved};
 use crate::ir::ClassSlot;
 use crate::lower::jsx::find_key_argument;
+use crate::lower::module::has_settled_type;
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, find_binding_looked_for};
 use crate::lower::scope::{
     BindingRef, CalledByName, ScopeSlot, find_declaration_called_by_name,
@@ -25,10 +26,15 @@ use crate::lower::scope::{
 use crate::lower::{class, commonjs, parameters};
 use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
 
-fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_count: usize) -> bool {
+fn has_module_operation(
+    site: &ImportSite,
+    answer: SiteAnswer<'_>,
+    argument_count: usize,
+    is_type_settled: bool,
+) -> bool {
     match site.kind {
         ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => match answer {
-            SiteAnswer::Computed(_) => argument_count <= 1,
+            SiteAnswer::Computed(_) => argument_count <= 1 || is_type_settled,
             SiteAnswer::Module(_) | SiteAnswer::Failed(_) | SiteAnswer::Erased => true,
         },
         ImportSiteKind::GetBuiltinModule(_) => match answer {
@@ -237,7 +243,8 @@ impl Walker<'_, '_> {
         binding: Binding,
     ) -> Option<CommonJsVariable> {
         let builtins = self.input.builtins;
-        if !self.walk.has_values_of_each_run || !matches!(binding, Binding::Symbol(_)) {
+        let has_values_of_run = self.walk.has_values_of_each_run || self.walk.keeps_first_exports;
+        if !has_values_of_run || !matches!(binding, Binding::Symbol(_)) {
             return None;
         }
         let Some(Resolved::Builtin(path)) = builtins.of_pure_expr(identifier) else {
@@ -248,6 +255,9 @@ impl Walker<'_, '_> {
     }
 
     fn is_value_of_run(&self, variable: CommonJsVariable, context: Context) -> bool {
+        if variable == CommonJsVariable::Exports && self.walk.keeps_first_exports {
+            return true;
+        }
         self.walk.has_values_of_each_run
             && match variable {
                 CommonJsVariable::Exports => true,
@@ -310,7 +320,8 @@ impl Walker<'_, '_> {
             }
             Binding::Arguments(owner) => self.use_arguments_binding(owner, is_store, context),
             Binding::CommonJs(variable)
-                if self.walk.has_wrapper_parameters || self.is_value_of_run(variable, context) =>
+                if self.walk.wrapper_slots.contains(variable)
+                    || self.is_value_of_run(variable, context) =>
             {
                 let slot = ScopeSlot::CommonJs(variable);
                 self.record_slot_use(context.function, self.file_scope, slot);
@@ -410,7 +421,7 @@ impl Walker<'_, '_> {
                 CodeUnit::Function(constructor) => {
                     binds_this_for_what_follows = self.walk.function_of_fn[constructor.idx()]
                         == Some(context.function)
-                        && self.unconditional_statements.contains(&expression);
+                        && self.unconditional_calls_of_super.contains(&expression);
                     self.record_slot_use(context.function, scope, ScopeSlot::Callee);
                     let reference = (context.function, constructor);
                     self.walk.function_references.push(reference);
@@ -427,6 +438,19 @@ impl Walker<'_, '_> {
             let loads_module = self.evaluates_inner_module(expression, &call)
                 || ((self.walk.has_wrapper_parameters || self.walk.has_values_of_each_run)
                     && self.is_bound_module_call(expression, &call));
+            let analysis = &self.input.compiled.analysis;
+            let is_site_of_require = analysis
+                .import_site_of_call(expression)
+                .is_some_and(|site| {
+                    matches!(analysis.import_sites[site].kind, ImportSiteKind::Require(_))
+                });
+            if (loads_module || is_site_of_require)
+                && self.is_value_of_run(CommonJsVariable::Module, context)
+                && self.is_require_seen(expression)
+            {
+                let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
+                self.record_slot_use(context.function, self.file_scope, slot);
+            }
             if !loads_module {
                 let called = find_declaration_called_by_name(self.hir, self.bound, expression);
                 match called.filter(|called| self.runs_behind_initialization(called, context)) {
@@ -482,6 +506,14 @@ impl Walker<'_, '_> {
         is_behind
     }
 
+    fn is_require_seen(&self, call: ExprId) -> bool {
+        let (modules, file) = (self.input.modules, self.input.file);
+        match modules.site(file, call) {
+            Some(Site::Evaluate { records, .. }) => records,
+            Some(Site::AsToday) | None => modules.keeps_module_object(ModuleRef::File(file)),
+        }
+    }
+
     fn evaluates_inner_module(&self, expression: ExprId, call: &Call) -> bool {
         if !call.args.is_empty() || self.input.modules.inner_modules(self.input.file).is_empty() {
             return false;
@@ -523,7 +555,10 @@ impl Walker<'_, '_> {
         let Some(answer) = modules.find_site_answer(self.input.file, site.kind) else {
             return false;
         };
-        has_module_operation(&site, answer, given.len()) && self.is_bound_module_callee(call.callee)
+        let names = analysis.alternatives_of(&site.specifier);
+        let is_type_settled = has_settled_type(hir, &site, names, given);
+        has_module_operation(&site, answer, given.len(), is_type_settled)
+            && self.is_bound_module_callee(call.callee)
     }
 
     fn is_bound_module_callee(&self, callee: ExprId) -> bool {

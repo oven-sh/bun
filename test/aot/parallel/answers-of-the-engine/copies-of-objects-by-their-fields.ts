@@ -1,6 +1,6 @@
 // Copies of objects whose layouts the checker knows. The source is plain, or got its keys in another order, lost one, got one more, a symbol, an index, a getter, other attributes, an integrity level or another prototype.
 // What is done to the copy is done to the copy alone: deleted from, frozen, given an accessor, stored to with another type, its prototype changed. The order of the keys is that of the source.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 type State = { a: number; b: number };

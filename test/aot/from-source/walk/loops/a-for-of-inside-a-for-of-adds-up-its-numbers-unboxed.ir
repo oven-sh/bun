@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function total(rows: number[][]): number {
+#   let sum = 0;
+#   for (const row of rows) { for (const one of row) sum += one; }
+#   return sum;
+# }
+# sink(total);
+# -- end of source
+# f1 = total
+# The inner loop stands under the cleanup of the outer for-of. It adds up what its own steps hand out: that is reckoning with what it reads, as `sum += row[i]` by index is. So its typed turns may begin
+# again, looks count on them, and the sum, which the closed copy may have made a text, is asked for a number once in front of the inner loop and goes round its typed copy as an unboxed number.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[sum]]: number @Double, {{*}}isLoopHead=true
+# CHECK: = Add [[sum]], {{*}}form=Numbers

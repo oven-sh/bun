@@ -67,8 +67,9 @@ impl LinkedFunctions {
             let map = ids_of(&tables, &list).map(TableIds::as_map);
             let records = list.functions.into_iter().map(Arc::unwrap_or_clone);
             let mut records: Vec<Function> = records.collect();
-            if let Some(map) = &map {
-                for function in &mut records {
+            for function in &mut records {
+                function.body.unpack();
+                if let Some(map) = &map {
                     remap_to_program_ids(function, map);
                 }
             }
@@ -147,7 +148,7 @@ mod tests {
             ..TableIds::default()
         };
         let function_types = [2, 6].map(FunctionId::new);
-        let function = Function {
+        let mut function = Function {
             name: Some(StringId::new(1)),
             function_types: function_types.to_vec(),
             builtin_members: vec![BuiltinId::default()],
@@ -156,6 +157,7 @@ mod tests {
                 builder.return_value(Some(value));
             })
         };
+        function.body.pack(&mut Vec::new());
         let lists = vec![FunctionsOfUnit {
             tables: 0,
             functions: vec![Arc::new(function)],

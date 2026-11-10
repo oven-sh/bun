@@ -221,7 +221,7 @@ fn computed_answer_is_sorted_and_unique() {
             ),
         ],
     };
-    assert_eq!(answer, CodeAnswer::Computed(expected));
+    assert_eq!(answer, CodeAnswer::Computed(&expected));
     assert_eq!(targets.0.as_slice(), [Some(FileId(5))]);
 }
 
@@ -247,7 +247,7 @@ fn computed_answer_without_candidate_is_empty_set() {
         host_modules: &[],
         spellings: &[],
     };
-    assert_eq!(answer, CodeAnswer::Computed(expected));
+    assert_eq!(answer, CodeAnswer::Computed(&expected));
 }
 
 #[test]
@@ -276,7 +276,7 @@ fn unknown_answer_keeps_cause_and_advances_past_file_candidates() {
         cause: ComputedUnknown::NoConstantPrefix,
         host_modules: &[HostModuleId(4), HostModuleId(9)],
     };
-    assert_eq!(answer, CodeAnswer::Computed(expected));
+    assert_eq!(answer, CodeAnswer::Computed(&expected));
     assert_eq!(targets.0.as_slice(), [Some(FileId(6))]);
 }
 
@@ -286,16 +286,18 @@ fn host_modules_come_from_constant_names_alone() {
     let constant = CodeAnswer::HostModule(HostModuleId(7));
     assert_eq!(host_modules_of(&constant), [HostModuleId(7)]);
 
+    let modules = ComputedTargets::Modules {
+        files: &[FileId(1)],
+        host_modules: &ids,
+        spellings: &[],
+    };
+    let all = ComputedTargets::All {
+        cause: ComputedUnknown::NoPattern,
+        host_modules: &ids,
+    };
     let others = [
-        CodeAnswer::Computed(ComputedTargets::Modules {
-            files: &[FileId(1)],
-            host_modules: &ids,
-            spellings: &[],
-        }),
-        CodeAnswer::Computed(ComputedTargets::All {
-            cause: ComputedUnknown::NoPattern,
-            host_modules: &ids,
-        }),
+        CodeAnswer::Computed(&modules),
+        CodeAnswer::Computed(&all),
         CodeAnswer::File(FileId(1)),
         CodeAnswer::External {
             specifier: known::require,

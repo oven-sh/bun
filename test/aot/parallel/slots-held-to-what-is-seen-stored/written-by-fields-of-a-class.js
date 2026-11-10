@@ -1,5 +1,5 @@
 // A slot of which nothing is written is held to what is seen stored in it. How the fields are written here: fields of a class.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 7
+// STATISTIC: FieldTypesEnforced >= 7
 var slot = "h" + (Date.now() > 0 ? "idden" : "");
 function hide(x) { globalThis[slot] = x; return globalThis[slot]; }
 function Other(w) { this.w = w; }

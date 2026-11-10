@@ -1,0 +1,18 @@
+The test file imports the CommonJS file first and the data file second. A test file is loaded asynchronously, so require() still returns the namespace object.
+#### asks.cjs
+exports.required = require("./held.json");
+#### held.json
+{ "name": "last" }
+#### a.test.js
+import { test } from "bun:test";
+import cjs from "./asks.cjs";
+import held from "./held.json";
+test("the data file second", () => {
+  console.log("| CASE", held.name, JSON.stringify(cjs.required), Object.prototype.toString.call(cjs.required));
+});
+#### z.test.js
+import { test } from "bun:test";
+test("deletes the key", () => {
+  delete require.cache[require.resolve("./held.json")];
+  console.log("| CASE", "after that", Object.prototype.toString.call(require("./held.json")));
+});

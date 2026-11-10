@@ -80,7 +80,7 @@ function countsIn(path: string) {
   const counts: Record<string, number> = {};
   for (const line of readFileSync(path, "utf8").split("\n")) {
     const [count, name] = line.split("\tcounter:");
-    if (name?.startsWith("RegExp")) counts[name] = (counts[name] ?? 0) + Number(count);
+    if (name?.includes("RegExp")) counts[name] = (counts[name] ?? 0) + Number(count);
   }
   return counts;
 }
@@ -102,7 +102,7 @@ for (const [name, { files, texts }] of Object.entries(cases)) {
     expect(said(plain.stdout).length).toBe(1);
     const counts = countsIn(path);
     expect({
-      given: counts.RegExpPredictedTextsGivenCode,
+      given: counts.PredictedRegExpsGivenCode,
       withoutRecord: counts.RegExpsCreatedWithoutRecord,
       interpreted: counts.RegExpMatchesInterpreted,
     }).toEqual({

@@ -308,7 +308,7 @@ pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> V
     native_path.iter().map(to_host).collect()
 }
 
-pub(super) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> Box<[u8]> {
+pub(crate) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> Box<[u8]> {
     let are_absolute = is_absolute(project_root) && is_absolute(native_path);
     let relative_path = are_absolute.then(|| compute_relative_path(project_root, native_path));
     let relative_path = relative_path.flatten();

@@ -1,0 +1,13 @@
+# -- source: a-walk-is-cut-short-where-operands-are-made-numbers.ts
+# declare function print(...values: unknown[]): void;
+# function count(flags: boolean[]) { let total = 0; for (let i = 0; i < flags.length; i++) total += +flags[i] - (flags[i] as any) * 2; return total; }
+# print(count([true, false, true]));
+# -- end of source
+# An operator on numbers first makes numbers of its operands and then asks which form they allow. Under the word the walk of the loop is cut short at the making.
+# The compiler died here: behind the cut the making answered nothing, and the form of nothing was asked for. A cut is taken up in front of the next operation of the input.
+# OPTIONS: testing=AbortLoopVisits:10:0
+# STATISTIC: LoopVisitsAborted >= 1
+# RUN: walk f0 mechanisms=all
+# CHECK: code f0:Body
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: -2

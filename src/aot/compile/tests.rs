@@ -6,8 +6,8 @@ use super::testing::{
 use super::*;
 use crate::builtins::{RuntimeFunction, RuntimeModule, table};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::InternalError;
-use crate::engine::LackedModuleRecord;
+use crate::diagnostics::{InternalError, log_diagnostic};
+use crate::engine::MissingModuleRecord;
 use crate::engine::testing::ResultRecords;
 use crate::ir::generated::{FunctionFlags, ModuleKind};
 use crate::ir::{
@@ -176,10 +176,38 @@ fn constructor_that_is_left_out_takes_the_class_token_as_a_class_token() {
         constructor,
         &mut text,
     );
-    assert!(text.contains("LeftOutOfExecutable"), "{text}");
+    assert!(text.contains("OmittedFromExecutable"), "{text}");
     let captures = constructor.captures.iter();
     let types = captures.map(|capture| program.types.get(capture.ty));
     assert!(types.eq([Type::opaque(OpaqueKind::ClassToken)]), "{text}");
+}
+
+fn has_key_with_text(statement: &str, name: &[u8]) -> bool {
+    let source = format!("function Base() {{}}\n{statement}\nglobalThis.kept = Base;\n");
+    let program = link_successfully(&[("a.js", &source[..])]).program;
+    let mut keys = program.property_keys.as_slice().iter();
+    keys.any(|key| {
+        key.text
+            .is_some_and(|text| program.strings.get(text) == name)
+    })
+}
+
+#[test]
+fn name_written_at_a_definition_by_descriptor_is_a_key_of_the_program() {
+    let definitions = [
+        "Object.defineProperty(Base.prototype, 'madeUpScale', { get() { return 10; } });",
+        "Reflect.defineProperty(Base.prototype, 'madeUpScale', { get() { return 10; } });",
+    ];
+    for definition in definitions {
+        assert!(
+            has_key_with_text(definition, b"madeUpScale"),
+            "{definition}"
+        );
+    }
+    assert!(!has_key_with_text(
+        "console.log('madeUpScale');",
+        b"madeUpScale"
+    ));
 }
 
 #[test]
@@ -766,6 +794,77 @@ fn every_build_checks_names_of_embedded_files() {
     let (result, log) = link_project(&project, &provider);
     expect_success(result, &log);
     assert_ne!(provider.checks.load(Ordering::Relaxed), 0);
+}
+
+struct CannotTakeOneValue;
+
+impl SourceProvider for CannotTakeOneValue {
+    fn fold_options<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> FoldOptions<'s> {
+        WithoutServices.fold_options(arena, atoms, log)
+    }
+
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+        WithoutServices.resolve(request, log)
+    }
+
+    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+        WithoutServices.load(request, log)
+    }
+
+    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+        WithoutServices.finish_deferred_loads(log)
+    }
+
+    fn parse_data<'s>(
+        &self,
+        file: &SourceFile<'_>,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> Result<DataModule<'s>, DataFailure> {
+        if !file.path.ends_with(b"/list.mjs") {
+            return WithoutServices.parse_data(file, arena, atoms, log);
+        }
+        log_diagnostic(log, Code::UnsupportedOption, &[b"the value of list.mjs"]);
+        Err(DataFailure::Build)
+    }
+
+    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        WithoutServices.check_embedded_files(log)
+    }
+}
+
+#[test]
+fn an_error_of_the_build_is_heard_of_a_file_that_is_named_as_code() {
+    let files = [
+        (
+            "a.mjs",
+            r#"import("./data/" + process.argv[2], { with: { type: "json" } });"#,
+        ),
+        ("data/list.mjs", "[1, 2]"),
+        ("data/other.mjs", "export {};"),
+    ];
+    let project = TestProject::new(&files, &default_settings());
+    let (result, log) = link_project(&project, &CannotTakeOneValue);
+    assert!(!expect_failure(result).is_internal_error);
+    let number = Code::UnsupportedOption.number();
+    assert!(
+        has_code(&log, Kind::Err, number),
+        "{}",
+        describe_messages(&log)
+    );
+    let (result, log) = link_project(&project, &WithoutServices);
+    expect_success(result, &log);
+    assert!(
+        !has_message(&log, Kind::Warn, ""),
+        "{}",
+        describe_messages(&log)
+    );
 }
 
 struct AssetPlugin {
@@ -1385,7 +1484,7 @@ fn module_without_source_file_has_no_text() {
 }
 
 #[test]
-fn function_text_of_a_module_is_its_text_without_the_types() {
+fn function_source_omits_types() {
     let text = "const greeting: string = \"gr\u{fc}\u{df}e\";\n\
         export function double(value: number): number {\n  return value * 2;\n}\n\
         console.log(greeting, double, double(21));";
@@ -1396,20 +1495,21 @@ fn function_text_of_a_module_is_its_text_without_the_types() {
     assert_eq!(source.text().map(BStr::new), Some(BStr::new(text)));
     assert!(texts.size_of_texts() >= text.len());
 
-    let function_text = source.function_text();
-    assert_eq!(function_text.len(), source.function_text_len());
-    assert!(function_text.len() < text.len());
+    let function_source = source.function_source();
+    assert_eq!(function_source.len(), source.function_source_len());
+    assert!(function_source.len() < text.len());
     let of_module = (program.functions.iter()).filter(|function| function.module == module);
     let shown: Vec<&BStr> = of_module
-        .map(|function| (function.text.start as usize, function.text.end as usize))
-        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .map(|function| function.source_range)
+        .map(|range| (range.start as usize, range.end as usize))
+        .map(|(start, end)| BStr::new(&function_source[start..end]))
         .collect();
     let expected = BStr::new("function double(value) {\n  return value * 2;\n}");
     assert!(shown.contains(&expected), "{shown:?}");
 }
 
 #[test]
-fn function_text_holds_the_values_that_bun_build_writes_in_place_of_enum_members() {
+fn function_source_inlines_enums() {
     let colors = "export enum Tone { Low = \"low\" }";
     let text = "import { Tone } from \"./colors\";\n\
         enum Color { Red = -1, Green = 5 }\n\
@@ -1420,11 +1520,12 @@ fn function_text_holds_the_values_that_bun_build_writes_in_place_of_enum_members
     let (program, texts) = (&linked.program, &linked.summary.texts);
     let module = program.entries[0].module;
     let source = texts.get(module).expect("a compiled file has its text");
-    let function_text = source.function_text();
+    let function_source = source.function_source();
     let of_module = (program.functions.iter()).filter(|function| function.module == module);
     let shown: Vec<&BStr> = of_module
-        .map(|function| (function.text.start as usize, function.text.end as usize))
-        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .map(|function| function.source_range)
+        .map(|range| (range.start as usize, range.end as usize))
+        .map(|(start, end)| BStr::new(&function_source[start..end]))
         .collect();
     let expected = BStr::new(
         "function pick(Shadow) {\n  return [5 .toFixed(), 1-(-1), (-1) ** 2, { [(-5)]: \"low\" }, Shadow.Green, Color[5]];\n}",
@@ -1433,7 +1534,7 @@ fn function_text_holds_the_values_that_bun_build_writes_in_place_of_enum_members
 }
 
 #[test]
-fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
+fn function_source_transpiles_declarations() {
     let text = "declare function f(): number;\n\
         namespace Box {\n  export let side = 4;\n  \
         export function area(): unknown {\n    \
@@ -1445,11 +1546,12 @@ fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
     let (program, texts) = (&linked.program, &linked.summary.texts);
     let module = program.entries[0].module;
     let source = texts.get(module).expect("a compiled file has its text");
-    let function_text = source.function_text();
+    let function_source = source.function_source();
     let of_module = (program.functions.iter()).filter(|function| function.module == module);
     let shown: Vec<&BStr> = of_module
-        .map(|function| (function.text.start as usize, function.text.end as usize))
-        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .map(|function| function.source_range)
+        .map(|range| (range.start as usize, range.end as usize))
+        .map(|(start, end)| BStr::new(&function_source[start..end]))
         .collect();
     let expected = BStr::new(
         "function area() {\n    \
@@ -1462,7 +1564,33 @@ fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
 }
 
 #[test]
-fn function_text_lacks_what_a_bundle_lacks() {
+fn declared_record_bears_the_position_of_its_function() {
+    let library = "export const first = value => value;\n\
+        export function aborted(payload) { return payload.issues.length > 0; }\n\
+        export class Kept { constructor(payload) { this.payload = payload; } }\n";
+    let declarations = "export interface Payload { value: unknown; issues: unknown[] }\n\
+        export declare const first: <T>(value: T) => T;\n\
+        export declare function aborted(payload: Payload): boolean;\n\
+        export declare class Kept { constructor(payload: Payload); payload: Payload }\n";
+    let main = "import { Kept, aborted, first } from \"./library.js\";\n\
+        console.log(aborted(first(new Kept({ value: 1, issues: [] }).payload)));";
+    let files = [
+        ("main.ts", main),
+        ("library.js", library),
+        ("library.d.ts", declarations),
+        GLOBALS,
+    ];
+    let program = &link_successfully(&files).program;
+    assert_eq!(program.declared_records.len(), 2);
+    for declared in &program.declared_records {
+        let place = (declared.module, declared.position);
+        let mut functions = program.functions.iter();
+        assert!(functions.any(|function| (function.module, function.position) == place));
+    }
+}
+
+#[test]
+fn function_source_omits_dead_code() {
     let text = "declare const unbound: unknown;\n\
         export function shown(o: any): unknown {\n  \
         if (false) o.dead();\n  \
@@ -1481,11 +1609,12 @@ fn function_text_lacks_what_a_bundle_lacks() {
     let (program, texts) = (&linked.program, &linked.summary.texts);
     let module = program.entries[0].module;
     let source = texts.get(module).expect("a compiled file has its text");
-    let function_text = source.function_text();
+    let function_source = source.function_source();
     let of_module = (program.functions.iter()).filter(|function| function.module == module);
     let shown: Vec<&BStr> = of_module
-        .map(|function| (function.text.start as usize, function.text.end as usize))
-        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .map(|function| function.source_range)
+        .map(|range| (range.start as usize, range.end as usize))
+        .map(|(start, end)| BStr::new(&function_source[start..end]))
         .collect();
     let expected = BStr::new(
         "function shown(o) {\n  if (false) ;\n  if (false) {} else o.a;\n  if (true) o.b; // @ts-expect-error\n  \
@@ -1497,17 +1626,18 @@ fn function_text_lacks_what_a_bundle_lacks() {
 }
 
 #[test]
-fn function_text_runs_as_the_function_does() {
+fn function_source_preserves_behavior() {
     let texts_of = |path: &str, text: &str| -> Vec<String> {
         let linked = link_successfully(&[(path, text), GLOBALS]);
         let (program, texts) = (&linked.program, &linked.summary.texts);
         let module = program.entries[0].module;
         let source = texts.get(module).expect("a compiled file has its text");
-        let function_text = source.function_text();
+        let function_source = source.function_source();
         let of_module = (program.functions.iter()).filter(|function| function.module == module);
         of_module
-            .map(|function| (function.text.start as usize, function.text.end as usize))
-            .map(|(start, end)| String::from_utf8_lossy(&function_text[start..end]).into_owned())
+            .map(|function| function.source_range)
+            .map(|range| (range.start as usize, range.end as usize))
+            .map(|(start, end)| String::from_utf8_lossy(&function_source[start..end]).into_owned())
             .collect()
     };
     let text = "enum Level { Below = -1, Strict = \"use strict\" }\n\
@@ -1550,13 +1680,13 @@ fn function_text_runs_as_the_function_does() {
         assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
     }
     let text = "exports.shown = function () {\n  if (false) { function g() {} }\n  return g;\n};";
-    let expected = "function () {\n  if (false) { var g; }\n  return g;\n}";
+    let expected = "function() {\n  if (false) { var g; }\n  return g;\n}";
     let shown = texts_of("a.cjs", text);
     assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
 }
 
 #[test]
-fn function_text_shows_one_operand_where_bun_run_prints_one() {
+fn function_source_folds_constants() {
     let operators = "export function shown(o) {\n  \
         return [1 && o.a, \"\" || o.b, void 0 ?? o.c, 0n || o.d, !0 && o.e, -1 && o.f, /x/ && o.g,\n  \
         typeof 1 === \"number\" && o.h, (o.i++, true) ? o.j : o.k, (o.i++, 1) && o.l, [] && o.m];\n}\n\
@@ -1575,11 +1705,12 @@ fn function_text_shows_one_operand_where_bun_run_prints_one() {
         let (program, texts) = (&linked.program, &linked.summary.texts);
         let module = program.entries[0].module;
         let source = texts.get(module).expect("a compiled file has its text");
-        let function_text = source.function_text();
+        let function_source = source.function_source();
         let of_module = (program.functions.iter()).filter(|function| function.module == module);
         of_module
-            .map(|function| (function.text.start as usize, function.text.end as usize))
-            .map(|(start, end)| String::from_utf8_lossy(&function_text[start..end]).into_owned())
+            .map(|function| function.source_range)
+            .map(|range| (range.start as usize, range.end as usize))
+            .map(|(start, end)| String::from_utf8_lossy(&function_source[start..end]).into_owned())
             .collect()
     };
     let expected = "function shown(o) {\n  return [o.a, o.b, o.c, o.d, o.e, o.f, o.g,\n  \
@@ -1611,25 +1742,25 @@ fn library_module_that_is_evaluated_without_code_is_named() {
         panic!("{} modules have the path bun:jsc", native_modules.len());
     };
     let paths = collect_paths_of_modules_without_bodies(&linked.program);
-    let describe = |lacked: &[LackedModuleRecord]| {
+    let describe = |lacked: &[MissingModuleRecord]| {
         let records = ResultRecords {
-            library_modules_lacked: lacked,
+            missing_library_modules: lacked,
             ..ResultRecords::default()
         };
-        records.with_result(|engine| describe_library_modules_lacked(engine, &paths))
+        records.with_result(|engine| describe_missing_library_modules(engine, &paths))
     };
     assert_eq!(describe(&[]), None);
 
     let module = native_module.to_word();
-    let message = describe(&[LackedModuleRecord { module }]);
+    let message = describe(&[MissingModuleRecord { module }]);
     let message = message.expect("a module that the engine lacks stops the build");
     assert!(
-        message.ends_with("that the load has left out: bun:jsc"),
+        message.ends_with("that the load stage removed: bun:jsc"),
         "{message}"
     );
 
     let module = u32::try_from(linked.program.modules.len()).unwrap();
-    let message = describe(&[LackedModuleRecord { module }]);
+    let message = describe(&[MissingModuleRecord { module }]);
     let message = message.expect("so does one that the program does not list");
     assert!(message.ends_with(&format!("number {module}")), "{message}");
 }
@@ -1647,9 +1778,9 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
         panic!("{} modules have the path bun:jsc", native_modules.len());
     };
     let module = native_module.to_word();
-    let lacked = [LackedModuleRecord { module }];
+    let lacked = [MissingModuleRecord { module }];
     let records = ResultRecords {
-        library_modules_lacked: &lacked,
+        missing_library_modules: &lacked,
         ..ResultRecords::default()
     };
 
@@ -1661,7 +1792,7 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
         let mut build = Build::new(&options, &WithoutServices, &caches, LimitValues::for_host());
         build.paths_of_modules_without_bodies =
             collect_paths_of_modules_without_bodies(&linked.program);
-        records.with_result(|engine| build.report_library_modules_lacked(engine));
+        records.with_result(|engine| build.report_missing_library_modules(engine));
         let result = match build.diagnostics.has_errors() {
             true => Err(Stage::Any),
             false => Ok(()),
@@ -1677,7 +1808,7 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
             .expect("the record stops the build")
             .is_internal_error
     );
-    let message = "internal compiler error (Load): the program evaluates modules of Bun's library";
+    let message = "internal compiler error (Load): the program evaluates built-in modules that the load stage removed";
     assert!(has_message(&log, Kind::Err, message));
     assert_eq!(log.msgs.len(), 1);
 

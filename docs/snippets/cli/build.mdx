@@ -22,6 +22,11 @@ bun build <entry points>
   With <code>--bytecode</code>: skip the build-time bytecode optimization passes
 </ParamField>
 
+<ParamField path="--bytecode-order" type="string">
+  With <code>--compile --bytecode</code>: lay the bytecode out by the order files that a run of the executable wrote
+  with <code>BUN_BYTECODE_ORDER_OUT</code>. Comma-separated or repeated, most important first
+</ParamField>
+
 <ParamField path="--target" type="string" default="browser">
   Intended execution environment for the bundle. One of <code>browser</code>, <code>bun</code>, or <code>node</code>
 </ParamField>
@@ -55,7 +60,8 @@ bun build <entry points>
 
 <ParamField path="--sourcemap" type="string" default="none">
   Generate source maps. One of <code>linked</code>, <code>inline</code>, <code>external</code>, or <code>none</code>.
-  With <code>--aot</code>, only <code>external</code> has an effect: it's the same as <code>--obfuscate</code>
+  With <code>--aot</code>, only <code>external</code> has an effect. It does what <code>--obfuscate</code> does, but
+  functions and classes keep their <code>name</code>
 </ParamField>
 
 <ParamField path="--banner" type="string">
@@ -210,8 +216,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--aot" type="boolean">
-  Compile JavaScript and TypeScript to machine code at build time. Requires <code>--compile</code>. Implies{" "}
-  <code>--format=esm</code>
+  Compile JavaScript and TypeScript to machine code at build time. Requires <code>--compile</code>.{" "}
+  <code>--format</code> and <code>--bytecode</code> have no effect with it
 </ParamField>
 
 <ParamField path="--explain" type="string">
@@ -226,7 +232,7 @@ bun build <entry points>
 
 <ParamField path="--no-compile-function-source" type="boolean">
   With <code>--aot</code>: don't embed function source code. <code>fn.toString()</code> returns{" "}
-  <code>[native code]</code>, and the executable only runs code that was compiled into it
+  <code>[native code]</code>
 </ParamField>
 
 <ParamField path="--compile-inspector" type="boolean">
@@ -234,8 +240,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--aot-allow-code-from-disk" type="boolean">
-  With <code>--aot</code>: let <code>import()</code> and <code>require()</code> load code that isn't in the executable
-  from disk at run time. Makes it larger and slower
+  With <code>--aot</code>: let <code>import()</code>, <code>require()</code> and <code>new Worker()</code> load code
+  that isn't in the executable from disk at run time. Makes it larger and slower
 </ParamField>
 
 <ParamField path="--aot-harden" type="string">
@@ -250,12 +256,8 @@ bun build <entry points>
 
 <ParamField path="--obfuscate" type="boolean">
   With <code>--aot</code>: strip function names and source locations from the executable and write them to{" "}
-  <code>&lt;outfile&gt;.map</code>. The source text of functions goes too, as with{" "}
-  <code>--no-compile-function-source</code>: a library that reads <code>fn.toString()</code> gets{" "}
-  <code>[native code]</code>. The path of a module stays only where your code can read it, such as through{" "}
-  <code>import.meta.path</code>, and the other modules don't show up when your code lists the folders inside the
-  executable. The <code>name</code> of every function and class is empty. <code>--sourcemap=external</code> does the
-  same and leaves <code>name</code> alone
+  <code>&lt;outfile&gt;.map</code>. The <code>name</code> of every function and class is empty, and{" "}
+  <code>fn.toString()</code> returns <code>[native code]</code>
 </ParamField>
 
 <ParamField path="--trim" type="boolean">

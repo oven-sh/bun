@@ -30,6 +30,7 @@ const stateChanged = {
 
 const stringOrNull = b.union(b.string, b.strictNull);
 const newArrayOfStrings = b.instance("Array").holding({ element: b.string }).fresh;
+const deletedCookie = b.optionBag(["name", "domain", "path"]);
 const arrayBufferView = b.union(b.instance("TypedArray"), b.instance("DataView"));
 const byteSource = b.union(arrayBufferView, b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
 
@@ -304,22 +305,44 @@ const sends = (message: readonly b.UseSpec[]) =>
     uses: { this: writesToSocket, message, compress: b.inspected },
   }) satisfies b.FunctionField;
 
-const publishes = (message: readonly b.UseSpec[]) =>
-  ({
-    ...socketTraffic,
-    args: { topic: b.any.optional, message: b.any.optional, compress: b.any.optional },
-    uses: { this: writesToSubscribers, topic: convertedToCharacters, message, compress: b.inspected },
-  }) satisfies b.FunctionField;
+// A topic that is no string is not converted: it is refused, and the error describes it.
+const topicOfAnyKind = [...convertedToCharacters, b.printedByFormatter("constructor")];
 
-const topicOperation = (state: readonly b.UseSpec[]) =>
-  ({
-    args: { topic: b.any.optional },
-    returns: b.bool,
-    ...operandCodeOnly,
-    throws: true,
-    uses: { this: state, topic: convertedToCharacters },
-    implementation: b.hostCall,
-  }) satisfies b.FunctionField;
+const publishes = (message: readonly b.UseSpec[]) =>
+  [
+    {
+      ...socketTraffic,
+      args: { topic: b.string, message: b.any.optional, compress: b.any.optional },
+      uses: { this: writesToSubscribers, topic: characters, message, compress: b.inspected },
+    },
+    {
+      ...socketTraffic,
+      args: { topic: b.any.optional, message: b.any.optional, compress: b.any.optional },
+      uses: { this: writesToSubscribers, topic: topicOfAnyKind, message, compress: b.inspected },
+    },
+  ] satisfies readonly b.FunctionField[];
+
+const topicOperation = (state: readonly b.UseSpec[], runsOnlyOperandCode = true) =>
+  [
+    {
+      args: { topic: b.string },
+      returns: b.bool,
+      ...operandCodeOnly,
+      runsOnlyOperandCode,
+      throws: true,
+      uses: { this: state, topic: characters },
+      implementation: b.hostCall,
+    },
+    {
+      args: { topic: b.any.optional },
+      returns: b.bool,
+      ...operandCodeOnly,
+      runsOnlyOperandCode,
+      throws: true,
+      uses: { this: state, topic: topicOfAnyKind },
+      implementation: b.hostCall,
+    },
+  ] satisfies readonly b.FunctionField[];
 
 export default b.declarations(
   b.tuple("StringPair", [b.string, b.string]),
@@ -463,10 +486,7 @@ export default b.declarations(
     done: b.bool,
   }),
   membersOf("FormData.prototype", {
-    ...pairIteration(
-      "FormDataIterator",
-      forEachPairOf(valueOfForm, [...makesFiles, b.handedOutFrom(filesOfFormsCell)]),
-    ),
+    ...pairIteration("FormDataIterator", forEachPairOf(valueOfForm, [...makesFiles, b.exposedFrom(filesOfFormsCell)])),
     get: takingStrings(["name"], [], { ...formRead, returns: b.union(valueOfForm, b.strictNull) }),
     getAll: takingStrings(["name"], [], {
       ...formRead,
@@ -560,7 +580,8 @@ export default b.declarations(
         ...operandCodeOnly,
         args: { name: b.any.optional, options: b.any.optional },
         throws: true,
-        uses: { this: changesState, name: [b.everything], options: [b.everything] },
+        // It reads three members, converts what `domain` and `path` hold, and describes no value in its errors.
+        uses: { this: changesState, name: deletedCookie, options: deletedCookie },
         implementation: b.hostCall,
       },
     ],
@@ -680,7 +701,7 @@ export default b.declarations(
     pong: sends(anyMessage),
     subscribe: topicOperation(changesState),
     // Leaving the last topic writes out what was published to this socket.
-    unsubscribe: { ...topicOperation(writesToSocket), runsOnlyOperandCode: false },
+    unsubscribe: topicOperation(writesToSocket, false),
     isSubscribed: topicOperation(readsState),
     // The listeners for `abort` on the signal of the request that was upgraded run too.
     close: {

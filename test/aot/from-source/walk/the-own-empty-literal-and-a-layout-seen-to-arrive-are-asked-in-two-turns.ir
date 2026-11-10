@@ -1,0 +1,31 @@
+# `var opts = options || {}`: at the join the function's own empty literal (L0, proven on its way in) meets what was seen to arrive as `options` (L2, the caller's literal). No family holds
+# L0 and L2, so the expectation L0|L2 had no test ("EXPECTED HAS NO TEST") and all eight reads off `opts` went by name, whether options were given or not. Now the members that answer one of
+# the names used off the value are asked first (L2: the reads are slots), and on the failing side the silent ones by their shapes (L0: every read is undefined). f1 = configure.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject layout=L0
+# CHECK: = ShapeTest {{*}}layouts=[L2] [rejectsMarkedObjects]
+# CHECK: = GetSlot {{*}}key="encoding" receivers=[L2] level=Proven
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
+# CHECK: = GetSlot {{*}}key="limit" receivers=[L2] level=Proven
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
+# -- source: the-own-empty-literal-and-a-layout-seen-to-arrive-are-asked-in-two-turns.cjs
+# function configure(stream, options) {
+#   var opts = options || {};
+#   var encoding = opts.encoding !== undefined ? opts.encoding : null;
+#   var limit = opts.limit | 0;
+#   var length = opts.length != null && !isNaN(opts.length) ? opts.length | 0 : 0;
+#   var strict = opts.strict === true ? 1 : 0;
+#   return stream + limit + length + strict + (encoding === null ? 0 : 1) + (opts.verify ? 1 : 0);
+# }
+# const table = { configure };
+# const turns = Number(process.argv[2] || 1) * 100000;
+# const given = process.argv[3] !== "absent";
+# function make(i) {
+#   return { limit: 3, length: i & 7, encoding: "utf8", strict: true };
+# }
+# const handed = [make(1), make(2), make(3), make(4)];
+# let sum = 0;
+# for (let i = 0; i < turns; i++) sum += table[process.argv.length > 99 ? "x" : "configure"](i & 1, given ? handed[i & 3] : undefined);
+# console.log(sum / turns);
+# -- end of source

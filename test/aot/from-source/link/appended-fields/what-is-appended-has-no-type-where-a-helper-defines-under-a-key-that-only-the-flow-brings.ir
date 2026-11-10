@@ -1,0 +1,19 @@
+# The control: the helper is called once, so the flow knows its key, but no access lays the value under the name: what lies under tools is not known.
+# -- source: what-is-appended-has-no-type-where-a-helper-defines-under-a-key-that-only-the-flow-brings.js
+# const tools = Object.freeze({ __proto__: null, twice(x) { return x * 2; }, half(x) { return x / 2; } });
+# const other = Object.freeze({ __proto__: null, size: 7, twice(x) { return x * 3; }, third(x) { return x / 3; } });
+# const box = {};
+# function run(n) { let s = 0; for (let i = 0; i < n; i++) s += box.tools.twice(i); return s; }
+# function show() { print(run(5), box.marked, box.count); }
+# function lay(b, name, value) { Object.defineProperty(b, name, { value: value }); }
+# function fill(b) { b.tools = tools; b.count = 3; Object.defineProperty(b, "marked", { value: true }); }
+# fill(box); show(); lay(box, "tools", other); show();
+# -- end of source
+# OPTIONS: check=FlowFixpoint
+# RUN: link fields mechanisms=all
+# CHECK-NOT: "tools" appended proven
+# CHECK: "tools" appended
+# CHECK-NOT: "tools" appended proven
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 20 true 3
+# ANSWERS: 30 true 3

@@ -1,0 +1,24 @@
+# `class A extends R { constructor(r) { super(r); this.w = 5; } }`, `class M extends A { constructor(r) { super(r); this.z = 2; } }`, `new M(r)` in a loop. A base constructor whose text only fills the object is copied
+# into the class below. A derived one written by hand never was: its text holds the super call and the checks that stand round it. Called, it does not know its new.target: the prototype is asked of an operation, the
+# object is made out of line below it, and it can never fall away.
+# In a loop such a constructor is copied too where, beside the super call and those checks, its text only fills the object. What it calls above goes by the rules for that call.
+# f1 = f, f2 = g . f3, f4, f6 = the constructors of R, A, M
+# -- source: in-a-loop-a-derived-constructor-that-only-fills-the-object-behind-super-is-copied-into-the-class-below.cjs
+# "use strict";
+# const D = JSON.parse('[{"b":1},{"b":2},{"b":3}]');
+# class R { constructor(r) { this.v = r.b; } }
+# class A extends R { constructor(r) { super(r); this.w = 5; } a() { return this.v + this.w; } }
+# class M extends A { constructor(r) { super(r); this.z = 2; } }
+# class Early extends R { constructor(r) { this.w = 5; super(r); } } class BelowEarly extends Early { constructor(r) { super(r); this.z = 1; } }
+# class Twice extends R { constructor(r) { super(r); super(r); } } class BelowTwice extends Twice { constructor(r) { super(r); this.z = 1; } }
+# function f(list) { let s = 0; for (const r of list) { const m = new M(r); s += m.a() + m.z + Object.keys(m).join("").length * 10; } return s; }
+# function g(list) { let s = ""; for (const r of list) { try { s += new BelowEarly(r).v; } catch (e) { s += e.constructor.name[0]; } try { s += new BelowTwice(r).v; } catch (e) { s += e.constructor.name[0]; } } return s; }
+# print(f(D), f(D), g(D), Object.keys(new M(D[0])).join());
+# Object.setPrototypeOf(A, class { constructor(r) { this.other = r.b * 100; } });
+# print(f(D), Object.keys(new M(D[0])).join());
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: frame {{*}}callee=f4
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 117 117 RRRRRR v,w,z
+# ANSWERS: NaN other,w,z

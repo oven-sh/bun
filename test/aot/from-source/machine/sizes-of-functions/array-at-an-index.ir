@@ -1,0 +1,16 @@
+# f1 = pick
+# -- source: array-at-an-index.ts
+# function pick(list: number[], index: number): number {
+#   return list.at(index) ?? 0;
+# }
+# declare const input: any;
+# const list: number[] = [];
+# list.push(input | 0);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = pick(list, input | 0);
+# -- end of source
+# The compiler before this one: 9 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 15, patches 2, moves 4, unlikely or rare 18.
+# RUN(X64): steps most:19 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 19

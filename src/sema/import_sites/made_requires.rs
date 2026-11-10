@@ -2,18 +2,22 @@ use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
     is_free_name,
 };
+use super::parameters::find_values_passed_for_pattern;
+use super::touched_exports::is_only_tested;
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
-    FnOwner, InitialState, Parent, PatParent, SymbolId, has_mapped_arguments,
+    Binding, BindingInitializer, BindingKind, BindingStability, Bound, CodeUnit, CommonJsVariable,
+    Decl, FnOwner, InitialState, Parent, PatParent, StoreKind, SymbolId, SymbolStore,
+    has_mapped_arguments,
 };
-use crate::fold::Decisions;
+use crate::fold::{Decisions, outermost_cast};
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
-    ImportedRequire, MemberKey, NodeData, OtherValues, PatKind, StmtKind, UnOp,
+    ImportedRequire, MemberKey, NodeData, OtherValues, PatKind, PropKey, PropKind, StmtKind, UnOp,
 };
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::SmallVec;
+use std::cell::{Cell, RefCell};
 
 fn is_node_module(specifier: Atom) -> bool {
     specifier == known::module || specifier == known::node_module
@@ -74,6 +78,7 @@ pub(super) struct StepsLeft {
     pub(super) passes_get_builtin_module: bool,
     passes_choices: bool,
     passes_and: bool,
+    passes_late: bool,
 }
 
 impl StepsLeft {
@@ -84,6 +89,7 @@ impl StepsLeft {
         passes_get_builtin_module: true,
         passes_choices: true,
         passes_and: true,
+        passes_late: true,
     };
 
     fn proofs_alone(self) -> StepsLeft {
@@ -101,6 +107,13 @@ impl StepsLeft {
             (false, false) => OtherValues::None,
         }
     }
+    pub(super) fn without_late(self) -> StepsLeft {
+        StepsLeft {
+            passes_late: false,
+            ..self
+        }
+    }
+
     pub(super) fn without_choices(self) -> StepsLeft {
         StepsLeft {
             passes_choices: false,
@@ -120,6 +133,15 @@ pub(super) struct Text<'a, 'h, 'b, 'd> {
     pub(super) hir: &'a File<'h>,
     pub(super) bound: &'a Bound<'b>,
     pub(super) decisions: Option<&'a Decisions<'d>>,
+    urls_handed: Option<&'a UrlsHanded>,
+}
+
+type Handed = (SymbolId, Option<Atom>);
+
+#[derive(Default)]
+pub(super) struct UrlsHanded {
+    known: RefCell<FxHashMap<Handed, bool>>,
+    pub(super) found_own_file: Cell<bool>,
 }
 
 impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
@@ -133,6 +155,14 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
             hir,
             bound,
             decisions,
+            urls_handed: None,
+        }
+    }
+
+    pub(super) fn with_urls_handed(self, urls_handed: &'a UrlsHanded) -> Self {
+        Text {
+            urls_handed: Some(urls_handed),
+            ..self
         }
     }
 
@@ -474,11 +504,21 @@ fn starts_at_own_folder(
                 let callee = hir[call].callee;
                 let export = text.find_export_read_off_module(callee, left, PATH_MODULES);
                 let joins = export == Some(known::join) || export == Some(known::resolve);
-                hir.ids(hir[call].args).next().filter(|_| joins)
+                let is_path_of_url = hir[call].args.len() == 1
+                    && text.find_export_read_off_module(callee, left, URL_MODULES)
+                        == Some(known::fileURLToPath);
+                hir.ids(hir[call].args)
+                    .next()
+                    .filter(|_| joins || is_path_of_url)
             }
             _ => None,
         };
+        let is_url_from_own_file = matches!(expr_kind(hir, e), Some(ExprKind::New(call))
+            if hir[call].args.len() == 2
+                && is_free_name(hir, bound, hir.skip_type_assertions(hir[call].callee), &[known::URL])
+                && names_own_file_behind(text, hir.id_at(hir[call].args, 1), parts_left, left));
         names_own_folder(text, e, left)
+            || is_url_from_own_file
             || first.is_some_and(|first| starts_at_own_folder(text, first, parts_left, left))
     })
 }
@@ -520,12 +560,186 @@ fn find_arguments_of_create_require(
 fn find_made_require(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> Option<OwnRequire> {
     let arguments = find_arguments_of_create_require(text, e, left)?;
     let base = text.hir.ids(arguments).next()?;
-    if names_own_file_behind(text, base, LONGEST_CHAIN_OF_BINDINGS, left) {
+    if names_own_file_behind(text, base, LONGEST_CHAIN_OF_BINDINGS, left)
+        || is_handed_own_file_by_calls_in_sight(text, base, left)
+    {
         Some(OwnRequire::Made)
     } else if starts_at_own_folder(text, base, LONGEST_CHAIN_OF_BINDINGS, left) {
         Some(OwnRequire::MadeForPath(base))
     } else {
         None
+    }
+}
+
+fn find_identifiers_written(hir: &File<'_>, name: Atom) -> Vec<ExprId> {
+    let all = hir.lazy.cells.identifiers_by_name.get_or_init(|| {
+        let exprs = (0..).map(ExprId).zip(hir.exprs.iter());
+        let mut all: Vec<(Atom, ExprId)> = exprs
+            .filter_map(|(e, written)| match written.kind {
+                ExprKind::Ident(name) => Some((name, e)),
+                _ => None,
+            })
+            .collect();
+        all.shared_sort_unstable_by_key(|it| (it.0.0, it.1));
+        all.into_boxed_slice()
+    });
+    let first = all.partition_point(|it| it.0.0 < name.0);
+    let count = all[first..].partition_point(|it| it.0 == name);
+    all[first..first + count].iter().map(|it| it.1).collect()
+}
+
+fn is_handed_own_file_by_calls_in_sight(
+    text: Text<'_, '_, '_, '_>,
+    base: ExprId,
+    left: StepsLeft,
+) -> bool {
+    let Text {
+        hir,
+        bound,
+        decisions,
+        urls_handed,
+    } = text;
+    let (true, Some(decisions), Some(urls_handed)) = (left.passes_late, decisions, urls_handed)
+    else {
+        return false;
+    };
+    let find_written = |name: Atom| find_identifiers_written(hir, name);
+    let mut is_handed = false;
+    let mut walked: Vec<(Handed, usize, bool)> = Vec::new();
+    let mut places: FxHashMap<Handed, usize> = FxHashMap::default();
+    let mut to_ask: Vec<(ExprId, usize)> = vec![(base, usize::MAX)];
+    let refused = 'walk: loop {
+        let Some((value, asker)) = to_ask.pop() else {
+            break None;
+        };
+        let all = StepsLeft::ALL;
+        let mut reaches_own_file =
+            names_own_file_behind(text, value, LONGEST_CHAIN_OF_BINDINGS, all);
+        if !reaches_own_file {
+            let value = hir.skip_type_assertions(value);
+            let (mention, key) = match hir.member_key(value) {
+                Some((object, MemberKey::Name(key))) => {
+                    (hir.skip_type_assertions(object), Some(key))
+                }
+                Some(_) => break Some(asker),
+                None => (value, None),
+            };
+            let (Some(ExprKind::Ident(name)), Binding::Symbol(parameter)) =
+                (expr_kind(hir, mention), bound.binding(mention))
+            else {
+                break Some(asker);
+            };
+            let handed = (parameter, key);
+            let known = urls_handed.known.borrow().get(&handed).copied();
+            match (places.get(&handed), known) {
+                (Some(&place), _) => reaches_own_file = walked[place].2,
+                (None, Some(true)) => reaches_own_file = true,
+                (None, Some(false)) => break Some(asker),
+                (None, None) => {
+                    let place = walked.len();
+                    walked.push((handed, asker, false));
+                    places.insert(handed, place);
+                    if key.is_some()
+                        && !is_only_read_by_member(hir, bound, parameter, name, &|_| false)
+                    {
+                        break Some(place);
+                    }
+                    let Some((values, path, _)) = find_values_passed_for_pattern(
+                        hir,
+                        bound,
+                        decisions,
+                        mention,
+                        &find_written,
+                        true,
+                    ) else {
+                        break Some(place);
+                    };
+                    for value in values {
+                        let mut keys = path.iter().copied().chain(key);
+                        let written = keys.try_fold(value, |object, key| {
+                            find_value_written_under(hir, object, key)
+                        });
+                        match written {
+                            Some(value) => to_ask.push((value, place)),
+                            None => break 'walk Some(place),
+                        }
+                    }
+                }
+            }
+        }
+        if reaches_own_file {
+            let mut place = asker;
+            while let Some(it) = walked.get_mut(place)
+                && !it.2
+            {
+                it.2 = true;
+                place = it.1;
+            }
+            is_handed |= place == usize::MAX;
+        }
+    };
+    let mut known = urls_handed.known.borrow_mut();
+    if let Some(mut place) = refused {
+        while let Some(it) = walked.get(place) {
+            known.insert(it.0, false);
+            place = it.1;
+        }
+        return false;
+    }
+    known.extend(walked.iter().filter(|it| it.2).map(|it| (it.0, true)));
+    if is_handed {
+        urls_handed.found_own_file.set(true);
+    }
+    is_handed
+}
+
+pub(super) fn is_only_read_by_member(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    object: SymbolId,
+    name: Atom,
+    is_other_read: &dyn Fn(ExprId) -> bool,
+) -> bool {
+    let is_callee = |member: ExprId| match bound.parent_of_expr(member) {
+        Parent::Expr(user) => match expr_kind(hir, user) {
+            Some(ExprKind::Call(call)) => hir[call].callee == member,
+            Some(ExprKind::TaggedTemplate(_)) | None => true,
+            Some(_) => false,
+        },
+        _ => false,
+    };
+    find_identifiers_written(hir, name)
+        .into_iter()
+        .all(|written| {
+            if !bound.is_evaluated_ident(written)
+                || bound.binding(written) != Binding::Symbol(object)
+            {
+                return true;
+            }
+            let Parent::Expr(member) = bound.parent_of_expr(written) else {
+                return is_other_read(written);
+            };
+            hir.member_key(member).is_some_and(|(of, _)| of == written)
+                && !is_callee(member)
+                && is_only_called_or_read(hir, bound, written, 0)
+        })
+}
+
+fn find_value_written_under(hir: &File<'_>, object: ExprId, key: Atom) -> Option<ExprId> {
+    let Some(ExprKind::Object(properties)) = expr_kind(hir, hir.skip_type_assertions(object))
+    else {
+        return None;
+    };
+    let is_plain = properties.iter().all(|id| {
+        matches!(hir[id].kind, PropKind::Init | PropKind::Shorthand)
+            && matches!(hir[id].key, PropKey::Name(_))
+    });
+    let mut written = properties
+        .iter()
+        .filter(|&id| hir[id].key == PropKey::Name(key));
+    match (is_plain, written.next(), written.next()) {
+        (true, Some(property), None) => Some(hir[property].value),
+        _ => None,
     }
 }
 
@@ -709,8 +923,457 @@ fn return_value_of(hir: &File<'_>, call: Call, callee: ExprId) -> Option<ExprId>
     let Some(ExprKind::Fn(function)) = expr_kind(hir, hir.skip_type_assertions(callee)) else {
         return None;
     };
+    return_value_of_function(hir, call, function)
+}
+
+fn return_value_of_settled_function(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    e: ExprId,
+) -> Option<ExprId> {
+    let Some(ExprKind::Call(call)) = expr_kind(hir, e) else {
+        return None;
+    };
+    let callee = follow_settled_bindings(hir, bound, hir[call].callee);
+    let declared =
+        settled_symbol(hir, bound, callee).map(|function| bound.binding_initializer(hir, function));
+    match declared {
+        Some(BindingInitializer::Function(function)) => {
+            return_value_of_function(hir, hir[call], function)
+        }
+        _ => return_value_of(hir, hir[call], callee),
+    }
+}
+
+fn is_answer_of_callee_only_called(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    let Some(ExprKind::Call(call)) = expr_kind(hir, e) else {
+        return false;
+    };
+    !settled_chain(hir, bound, hir[call].callee).any(|name| {
+        settled_symbol(hir, bound, name)
+            .is_some_and(|name| is_answer_used_otherwise_than_called(hir, bound, name))
+    })
+}
+
+pub(super) fn is_nothing(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    let e = hir.skip_type_assertions(e);
+    matches!(
+        expr_kind(hir, e),
+        Some(ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. })
+    ) || is_free_name(hir, bound, e, &[known::undefined])
+}
+
+fn find_require_among_all_that_is_stored(
+    text: Text<'_, '_, '_, '_>,
+    e: ExprId,
+    left: StepsLeft,
+) -> Option<OwnRequire> {
+    let Text { hir, bound, .. } = text;
+    if !left.passes_late || !left.passes_and || !left.passes_get_builtin_module {
+        return None;
+    }
+    let (Some(ExprKind::Ident(_)), Binding::Symbol(holder)) = (expr_kind(hir, e), bound.binding(e))
+    else {
+        return None;
+    };
+    if bound.dynamic_lookup_scope(NodeData::Expr(e)).is_some() {
+        return None;
+    }
+    if IS_ASKING_WHOLE_FILE.replace(true) {
+        return None;
+    }
+    let holders = &hir.lazy.cells.names_that_hold_own_requires;
+    let holders = holders.get_or_init(|| list_names_that_hold_own_requires(text));
+    IS_ASKING_WHOLE_FILE.set(false);
+    let found = holders.binary_search_by_key(&holder, |it| it.0).ok()?;
+    if lets_made_requires_out_of_sight(text) {
+        return None;
+    }
+    Some(match holders[found].1 {
+        true => OwnRequire::Made,
+        false => OwnRequire::OfFile,
+    })
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum OtherUse {
+    Escaped,
+    Tracked,
+    OfCallResult,
+}
+
+fn list_names_used_otherwise_than_called(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+) -> Box<[(SymbolId, OtherUse)]> {
+    let mut names: Vec<(SymbolId, OtherUse)> = Vec::new();
+    for mention in (0..hir.exprs.len() as u32).map(ExprId) {
+        if !bound.is_evaluated_ident(mention) || bound.is_store_target(mention) {
+            continue;
+        }
+        let Binding::Symbol(name) = bound.binding(mention) else {
+            continue;
+        };
+        let written = outermost_cast(hir, bound, mention);
+        let is_callee = matches!(bound.parent_of_expr(written), Parent::Expr(user)
+            if matches!(expr_kind(hir, user), Some(ExprKind::Call(call)) if hir[call].callee == written));
+        if !is_called_or_asked_to_resolve(hir, bound, mention)
+            && !is_only_tested(hir, bound, written)
+        {
+            let is_tracked = match bound.parent_of_expr(written) {
+                Parent::Expr(member) => {
+                    (hir.member_key(member)).is_some_and(|(object, _)| object == written)
+                }
+                Parent::VarInit(declaration) => {
+                    matches!(bound.initialized_binding(hir[declaration].pat),
+                        Binding::Symbol(taker) if bound.is_stable_binding(taker))
+                }
+                _ => false,
+            };
+            names.push(match is_tracked {
+                true => (name, OtherUse::Tracked),
+                false => (name, OtherUse::Escaped),
+            });
+        } else if let (true, Parent::Expr(answer)) = (is_callee, bound.parent_of_expr(written))
+            && !is_called_or_asked_to_resolve(hir, bound, answer)
+            && !is_only_tested(hir, bound, outermost_cast(hir, bound, answer))
+        {
+            names.push((name, OtherUse::OfCallResult));
+        }
+    }
+    names.shared_sort_unstable();
+    names.dedup();
+    names.into_boxed_slice()
+}
+
+fn is_used_otherwise_than_called(hir: &File<'_>, bound: &Bound<'_>, name: SymbolId) -> bool {
+    let names = &hir.lazy.cells.names_used_otherwise_than_called;
+    let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
+    let start = names.partition_point(|it| it.0 < name);
+    (names[start..].first()).is_some_and(|it| it.0 == name && it.1 != OtherUse::OfCallResult)
+}
+
+fn has_escaping_use(hir: &File<'_>, bound: &Bound<'_>, name: SymbolId) -> bool {
+    let names = &hir.lazy.cells.names_used_otherwise_than_called;
+    let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
+    names.binary_search(&(name, OtherUse::Escaped)).is_ok()
+}
+
+fn is_answer_used_otherwise_than_called(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    function: SymbolId,
+) -> bool {
+    let names = &hir.lazy.cells.names_used_otherwise_than_called;
+    let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
+    names.binary_search_by_key(&function, |it| it.0).is_ok()
+}
+
+thread_local! {
+    static IS_ASKING_WHOLE_FILE: Cell<bool> = const { Cell::new(false) };
+}
+
+fn is_called_or_asked_to_resolve(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    let e = outermost_cast(hir, bound, e);
+    let is_callee = |e: ExprId| {
+        matches!(bound.parent_of_expr(e), Parent::Expr(user)
+            if matches!(expr_kind(hir, user), Some(ExprKind::Call(call)) if hir[call].callee == e))
+    };
+    is_callee(e)
+        || matches!(bound.parent_of_expr(e), Parent::Expr(member)
+            if matches!(hir.member_key(member), Some((object, MemberKey::Name(known::resolve))) if object == e)
+                && is_callee(outermost_cast(hir, bound, member)))
+}
+
+fn find_choice_that_hands_on(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<ExprId> {
+    let Parent::Expr(above) = bound.parent_of_expr(e) else {
+        return None;
+    };
+    let hands_on = match expr_kind(hir, above) {
+        Some(ExprKind::Cond { test, .. }) => test != e,
+        Some(ExprKind::Binary { op, .. }) => {
+            matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma)
+        }
+        _ => false,
+    };
+    hands_on.then(|| outermost_cast(hir, bound, above))
+}
+
+fn goes_out_of_sight(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> bool {
+    let mut e = outermost_cast(hir, bound, made);
+    loop {
+        if is_called_or_asked_to_resolve(hir, bound, e) || is_only_tested(hir, bound, e) {
+            return false;
+        }
+        let name_of = |function: FnId| match bound.fns[function.idx()].owner {
+            FnOwner::Stmt(_) => Some(bound.declared_symbol(Decl::Fn(function))),
+            FnOwner::Expr(written) => {
+                match bound.parent_of_expr(outermost_cast(hir, bound, written)) {
+                    Parent::VarInit(declaration) => {
+                        match bound.initialized_binding(hir[declaration].pat) {
+                            Binding::Symbol(name) => Some(name),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let is_answer_in_sight = |function: FnId| {
+            name_of(function).is_some_and(|name| {
+                bound.is_stable_binding(name)
+                    && !is_exported(bound, name)
+                    && !is_answer_used_otherwise_than_called(hir, bound, name)
+            })
+        };
+        let call_where_written = |function: FnId| match bound.fns[function.idx()].owner {
+            FnOwner::Expr(written) => {
+                let written = outermost_cast(hir, bound, written);
+                match bound.parent_of_expr(written) {
+                    Parent::Expr(call) => (matches!(expr_kind(hir, call), Some(ExprKind::Call(id))
+                        if hir[id].callee == written))
+                    .then_some(call),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let above = match bound.parent_of_expr(e) {
+            Parent::Expr(above) => above,
+            Parent::VarInit(declaration) => {
+                return match (
+                    hir[hir[declaration].pat].kind,
+                    bound.initialized_binding(hir[declaration].pat),
+                ) {
+                    (PatKind::Ident(_), Binding::Symbol(name)) => {
+                        !bound.is_stable_binding(name)
+                            && is_used_otherwise_than_called(hir, bound, name)
+                    }
+                    _ => true,
+                };
+            }
+            Parent::FnBody(function) => match call_where_written(function) {
+                Some(call) => {
+                    e = outermost_cast(hir, bound, call);
+                    continue;
+                }
+                None => return !is_answer_in_sight(function),
+            },
+            Parent::Stmt(statement) => {
+                return match hir[statement].kind {
+                    StmtKind::Expr(_) => false,
+                    StmtKind::Return(_) => {
+                        let mut around = statement;
+                        let function = loop {
+                            around = match bound.parent_of_stmt(around) {
+                                Parent::Stmt(above) => above,
+                                Parent::Case(case) => bound.case_stmt[case.idx()],
+                                Parent::FnBody(function) => break Some(function),
+                                _ => break None,
+                            };
+                        };
+                        !function.is_some_and(is_answer_in_sight)
+                    }
+                    _ => true,
+                };
+            }
+            _ => return true,
+        };
+        if let Some(around) = find_choice_that_hands_on(hir, bound, e) {
+            e = around;
+            continue;
+        }
+        let Some(ExprKind::Assign {
+            op: None | Some(BinOp::Or | BinOp::Nullish),
+            target,
+            value,
+        }) = expr_kind(hir, above)
+        else {
+            return true;
+        };
+        let stays_in_sight = value == e
+            && matches!((expr_kind(hir, target), bound.binding(target)),
+                (Some(ExprKind::Ident(_)), Binding::Symbol(name))
+                    if !is_used_otherwise_than_called(hir, bound, name)
+                        && !is_exported(bound, name));
+        if !stays_in_sight {
+            return true;
+        }
+        e = outermost_cast(hir, bound, above);
+    }
+}
+
+fn find_name_that_takes(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> Option<SymbolId> {
+    let mut e = outermost_cast(hir, bound, made);
+    while let Some(around) = find_choice_that_hands_on(hir, bound, e) {
+        e = around;
+    }
+    let taker = match bound.parent_of_expr(e) {
+        Parent::VarInit(declaration) => bound.initialized_binding(hir[declaration].pat),
+        Parent::Expr(above) => match expr_kind(hir, above) {
+            Some(ExprKind::Assign { target, value, .. }) if value == e => bound.binding(target),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    match taker {
+        Binding::Symbol(name) => Some(name),
+        _ => None,
+    }
+}
+
+fn is_followed_to_every_call(text: Text<'_, '_, '_, '_>, made: ExprId) -> bool {
+    let Text { hir, bound, .. } = text;
+    if goes_out_of_sight(hir, bound, made) {
+        return false;
+    }
+    let is_base_read = find_made_require(text, made, StepsLeft::ALL).is_some();
+    let Some(holder) = find_name_that_takes(hir, bound, made) else {
+        let written = outermost_cast(hir, bound, made);
+        return is_base_read
+            || is_only_tested(hir, bound, written)
+            || matches!(bound.parent_of_expr(written), Parent::Stmt(statement)
+                if matches!(hir[statement].kind, StmtKind::Expr(_)));
+    };
+    if bound.is_stable_binding(holder) {
+        let is_made_for_choice =
+            || find_require_made_for_choice(text, made, Some(holder), StepsLeft::ALL).is_some();
+        return (is_base_read || is_made_for_choice())
+            && (is_exported(bound, holder) || !has_escaping_use(hir, bound, holder));
+    }
+    if IS_ASKING_WHOLE_FILE.replace(true) {
+        return true;
+    }
+    let holders = &hir.lazy.cells.names_that_hold_own_requires;
+    let holders = holders.get_or_init(|| list_names_that_hold_own_requires(text));
+    IS_ASKING_WHOLE_FILE.set(false);
+    holders.binary_search_by_key(&holder, |it| it.0).is_ok()
+}
+
+pub fn find_made_requires_that_go_out_of_sight(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+) -> Vec<ExprId> {
+    let text = Text::of(hir, bound, None);
+    let early = StepsLeft::ALL.without_late();
+    let calls = (0..hir.exprs.len() as u32).map(ExprId);
+    let made = calls.filter(|&e| {
+        matches!(expr_kind(hir, e), Some(ExprKind::Call(_)))
+            && !decisions.is_dead_expr(e)
+            && find_arguments_of_create_require(text, e, early).is_some()
+    });
+    made.filter(|&made| !is_followed_to_every_call(text, made))
+        .collect()
+}
+
+fn lets_made_requires_out_of_sight(text: Text<'_, '_, '_, '_>) -> bool {
+    let Text { hir, bound, .. } = text;
+    if IS_ASKING_WHOLE_FILE.replace(true) {
+        return true;
+    }
+    let answer = bound.lets_made_requires_out_of_sight(|| {
+        let text = Text::of(hir, bound, None);
+        let early = StepsLeft::ALL.without_late();
+        (0..hir.exprs.len() as u32).map(ExprId).any(|e| {
+            matches!(expr_kind(hir, e), Some(ExprKind::Call(_)))
+                && find_arguments_of_create_require(text, e, early).is_some()
+                && goes_out_of_sight(hir, bound, e)
+        })
+    });
+    IS_ASKING_WHOLE_FILE.set(false);
+    answer
+}
+
+fn list_names_that_hold_own_requires(text: Text<'_, '_, '_, '_>) -> Box<[(SymbolId, bool)]> {
+    let text = Text::of(text.hir, text.bound, None);
+    let mut holders = Vec::new();
+    let mut stores = text.bound.stores();
+    while let Some(first) = stores.first() {
+        let count = stores.partition_point(|store| store.symbol == first.symbol);
+        let (of_holder, rest) = stores.split_at(count);
+        match find_require_in_all_stores(text, first.symbol, of_holder) {
+            Some(OwnRequire::Made) => holders.push((first.symbol, true)),
+            Some(OwnRequire::OfFile) => holders.push((first.symbol, false)),
+            _ => {}
+        }
+        stores = rest;
+    }
+    holders.into_boxed_slice()
+}
+
+fn find_require_in_all_stores(
+    text: Text<'_, '_, '_, '_>,
+    holder: SymbolId,
+    stores: &[SymbolStore],
+) -> Option<OwnRequire> {
+    let Text { hir, bound, .. } = text;
+    let [Decl::Var(pattern)] = *bound.symbol(holder).decls else {
+        return None;
+    };
+    let is_stored_as_written = matches!(
+        bound.binding_stability(holder),
+        BindingStability::Stored | BindingStability::NotInitializedOnce
+    ) && matches!(
+        bound.binding_kind(holder),
+        BindingKind::Let | BindingKind::Var
+    ) && matches!(hir[pattern].kind, PatKind::Ident(_))
+        && !bound.is_visible_to_eval(holder)
+        && !bound.is_appended_symbol(holder)
+        && !bound.runtime.is_stored_by_function_of_block(holder)
+        && !(bound.runtime.redeclared_commonjs_variables().iter()).any(|it| it.0 == holder)
+        && !is_exported(bound, holder);
+    if !is_stored_as_written {
+        return None;
+    }
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let statement = bound.var_stmt[declaration.idx()];
+    if let Parent::Stmt(above) = bound.parent_of_stmt(statement)
+        && matches!(hir[above].kind,
+            StmtKind::ForOf { left, .. } | StmtKind::ForIn { left, .. } if left == statement)
+    {
+        return None;
+    }
+    let within = StepsLeft {
+        passes_and: false,
+        passes_choices: false,
+        ..StepsLeft::ALL
+    };
+    let mut held = None;
+    let mut holds_no_other = |value: ExprId| {
+        let found = follow_to_own_require(text, value, within);
+        match found {
+            Some(OwnRequire::Made | OwnRequire::OfFile) => *held.get_or_insert(found) == found,
+            _ => is_nothing(hir, bound, value),
+        }
+    };
+    if !hir[declaration].init.some().is_none_or(&mut holds_no_other) {
+        return None;
+    }
+    for store in stores {
+        let is_plain = matches!(
+            store.kind,
+            StoreKind::Assign | StoreKind::CompoundAssign(BinOp::Or | BinOp::Nullish)
+        );
+        let Parent::Expr(assignment) = bound.parent_of_expr(store.target) else {
+            return None;
+        };
+        match expr_kind(hir, assignment) {
+            Some(ExprKind::Assign { target, value, .. })
+                if is_plain && target == store.target && holds_no_other(value) => {}
+            _ => return None,
+        }
+    }
+    held.flatten()
+        .filter(|_| !is_used_otherwise_than_called(hir, bound, holder))
+}
+
+fn return_value_of_function(hir: &File<'_>, call: Call, function: FnId) -> Option<ExprId> {
     let function = &hir[function];
-    let is_plain_function = matches!(function.kind, FnKind::Arrow | FnKind::Expr)
+    let is_plain_function = matches!(function.kind, FnKind::Arrow | FnKind::Expr | FnKind::Decl)
         && !function.flags.intersects(Flags::ASYNC | Flags::GENERATOR);
     if call.chain != Chain::No || !is_plain_function {
         return None;
@@ -801,6 +1464,7 @@ fn is_given_require_of_file(
         hir,
         bound,
         decisions,
+        ..
     } = text;
     let Some((expression, call)) = find_call_around(hir, bound, function) else {
         return false;
@@ -842,6 +1506,54 @@ fn is_given_require_of_file(
     })
 }
 
+pub fn gives_first_argument_to_own_require(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    call: Call,
+) -> bool {
+    let text = Text::of(hir, bound, Some(decisions));
+    let made = follow_settled_bindings(hir, bound, call.callee);
+    let Some(ExprKind::Call(making)) = expr_kind(hir, made) else {
+        return false;
+    };
+    let making = hir[making];
+    let maker = follow_settled_bindings(hir, bound, making.callee);
+    let Some(ExprKind::Fn(maker_function)) = expr_kind(hir, maker) else {
+        return false;
+    };
+    let Some(loader) = return_value_of(hir, making, maker) else {
+        return false;
+    };
+    let loader = hir.skip_type_assertions(loader);
+    let Some(ExprKind::Fn(loading_function)) = expr_kind(hir, loader) else {
+        return false;
+    };
+    let Some(answer) = return_value_of(hir, call, loader) else {
+        return false;
+    };
+    let Some(ExprKind::Call(loading)) = expr_kind(hir, hir.skip_type_assertions(answer)) else {
+        return false;
+    };
+    let loading = hir[loading];
+    let given = find_settled_parameter(hir, bound, hir.skip_type_assertions(loading.callee));
+    let Some((owner, place)) = given else {
+        return false;
+    };
+    let names_own_parameter = argument_at(hir, loading.args, 0).is_some_and(|name| {
+        let name = hir.skip_type_assertions(name);
+        find_settled_parameter(hir, bound, name) == Some((loading_function, 0))
+    });
+    let is_given_own_require = argument_at(hir, making.args, place).is_some_and(|argument| {
+        let left = StepsLeft::ALL.proofs_alone();
+        follow_to_own_require(text, argument, left) == Some(OwnRequire::OfFile)
+    });
+    loading.chain == Chain::No
+        && owner == maker_function
+        && names_own_parameter
+        && is_given_own_require
+}
+
 pub fn find_own_require(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -872,10 +1584,22 @@ pub(super) fn follow_to_own_require(
     e: ExprId,
     left: StepsLeft,
 ) -> Option<OwnRequire> {
+    follow_each_side_once(text, e, left, &mut FxHashMap::default())
+}
+
+type SidesAsked = FxHashMap<(ExprId, [bool; 2], usize, usize), (usize, Option<OwnRequire>)>;
+
+fn follow_each_side_once(
+    text: Text<'_, '_, '_, '_>,
+    e: ExprId,
+    left: StepsLeft,
+    asked: &mut SidesAsked,
+) -> Option<OwnRequire> {
     let Text {
         hir,
         bound,
         decisions,
+        ..
     } = text;
     if !bound.may_name_own_require() && hir.imported_requires.is_empty() {
         return None;
@@ -889,9 +1613,20 @@ pub(super) fn follow_to_own_require(
     };
     let mut e = hir.skip_type_assertions(e);
     let mut holder = None;
+    let mut holders = [None; LONGEST_CHAIN_OF_BINDINGS];
+    let are_only_called = |holders: &[Option<SymbolId>]| {
+        let mut holders = holders.iter().flatten();
+        holders.all(|&holder| !is_used_otherwise_than_called(hir, bound, holder))
+    };
     for bindings in (0..left.bindings).rev() {
         if is_free_common_js(hir, bound, e, CommonJsVariable::Require)
             || find_module_printed_as_require(hir, bound, e).is_some()
+        {
+            return Some(OwnRequire::OfFile);
+        }
+        if left.passes_late
+            && matches!(expr_kind(hir, e), Some(ExprKind::Ident(_)))
+            && bound.binding(e) == Binding::CommonJs(CommonJsVariable::Require)
         {
             return Some(OwnRequire::OfFile);
         }
@@ -899,6 +1634,23 @@ pub(super) fn follow_to_own_require(
             decisions.and_then(|decisions| find_result_expression(hir, decisions, e))
         {
             e = hir.skip_type_assertions(result);
+            continue;
+        }
+        if left.passes_late
+            && let Some(result) = return_value_of_settled_function(hir, bound, e)
+            && let Some(found) =
+                follow_each_side_once(text, result, StepsLeft { bindings, ..left }, asked)
+            && is_answer_of_callee_only_called(hir, bound, e)
+            && are_only_called(&holders)
+            && !lets_made_requires_out_of_sight(text)
+        {
+            return Some(found);
+        }
+        if left.passes_late
+            && let Some(ExprKind::Assign { target, .. }) = expr_kind(hir, e)
+            && matches!(expr_kind(hir, target), Some(ExprKind::Ident(_)))
+        {
+            e = target;
             continue;
         }
         if let Some(ExprKind::Binary {
@@ -929,9 +1681,37 @@ pub(super) fn follow_to_own_require(
                     bindings: bindings + 1,
                     ..left
                 };
-                let is_own =
-                    |side| follow_to_own_require(text, side, left) == Some(OwnRequire::OfFile);
-                return sides.into_iter().any(is_own).then_some(OwnRequire::OfFile);
+                let mut follow_sides = |left: StepsLeft| {
+                    sides.map(|side| {
+                        let passes = [left.passes_and, left.passes_late];
+                        let key = (side, passes, left.parameters, left.requests);
+                        match asked.get(&key) {
+                            Some(&(steps, found)) if steps >= left.bindings => found,
+                            _ => {
+                                let found = follow_each_side_once(text, side, left, asked);
+                                asked.insert(key, (left.bindings, found));
+                                found
+                            }
+                        }
+                    })
+                };
+                let mut found = follow_sides(left);
+                let mut left = left;
+                if left.passes_late && found != [None; 2] && !are_only_called(&holders) {
+                    left = left.without_late();
+                    found = follow_sides(left);
+                }
+                if found.contains(&Some(OwnRequire::OfFile)) {
+                    return Some(OwnRequire::OfFile);
+                }
+                let is_made_or_nothing = sides.into_iter().zip(found).all(|(side, found)| {
+                    found == Some(OwnRequire::Made) || is_nothing(hir, bound, side)
+                });
+                let is_made = left.passes_late
+                    && is_made_or_nothing
+                    && found.contains(&Some(OwnRequire::Made))
+                    && !lets_made_requires_out_of_sight(text);
+                return is_made.then_some(OwnRequire::Made);
             }
         }
         if let Some((object, MemberKey::Name(known::require))) = hir.member_key(e)
@@ -952,6 +1732,12 @@ pub(super) fn follow_to_own_require(
             if let Some(made) = find_require_made_for_choice(text, e, holder, left) {
                 return Some(made);
             }
+            let fewer = StepsLeft { bindings, ..left };
+            if let Some(made) = find_require_among_all_that_is_stored(text, e, fewer)
+                && are_only_called(&holders)
+            {
+                return Some(made);
+            }
             if let Some(imported) = find_imported_require(hir, bound, e, left) {
                 return Some(match imported.is_made {
                     true => OwnRequire::MadeInOtherFile(imported.path),
@@ -961,6 +1747,7 @@ pub(super) fn follow_to_own_require(
             return is_parameter_with_require_of_file(e).then_some(OwnRequire::OfFile);
         };
         holder = settled_symbol(hir, bound, e);
+        holders[bindings.min(LONGEST_CHAIN_OF_BINDINGS - 1)] = holder;
         e = source;
     }
     None

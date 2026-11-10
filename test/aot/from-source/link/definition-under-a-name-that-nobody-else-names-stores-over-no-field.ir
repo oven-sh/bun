@@ -1,16 +1,12 @@
 # `Object.defineProperty(scanner, "shownToDebuggers", { get() { .. } })`: the key is written and nothing else in the program names it, so it is the name of no field. What the fields are expected to hold stays what was stored there.
 # RUN: summary f0
-# REQUIRES: entries-of-bun
 # CHECK: change {{*}}DefinesByDescriptor {{*}}under-a-name-that-nobody-else-names
 # RUN(ACCESS): summary f0
-# REQUIRES(ACCESS): entries-of-bun
 # ACCESS-NOT: Define {{*}}[Unknown]
 # RUN(HELD): link held fields mechanisms=all
-# REQUIRES(HELD): entries-of-bun
 # HELD: "position" proven=i32 writers-known
 # HELD: "scan" proven=f1 writers-known written-at-construction-alone
 # RUN(ALL): run-in-shell mechanisms=all
-# REQUIRES(ALL): entries-of-bun
 # ALL: 1 0
 # ALL-NEXT: 5
 # ALL-NEXT: exited with 0

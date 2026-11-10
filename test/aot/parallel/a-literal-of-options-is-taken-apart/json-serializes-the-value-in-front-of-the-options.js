@@ -1,5 +1,5 @@
 // The value is serialized first, then the headers are read, then the status, then the text.
-// STATISTIC: LiteralArgumentsTakenApart >= 1
+// STATISTIC: LiteralArgumentsScalarized >= 1
 const told = [];
 function answer(value, status, statusText, headers) {
   return Response.json(value, { status, statusText, headers });

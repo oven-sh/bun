@@ -1,0 +1,162 @@
+# -- source: main.cjs
+# "use strict";
+# function climb(at, word) { let sum = 0; while (at) { if (word === "const") sum += 1000; sum += at.weight; at = at.above; } return sum; }
+# function turnsNotKnown(x, n) { let c = 0; for (let i = 0; i < n; i++) { if (x === "const") c += 2; c += i; } return c; }
+# function turnsKnown(x) { let c = 0; for (let i = 0; i < 24; i++) { if (x === "const") c += 2; c += i; } return c; }
+# globalThis.kept = [climb, turnsNotKnown, turnsKnown];
+# console.log(climb({ weight: 1, above: { weight: 2 } }, "const"), turnsNotKnown("const", 3), turnsKnown("let"));
+# -- end of source
+# `x === "const"` in every turn, x from in front of the loop. StrictEq on a text declares that it may resolve a rope (writes, throws), so it could not leave a loop. The forms that hold a value against a
+# WRITTEN text read the text alone: a rope goes into a local buffer, nothing is flattened, nothing is thrown, nothing is allocated: the answer hangs on the text alone. So the comparison is built in that
+# form where it may then stand in front. THE SAID PRICE: a loop that takes no turn pays the comparison once (7 instructions), one turn 0 to 2; every further turn saves 7. No guard: a copy of the head's
+# test costs 5 to 9 at every entry to spare those 7. Only what cannot fail and is as cheap as this leaves a loop whose first turn is not known.
+# RUN: compile StringLiteralComparisonsHoisted mechanisms=all
+# CHECK: statistic StringLiteralComparisonsHoisted 3
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=460 fields=[{key="above" declared={type=anything}}, {key="weight" declared={type=undefined|number flags=[IsExpected]}}] declaredOrder=[1, 0] place=460 ownFieldCount=2
+layout L1 module=m0 position=480 fields=[{key="weight" declared={type=anything} flags=[IsRequired]}] place=480 ownFieldCount=1
+layout L2 module=m0 place=0
+layout L3 module=m0 place=0
+data d0 root=Object{layout=L0 members=[{key="weight" value=Number{value=1}}, {key="above" value=Object{layout=L1 members=[{key="weight" value=Number{value=2}}]}}]} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=4
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L2 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f2 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = NewClosure function=f3 @0
+    v8 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @0
+    v9 = Builtin builtin=GlobalThis @388
+    v10 = PropGet v9 key="globalThis" [isFreeName] @388
+    v11 = Convert v10 declared={type=builtin(GlobalThis) flags=[IsExpected]} @388
+    v12 = NewArray v4, v6, v8 contents=anything @406
+    PropSet v11, v12 key="kept" @388
+    v14 = Builtin builtin=GlobalThis @442
+    v15 = PropGet v14 key="console" [isFreeName] @442
+    v16 = Convert v15 declared={type=builtin(Console) flags=[IsExpected]} @442
+    v17 = PropGet v16 key="log" @442
+    v18 = Convert v17 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @442
+    v19 = Data data=d0 @460
+    v20 = String string="const" @497
+    v21 = Call v4, -, v19, v20 calleeName="climb" @454
+    v22 = String string="const" @521
+    v23 = Integer integer=3 @530
+    v24 = Call v6, -, v22, v23 calleeName="turnsNotKnown" @507
+    v25 = String string="let" @545
+    v26 = Call v8, -, v25 calleeName="turnsKnown" @534
+    v27 = Call v18, v16, v21, v24, v26 calleeKey="log" calleeName="console.log" @450
+    v28 = Undefined @442
+    Return v28 @442
+}
+function f1 name="climb" module=m0 position=14 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0, v1: undefined|null|string):
+    v2 = Integer @51
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @51
+    Jump -> next b1(v0, v3) @54
+  b1(v4, v5):
+    LoopHint @54
+    v7 = ToBoolean v4 @61
+    Branch v7 -> taken b2(| 0), notTaken b5(| 0) @61
+  b2(v8):
+    v9 = String string="const" @80
+    v10 = StrictEq v1, v9 @80
+    Branch v10 -> taken b3(), notTaken b4(v5) @80
+  b3():
+    v11 = Integer integer=1000 @96
+    v12 = Add v5, v11 @96
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @89
+    Jump -> next b4(v13) @89
+  b4(v14):
+    v15 = PropGet v4 key="weight" @109
+    v16 = Add v14, v15 @109
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @102
+    v18 = PropGet v4 key="above" @125
+    v19 = Convert v18 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]} @120
+    Jump -> next b1(v19, v17) @120
+  b5(v20):
+    Return v5 @144
+}
+function f2 name="turnsNotKnown" module=m0 position=151 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = Integer @190
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @190
+    v4 = Integer @206
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @206
+    Jump -> next b1(v3, v5) @202
+  b1(v6, v7):
+    LoopHint @202
+    v9 = Less v7, v1 @213
+    Branch v9 -> taken b2(), notTaken b5() @213
+  b2():
+    v10 = String string="const" @233
+    v11 = StrictEq v0, v10 @233
+    Branch v11 -> taken b3(), notTaken b4(v6) @233
+  b3():
+    v12 = Integer integer=2 @247
+    v13 = Add v6, v12 @247
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @242
+    Jump -> next b4(v14) @242
+  b4(v15):
+    v16 = Add v15, v7 @255
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @250
+    v18 = Increment v7 @216
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @216
+    Jump -> next b1(v17, v19) @216
+  b5():
+    Return v6 @267
+}
+function f3 name="turnsKnown" module=m0 position=272 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @305
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @305
+    v3 = Integer @321
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @321
+    Jump -> next b1(v2, v4) @317
+  b1(v5, v6):
+    LoopHint @317
+    v8 = Integer integer=24 @328
+    v9 = Less v6, v8 @328
+    Branch v9 -> taken b2(), notTaken b5() @328
+  b2():
+    v10 = String string="const" @349
+    v11 = StrictEq v0, v10 @349
+    Branch v11 -> taken b3(), notTaken b4(v5) @349
+  b3():
+    v12 = Integer integer=2 @363
+    v13 = Add v5, v12 @363
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @358
+    Jump -> next b4(v14) @358
+  b4(v15):
+    v16 = Add v15, v6 @371
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @366
+    v18 = Increment v6 @332
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @332
+    Jump -> next b1(v17, v19) @332
+  b5():
+    Return v5 @383
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

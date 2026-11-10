@@ -9,7 +9,9 @@
 // # RUN(ADDED): bytes f3:Body mechanisms=all-Inlining
 // # ADDED: CallMethodThatMayBeUnread.SetAdd
 // # RUN(ONCE): bytes f4:Body mechanisms=all-Inlining
-// # ONCE: CallMethodOfBuiltinClassByValue.ArrayPush
+// # where the class is expected and not proven the read is a look too: it asks the class besides; what it finds as made stays unread, anything else is read there, in front of the operand
+// # ONCE: ReadMethodAtSiteUnlessReceiverFindsIt.ArrayPush
+// # ONCE: CallMethodOfAnyReceiverThatMayBeUnread.ArrayPush
 // # RUN(PROBED): bytes f6:Body mechanisms=all-Inlining
 // # PROBED: CallMethodOfBuiltinClassByValue.RegExpTest
 // # LIBRARY: own
@@ -26,15 +28,17 @@ function fill(table: Map<string, number>, names: string[], f: (name: string) => 
 function keep(seen: Set<number>, from: number[], f: (x: number) => number): number { for (let i = 0; i < from.length; i++) seen.add(f(from[i])); return seen.size; }
 function once(list: number[], f: () => number): number { const length = list.push(f()); return length + 0; }
 function keysOf(table: Map<string, number>): string { let keys = ""; table.forEach((value, key) => { keys += key + ","; }); return keys; }
+// The indexes come out of a list: what stands at a WRITTEN place of a written list is known by the place (what-a-written-list-holds-at-each-written-place-1), and gather() would be built once for each callee.
+const at: number[] = [0, 1, 2];
 let fs: ((x: number) => number)[] = [twice, x => x + 1, x => -x];
-tell(() => gather([1, 2, 3], fs[0]).join());
-tell(() => gather([1, 2, 3], fs[1]).join());
-tell(() => gather([], fs[2]).join());
+tell(() => gather([1, 2, 3], fs[at[0]]).join());
+tell(() => gather([1, 2, 3], fs[at[1]]).join());
+tell(() => gather([], fs[at[2]]).join());
 tell(() => fill(new Map(), ["a", "b", "a"], name => name.length));
 // The set has left the program, so nobody can say that it stays as its class makes it: else no operand can do anything to it and the method is called without a look at the receiver (instances-that-stay-as-made-1).
 const handedOut = new Set<number>();
 (globalThis as any).handedOutOfThisTest = handedOut;
-tell(() => keep(handedOut, [1, 2, 1, 3], fs[2]));
+tell(() => keep(handedOut, [1, 2, 1, 3], fs[at[2]]));
 const list: number[] = [];
 tell(() => once(list, () => 7));
 tell(() => once(list, () => 8));

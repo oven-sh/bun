@@ -3,8 +3,8 @@
 # f1 = Context
 # -- source: private-name-is-held-to-nothing.ts
 # declare function sink(...values: unknown[]): void;
-# class Context { #raw: string; label: string; constructor(raw: string) { this.#raw = raw; this.label = raw; } read(): string { return this.#raw; } }
-# sink(Context, new Context("a"));
+# class Context { #raw: string; label: string; constructor(raw: string, other: string) { this.#raw = raw; this.label = raw; this.#raw = other; } read(): string { return this.#raw; } }
+# sink(Context, new Context("a", "b"));
 # -- end of source
 # RUN: facts enforced mechanisms=all
 # CHECK: field {{*}} "label" source=written type=undefined|null|string {{*}}held=undefined|null|string

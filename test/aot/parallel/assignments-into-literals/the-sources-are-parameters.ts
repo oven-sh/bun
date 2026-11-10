@@ -1,5 +1,5 @@
 // No guess stands around the call: the literal is made once and its name is bound anew.
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+// STATISTIC: ObjectAssignCallsExpanded >= 1
 type Part = { p: number };
 type Rest = { q: number };
 type Sum = { c: number; p?: number; q?: number };

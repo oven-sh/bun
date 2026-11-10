@@ -1,0 +1,29 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# const list = [1, 2, 3];
+# list.push(id(-7));
+# function count(): number {
+#   let found = 0;
+#   for (let i = 0; i < list.length; i++) {
+#     const v = list[i]!;
+#     if (v < 0) found++;
+#   }
+#   return found;
+# }
+# print(count());
+# print("went on");
+# -- end of source
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So all that it sees stored into the array are integer literals that are not negative: int[0, 2147483647]. The array holds 1, 2, 3 and -7 in int32 storage.
+# The read from int32 storage checks nothing about the number, so its type is int32 and nothing narrower. The version that reads a boxed value checks for an int32 and claims nothing narrower.
+# In neither version does the range decide `v < 0`, so the output is that of plain Bun. Before the first of these two rules the program printed 0 and continued.
+# Where the range is relied on, at an entry check, it is checked: see a-false-range-of-what-a-list-holds-stops-at-the-door-that-believes-it.ir.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 1
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumeUnknownCallsReturnUndefined
+# LIE: 1
+# LIE-NEXT: went on
+# LIE-NEXT: exited with 0

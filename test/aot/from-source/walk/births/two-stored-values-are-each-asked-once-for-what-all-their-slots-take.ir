@@ -1,0 +1,20 @@
+# f1 = Pair, f2 = make
+# -- source: two-stored-values-are-each-asked-once-for-what-all-their-slots-take.ts
+# declare function sink(...values: unknown[]): void;
+# interface Pair { wide: number | string | undefined; narrow: string; text: string | undefined; rest?: object; more?: object; }
+# function Pair(this: Pair, value: string, text: string) { this.wide = value; this.narrow = value; this.text = text; this.rest = undefined; this.more = undefined; }
+# const Maker: new (value: string, text: string) => Pair = Pair as any;
+# function make(value: any, text: any) { return new Maker(value, text); }
+# function fill(pair: Pair, value: object) { pair.rest = value; pair.more = value; pair.wide = 7; }
+# sink(make, fill);
+# -- end of source
+# RUN(WALK): walk f2 mechanisms=all
+# WALK: TypeTest v0 testedType=undefined|null|string
+# WALK: TypeTest v1 testedType=undefined|null|string
+# WALK: NewObject {{*}}fields=[0, 1, 2, 3, 4]
+# RUN(NONE): walk f2 mechanisms=all
+# NONE: code f2:Body
+# NONE-NOT: PutSlotOrAdd
+# RUN(CLOSED): walk f2 mechanisms=all
+# CLOSED: code f2:Body
+# CLOSED-NOT: PropDefine

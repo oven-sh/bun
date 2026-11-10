@@ -107,7 +107,7 @@ for (const use in uses) for (const change in changes) attempt(use + ", the gette
 
 // GENERATED: rest values reverses get
 // CHECK-LABEL: function {{*}}name="rest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string|Array):
 // CHECK-NEXT: v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
 // CHECK-NEXT: Jump -> next b1()
@@ -138,7 +138,7 @@ for (const use in uses) for (const change in changes) attempt(use + ", the gette
 // CHECK-NEXT: Rethrow v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="values"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|object flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|object flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string|object):
 // CHECK-NEXT: v1 = Builtin builtin=Object
 // CHECK-NEXT: v2 = Builtin builtin=ObjectValues
@@ -146,7 +146,7 @@ for (const use in uses) for (const change in changes) attempt(use + ", the gette
 // CHECK-NEXT: ReturnCall v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="reverses"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = Builtin builtin=Object
 // CHECK-NEXT: v2 = Builtin builtin=ObjectDefineProperty
@@ -164,7 +164,7 @@ for (const use in uses) for (const change in changes) attempt(use + ", the gette
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_2]]):
 // CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_2]] field=2
 // CHECK-NEXT: v2 = CheckInitialized v1 name="calls"

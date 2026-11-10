@@ -20,7 +20,7 @@ const summarize = ({ signatures }: MemberDeclaration) =>
   signatures.map(({ parameters, isSpecialCase = false, directEntry }) => ({
     accepted: parameters.map(({ type }) => type.accepted),
     isSpecialCase,
-    handedOver: directEntry?.parameters.map(({ value }) => value) ?? null,
+    directEntryValues: directEntry?.parameters.map(({ value }) => value) ?? null,
   }));
 
 test("a function whose arguments are taken as they are is entered with them", () => {
@@ -29,7 +29,7 @@ test("a function whose arguments are taken as they are is entered with them", ()
     {
       accepted: [boolean, int32, number, anything],
       isSpecialCase: false,
-      handedOver: ["Realm", "Boolean", "Int32", "Double", "Value"],
+      directEntryValues: ["Realm", "Boolean", "Int32", "Double", "Value"],
     },
   ]);
   expect(member.signatures[0].directEntry).toMatchObject({
@@ -50,7 +50,7 @@ test("a function whose arguments are taken as they are is entered with them", ()
 
 test("a function without arguments takes the realm", () => {
   expect(summarize(declare(b.fn({ returns: b.f64 })))).toEqual([
-    { accepted: [], isSpecialCase: false, handedOver: ["Realm"] },
+    { accepted: [], isSpecialCase: false, directEntryValues: ["Realm"] },
   ]);
 });
 
@@ -60,9 +60,9 @@ test("arguments that converting would leave as they are have an overload of thei
   expect(special).toEqual({
     accepted: [anything, boolean, number],
     isSpecialCase: true,
-    handedOver: ["Realm", "Value", "Boolean", "Double"],
+    directEntryValues: ["Realm", "Value", "Boolean", "Double"],
   });
-  expect(general).toMatchObject({ isSpecialCase: false, handedOver: null });
+  expect(general).toMatchObject({ isSpecialCase: false, directEntryValues: null });
   expect(member.signatures[0].parameters.map(({ type }) => [type.mode, type.conversion])).toEqual([
     ["Required", "None"],
     ["Required", "None"],
@@ -95,18 +95,22 @@ test("what only the host function can make for the thunk leaves the function wit
     b.array(b.f64),
   ]) {
     expect(summarize(declare(b.fn({ args: { flag: b.bool, operand: type } })))).toMatchObject([
-      { isSpecialCase: false, handedOver: null },
+      { isSpecialCase: false, directEntryValues: null },
     ]);
   }
   expect(summarize(declare(b.fn({ args: { fd: b.i32.validateInteger() } })))).toMatchObject([
-    { handedOver: ["Realm", "Int32"] },
+    { directEntryValues: ["Realm", "Int32"] },
   ]);
 });
 
 test("the realm and five arguments are the most", () => {
   const argumentsNamed = (...names: string[]) => Object.fromEntries(names.map(name => [name, b.any]));
-  expect(summarize(declare(b.fn({ args: argumentsNamed("a", "b", "c", "d", "e") })))[0].handedOver).toHaveLength(6);
-  expect(summarize(declare(b.fn({ args: argumentsNamed("a", "b", "c", "d", "e", "f") })))[0].handedOver).toBeNull();
+  expect(summarize(declare(b.fn({ args: argumentsNamed("a", "b", "c", "d", "e") })))[0].directEntryValues).toHaveLength(
+    6,
+  );
+  expect(
+    summarize(declare(b.fn({ args: argumentsNamed("a", "b", "c", "d", "e", "f") })))[0].directEntryValues,
+  ).toBeNull();
 });
 
 test("each signature of a function has its own thunk", () => {
@@ -162,7 +166,7 @@ test("an argument that a null pointer stands in for can be left out of a direct 
   expect(summarize(member)[0]).toEqual({
     accepted: [string, stringOrNothing],
     isSpecialCase: true,
-    handedOver: ["Realm", "Value", "ValueOrEmpty"],
+    directEntryValues: ["Realm", "Value", "ValueOrEmpty"],
   });
   expect(member.signatures[0].parameters.map(({ type }) => type.mode)).toEqual(["Required", "Optional"]);
   expect(member.dispatches[0].root).toEqual({
@@ -173,7 +177,7 @@ test("an argument that a null pointer stands in for can be left out of a direct 
     ],
   });
   const followed = declare(b.fn({ args: { suffix: new CellType().optional, path: new CellType() } }));
-  expect(summarize(followed)[0]).toMatchObject({ handedOver: ["Realm", "Value", "Value"] });
+  expect(summarize(followed)[0]).toMatchObject({ directEntryValues: ["Realm", "Value", "Value"] });
 });
 
 test("a value that may be left out is handed over as it is or as nothing, in one overload", () => {
@@ -184,7 +188,7 @@ test("a value that may be left out is handed over as it is or as nothing, in one
     {
       accepted: [anything, anything, anything],
       isSpecialCase: false,
-      handedOver: ["Realm", "Value", "ValueOrEmpty", "ValueOrEmpty"],
+      directEntryValues: ["Realm", "Value", "ValueOrEmpty", "ValueOrEmpty"],
     },
   ]);
   expect(member.signatures[0].parameters.map(({ type }) => type.mode)).toEqual(["Required", "Optional", "Optional"]);
@@ -196,7 +200,7 @@ test("a value that may be left out is handed over as it is or as nothing, in one
 test("one that another argument follows is always there", () => {
   const member = declare(b.fn({ args: { name: b.any.orAbsent, value: b.f64 }, capability: "js" }));
   expect(summarize(member)).toEqual([
-    { accepted: [anything, number], isSpecialCase: false, handedOver: ["Realm", "Value", "Double"] },
+    { accepted: [anything, number], isSpecialCase: false, directEntryValues: ["Realm", "Value", "Double"] },
   ]);
 });
 

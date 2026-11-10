@@ -5,10 +5,8 @@
 # Promise.all(gather(id(2), id("-"))).then(all => print(all.join("|")));
 # -- end of source
 # RUN(ANSWERS): run-in-shell mechanisms=all
-# REQUIRES(ANSWERS): entries-of-bun
 # ANSWERS: -,0|-,1|k0k1
 # RUN(FORM): walk f1 mechanisms=all
-# REQUIRES(FORM): entries-of-bun
 # FORM-LABEL: code f1:Body
 # FORM: StringBuilderBegin
 # FORM: = PromiseAllOfElements

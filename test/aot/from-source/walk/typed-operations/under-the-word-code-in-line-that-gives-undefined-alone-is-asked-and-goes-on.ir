@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function clears(n: number): string { const m = new Map<string, number>(), s = new Set<number>(); let told = ""; for (let i = 0; i < n; i++) { m.set("a" + i, i); s.add(i); told += String(m.clear()) + String(s.clear()); } return told + m.size + s.size; }
+# function writes(bytes: number[]): string { const from = new Uint8Array(bytes), to = new Uint8Array(8), view = new DataView(to.buffer); return String(to.set(from, 1)) + String(view.setInt8(0, -1)) + to[0] + to[1]; }
+# print(clears(id(1)), writes(id([7, 8])));
+# print("went on");
+# -- end of source
+# The four rows with code in line that truly write undefined alone: Map.prototype.clear and Set.prototype.clear (CallInline), %TypedArray%.prototype.set and the setters of DataView (TryCallInline). Under the word each keeps what its
+# code gives in a register and is asked for undefined. No lie: the program goes on.
+# RUN(CLEARS): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# CLEARS: [[map]]: undefined @JSValue = CallInline {{*}} inlineBuiltin=MapClear
+# CLEARS-NEXT: = CheckProof [[map]] checkedType=undefined
+# CLEARS: [[set]]: undefined @JSValue = CallInline {{*}} inlineBuiltin=SetClear
+# CLEARS-NEXT: = CheckProof [[set]] checkedType=undefined
+# RUN(WRITES): walk f2 mechanisms=all testing=CheckProofsAtRunTime
+# WRITES: TryCallInline {{*}} inlineBuiltin=TypedArraySet
+# WRITES-NEXT: ([[copied]]: undefined @JSValue
+# WRITES-NEXT: = CheckProof [[copied]] checkedType=undefined
+# WRITES: TryCallInline {{*}} inlineBuiltin=DataViewSet
+# WRITES-NEXT: ([[stored]]: undefined @JSValue
+# WRITES-NEXT: = CheckProof [[stored]] checkedType=undefined
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.id = (x) => x;
+# RIGHT: undefinedundefined00 undefinedundefined2557
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use super::bindings::{ModuleRequest, SpelledModule};
+use super::bindings::{ModuleRequest, NO_STAR_PLACE, SpelledModule};
 use super::exports::ExportTables;
 use super::failures::{
     FailureEffect, FailureOrder, ModuleFailureKind, NumberedFailures, PendingFailure, SitePart,
@@ -19,7 +19,9 @@ use crate::load::Sources;
 use crate::load::contents::load_names::{
     NamedModule, is_followed_further_than_bundler, mentions_plugin, modules_named_in, names_plugin,
 };
+use crate::load::plugin_modules::FOLDER_OF_DATABASE_NAMESPACE;
 use crate::load::sources::{SourceKind, parsed_source};
+use crate::module_keys::DATABASE_NAMESPACE;
 use bun_core::strings;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Atom;
@@ -52,6 +54,7 @@ pub(super) struct RequestDraft {
     pub target: ModuleRef,
     pub phase: ImportPhase,
     pub is_star_export: bool,
+    pub star_place: u32,
 }
 
 pub(super) struct FileScan {
@@ -108,6 +111,60 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
         by_file[file.idx()] = scan;
     }
     Scans { by_file }
+}
+
+pub(super) fn request_folders_of_databases_first(
+    input: &BindInput<'_, '_>,
+    scans: &mut Scans,
+) -> Vec<FileId> {
+    let files = input.files;
+    let namespace_of = |file: FileId| {
+        let module = parsed_source(files, file)?.plugin_module.as_ref()?;
+        Some(&*module.namespace)
+    };
+    let mut folders = Vec::new();
+    for &database in files.compiled_files() {
+        if namespace_of(database) != Some(DATABASE_NAMESPACE) {
+            continue;
+        }
+        let sites = scans.find(database).map_or(&[][..], |scan| &scan.sites);
+        let folder = sites.iter().find_map(|site| match *site {
+            ScannedSite::Module(ModuleRef::File(file))
+                if namespace_of(file) == Some(FOLDER_OF_DATABASE_NAMESPACE) =>
+            {
+                Some(file)
+            }
+            _ => None,
+        });
+        let Some(folder) = folder else {
+            continue;
+        };
+        let is_imported_by_statement = files.compiled_files().iter().any(|&importer| {
+            let requests = scans.find(importer).map_or(&[][..], |scan| &scan.requests);
+            (requests.iter()).any(|request| request.target == ModuleRef::File(database))
+        });
+        folders.push((folder, is_imported_by_statement));
+    }
+    for entry_point in input.sources.entry_points() {
+        let Some(scan) = scans.find_mut(entry_point.file) else {
+            continue;
+        };
+        if !matches!(
+            scan.interop.kind,
+            ModuleKind::SourceText | ModuleKind::CommonJs
+        ) {
+            continue;
+        }
+        let run_first = folders.iter().filter(|folder| folder.1);
+        let first = run_first.map(|&(folder, _)| RequestDraft {
+            target: ModuleRef::File(folder),
+            phase: ImportPhase::Evaluation,
+            is_star_export: false,
+            star_place: NO_STAR_PLACE,
+        });
+        scan.requests.splice(0..0, first);
+    }
+    folders.iter().map(|folder| folder.0).collect()
 }
 
 fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scans) {
@@ -297,8 +354,8 @@ fn find_forms_given_to_several_types(
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Spelling {
     WithoutExtension,
-    UnderAnotherExtension,
-    AsFolder,
+    WithOtherExtension,
+    AsDirectory,
 }
 
 fn without_extension_of_file(path: &[u8]) -> &[u8] {
@@ -324,9 +381,9 @@ pub(super) fn find_spelling(
     match &written[..] {
         written if written == path => None,
         written if written == without_extension_of_file(path) => Some(Spelling::WithoutExtension),
-        written if Some(written) == folder => Some(Spelling::AsFolder),
+        written if Some(written) == folder => Some(Spelling::AsDirectory),
         written if without_extension_of_file(written) == without_extension_of_file(path) => {
-            Some(Spelling::UnderAnotherExtension)
+            Some(Spelling::WithOtherExtension)
         }
         _ => None,
     }
@@ -434,7 +491,7 @@ impl FileScanner<'_, '_> {
         let is_followed_further = is_followed_further_than_bundler(self.files, self.file, site);
         let asks_loader =
             self.asks_loader_where_bundler_does && (finds_nothing || is_followed_further);
-        if asks_loader && let Some(scanned) = self.leave_site_to_loader(answer) {
+        if asks_loader && let Some(scanned) = self.leave_site_to_loader(site, answer) {
             if let (false, ImportSpecifier::Constant(specifier), CodeAnswer::NotFound(reason)) =
                 (is_followed_further, site.specifier, answer)
             {
@@ -456,7 +513,11 @@ impl FileScanner<'_, '_> {
         }
     }
 
-    fn leave_site_to_loader(&mut self, answer: CodeAnswer<'_>) -> Option<ScannedSite> {
+    fn leave_site_to_loader(
+        &mut self,
+        site: &ImportSite,
+        answer: CodeAnswer<'_>,
+    ) -> Option<ScannedSite> {
         let at = self.spellings.len() as u32;
         let target = match answer {
             CodeAnswer::File(target) => target,
@@ -475,7 +536,14 @@ impl FileScanner<'_, '_> {
             return None;
         }
         self.candidates.push(ModuleRef::File(target));
-        Some(ScannedSite::Candidates(at..at))
+        if let ImportSpecifier::Constant(spelling) = site.specifier {
+            self.spellings.push(SpelledModule {
+                spelling,
+                module: ModuleRef::File(target),
+                is_left_to_loader: true,
+            });
+        }
+        Some(ScannedSite::Candidates(at..self.spellings.len() as u32))
     }
 
     fn with_type_attribute(&self, site: &ImportSite, scanned: ScannedSite) -> ScannedSite {
@@ -769,6 +837,7 @@ impl FileScanner<'_, '_> {
                 target,
                 phase,
                 is_star_export,
+                star_place: NO_STAR_PLACE,
             });
         }
         requests.drafts
@@ -907,13 +976,26 @@ fn is_star_export_entry(hir: &hir::File<'_>, statement: StmtId) -> bool {
 struct RequestList {
     drafts: Vec<RequestDraft>,
     positions: FxHashMap<(ModuleRef, ImportPhase), u32>,
+    stars: u32,
 }
 
 impl RequestList {
     fn add(&mut self, draft: RequestDraft) {
-        match self.find(draft.target, draft.phase) {
-            Some(position) => self.drafts[position].is_star_export |= draft.is_star_export,
-            None => self.push(draft),
+        let position = match self.find(draft.target, draft.phase) {
+            Some(position) => position,
+            None => {
+                self.push(RequestDraft {
+                    is_star_export: false,
+                    ..draft
+                });
+                self.drafts.len() - 1
+            }
+        };
+        let listed = &mut self.drafts[position];
+        if draft.is_star_export && !listed.is_star_export {
+            listed.is_star_export = true;
+            listed.star_place = self.stars;
+            self.stars += 1;
         }
     }
 
@@ -941,6 +1023,7 @@ impl RequestList {
 pub(super) struct FinishedRequests {
     pub files: Vec<Vec<ModuleRequest>>,
     pub inner_modules: Vec<(ModuleRef, Vec<ModuleRequest>)>,
+    pub files_with_late_stars: Vec<FileId>,
 }
 
 fn find_modules_with_names_of_mocks(
@@ -984,14 +1067,26 @@ pub(super) fn finish_requests(
     sites: &PlannedSites,
     mocked_modules: &FxHashSet<ModuleRef>,
 ) -> FinishedRequests {
-    let has_names_of_mock = find_modules_with_names_of_mocks(scans, modules, mocked_modules);
+    let modules_with_names_of_mock =
+        find_modules_with_names_of_mocks(scans, modules, mocked_modules);
     let finish_file = |&file: &FileId| {
+        let is_any_mock_named = !modules_with_names_of_mock.is_empty();
+        let has_names_of_mock = modules_with_names_of_mock.contains(&ModuleRef::File(file));
+        let reaches_another_mock = || {
+            let stars = scans.find(file).into_iter().flat_map(|scan| &scan.requests);
+            let mut stars = stars.filter(|draft| draft.is_star_export);
+            stars.any(|draft| modules_with_names_of_mock.contains(&draft.target))
+        };
         let follows_every_star = tables.follows_every_star(file)
-            || (has_names_of_mock.contains(&ModuleRef::File(file))
-                && !mocked_modules.contains(&ModuleRef::File(file)));
+            || (has_names_of_mock
+                && (!mocked_modules.contains(&ModuleRef::File(file)) || reaches_another_mock()));
         let finish_request = |draft: &RequestDraft| ModuleRequest {
             phase: draft.phase,
             is_star_export: draft.is_star_export,
+            star_place: match is_any_mock_named {
+                true => draft.star_place,
+                false => NO_STAR_PLACE,
+            },
             is_dynamic_star_export: draft.is_star_export
                 && (follows_every_star || tables.has_dynamic_names(draft.target)),
             ..ModuleRequest::import(draft.target)
@@ -1007,7 +1102,18 @@ pub(super) fn finish_requests(
         inner_modules: inner_modules
             .map(|&(file, callback)| (ModuleRef::Inner { file, callback }, Vec::new()))
             .collect(),
+        files_with_late_stars: Vec::new(),
     };
+    if !modules_with_names_of_mock.is_empty() {
+        let has_late_star = |requests: &[ModuleRequest]| {
+            let places = requests.iter().map(|it| it.star_place);
+            !places.filter(|&place| place != NO_STAR_PLACE).is_sorted()
+        };
+        let files = modules.record_files.iter().zip(&finished.files);
+        let files = files.filter(|(_, requests)| has_late_star(requests));
+        finished.files_with_late_stars = files.map(|(&file, _)| file).collect();
+        finished.files_with_late_stars.sort_unstable();
+    }
     let mut seen = FxHashSet::default();
     for (requests, &file) in finished.files.iter_mut().zip(&modules.record_files) {
         seen.clear();

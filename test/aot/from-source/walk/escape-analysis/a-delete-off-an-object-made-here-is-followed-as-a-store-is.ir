@@ -1,0 +1,33 @@
+# `const o = { id: i, name: "x", n: i }; delete o.name; s += o.n;`: without the delete, or with `o.name = undefined` in its place, the object is never built. A delete had no form but the closed one, with the
+# effects of unknown code: the object was built to be handed to it, and all that was known of the object was forgotten: 98 instructions a turn against 3.
+# Off a literal's record that has not left and that only stores in sight into its fields have touched (not frozen, no field outside its slot), a delete by name runs no code of the program and throws nothing:
+# a name that is no field of the layout: there is nothing to remove: the answer is true and nothing is built (absent). A field that lies in its slot: the closed operation stays, with the effects it has there,
+# so that it goes with the object where nobody needs the object (held), and is done where the object leaves (leaves). The state forgets the slot and the order of the keys.
+# A frozen object is none of these: its delete keeps the effects of unknown code, and throws (frozen).
+# -- source: a-delete-off-an-object-made-here-is-followed-as-a-store-is.cjs
+# 'use strict';
+# function held(t) { let s = 0; for (let i = 0; i < 4; i++) { const o = { id: i, name: "x", n: i + t }; delete o.name; s += o.n; } return s; }
+# function absent(t) { let s = 0; for (let i = 0; i < 4; i++) { const o = { id: i, name: "x", n: i + t }; if (delete o.zip) s += o.n; } return s; }
+# function leaves(t) { const o = { id: t, name: "x", n: t + 1 }; delete o.name; return o; }
+# function frozen(t) { const o = { id: t, name: "x", n: t + 1 }; Object.freeze(o); try { delete o.name; } catch (e) { return e.constructor.name + o.name; } return "no throw"; }
+# hand(held); hand(absent); hand(leaves); hand(frozen);
+# const left = leaves(3);
+# print(held(1), absent(2), Object.keys(left).join(), left.name, "name" in left, left.n, frozen(4));
+# -- end of source
+# RUN(HELD): walk f1 mechanisms=all
+# HELD-LABEL: code f1:Body
+# HELD-NOT: = NewObject
+# HELD-NOT: PropDelete
+# RUN(ABSENT): walk f2 mechanisms=all
+# ABSENT-LABEL: code f2:Body
+# ABSENT-NOT: = NewObject
+# ABSENT-NOT: PropDelete
+# RUN(LEAVES): walk f3 mechanisms=all
+# LEAVES-LABEL: code f3:Body
+# LEAVES: = NewObject
+# LEAVES: = PropDelete {{*}}key="name" traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
+# RUN(FROZEN): walk f4 mechanisms=all
+# FROZEN-LABEL: code f4:Body
+# FROZEN: = PropDelete {{*}}key="name" traits=[{{*}}mayCallUnknownCode
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 10 14 id,n undefined false 4 TypeErrorx

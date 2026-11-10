@@ -1,0 +1,16 @@
+# Bun.build(globalThis.options)
+# The control: the options may have `compile`.
+# RUN: features
+# CHECK: feature JIT by BunBuild named at f0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="build"
+    v2 = Convert v1 declared={type=builtin(BunBuild) flags=[IsExpected]}
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="options"
+    v5 = Call v2, v0, v4 calleeKey="build" calleeName="Bun.build"
+    Return v5
+}

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/primordials.js, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 1707be69cea78abd175b76624ec9b7f6845993ca22b53f3405095b7e654e113e.
+// Written against that file with the SHA-256 dc9515751b0719840243a4f428b908ab6192265e608b94f1456beb14fcfcc581.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -543,5 +543,17 @@ export default {
   TypedArrayPrototypeGetSymbolToStringTag: FunctionPrototypeCall.bind(
     Uint8Array.prototype.__lookupGetter__(SymbolToStringTag),
   ),
+  Uint8ClampedArray,
+  Uint8Array,
+  Uint16Array,
+  Uint32Array,
+  Int8Array,
+  Int16Array,
+  Int32Array,
+  Float16Array,
+  Float32Array,
+  Float64Array,
+  BigUint64Array,
+  BigInt64Array,
   uncurryThis,
 };

@@ -355,7 +355,7 @@ impl<'s> Folder<'_, 's> {
                 self.copy_condition(ident, init);
                 let effects = match is_const {
                     true if self.note_constant_of_enum_member(ident, init) => {
-                        Effects::LeftOutByBunRun
+                        self.folded(init).effects
                     }
                     true => Effects::DeadZoneCheck,
                     false => Effects::Unknown,

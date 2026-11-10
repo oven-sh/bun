@@ -13,20 +13,16 @@
 # sink(asked.prototype);
 # -- end of source
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewGenerator function=f1
 # somebody else has the generator
 # RUN(KEPT): walk f2:Body mechanisms=all
-# REQUIRES(KEPT): entries-of-bun
 # KEPT-LABEL: code f2:Body
 # KEPT: = NewGenerator v{{*}} function=f2
 # somebody has asked the function for the object
 # RUN(ASKED): walk f3:Body mechanisms=all
-# REQUIRES(ASKED): entries-of-bun
 # ASKED-LABEL: code f3:Body
 # ASKED: = NewGenerator v{{*}} function=f3
 # RUN(WITHHELD): walk f1:Body mechanisms=none
-# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-LABEL: code f1:Body
 # WITHHELD: = NewGenerator v{{*}} function=f1

@@ -475,24 +475,55 @@ test("t", () => {
 });`,
       said: "SAID false,2,true,8,TypeError,2,[object Math],8",
     },
-  // What docs/compiler/debugging.mdx names as still taken, held to its word: the first stays on the stack and is refused; of the next two nothing is running when the store happens; of the
-  // last nobody knows who handed the text in. Whoever mends one of them changes the page with this line.
-  "anything but this: nothing of the product is running when the store happens, or it stands in a text handed to node:vm":
-    {
-      product: `
+  // A text belongs to the file that hands it to node:vm, as one handed to eval does, whoever has it run and in whichever context.
+  "who has a text run that was handed to node:vm": {
+    product: `
+import vm from "node:vm";
+const text = "Math.ceil = () => 7";
+export const roads = [
+  () => { vm.runInThisContext(text); },
+  () => { new vm.Script(text).runInThisContext(); },
+  () => { vm.compileFunction(text)(); },
+  () => { vm.runInNewContext("M.ceil = () => 7", { M: Math }); },
+  () => { vm.runInThisContext("eval('Math.ceil = () => 7')"); },
+];
+export const made = new vm.Script(text);
+export function run(script) { script.runInThisContext(); }`,
+    tests: `
+import { test } from "bun:test";
+import vm from "node:vm";
+import { made, roads, run } from "./src/main.js";
+test("a", () => {
+  const kept = Math.ceil, said = [];
+  Math.ceil = () => 9;
+  const own = "Math.ceil = () => 8";
+  for (const patch of [...roads, () => made.runInThisContext(), () => run(new vm.Script(own)), () => vm.runInThisContext(own)]) {
+    Math.ceil = kept;
+    try { patch(); said.push(Math.ceil(1.5)); } catch (error) { said.push(error.constructor.name + Math.ceil(1.5)); }
+  }
+  Math.ceil = kept;
+  console.log("SAID", said.join());
+});`,
+    said: "SAID TypeError2,TypeError2,TypeError2,TypeError2,TypeError2,TypeError2,8,8",
+  },
+  // Which of these stores are still accepted: the first stays on the stack and is refused; of the next two nothing is running when the store happens; of the
+  // last two nothing is running when node:vm is handed the text: one has left, so the text is the test's that called it, the other is a timer's.
+  "anything but this: nothing of the product is running when the store happens, or when node:vm is handed the text": {
+    product: `
 import vm from "node:vm";
 const set = Reflect.set.bind(null, Math, "ceil");
 export function patchAndStay() { return [set(() => 7)]; }
 export function patchLast() { return set(() => 7); }
 export function patchLater() { setTimeout(Object.assign, 0, Math, { ceil: () => 7 }); }
-export function patchByText() { vm.runInThisContext("Math.ceil = () => 7"); }`,
-      tests: `
+export function patchByTextLast() { return vm.runInThisContext("Math.ceil = () => 7"); }
+export function patchByTextLater() { setTimeout(vm.runInThisContext, 0, "Math.ceil = () => 7"); }`,
+    tests: `
 import { test } from "bun:test";
-import { patchAndStay, patchByText, patchLast, patchLater } from "./src/main.js";
+import { patchAndStay, patchByTextLast, patchByTextLater, patchLast, patchLater } from "./src/main.js";
 test("a", async () => {
   const kept = Math.ceil, said = [];
   Math.ceil = () => 9;
-  for (const patch of [patchAndStay, patchLast, patchLater, patchByText]) {
+  for (const patch of [patchAndStay, patchLast, patchLater, patchByTextLast, patchByTextLater]) {
     Math.ceil = kept;
     patch();
     await new Promise(done => setTimeout(done, 5));
@@ -501,8 +532,8 @@ test("a", async () => {
   Math.ceil = kept;
   console.log("SAID", said.join());
 });`,
-      said: "SAID 2,7,7,7",
-    },
+    said: "SAID 2,7,7,7,7",
+  },
 })) {
   test(`nor on ${title}`, async () => {
     using dir = tempDir("aot-product-writes-whoever-stored-before", {

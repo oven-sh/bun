@@ -1,0 +1,887 @@
+# This test gives the speculation of a-sum-of-two-values-that-say-nothing-asks-both-for-numbers-where-the-turn-may-begin-again.ir operands that prove it wrong.
+# The operands are strings, a string next to a number, null, BigInts, an object whose valueOf counts its calls, arrays, a boolean, NaN, -0 and a symbol.
+# The first iteration restarts in the generic version. Every result is what plain Bun prints, and valueOf runs the same number of times.
+# -- source: a-sum-and-a-comparison-of-what-are-no-numbers-answer-as-plain.js
+# const sums = { go: (a, b) => a + b }, orders = { go: (a, b) => a < b }, names = JSON.parse('["go"]');
+# const sum = sums[names[0]], less = orders[names[0]];
+# let calls = 0;
+# const counted = { valueOf() { calls++; return 4; } };
+# function run(x, y) { let out; for (let i = 0; i < 3; i++) out = sum(x, y); return out; }
+# function order(x, y) { let out; for (let i = 0; i < 3; i++) out = less(x, y); return out; }
+# const pairs = [[1, 2], [0.5, "t"], ["t", 0.5], ["a", "b"], [null, undefined], [1n, 2n], [counted, 1], [[1], [2]], [true, 1], [NaN, 1], [-0, 0]];
+# for (const [x, y] of pairs)
+#   print(String(run(x, y)), String(order(x, y)));
+# print(calls);
+# try { run(Symbol("s"), 1); } catch (error) { print(error instanceof TypeError); }
+# try { run(1n, 1); } catch (error) { print(error instanceof TypeError); }
+# try { order(Symbol("s"), 1); } catch (error) { print(error instanceof TypeError); }
+# print(order(1n, 1.5), order("10", 9), order("10", "9"));
+# -- end of source
+# RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# ANSWERS: 3 true
+# ANSWERS: 0.5t false
+# ANSWERS: t0.5 false
+# ANSWERS: ab true
+# ANSWERS: NaN false
+# ANSWERS: 3 true
+# ANSWERS: 5 false
+# ANSWERS: 12 true
+# ANSWERS: 2 false
+# ANSWERS: NaN false
+# ANSWERS: 0 false
+# ANSWERS: 6
+# ANSWERS: true
+# ANSWERS: true
+# ANSWERS: true
+# ANSWERS: true false true
+
+module m0 path="a-sum-and-a-comparison-of-what-are-no-numbers-answer-as-plain.js" displayPath="a-sum-and-a-comparison-of-what-are-no-numbers-answer-as-plain.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorConstructor.ts" displayPath="/$bun/js/engine/JSIteratorConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+entry module=m0
+layout L0 module=m0 position=186 fields=[{key="valueOf" declared={type=anything} flags=[IsRequired, IsMethod]}] place=186 ownFieldCount=1
+layout L1 module=m0 position=13 fields=[{key="go" declared={type=anything} flags=[IsRequired]}] place=13 ownFieldCount=1
+layout L2 module=m2 position=3614 fields=[{key="done" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] place=3614 ownFieldCount=2
+layout L3 module=m3 position=11607 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key=@#"nextPosition" declared={type=number} flags=[IsRequired]}, {key=@#"steppedText" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[2, 1, 0] place=11607 ownFieldCount=3
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=0.5}, String{value="t"}]} module=m0
+data d2 root=Array{contents=anything elements=[String{value="t"}, Number{value=0.5}]} module=m0
+data d3 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}]} module=m0
+data d4 root=Array{contents=anything elements=[Null, Undefined]} module=m0
+data d5 root=Array{contents=anything elements=[BigInt{digits="1"}, BigInt{digits="2"}]} module=m0
+data d6 root=Array{contents=anything elements=[Array{contents=anything elements=[Number{value=1}]}, Array{contents=anything elements=[Number{value=2}]}]} module=m0
+data d7 root=Array{contents=anything elements=[Boolean{value=true}, Number{value=1}]} module=m0
+data d8 root=Array{contents=anything elements=[Number{value=NaN}, Number{value=1}]} module=m0
+data d9 root=Array{contents=anything elements=[Number{value=-0}, Number{}]} module=m0
+data d10 root=Array{contents=anything} module=m3
+data d11 root=Object{layout=L2 members=[{key="value"}, {key="done" value=Boolean{value=true}}]} module=m3
+variable g0 name="sum" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=6
+variable g1 name="less" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=7
+variable g2 name="calls" module=m0 declared={type=number|absent flags=[IsExpected]} place=8
+variable g3 name="stepIterator" module=m3 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable] place=50
+variable g4 name="openIterator" module=m3 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable] place=46
+variable g5 name="stepOverText" module=m3 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable] place=42
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @19
+    v5 = NewObject -, v4 layout=L1 fields=[0] @13
+    v6 = FinishObject v5 @13
+    v7 = NewClosure function=f4 @53
+    v8 = NewObject -, v7 layout=L1 fields=[0] @47
+    v9 = FinishObject v8 @47
+    v10 = Builtin builtin=JSON @80
+    v11 = PropGet v10 key="parse" @80
+    v12 = Convert v11 declared={type=builtin(JSONParse) flags=[IsExpected]} @80
+    v13 = String string="[\"go\"]" @91
+    v14 = Call v12, v10, v13 calleeKey="parse" calleeName="JSON.parse" @85
+    v15 = Integer @119
+    v16 = ElemGet v14, v15 @119
+    v17 = ElemGet v6, v16 @114
+    PutModuleVariable v17 variable=g0 @108
+    v19 = Integer @144
+    v20 = ElemGet v14, v19 @144
+    v21 = ElemGet v9, v20 @137
+    PutModuleVariable v21 variable=g1 @130
+    v23 = Integer @167
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @167
+    PutModuleVariable v24 variable=g2 @159
+    v26 = NewClosure function=f5 @188
+    v27 = NewObject -, v26 layout=L0 fields=[0] @186
+    v28 = FinishObject v27 @186
+    v29 = Data data=d0 @420
+    v30 = Data data=d1 @428
+    v31 = Data data=d2 @440
+    v32 = Data data=d3 @452
+    v33 = Data data=d4 @464
+    v34 = Data data=d5 @483
+    v35 = Integer integer=1 @503
+    v36 = NewArray v28, v35 contents=anything @493
+    v37 = Data data=d6 @507
+    v38 = Data data=d7 @519
+    v39 = Data data=d8 @530
+    v40 = Data data=d9 @540
+    v41 = NewArray v29, v30, v31, v32, v33, v34, v36, v37, v38, v39, v40 contents=anything @419
+    v42 = IteratorOpen v41 @550
+    Jump -> next b1() @550
+  b1():
+    LoopHint @550
+    v44 = IteratorResume v42 @550
+    v45 = ResultAt v44 @550
+    v46 = ResultAt v44 index=1 @550
+    Branch v45 -> taken b2(), notTaken b12() @550
+  b2():
+    v47 = Builtin builtin=GlobalThis @627
+    v48 = PropGet v47 key="print" [isFreeName] @627
+    v49 = GetModuleVariable variable=g2 @633
+    v50 = CheckInitialized v49 name="calls" @633
+    v51 = Call v48, -, v50 calleeName="print" @627
+    Jump -> next b3() @641
+  b3() handler=b4():
+    v52 = Builtin builtin=Symbol @651
+    v53 = String string="s" @658
+    v54 = Call v52, -, v53 calleeName="Symbol" callNumber=9 @651
+    v55 = Integer integer=1 @664
+    v56 = Call v1, -, v54, v55 calleeName="run" @647
+    Jump -> next b5() @647
+  b4() role=CatchHandler:
+    v57 = CatchValue @684
+    v58 = Builtin builtin=GlobalThis @686
+    v59 = PropGet v58 key="print" [isFreeName] @686
+    v60 = Builtin builtin=GlobalThis @709
+    v61 = PropGet v60 key="TypeError" [isFreeName] @709
+    v62 = Convert v61 declared={type=builtin(TypeError) flags=[IsExpected]} @709
+    v63 = InstanceOf v57, v62 @698
+    v64 = Call v59, -, v63 calleeName="print" @686
+    Jump -> next b5() @686
+  b5():
+    Jump -> next b6() @723
+  b6() handler=b7():
+    v65 = BigInt digits="1" @733
+    v66 = Integer integer=1 @737
+    v67 = Call v1, -, v65, v66 calleeName="run" @729
+    Jump -> next b8() @729
+  b7() role=CatchHandler:
+    v68 = CatchValue @757
+    v69 = Builtin builtin=GlobalThis @759
+    v70 = PropGet v69 key="print" [isFreeName] @759
+    v71 = Builtin builtin=GlobalThis @782
+    v72 = PropGet v71 key="TypeError" [isFreeName] @782
+    v73 = Convert v72 declared={type=builtin(TypeError) flags=[IsExpected]} @782
+    v74 = InstanceOf v68, v73 @771
+    v75 = Call v70, -, v74 calleeName="print" @759
+    Jump -> next b8() @759
+  b8():
+    Jump -> next b9() @796
+  b9() handler=b10():
+    v76 = Builtin builtin=Symbol @808
+    v77 = String string="s" @815
+    v78 = Call v76, -, v77 calleeName="Symbol" callNumber=14 @808
+    v79 = Integer integer=1 @821
+    v80 = Call v3, -, v78, v79 calleeName="order" @802
+    Jump -> next b11() @802
+  b10() role=CatchHandler:
+    v81 = CatchValue @841
+    v82 = Builtin builtin=GlobalThis @843
+    v83 = PropGet v82 key="print" [isFreeName] @843
+    v84 = Builtin builtin=GlobalThis @866
+    v85 = PropGet v84 key="TypeError" [isFreeName] @866
+    v86 = Convert v85 declared={type=builtin(TypeError) flags=[IsExpected]} @866
+    v87 = InstanceOf v81, v86 @855
+    v88 = Call v83, -, v87 calleeName="print" @843
+    Jump -> next b11() @843
+  b11():
+    v89 = Builtin builtin=GlobalThis @880
+    v90 = PropGet v89 key="print" [isFreeName] @880
+    v91 = BigInt digits="1" @892
+    v92 = Double number=1.5 @896
+    v93 = Call v3, -, v91, v92 calleeName="order" @886
+    v94 = String string="10" @908
+    v95 = Integer integer=9 @914
+    v96 = Call v3, -, v94, v95 calleeName="order" @902
+    v97 = String string="10" @924
+    v98 = String string="9" @930
+    v99 = Call v3, -, v97, v98 calleeName="order" @918
+    v100 = Call v90, -, v93, v96, v99 calleeName="print" @880
+    v101 = Undefined @880
+    Return v101 @880
+  b12():
+    Jump -> next b13() @550
+  b13() handler=b17():
+    v102 = Convert v46 declared={type=undefined|null|Array<undefined|null|boolean|number|string|bigint|L0|Array<number>> flags=[IsExpected]} @550
+    v103 = IteratorOpen v102 elementCount=2 [isDestructuring] @561
+    Jump -> next b14() @561
+  b14() handler=b16():
+    v104 = IteratorResume v103 stepIndex=0 @561
+    v105 = ResultAt v104 @561
+    v106 = ResultAt v104 index=1 @561
+    v107 = IteratorResume v103 stepIndex=1 @561
+    v108 = ResultAt v107 @561
+    v109 = ResultAt v107 index=1 @561
+    Jump -> next b15() @565
+  b15() handler=b17():
+    IteratorClose v103 @561
+    v111 = Builtin builtin=GlobalThis @580
+    v112 = PropGet v111 key="print" [isFreeName] @580
+    v113 = Builtin builtin=String @586
+    v114 = Call v1, -, v106, v109 calleeName="run" @593
+    v115 = Call v113, -, v114 calleeName="String" @586
+    v116 = Builtin builtin=String @605
+    v117 = Call v3, -, v106, v109 calleeName="order" @612
+    v118 = Call v116, -, v117 calleeName="String" @605
+    v119 = Call v112, -, v115, v118 calleeName="print" @580
+    Jump -> next b1() @580
+  b16() role=IterationCleanup subject=v103 handler=b17():
+    v120 = CatchException @561
+    IteratorClose v103 completion=Throw @561
+    Rethrow v120 @561
+  b17() role=IterationCleanup subject=v42:
+    v122 = CatchException @550
+    IteratorClose v42 completion=Throw @550
+    Rethrow v122 @550
+}
+function f1 name="run" module=m0 position=224 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|L0|Array<number> flags=[IsExpected]}, {type=undefined|null|boolean|number|string|bigint|L0|Array<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|boolean|number|string|symbol|bigint|L0|Array<number>, v1: undefined|null|boolean|number|string|bigint|L0|Array<number>):
+    v2 = Undefined @245
+    v3 = Integer @267
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @267
+    Jump -> next b1(v2, v4) @263
+  b1(v5, v6):
+    LoopHint @263
+    v8 = Integer integer=3 @274
+    v9 = Less v6, v8 @274
+    Branch v9 -> taken b2(), notTaken b3() @274
+  b2():
+    v10 = GetModuleVariable variable=g0 @288
+    v11 = CheckInitialized v10 name="sum" @288
+    v12 = Call v11, -, v0, v1 calleeName="sum" @288
+    v13 = Increment v6 @277
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @277
+    Jump -> next b1(v12, v14) @277
+  b3():
+    Return v5 @306
+}
+function f2 name="order" module=m0 position=313 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|L0|Array<number> flags=[IsExpected]}, {type=undefined|null|boolean|number|string|bigint|L0|Array<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|boolean|number|string|symbol|bigint|L0|Array<number>, v1: undefined|null|boolean|number|string|bigint|L0|Array<number>):
+    v2 = Undefined @336
+    v3 = Integer @358
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @358
+    Jump -> next b1(v2, v4) @354
+  b1(v5, v6):
+    LoopHint @354
+    v8 = Integer integer=3 @365
+    v9 = Less v6, v8 @365
+    Branch v9 -> taken b2(), notTaken b3() @365
+  b2():
+    v10 = GetModuleVariable variable=g1 @379
+    v11 = CheckInitialized v10 name="less" @379
+    v12 = Call v11, -, v0, v1 calleeName="less" @379
+    v13 = Increment v6 @368
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @368
+    Jump -> next b1(v12, v14) @368
+  b3():
+    Return v5 @398
+}
+function f3 name="go" module=m0 position=19 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1 @33
+    Return v2 @33
+}
+function f4 name="go" module=m0 position=53 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1 @67
+    Return v2 @67
+}
+function f5 name="valueOf" module=m0 position=188 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g2 @200
+    v1 = CheckInitialized v0 name="calls" @200
+    v2 = Increment v1 @200
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @200
+    v4 = GetModuleVariable variable=g2 @200
+    v5 = CheckInitialized v4 name="calls" @200
+    PutModuleVariable v3 variable=g2 @200
+    v7 = Integer integer=4 @216
+    Return v7 @216
+}
+function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f7 name="takeFromIterable" module=m3 position=7719 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersTakeFromIterable thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: number):
+    v2 = GetModuleVariable variable=g4 @7824
+    v3 = Call v2, -, v0 calleeName="openIterator" @7824
+    v4 = TypeTest v3 testedType=undefined @7851
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0) @7851
+  b1(v5):
+    v6 = CollectionIteratorClosedMark @7883
+    v7 = NewArray v6 contents=anything @7882
+    v8 = Convert v7 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @7882
+    Return v8 @7882
+  b2(v9):
+    v10 = NarrowByTest v3, v9 @7851
+    v11 = PropGet v10 key="next" @7942
+    v12 = TypeTest v11 testedType=function @7972
+    Branch v12 -> taken b3(| 0), notTaken b16(| 0) @7972
+  b3(v13):
+    v14 = NarrowByTest v11, v13 @7972
+    v15 = Data data=d10 @8066
+    v16 = Convert v15 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @8066
+    v17 = Integer @8089
+    v18 = Convert v17 declared={type=number} @8089
+    Jump -> next b4(v18) @8081
+  b4(v19: number):
+    LoopHint @8081
+    v21 = Less v19, v1 @8100
+    Branch v21 -> taken b5(), notTaken b8() @8100
+  b5():
+    v22 = GetModuleVariable variable=g3 @8145
+    v23 = Call v22, -, v10, v14 calleeName="stepIterator" @8145
+    v24 = IsCollectionIteratorClosedMark v23 @8183
+    v25 = ToBoolean v24 @8183
+    Branch v25 -> taken b6(| 0), notTaken b7(| 0) @8183
+  b6(v26):
+    Return v16 @8230
+  b7(v27):
+    v28 = Convert v16 declared={type=object flags=[IsFromCompiler, IsClaim]} @8241
+    v29 = PropGet v28 key="length" @8241
+    ElemDefine v28, v29, v23 @8241
+    v31 = Increment v19 @8107
+    v32 = Convert v31 declared={type=number} @8107
+    Jump -> next b4(v32) @8107
+  b8():
+    v33 = PropGet v10 key="return" @8297
+    v34 = TypeTest v33 testedType=undefined @8328
+    Branch v34 -> taken b10(), notTaken b9(| 0) @8328
+  b9(v35):
+    v36 = NarrowByTest v33, v35 @8328
+    v37 = TypeTest v36 testedType=null @8351
+    Branch v37 -> taken b10(), notTaken b11(| 0) @8351
+  b10():
+    Return v16 @8374
+  b11(v38):
+    v39 = NarrowByTest v33, v38 @8351
+    v40 = TypeTest v39 testedType=function @8388
+    Branch v40 -> taken b12(| 0), notTaken b15(| 0) @8388
+  b12(v41):
+    v42 = NarrowByTest v33, v41 @8388
+    v43 = Call v42, v10 @8474
+    v44 = TypeTest v43 testedType=object @8464
+    Branch v44 -> taken b13(| 0), notTaken b14(| 0) @8464
+  b13(v45):
+    Return v16 @8572
+  b14(v46):
+    v47 = ThrowNewError errorKind=TypeError message="Iterator result interface is not an object." @8499
+    Unreachable @8499
+  b15(v48):
+    v49 = NarrowByTest v33, v48 @8388
+    v50 = CollectionIteratorClosedMark @8416
+    v51 = NewArray v50, v49 contents=anything @8415
+    v52 = Convert v51 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @8415
+    Return v52 @8415
+  b16(v53):
+    v54 = NarrowByTest v11, v53 @7972
+    v55 = CollectionIteratorClosedMark @7999
+    v56 = NewArray v55, v54 contents=anything @7998
+    v57 = Convert v56 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @7998
+    Return v57 @7998
+}
+function f8 name="stepOverText" module=m3 position=11839 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L3):
+    v1 = PropGet v0 key=@#"steppedText" @11918
+    v2 = PropGet v0 key=@#"nextPosition" @11960
+    v3 = TypeTest v1 testedType=string @12158
+    Branch v3 -> taken b1(| 0), notTaken b11() @12158
+  b1(v4):
+    v5 = NarrowByTest v1, v4 @12158
+    v6 = TypeTest v2 testedType=number @12186
+    Branch v6 -> taken b2(| 0), notTaken b11() @12186
+  b2(v7):
+    v8 = NarrowByTest v2, v7 @12186
+    v9 = Integer @12274
+    v10 = BitOr v8, v9 @12274
+    v11 = PropGet v5 key="length" @12294
+    v12 = GreaterEq v10, v11 @12325
+    Branch v12 -> taken b3(), notTaken b4() @12325
+  b3():
+    v13 = CollectionIteratorClosedMark @12340
+    Return v13 @12340
+  b4():
+    v14 = PropGet v5 key="charCodeAt" @12389
+    v15 = Call v14, v5, v10 calleeKey="charCodeAt" calleeName="text.charCodeAt" @12394
+    v16 = Convert v15 declared={type=number} illTypedCause=DeclarationWithoutBody @12389
+    v17 = Integer integer=55296 @12431
+    v18 = GreaterEq v16, v17 @12431
+    Branch v18 -> taken b5(), notTaken b10() @12431
+  b5():
+    v19 = Integer integer=56319 @12450
+    v20 = LessEq v16, v19 @12450
+    Branch v20 -> taken b6(), notTaken b10() @12450
+  b6():
+    v21 = Integer integer=1 @12471
+    v22 = Add v10, v21 @12471
+    v23 = Less v22, v11 @12475
+    Branch v23 -> taken b7(), notTaken b10() @12475
+  b7():
+    v24 = PropGet v5 key="charCodeAt" @12504
+    v25 = Integer integer=1 @12531
+    v26 = Add v10, v25 @12531
+    v27 = Call v24, v5, v26 calleeKey="charCodeAt" calleeName="text.charCodeAt" @12509
+    v28 = Convert v27 declared={type=number} illTypedCause=DeclarationWithoutBody @12504
+    v29 = Integer integer=56320 @12553
+    v30 = GreaterEq v28, v29 @12553
+    Branch v30 -> taken b8(), notTaken b10() @12553
+  b8():
+    v31 = Integer integer=57343 @12573
+    v32 = LessEq v28, v31 @12573
+    Branch v32 -> taken b9(), notTaken b10() @12573
+  b9():
+    v33 = Integer integer=2 @12622
+    v34 = Add v10, v33 @12622
+    PropSet v0, v34 key=@#"nextPosition" @12589
+    v36 = PropGet v5 key="substring" @12638
+    v37 = Integer integer=2 @12674
+    v38 = Add v10, v37 @12674
+    v39 = Call v36, v5, v10, v38 calleeKey="substring" calleeName="text.substring" @12643
+    ReturnCall v39 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @12643
+  b10():
+    v40 = Integer integer=1 @12723
+    v41 = Add v10, v40 @12723
+    PropSet v0, v41 key=@#"nextPosition" @12690
+    v43 = ElemGet v5, v10 @12735
+    Return v43 @12735
+  b11():
+    v44 = CollectionIteratorClosedMark @12217
+    Return v44 @12217
+}
+function f9 name="nextOfStepsOverText" module=m3 position=12779 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=IteratorConsumersNextOfStepsOverText thisType={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L3):
+    v1 = GetModuleVariable variable=g5 @12872
+    v2 = Call v1, -, v0 calleeName="stepOverText" @12872
+    v3 = IsCollectionIteratorClosedMark v2 @12901
+    v4 = ToBoolean v3 @12901
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0) @12901
+  b1(v5):
+    v6 = Data data=d11 @12942
+    Jump -> next b3(v6) @12942
+  b2(v7):
+    v8 = Boolean @12999
+    v9 = NewObject -, v2, v8 layout=L2 fields=[1, 0] @12977
+    v10 = FinishObject v9 @12977
+    Jump -> next b3(v10) @12977
+  b3(v11):
+    Return v11 @12977
+}
+function f10 name="openIterator" module=m3 position=13144 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersOpenIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined @13209
+    Branch v1 -> taken b2(), notTaken b1(| 0) @13209
+  b1(v2):
+    v3 = NarrowByTest v0, v2 @13209
+    v4 = TypeTest v3 testedType=null @13235
+    Branch v4 -> taken b2(), notTaken b3(| 0) @13235
+  b2():
+    v5 = Undefined @13261
+    Return v5 @13261
+  b3(v6):
+    v7 = NarrowByTest v0, v6 @13235
+    v8 = PropGet v7 key=@@iterator @13298
+    v9 = TypeTest v8 testedType=function @13335
+    Branch v9 -> taken b4(| 0), notTaken b12(| 0) @13335
+  b4(v10):
+    v11 = NarrowByTest v8, v10 @13335
+    v12 = TypeTest v7 testedType=string @13380
+    Branch v12 -> taken b5(| 0), notTaken b7() @13380
+  b5(v13):
+    v14 = NarrowByTest v0, v13 @13380
+    v15 = Builtin builtin=StringPrototypeSymbolIterator [isNotReadFromHolder] @13423
+    v16 = StrictEq v11, v15 @13423
+    Branch v16 -> taken b6(), notTaken b7() @13423
+  b6():
+    v17 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @13478
+    v18 = Integer @13503
+    v19 = Convert v18 declared={type=number} @13503
+    v20 = Builtin builtin=CompilerHelpersNextOfStepsOverText [isNotReadFromHolder] @13512
+    v21 = NewObject -, v17, v19, v20 layout=L3 fields=[2, 1, 0] @13462
+    v22 = FinishObject v21 @13462
+    Return v22 @13462
+  b7():
+    v23 = Builtin builtin=IteratorPrototypeSymbolIterator [isNotReadFromHolder] @13759
+    v24 = StrictEq v11, v23 @13759
+    Branch v24 -> taken b9(v7), notTaken b8() @13759
+  b8():
+    v25 = Call v11, v7 @13801
+    Jump -> next b9(v25) @13801
+  b9(v26):
+    v27 = TypeTest v26 testedType=object @13833
+    Branch v27 -> taken b10(| 0), notTaken b11(| 0) @13833
+  b10(v28):
+    v29 = NarrowByTest v26, v28 @13833
+    Return v29 @13927
+  b11(v30):
+    v31 = ThrowNewError errorKind=TypeError message="Iterator result interface is not an object." @13854
+    Unreachable @13854
+  b12(v32):
+    v33 = Undefined @13363
+    Return v33 @13363
+}
+function f11 name="stepIterator" module=m3 position=14837 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersStepIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = HasJSType v0 first=5 last=5 @15109
+    v3 = ToBoolean v2 @15109
+    Branch v3 -> taken b1(| 0), notTaken b5(| 0) @15109
+  b1(v4):
+    v5 = Builtin builtin=ArrayIteratorPrototypeNext [isNotReadFromHolder] @15156
+    v6 = StrictEq v1, v5 @15156
+    Branch v6 -> taken b2(), notTaken b26() @15156
+  b2():
+    v7 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @15202
+    v8 = StepArrayIterator v7 @15202
+    v9 = ResultAt v8 index=1 @15252
+    v10 = ResultAt v8 @15313
+    v11 = ToBoolean v10 @15313
+    Branch v11 -> taken b3(| 0), notTaken b4(v9) @15313
+  b3(v12):
+    v13 = CollectionIteratorClosedMark @15361
+    Jump -> next b4(v13) @15361
+  b4(v14):
+    Return v14 @15395
+  b5(v15):
+    v16 = HasJSType v0 first=7 last=7 @15421
+    v17 = ToBoolean v16 @15421
+    Branch v17 -> taken b6(| 0), notTaken b10(| 0) @15421
+  b6(v18):
+    v19 = Builtin builtin=MapIteratorPrototypeNext [isNotReadFromHolder] @15466
+    v20 = StrictEq v1, v19 @15466
+    Branch v20 -> taken b7(), notTaken b26() @15466
+  b7():
+    v21 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @15510
+    v22 = StepMapIterator v21 @15510
+    v23 = ResultAt v22 index=1 @15558
+    v24 = ResultAt v22 @15619
+    v25 = ToBoolean v24 @15619
+    Branch v25 -> taken b8(| 0), notTaken b9(v23) @15619
+  b8(v26):
+    v27 = CollectionIteratorClosedMark @15667
+    Jump -> next b9(v27) @15667
+  b9(v28):
+    Return v28 @15701
+  b10(v29):
+    v30 = HasJSType v0 first=10 last=10 @15727
+    v31 = ToBoolean v30 @15727
+    Branch v31 -> taken b11(| 0), notTaken b15(| 0) @15727
+  b11(v32):
+    v33 = Builtin builtin=SetIteratorPrototypeNext [isNotReadFromHolder] @15772
+    v34 = StrictEq v1, v33 @15772
+    Branch v34 -> taken b12(), notTaken b26() @15772
+  b12():
+    v35 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @15816
+    v36 = StepSetIterator v35 @15816
+    v37 = ResultAt v36 index=1 @15864
+    v38 = ResultAt v36 @15925
+    v39 = ToBoolean v38 @15925
+    Branch v39 -> taken b13(| 0), notTaken b14(v37) @15925
+  b13(v40):
+    v41 = CollectionIteratorClosedMark @15973
+    Jump -> next b14(v41) @15973
+  b14(v42):
+    Return v42 @16007
+  b15(v43):
+    v44 = Builtin builtin=GeneratorPrototypeNext [isNotReadFromHolder] @16042
+    v45 = StrictEq v1, v44 @16042
+    Branch v45 -> taken b16(), notTaken b24() @16042
+  b16():
+    v46 = Undefined @16212
+    v47 = StepGenerator v0, v46 check=IsGenerator @16170
+    v48 = ResultAt v47 @16274
+    v49 = ResultAt v47 index=1 @16337
+    v50 = Integer integer=2 @16401
+    v51 = StrictEq v49, v50 @16401
+    Branch v51 -> taken b17(), notTaken b21() @16401
+  b17():
+    v52 = Undefined @16500
+    v53 = ResumeGenerator v0, v52 @16456
+    v54 = PropGet v53 key="done" @16525
+    v55 = Boolean boolean=true @16541
+    v56 = StrictEq v54, v55 @16541
+    Branch v56 -> taken b18(| 0), notTaken b19(| 0) @16541
+  b18(v57):
+    v58 = NarrowByField v53, v57 key="done" @16541
+    v59 = CollectionIteratorClosedMark @16548
+    Jump -> next b20(v59) @16548
+  b19(v60):
+    v61 = NarrowByField v53, v60 key="done" @16541
+    v62 = PropGet v61 key="value" @16582
+    Jump -> next b20(v62) @16582
+  b20(v63):
+    Return v63 @16582
+  b21():
+    v64 = Integer integer=1 @16624
+    v65 = StrictEq v49, v64 @16624
+    Branch v65 -> taken b22(), notTaken b23(v48) @16624
+  b22():
+    v66 = CollectionIteratorClosedMark @16656
+    Jump -> next b23(v66) @16656
+  b23(v67):
+    Return v67 @16690
+  b24():
+    v68 = Builtin builtin=CompilerHelpersNextOfStepsOverText [isNotReadFromHolder] @16719
+    v69 = StrictEq v1, v68 @16719
+    Branch v69 -> taken b25(), notTaken b26() @16719
+  b25():
+    v70 = GetModuleVariable variable=g5 @16748
+    v71 = Convert v0 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @16761
+    v72 = Call v70, -, v71 calleeName="stepOverText" @16748
+    ReturnCall v72 @16748
+  b26():
+    v73 = Call v1, v0 @16806
+    v74 = RequireObject v73 runtimeError=IteratorResultNotObject @16806
+    v75 = PropGet v74 key="done" @16853
+    v76 = ToBoolean v75 @16853
+    Branch v76 -> taken b27(| 0), notTaken b28(| 0) @16853
+  b27(v77):
+    v78 = CollectionIteratorClosedMark @16867
+    Jump -> next b29(v78) @16867
+  b28(v79):
+    v80 = PropGet v74 key="value" @16901
+    Jump -> next b29(v80) @16901
+  b29(v81):
+    Return v81 @16901
+}
+function f12 name="wayToStepIterator" module=m3 position=17316 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersWayToStepIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = HasJSType v0 first=5 last=5 @17400
+    v3 = ToBoolean v2 @17400
+    Branch v3 -> taken b1(| 0), notTaken b5(| 0) @17400
+  b1(v4):
+    v5 = Builtin builtin=ArrayIteratorPrototypeNext [isNotReadFromHolder] @17444
+    v6 = StrictEq v1, v5 @17444
+    Branch v6 -> taken b2(), notTaken b3() @17444
+  b2():
+    v7 = Integer integer=1 @17470
+    Jump -> next b4(v7) @17470
+  b3():
+    v8 = Integer @17474
+    Jump -> next b4(v8) @17474
+  b4(v9):
+    v10 = Convert v9 declared={type=number} @17474
+    Return v10 @17474
+  b5(v11):
+    v12 = HasJSType v0 first=7 last=7 @17483
+    v13 = ToBoolean v12 @17483
+    Branch v13 -> taken b6(| 0), notTaken b10(| 0) @17483
+  b6(v14):
+    v15 = Builtin builtin=MapIteratorPrototypeNext [isNotReadFromHolder] @17525
+    v16 = StrictEq v1, v15 @17525
+    Branch v16 -> taken b7(), notTaken b8() @17525
+  b7():
+    v17 = Integer integer=2 @17549
+    Jump -> next b9(v17) @17549
+  b8():
+    v18 = Integer @17553
+    Jump -> next b9(v18) @17553
+  b9(v19):
+    v20 = Convert v19 declared={type=number} @17553
+    Return v20 @17553
+  b10(v21):
+    v22 = HasJSType v0 first=10 last=10 @17562
+    v23 = ToBoolean v22 @17562
+    Branch v23 -> taken b11(| 0), notTaken b15(| 0) @17562
+  b11(v24):
+    v25 = Builtin builtin=SetIteratorPrototypeNext [isNotReadFromHolder] @17604
+    v26 = StrictEq v1, v25 @17604
+    Branch v26 -> taken b12(), notTaken b13() @17604
+  b12():
+    v27 = Integer integer=3 @17628
+    Jump -> next b14(v27) @17628
+  b13():
+    v28 = Integer @17632
+    Jump -> next b14(v28) @17632
+  b14(v29):
+    v30 = Convert v29 declared={type=number} @17632
+    Return v30 @17632
+  b15(v31):
+    v32 = Builtin builtin=GeneratorPrototypeNext [isNotReadFromHolder] @17650
+    v33 = StrictEq v1, v32 @17650
+    Branch v33 -> taken b16(), notTaken b17() @17650
+  b16():
+    v34 = Integer integer=4 @17678
+    v35 = Convert v34 declared={type=number} @17678
+    Return v35 @17678
+  b17():
+    v36 = Builtin builtin=CompilerHelpersNextOfStepsOverText [isNotReadFromHolder] @17699
+    v37 = StrictEq v1, v36 @17699
+    Branch v37 -> taken b18(), notTaken b19() @17699
+  b18():
+    v38 = Integer integer=5 @17722
+    Jump -> next b20(v38) @17722
+  b19():
+    v39 = Integer @17726
+    Jump -> next b20(v39) @17726
+  b20(v40):
+    v41 = Convert v40 declared={type=number} @17726
+    Return v41 @17726
+}
+function f13 name="stepIteratorInWay" module=m3 position=18036 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersStepIteratorInWay thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=3 @18128
+    v3 = StrictEq v1, v2 @18128
+    Branch v3 -> taken b1(), notTaken b5() @18128
+  b1():
+    v4 = HasJSType v0 first=10 last=10 @18141
+    v5 = ToBoolean v4 @18141
+    Branch v5 -> taken b2(| 0), notTaken b26() @18141
+  b2(v6):
+    v7 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @18188
+    v8 = StepSetIterator v7 @18188
+    v9 = ResultAt v8 index=1 @18236
+    v10 = ResultAt v8 @18297
+    v11 = ToBoolean v10 @18297
+    Branch v11 -> taken b3(| 0), notTaken b4(v9) @18297
+  b3(v12):
+    v13 = CollectionIteratorClosedMark @18345
+    Jump -> next b4(v13) @18345
+  b4(v14):
+    Return v14 @18379
+  b5():
+    v15 = Integer integer=2 @18413
+    v16 = StrictEq v1, v15 @18413
+    Branch v16 -> taken b6(), notTaken b10() @18413
+  b6():
+    v17 = HasJSType v0 first=7 last=7 @18426
+    v18 = ToBoolean v17 @18426
+    Branch v18 -> taken b7(| 0), notTaken b26() @18426
+  b7(v19):
+    v20 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @18473
+    v21 = StepMapIterator v20 @18473
+    v22 = ResultAt v21 index=1 @18521
+    v23 = ResultAt v21 @18582
+    v24 = ToBoolean v23 @18582
+    Branch v24 -> taken b8(| 0), notTaken b9(v22) @18582
+  b8(v25):
+    v26 = CollectionIteratorClosedMark @18630
+    Jump -> next b9(v26) @18630
+  b9(v27):
+    Return v27 @18664
+  b10():
+    v28 = Integer integer=5 @18698
+    v29 = StrictEq v1, v28 @18698
+    Branch v29 -> taken b11(), notTaken b12() @18698
+  b11():
+    v30 = GetModuleVariable variable=g5 @18708
+    v31 = Convert v0 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @18721
+    v32 = Call v30, -, v31 calleeName="stepOverText" @18708
+    ReturnCall v32 @18708
+  b12():
+    v33 = Integer integer=1 @18768
+    v34 = StrictEq v1, v33 @18768
+    Branch v34 -> taken b13(), notTaken b17() @18768
+  b13():
+    v35 = HasJSType v0 first=5 last=5 @18781
+    v36 = ToBoolean v35 @18781
+    Branch v36 -> taken b14(| 0), notTaken b26() @18781
+  b14(v37):
+    v38 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @18830
+    v39 = StepArrayIterator v38 @18830
+    v40 = ResultAt v39 index=1 @18880
+    v41 = ResultAt v39 @18941
+    v42 = ToBoolean v41 @18941
+    Branch v42 -> taken b15(| 0), notTaken b16(v40) @18941
+  b15(v43):
+    v44 = CollectionIteratorClosedMark @18989
+    Jump -> next b16(v44) @18989
+  b16(v45):
+    Return v45 @19023
+  b17():
+    v46 = Integer integer=4 @19057
+    v47 = StrictEq v1, v46 @19057
+    Branch v47 -> taken b18(), notTaken b26() @19057
+  b18():
+    v48 = Undefined @19121
+    v49 = StepGenerator v0, v48 check=IsGenerator @19079
+    v50 = ResultAt v49 @19183
+    v51 = ResultAt v49 index=1 @19246
+    v52 = Integer integer=2 @19310
+    v53 = StrictEq v51, v52 @19310
+    Branch v53 -> taken b19(), notTaken b23() @19310
+  b19():
+    v54 = Undefined @19409
+    v55 = ResumeGenerator v0, v54 @19365
+    v56 = PropGet v55 key="done" @19434
+    v57 = Boolean boolean=true @19450
+    v58 = StrictEq v56, v57 @19450
+    Branch v58 -> taken b20(| 0), notTaken b21(| 0) @19450
+  b20(v59):
+    v60 = NarrowByField v55, v59 key="done" @19450
+    v61 = CollectionIteratorClosedMark @19457
+    Jump -> next b22(v61) @19457
+  b21(v62):
+    v63 = NarrowByField v55, v62 key="done" @19450
+    v64 = PropGet v63 key="value" @19491
+    Jump -> next b22(v64) @19491
+  b22(v65):
+    Return v65 @19491
+  b23():
+    v66 = Integer integer=1 @19533
+    v67 = StrictEq v51, v66 @19533
+    Branch v67 -> taken b24(), notTaken b25(v50) @19533
+  b24():
+    v68 = CollectionIteratorClosedMark @19565
+    Jump -> next b25(v68) @19565
+  b25(v69):
+    Return v69 @19599
+  b26():
+    v70 = CollectionIteratorClosedMark @19619
+    Return v70 @19619
+}
+function f14 name="closeIterator" module=m3 position=19680 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="return" @19739
+    v2 = TypeTest v1 testedType=undefined|null @19739
+    Branch v2 -> taken b2(), notTaken b1(| 0) @19739
+  b1(v3):
+    v4 = Call v3, v0 @19739
+    v5 = RequireObject v4 runtimeError=IteratorResultNotObject @19739
+    Jump -> next b2() @19739
+  b2():
+    v6 = Undefined @19739
+    v7 = Undefined @19739
+    Return v7 @19739
+}
+function f15 name="closeIteratorAfterThrow" module=m3 position=20055 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIteratorAfterThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined @20128
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0) @20128
+  b1(v2):
+    v3 = Undefined @20152
+    Return v3 @20152
+  b2(v4):
+    v5 = NarrowByTest v0, v4 @20128
+    Jump -> next b3() @20162
+  b3() handler=b7():
+    v6 = PropGet v5 key="return" @20172
+    v7 = TypeTest v6 testedType=undefined|null @20172
+    Branch v7 -> taken b4(| 0), notTaken b5(| 0) @20172
+  b4(v8) handler=b7():
+    Jump -> next b6() @20172
+  b5(v9) handler=b7():
+    v10 = Call v9, v5 @20172
+    v11 = RequireObject v10 runtimeError=IteratorResultNotObject @20172
+    Jump -> next b6() @20172
+  b6() handler=b7():
+    v12 = Undefined @20172
+    Jump -> next b8() @20172
+  b7() role=CatchHandler:
+    v13 = CatchValue @20222
+    Jump -> next b8() @20222
+  b8():
+    v14 = Undefined @20222
+    Return v14 @20222
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private
+runtimefunction id=IteratorConsumersCloseIterator function=f14 visibility=Private
+runtimefunction id=IteratorConsumersCloseIteratorAfterThrow function=f15 visibility=Private
+runtimefunction id=IteratorConsumersNextOfStepsOverText function=f9 visibility=Private
+runtimefunction id=IteratorConsumersOpenIterator function=f10 visibility=Private
+runtimefunction id=IteratorConsumersStepIterator function=f11 visibility=Private
+runtimefunction id=IteratorConsumersStepIteratorInWay function=f13 visibility=Private
+runtimefunction id=IteratorConsumersTakeFromIterable function=f7 visibility=Private
+runtimefunction id=IteratorConsumersWayToStepIterator function=f12 visibility=Private

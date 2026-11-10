@@ -10,6 +10,7 @@ mod interop;
 #[cfg(test)]
 mod kept_frames_tests;
 mod known_members;
+mod link_lookups;
 mod module_set;
 mod namespace_members;
 mod order;
@@ -34,8 +35,8 @@ mod written_descriptor;
 
 pub use bindings::{
     AccessedModule, AnswerMember, Candidates, CopiedExports, ExportBinding, ExportLookup,
-    ExportStatement, ExportUse, Holder, ImportBinding, ModuleExport, ModuleRequest, RequiredName,
-    ShownNames, SiteAnswer, SpelledModule, SyntheticExport, SyntheticExportId,
+    ExportStatement, ExportUse, Holder, ImportBinding, ModuleExport, ModuleRequest, NO_STAR_PLACE,
+    RequiredName, ShownNames, SiteAnswer, SpelledModule, SyntheticExport, SyntheticExportId,
 };
 pub use bun_core::strings::order_utf16 as compare_code_units;
 pub use commonjs_exports::CommonJsExports;
@@ -64,7 +65,7 @@ use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind, Sources};
 use crate::statistics::{Stage, StepClock};
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::hir::StmtId;
+use bun_sema::hir::{ExprId, StmtId};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -86,9 +87,10 @@ use order::{SiteKey, SitePosition, compute_order};
 use plan::{Plan, StoredSite};
 use requests::{
     ScannedSite, Scans, find_spelling, finish_requests, finish_site_answers,
-    leave_imports_of_test_files_to_loader, scan_files,
+    leave_imports_of_test_files_to_loader, request_folders_of_databases_first, scan_files,
 };
 use side_effects::is_declared_free_of_side_effects;
+pub(crate) use side_effects::names as names_file_with_side_effects;
 use std::sync::OnceLock;
 use synthetic_exports::{ReplacedNames, number_synthetic_exports};
 use test_run_names_handed_on::NamesHandedOn;
@@ -164,6 +166,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
 pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
     let mut steps = StepClock::new(Stage::BindModules);
     let mut scans = scan_files(input);
+    let folders_of_databases = request_folders_of_databases_first(input, &mut scans);
     steps.end("bind: scan files");
     let_late_commonjs_files_fail_at_load(input, &mut scans);
     let unloadable = find_unloadable_modules(input, &mut scans);
@@ -192,10 +195,14 @@ pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
         || collect_modules(input, &scans),
     );
     modules.texts_listed_ahead = texts_listed_ahead;
+    modules.folders_of_databases = folders_of_databases;
     if input.entry_points_run_again {
         let entry_points = input.sources.entry_points().iter();
         run_again.extend(entry_points.map(|entry_point| ModuleRef::File(entry_point.file)));
     }
+    run_again.extend(test_run_evictions::find_es_packages_that_mocks_name(
+        input, &scans,
+    ));
     ScannedModules {
         scans,
         unloadable,
@@ -265,6 +272,10 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         ModuleKind::CommonJs => texts.marker(module),
         _ => None,
     };
+    let is_required_by_star =
+        |file: FileId, required: ExprId| texts.is_required_by_star(file, required);
+    let is_holder_in_erased_getter =
+        |file: FileId, holder: ExprId| texts.is_holder_in_erased_getter(file, holder);
     let (found_in_commonjs, mut imports) = run_steps_beside(
         input.beside,
         &mut steps,
@@ -279,6 +290,8 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
                 &order,
                 &sites,
                 &find_marker,
+                &is_required_by_star,
+                &is_holder_in_erased_getter,
                 &evicted,
             )
         },
@@ -594,7 +607,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         let (site_answers, exports, imports) = match imports {
             Some(imports) => (
                 finish_site_answers(files, &scans, file, &failures),
-                finish_exports(files, &tables, &synthetic, file),
+                finish_exports(files, &tables, &scans, &synthetic, file),
                 core::mem::take(imports),
             ),
             None => (Vec::new(), Vec::new(), FileImports::default()),
@@ -652,6 +665,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             evaluating_sites,
             unread_sites: imports.unread_sites,
             holders: imports.holders,
+            holders_by_call: OnceLock::new(),
             answer_members: imports.answer_members,
             names_read_on_answers: imports.names_read_on_answers,
             exports,
@@ -660,16 +674,19 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
                 false => Vec::new(),
             },
             unread_exports: Vec::new(),
+            names_left_out: Vec::new(),
             is_left_to_loader: is_left_to_loader[file.idx()],
             required_names: imports.required_names,
             names_searched_behind_stars: imports.names_searched_behind_stars,
             handed_on: names_handed_on.names_of(file, is_compiled),
             named_by_stars: names_handed_on.files_named_by_stars(file, is_compiled),
             names_from_stars: names_handed_on.names_from_stars(file, is_compiled),
+            names_of_unlisted_stars: names_handed_on.names_of_unlisted_stars(file, is_compiled),
             reaches_mock: reaches_mock.contains(&file),
         })
     };
     let inner_requests = requests.inner_modules;
+    let files_with_late_stars = requests.files_with_late_stars;
     let create_plan = || {
         let mut plan = Plan::new(order.into_parts(), erased_statements);
         for &module in &stored_markers {
@@ -686,8 +703,10 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             made.filter_map(|it| input.files.by_path.get(input.files.atoms.bytes(it.path)));
         plan.set_makers_of_imported_requires(makers.collect());
         plan.set_names_without_code_that_mocks_give(names_without_code);
+        plan.set_files_with_late_stars(files_with_late_stars);
         plan.test_run = input.run.plan_of_files();
         test_run_evictions::fill_plan_of_loads(input, evicted.modules(), &mut plan);
+        test_run_evictions::fill_plan_of_reloads(input, &scans, &mut plan);
         for &module in &mocked_modules {
             plan.set_may_be_mocked(module);
         }
@@ -726,7 +745,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             plan.set_originals_beside_mocks_may_run();
         }
         if input.runs_tests && (mocks_any_module || input.run.loader_functions_answer_requires) {
-            plan.set_test_runner_hands_out_every_runtime_module();
+            plan.expose_all_runtime_modules();
         }
         for &file in modules.compiled_files.iter().filter(|_| input.runs_tests) {
             let sites = input.files.analysis(file).import_sites.iter();
@@ -752,16 +771,16 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
                     && let written = input.files.atoms.bytes(written)
                     && let Some(spelling) = find_spelling(input.sources, file, written, target)
                 {
-                    plan.set_is_reached_by(module, spelling);
+                    plan.set_is_imported_by_alias(module, spelling);
                 }
                 match *answer {
                     _ if !is_asked_of_test_runner => {}
                     ScannedSite::Module(ModuleRef::Runtime(module)) => {
-                        plan.set_is_handed_out_by_test_runner(module);
+                        plan.expose_runtime_module(module);
                     }
                     ScannedSite::Module(_) | ScannedSite::Unresolved | ScannedSite::Erased => {}
                     ScannedSite::AllModules | ScannedSite::Candidates(_) => {
-                        plan.set_test_runner_hands_out_every_runtime_module();
+                        plan.expose_all_runtime_modules();
                     }
                 }
             }
@@ -771,7 +790,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         }
         for module in run_again {
             let is_es_module = modules.interop(module).kind == ModuleKind::SourceText;
-            plan.set_runs_again(module, is_es_module);
+            plan.set_may_be_reevaluated(module, is_es_module);
         }
         test_run_evictions::fill_plan_of_copies(
             input, &scans, &modules, &evicted, &mocked, &mut plan,
@@ -843,6 +862,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: modules.forms_require_checks_first,
+        folders_of_databases: modules.folders_of_databases,
         star_names_left_out,
         names_laid_on_object_prototype,
     };
@@ -892,7 +912,7 @@ fn find_files_that_reach_mocks(
     named_by_mocks: &FxHashSet<ModuleRef>,
 ) -> FxHashSet<FileId> {
     let files_of_mocks = named_by_mocks.iter().filter_map(|&module| match module {
-        ModuleRef::File(file) | ModuleRef::Face(file) => Some(file),
+        ModuleRef::File(file) | ModuleRef::Facade(file) => Some(file),
         _ => None,
     });
     let mut reaching: FxHashSet<FileId> = files_of_mocks.collect();
@@ -910,7 +930,7 @@ fn find_files_that_reach_mocks(
     for (file, requests) in of_files.chain(of_inner_modules) {
         for request in requests {
             let (ModuleRef::File(target)
-            | ModuleRef::Face(target)
+            | ModuleRef::Facade(target)
             | ModuleRef::Check(target)
             | ModuleRef::Inner { file: target, .. }) = request.target
             else {
@@ -945,7 +965,7 @@ fn rank_of_module(module: ModuleRef) -> u8 {
     match module {
         ModuleRef::File(_) => 0,
         ModuleRef::Inner { .. } => 1,
-        ModuleRef::Face(_) => 2,
+        ModuleRef::Facade(_) => 2,
         ModuleRef::Check(_) => 3,
         ModuleRef::Runtime(_) => 4,
         ModuleRef::External { .. } => 5,
@@ -953,9 +973,9 @@ fn rank_of_module(module: ModuleRef) -> u8 {
 }
 
 pub fn compare_modules(a: ModuleRef, b: ModuleRef, atoms: &Interner<'_>) -> Ordering {
-    use ModuleRef::{Check, External, Face, File, Inner, Runtime};
+    use ModuleRef::{Check, External, Facade, File, Inner, Runtime};
     match (a, b) {
-        (File(a), File(b)) | (Face(a), Face(b)) | (Check(a), Check(b)) => a.cmp(&b),
+        (File(a), File(b)) | (Facade(a), Facade(b)) | (Check(a), Check(b)) => a.cmp(&b),
         (
             Inner {
                 file: a_file,
@@ -982,7 +1002,7 @@ pub fn compare_modules(a: ModuleRef, b: ModuleRef, atoms: &Interner<'_>) -> Orde
             .cmp(&b_importer)
             .then_with(|| atoms.bytes(a_specifier).cmp(atoms.bytes(b_specifier)))
             .then_with(|| a_type.map(|it| it as u8).cmp(&b_type.map(|it| it as u8))),
-        (File(_) | Inner { .. } | Face(_) | Check(_) | Runtime(_) | External { .. }, _) => {
+        (File(_) | Inner { .. } | Facade(_) | Check(_) | Runtime(_) | External { .. }, _) => {
             rank_of_module(a).cmp(&rank_of_module(b))
         }
     }

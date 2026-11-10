@@ -1,0 +1,17 @@
+# The fields have written types that bar `undefined`, so a slot that counted as filled at birth would hold its value raw, without a mark for "empty". The stores run the setters, and the slots stay empty.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# interface User { name: string; size: number; _name: string; _size: number; last: number; }
+# function User(this: User, name: string, size: number) { this.name = name; this.size = size; this.last = 3; }
+# Object.defineProperty(User.prototype, "name", { get(this: User) { return this._name; }, set(this: User, v: string) { this._name = v.trim(); }, configurable: true });
+# Object.defineProperty(User.prototype, "size", { get(this: User) { return this._size + 1; }, set(this: User, v: number) { this._size = v; }, configurable: true });
+# const make = User as unknown as new (name: string, size: number) => User;
+# function show(u: User) { return [u.name, u.size, u.last, Object.keys(u).join("+"), Object.hasOwn(u, "name"), Object.hasOwn(u, "size"), JSON.stringify(u), JSON.stringify({ ...u })].join(" "); }
+# print(show(new make(" a ", 4)));
+# -- end of source
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: a 5 3 _name+_size+last false false {"_name":"a","_size":4,"last":3} {"_name":"a","_size":4,"last":3}
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: a 5 3 _name+_size+last false false {"_name":"a","_size":4,"last":3} {"_name":"a","_size":4,"last":3}
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: a 5 3 _name+_size+last false false {"_name":"a","_size":4,"last":3} {"_name":"a","_size":4,"last":3}

@@ -1,0 +1,142 @@
+# -- source: main.cjs
+# "use strict";
+# const list = JSON.parse("[0.5, 1.5, 2.5, 3.5]");
+# function find(t) { const x = t & 3; for (let i = 0; i < list.length; i++) if (list[i] === x) return i; return -1; }
+# function findGiven(x) { for (let i = 0; i < list.length; i++) if (list[i] === x) return i; return -1; }
+# globalThis.kept = [find, findGiven];
+# console.log(find(1), find(2), findGiven(2.5), findGiven("2.5"));
+# -- end of source
+# A search by === through a list of which nothing is known. The loop tells a list from bytes in front. Its list had one copy, which read every element boxed out of whatever storage, and every
+# fraction took the rare way of the comparison: 27 instructions an element. Now the list is first asked for storage of numbers, as where a loop reckons with its elements: that copy reads raw: 7.
+# A list that fails the question goes on to the copy for lists of anything: a guess that fails costs one test. And the needle counts as a number not only where it is written: an operator on bits
+# has made it. Where the needle is a parameter of which nothing is known (findGiven) nothing is asked, as before.
+# f1 = find, f2 = findGiven
+# RUN(FIND): walk f1 mechanisms=all
+# FIND: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# FIND: GetArrayElement {{*}}arrayStorage=Double
+# RUN(BEHIND): compile LoopsWithCopyForListsOfAnything mechanisms=all
+# BEHIND: statistic LoopsWithCopyForListsOfAnything 1
+# RUN(GIVEN): walk f2 mechanisms=all
+# GIVEN: GetArrayElement
+# GIVEN-NOT: arrayStorage=Double
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 place=0
+layout L1 module=m0 place=0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=4
+variable g1 name="list" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=3
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f2 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = Builtin builtin=JSON @27
+    v8 = PropGet v7 key="parse" @27
+    v9 = Convert v8 declared={type=builtin(JSONParse) flags=[IsExpected]} @27
+    v10 = String string="[0.5, 1.5, 2.5, 3.5]" @38
+    v11 = Call v9, v7, v10 calleeKey="parse" calleeName="JSON.parse" @32
+    PutModuleVariable v11 variable=g1 @20
+    v13 = Builtin builtin=GlobalThis @283
+    v14 = PropGet v13 key="globalThis" [isFreeName] @283
+    v15 = Convert v14 declared={type=builtin(GlobalThis) flags=[IsExpected]} @283
+    v16 = NewArray v4, v6 contents=anything @301
+    PropSet v15, v16 key="kept" @283
+    v18 = Builtin builtin=GlobalThis @320
+    v19 = PropGet v18 key="console" [isFreeName] @320
+    v20 = Convert v19 declared={type=builtin(Console) flags=[IsExpected]} @320
+    v21 = PropGet v20 key="log" @320
+    v22 = Convert v21 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @320
+    v23 = Integer integer=1 @337
+    v24 = Call v4, -, v23 calleeName="find" @332
+    v25 = Integer integer=2 @346
+    v26 = Call v4, -, v25 calleeName="find" @341
+    v27 = Double number=2.5 @360
+    v28 = Call v6, -, v27 calleeName="findGiven" @350
+    v29 = String string="2.5" @376
+    v30 = Call v6, -, v29 calleeName="findGiven" @366
+    v31 = Call v22, v20, v24, v26, v28, v30 calleeKey="log" calleeName="console.log" @328
+    v32 = Undefined @320
+    Return v32 @320
+}
+function f1 name="find" module=m0 position=63 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Integer integer=3 @96
+    v2 = BitAnd v0, v1 @96
+    v3 = Integer @112
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @112
+    Jump -> next b1(v4) @108
+  b1(v5):
+    LoopHint @108
+    v7 = GetModuleVariable variable=g1 @119
+    v8 = CheckInitialized v7 name="list" @119
+    v9 = PropGet v8 key="length" @119
+    v10 = Less v5, v9 @119
+    Branch v10 -> taken b2(), notTaken b5() @119
+  b2():
+    v11 = GetModuleVariable variable=g1 @141
+    v12 = CheckInitialized v11 name="list" @141
+    v13 = ElemGet v12, v5 @141
+    v14 = StrictEq v13, v2 @153
+    Branch v14 -> taken b3(), notTaken b4() @153
+  b3():
+    Return v5 @163
+  b4():
+    v15 = Increment v5 @132
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @132
+    Jump -> next b1(v16) @132
+  b5():
+    v17 = Integer integer=-1 @173
+    Return v17 @173
+}
+function f2 name="findGiven" module=m0 position=179 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @216
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @216
+    Jump -> next b1(v2) @212
+  b1(v3):
+    LoopHint @212
+    v5 = GetModuleVariable variable=g1 @223
+    v6 = CheckInitialized v5 name="list" @223
+    v7 = PropGet v6 key="length" @223
+    v8 = Less v3, v7 @223
+    Branch v8 -> taken b2(), notTaken b5() @223
+  b2():
+    v9 = GetModuleVariable variable=g1 @245
+    v10 = CheckInitialized v9 name="list" @245
+    v11 = ElemGet v10, v3 @245
+    v12 = StrictEq v11, v0 @257
+    Branch v12 -> taken b3(), notTaken b4() @257
+  b3():
+    Return v3 @267
+  b4():
+    v13 = Increment v3 @236
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @236
+    Jump -> next b1(v14) @236
+  b5():
+    v15 = Integer integer=-1 @277
+    Return v15 @277
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

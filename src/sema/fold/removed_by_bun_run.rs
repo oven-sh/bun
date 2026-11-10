@@ -60,12 +60,18 @@ impl Folder<'_, '_> {
     }
 
     pub(super) fn removes_unused_value(&self, e: ExprId) -> bool {
+        let asked = (e, self.assumes_minify_syntax.get());
+        if let Some(&answer) = self.unused_values_asked_of_build.borrow().get(&asked) {
+            return answer;
+        }
         let mut removal = Removal {
             is_of_build: true,
             ..Default::default()
         };
         (removal.parts).push((TreeNode::Expr(e), Rule::UnusedValue));
-        self.removes_all(&mut removal)
+        let answer = self.removes_all(&mut removal);
+        (self.unused_values_asked_of_build.borrow_mut()).insert(asked, answer);
+        answer
     }
 
     fn removes_all(&self, removal: &mut Removal) -> bool {
@@ -127,6 +133,12 @@ impl Folder<'_, '_> {
     }
 
     fn push_parts_of_unused_value(&self, e: ExprId, rule: Rule, removal: &mut Removal) -> bool {
+        if removal.is_of_build && matches!(rule, Rule::UnusedValue) {
+            let asked = (e, self.assumes_minify_syntax.get());
+            if let Some(&answer) = self.unused_values_asked_of_build.borrow().get(&asked) {
+                return answer;
+            }
+        }
         let hir = self.hir;
         let e = hir.skip_type_assertions(e);
         let parts = &mut removal.parts;

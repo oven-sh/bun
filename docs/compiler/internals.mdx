@@ -58,7 +58,7 @@ The check compares layouts and doesn't look inside the object. `JSON.parse` make
 
 Types change how fast your program runs, never what it does. A value that doesn't match its type doesn't throw, and it isn't converted or copied. The code that touches it takes the slow path. [Types](/compiler/types#when-a-value-doesnt-match-its-type) has an example.
 
-Anything the compiler rejects that `bun run` accepts, it rejects at build time. The exceptions are [read-only built-ins](#read-only-built-ins) and [an import of code that isn't in the executable](/compiler/compatibility#dynamic-imports).
+Anything the compiler rejects that `bun run` accepts, it rejects at build time. The main exceptions are [read-only built-ins](#read-only-built-ins) and [an import of code that isn't in the executable](/compiler/compatibility#dynamic-imports). [Compatibility](/compiler/compatibility) has others.
 
 ## Code without types
 
@@ -74,7 +74,7 @@ The compiler finds these calls at build time and assumes less about whatever the
 
 ## Read-only built-ins
 
-Compiled code calls `Array.prototype.push` directly. A JIT can do that too, because it can throw the code away if something replaces `push`. Code in a file can't be thrown away. So Bun makes the assumption true, and replacing or deleting an existing member of a built-in object throws a `TypeError`.
+Compiled code calls `Array.prototype.push` directly. A JIT can do that too, because it can throw the code away if something replaces `push`. Code in a file can't be thrown away. So Bun makes the assumption true, and replacing or deleting most existing members of a built-in object throws a `TypeError`.
 
 Adding your own method to `Array.prototype` still works, and so does patching `console`, `process` or `fetch`. See [Built-in objects are read-only](/compiler/compatibility#built-in-objects-are-read-only).
 
@@ -82,7 +82,7 @@ Adding your own method to `Array.prototype` still works, and so does patching `c
 
 The file holds the machine code for your program and its packages, Bun's native APIs, the event loop, the garbage collector, and the interpreter for code from strings. It also holds function names and source positions for stack traces, and the source text of each function so that `fn.toString()` works.
 
-It doesn't hold the JIT compilers, the `bun` command line, the bundler, the type checker or the compiler itself. Built-in modules that your program never imports aren't there either.
+Unless your code passes `compile`, `check`, `dts`, `plugins` or a `target` that starts with `bun-` to `Bun.build`, or options that the compiler can't read, it doesn't hold the JIT compilers, the `bun` command line, the type checker or the compiler itself. Built-in modules that your program never imports aren't there either.
 
 The machine code and its tables are read-only and mapped straight from the file, so processes and Workers share them. [Smaller executables](/compiler/size) covers what else you can remove.
 

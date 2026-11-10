@@ -25,7 +25,10 @@ const loads: Record<string, (name: string) => string> = {
   "resolve.cjs": name => `require(require.resolve("${name}"))`,
 };
 
-// With a second argument the build does not follow the name, whatever the argument holds: the package is not in the executable, as it is not in one that is built without --aot.
+// With a second argument the call is left to the run, whatever the argument holds. The build has written down where the name leads from the folder of the file, so an argument that
+// names no other folder answers as `bun <file>` does. `paths` that name another folder are looked through at the run too, and where the build can read the list it has brought what each
+// listed folder answers.
+// An executable that is built without --aot finds none of them.
 const notFollowed: Record<string, (name: string) => string> = {
   "resolve-symbol.cjs": name => `require(require.resolve("${name}", { [Symbol.for("outside")]: true }))`,
   "resolve-jest.cjs": name =>
@@ -34,6 +37,9 @@ const notFollowed: Record<string, (name: string) => string> = {
   "resolve-nothing.cjs": name => `require(require.resolve("${name}", undefined))`,
   "resolve-held.cjs": name => `const options = { other: [] }; require(require.resolve("${name}", options))`,
 };
+const fromAnotherFolder = "resolve-paths.cjs";
+notFollowed[fromAnotherFolder] = name =>
+  `require(require.resolve("${name}", { paths: [require("node:path").join(__dirname, "..", "another")] }))`;
 
 async function build(project: string, entry: string, executable: string) {
   const built = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", executable], project);
@@ -43,7 +49,7 @@ async function build(project: string, entry: string, executable: string) {
 
 const packageOf = (file: string) => "dep-" + file.replace(".", "-");
 
-test("require.resolve() with a second argument brings no package into the executable", async () => {
+test("require.resolve() with a second argument answers as bun <file> does", async () => {
   const files = Object.keys(notFollowed);
   using dir = tempDir("aot-made-requires-not-followed", {
     "project/package.json": `{ "name": "project" }`,
@@ -60,10 +66,13 @@ test("require.resolve() with a second argument brings no package into the execut
     ...Object.fromEntries(
       files.flatMap(file => [
         [
-          `project/node_modules/${packageOf(file)}/package.json`,
+          `${file === fromAnotherFolder ? "another" : "project"}/node_modules/${packageOf(file)}/package.json`,
           JSON.stringify({ name: packageOf(file), version: "1.0.0", exports: { "./sub": "./lib/sub.js" } }),
         ],
-        [`project/node_modules/${packageOf(file)}/lib/sub.js`, `exports.name = "sub for ${file}";\n`],
+        [
+          `${file === fromAnotherFolder ? "another" : "project"}/node_modules/${packageOf(file)}/lib/sub.js`,
+          `exports.name = "sub for ${file}";\n`,
+        ],
       ]),
     ),
     "elsewhere/empty.txt": "",
@@ -71,8 +80,8 @@ test("require.resolve() with a second argument brings no package into the execut
   const project = join(String(dir), "project");
   const plain = await run([bunExe(), "entry.cjs"], project, bunEnv);
   expect(plain.stdout.trim().split("\n")).toEqual(files.map(file => `sub for ${file}`));
-  const refused = { stdout: files.map(file => `${file} MODULE_NOT_FOUND`), exitCode: 0 };
   for (const flags of [["--aot"], []]) {
+    const expected = files.map(file => (flags.length > 0 ? `sub for ${file}` : `${file} MODULE_NOT_FOUND`));
     const executable = join(String(dir), "program" + flags.join(""));
     const built = await run(
       [bunExe(), "build", "--compile", ...flags, "./entry.cjs", "--outfile", executable],
@@ -80,7 +89,10 @@ test("require.resolve() with a second argument brings no package into the execut
     );
     expect({ flags, exitCode: built.exitCode }).toEqual({ flags, exitCode: 0 });
     const ran = await run([executable], join(String(dir), "elsewhere"), bunEnv);
-    expect({ stdout: ran.stdout.trim().split("\n"), exitCode: ran.exitCode }).toEqual(refused);
+    expect({ stdout: ran.stdout.trim().split("\n"), exitCode: ran.exitCode }).toEqual({
+      stdout: expected,
+      exitCode: 0,
+    });
   }
 }, 180_000);
 

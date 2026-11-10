@@ -1,0 +1,44 @@
+# f1 = sum, f2 = sumOf, f3 = asks, f4 = changes
+# -- source: a-list-of-fractions-goes-through-the-fast-loop-of-a-list-method.ts
+# declare function print(...values: unknown[]): void;
+# const halves = [0.5, 1.5, 2.5, 3.5];
+# function sum(rounds: number) { let total = 0; for (let r = 0; r < rounds; r++) halves.forEach(x => { total += x; }); return total; }
+# function sumOf(list: number[], rounds: number) { let total = 0; for (let r = 0; r < rounds; r++) list.forEach(x => { total += x; }); return total; }
+# function asks(list: number[], rounds: number) { let hits = 0; for (let r = 0; r < rounds; r++) { if (list.some(x => x > 2)) hits++; if (list.every(x => x > 0)) hits += 10; hits += list.reduce((all, x) => all + x, 0) * 100; } return hits; }
+# function changes(list: unknown[], rounds: number) { let said = ""; for (let r = 0; r < rounds; r++) list.forEach((x, at) => { said += typeof x + String(x) + ","; if (at === 0 && r === 1) list[2] = "text"; if (at === 1 && r === 2) list.length = 2; }); return said; }
+# let out = "";
+# for (let k = 0; k < 3; k++) out += sum(2) + ";" + sumOf([0.5, 1.5], 2) + ";" + sumOf([1, 2, 3], 2) + ";" + sumOf([0.5, , 2.5] as number[], 2) + ";" + sumOf("1.5,2.5".split(",").map(Number), 2) + ";" + sumOf([0.5, NaN, -0], 1) + ";" + asks([0.5, 2.5], 2) + ";" + changes([0.5, 1.5, 2.5], 4) + "|";
+# print(out);
+# -- end of source
+# `$hasContiguousIndex(list, i)` and `$getOwnContiguousIndex(list, i)` say "the list has an element of its own at i in a plain vector" and "that element". Their emitted forms know the two storages of boxed
+# values, so a list of fractions failed the test at its first element and went the general way: forEachFrom by call, the arrow by value, `i in list`, `list[i]`: three times the instructions of plain Bun.
+# Behind a row that has shown the storage of numbers, the pair is the walk's own pair for such storage, and the arrow gets a raw number.
+# Link has seen no whole number arrive at this arrow: the storage of whole numbers is not admitted, and the kind is not asked again in the turns.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double
+# CHECK: [[test]]: boolean @Boolean = IsElementPresent [[list]], [[at]], {{*}}arrayStorage=Double
+# CHECK: : number @Double = GetArrayElement [[list]], [[at]], {{*}}arrayStorage=Double level=Proven {{*}}isPresent
+# No read of boxed values stands behind a test that was answered for numbers: it would hand out the bits of a double as a value.
+# RUN(PAIRS): walk f1 mechanisms=all
+# PAIRS: = IsElementPresent
+# PAIRS-NOT: = GetOwnContiguousIndex
+# PAIRS: = GetArrayElement {{*}}isPresent
+# PAIRS: = IsElementPresent
+# PAIRS-NOT: = GetOwnContiguousIndex
+# PAIRS: = GetArrayElement {{*}}isPresent
+# Whole numbers and fractions arrive at this one: the row admits either storage of numbers.
+# RUN(BOTH): walk f2 mechanisms=all
+# BOTH: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# BOTH: = IsElementPresent {{*}}arrayStorage=Double {{*}}admitsInt32Storage
+# BOTH: = GetArrayElement {{*}}arrayStorage=Double level=Proven {{*}}isPresent
+# some, every, reduce.
+# RUN(OTHERS): walk f3 mechanisms=all
+# OTHERS-COUNT-3: = GetArrayElement {{*}}arrayStorage=Double level=Proven {{*}}isPresent
+# What plain Bun prints.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|
+# ANSWERS-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell testing=CheckProofsAtRunTime,TestsEveryPosition
+# HARDENED: 16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|
+# HARDENED-NEXT: exited with 0

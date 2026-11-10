@@ -1,0 +1,24 @@
+# -- source: a-read-that-finds-nothing-is-held-to-the-facts-that-nobody-has-seen.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { weight: number; constructor(weight: number) { this.weight = weight; } }
+# function look(weight: number, changes: boolean) { const parcel: any = new Parcel(weight); if (changes) Object.setPrototypeOf(parcel, { missing: "from above" }); return parcel.missing; }
+# const looks = id(look);
+# print(looks(1, false));
+# print(looks(5, true));
+# -- end of source
+# LIBRARY: own
+# A read under a name that no receiver has and nothing above declares is folded to undefined where the cell has the prototype of its layout and no property of its own beside its fields.
+# The lie, testing=GuardsAndFactsAreTakenToHold: the planner of typed accesses takes every guard of a class for held and every fact of a cell for seen, and the state is not touched. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) what the access leans on is asked where nobody has answered it: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: undefined
+# RIGHT-NEXT: from above
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: undefined
+# HARDENED-NEXT: from above
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold
+# LIE: undefined
+# LIE-NEXT: AOT: f1 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE: crashed with

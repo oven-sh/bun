@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { builtinFunctionIds } from "./builtin-function-ids";
+import { builtinFunctionFiles, builtinFunctionIds } from "./builtin-function-ids";
 import { registerNativeCall } from "./generate-js2native";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 
@@ -40,11 +40,9 @@ export function specifierOf(file: string): string | undefined {
   return prefix && prefix + file.slice(prefix.length).replaceAll(".", "/").slice(0, -3);
 }
 
-export const functionFiles = fs
-  .readdirSync(path.join(BASE, "builtins"))
-  .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts"))
-  .sort()
-  .map(file => "builtins/" + file);
+export const functionFiles = [...builtinFunctionFiles(path.join(BASE, "builtins")).keys()].map(
+  file => "builtins/" + file,
+);
 export const functionIds = builtinFunctionIds(path.join(BASE, "builtins"));
 
 /** Where the text that the compiler reads under the name `file` is. A module may have a second text for the compiler, under the same name in src/js/ahead-of-time. */
@@ -55,7 +53,8 @@ export function locate(file: string): string {
 
 /** Where the text that `bun run` evaluates under the name `file` is, if the compiler reads another. */
 export function locateFirstText(file: string): string | undefined {
-  return fs.existsSync(path.join(BASE, "ahead-of-time", file)) ? path.join(BASE, file) : undefined;
+  const first = path.join(BASE, file);
+  return fs.existsSync(path.join(BASE, "ahead-of-time", file)) && fs.existsSync(first) ? first : undefined;
 }
 
 /** The module that `text` holds a part of, if `text` has a line that says so. */
@@ -113,7 +112,8 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
   const isText = (file: string) => file.endsWith(".ts") && !file.endsWith(".d.ts");
   const helpers = fs.readdirSync(prelude).filter(isText).sort();
   secondTexts.push(...helpers.map(file => path.join(prelude, file)));
-  for (const file of [...files.map(file => path.join(BASE, file)), ...secondTexts]) {
+  const firstTexts = files.map(file => path.join(BASE, file)).filter(file => fs.existsSync(file));
+  for (const file of [...firstTexts, ...secondTexts]) {
     const source = fs.readFileSync(file, "utf8");
     const namer = path
       .relative(BASE, file)

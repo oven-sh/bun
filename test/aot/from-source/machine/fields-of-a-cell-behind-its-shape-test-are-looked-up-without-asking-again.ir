@@ -1,0 +1,38 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# interface HasV { v: number; next: HasV | null }
+# class P0 { a0 = 0; }
+# class P1 extends P0 { a1 = 0; }
+# class P2 extends P1 { a2 = 0; }
+# class K0 extends P0 { v = 1; next: HasV | null = null; } class K1 extends P1 { v = 2; next: HasV | null = null; } class K2 extends P2 { v = 3; next: HasV | null = null; }
+# class K3 extends P0 { v = 4; next: HasV | null = null; } class K4 extends P1 { v = 5; next: HasV | null = null; } class K5 extends P2 { v = 6; next: HasV | null = null; }
+# function pick(which: number): HasV {
+#   switch (which) { case 0: return new K0(); case 1: return new K1(); case 2: return new K2(); case 3: return new K3(); case 4: return new K4(); default: return new K5(); }
+# }
+# function total(first: HasV | null): number {
+#   let sum = 0;
+#   for (let at = first; at !== null; at = at.next) { at.v = at.v + 1; sum += at.v; }
+#   return sum;
+# }
+# let head: HasV | null = null;
+# for (let i = 0; i < 60; i++) { const thing = pick(i % 6); thing.next = head; head = thing; }
+# print(total(id(head)));
+# -- end of source
+# The cells have escaped, so each turn tests the shape of `at` against every shape: the two reads for themselves, the store behind a ShapeTest. Where `v` and `next` lie is then looked up without asking again.
+# f2 = total
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 270
+# RIGHT-NEXT: exited with 0
+# A class that the test lets through and the table does not hold is still asked for.
+# RUN(HIGHEST): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f2/ShapesOfField
+# HIGHEST: AOT: 
+# HIGHEST-NOT: exited with 0
+# RUN(MIDDLE): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f2/MiddleShapesOfField
+# MIDDLE: AOT: 
+# MIDDLE-NOT: exited with 0
+# When the bound was taken: loop: operations 59, patches 1, moves 3, unlikely 32.
+# RUN(X64): loops most:62 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: loop: at most 62

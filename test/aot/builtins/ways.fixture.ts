@@ -449,6 +449,12 @@ for (const entry of entries) {
         continue;
       }
       if (receiver !== holder) counts.readsOfInstances++;
+      // As for an own property of instances: a type that is declared only says what native code makes by itself, and these instances were handed operands.
+      if (
+        receiver !== holder &&
+        entry.overloads.some(({ mode, resultIsDeclaredOnly }) => mode === "Get" && resultIsDeclaredOnly)
+      )
+        continue;
       holdValue(entry, value, receiver === holder ? "read gives" : "read of an instance gives", receiver);
     }
   }

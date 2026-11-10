@@ -4,8 +4,9 @@ use bun_sema::module_format::evaluates_own_this;
 
 use crate::ir::generated::{HomeObjectKind, ModuleKind, RuntimeErrorKind};
 use crate::ir::{TypeTable, ValueId};
+use crate::lower::class::ClassElement;
 use crate::lower::scope::{BindingRef, ScopeSlot};
-use crate::lower::{FileLowering, FunctionLowering, class};
+use crate::lower::{FileLowering, FunctionLowering};
 
 #[derive(Copy, Clone)]
 enum LexicalOwner {
@@ -20,8 +21,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let ScopeKind::FieldInitializer(member) = self.bound.scopes[scope.idx()].kind else {
             return false;
         };
-        let signed = &self.classes.fields_under_signed_members;
-        class::is_evaluated_in_constructor(self.hir, self.bound, self.compiled, signed, member)
+        let Some(class) = self.bound.member_class(member) else {
+            return false;
+        };
+        let field = ClassElement::AssignedField { member };
+        self.class_plan(class).injected_elements.contains(&field)
     }
 
     pub(in crate::lower) fn find_scope_of_evaluating_constructor(
@@ -63,9 +67,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    fn is_in_value_of_field(&self) -> bool {
+        let scopes = &self.file.bound.scopes;
+        let parent_of = |&scope: &ScopeId| scopes[scope.idx()].parent.some();
+        std::iter::successors(self.innermost_scope().some(), parent_of)
+            .any(|scope| matches!(scopes[scope.idx()].kind, ScopeKind::FieldInitializer(_)))
+    }
+
     pub(crate) fn lower_this_expression(&mut self) -> ValueId {
         match self.find_lexical_owner() {
-            LexicalOwner::File(_) if self.file.compiled.analysis.has_esm_syntax => {
+            LexicalOwner::File(_)
+                if self.file.compiled.analysis.has_esm_syntax && !self.is_in_value_of_field() =>
+            {
                 self.builder.null()
             }
             _ => self.get_this(),
@@ -91,6 +104,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         debug_assert!(
             self.judges_say_that_this_is_read(),
             "the lowering takes `this` in a function that reads none by the judges of `this`"
+        );
+        assert!(
+            self.birth.is_none(),
+            "the object is taken while its fields are not yet defined"
         );
         match self.find_lexical_owner() {
             LexicalOwner::Generated => self.get_entry_this(),

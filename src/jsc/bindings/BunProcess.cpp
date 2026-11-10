@@ -359,8 +359,8 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-// False: script may run no longer.
-static bool runWhatRunsWhenProcessExits(JSC::JSGlobalObject* globalObject, Process* process)
+// False: script may run no longer. What the function throws is handed back, cleared: it is reported behind the listeners of 'exit'.
+static bool runWhatRunsWhenProcessExits(JSC::JSGlobalObject* globalObject, Process* process, JSC::Exception*& thrown)
 {
     auto* function = process->runsWhenProcessExits();
     if (!function)
@@ -368,7 +368,8 @@ static bool runWhatRunsWhenProcessExits(JSC::JSGlobalObject* globalObject, Proce
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     MarkedArgumentBuffer noArguments;
     JSC::call(globalObject, function, noArguments, "What runs when the process exits is not a function"_s);
-    return !scope.exception() || scope.tryClearException();
+    thrown = scope.exception();
+    return !thrown || scope.tryClearException();
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -382,18 +383,21 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    if (!runWhatRunsWhenProcessExits(globalObject, process))
+    JSC::Exception* thrown = nullptr;
+    if (!runWhatRunsWhenProcessExits(globalObject, process, thrown))
         return;
 
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
     auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
-        return;
+    if (emitter.hasEventListeners(event)) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(exitCode));
+        emitter.emit(event, arguments);
     }
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    // A handler of 'uncaughtException' may exit: the listeners of 'exit' have run by now.
+    if (thrown && !vm.hasTerminationRequest()) [[unlikely]]
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -2075,7 +2079,7 @@ static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject,
     auto* function = JSC::JSFunction::create(vm, globalObject, generator(vm), globalObject);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        if (JSC::AOT::refusesToRun(function))
+        if (JSC::AOT::isFunctionDisallowed(function))
             return {};
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -3259,7 +3263,7 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     args.append(ports);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStream, JSC::getCallData(getStream), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
-        if (JSC::AOT::refusesToRun(getStream))
+        if (JSC::AOT::isFunctionDisallowed(getStream))
             return {};
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -3274,7 +3278,7 @@ static EncodedJSValue throwThatStreamWasLeftOut(JSGlobalObject* globalObject, JS
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSC::AOT::refusesToRun(makesWholeStream)) {
+    if (JSC::AOT::isFunctionDisallowed(makesWholeStream)) {
         JSC::MarkedArgumentBuffer args;
         JSC::profiledCall(globalObject, ProfilingReason::API, makesWholeStream, JSC::getCallData(makesWholeStream), globalObject->globalThis(), args);
         RETURN_IF_EXCEPTION(scope, {});
@@ -4007,7 +4011,7 @@ static JSValue constructLightStdioWriteStream(JSC::JSGlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSC::AOT::isNeededByNothingThatRuns(JSC::JSFunction::create(vm, globalObject, stdioGetLightStdioWriteStreamsCodeGenerator(vm), globalObject)))
+    if (JSC::AOT::isUnreachableLibraryFunction(JSC::JSFunction::create(vm, globalObject, stdioGetLightStdioWriteStreamsCodeGenerator(vm), globalObject)))
         RELEASE_AND_RETURN(scope, constructBareStdioWriteStream(globalObject, processObject, fd));
     JSObject* kept = lightStandardStreamsOf(globalObject, processObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -4037,7 +4041,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
-    if (vm.hasCompiledCode() && JSC::AOT::isNeededByNothingThatRuns(getStdioWriteStream)) {
+    if (vm.hasCompiledCode() && JSC::AOT::isUnreachableLibraryFunction(getStdioWriteStream)) {
         JSValue stream = constructLightStdioWriteStream(globalObject, processObject, fd);
         RETURN_IF_EXCEPTION(scope, {});
         return stream;
@@ -4180,9 +4184,9 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
-    if (vm.hasCompiledCode() && JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
+    if (vm.hasCompiledCode() && JSC::AOT::isUnreachableLibraryFunction(getStdinStream)) {
         getStdinStream = JSC::JSFunction::create(vm, globalObject, stdioGetLightStdinStreamCodeGenerator(vm), globalObject);
-        if (JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
+        if (JSC::AOT::isUnreachableLibraryFunction(getStdinStream)) {
             JSValue stream = constructBareStream(globalObject, processObject, STDIN_FILENO, {});
             return scope.exception() ? JSValue() : stream;
         }
@@ -4843,8 +4847,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     // m_isExiting so dispatchExitInternal (via Bun__Process__exit) skips them
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
     auto* process = zigGlobal->processObject();
-    if (!std::exchange(process->m_isExiting, true))
-        runWhatRunsWhenProcessExits(zigGlobal, process);
+    if (!std::exchange(process->m_isExiting, true)) {
+        JSC::Exception* thrown = nullptr;
+        if (runWhatRunsWhenProcessExits(zigGlobal, process, thrown) && thrown) [[unlikely]] {
+            Bun__setExitCode(bunVM(zigGlobal), exitCode);
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(zigGlobal, thrown);
+            exitCode = Bun__getExitCode(bunVM(zigGlobal));
+        }
+    }
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a
@@ -5751,7 +5761,7 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        if (JSC::AOT::refusesToRun(initializer))
+        if (JSC::AOT::isFunctionDisallowed(initializer))
             return {};
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);

@@ -1,0 +1,26 @@
+# f1 = shift, f2 = size
+# -- source: a-function-that-builds-objects-and-calls-itself-is-not-copied-into-itself.js
+# function shift(t, by, cutoff) {
+#   switch (t.tag) {
+#     case "ix": return t.index < cutoff ? t : { tag: "ix", index: t.index + by };
+#     case "free": return t;
+#     case "fun": { const body = shift(t.body, by, cutoff + 1); return body === t.body ? t : { tag: "fun", hint: t.hint, body }; }
+#     case "call": { const fn = shift(t.fn, by, cutoff), arg = shift(t.arg, by, cutoff); return fn === t.fn && arg === t.arg ? t : { tag: "call", fn, arg }; }
+#   }
+# }
+# function size(t) { return t.tag === "fun" ? 1 + size(t.body) : t.tag === "call" ? 1 + size(t.fn) + size(t.arg) : 1; }
+# const term = { tag: "call", fn: { tag: "fun", hint: "x", body: { tag: "call", fn: { tag: "ix", index: 0 }, arg: { tag: "ix", index: 2 } } }, arg: { tag: "free", name: "y" } };
+# const moved = shift(term, 3, 0);
+# print(size(term), size(moved), moved === term, moved.fn.body.arg.index, moved.fn.body.fn === term.fn.body.fn, moved.arg === term.arg);
+# -- end of source
+# A copy of a function into itself goes by the limit of copies in loops WITHOUT objects. The wider limit is for a copy that may let an object fall away; what a function hands to itself
+# and gets from itself does not. `shift` copied three times into itself was 3.6 times its bytes and 7% MORE instructions (a reducer of lambda terms: +3.5% in all). `size` is small: it is copied.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: frame 1
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(SMALL): walk f2 mechanisms=all
+# SMALL-LABEL: code f2:Body
+# SMALL: frame 1 callee=f2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

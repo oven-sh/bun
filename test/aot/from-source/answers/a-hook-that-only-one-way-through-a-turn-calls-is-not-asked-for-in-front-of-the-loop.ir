@@ -1,0 +1,31 @@
+# -- source: main.cjs
+# "use strict";
+# const list = [1, 2, 3, 4, 5, 6, 7, 8];
+# let seen = 0;
+# let hook = null;
+# function first(i) { seen = (seen + i) | 0; }
+# function second(i) { seen = (seen - 2 * i) | 0; }
+# if (flag(1)) hook = first;
+# if (flag(2)) hook = second;
+# function onOneWay(t) { let s = t & 1; for (let i = 0; i < 9; i++) { s = (s + list[i & 7] * 3 + (i ^ t)) | 0; if (hook) hook(i); } return s; }
+# function inLoopWithin(t) { let s = t & 1; for (let j = 0; j < 5; j++) { s = (s + list[j & 7] * 5) | 0; for (let i = 0; i < (hook ? 4 : 0); i++) hook(i); for (let i = 0; i < 6; i++) s = (s + list[i & 7] * 3 + (i ^ t)) | 0; } return s; }
+# print(onOneWay(3), inLoopWithin(3), seen);
+# -- end of source
+# f1 = first, f2 = second, f3 = onOneWay, f4 = inLoopWithin
+# A test in front of a loop sends the whole loop away where it fails. So a variable of the file that is seen to hold one of a few closures is asked for them in front of a loop only where every turn of that very loop calls it.
+# A hook that only one way through a turn calls, and one that a loop within calls, are not asked for there: where the hook is unset the work of the turns stays typed.
+# RUN(ONEWAY): walk f3 mechanisms=all
+# ONEWAY-NOT: testedType=f1|f2
+# ONEWAY: Return v
+# RUN(WITHIN): walk f4 mechanisms=all
+# WITHIN-NOT: testedType=f1|f2
+# WITHIN: isLoopHead=true
+# RUN(UNSET): run-in-shell flag = function (which) { return false; };
+# UNSET: 151 486 0
+# UNSET-NEXT: exited with 0
+# RUN(FIRST): run-in-shell flag = function (which) { return which === 1; };
+# FIRST: 151 486 66
+# FIRST-NEXT: exited with 0
+# RUN(SECOND): run-in-shell flag = function (which) { return true; };
+# SECOND: 151 486 -132
+# SECOND-NEXT: exited with 0

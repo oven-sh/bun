@@ -14,9 +14,15 @@
 // # COUNTS: number @Double{{*}}isInLoop=true isLoopHead=true
 // # COUNTS: = HasArrayStorage {{*}}arrayStorage=Double
 // # RUN(GROWS): walk f5 mechanisms=all
-// # GROWS-NOT: = HasArrayStorage
-// # RUN(SWAPPED): walk f6 f7 mechanisms=all
-// # SWAPPED-NOT: = HasArrayStorage
+// # the list that such a turn finds is asked in that turn, in front of each read, as in f7: nothing of it is laid in front or kept
+// # GROWS-NOT: = GetArrayStorage
+// # RUN(SWAPPED): walk f6 mechanisms=all
+// # SWAPPED-NOT: = GetArrayStorage
+// # Where the turns swap the variable nothing is laid in front either: the list that each turn finds is asked in that turn, and nothing of it is kept from in front.
+// # RUN(ASKED): walk f7 mechanisms=all
+// # ASKED: = HasArrayStorage {{*}}arrayStorage=Double
+// # RUN(KEPT): walk f7 mechanisms=all
+// # KEPT-NOT: = GetArrayStorage
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 16 of 16 of 16

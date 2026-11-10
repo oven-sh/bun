@@ -160,7 +160,7 @@ async function findExits(executable: string, cwd: string, list: string[]) {
 
 async function findExitsOfPiece(executable: string, cwd: string, list: string[]) {
   const exits: Exit[] = [];
-  for (let next = 0; next <= list.length; ) {
+  for (let next = 0; next <= list.length;) {
     const { stdout, stderr, exitCode, signal } = await spawned([executable, JSON.stringify(list), String(next)], cwd);
     const lines = stdout.trimEnd().split("\n");
     const errors = stderr.split("\n").filter(line => line.startsWith("error"));

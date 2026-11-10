@@ -2691,6 +2691,179 @@ describe("bundler", () => {
       },
       out: "@layer{@layer w;@layer v{.t{color:#00f}}}",
     },
+    // "v" comes first because the import that closes the cycle declares it.
+    SublayerOfACycleInImportedFileOfAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "./b.css";
+          @layer v { .t { color: red } }
+          @layer c { .t { color: green } }
+        `,
+        "/b.css": /* css */ `
+          @import "./entry.css" layer(v);
+          @layer c { .u { color: blue } }
+        `,
+      },
+      out: "@layer{@layer v;@layer c{.u{color:#00f}}@layer v{.t{color:red}}@layer c{.t{color:green}}}",
+    },
+    // The external import prints an anonymous layer of its own, so it does not declare "w" for its neighbours.
+    SublayerOfAnExternalImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "https://example.com/ext.css" layer(w);
+          @import "./f.css" layer(w);
+          @import "./g.css";
+          @import "./f.css" layer(w);
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+        "/f.css": `.t { color: red }`,
+      },
+      out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}}`,
+    },
+    // The external import declares "w" ahead of "v", also with no other copy of "f.css".
+    SublayerOfALoneExternalImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "https://example.com/ext.css" layer(w);
+          @import "./g.css";
+          @import "./f.css" layer(w);
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+        "/f.css": `.t { color: red }`,
+      },
+      out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}}`,
+    },
+    // An import that does not load a style sheet still declares its layer, each time.
+    LayersOfImportsOfAnAsset: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.svg" layer(x);
+          @import "./a.svg" layer(y);
+          @import "./c.css" layer(y);
+          @import "./b.css" layer(x);
+        `,
+        "/a.svg": `<svg/>`,
+        "/b.css": `.t { color: red }`,
+        "/c.css": `.t { color: blue }`,
+      },
+      out: "@layer x;@layer y{.t{color:#00f}}@layer x{.t{color:red}}",
+    },
+    // An asset under no layer adds nothing, so the statement stays ahead of the external import.
+    ImportOfAnAssetAheadOfAStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.svg" screen;
+          @import "./a.svg" screen;
+          @import "./a.css";
+        `,
+        "/a.svg": `<svg/>`,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css" layer(y);
+        `,
+      },
+      out: `@layer x;@import "https://example.com/e.css" layer(y);`,
+    },
+    // Only "z" is out of its place, and nothing else declares it.
+    ConditionalImportOfAnAssetAheadOfAStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.svg" layer(z) screen;
+          @import "./a.css";
+        `,
+        "/a.svg": `<svg/>`,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css" layer(y);
+          .a { c: d }
+        `,
+      },
+      out: `@layer x;@import "https://example.com/e.css" layer(y);@media screen{@layer z;}.a{c:d}`,
+    },
+    ConditionalImportOfACycleAheadOfAStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer(z) screen;
+          @import "./a.css";
+        `,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css" layer(y);
+          .a { c: d }
+        `,
+      },
+      out: `@layer x;@import "https://example.com/e.css" layer(y);@media screen{@layer z;}.a{c:d}`,
+    },
+    // Browsers accept an "@import" behind an unknown at-rule, and it applies once.
+    ImportBehindAnUnknownAtRule: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://example.com/f.css";
+        `,
+        "/a.css": /* css */ `
+          @layer first;
+          @unknown x;
+          @import "https://example.com/e.css";
+          .a { c: d }
+        `,
+      },
+      out: `@layer first;@import "https://example.com/e.css";@import "https://example.com/f.css";@unknown x;.a{c:d}`,
+    },
+    ImportOfAFileBehindAnUnknownAtRule: {
+      files: {
+        "/entry.css": /* css */ `
+          @unknown x;
+          @import "./b.css";
+          .a { c: d }
+        `,
+        "/b.css": `.b { c: d }`,
+      },
+      out: ".b{c:d}@unknown x;.a{c:d}",
+    },
+    ConditionalImportsBehindAnUnknownAtRule: {
+      files: {
+        "/entry.css": /* css */ `
+          @unknown x;
+          @import "./b.css" layer(x) supports(display: grid) screen;
+          @import "https://example.com/e.css" layer(y) print;
+          .a { c: d }
+        `,
+        "/b.css": `.b { c: d }`,
+      },
+      out: `@import "https://example.com/e.css" layer(y) print;@media screen{@supports (display:grid){@layer x{.b{c:d}}}}@unknown x;.a{c:d}`,
+    },
+    // The "url()" has an import record of its own, ahead of the one of the "@import".
+    ImportBehindAnUnknownAtRuleWithAURL: {
+      files: {
+        "/entry.css": /* css */ `
+          @unknown url(./x.png);
+          @import "./b.css";
+          @import "https://example.com/e.css";
+          .a { c: d }
+        `,
+        "/b.css": `.b { c: d }`,
+        "/x.png": `png`,
+      },
+      out: `@import "https://example.com/e.css";.b{c:d}@unknown url(data:image/png;base64,cG5n);.a{c:d}`,
+    },
+    // A block between the imports would make the ones after it invalid.
+    ThreeCopiesOfAnExternalImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "https://example.com/ext.css" layer(w);
+          @import "https://example.com/ext.css" layer(w);
+          @import "https://example.com/other.css" layer(v);
+          @import "https://example.com/ext.css" layer(w);
+          .a { c: d }
+        `,
+      },
+      out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@import "data:text/css,@import \\"https://example.com/other.css\\" layer(v);" layer;@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{@layer w;@layer v;.a{c:d}}`,
+    },
     // A copy with no layer does not cover a list under "layer(w)": the list is what declares "w" ahead of "u".
     ListForADuplicateImportUnderLayer: {
       files: {

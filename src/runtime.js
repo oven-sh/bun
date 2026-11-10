@@ -27,13 +27,18 @@ function __accessProp(key) {
 export var __reExport = (target, mod, secondTarget) => {
   // An external CommonJS re-export target may set "module.exports" to null,
   // undefined, or a primitive; only objects and functions have named exports.
-  var keys = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [];
+  var keys = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [],
+    // A require() of this module that ran before this call holds the view
+    // that `__toCommonJS` cached. The view gets the new names too.
+    view = __moduleCache && __moduleCache.get(target);
   for (let key of keys)
     if (!__hasOwnProp.call(target, key) && key !== "default")
       __defProp(target, key, {
         get: __accessProp.bind(mod, key),
         enumerable: true,
       });
+
+  if (view) __reExport(view, mod);
 
   if (secondTarget) {
     for (let key of keys)
@@ -51,6 +56,13 @@ export var __reExport = (target, mod, secondTarget) => {
 var __toESMCache_node;
 /*__PURE__*/
 var __toESMCache_esm;
+// The namespaces built for an exports object while its CommonJS module was
+// still loading, each with what it was built from: [own names, whether
+// "default" is "module.exports", namespace]. One map for each mode.
+/*__PURE__*/
+var __toESMEarly_node;
+/*__PURE__*/
+var __toESMEarly_esm;
 
 // Converts the module from CommonJS to ESM. "default" is "module.exports",
 // except outside node mode when "__esModule" is truthy and the module has its
@@ -62,23 +74,53 @@ export var __toESM = (mod, isNodeMode, target) => {
     var cached = cache.get(mod);
     if (cached) return cached;
   }
-  target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to =
-    isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default")
-      ? __defProp(target, "default", { value: mod, enumerable: true })
-      : target;
-
   // A CommonJS module may legitimately set "module.exports" to null,
   // undefined, or a primitive; only objects and functions have named exports.
-  if ((mod && typeof mod === "object") || typeof mod === "function")
-    for (let key of __getOwnPropNames(mod))
-      if (!__hasOwnProp.call(to, key))
-        __defProp(to, key, {
-          get: __accessProp.bind(mod, key),
-          enumerable: true,
-        });
+  var names = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [],
+    isDefault = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default");
+  if (canCache) {
+    // A module that is still loading can set more names. Its namespace has
+    // the names set so far, so it must not become the cached one. Importers
+    // inside the load share it for as long as a new one would be the same.
+    var i = __cjsDepth,
+      stack = __cjsLoading,
+      loading = false;
+    while (i)
+      if (stack[--i].exports === mod) {
+        loading = true;
+        break;
+      }
+    var early = isNodeMode ? __toESMEarly_node : __toESMEarly_esm;
+    if (
+      early &&
+      (cached = early.get(mod)) &&
+      cached[1] === isDefault &&
+      __getProtoOf(cached[2]) === __getProtoOf(mod) &&
+      cached[0].length === (i = names.length)
+    ) {
+      // No closure in this function: a captured variable costs an allocation on every call.
+      while (i && cached[0][i - 1] === names[i - 1]) i--;
+      if (!i) return (loading || cache.set(mod, cached[2]), cached[2]);
+    }
+  }
+  target = mod != null ? __create(__getProtoOf(mod)) : {};
+  const to = isDefault ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
 
-  if (canCache) cache.set(mod, to);
+  for (let key of names)
+    if (!__hasOwnProp.call(to, key))
+      __defProp(to, key, {
+        get: __accessProp.bind(mod, key),
+        enumerable: true,
+      });
+
+  if (canCache)
+    loading
+      ? (early || (isNodeMode ? (__toESMEarly_node = new WeakMap()) : (__toESMEarly_esm = new WeakMap()))).set(mod, [
+          names,
+          isDefault,
+          to,
+        ])
+      : cache.set(mod, to);
   return to;
 };
 
@@ -103,8 +145,24 @@ export var __toCommonJS = from => {
 /*__PURE__*/
 var __moduleCache;
 
+// The `module` objects of the CommonJS modules whose body is running, the
+// outermost first. Only the first `__cjsDepth` entries are in use.
+var __cjsLoading = [];
+var __cjsDepth = 0;
+
+// Runs the body of a CommonJS module. Kept out of the `__commonJS` closure so
+// that a call of an already loaded module stays small enough to inline.
+var __cjsLoad = (cb, mod, depth) => {
+  __cjsLoading[(depth = __cjsDepth++)] = mod;
+  try {
+    cb(mod.exports, mod);
+  } finally {
+    __cjsDepth = depth;
+  }
+};
+
 // When you do know the module is CJS
-export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+export var __commonJS = (cb, mod) => () => (mod || __cjsLoad(cb, (mod = { exports: {} })), mod.exports);
 
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {

@@ -100,6 +100,8 @@ function __accessProp(key) {
 }
 var __toESMCache_node;
 var __toESMCache_esm;
+var __toESMEarly_node;
+var __toESMEarly_esm;
 var __toESM = (mod, isNodeMode, target) => {
   var canCache = mod != null && typeof mod === "object";
   if (canCache) {
@@ -108,21 +110,49 @@ var __toESM = (mod, isNodeMode, target) => {
     if (cached)
       return cached;
   }
-  target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
-  if (mod && typeof mod === "object" || typeof mod === "function") {
-    for (let key of __getOwnPropNames(mod))
-      if (!__hasOwnProp.call(to, key))
-        __defProp(to, key, {
-          get: __accessProp.bind(mod, key),
-          enumerable: true
-        });
+  var names = mod && typeof mod === "object" || typeof mod === "function" ? __getOwnPropNames(mod) : [], isDefault = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default");
+  if (canCache) {
+    var i = __cjsDepth, stack = __cjsLoading, loading = false;
+    while (i)
+      if (stack[--i].exports === mod) {
+        loading = true;
+        break;
+      }
+    var early = isNodeMode ? __toESMEarly_node : __toESMEarly_esm;
+    if (early && (cached = early.get(mod)) && cached[1] === isDefault && __getProtoOf(cached[2]) === __getProtoOf(mod) && cached[0].length === (i = names.length)) {
+      while (i && cached[0][i - 1] === names[i - 1])
+        i--;
+      if (!i)
+        return loading || cache.set(mod, cached[2]), cached[2];
+    }
   }
+  target = mod != null ? __create(__getProtoOf(mod)) : {};
+  const to = isDefault ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  for (let key of names)
+    if (!__hasOwnProp.call(to, key))
+      __defProp(to, key, {
+        get: __accessProp.bind(mod, key),
+        enumerable: true
+      });
   if (canCache)
-    cache.set(mod, to);
+    loading ? (early || (isNodeMode ? __toESMEarly_node = new WeakMap : __toESMEarly_esm = new WeakMap)).set(mod, [
+      names,
+      isDefault,
+      to
+    ]) : cache.set(mod, to);
   return to;
 };
-var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __cjsLoading = [];
+var __cjsDepth = 0;
+var __cjsLoad = (cb, mod, depth) => {
+  __cjsLoading[depth = __cjsDepth++] = mod;
+  try {
+    cb(mod.exports, mod);
+  } finally {
+    __cjsDepth = depth;
+  }
+};
+var __commonJS = (cb, mod) => () => (mod || __cjsLoad(cb, mod = { exports: {} }), mod.exports);
 
 // node_modules/react/index.js
 var require_react = __commonJS(function(exports) {

@@ -1235,4 +1235,534 @@ describe("bundler", () => {
       stdout: "function/undefined",
     },
   });
+
+  // ============================================================================
+  // A CommonJS module that an ES module imports while it is still loading.
+  // `__toESM` builds that importer's namespace from the names set so far. An
+  // import that runs after the load sees every name, as in Node and `bun run`.
+  // ============================================================================
+
+  // `index.js` requires a plugin in the middle of its own load. The plugin is
+  // an ES module that imports `index.js` back through `api.js`.
+  const pluginHost = (plugin: string, api = /* js */ `module.exports = require("./index.js");`) => ({
+    "/index.js": /* js */ `
+      exports.helper = s => "h:" + s;
+      exports.plugins = [require("./${plugin}").default];
+      exports.version = "1.0";
+    `,
+    "/api.js": api,
+    ["/" + plugin]: /* js */ `
+      import { helper } from "./api.js";
+      export default { name: helper("a") };
+    `,
+  });
+  const logIndex = /* js */ `console.log(typeof ns.helper, typeof ns.plugins, String(ns.version), String(ns.default.version), Object.keys(ns).join(","));`;
+  const importIndexLater = /* js */ `
+    export const handle = async () => {
+      const ns = await import("./index.js");
+      ${logIndex}
+    };
+  `;
+  const requireHostThen = (route: string) => /* js */ `
+    require("./index.js");
+    require("./${route}").handle();
+  `;
+  const allOfIndex = "function object 1.0 1.0 default,helper,plugins,version";
+
+  // Test 63: a `.ts` file imports inside the load, then `import()` in a
+  // CommonJS file
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`cjs/__toESM_module_still_loading_dynamic_import_cjs_importer_format_${format}`, {
+      files: {
+        "/entry.js": requireHostThen("route.cjs"),
+        ...pluginHost("plugin.ts"),
+        "/route.cjs": /* js */ `
+          exports.handle = async () => {
+            const ns = await import("./index.js");
+            ${logIndex}
+          };
+        `,
+      },
+      target: "node",
+      format,
+      run: { stdout: allOfIndex },
+    });
+  }
+
+  // Test 64: then `import()` in a `.ts` file
+  itBundled("cjs/__toESM_module_still_loading_dynamic_import_ts_importer", {
+    files: {
+      "/entry.js": requireHostThen("route.ts"),
+      ...pluginHost("plugin.ts"),
+      "/route.ts": importIndexLater,
+    },
+    target: "node",
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 65: then `import *` in a `.ts` file
+  itBundled("cjs/__toESM_module_still_loading_static_import_ts_importer", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./index.js");
+        require("./route.ts");
+      `,
+      ...pluginHost("plugin.ts"),
+      "/route.ts": /* js */ `
+        import * as ns from "./index.js";
+        ${logIndex}
+      `,
+    },
+    target: "node",
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 66: the same pair in node mode, an `.mjs` file then an `.mjs` file
+  itBundled("cjs/__toESM_module_still_loading_mjs_importers", {
+    files: {
+      "/entry.js": requireHostThen("route.mjs"),
+      ...pluginHost("plugin.mjs"),
+      "/route.mjs": importIndexLater,
+    },
+    target: "node",
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 67: minified helpers, through `Bun.build`
+  itBundled("cjs/__toESM_module_still_loading_minified", {
+    files: {
+      "/entry.js": requireHostThen("route.ts"),
+      ...pluginHost("plugin.ts"),
+      "/route.ts": importIndexLater,
+    },
+    backend: "api",
+    target: "bun",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 68: `import()` of a chunk
+  itBundled("cjs/__toESM_module_still_loading_splitting", {
+    files: {
+      "/entry.js": requireHostThen("route.ts"),
+      ...pluginHost("plugin.ts"),
+      "/route.ts": importIndexLater,
+    },
+    target: "node",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: allOfIndex },
+  });
+
+  // Test 69: `api.js` is more than a re-export, so it keeps its own wrapper.
+  // The object that `require_api()` returns is still the one `index.js` fills.
+  itBundled("cjs/__toESM_module_still_loading_through_another_wrapper", {
+    files: {
+      "/entry.js": requireHostThen("route.ts"),
+      ...pluginHost(
+        "plugin.ts",
+        /* js */ `
+          const index = require("./index.js");
+          globalThis.apiLoaded = true;
+          module.exports = index;
+        `,
+      ),
+      "/route.ts": importIndexLater,
+    },
+    target: "node",
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 70: a CommonJS entry point in a cycle with itself through a `.ts` file
+  itBundled("cjs/__toESM_entry_still_loading", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./reexport.ts");
+        import("./entry.js").then(ns => console.log(String(ns.late), String(ns.default.late), Object.keys(ns).join(",")));
+        exports.late = "late";
+      `,
+      "/reexport.ts": /* js */ `export { early } from "./entry.js";`,
+    },
+    target: "node",
+    run: { stdout: "late late default,late" },
+  });
+
+  // `const e = exports` keeps the bundler from turning the assignments into ES
+  // exports, which have no `__toESM` call.
+  const twoStaticImports = {
+    "/entry.ts": /* js */ `
+      import * as a from "./a.cjs";
+      console.log(Object.keys(a).join(","), a.late, a.default.late);
+    `,
+    "/a.cjs": /* js */ `
+      const e = exports;
+      e.early = 1;
+      require("./b.ts");
+      e.late = 2;
+    `,
+    "/b.ts": /* js */ `
+      import * as a from "./a.cjs";
+      console.log(Object.keys(a).join(","));
+    `,
+  };
+
+  // Test 71: two static imports, one inside the load and one after it
+  itBundled("cjs/__toESM_module_still_loading_two_static_imports", {
+    files: twoStaticImports,
+    run: { stdout: "default,early\ndefault,early,late 2 2" },
+  });
+
+  // Test 72: with target bun, `require("./b.ts")` is a chunk of its own. Its
+  // top level runs while `a.cjs` is loading.
+  itBundled("cjs/__toESM_module_still_loading_split_require", {
+    files: twoStaticImports,
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "default,early\ndefault,early,late 2 2" },
+  });
+
+  // Test 73: each import inside the load sees the names set so far
+  itBundled("cjs/__toESM_module_still_loading_imported_twice", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as a from "./a.cjs";
+        console.log(Object.keys(a).join(","));
+      `,
+      "/a.cjs": /* js */ `
+        const e = exports;
+        e.one = 1;
+        require("./b.ts");
+        e.two = 2;
+        require("./c.ts");
+        e.three = 3;
+      `,
+      "/api1.cjs": /* js */ `module.exports = require("./a.cjs");`,
+      "/api2.cjs": /* js */ `module.exports = require("./a.cjs");`,
+      "/b.ts": /* js */ `
+        import * as a from "./api1.cjs";
+        console.log(Object.keys(a).join(","));
+        globalThis.seenByB = a;
+      `,
+      "/c.ts": /* js */ `
+        import * as a from "./api2.cjs";
+        console.log(Object.keys(a).join(","), a === globalThis.seenByB);
+      `,
+    },
+    run: { stdout: "default,one\ndefault,one,two false\ndefault,one,two,three" },
+  });
+
+  // Test 74: a load inside a load. `b.ts` runs while both are loading.
+  itBundled("cjs/__toESM_module_still_loading_nested", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as x from "./x.cjs";
+        import * as y from "./y.cjs";
+        console.log(Object.keys(x).join(","), Object.keys(y).join(","));
+      `,
+      "/x.cjs": /* js */ `
+        const e = exports;
+        e.x1 = 1;
+        require("./y.cjs");
+        e.x2 = 2;
+      `,
+      "/y.cjs": /* js */ `
+        const e = exports;
+        e.y1 = 1;
+        require("./b.ts");
+        e.y2 = 2;
+      `,
+      "/b.ts": /* js */ `
+        import * as x from "./x.cjs";
+        import * as y from "./y.cjs";
+        console.log(Object.keys(x).join(","), Object.keys(y).join(","));
+      `,
+    },
+    run: { stdout: "default,x1 default,y1\ndefault,x1,x2 default,y1,y2" },
+  });
+
+  // Test 75: the body throws after the import. The names set before the throw
+  // are all there for a later import.
+  itBundled("cjs/__toESM_module_still_loading_then_throws", {
+    files: {
+      "/entry.ts": /* js */ `
+        try {
+          require("./a.cjs");
+        } catch (e) {
+          console.log(e.message);
+        }
+        const ns = await import("./a.cjs");
+        console.log(Object.keys(ns).join(","));
+      `,
+      "/a.cjs": /* js */ `
+        const e = exports;
+        e.one = 1;
+        require("./b.ts");
+        e.two = 2;
+        throw new Error("boom");
+      `,
+      "/b.ts": /* js */ `
+        import * as a from "./a.cjs";
+        console.log(Object.keys(a).join(","));
+      `,
+    },
+    run: { stdout: "default,one\nboom\ndefault,one,two" },
+  });
+
+  // Test 76: "default" is picked again after the load. TypeScript output sets
+  // `exports.default` where the source has it, below the `require()` calls.
+  itBundled("cjs/__toESM_module_still_loading_late_default", {
+    files: {
+      "/entry.ts": /* js */ `
+        import lib, { early } from "./lib.cjs";
+        console.log(typeof lib, early);
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.early = 1;
+        require("./user.ts");
+        exports.default = function late() {};
+      `,
+      "/user.ts": /* js */ `
+        import * as lib from "./lib.cjs";
+        console.log(typeof lib.default, lib.early);
+      `,
+    },
+    run: { stdout: "object 1\nfunction 1" },
+  });
+
+  // Test 77: `module.exports` is replaced, before or after the import
+  itBundled("cjs/__toESM_module_still_loading_module_exports_replaced", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as a from "./a.cjs";
+        console.log(Object.keys(a).join(","), a.late);
+      `,
+      "/a.cjs": /* js */ `
+        exports.early = 1;
+        require("./b.ts");
+        module.exports = { replaced: true };
+        require("./c.ts");
+        module.exports.late = 2;
+      `,
+      "/b.ts": /* js */ `
+        import * as a from "./a.cjs";
+        console.log(Object.keys(a).join(","));
+      `,
+      "/c.ts": /* js */ `
+        import * as a from "./a.cjs";
+        console.log(Object.keys(a).join(","));
+      `,
+    },
+    run: { stdout: "default,early\ndefault,replaced\ndefault,replaced,late 2" },
+  });
+
+  // Test 78: no import cycle. `y.cjs` is loaded, but its `module.exports` is
+  // now the object that `z.cjs` is still filling.
+  itBundled("cjs/__toESM_exports_of_another_module_still_loading", {
+    files: {
+      "/entry.ts": /* js */ `
+        import "./z.cjs";
+        import * as y from "./y.cjs";
+        console.log(Object.keys(y).join(","), y.late);
+      `,
+      "/z.cjs": /* js */ `
+        const e = exports;
+        e.early = 1;
+        require("./y.cjs").adopt(e);
+        require("./f.ts");
+        e.late = 2;
+      `,
+      "/y.cjs": /* js */ `module.exports.adopt = o => { module.exports = o; };`,
+      "/f.ts": /* js */ `
+        import * as y from "./y.cjs";
+        console.log(Object.keys(y).join(","));
+      `,
+    },
+    run: { stdout: "default,early\ndefault,early,late 2" },
+  });
+
+  // Test 79: `export *` from the module inside its load is one more importer.
+  // It copies the names set so far.
+  itBundled("cjs/__toESM_module_still_loading_export_star", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./a.cjs");
+        const { a, b } = require("./later.ts");
+        console.log(Object.keys(a).join(","), Object.keys(b).join(","));
+      `,
+      "/a.cjs": /* js */ `
+        const e = exports;
+        e.early = 1;
+        require("./b.ts");
+        e.late = 2;
+      `,
+      "/b.ts": /* js */ `
+        export * from "./a.cjs";
+        export const own = 1;
+      `,
+      "/later.ts": /* js */ `
+        import * as a from "./a.cjs";
+        import * as b from "./b.ts";
+        export { a, b };
+      `,
+    },
+    run: { stdout: "default,early,late own,early" },
+  });
+
+  // Test 80: a function as `module.exports` has no cached namespace
+  itBundled("cjs/__toESM_function_still_loading", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as ns from "./fn.cjs";
+        console.log(typeof ns.default, ns.early, ns.late);
+      `,
+      "/fn.cjs": /* js */ `
+        module.exports = function f() {};
+        module.exports.early = 1;
+        require("./user.ts");
+        module.exports.late = 2;
+      `,
+      "/user.ts": /* js */ `
+        import * as ns from "./fn.cjs";
+        console.log(typeof ns.default, ns.early, ns.late);
+      `,
+    },
+    run: { stdout: "function 1 undefined\nfunction 1 2" },
+  });
+
+  // ============================================================================
+  // What does not change: the namespace of a loaded module is built once.
+  // ============================================================================
+
+  // Test 81: a name added after the load is not in the namespace, and every
+  // import gets the same object. Node and `bun run` do the same.
+  itBundled("cjs/__toESM_loaded_module_has_one_namespace", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as first from "./lib.cjs";
+        first.default.setLate();
+        const ns = await import("./lib.cjs");
+        console.log(ns === first, Object.keys(ns).join(","), ns.late, ns.default.late);
+      `,
+      "/lib.cjs": /* js */ `
+        const e = exports;
+        e.early = 1;
+        e.setLate = () => { e.late = 2; };
+      `,
+    },
+    run: { stdout: "true default,early,setLate undefined 2" },
+  });
+
+  // Test 82: importers inside the load share one namespace when no name was
+  // set between them. An import after the load gets that object too.
+  itBundled("cjs/__toESM_module_still_loading_shares_unchanged_namespace", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as hub from "./hub.cjs";
+        const [p1, p2] = globalThis.seen;
+        console.log(p1 === p2, hub === p1, Object.keys(hub).join(","));
+      `,
+      "/hub.cjs": /* js */ `
+        const e = exports;
+        e.a = 1;
+        e.b = 2;
+        globalThis.seen = [];
+        require("./p1.ts");
+        require("./p2.ts");
+      `,
+      "/p1.ts": /* js */ `
+        import * as hub from "./hub.cjs";
+        globalThis.seen.push(hub);
+      `,
+      "/p2.ts": /* js */ `
+        import * as hub from "./hub.cjs";
+        globalThis.seen.push(hub);
+      `,
+    },
+    run: { stdout: "true true default,a,b" },
+  });
+
+  // Test 83: a module whose body threw is not loading any more. Its namespace
+  // is built once, like that of a loaded module.
+  itBundled("cjs/__toESM_module_that_threw_has_one_namespace", {
+    files: {
+      "/entry.mjs": /* js */ `
+        try {
+          require("./x.cjs");
+        } catch (e) {
+          console.log(e.message);
+        }
+        const first = await import("./x.cjs");
+        first.default.setLate();
+        const ns = await import("./x.cjs");
+        console.log(ns === first, Object.keys(ns).join(","));
+      `,
+      "/x.cjs": /* js */ `
+        const e = exports;
+        e.one = 1;
+        e.setLate = () => { e.late = 2; };
+        throw new Error("boom");
+      `,
+    },
+    run: { stdout: "boom\ntrue default,one,setLate" },
+  });
+
+  // ============================================================================
+  // The other direction: `require()` of an ES module while it is still
+  // loading. `__toCommonJS` caches the view it returns. An `export *` that
+  // runs later adds its names to that view.
+  // ============================================================================
+
+  const requiredWhileLoading = {
+    "/b.ts": /* js */ `
+      import "./c.cjs";
+      export * from "./d.cjs";
+      export const own = 1;
+    `,
+    "/c.cjs": /* js */ `globalThis.early = require("./b.ts");`,
+    "/d.cjs": /* js */ `
+      const e = exports;
+      e.fromD = "d";
+    `,
+  };
+
+  // Test 84: a `require()` after the load
+  itBundled("cjs/__toCommonJS_module_still_loading_export_star", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const b = require("./b.ts");
+        console.log(Object.keys(b).join(","), b.fromD, b === globalThis.early);
+      `,
+      ...requiredWhileLoading,
+    },
+    target: "node",
+    run: { stdout: "own,fromD d true" },
+  });
+
+  // Test 85: in CommonJS output the view of the entry point is
+  // `module.exports`, and it stays that object
+  itBundled("cjs/__toCommonJS_entry_still_loading_export_star_format_cjs", {
+    files: {
+      "/entry.ts": /* js */ `
+        import "./c.cjs";
+        export * from "./d.cjs";
+        export const own = 1;
+        export const self = () => require("./lazy.cjs").get();
+      `,
+      "/c.cjs": /* js */ `globalThis.early = require("./entry.ts");`,
+      "/d.cjs": requiredWhileLoading["/d.cjs"],
+      "/lazy.cjs": /* js */ `exports.get = () => require("./entry.ts");`,
+      "/run.cjs": /* js */ `
+        const m = require("./out.js");
+        console.log(Object.keys(m).sort().join(","), m.fromD, m.self() === m, globalThis.early === m);
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: { file: "/run.cjs", stdout: "fromD,own,self d true true" },
+  });
 });

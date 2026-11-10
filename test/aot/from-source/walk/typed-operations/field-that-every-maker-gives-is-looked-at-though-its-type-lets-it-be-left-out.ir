@@ -12,7 +12,6 @@
 # The written type lets both fields be left out, as every field of a program without types may be. The one maker in sight gives both (LinkedCell::isOfBirth), so a look at the slot is likely to find it filled, outside of loops too:
 # the look, the load, and the read as written where the look fails. Unseen code takes one of them away between the calls.
 # RUN: walk f2 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK: = IsSlotFilled {{*}}key="price"
 # CHECK: = GetSlot {{*}}key="price"
@@ -20,6 +19,5 @@
 # CHECK: = PropGet {{*}}key="price"
 # CHECK: = GetSlot {{*}}key="count"
 # RUN(ANSWERS): run-in-shell
-# REQUIRES(ANSWERS): entries-of-bun
 # ANSWERS: 6 8
 # ANSWERS: NaN

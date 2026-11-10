@@ -1,0 +1,20 @@
+# `for (let i = length - 1; i >= 0; --i) M[1] = L[i]`, handed two views that each came through a generic function of a file that is not checked: a fuzzer's cut, as it stands.
+# The list under the counter is asked in front of the loop, and the other copy of that purchase is walked as a loop like any other that asks the counter alone. For that walk the loop was taken off the list of loops being built twice. Where the walk buys the loop, the list is right again.
+# Here it bought NOTHING: an edge out of the loop was taken to enter alone, its block was left unended, and the outer copy's own edge found no edge to close: the build aborted while it walked k2.
+# Now such a purchase is not kept: the try is undone with its edges, the lists are struck, and the loop is built again without them.
+# -- source: main.ts
+# import { filled } from "./declared-1";
+# import { k2} from "./declared-3";
+# console.log([(L=> { const M = filled(new Int16Array, 559, []); k2(L, M) })(filled(new Int32Array, 78, [])), (Int32Array=> 0 )()].join)
+# -- source: declared-1.ts
+# // @ts-nocheck
+# export function filled<T>(L: T, seednumber, []): T {
+#     state (state) + 0;
+#   return L}
+# -- source: declared-3.js
+# export function k2(L, M) {
+#   for (let i = length - 1;i >= 0; --i)
+#     M[1] = L[i]}
+# -- end of source
+# RUN(COUNT): compile LoopsBuiltTwice mechanisms=all
+# COUNT: statistic LoopsBuiltTwice

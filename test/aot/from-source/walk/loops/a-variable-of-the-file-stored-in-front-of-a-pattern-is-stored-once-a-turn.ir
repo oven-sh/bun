@@ -1,0 +1,19 @@
+# -- source: a-variable-of-the-file-stored-in-front-of-a-pattern-is-stored-once-a-turn.cjs
+# "use strict";
+# const rows = [[0.5, 2, 1], [1.5, 4, 3], Object.assign([2.5, 6, 1], { *[Symbol.iterator]() { yield 10; yield 20; yield 3; } }), [3.5, 8, 3]];
+# let count = 0;
+# function total(list, t) { let s = t & 1; for (let i = 0; i < list.length; i++) { count = count + 1; const [x, y, z] = list[i]; s += x * 2 + y - z; } return s; }
+# print(total(rows, 3), count);
+# -- end of source
+# A turn of a typed copy may begin again in the closed copy only while it has done nothing that can be seen. Here a variable of the file is stored in front of the pattern: the value is not held there, and the turn of the third row,
+# which has an iterator of its own, counts once.
+# THE LIE, testing=TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld: the hold is laid though the turn has stored. The turn of the third row begins again behind its store and counts twice.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 56 4
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld
+# LIE: 56 5
+# LIE-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld,CheckEffectsAtRunTime
+# HELD: AOT: f{{*}} at {{*}}: a turn of a loop begins again in the closed copy, so the state of the walk says that nothing was done in it
+# HELD: crashed with

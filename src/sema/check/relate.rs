@@ -936,6 +936,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     fn is_empty_resolved_type_as(&mut self, ty: TypeId, data: &TypeData) -> bool {
+        if self.class_members_by_name.is_on
+            && let Some(is_empty) = self.is_empty_unlisted_class(ty)
+        {
+            return is_empty;
+        }
         !matches!(data, TypeData::Synth(shape) if Self::is_any_function_shape(shape))
             && (self.members(ty)).is_some_and(|m| Self::lists_nothing(m.whole_shape()))
     }
@@ -2930,6 +2935,20 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeParameterModifiers`: the modifiers that any declaration of `sym` has on its type
     /// parameter `param`.
     pub(super) fn type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
+        let known = self
+            .modifiers_of_type_parameters
+            .borrow()
+            .get(&(sym, param))
+            .copied();
+        known.unwrap_or_else(|| {
+            let modifiers = self.find_type_param_modifiers(sym, param);
+            let mut known = self.modifiers_of_type_parameters.borrow_mut();
+            known.insert((sym, param), modifiers);
+            modifiers
+        })
+    }
+
+    fn find_type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
         let TypeData::TypeParam(of, id, ..) = *self.data(param) else {
             return Flags::empty();
         };
@@ -3687,7 +3706,7 @@ impl<'p, 's> Checker<'p, 's> {
                             && let Some(owner) = self.bound(file).prop_owner[p.idx()].some()
                             && matches!(self.hir(file)[owner].kind, ExprKind::Jsx(_))
                         {
-                            let p = self.bound(file).declarations_of_literal_member(p)[0];
+                            let p = self.bound(file).first_declaration_of_literal_member(p);
                             let end = self.end_of_jsx_attr_name(file, p);
                             r.error_node = (file, self.hir(file)[p].pos, end);
                         }
@@ -3699,7 +3718,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // `prop.ValueDeclaration`
                     let is_identifier = match Self::value_declaration(prop) {
                         Some(&PropSource::Literal(file, p)) if r.error_node.0 == file => {
-                            let p = self.bound(file).declarations_of_literal_member(p)[0];
+                            let p = self.bound(file).first_declaration_of_literal_member(p);
                             let (hir, prop_node) = (self.hir(file), &self.hir(file)[p]);
                             r.error_node = (file, prop_node.pos, self.end_of_prop_name(file, p));
                             matches!(prop_node.key, PropKey::Name(_))

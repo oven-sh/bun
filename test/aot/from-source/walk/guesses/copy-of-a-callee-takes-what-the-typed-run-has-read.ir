@@ -28,12 +28,10 @@
 # console.log(said);
 # -- end of source
 # RUN: walk f2 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK: [[raw]]: {{*}}@Int32 = GetSlot {{*}}key="tag"
 # CHECK-NEXT: Switch [[raw]] cases=[0, 2, 3, 7, 33]
 # CHECK: [[closed]]: {{*}} = PropGet {{*}}key="tag"
 # CHECK-NEXT: = CallDirect [[closed]] function=f1
 # RUN(WITHHELD): walk f2 mechanisms=-Inlining
-# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-NOT: Switch

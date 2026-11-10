@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# const names = { get add() { return add; } };
+# function called(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + names.add(i, t)) | 0; return s; }
+# print(called(1), called(2));
+# -- end of source
+# f1 = add, f2 = called, f3 = get add
+# `names.add(i, t)`, add a getter in the literal. Link proves the accessor and the callee. The walk calls a proven accessor directly only where the unit may MENTION it,
+# and a caller was booked to mention the accessors under the names that it READS: the call by name booked the getter's answer as its callee and never the getter.
+# So a read into a local went in line, and the call by name took IsSlotFilled, GetSlotGetter and a call by value each turn: five times the instructions.
+# One case a file: a second function that reads the name hides it.
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED: frame 1 callee=f3
+# CALLED: frame 2 callee=f1
+# CALLED-NOT: = GetSlotGetter
+# RUN(ANSWER): run-in-shell
+# ANSWER: 10 20
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 10 20
+# CHECKED-NEXT: exited with 0

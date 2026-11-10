@@ -3,6 +3,7 @@ use super::{PublishedFunction, Reference};
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Helper {
     ExportStar,
+    ExportStarInLine,
     CreateBinding,
     ClassPrivateFieldGet,
     ClassPrivateFieldSet,
@@ -26,11 +27,14 @@ pub enum Helper {
     ToPropertyKey,
     ToPrimitive,
     Typeof,
+    DefineNormalProperty,
+    PublicField,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Shape {
     ExportStarBindsNamesTheTargetLacks,
+    ExportStarInLineDefinesGettersForNamesThatDiffer,
     CreateBindingDefinesGetter,
     CreateBindingReusesDescriptor,
     CreateBindingCopiesValue,
@@ -75,17 +79,26 @@ pub enum Shape {
     ToPropertyKeyAnswersSymbolOrText,
     ToPrimitiveAsksMethodOfObject,
     TypeofAnswersSymbolForSymbols,
+    DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
+    PublicFieldAnswersValue,
+    PublicFieldAnswersWhatDefiningAnswers,
 }
 
 impl Shape {
     pub const fn helper(self) -> Helper {
         match self {
             Shape::ExportStarBindsNamesTheTargetLacks => Helper::ExportStar,
+            Shape::ExportStarInLineDefinesGettersForNamesThatDiffer => Helper::ExportStarInLine,
             Shape::DefinePropertiesOfDescriptors => Helper::DefineProperties,
             Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys => Helper::DefineProperties,
             Shape::ToPropertyKeyAnswersSymbolOrText => Helper::ToPropertyKey,
             Shape::ToPrimitiveAsksMethodOfObject => Helper::ToPrimitive,
             Shape::TypeofAnswersSymbolForSymbols => Helper::Typeof,
+            Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot => {
+                Helper::DefineNormalProperty
+            }
+            Shape::PublicFieldAnswersValue => Helper::PublicField,
+            Shape::PublicFieldAnswersWhatDefiningAnswers => Helper::PublicField,
             Shape::CreateClassDefinesBothSides => Helper::CreateClass,
             Shape::CreateClassDefinesBothSidesAndLocksPrototype => Helper::CreateClass,
             Shape::CommonJsRunsCallbackOnce => Helper::CommonJs,
@@ -159,7 +172,30 @@ const GET_PROTOTYPE_OF: (&str, Reference) = (
 const COPY_PROPERTIES: (&str, Reference) =
     ("__copyProps", Reference::Helper(Helper::CopyProperties));
 
+const DEFINE_NORMAL_PROPERTY: (&str, Reference) = (
+    "__defNormalProp",
+    Reference::Helper(Helper::DefineNormalProperty),
+);
+
 pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
+    PublishedFunction {
+        shape: Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
+        text: "(obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value",
+        references: &[DEFINE_PROPERTY],
+        origin: "esbuild 0.11 and after; bun",
+    },
+    PublishedFunction {
+        shape: Shape::PublicFieldAnswersValue,
+        text: "(obj, key, value) => {\n__defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value);\nreturn value;\n}",
+        references: &[DEFINE_NORMAL_PROPERTY],
+        origin: "esbuild 0.11 to 0.20",
+    },
+    PublishedFunction {
+        shape: Shape::PublicFieldAnswersWhatDefiningAnswers,
+        text: "(obj, key, value) => __defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value)",
+        references: &[DEFINE_NORMAL_PROPERTY],
+        origin: "esbuild 0.21 and after; bun",
+    },
     PublishedFunction {
         shape: Shape::DefinePropertiesOfDescriptors,
         text: "function(target, props) {\nfor (var i = 0; i < props.length; i++) {\nvar descriptor = props[i];\ndescriptor.enumerable = descriptor.enumerable || false;\ndescriptor.configurable = true;\nif (\"value\" in descriptor) descriptor.writable = true;\nObject.defineProperty(target, descriptor.key, descriptor);\n}\n}",
@@ -297,6 +333,12 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         text: "function(m, o) {\nfor (var p in m) if (p !== \"default\" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);\n}",
         references: &[("__createBinding", Reference::Helper(Helper::CreateBinding))],
         origin: "tslib 2.0.1 to 2.8.1; typescript 4.0 to 6.0",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInLineDefinesGettersForNamesThatDiffer,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nif (key in exports && exports[key] === _x[key]) return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function () {\nreturn _x[key];\n}\n});\n}",
+        references: &[("_x", Reference::Holder)],
+        origin: "babel 7.9 and after, a file without names of its own",
     },
     PublishedFunction {
         shape: Shape::CreateBindingDefinesGetter,

@@ -1,0 +1,16 @@
+# f1 = second
+# -- source: read-behind-an-optional-chain-on-a-field.ts
+# type Item = { value: number; next: Item | null };
+# function second(item: Item): number {
+#   return item.next?.value ?? -1;
+# }
+# declare const input: any;
+# const last: Item = { value: +input, next: null };
+# (globalThis as any).answer = second(input ? { value: +input, next: last } : last);
+# -- end of source
+# The compiler before this one: 7 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 7, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 8

@@ -1,0 +1,29 @@
+# `const r = readings[i]; sum = sum + r * r`: the element is held by a name and the product takes it twice, so it has no one user. Its first user is the product: the loop reckons with the
+# elements, and the list, of which nothing is known, is asked in front of the loop what it holds, as for `readings[i] * readings[i]`. In the copy for numbers the turn reads, multiplies and adds.
+# f1 = energy
+# -- source: main.js
+# const readings = JSON.parse("[1.5,2.25,3,4.75]");
+# function energy(turn) { let sum = turn & 1; for (let i = 0; i < readings.length; i++) { const r = readings[i]; sum = sum + r * r; } return sum; }
+# let all = 0;
+# for (let turn = 0; turn < 6; turn++) all += energy(turn);
+# print(all);
+# readings[1] = "3";
+# print(energy(0));
+# readings[2] = { valueOf() { readings.length = 3; return 2; } };
+# print(energy(0), readings.length);
+# readings.push(undefined);
+# print(energy(1));
+# readings[3] = 2n;
+# try { energy(0); } catch (error) { print(error.constructor.name); }
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: TypeTest {{*}} testedType=Array<number>
+# WALK: GetArrayElement {{*}} arrayStorage=Double
+# WALK-NEXT: Mul {{*}} form=Numbers
+# WALK-NEXT: Add {{*}} form=Numbers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 236.25
+# ANSWERS-NEXT: 42.8125
+# ANSWERS-NEXT: 15.25 3
+# ANSWERS-NEXT: 16.25
+# ANSWERS-NEXT: exited with 0

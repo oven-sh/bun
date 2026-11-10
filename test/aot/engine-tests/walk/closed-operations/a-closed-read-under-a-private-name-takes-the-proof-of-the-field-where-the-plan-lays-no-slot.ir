@@ -1,0 +1,99 @@
+# class Counter extends Map<string, number> { #n = 0; bump() { this.#n++; return this.#n; } }
+# An instance of a class below a built-in is no compiled object: the plan lays no slot for its fields, and an access under a private name stays closed.
+# The name is the class's own all the same: whoever stores under it stands in the text of the class, and Link has followed every one of them: field L0.1 proven=number writers-known.
+# A read that finds nothing throws, so what it answers is of the type that is proven of the field. Before, it was anything, and the increment behind it was generic.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: number @JSValue = PrivateGet
+# CHECK: = Increment {{*}}form=Numbers
+# CHECK: number @JSValue = PrivateGet
+
+layout L0 kind=Instance name="Counter" module=m0 position=6 constructor=f1 fields=[{key=#"class brand"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#n"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage] ownFieldCount=2
+# layout L3 kind=Closure
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="/$bunfs/root/main.ts" displayPath="main.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 92, 123, 138, 200, 228] quotedTexts=[{position=61 start=60 end=67}, {position=79 start=69 end=76}, {position=112 end=11}, {position=184 start=20 end=32}, {position=192 start=20 end=34}, {position=200 start=34 end=45}, {position=208 start=34 end=60}, {position=212 start=46 end=59}] textOfQuotes="new Countertotal += counter.bump()console.log(String(total))this.#n++this.#n"} functionText="class Counter extends Map { #n = 0; bump() { this.#n++; return this.#n; } }\x0aconst counter = new Counter();\x0alet total = 0;\x0afor (let turn = 0; turn < 3; turn++) total += counter.bump();\x0aconsole.log(String(total));\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Map @22
+    v1 = ResolveHeritage v0 @22
+    v2 = NewClassToken layout=L0 @0
+    PutModuleVariable v2 variable=g1 @0
+    v4 = NewClosure function=f1 @0
+    v5 = NewClass v4, v0, v1 layout=L0 @0
+    PutModuleVariable v5 variable=g0 @0
+    v7 = NewClosure function=f2 @52
+    DefineMethod v5, v7 layout=L0 key="bump" @52
+    v9 = FinishClass v5 layout=L0 @0
+    v10 = Convert v9 declared={type=f1 flags=[IsFromCompiler]} @0
+    v11 = Convert v9 declared={type=f1 flags=[IsFromCompiler]} @0
+    v12 = Construct v11 calleeName="Counter" @112
+    v13 = Convert v12 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @108
+    v14 = Integer @135
+    v15 = Convert v14 declared={type=number} @135
+    v16 = Integer @154
+    v17 = Convert v16 declared={type=number} @154
+    Jump -> next b1(v15, v17) @147
+  b1(v18: number, v19: number):
+    LoopHint @147
+    v21 = Integer integer=3 @164
+    v22 = Less v19, v21 @164
+    Branch v22 -> taken b2(), notTaken b3() @164
+  b2():
+    v23 = PropGet v13 key="bump" @184
+    v24 = Call v23, v13 calleeKey="bump" calleeName="counter.bump" @192
+    v25 = Add v18, v24 @184
+    v26 = Convert v25 declared={type=number} @175
+    v27 = Increment v19 @167
+    v28 = Convert v27 declared={type=number} @167
+    Jump -> next b1(v26, v28) @167
+  b3():
+    v29 = Builtin builtin=GlobalThis @200
+    v30 = PropGet v29 key="console" [isFreeName] @200
+    v31 = Convert v30 declared={type=builtin(Console) flags=[IsExpected]} @200
+    v32 = PropGet v31 key="log" @200
+    v33 = Convert v32 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @200
+    v34 = Builtin builtin=String @212
+    v35 = Call v34, -, v18 calleeName="String" @212
+    v36 = Convert v35 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @212
+    v37 = Call v33, v31, v36 calleeKey="log" calleeName="console.log" @208
+    v38 = Undefined @200
+    Return v38 @200
+}
+function f1 name="Counter" module=m0 position=6 text={end=75} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @6
+    v4 = SuperConstructList v3, v1, v2 layout=L0 @6
+    v5 = Convert v4 declared={type=L0} @6
+    v6 = CallDirect v5 function=f3 @6
+    Return v5 @6
+}
+function f2 name="bump" module=m0 position=52 text={start=36 end=73} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = GetModuleVariable variable=g1 @61
+    v2 = PrivateGet v0, v1 layout=L0 field=1 @61
+    v3 = Increment v2 @61
+    v4 = Convert v3 declared={type=number} @61
+    v5 = GetModuleVariable variable=g1 @61
+    PrivateSet v0, v5, v4 layout=L0 field=1 @61
+    v7 = GetModuleVariable variable=g1 @79
+    v8 = PrivateGet v0, v7 layout=L0 field=1 @79
+    Return v8 @79
+}
+function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @6
+    v2 = GetModuleVariable variable=g1 @6
+    v3 = PrivateHas v1, v2 layout=L0 @6
+    Branch v3 -> taken b2(), notTaken b1() @6
+  b1():
+    PrivateDefine v1, v2, v2 layout=L0 @6
+    Jump -> next b2() @6
+  b2():
+    v5 = Integer @49
+    v6 = Convert v5 declared={type=number} @49
+    v7 = GetModuleVariable variable=g1 @44
+    PrivateDefine v1, v7, v6 layout=L0 field=1 @44
+    v9 = Undefined @6
+    Return v9 @6
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]

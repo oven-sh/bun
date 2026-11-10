@@ -1,0 +1,10 @@
+# the shape of the servers' "/stream" route: what the encoder answers is known to nobody, and goes to enqueue() by name
+# -- source: a-route-that-streams-encoded-lines-brings-no-other-feature.ts
+# const encoder = new TextEncoder(); async function* lines() { yield "a"; } Bun.serve({ port: 0, routes: { "/stream": () => new Response(new ReadableStream({ async start(controller) { for await (const line of lines()) controller.enqueue(encoder.encode(line)); controller.close(); } }), { headers: { "Content-Type": "text/csv" } }) } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by ReadableStream
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

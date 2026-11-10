@@ -125,6 +125,50 @@ mod tests {
         });
     }
 
+    #[cfg(target_os = "linux")]
+    fn size_of_the_stack_of_this_thread() -> usize {
+        let probe = 0u8;
+        let here = core::hint::black_box(&raw const probe).addr();
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let sizes = maps.lines().filter_map(|line| {
+            let (from, to) = line.split_whitespace().next()?.split_once('-')?;
+            let from = usize::from_str_radix(from, 16).ok()?;
+            let to = usize::from_str_radix(to, 16).ok()?;
+            (from..to).contains(&here).then_some(to - from)
+        });
+        sizes.last().unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn whoever_lowers_has_its_stack_behind_a_pool_that_a_check_made() {
+        set_up_output();
+        crate::use_dedicated_pool("Bun Check");
+        crate::use_pool_for_lowering("Bun Compile");
+        let caches = ThreadCaches::default();
+        let arrived = AtomicUsize::new(0);
+        let least = AtomicUsize::new(usize::MAX);
+        for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
+            arrived.fetch_add(1, Ordering::SeqCst);
+            let begun = std::time::Instant::now();
+            while arrived.load(Ordering::SeqCst) < 2 {
+                assert!(
+                    begun.elapsed() < std::time::Duration::from_secs(20),
+                    "no thread of the pool joined the region"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            if crate::is_pool_thread() {
+                least.fetch_min(size_of_the_stack_of_this_thread(), Ordering::SeqCst);
+            }
+        });
+        let least = least.load(Ordering::SeqCst);
+        assert!(
+            least != usize::MAX && least > crate::WORKER_STACK_SIZE as usize,
+            "{least}"
+        );
+    }
+
     fn start_regions_until_a_thread_joins(on_other_thread: &(dyn Fn() + Sync)) {
         let caches = ThreadCaches::default();
         let has_joined = AtomicBool::new(false);

@@ -1,0 +1,13 @@
+# f1 = step
+# -- source: object-has-own-of-a-field-that-one-of-two-literals-has.js
+# function step(options) {
+#   return Object.hasOwn(options, "step") ? options.limit : 0;
+# }
+# for (let turn = 0; turn < input; turn++) globalThis.answer = step(input ? { limit: +input, step: 2.5 } : { limit: +input });
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 8, patches 1, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:11 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 11

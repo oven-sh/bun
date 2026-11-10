@@ -5,6 +5,7 @@
 #include "BunAOTCompile.h"
 
 #include "AOTSchemaHash.h"
+#include "BunCompiledModules.h"
 #include <JavaScriptCore/AOTBuiltinTableBindings.h>
 #include <JavaScriptCore/AOTCompileOptionWords.h>
 #include <JavaScriptCore/AOTCurrentWork.h>
@@ -31,6 +32,7 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
+#include <zstd.h>
 
 #if OS(WINDOWS)
 #include <fcntl.h>
@@ -94,6 +96,17 @@ extern "C" size_t Bun__AOT__applyOptionWord(Wire::CompileOptions* options, BunAO
     return utf8.length();
 }
 
+static size_t mostBytesCompressed(size_t sizeOfText)
+{
+    return ZSTD_compressBound(sizeOfText);
+}
+
+static size_t compressText(std::span<uint8_t> compressed, std::span<const uint8_t> text)
+{
+    size_t written = ZSTD_compress(compressed.data(), compressed.size(), text.data(), text.size(), 3);
+    return ZSTD_isError(written) ? 0 : written;
+}
+
 static void ensureHostBindings()
 {
     static std::once_flag onceFlag;
@@ -113,13 +126,13 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
 #endif
 
     auto* result = new BunAOTResult;
-    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, sizeOfFunctionText, copyFunctionText }, releaseBytesOfProgram });
+    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, sizeOfFunctionText, copyFunctionText, mostBytesCompressed, compressText }, releaseBytesOfProgram });
     return result;
 }
 
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t* description, size_t size, uint8_t* message, size_t capacity)
 {
-    std::optional<JSC::AOT::RuntimeDifference> difference = JSC::AOT::findDifferenceFromThisRuntime({ description, size });
+    std::optional<JSC::AOT::RuntimeDifference> difference = JSC::AOT::findRuntimeDifference({ description, size });
     if (!difference)
         return 0;
 
@@ -145,24 +158,24 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
 
 extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport))
 {
-    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size });
+    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, Bun::decompressText);
     take(stored, read.strings.span().data(), read.strings.size(), read.report.span().data(), read.report.size());
     return static_cast<uint32_t>(read.verdict);
 }
 
 extern "C" size_t Bun__AOT__peakResidentMegabytesOfProcess()
 {
-    return JSC::AOT::peakResidentMegabytesOfProcess();
+    return JSC::AOT::processPeakResidentMegabytes();
 }
 
 extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t* buffer, size_t capacity)
 {
-    return JSC::AOT::describeWhereThisThreadStopped({ reinterpret_cast<char*>(buffer), capacity });
+    return JSC::AOT::describeCurrentThreadWork({ reinterpret_cast<char*>(buffer), capacity });
 }
 
 extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, size_t capacity)
 {
-    return JSC::AOT::describeWhatThreadsAreCompiling({ reinterpret_cast<char*>(buffer), capacity });
+    return JSC::AOT::describeAllThreadsWork({ reinterpret_cast<char*>(buffer), capacity });
 }
 
 // What the parser of JavaScript says of a regular expression literal, which it refuses the whole file for. How deep a pattern may be nested depends on the thread, so that is left to where the literal is evaluated. The front end reads the flags itself.

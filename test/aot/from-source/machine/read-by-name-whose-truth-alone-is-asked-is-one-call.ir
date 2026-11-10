@@ -1,5 +1,5 @@
 # `if (thing.mark)`: a read by name at the end of its block, outside of loops and of try, of which nothing but its truth is asked: one call of one stub, which reads at the place of the site and answers in the flags.
-# A name that no layout has as a field takes the short body, as the plain read of such a name does.
+# A name that no layout written in the file of the reader has as a field takes the stub that asks the Structure first, as the plain read of such a name does.
 # Where the value is read besides, where a handler stands round the read, and in a loop, where the truth is asked in line, the read and the question stay two.
 # What such readers answer of every kind of receiver and value: answers/read-by-name-answers-for-its-truth-in-one-call.js.
 # f1 = asks, f2 = asksRank, f3 = keeps, f4 = asksInside, f5 = counts
@@ -15,12 +15,12 @@
 # sink(asks, asksRank, keeps, asksInside, counts, new Part(1), new Pair(2), new Triple(3), { first: 0, second: 0, third: 0, rank: 4 }, { rank: "", last: 5 });
 # -- end of source
 # RUN: bytes f1:Body mechanisms=all
-# CHECK: ReadTruthAtSiteOfNameWithoutField.OfAnyValueUnderNameWithColumn
+# CHECK: ReadTruthAtSiteAskingStructureFirst.OfAnyValue
 # CHECK-NOT: ValueIsTruthy
 # RUN(ALONE): bytes f1:Body mechanisms=all
 # ALONE-NOT: Stub ReadAtSite
 # RUN(RANK): bytes f2:Body mechanisms=all
-# RANK: ReadTruthAtSite.OfAnyValueUnderNameWithColumn
+# RANK: ReadTruthAtSite.OfAnyValue
 # RANK-NOT: ValueIsTruthy
 # RUN(KEEPS): bytes f3:Body mechanisms=all
 # KEEPS-NOT: ReadTruthAtSite

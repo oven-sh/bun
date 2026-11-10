@@ -43,6 +43,7 @@ pub struct PublishedFunction {
 pub enum Reference {
     Helper(Helper),
     Global(&'static [&'static str]),
+    Holder,
 }
 
 #[derive(Default)]

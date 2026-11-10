@@ -16,6 +16,8 @@
 # -- end of source
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
 # CHECK: [[crate]]: L0 @Cell = NewObject layout=L0
 # CHECK: = FinishBirth [[crate]]
 # CHECK: = PutSlot [[crate]], {{*}} key="tint"

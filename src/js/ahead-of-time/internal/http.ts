@@ -41,6 +41,7 @@ const fakeSocketSymbol = Symbol("fakeSocket");
 const eofInProgress = Symbol("eofInProgress");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kMadeOverHandle = Symbol("handle");
 const kOnReadParsed = Symbol("kOnReadParsed");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
@@ -80,9 +81,12 @@ const requestRoad: {
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
   beginDump?: (request: $Node.IncomingMessage) => boolean;
   readsUnseen?: (request: $Node.IncomingMessage) => boolean;
+  chainIsPlain?: () => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
+  resumeUnlessFlowing?: (socket: $Node.HttpSocket, asksWhetherReadable: boolean) => void;
 } = {};
 const responseRoad: {
+  IncomingMessage?: $Node.IncomingMessageConstructor;
   makeExchange?: (
     response: $Node.ServerResponse,
     connection: $Node.HttpServerSocket | null,
@@ -863,6 +867,7 @@ export {
   kIncomingMessage,
   kInternalSocketData,
   kLenientValidation,
+  kMadeOverHandle,
   kNeedDrain,
   kOnReadParsed,
   kOutHeaders,

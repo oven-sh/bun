@@ -3,6 +3,7 @@ use bun_alloc::Arena;
 use bun_sema::atom::Interner;
 use bun_sema::hir::{DiagnosticClass, File, FileBuilder};
 use bun_sema::resolve::{Dialect, ScriptKind};
+use bun_sema::session::Session;
 
 #[derive(Copy, Clone)]
 pub struct CompileParseOptions<'a> {
@@ -26,6 +27,15 @@ pub fn parse_for_compile<'s>(
     options: &CompileParseOptions<'_>,
     text: &[u8],
     atoms: &Interner<'s>,
+) -> File<'s> {
+    parse_for_compile_in((arena, atoms.session()), options, text, atoms)
+}
+
+pub fn parse_for_compile_in<'s>(
+    memory: (&'s Arena, &'s Session),
+    options: &CompileParseOptions<'_>,
+    text: &[u8],
+    atoms: &Interner<'_>,
 ) -> File<'s> {
     let script_kind = (options.script_kind).or_else(|| ScriptKind::from_file_name(options.path));
     let dialect = match script_kind.is_some_and(ScriptKind::is_javascript) {
@@ -54,6 +64,6 @@ pub fn parse_for_compile<'s>(
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
-        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
+        parse_into_arena(scratch, how, memory, text, atoms)
     })
 }

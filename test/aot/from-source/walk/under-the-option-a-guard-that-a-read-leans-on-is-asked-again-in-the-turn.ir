@@ -1,0 +1,31 @@
+# -- source: main.js
+# class Crate { constructor(tag) { this.tag = tag; } }
+# function mark(item, note) { item.note = note; }
+# function watch(item, above, turns, when) {
+#   let found = 0;
+#   for (let turn = 0; turn < turns; turn++) {
+#     if (item.note !== undefined) found++;
+#     if (turn === when) above.note = "above";
+#   }
+#   return found;
+# }
+# const spare = new Crate("spare");
+# mark(spare, "own");
+# const one = new Crate("one"), two = new Crate("two");
+# print(watch(one, new Crate("other"), 20, 5), watch(one, Crate.prototype, 20, 5), watch(two, spare, 20, 99), two.note, Object.keys(one).join());
+# -- end of source
+# f2 = watch. The program of a-guard-that-a-read-leans-on-is-asked-again-in-the-turn-under-its-own-word.ir.
+# A read of a slot that may be empty goes without a look above where the state remembers that the guard of the class holds. That guard is asked again in front of the read, and the process ends where it does not hold: under
+# testing=CheckWalkAtRunTime, AND UNDER testing=CheckProofsAtRunTime, WHICH --aot-harden=proof-checks STANDS FOR: a guard that had ended unseen is how a silent miscompilation went by the proofs' word: with
+# its two mends taken out again six of its ten programs answer wrongly in silence under the option, and end by name with the guard asked again. THE LIE lays the row of PutSlotOrAdd false (it ends no guard): the second version
+# of the loop asks the guard once, in front of the loop, and its turn leans on that. The test built again stands IN THE TURN.
+# RUN(OPTION): walk f2 mechanisms=all testing=RowSaysLess:Operation/PutSlotOrAdd/MemberGuards,CheckProofsAtRunTime
+# OPTION: isLoopHead=true
+# OPTION: isLoopHead=true
+# OPTION: [[again]]: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="note"}]
+# OPTION-NEXT: CheckProof [[again]] checkedType=true {{*}}source=WhatIsRemembered
+# OPTION: = GetSlotOrUndefined {{*}} key="note"
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime
+# RIGHT: 0 14 20 above tag
+# RIGHT-NEXT: exited with 0
+# RIGHT-NEXT: the source prints the same

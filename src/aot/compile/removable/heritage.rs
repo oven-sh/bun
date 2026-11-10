@@ -108,7 +108,7 @@ impl Removable<'_, '_> {
         let Some((modules, file)) = self.modules else {
             return false;
         };
-        !modules.may_run_before(ModuleRef::File(file), ModuleRef::File(export.file))
+        !self.may_run_before(modules, file, export.file)
             && Removable::new(self.files, export.file, self.options)
                 .is_some_and(|exporter| exporter.holds_class_once_file_has_run(export.id))
     }

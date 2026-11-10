@@ -1,9 +1,19 @@
 import { expect, test } from "bun:test";
+import { isDebug } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { copyOfEngine, generateAgainst, hasNoPrebuiltEngine, timeLimitOfOneRun } from "./prebuilt-engine.ts";
 
 // The generator compares the engine's files after it has generated everything else, so this file takes the time of one whole run.
+// A debug build takes several times as long for that run as the builds that CI tests, which timeLimitOfOneRun is for.
+const timeLimit = isDebug ? 1_200_000 : timeLimitOfOneRun;
+
+// What the generator tells the reader of a refusal to do.
+const remedy =
+  "this WebKit was compiled with another list of the built-ins that its own code names than the one this tree declares: " +
+  "a change to an entry that the engine declares or that aot/builtins/host-roles.builtins.ts lists needs a build of WebKit. " +
+  "Build with --webkit=local, or pin a release of WebKit that was built from this tree's declarations";
+
 test.skipIf(hasNoPrebuiltEngine)(
   "an engine compiled with another position for one built-in that it names is refused by name",
   async () => {
@@ -25,12 +35,12 @@ test.skipIf(hasNoPrebuiltEngine)(
       // The one file that differs, with its line on both sides, and then what to do about it. Nothing is said of the engine's other files.
       errors: [
         `error: ${ids}: line ${lineNumber} is \`${compiledWith}\`, and this tree writes \`${written[0]}\``,
-        expect.stringContaining("another list of the built-ins"),
+        remedy,
       ],
       // Nothing is written for the build to compile.
       tableOfBuiltins: "",
       exitCode: 1,
     });
   },
-  timeLimitOfOneRun,
+  timeLimit,
 );

@@ -53,24 +53,43 @@ describe("mock.module() as the call that ends a function", () => {
           export const optional = () => mock?.module("./dep", factory("optional"));
           export const byString = () => mock["module"]("./dep", factory("byString"));
           export const inTemplate = () => mock.module(\`./dep\`, factory("inTemplate"));
+          export const inParentheses = () => mock.module(("./dep"), factory("inParentheses"));
           export const inContinuation = () => Promise.resolve().then(() => mock.module("./dep", factory("inContinuation")));
           export function asHook() { return mock.module("./dep", factory("asHook")); }
           export const ofNoFile = () => mock.module("./no-file", factory("ofNoFile"));
 
-          export const handedOn = (path, where) => mock.module(path, factory(where));
+          const ofModule = "./dep";
+          export const handedOn = path => mock.module(path, factory("handedOn"));
+          export const heldByNameOfModule = () => mock.module(ofModule, factory("heldByNameOfModule"));
+          export const ofAnotherHolder = holder => holder.module("./dep", factory("ofAnotherHolder"));
+          // The transpiler makes a string of each of these paths. The call still does not write one.
+          export function heldByName() {
+            const path = "./dep";
+            return mock.module(path, factory("heldByName"));
+          }
+          export function heldByNameBehindAnother(flag) {
+            const path = "./dep";
+            const on = flag;
+            const result = on && mock.module(path, factory("heldByNameBehindAnother"));
+            return result;
+          }
+          export const chosen = () => mock.module(true ? "./dep" : "./no-file", factory("chosen"));
+          export const joined = () => mock.module("./" + "dep", factory("joined"));
+          export const filled = () => mock.module(\`./\${"dep"}\`, factory("filled"));
         `,
         "tests/shapes.test.ts": `
-          import { beforeEach, describe, expect, test } from "bun:test";
+          import { beforeEach, describe, expect, mock, test } from "bun:test";
           import * as mocks from "../helpers/mocks";
           import * as ofHelper from "../helpers/dep";
           import * as ofTestFile from "./dep";
 
           const read = () => [ofHelper.where, ofTestFile.where];
+          const lender = { module: (path, factory) => mock.module(path, factory) };
 
           test.each([
             ["arrow"], ["declared"], ["either", true], ["behindAnd", true], ["behindOr", false], ["behindNullish", null],
             ["afterComma"], ["throughName"], ["staticMethod"], ["underAnotherName"], ["fromJestGlobals"], ["asserted"],
-            ["optional"], ["byString"], ["inTemplate"], ["inContinuation"],
+            ["optional"], ["byString"], ["inTemplate"], ["inParentheses"], ["inContinuation"],
           ])("%s", async (shape, ...args) => {
             await mocks[shape](...args);
             expect(read()).toEqual([shape, "beside the test file"]);
@@ -86,15 +105,18 @@ describe("mock.module() as the call that ends a function", () => {
             expect((await import("../helpers/no-file")).where).toBe("ofNoFile");
           });
 
-          // A preload that lends vi.mock() as such a wrapper relies on it.
-          test("a path that a wrapper is handed stays a path of the wrapper's caller", () => {
+          // As in every release. A preload that lends vi.mock() as a wrapper like the first relies on it.
+          test.each([
+            ["handedOn", "./dep"], ["heldByNameOfModule"], ["ofAnotherHolder", lender], ["heldByName"],
+            ["heldByNameBehindAnother", true], ["chosen"], ["joined"], ["filled"],
+          ])("%s is not written as mock.module() of a path, so its path stays a path of the caller", (shape, ...args) => {
             const ofHelperBefore = ofHelper.where;
-            mocks.handedOn("./dep", "handedOn");
-            expect(read()).toEqual([ofHelperBefore, "handedOn"]);
+            mocks[shape](...args);
+            expect(read()).toEqual([ofHelperBefore, shape]);
           });
         `,
       },
-      19,
+      27,
     );
   });
 
@@ -105,6 +127,7 @@ describe("mock.module() as the call that ends a function", () => {
       await expectFixturesToPass(
         {
           "dep.ts": `export const where = "real";`,
+          "stored.ts": `export const where = "real";`,
           "node_modules/a-package/package.json": JSON.stringify({
             name: "a-package",
             type: "module",
@@ -119,13 +142,19 @@ describe("mock.module() as the call that ends a function", () => {
           "node_modules/two-files/index.cjs": `exports.where = "real for require";`,
           "hooks.test.ts": `
           import { afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+          import { AsyncLocalStorage } from "node:async_hooks";
           import * as dep from "./dep";
+          import * as stored from "./stored";
           import * as ofPackage from "a-package";
           import * as ofTwoFiles from "two-files";
           ${factory}
 
           describe("a describe body", () => mock.module("./dep", factory("describe body")));
           test("a describe body", () => expect(dep.where).toBe("describe body"));
+
+          // The runner then holds the callback in a wrapper that knows the store.
+          new AsyncLocalStorage().run(1, () => describe("under a store", () => mock.module("./stored", factory("under a store"))));
+          test("a describe body that is registered under an AsyncLocalStorage store", () => expect(stored.where).toBe("under a store"));
 
           describe("beforeAll", () => {
             beforeAll(() => mock.module("./dep", factory("beforeAll")));
@@ -177,10 +206,42 @@ describe("mock.module() as the call that ends a function", () => {
           });
         `,
         },
-        13,
+        14,
       );
     },
   );
+
+  // A plain run reads `mock["module"]` as `mock.module`. --coverage and the inspector leave it as it is written.
+  test.concurrent("keeps the frame of a call that names its method in brackets under --coverage", async () => {
+    await expectFixturesToPass(
+      {
+        "helpers/dep.ts": `export const where = "beside the helper";`,
+        "tests/dep.ts": `export const where = "beside the test file";`,
+        "helpers/mocks.ts": `
+          import { jest, mock } from "bun:test";
+          export const ofMock = () => mock["module"]("./dep", () => ({ where: "mock.module" }));
+          export const ofJest = () => jest["doMock"]("./dep", () => ({ where: "jest.doMock" }));
+          export const handedOn = path => mock["module"](path, () => ({ where: "handed on" }));
+        `,
+        "tests/brackets.test.ts": `
+          import { expect, test } from "bun:test";
+          import * as mocks from "../helpers/mocks";
+          import * as ofHelper from "../helpers/dep";
+          import * as ofTestFile from "./dep";
+          test.each([["ofMock", "mock.module"], ["ofJest", "jest.doMock"]])("%s", (helper, where) => {
+            mocks[helper]();
+            expect([ofHelper.where, ofTestFile.where]).toEqual([where, "beside the test file"]);
+          });
+          test("a path that is handed on stays a path of the caller", () => {
+            mocks.handedOn("./dep");
+            expect([ofHelper.where, ofTestFile.where]).toEqual(["jest.doMock", "handed on"]);
+          });
+        `,
+      },
+      3,
+      ["--coverage"],
+    );
+  });
 
   // Without the frame the path stayed as written, and the mock replaced the "./dep" of every later test file.
   test.concurrent("resolves a path that the call writes beside a --preload script in another folder", async () => {

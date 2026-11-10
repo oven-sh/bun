@@ -72,6 +72,10 @@ fn frame_is_kept_for_mock_module_of_the_name_that_an_import_binds() {
     ));
     assert!(!keeps("import * as runner from 'bun:test';", "runner.mock"));
     assert!(!keeps("import { jest } from 'bun:test';", "jest"));
+    assert!(!keeps(
+        "import { mock as imported } from 'bun:test';",
+        "(typeof mock !== 'undefined' ? mock : imported)"
+    ));
 }
 
 #[test]
@@ -86,11 +90,30 @@ fn frame_is_kept_for_mock_module_only_where_the_call_writes_the_path() {
     };
     assert!(keeps("'./dep.cjs'"));
     assert!(keeps("`./dep.cjs`"));
+    assert!(keeps("('./dep.cjs')"));
     assert!(keeps("'./dep.cjs' as string"));
+    assert!(keeps("<string>'./dep.cjs'"));
     assert!(keeps("'a-package'"));
     assert!(!keeps("top"));
     assert!(!keeps("`./${top}`"));
+    // The visit of the transpiler makes a string of each of these. It asks before that visit.
+    assert!(!keeps("`./${'dep.cjs'}`"));
     assert!(!keeps("'./' + 'dep.cjs'"));
+    assert!(!keeps("true ? './dep.cjs' : './no-file.cjs'"));
+    assert!(!keeps("'./dep.cjs' || top"));
+}
+
+#[test]
+fn frame_is_kept_for_a_name_in_brackets_under_an_assertion() {
+    // The transpiler drops the assertion where it parses the name.
+    let keeps = |returned: &str| {
+        let head = "import { jest, mock } from 'bun:test'; const marker = { here: () => ({}) };";
+        keeps_frame_of(head, returned, "here")
+    };
+    assert!(keeps("mock['module' as const]('./dep.cjs', marker.here)"));
+    assert!(keeps(
+        "jest['requireActual' as const]('./dep.cjs', marker.here)"
+    ));
 }
 
 #[test]

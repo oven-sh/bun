@@ -55,10 +55,22 @@ pub(crate) enum MockHoistOrder {
     InPlace,
 }
 
-/// A path that a wrapper hands on stays a path of the wrapper's caller, as in every release: a preload that lends
-/// `vi.mock()` as `(path, factory) => mock.module(path, factory)` relies on it. A folded `"a" + "b"` has a `next`.
-fn names_module_in_text(call: &E::Call) -> bool {
-    matches!(call.args.slice().first().map(|name| &name.data), Some(ExprData::EString(name)) if name.next.is_none())
+/// The object and the name of a callee `object.name`. `--coverage` and the inspector leave `object["name"]` as it is.
+fn member_of_callee(callee: &Expr) -> Option<(Expr, E::Str)> {
+    match callee.data {
+        ExprData::EDot(dot) => Some((dot.target, dot.name)),
+        ExprData::EIndex(index) => match index.index.unwrap_inlined().data {
+            ExprData::EString(name) if name.is_utf8() && name.next.is_none() => {
+                Some((index.target, name.data))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn path_is_string(call: &E::Call) -> bool {
+    matches!(call.args.slice().first().map(|path| &path.data), Some(ExprData::EString(path)) if path.next.is_none())
 }
 
 /// Rewrites a lowered import's callee to `(0, ns.fn)`, so the call doesn't pass `ns` as `this`.
@@ -160,6 +172,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         match self.test_api(ref_)? {
             TestApi::Mocks(api) => Some(api),
             TestApi::Mock | TestApi::Expect => None,
+        }
+    }
+
+    fn test_api_of(&self, holder: &Expr) -> Option<TestApi> {
+        match holder.data {
+            ExprData::EIdentifier(id) => self.test_api(id.ref_),
+            ExprData::EImportIdentifier(id) => self.test_api(id.ref_),
+            _ => None,
         }
     }
 
@@ -441,24 +461,38 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     fn reads_frame_of_caller(&self, call: &E::Call) -> bool {
         const VI: TestApi = TestApi::Mocks(MockApi::Vi);
         const JEST: TestApi = TestApi::Mocks(MockApi::Jest);
-        let ExprData::EDot(dot) = call.target.data else {
+        let Some((holder, name)) = member_of_callee(&call.target) else {
             return false;
         };
-        let holders: &[TestApi] = match dot.name.slice() {
+        let holders: &[TestApi] = match name.slice() {
             b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => return true,
             b"mock" | b"doMock" | b"unmock" => &[VI, JEST],
             b"doUnmock" | b"importActual" | b"importMock" => &[VI],
             b"dontMock" | b"requireActual" | b"requireMock" | b"createMockFromModule" => &[JEST],
-            b"module" if names_module_in_text(call) => &[TestApi::Mock],
+            b"module" if call.close_paren_loc != bun_ast::Loc::EMPTY => {
+                let mut noted = self.mock_modules_of_written_path.iter().rev();
+                return noted.any(|&end| end == call.close_paren_loc);
+            }
+            // The React Compiler writes a call anew after the visit, with no position to find it by.
+            b"module" if path_is_string(call) => &[TestApi::Mock],
             b"addEqualityTesters" | b"addSnapshotSerializer" => &[TestApi::Expect],
             _ => return false,
         };
-        let holder = match dot.target.data {
-            ExprData::EIdentifier(id) => self.test_api(id.ref_),
-            ExprData::EImportIdentifier(id) => self.test_api(id.ref_),
-            _ => None,
+        self.test_api_of(&holder)
+            .is_some_and(|holder| holders.contains(&holder))
+    }
+
+    /// Asked before the first visit of the path, which makes a string of a `const` too: a path that is handed on stays the caller's.
+    pub(crate) fn note_mock_module_of_written_path(&mut self, call: &E::Call) {
+        if self.is_revisit_for_substitution || !path_is_string(call) {
+            return;
+        }
+        let Some((holder, name)) = member_of_callee(&call.target) else {
+            return;
         };
-        holder.is_some_and(|holder| holders.contains(&holder))
+        if name.slice() == b"module" && self.test_api_of(&holder) == Some(TestApi::Mock) {
+            self.mock_modules_of_written_path.push(call.close_paren_loc);
+        }
     }
 
     fn ends_in_call_that_reads_frame_of_caller(&self, value: &Expr) -> bool {

@@ -389,7 +389,15 @@ fn names_module_in_text(hir: &File<'_>, call: CallId) -> bool {
 
 fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> bool {
     let callee = hir.skip_type_assertions(hir[call].callee);
-    let Some((object, MemberKey::Name(name))) = hir.member_key(callee) else {
+    let Some((object, key)) = hir.member_key(callee) else {
+        return false;
+    };
+    // The transpiler drops the assertion of `vi["mock" as const]` where it parses it.
+    let key = match key {
+        MemberKey::Computed(key) => hir.index_member_key(hir.skip_type_assertions(key)),
+        key => key,
+    };
+    let MemberKey::Name(name) = key else {
         return false;
     };
     let holders: &[Atom] = match name {
@@ -424,7 +432,10 @@ fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> boo
         _ => return false,
     };
     let object = hir.skip_type_assertions(object);
-    is_name_that_transpiler_knows(hir, bound, object, holders)
+    // No loader writes `mock` as a choice of a free name, as it does for the globals of the runner.
+    let is_written_choice = matches!(expr_kind(hir, object), Some(ExprKind::Cond { .. }));
+    !(name == known::module && is_written_choice)
+        && is_name_that_transpiler_knows(hir, bound, object, holders)
 }
 
 pub fn ends_in_call_that_reads_frame_of_caller(

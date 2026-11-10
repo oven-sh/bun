@@ -468,6 +468,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) jest: Jest,
     /// The named imports of a test module that `bun test` knows by name. A file has few, so they are scanned.
     pub(crate) imported_test_apis: smallvec::SmallVec<[(Ref, TestApi); 4]>,
+    /// Where each `mock.module()` call that writes its path as a string ends.
+    pub(crate) mock_modules_of_written_path: smallvec::SmallVec<[bun_ast::Loc; 4]>,
     /// `assert` and `should` imported from "vitest", which re-exports them from chai. Bun imports them from the project's chai.
     pub(crate) chai_imports: crate::parser::ChaiImports,
     /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
@@ -9802,6 +9804,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_test_apis: Default::default(),
+            mock_modules_of_written_path: Default::default(),
             chai_imports: Default::default(),
             did_apply_test_feature: false,
             has_hoisted_mock_stmt: false,

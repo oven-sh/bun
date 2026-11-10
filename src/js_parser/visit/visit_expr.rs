@@ -2237,9 +2237,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            let visited_args = usize::from(
-                p.options.features.inject_jest_globals && p.visit_import_in_mock_path(&mut e_),
-            );
+            let visited_args = if p.options.features.inject_jest_globals {
+                p.note_mock_module_of_written_path(&e_);
+                usize::from(p.visit_import_in_mock_path(&mut e_))
+            } else {
+                0
+            };
             let mut arg_in = ExprIn {
                 is_object_keys_argument: p.has_import_meta && is_object_keys_call(&p.symbols, &e_),
                 ..Default::default()

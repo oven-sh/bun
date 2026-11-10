@@ -3965,6 +3965,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
         "mmap",
         "nanoseconds",
         "origin",
+        "parseEnv",
         "pathToFileURL",
         "peek",
         "randomUUIDv5",

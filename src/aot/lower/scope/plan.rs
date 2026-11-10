@@ -82,7 +82,7 @@ impl<'x, 's> Context<'x, 's> {
             holders_without_value: collect_holders_without_value(input),
         };
         let has_module_variables = match input.modules.kind(input.file) {
-            ModuleKind::SourceText if input.modules.runs_again(input.file) => false,
+            ModuleKind::SourceText if input.modules.may_be_reevaluated(input.file) => false,
             ModuleKind::SourceText | ModuleKind::Data | ModuleKind::RuntimeSource => true,
             ModuleKind::CommonJs => input.modules.runs_body_once(ModuleRef::File(input.file)),
             ModuleKind::Runtime | ModuleKind::External => false,

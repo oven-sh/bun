@@ -1,0 +1,12 @@
+# `this.name = name` finds the setter on the prototype object: the object gets no property `name` of its own, and the read goes to the getter.
+# -- source: main.js
+# function User(name) { this.name = name; }
+# Object.defineProperty(User.prototype, "name", { get() { return this._name; }, set(v) { this._name = v.trim(); }, configurable: true });
+# const u = new User(" a "); print(u.name, Object.keys(u).join());
+# -- end of source
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: a _name
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: a _name
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: a _name

@@ -30,7 +30,7 @@ console.log(built.names.join())
 
 // GENERATED: handle makeHandlers group
 // CHECK-LABEL: function {{*}}name="handle"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined|null|string, v2: undefined|null|[[f_2]]):
 // CHECK-NEXT: v3 = PropGet v0 key="names"
 // CHECK-NEXT: v4 = PropGet v3 key="push"
@@ -43,7 +43,7 @@ console.log(built.names.join())
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeHandlers"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_3]]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_3]]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_3]]>):
 // CHECK-NEXT: v1 = Builtin builtin=ObjectCreate
 // CHECK-NEXT: v2 = GetModuleVariable variable=[[g_4]]
@@ -61,7 +61,7 @@ console.log(built.names.join())
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="group"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_3]]> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_3]]> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_3]]>, v1: undefined|null|[[f_6]]):
 // CHECK-NEXT: v2 = GetModuleVariable variable=[[g_7]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="makeHandlers"

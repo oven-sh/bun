@@ -1,0 +1,50 @@
+# f1 = feed, f6 = inc
+# -- source: a-copy-in-line-leaves-for-its-call-under-the-cleanup-of-a-for-of.ts
+# // A method copied in line inside a for-of: where a guess of the copy fails it leaves for the call; what the call throws must still close an iterator that goes by protocol, once, and a list needs no closing.
+# class Counter {
+#   at = 0;
+#   cells: number[] = [0, 0, 0];
+#   inc(by: number): void { if (by === 13) throw new RangeError("thirteen"); this.cells[this.at] += by; }
+# }
+# const said: string[] = [];
+# function feed(source: Iterable<number>, counter: Counter): void {
+#   for (const by of source) counter.inc(by);
+# }
+# function protocol(values: number[], name: string): Iterable<number> {
+#   return {
+#     [Symbol.iterator]() {
+#       let next = 0;
+#       return {
+#         next() { said.push(name + " next " + next); return next < values.length ? { done: false, value: values[next++] } : { done: true, value: undefined as unknown as number }; },
+#         return() { said.push(name + " closed"); return { done: true, value: undefined as unknown as number }; },
+#       };
+#     },
+#   };
+# }
+# function odd(): Counter {
+#   const counter = new Counter();
+#   delete (counter as { at?: number }).at;
+#   Object.defineProperty(counter, "at", { get() { said.push("getter of at"); return 1; }, configurable: true });
+#   return counter;
+# }
+# for (const make of [() => new Counter(), odd]) {
+#   for (const values of [[1, 2, 3], [1, 13, 3], [13], []]) {
+#     for (const source of [values, protocol(values, "p")]) {
+#       const counter = make();
+#       try { feed(source, counter); said.push("fed"); } catch (error) { said.push("threw " + (error as Error).message); }
+#       said.push(counter.cells.join(","));
+#     }
+#   }
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# `inc` is copied in line into the body of a for-of that may go by protocol, so the copy stands under the cleanup that closes the iterator and throws on. That cleanup reads nothing of the turn: its edge brings no argument.
+# Where a guess of the copy fails and nothing was done since the copy began, the copy leaves for the call, as it does where no handler stands; the call stands under the cleanup like the call that was written.
+# RUN: walk f1 mechanisms=all
+# CHECK: frequency=Rare isInLoop=true handler=
+# CHECK: = CallDirect {{*}}function=f6 [isNeverInlined]
+# What the call throws closes an iterator once and a list never; a getter in the place of `at` runs as often as in the source.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 60 lines 2050998429

@@ -1,6 +1,6 @@
 // node:process, bun and node:module mirror an object that exists without them, and an export whose value Bun's own JavaScript makes is made when somebody first asks for it. Whoever lists such a
 // namespace asks for all of them: Object.keys() wants the descriptor of each name to see whether it is listed, and the descriptor of an export holds its value. Once the build kept what the program
-// named, and the list ended the executable: "process.allowedNodeEnvironmentFlags was left out of the executable".
+// named, and the list ended the executable: "process.allowedNodeEnvironmentFlags was used, but it was not compiled into this executable".
 // Every way of listing, told over the modules and over how the namespace is come by.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

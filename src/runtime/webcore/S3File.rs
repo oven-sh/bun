@@ -407,15 +407,21 @@ impl S3BlobStatTask {
         Ok(promise)
     }
 
+    #[inline(never)]
     pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::exists);
         Self::start(cx, blob, "exists", S3BlobStatTask::on_s3_exists_resolved)
     }
 
+    #[inline(never)]
     pub(crate) fn stat(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::stat);
         Self::start(cx, blob, "stat", S3BlobStatTask::on_s3_stat_resolved)
     }
 
+    #[inline(never)]
     pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::size);
         Self::start(cx, blob, "size", S3BlobStatTask::on_s3_size_resolved)
     }
 

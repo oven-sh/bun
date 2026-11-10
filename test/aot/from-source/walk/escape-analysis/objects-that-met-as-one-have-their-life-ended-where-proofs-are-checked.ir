@@ -13,14 +13,14 @@
 # CHECK: = NewObject
 # CHECK: = NewObject
 # CHECK: ([[met]]: L{{*}} @Cell
-# CHECK: EndLifeOfCell [[met]]
+# CHECK: EndCellLifetime [[met]]
 # CHECK: Return
-# CHECK: EndLifeOfCell [[met]]
+# CHECK: EndCellLifetime [[met]]
 # CHECK: Return
 # Where it is handed back its life goes on; on the way on which null is handed back it ends.
 # RUN(BACK): walk f2 mechanisms=-Inlining
 # BACK-LABEL: code f2:Body
 # BACK: ([[met]]: L{{*}} @Cell
-# BACK: EndLifeOfCell [[met]]
+# BACK: EndCellLifetime [[met]]
 # RUN(WITHOUT): walk f1 mechanisms=-Inlining-EscapeAnalysis
-# WITHOUT-NOT: EndLifeOfCell
+# WITHOUT-NOT: EndCellLifetime

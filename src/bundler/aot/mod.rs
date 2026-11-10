@@ -25,6 +25,7 @@ use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
 use bun_ast::{Loc, Log};
 use bun_options_types::aot_options::AotOptions;
+use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_resolver::package_names::{
     BuildPaths, FurtherPackageName, PackageName, PathAlias, add_hidden_names, add_written_names,
 };
@@ -33,8 +34,10 @@ use core::ptr::NonNull;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
 pub use options::expand_entry_points;
 use options::{OptionsInput, options_from_bundler};
-use services::BundlerServices;
+pub use paths::FileIdentity;
 pub use services::FileFinder;
+pub use services::FilesForFileSystem;
+use services::{BundlerServices, NamesWanted, is_at_or_below};
 
 pub struct PluginSetup {
     pub plugins: NonNull<JSBundlerPlugin>,
@@ -80,6 +83,11 @@ pub struct AotBuild {
     pub names_added_to_builtins: Vec<(u32, Vec<u8>)>,
     /// `Resolver::find_further_package_names`
     pub further_package_names: Vec<FurtherPackageName>,
+    /// `CompiledProgram::refused_data`
+    pub refused_data: Vec<u8>,
+    pub files_for_file_system: FilesForFileSystem,
+    /// `CompiledProgram::loaders_given_to_build`
+    pub loaders_given_to_build: Vec<u8>,
     pub output_files: Vec<OutputFile>,
     pub engine: EngineResult,
     /// `Compilation::starts_workers_from_unseen_code`
@@ -124,6 +132,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     if let Some(outfile) = outfile {
         transpiler.resolver.pass_over_outfile(outfile);
     }
+    let is_root_written = !transpiler.options.root_dir.is_empty();
     let input = OptionsInput {
         bundle_options: &transpiler.options,
         entry_points,
@@ -176,11 +185,33 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         bundle.completion = Some(setup.completion);
     }
 
+    let working_directory = crate::bun_fs::FileSystem::get().top_level_dir();
+    let working_directory = without_trailing_slash_windows_path(working_directory);
+    let assets_by_absolute_paths = assets
+        .iter()
+        .map(|asset| {
+            let path = paths::absolute_path(working_directory, asset);
+            without_trailing_slash_windows_path(&path).to_vec()
+        })
+        .collect();
+    // `options::root_directory` widens a root that nobody wrote to the assets below the working directory.
+    let root_directory = &options.paths.root_directory[..];
+    let is_root_widened = !is_root_written && is_at_or_below(root_directory, working_directory);
+    let assets_root = match is_root_widened {
+        true => working_directory.to_vec(),
+        false => root_directory.to_vec(),
+    };
     let services = BundlerServices::new(
         NonNull::from(&mut *bundle).cast(),
         module_prefix,
         &aot.user_defined_names,
-    );
+        NamesWanted {
+            runs_in_place: aot.runs_in_place,
+            loads_code_from_disk: aot.loads_code_from_disk,
+            root_directory: Box::from(&options.paths.root_directory[..]),
+        },
+    )
+    .with_assets(assets_by_absolute_paths, assets_root);
     let mut said_by_compiler = Log::init();
     let result = bun_aot::compile(&options, &services, &mut said_by_compiler);
     // SAFETY: the log outlives the build, and the reference ends with the statement.
@@ -191,6 +222,9 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         Err(_) => 0,
     };
     let refused_names = services.take_refused_names();
+    let refused_data = services.take_refused_data();
+    let files_for_file_system = services.take_files_for_file_system();
+    let found_beside_engine = services.take_names_of_packages();
     let embedded = services.shut_down();
     let (package_names, path_aliases) = match &result {
         // A program that runs in place asks the disk, and one entry point is loaded by nobody.
@@ -204,40 +238,20 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             let entry_points: Vec<BuildPaths<'_>> = entry_points
                 .map(|it| paths(&it.source_path, &it.public_path))
                 .collect();
-            let folders = summary.folders.iter();
-            let folders: Vec<BuildPaths<'_>> = folders
-                .map(|it| paths(&it.source_path, &it.public_path))
-                .collect();
             let written = compilation.names_of_worker_files.iter();
             let written: Vec<BuildPaths<'_>> = written
                 .map(|it| paths(&it.source_path, &it.public_path))
                 .collect();
-            let resolver = &mut bundle.transpiler.resolver;
-            let names = resolver.find_package_names(&entry_points, &folders);
+            let names = found_beside_engine.of_entry_points_and_folders;
             let names = add_written_names(names, &written, &entry_points);
-            (names, resolver.find_path_aliases(&folders))
+            (names, found_beside_engine.path_aliases)
         }
         Ok(_) | Err(_) => (Vec::new(), Vec::new()),
     };
     let package_names = match &result {
-        Ok(compilation) if !aot.runs_in_place => {
-            let folders = compilation.summary.folders.iter();
-            let folders: Vec<BuildPaths<'_>> = folders
-                .map(|it| BuildPaths {
-                    source_path: &it.source_path,
-                    public_path: &it.public_path,
-                })
-                .collect();
-            let files = compilation.program_files.iter();
-            let files: Vec<BuildPaths<'_>> = files
-                .map(|it| BuildPaths {
-                    source_path: &it.source_path,
-                    public_path: &it.public_path,
-                })
-                .collect();
-            let resolver = &mut bundle.transpiler.resolver;
-            let names = add_hidden_names(package_names, resolver.find_nearer_packages(&folders));
-            add_hidden_names(names, resolver.find_names_that_lead_outside(&files))
+        Ok(_) if !aot.runs_in_place => {
+            let names = add_hidden_names(package_names, found_beside_engine.nearer);
+            add_hidden_names(names, found_beside_engine.that_lead_outside)
         }
         Ok(_) | Err(_) => package_names,
     };
@@ -257,22 +271,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         false => package_names,
     };
     let further_package_names = match &result {
-        Ok(compilation) if aot.loads_code_from_disk && !compilation.program_files.is_empty() => {
-            let files = compilation.program_files.iter();
-            let files: Vec<BuildPaths<'_>> = files
-                .map(|it| BuildPaths {
-                    source_path: &it.source_path,
-                    public_path: &it.public_path,
-                })
-                .collect();
-            let root = BuildPaths {
-                source_path: &options.paths.root_directory,
-                public_path: module_prefix,
-            };
-            let resolver = &mut bundle.transpiler.resolver;
-            resolver.find_further_package_names(&files, root)
-        }
-        Ok(_) | Err(_) => Vec::new(),
+        Ok(_) => found_beside_engine.further,
+        Err(_) => Vec::new(),
     };
     let mut further_package_names = further_package_names;
     if let Ok(compilation) = &result {
@@ -300,6 +300,10 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             let mut build = output::finish_build(compilation, &names, embedded);
             build.package_names = package_names;
             build.further_package_names = further_package_names;
+            build.refused_data = refused_data;
+            build.files_for_file_system = files_for_file_system;
+            build.loaders_given_to_build =
+                bun_aot::module_keys::encode_loaders_given_to_build(&options.load.loaders);
             build.path_aliases = path_aliases;
             build.root_directory = options.paths.root_directory;
             Ok(build)

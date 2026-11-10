@@ -1,5 +1,5 @@
 // a list is searched by the stub for what is found by its bits, and for a text by its characters: the answers are those of the engine
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 let calls = 0;
 function found(list, x) { const place = list.indexOf(x); calls++; return place; }

@@ -13,9 +13,94 @@ fn files_that_run_again<'a>(
     with_graph_of_test_files(files, test_files, preloads, |graph, input| {
         let names = files.iter().map(|&(name, _)| name);
         names
-            .filter(|name| graph.runs_again(file_named(input, name)))
+            .filter(|name| graph.may_be_reevaluated(file_named(input, name)))
             .collect()
     })
+}
+
+#[test]
+fn an_es_package_that_a_mock_names_may_run_again_and_nothing_around_it() {
+    let es = r#"{ "type": "module", "main": "index.js" }"#;
+    let test_file = "import { test, vi } from 'bun:test';\nimport './reader.ts';\nvi.mock('kit');\nvi.mock('old');\nvi.mock('./own.ts');\ntest('t', () => import('kit'));";
+    let files = [
+        ("a.test.ts", test_file),
+        (
+            "reader.ts",
+            "import { x } from 'kit';\nimport { w } from 'free';\nimport './own.ts';\nimport 'old';\nexport const y = [x, w];",
+        ),
+        ("own.ts", "export const z = 1;"),
+        ("node_modules/kit/package.json", es),
+        ("node_modules/kit/index.js", "export const x = 1;"),
+        ("node_modules/free/package.json", es),
+        ("node_modules/free/index.js", "export const w = 1;"),
+        ("node_modules/old/package.json", r#"{ "main": "index.js" }"#),
+        ("node_modules/old/index.js", "exports.v = 1;"),
+    ];
+    let code = files.iter().map(|&(name, _)| name);
+    let code = code.filter(|name| !name.ends_with(".json"));
+    let marked: Vec<&str> = with_graph_of_test_files(&files, 1, 0, |graph, input| {
+        code.filter(|name| graph.may_be_reevaluated(file_named(input, name)))
+            .collect()
+    });
+    assert_eq!(marked, ["node_modules/kit/index.js"]);
+}
+
+fn reloadable_files<'a>(files: &[(&'a str, &str)], test_files: usize) -> Vec<&'a str> {
+    with_graph_of_test_files(files, test_files, 0, |graph, input| {
+        let names = files.iter().map(|&(name, _)| name);
+        names
+            .filter(|name| graph.is_reloadable(file_named(input, name)))
+            .collect()
+    })
+}
+
+#[test]
+fn a_mocked_file_and_its_importers_are_reloadable() {
+    let files = [
+        (
+            "a.test.ts",
+            "import { vi } from 'bun:test';\nimport './top.ts';\nimport './aside.ts';\nvi.doMock('./dep.ts', () => ({}));",
+        ),
+        ("b.test.ts", "import './aside.ts';\nimport('./top.ts');"),
+        ("top.ts", "export * from './user.cjs';"),
+        ("user.cjs", "exports.dep = require('./dep.ts');"),
+        ("dep.ts", "import './below.ts';\nexport const who = 1;"),
+        ("below.ts", "export const low = 1;"),
+        ("aside.ts", "export const far = 1;"),
+    ];
+    assert_eq!(
+        reloadable_files(&files, 2),
+        ["a.test.ts", "top.ts", "user.cjs", "dep.ts"]
+    );
+}
+
+#[test]
+fn importers_of_a_mocked_built_in_module_are_reloadable() {
+    let files = [
+        (
+            "a.test.ts",
+            "import { mock } from 'bun:test';\nimport './reader.ts';\nmock.module('node:os', () => ({}));",
+        ),
+        (
+            "reader.ts",
+            "import os from 'node:os';\nexport const host = os;",
+        ),
+        ("b.test.ts", "import './other.ts';"),
+        (
+            "other.ts",
+            "import path from 'node:path';\nexport const sep = path;",
+        ),
+    ];
+    assert_eq!(reloadable_files(&files, 2), ["a.test.ts", "reader.ts"]);
+}
+
+#[test]
+fn nothing_is_reloadable_where_no_module_is_mocked() {
+    let files = [
+        ("a.test.ts", "import './user.ts';"),
+        ("user.ts", "export const who = 1;"),
+    ];
+    assert!(reloadable_files(&files, 1).is_empty());
 }
 
 #[test]
@@ -41,15 +126,26 @@ fn what_lies_below_the_file_that_threw_runs_again_with_it() {
 }
 
 #[test]
-fn what_one_test_file_alone_asks_for_is_told_apart_for_the_first_alone() {
+fn what_one_test_file_alone_asks_for_is_told_apart_wherever_the_test_file_stands() {
     let own = ("own.cjs", "exports.name = 1;");
     let shared = "const gauge = require('./gauge.cjs');";
     let with_own = "const own = require('./own.cjs');\nconst gauge = require('./gauge.cjs');";
     let first_has_it = [("a.test.ts", with_own), ("b.test.ts", shared), own, GAUGE];
     assert_eq!(files_that_run_again(&first_has_it, 2, 0), ["gauge.cjs"]);
     let second_has_it = [("a.test.ts", shared), ("b.test.ts", with_own), own, GAUGE];
+    assert_eq!(files_that_run_again(&second_has_it, 2, 0), ["gauge.cjs"]);
+    let nothing = "const one = 1;";
+    let third_has_it = [
+        ("a.test.ts", nothing),
+        ("b.test.ts", nothing),
+        ("c.test.ts", with_own),
+        own,
+        GAUGE,
+    ];
+    assert!(files_that_run_again(&third_has_it, 3, 0).is_empty());
+    let both_have_it = [("a.test.ts", with_own), ("b.test.ts", with_own), own, GAUGE];
     assert_eq!(
-        files_that_run_again(&second_has_it, 2, 0),
+        files_that_run_again(&both_have_it, 2, 0),
         ["own.cjs", "gauge.cjs"]
     );
 }

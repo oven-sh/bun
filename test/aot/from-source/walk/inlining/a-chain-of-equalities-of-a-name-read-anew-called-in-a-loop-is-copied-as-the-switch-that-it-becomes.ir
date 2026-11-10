@@ -1,0 +1,19 @@
+# The commonest spelling: `node.kind === 3 || node.kind === 5 || ..`: the walk folds a subject that each test reads anew by one name off one holder and reads it once; the scan took each read for a value of its own, so every test began a new run and nothing was saved: ten tests weighed twenty and the helper stayed a call in every turn. The subject of a run is now the holder and the name: in a loop the chain weighs its one read and half its cases, and countLoud() holds the Switch and no call. Outside loops nothing changes: once() calls it.
+# f1 = isLoud, f2 = countLoud, f3 = once
+# -- source: a-chain-of-equalities-of-a-name-read-anew-called-in-a-loop-is-copied-as-the-switch-that-it-becomes.js
+# function isLoud(node) { return node.kind === 3 || node.kind === 5 || node.kind === 8 || node.kind === 11 || node.kind === 12 || node.kind === 17 || node.kind === 19 || node.kind === 21 || node.kind === 23 || node.kind === 26; }
+# function countLoud(list) { let n = 0; for (let i = 0; i < list.length; i++) if (isLoud(list[i])) n++; return n; }
+# function once(node) { return isLoud(node) ? 1 : 0; }
+# const list = []; for (let i = 0; i < 48; i++) list.push({ kind: i * 7 % 43, at: i });
+# print(countLoud(list) * 100 + once(list[1]) * 10 + once(list[2]));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1100
+# RUN(LOOP): walk f2 mechanisms=all
+# LOOP-LABEL: code f2:Body
+# LOOP-NOT: function=f1
+# LOOP: Switch {{*}} cases=[3, 5, 8, 11, 12, 17, 19, 21, 23, 26]
+# LOOP-NOT: function=f1
+# RUN(OUTSIDE): walk f3 mechanisms=all
+# OUTSIDE-LABEL: code f3:Body
+# OUTSIDE: = CallDirect {{*}} function=f1

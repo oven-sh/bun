@@ -4,8 +4,8 @@
 // `measure`, which every run creates, is bound to its variable as ever.
 // RUN: link
 // CHECK: module [[shapes]] path="{{*}}shapes.mjs" {{*}}exports=[{name="paint" variable={{*}}}]
-// CHECK: module [[face]] path="#{{*}}displayPath="node-or-browser.cjs" {{*}}syntheticExports=[{name="measure" variable=[[measure]]}, {name="paint" variable=[[copy]]}]
-// CHECK: module [[index]] path="{{*}}index.mjs" {{*}}requests=[{target=[[shapes]] isDynamicStarExport=true completes=true}, {target={{*}} isDynamicStarExport=true completes=true}, {target=[[face]] completes=true}] exports=[{name="paint" variable=[[copy]] isDroppedWhileEmpty=true}] requiredNames=[{module=[[index]] name="paint" exportName="paint" specifier="./node-or-browser.cjs"}]
+// CHECK: module [[facade]] path="#{{*}}displayPath="node-or-browser.cjs" {{*}}syntheticExports=[{name="measure" variable=[[measure]]}, {name="paint" variable=[[copy]]}]
+// CHECK: module [[index]] path="{{*}}index.mjs" {{*}}requests=[{target=[[shapes]] isDynamicStarExport=true completes=true}, {target={{*}} isDynamicStarExport=true completes=true}, {target=[[facade]] completes=true}] exports=[{name="paint" variable=[[copy]] isHiddenUntilInitialized=true}] requiredNames=[{module=[[index]] name="paint" exportName="paint" specifier="./node-or-browser.cjs"}]
 // CHECK: module {{*}}main.mjs" {{*}}requiredNames=[{module=[[index]] name="paint"}]
 // CHECK: GetModuleVariable variable=[[measure]]
 // CHECK: [[space]] = ModuleNamespace module=[[index]]

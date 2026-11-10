@@ -1,4 +1,4 @@
-// COUNTER: FieldsLeftSlotByStoreOfOtherType <= 8
+// COUNTER: FieldsEvictedByTypeMismatch <= 8
 // `this.parent = undefined!`, `found!`: the checker is told that a value is there, and undefined or null arrives where a class, a number, a text and a boolean are written. Both lie in the slot of every held type: no field leaves its slot.
 // Under: --aot-testing=CheckProofsAtRunTime: the type that a slot is held to
 class TreeNode {

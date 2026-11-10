@@ -10,8 +10,8 @@ use bun_exe_format::image::{
 use bun_removable_features::{Feature, FeatureSet, RemovableFeatureState, RemovedRange};
 
 use crate::error::{TrimError, TrimInternalError, UnsupportedReason};
-use crate::icu_data::remove_items;
-use crate::model::{PlannedRange, TrimPlan, TrimSummary};
+use crate::icu_data::{find_dead_ranges, remove_items};
+use crate::model::{PlannedIcuPackage, PlannedRange, TrimPlan, TrimSummary, UnrequestedCut};
 use crate::table::{REMOVED_RANGES_HEADER_BYTES, encode_removed_ranges, read_u32};
 
 // `hlt` and `udf #0`. Not breakpoints: where a program listens for SIGTRAP, a breakpoint stops nothing.
@@ -43,6 +43,7 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
             cut_bytes: 0,
             filled_bytes: 0,
             file_bytes_saved: 0,
+            requested_cut_bytes: Some(0),
             uncut: None,
             format: None,
         });
@@ -55,6 +56,13 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
         editor.give_back_cuts(&find_ranges_without_fill(plan))?
     } else {
         0
+    };
+    let unrequested_cut_bytes = match &plan.unrequested {
+        UnrequestedCut::Nothing => Some(0),
+        UnrequestedCut::Planned(unrequested) => {
+            count_cut_bytes(&mut editor, unrequested, sections, is_cut_template).ok()
+        }
+        UnrequestedCut::Unknown => None,
     };
     let icu_ranges = remove_icu_items(&mut editor, plan)?;
     let mut removable = merge_removable_bytes(&plan.ranges, icu_ranges);
@@ -83,6 +91,8 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
         cut_bytes: cut_plan.cut_bytes() - cut_bytes_of_table,
         filled_bytes: cut_plan.filled_bytes(),
         file_bytes_saved,
+        requested_cut_bytes: unrequested_cut_bytes
+            .map(|unrequested| cut_plan.cut_bytes().saturating_sub(unrequested)),
         uncut: cut_plan.uncut,
         format: Some(format),
     })
@@ -178,17 +188,60 @@ fn remove_icu_items(
             .bytes_at_mut(package.range)
             .ok_or(TrimInternalError::RangeOutsideImage)?;
         let dead_ranges = remove_items(bytes, &package.removed_items, &package.tombstoned_items)?;
-        icu_ranges.extend(dead_ranges.into_iter().map(|dead| RemovableBytes {
-            range: AddressRange {
-                start: package.range.start + u64::from(dead.start),
-                end: package.range.start + u64::from(dead.end),
-            },
-            is_code: false,
-            can_be_cut: true,
-            can_be_filled: true,
-        }));
+        icu_ranges.extend(to_removable_bytes(package, dead_ranges));
     }
     Ok(icu_ranges)
+}
+
+fn to_removable_bytes(
+    package: &PlannedIcuPackage,
+    dead_ranges: Vec<Range<u32>>,
+) -> impl Iterator<Item = RemovableBytes> {
+    let start_of_package = package.range.start;
+    dead_ranges.into_iter().map(move |dead| RemovableBytes {
+        range: AddressRange {
+            start: start_of_package + u64::from(dead.start),
+            end: start_of_package + u64::from(dead.end),
+        },
+        is_code: false,
+        can_be_cut: true,
+        can_be_filled: true,
+    })
+}
+
+/// The bytes that `apply` would cut out of the file for `plan`. Changes nothing.
+fn count_cut_bytes(
+    editor: &mut ImageEditor<'_>,
+    plan: &TrimPlan,
+    sections: TrimSections,
+    is_cut_template: bool,
+) -> Result<u64, TrimInternalError> {
+    if plan.is_empty() {
+        return Ok(0);
+    }
+    let mut icu_ranges = Vec::new();
+    for package in &plan.icu_packages {
+        let bytes = editor
+            .bytes_at_mut(package.range)
+            .ok_or(TrimInternalError::RangeOutsideImage)?;
+        let dead_ranges =
+            find_dead_ranges(bytes, &package.removed_items, &package.tombstoned_items)?;
+        icu_ranges.extend(to_removable_bytes(package, dead_ranges));
+    }
+    let mut removable = merge_removable_bytes(&plan.ranges, icu_ranges);
+    if is_cut_template {
+        removable = keep_file_backed_parts(editor, &removable);
+    }
+    if !plan.keeps_table {
+        let records = collect_removed_ranges(plan, sections.state.start);
+        let encoded = encode_removed_ranges(&records, sections.table.len() as usize);
+        let rest_of_table = AddressRange {
+            start: sections.table.start + encoded.bytes.len() as u64,
+            end: sections.table.end,
+        };
+        insert_rest_of_table(&mut removable, rest_of_table);
+    }
+    Ok(editor.cut_model().choose(&removable).cut_bytes())
 }
 
 fn merge_removable_bytes(
@@ -781,6 +834,7 @@ mod tests {
             refused_entry_points: Vec::new(),
             icu_packages: Vec::new(),
             keeps_table: false,
+            unrequested: UnrequestedCut::Nothing,
         }
     }
 
@@ -847,6 +901,71 @@ mod tests {
 
     fn assert_words_trap(bytes: &[u8]) {
         assert!(bytes.chunks_exact(4).all(|word| word == AARCH64_TRAP));
+    }
+
+    #[test]
+    fn summary_counts_what_the_request_itself_cut() {
+        let apply_with = |unrequested: UnrequestedCut| {
+            let mut executable = toy_elf(EM_X86_64, TABLE_BYTES);
+            let old_len = executable.len() as u64;
+            let mut plan = cut_and_fill_plan();
+            plan.set_unrequested_cut(unrequested);
+            let summary = apply(&mut executable, &plan).unwrap();
+            (
+                summary.requested_cut_bytes,
+                old_len - executable.len() as u64,
+            )
+        };
+        let apply_beside =
+            |unrequested: TrimPlan| apply_with(UnrequestedCut::Planned(Box::new(unrequested)));
+
+        let (alone, saved) = apply_with(UnrequestedCut::Nothing);
+        assert!(alone.unwrap().abs_diff(saved) <= 256);
+        assert_eq!(apply_beside(TrimPlan::empty()), (alone, saved));
+
+        let part = planned(CUT_START, CUT_START + 0x10000, true, true, unused_feature());
+        let saved_by_part = {
+            let mut executable = toy_elf(EM_X86_64, TABLE_BYTES);
+            let old_len = executable.len() as u64;
+            apply(&mut executable, &create_plan(vec![part])).unwrap();
+            old_len - executable.len() as u64
+        };
+        let (beside_part, saved_beside_part) = apply_beside(create_plan(vec![part]));
+        assert_eq!(saved_beside_part, saved);
+        assert!(saved_by_part > 0 && saved_by_part < saved);
+        assert!(beside_part.unwrap().abs_diff(saved - saved_by_part) <= 512);
+
+        assert_eq!(apply_beside(cut_and_fill_plan()), (Some(0), saved));
+    }
+
+    #[test]
+    fn uncountable_plan_still_cuts() {
+        let apply_with = |unrequested: UnrequestedCut| {
+            let mut executable = toy_elf(EM_X86_64, TABLE_BYTES);
+            let mut plan = cut_and_fill_plan();
+            plan.set_unrequested_cut(unrequested);
+            let summary = apply(&mut executable, &plan).unwrap();
+            (summary.requested_cut_bytes, executable)
+        };
+        let (_, expected) = apply_with(UnrequestedCut::Nothing);
+        assert_eq!(
+            apply_with(UnrequestedCut::Unknown),
+            (None, expected.clone())
+        );
+
+        let mut outside = cut_and_fill_plan();
+        outside.icu_packages.push(PlannedIcuPackage {
+            range: AddressRange {
+                start: u64::MAX - 0x100,
+                end: u64::MAX,
+            },
+            removed_items: Vec::new(),
+            tombstoned_items: Vec::new(),
+        });
+        assert_eq!(
+            apply_with(UnrequestedCut::Planned(Box::new(outside))),
+            (None, expected)
+        );
     }
 
     #[test]

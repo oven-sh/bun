@@ -1175,7 +1175,7 @@ impl<'a> Resolver<'a> {
                 is_require(kind),
             )
         });
-        if let Some(file_name) = followed {
+        if let Some(file_name) = followed.filter(|_| self.custom_dir_paths.is_none()) {
             return PackageLookup::Found(file_name);
         }
         let is_left_outside = graph.compiled_program().is_some_and(|program| {
@@ -7169,7 +7169,7 @@ fn is_require(kind: ast::ImportKind) -> bool {
 /// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
 /// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
 /// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
-fn rewritten_file_extensions(
+pub(crate) fn rewritten_file_extensions(
     ext: &[u8],
     inside_node_modules: impl Fn() -> bool,
 ) -> &'static [&'static [u8]] {

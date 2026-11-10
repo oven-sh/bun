@@ -978,6 +978,19 @@ pub enum FnOwner {
     Type(TypeNodeId),
 }
 
+impl FnOwner {
+    pub(crate) fn text_of_expression_or_declaration(
+        self,
+        hir: &File<'_>,
+    ) -> Option<std::ops::Range<u32>> {
+        match self {
+            FnOwner::Expr(written) => Some(hir[written].pos..hir[written].end),
+            FnOwner::Stmt(declared) => Some(hir[declared].loc.pos..hir[declared].loc.end),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum MemberOwner {
     None,
@@ -1901,6 +1914,18 @@ impl<S: Storage> BoundIn<S> {
         parent.unwrap_or_default().get()
     }
 
+    /// Returns the statement that holds `e` if only expressions and a declarator are between them.
+    pub fn statement_of_expr(&self, mut e: ExprId) -> Option<StmtId> {
+        loop {
+            match self.parent_of_expr(e) {
+                Parent::Expr(above) => e = above,
+                Parent::Stmt(statement) => return statement.some(),
+                Parent::VarInit(declaration) => return self.var_stmt[declaration.idx()].some(),
+                _ => return None,
+            }
+        }
+    }
+
     /// Returns `expr_symbol` for `e`, or `NONE` if `e` isn't an expression of this file.
     #[inline]
     pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {
@@ -2296,6 +2321,18 @@ impl Bound<'_> {
                 _ => None,
             })
             .collect()
+    }
+
+    pub fn first_declaration_of_literal_member(&self, p: PropId) -> PropId {
+        let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
+            return p;
+        };
+        let mut declarations = self.symbol(*symbol).decls.iter();
+        let first = declarations.find_map(|declaration| match *declaration {
+            Decl::Property(first) => Some(first),
+            _ => None,
+        });
+        first.unwrap_or(p)
     }
 
     /// True if `m`, which has a name, has a symbol other than the one its container has under that

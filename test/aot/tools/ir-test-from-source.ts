@@ -14,11 +14,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { testaot, toolEnv } from "../shell/tools";
 
-/** `written`: a file that counts as success where it is there, whatever the exit code. */
+/** `written`: a file that counts as success where it is there, whatever the exit code. What a signal has ended has not succeeded. */
 function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {
-  const { exitCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  if (exitCode !== 0 && !(written && existsSync(written)))
-    throw new Error(`${cmd.join(" ")} ended with ${exitCode}:\n${stderr}`);
+  const { exitCode, signalCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const hasDied = signalCode !== undefined || exitCode > 128;
+  if (hasDied || (exitCode !== 0 && !(written && existsSync(written))))
+    throw new Error(`${cmd.join(" ")} ended with ${signalCode ?? exitCode}:\n${stderr}`);
   return stdout.toString().replaceAll("\r\n", "\n");
 }
 
@@ -111,8 +112,8 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
     return lines.map((line, index) => {
       if (record.kind === "module")
         return withoutField(line, "positions")
-          .replace(/ functionText="(?:[^"\\]|\\.)*"/, "")
-          .replace(" flags=[KeepsError]", "")
+          .replace(/ functionSource="(?:[^"\\]|\\.)*"/, "")
+          .replace(" flags=[CachesEvaluationError]", "")
           .replaceAll("/$bunfs/root/", "")
           .replace(/\/\$bun\/text\/[^"/]*%2f/g, "/$bun/text/");
       if (record.kind === "entry") return withoutField(line, "hostReads");
@@ -120,7 +121,7 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
       if (record.kind !== "function") return line;
       // An operation says where in the text it stands, as in a build of the program.
       if (index) return line;
-      return withoutField(line, "text");
+      return withoutField(line, "sourceRange");
     });
   }
 

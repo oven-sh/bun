@@ -143,7 +143,7 @@ fn modules_order_by_variant_project_file() {
         file(application, 0),
         inner(1),
         inner(4),
-        ProgramModule::Face(in_project(application, 0)),
+        ProgramModule::Facade(in_project(application, 0)),
         ProgramModule::Check(in_project(application, 0)),
         file(application, 9),
         file(runtime, 0),

@@ -1,4 +1,4 @@
-// A DECLARED DIFFERENCE: docs/compiler/compatibility.mdx, "Smaller differences": "A name imported from a CommonJS file that was still running, after a later import".
+// Differs from `bun run` by design: a name imported from a CommonJS file that was still running, after a later import.
 // As its neighbor, with names: `first` is 1 when imports-back.mjs is bound and 2 when file.cjs has ended. Plain Bun goes on answering 1 in imports-back.mjs.
 // Compiled, all importers of a file read one variable for a name: from the link of imports-later.mjs on it holds 2.
 require("./calls-import.mjs");

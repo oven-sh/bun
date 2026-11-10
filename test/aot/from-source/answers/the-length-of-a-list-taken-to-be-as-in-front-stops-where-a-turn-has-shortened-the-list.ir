@@ -1,0 +1,29 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function walk(list: number[]): number { let turns = 0; for (let i = 0; i < list.length; i++) { list.pop(); turns++; } return turns; }
+# const list: number[] = []; for (let i = 0; i < 8; i++) list.push(i + 0.5);
+# print(walk(list), list.length);
+# -- end of source
+# The loop header tests the length of the array, and each iteration pops an element.
+# Fault injection, testing=AssumeInvariantArrayStorage: the iterations of a loop are assumed to leave the storage of arrays and of typed arrays, and therefore their lengths, unchanged.
+# So whatever an iteration reads of them is hoisted and read once, before the loop. The loop runs as many iterations as the array had elements. No iteration reads an element.
+# With testing=CheckBoundsAtRunTime (--aot-harden=ignore-told-ranges) and with testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same operations are built in the same places.
+# The hoisted values are checked against the cell inside the iteration, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 4 4
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime
+# HELD: 4 4
+# HELD-NEXT: exited with 0
+# The fault in a default build: the program prints a different result, and nothing crashes.
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeInvariantArrayStorage
+# SILENT: 8 0
+# SILENT-NEXT: exited with 0
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,AssumeInvariantArrayStorage
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed
+# POSITIONS-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# POSITIONS: crashed with
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeInvariantArrayStorage
+# PROOFS: bun: internal AOT error: redundancy elimination check failed
+# PROOFS-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# PROOFS: crashed with

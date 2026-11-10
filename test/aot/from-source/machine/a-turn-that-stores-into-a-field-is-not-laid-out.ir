@@ -1,0 +1,10 @@
+# The eight turns laid out in a row share one scope of loads: a slot of one object is loaded once for all eight. That is right only while no operation of a turn writes a field or a shape word. A turn that stores into a
+# field stays as written.
+# RUN(EVENT): compile UnrolledLoopsEmitted mechanisms=all
+# EVENT: statistic UnrolledLoopsEmitted 0
+# -- source: main.cjs
+# const rows = []; for (const i of JSON.parse("[1,2,3,4,5,6,7,8,9,10,11]")) rows.push({ id: i, price: i * 2 });
+# function stores(list, o) { let s = 0; for (let i = 0; i < list.length; i++) { o.last = s; s += list[i].price + o.last; } return s; }
+# globalThis.kept = stores;
+# console.log(stores(rows, { last: 0 }));
+# -- end of source

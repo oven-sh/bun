@@ -1,0 +1,15 @@
+# f1 = resolve
+# -- source: typeof-tells-a-function-from-a-number.ts
+# function resolve(value: number | (() => number)): number {
+#   if (typeof value === "function") return value();
+#   return value;
+# }
+# declare const input: any;
+# (globalThis as any).answer = resolve(input ? () => +input : +input);
+# -- end of source
+# The compiler before this one: 8 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 4, patches 1, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 5

@@ -12,7 +12,7 @@ use super::{ObjectBuilder, builder};
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
 use crate::ir::generated::LimitId;
-use crate::lower::member::{GivenName, PropertyName};
+use crate::lower::member::PropertyName;
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, captures};
 
 #[derive(Copy, Clone)]
@@ -98,7 +98,10 @@ impl FileLowering<'_, '_, '_, '_> {
             .is_ok_and(|shape| {
                 matches!(
                     shape.kind,
-                    ShapeKind::TypeVariable { .. } | ShapeKind::Anything(_) | ShapeKind::AnyObject
+                    ShapeKind::TypeVariable { .. }
+                        | ShapeKind::Anything(_)
+                        | ShapeKind::AnyObject
+                        | ShapeKind::ConstructorFunctionInstance(_)
                 )
             });
         if names_are_unknown {
@@ -116,6 +119,9 @@ impl FileLowering<'_, '_, '_, '_> {
             return false;
         };
         if first.kind != PropKind::Spread {
+            return false;
+        }
+        if self.adds_names_to_literal_expected_of_parameter(literal) {
             return false;
         }
         if self.has_names_known_only_at_run_time(first.value) {
@@ -471,7 +477,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     self.lower_taken_value_for_effect(prop.value);
                     return;
                 };
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let value = self.lower_named_evaluation(prop.value, given);
                 self.set_position(prop.pos);
                 let value = self.convert_dictionary_member(dictionary, key, value, prop.value);
@@ -486,7 +492,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let function_key = self.file.scopes.function_key(CodeUnit::Function(function));
                 let captures_home = captures::captures_home_object(self.file, function_key);
                 let home = captures_home.then(|| self.open_head(object));
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let closure = self.create_named_closure(function, Some(given), home);
                 let closure = self.convert_dictionary_member(dictionary, key, closure, prop.value);
                 self.add_property(object, name, closure, Some(prop.value));
@@ -499,7 +505,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.define_waiting_elements(object);
                 let head = self.open_head(object);
                 let function = get_method_function(hir, &prop);
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let closure = self.lower_method(function, given, head);
                 let (computed_key, constant_key) = name.key_operands();
                 if let Some(key) = constant_key {
@@ -531,6 +537,84 @@ fn get_method_function(hir: &File<'_>, prop: &Prop) -> FnId {
     function
 }
 
+pub(in crate::lower) fn is_born_level_by_level(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+    literal: ExprId,
+) -> bool {
+    if lowering.is_module_body() && !lowering.stands_in_loop() {
+        return false;
+    }
+    let hir = lowering.file.hir;
+    if lowering.only_argument_of_construction == Some(hir.skip_type_assertions(literal)) {
+        return false;
+    }
+    let literal = hir.skip_type_assertions(literal);
+    let mut known = lowering.lists_inside_literals.borrow_mut();
+    if !known.contains_key(&literal) && is_laid_out_in_line_by_the_walk(hir, literal) {
+        known.insert(literal, ListsInside::None);
+    }
+    let mut pending: SmallVec<[(ExprId, bool); 8]> = smallvec![(literal, false)];
+    while let Some((expression, is_left)) = pending.pop() {
+        if known.contains_key(&expression) {
+            continue;
+        }
+        let inside = find_literals_inside(hir, expression);
+        if !is_left && !inside.is_empty() {
+            pending.push((expression, true));
+            pending.extend(inside.iter().map(|&inner| (inner, false)));
+            continue;
+        }
+        let is_filled_list =
+            matches!(hir[expression].kind, ExprKind::Array(items) if items.len() != 0);
+        let lists = match inside.iter().any(|inner| known[inner] != ListsInside::None) {
+            true => ListsInside::Some,
+            false if inside.is_empty() && is_filled_list => ListsInside::IsListOfLeaves,
+            false => ListsInside::None,
+        };
+        known.insert(expression, lists);
+    }
+    known[&literal] == ListsInside::Some
+}
+
+fn is_laid_out_in_line_by_the_walk(hir: &File<'_>, literal: ExprId) -> bool {
+    const MOST_NODES_OF_EXPANDED_DATA: usize = 16;
+    let mut number_of_nodes = 1;
+    let mut pending: SmallVec<[ExprId; 8]> = smallvec![literal];
+    while let Some(list) = pending.pop() {
+        let ExprKind::Array(items) = hir[list].kind else {
+            return false;
+        };
+        number_of_nodes += items.len();
+        if number_of_nodes > MOST_NODES_OF_EXPANDED_DATA {
+            return false;
+        }
+        pending.extend(find_literals_inside(hir, list));
+    }
+    true
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::lower) enum ListsInside {
+    None,
+    IsListOfLeaves,
+    Some,
+}
+
+fn find_literals_inside(hir: &File<'_>, literal: ExprId) -> SmallVec<[ExprId; 8]> {
+    let as_literal = |expression: ExprId| {
+        let expression = hir.skip_type_assertions(expression);
+        is_literal(hir, expression).then_some(expression)
+    };
+    match hir[literal].kind {
+        ExprKind::Array(items) => hir.ids(items).filter_map(as_literal).collect(),
+        ExprKind::Object(properties) => {
+            let values = properties.iter().map(|property| hir[property].value);
+            values.filter_map(as_literal).collect()
+        }
+        _ => SmallVec::new(),
+    }
+}
+
 fn is_literal(hir: &File<'_>, expression: ExprId) -> bool {
     matches!(
         hir[hir.skip_type_assertions(expression)].kind,
@@ -545,7 +629,7 @@ fn find_signature(signatures: &[IndexSignature], key: IndexKey) -> Option<IndexS
         .find(|signature| signature.key == key)
 }
 
-fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
+pub(in crate::lower) fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
     let ExprKind::Object(props) = hir[literal].kind else {
         return false;
     };
@@ -571,10 +655,14 @@ pub(crate) fn lower_object_literal(
     };
     if is_empty_without_prototype(hir, literal) {
         lowering.set_position(hir[literal].pos);
+        if let Some(made) = lowering.lower_literal_below_null_for_maker(literal) {
+            return made;
+        }
         let null = lowering.builder.null();
         return lowering.emit_builtin_call(BuiltinId::ObjectCreate, &[null]);
     }
     if lowering.file.decisions().is_data_literal(literal)
+        && !is_born_level_by_level(lowering, literal)
         && !lowering.file.is_built_by_code(literal)
     {
         return lowering.lower_decided_data(literal);
@@ -617,7 +705,11 @@ pub(crate) fn lower_object_literal(
         }
         None => {
             let layout = lowering.file.literal_layout(literal);
-            lowering.begin_object(layout)
+            let mut object = lowering.begin_object(layout);
+            if lowering.file.is_opened_at_once(literal) {
+                lowering.open_head(&mut object);
+            }
+            object
         }
     };
     for prop in rest {

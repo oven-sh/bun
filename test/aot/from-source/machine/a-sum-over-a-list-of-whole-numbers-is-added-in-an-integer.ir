@@ -1,0 +1,14 @@
+# -- source: a-sum-over-a-list-of-whole-numbers-is-added-in-an-integer.ts
+# declare function sink(value: unknown): void;
+# function sum(list: number[]): number { let s = 0; for (const v of list) s += v; return s; }
+# const list: number[] = []; for (let j = 0; j < 40; j++) list.push(j * 1000);
+# sink(sum(list));
+# -- end of source
+# The eight turns laid out of a loop that sums a list of numbers. What Link knows of the elements is "whole numbers": such a list keeps them as int32s or as doubles, and every turn asked which.
+# Now the kind is asked once, in front of the eight turns, and they are laid out once for each kind. In the turns over int32s a hole leaves for the loop as written, which reads it as NaN; so each
+# element is an int32, and the sum is added in a 64-bit integer: a load, the test for the hole, an addition. It is taken over into the double where the turns end and behind every stretch of 2^20
+# turns, where the poll stands; there the double is asked again to lie within 2^52, so that every sum on the way is exact.
+# f1 = sum
+# RUN: compile UnrolledLoopsForIndexingType UnrolledLoopIntegerElementSums mechanisms=all
+# CHECK: statistic UnrolledLoopsForIndexingType 2
+# CHECK: statistic UnrolledLoopIntegerElementSums 1

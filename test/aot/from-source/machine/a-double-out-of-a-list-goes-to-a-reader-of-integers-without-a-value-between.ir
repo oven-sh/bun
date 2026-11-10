@@ -1,0 +1,27 @@
+# A list of whole numbers of which some pass 2 ** 31 holds doubles. Where the reader of an element wants an integer (`^`, `&`, `>>>`), the double was asked whether it is the integer that Link has said,
+# then made a value (is it an int32? two roads, a join), then the value was asked what it is and taken apart again: 40 of the 48 instructions a byte of a checksum by table.
+# The question of Link's word has truncated the double already: that integer is what the reader gets. The question itself is two stops, one for "no fraction" and one for the range, not two answers made booleans and joined.
+# f1 = fold. past: the same read past the end of the list and at a hole gives `undefined`, which is 0 for `^`.
+# -- source: a-double-out-of-a-list-goes-to-a-reader-of-integers-without-a-value-between.ts
+# declare function print(...values: unknown[]): void;
+# const table: number[] = [];
+# for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; table.push(c >>> 0); }
+# function fold(bytes: Uint8Array): number { let c = -1; for (let i = 0; i < bytes.length; i++) c = table[(c ^ bytes[i]) & 255] ^ (c >>> 8); return (c ^ -1) >>> 0; }
+# const few = [4000000000, 3000000000, , 7] as number[];
+# function past(mask: number, n: number): number { let c = 1; for (let i = 0; i < n; i++) c = few[i & mask] ^ (c << 1); return c; }
+# function turns(n: number): number { return Date.now() > 0 ? n : 0; }
+# print(fold(new Uint8Array([49, 50, 51, 52, 53, 54, 55, 56, 57])), fold(new Uint8Array(turns(0))), fold(new Uint8Array(turns(300))));
+# print(past(turns(1), turns(2)), past(turns(3), turns(4)), past(turns(7), turns(8)));
+# -- end of source
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: indexedDoubleProperties
+# CHECK: Double {{*}} = IToD(
+# CHECK-NOT: BitAnd(
+# CHECK: = Check(
+# CHECK-NOT: IToD(
+# CHECK: = Check(
+# CHECK-NEXT: = Upsilon(
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3421780262 0 3040120786
+# ANSWERS: 1845890564 -1206372329 -2122088080

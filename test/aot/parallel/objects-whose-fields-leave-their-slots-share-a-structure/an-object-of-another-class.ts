@@ -1,4 +1,4 @@
-// COUNTER: CompiledStructuresMade <= 8
+// COUNTER: CompiledStructuresCreated <= 8
 // COUNTER: operationAOTGetByIdAndCache <= 8
 // The slot is held to the objects of one class, and every second store brings one of another.
 class Lid { width: number; constructor(width: number) { this.width = width; } }

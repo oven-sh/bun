@@ -1,14 +1,14 @@
 # -- source: main.js
 # function make(id, note) { return id % 2 ? new Noted(id, note) : new Plain(id); }
 # function run(count) { var text = ""; for (var i = 0; i < count; i++) { var made = make(i, notes[i % 3]); text += made.id + (made.note ? made.note.name : "-") + (made.mark ?? "") + Object.keys(made).length + " "; } return text; }
-# class Plain { id; note; next; constructor(id) { this.id = id; this.note = undefined; this.next = null; } }
+# class Plain { id; note; next; constructor(id) { this.id = id; this.note = undefined; for (var turn = id; turn < id; turn++) this.next = undefined; this.next = null; } }
 # class Noted extends Plain { mark; constructor(id, note) { super(id); this.note = note; this.mark = id + 1; } }
 # const notes = [{ name: "x" }, { name: "y" }, { name: "z" }];
 # print(run(10));
 # -- end of source
 # f3 = the constructor of Plain, f4 = the constructor of Noted
-# What `super(id)` gives is a Plain or a Noted by the type of the call. The copy of the field initializer of Noted is entered behind a test that holds the object to what every caller hands it, a Noted,
-# and the way where the test fails ends there. So the object is a Noted in the rest of the constructor too, and the stores behind the copy go to the slots of a Noted: a Plain never holds an object under `note`.
+# The constructor of Plain holds a loop, so `super(id)` calls it. What the call gives is a Plain or a Noted by the type of the call. The copy of the field initializer of Noted is entered behind a test that holds the object
+# to what every caller hands it, a Noted, and the way where the test fails ends there. So the object is a Noted in the rest of the constructor too, and the stores behind the copy go to the slots of a Noted: a Plain never holds an object under `note`.
 # RUN(STORES): walk f4 mechanisms=all
 # STORES: CallDirect {{*}}function=f3
 # STORES-NOT: PropSet

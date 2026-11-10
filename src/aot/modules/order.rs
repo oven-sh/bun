@@ -21,7 +21,8 @@ use bun_sema::bind::{
 use bun_sema::components::strongly_connected_components;
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, Flags, FnId, ImportEqualsId, StmtId, StmtKind, VarKind,
+    self, BinOp, Chain, ExprId, ExprKind, Flags, FnId, ImportEqualsId, NodeData, StmtId, StmtKind,
+    VarKind,
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, OwnRequire, find_module_printed_as_require, find_own_require,
@@ -182,7 +183,7 @@ impl EvaluationOrder {
         self.is_code_of_program(referrer)
             && self.is_code_of_program(target)
             && !self.has(&self.needs_loader, target)
-            && !self.has(&self.parts.may_be_imported_while_it_runs, target)
+            && !self.has(&self.parts.is_importable_during_evaluation, target)
             && is_seen_whole
     }
 }
@@ -195,12 +196,11 @@ pub(super) struct OrderParts {
     pub is_required_at_any_time: Vec<bool>,
     pub is_loaded_by_loader: Vec<bool>,
     pub is_required_during_load: Vec<bool>,
-    pub may_be_imported_while_it_runs: Vec<bool>,
+    pub is_importable_during_evaluation: Vec<bool>,
     pub makes_values_at_load: Vec<bool>,
-    pub is_es_module_to_imports: Vec<bool>,
+    pub is_imported_as_es_module: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
     pub required_prefix_roots: Vec<FileId>,
-    pub first_requests_of_host: Vec<FileId>,
     pub texts_that_spell_files: Option<Vec<TextThatSpellsFile>>,
 }
 
@@ -215,12 +215,11 @@ impl OrderParts {
             is_required_at_any_time: vec![false; file_count],
             is_loaded_by_loader: vec![false; file_count],
             is_required_during_load: vec![false; file_count],
-            may_be_imported_while_it_runs: vec![false; file_count],
+            is_importable_during_evaluation: vec![false; file_count],
             makes_values_at_load: vec![false; file_count],
-            is_es_module_to_imports: vec![false; file_count],
+            is_imported_as_es_module: vec![false; file_count],
             prefix_roots: Vec::new(),
             required_prefix_roots: Vec::new(),
-            first_requests_of_host: Vec::new(),
             texts_that_spell_files: None,
         }
     }
@@ -501,8 +500,10 @@ impl<'a, 's> FileText<'a, 's> {
     }
 
     pub(super) fn is_free(&self, expression: ExprId, variable: CommonJsVariable) -> bool {
+        let scope_object = self.bound.dynamic_lookup_scope(NodeData::Expr(expression));
         matches!(self.hir[expression].kind, ExprKind::Ident(_))
             && self.bound.binding(expression) == Binding::CommonJs(variable)
+            && scope_object.is_none()
     }
 
     fn is_proven_call(
@@ -723,6 +724,66 @@ fn find_reached(edges: &[Vec<u32>], mut pending: Vec<u32>) -> Vec<bool> {
     is_reached
 }
 
+struct FilesStartedByTestRunner {
+    started_behind_first: Vec<u32>,
+    reached_by_several: Vec<u32>,
+}
+
+impl FilesStartedByTestRunner {
+    fn find(
+        edges: &[Vec<u32>],
+        candidates: &[(u32, u32)],
+        started: &[u32],
+        started_behind_first: Vec<u32>,
+    ) -> Self {
+        const NOBODY: u32 = u32::MAX;
+        let follow = |module: u32, pending: &mut Vec<u32>| {
+            pending.extend_from_slice(&edges[module as usize]);
+            let first = candidates.partition_point(|load| load.0 < module);
+            let of_module = candidates[first..]
+                .iter()
+                .take_while(|load| load.0 == module);
+            pending.extend(of_module.map(|load| load.1));
+        };
+        let mut first_to_reach = vec![NOBODY; edges.len()];
+        let mut is_reached_by_several = vec![false; edges.len()];
+        let mut reached_by_several = Vec::new();
+        let (mut pending, mut reached_again) = (Vec::new(), Vec::new());
+        for (number, &file) in started.iter().enumerate() {
+            pending.push(file);
+            while let Some(module) = pending.pop() {
+                let first = &mut first_to_reach[module as usize];
+                if *first == NOBODY {
+                    *first = number as u32;
+                    follow(module, &mut pending);
+                } else if *first != number as u32 {
+                    reached_again.push(module);
+                }
+            }
+            while let Some(module) = reached_again.pop() {
+                if !core::mem::replace(&mut is_reached_by_several[module as usize], true) {
+                    reached_by_several.push(module);
+                    follow(module, &mut reached_again);
+                }
+            }
+        }
+        FilesStartedByTestRunner {
+            started_behind_first,
+            reached_by_several,
+        }
+    }
+
+    fn find_reached(&self, edges: &[Vec<u32>], mut pending: Vec<u32>) -> Vec<bool> {
+        pending.retain(|module| self.started_behind_first.binary_search(module).is_err());
+        pending.extend_from_slice(&self.reached_by_several);
+        let mut is_reached = find_reached(edges, pending);
+        for &file in &self.started_behind_first {
+            is_reached[file as usize] = true;
+        }
+        is_reached
+    }
+}
+
 fn find_program_code(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -752,7 +813,7 @@ fn find_program_code(
 struct LoadsSeenByProgram {
     is_loaded_by_loader: Vec<bool>,
     is_required_during_load: Vec<bool>,
-    may_be_imported_while_it_runs: Vec<bool>,
+    is_importable_during_evaluation: Vec<bool>,
 }
 
 fn list_what_file_may_require<'a>(
@@ -784,7 +845,7 @@ fn find_loads_seen_by_program(
     let mut seen = LoadsSeenByProgram {
         is_loaded_by_loader: vec![false; count],
         is_required_during_load: vec![false; count],
-        may_be_imported_while_it_runs: vec![false; count],
+        is_importable_during_evaluation: vec![false; count],
     };
     let kind_of = |module: ModuleRef| match module {
         ModuleRef::File(file) if is_code_of_program[file.idx()] => {
@@ -810,7 +871,7 @@ fn find_loads_seen_by_program(
         if scans.of(*file).interop.kind == ModuleKind::CommonJs
             && loads.any(|load| load.1 == ModuleRef::File(*file))
         {
-            seen.may_be_imported_while_it_runs[file.idx()] = true;
+            seen.is_importable_during_evaluation[file.idx()] = true;
         }
     }
     if imports.is_empty() {
@@ -887,12 +948,12 @@ fn find_loads_seen_by_program(
         return seen;
     };
     for &(importer, file) in &imports {
-        seen.may_be_imported_while_it_runs[file.idx()] |= components_imported_back
+        seen.is_importable_during_evaluation[file.idx()] |= components_imported_back
             .contains(&component_of[file.idx()])
             && component_of[importer.idx()] == component_of[file.idx()];
     }
     for file in files_imported_back {
-        seen.may_be_imported_while_it_runs[file.idx()] = true;
+        seen.is_importable_during_evaluation[file.idx()] = true;
     }
     if components_that_lead_back.is_empty() {
         return seen;
@@ -923,7 +984,7 @@ fn find_loads_seen_by_program(
         seen.is_loaded_by_loader[file.idx()] = comes_to_cycle[file.idx()];
     }
     for (importer, file) in imports {
-        seen.may_be_imported_while_it_runs[file.idx()] |=
+        seen.is_importable_during_evaluation[file.idx()] |=
             leads_back(file.idx()) && component_of[importer.idx()] == component_of[file.idx()];
     }
     seen
@@ -1035,12 +1096,46 @@ pub(super) fn compute_order(
     let number_of = |target: ModuleRef| Some(numbers.number_of(target)? as u32);
     let required_at_any_time = required_late.clone().chain(required_candidates);
     let required_at_any_time = required_at_any_time.chain(loaded_by_name);
-    let is_required_at_any_time =
-        find_reached(&edges, required_at_any_time.filter_map(number_of).collect());
+    let runner_starts_each_once = input.runner_starts_entry_points && !input.entry_points_run_again;
+    let written_and_found = files.entry_points().iter();
+    let found = written_and_found.skip(input.written_entry_point_count);
+    let mut found_by_load: Vec<u32> = found.map(|file| file.0).collect();
+    found_by_load.sort_unstable();
+    let is_started = |kind: EntryPointKind, file: FileId| match kind {
+        EntryPointKind::Main => true,
+        EntryPointKind::Additional => {
+            runner_starts_each_once && found_by_load.binary_search(&file.0).is_err()
+        }
+        EntryPointKind::LoadedByTestRunner
+        | EntryPointKind::HostLoadedModule
+        | EntryPointKind::ImportedModule
+        | EntryPointKind::Library => false,
+    };
+    let is_spelled = |file: FileId| {
+        let mut texts = texts_that_spell_files.iter().flatten();
+        texts.any(|text| text.spelled == file)
+    };
+    let started = input.sources.entry_points().iter();
+    let started = started.filter(|entry| is_started(entry.kind, entry.file));
+    let started_behind_first = started.clone().filter(|entry| {
+        entry.kind == EntryPointKind::Additional && !is_every_file_found && !is_spelled(entry.file)
+    });
+    let mut started_behind_first: Vec<u32> = started_behind_first.map(|it| it.file.0).collect();
+    started_behind_first.sort_unstable();
+    let started: Vec<u32> = started.map(|entry| entry.file.0).collect();
+    let candidates = planned.iter().flat_map(|it| &it.1.required_candidates);
+    let mut candidates: Vec<(u32, u32)> = candidates
+        .filter_map(|&(referrer, target)| Some((number_of(referrer)?, number_of(target)?)))
+        .collect();
+    candidates.sort_unstable();
+    let started_by_runner =
+        FilesStartedByTestRunner::find(&edges, &candidates, &started, started_behind_first);
+    let is_required_at_any_time = started_by_runner
+        .find_reached(&edges, required_at_any_time.filter_map(number_of).collect());
     let linked_late: Vec<u32> = late_targets.filter_map(number_of).collect();
     let late_targets = linked_late.iter().copied();
     let late_targets = late_targets.chain(required_late.filter_map(number_of));
-    let is_exposed = find_reached(&edges, late_targets.collect());
+    let is_exposed = started_by_runner.find_reached(&edges, late_targets.collect());
     let (is_on_cycle, component_of) = find_modules_on_cycles(&edges);
     let is_half = is_on_cycle.iter().zip(&is_exposed);
     let mut is_half: Vec<bool> = is_half
@@ -1100,11 +1195,11 @@ pub(super) fn compute_order(
         }
     }
     let mut makes_values_at_load = vec![false; file_count];
-    let mut is_es_module_to_imports = vec![false; file_count];
+    let mut is_imported_as_es_module = vec![false; file_count];
     for &file in &modules.compiled_files {
         makes_values_at_load[file.idx()] = scans.of(file).interop.kind == ModuleKind::Data
             && crate::module_keys::makes_values_at_load(input.sources.loader(file));
-        is_es_module_to_imports[file.idx()] = files.is_es_module_to_imports(file);
+        is_imported_as_es_module[file.idx()] = files.is_imported_as_es_module(file);
     }
     let required = planned.iter().flat_map(|(_, file_sites)| {
         let named = file_sites.sites.iter().map(|site| site.target);
@@ -1136,15 +1231,11 @@ pub(super) fn compute_order(
         is_required_at_any_time,
         is_loaded_by_loader: loads.is_loaded_by_loader,
         is_required_during_load: loads.is_required_during_load,
-        may_be_imported_while_it_runs: loads.may_be_imported_while_it_runs,
+        is_importable_during_evaluation: loads.is_importable_during_evaluation,
         makes_values_at_load,
-        is_es_module_to_imports,
+        is_imported_as_es_module,
         prefix_roots,
         required_prefix_roots,
-        first_requests_of_host: (input.sources.entry_points().iter())
-            .filter(|entry| entry.kind != EntryPointKind::Library)
-            .map(|entry| entry.file)
-            .collect(),
         texts_that_spell_files,
     };
     let order = EvaluationOrder {

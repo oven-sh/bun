@@ -1,14 +1,14 @@
 // answers: without-library
-// # A function whose parameters are tested at its entry has a slow body for whatever the test turns away. With testing=WritesBodiesStraight it is written straight, as every body is that stores only what fits by its making.
+// # A function whose parameters are tested at its entry has a slow body for whatever the test turns away. With testing=ForceStraightCompilation it is written straight, as every body is that stores only what fits by its making.
 // # The body of the file is none of those: it is walked, takes tell() in line, and tell() is built nowhere else. The three units that the guards bring are the slow bodies.
 // # Without the switch the slow bodies alone are written straight: a-slow-body-is-written-straight.ir.
-// # OPTIONS: testing=WritesBodiesStraight
-// # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+// # OPTIONS: testing=ForceStraightCompilation
+// # RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
 // # REQUIRES(STRAIGHT): faulting-loop-polls
-// # STRAIGHT: statistic UnitsWrittenStraight 13
-// # RUN(WITHHELD): compile UnitsWrittenStraight mechanisms=all-ParameterGuards
+// # STRAIGHT: statistic StraightUnitsCompiled 13
+// # RUN(WITHHELD): compile StraightUnitsCompiled mechanisms=all-ParameterGuards
 // # REQUIRES(WITHHELD): faulting-loop-polls
-// # WITHHELD: statistic UnitsWrittenStraight 10
+// # WITHHELD: statistic StraightUnitsCompiled 10
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 58 of 58 of 58

@@ -1,5 +1,5 @@
 // A list, a map or a set finds the methods of its class only while it is as its class makes it. An own property, a definition by a descriptor, another prototype, none at all and a class below each hide them, on an object that comes from elsewhere and on one that was made here.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function attempt(way: () => unknown) { try { return way(); } catch (error: any) { return error.name; } }

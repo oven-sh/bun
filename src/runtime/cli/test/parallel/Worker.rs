@@ -369,11 +369,18 @@ impl Worker {
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status, peak_rss_mb) };
     }
 
-    pub(crate) fn dispatch(&mut self, f: &mut Frame, file_idx: u32, file: &[u8]) {
+    pub(crate) fn dispatch(
+        &mut self,
+        f: &mut Frame,
+        file_idx: u32,
+        file: &[u8],
+        is_growth_written: bool,
+    ) {
         f.begin(frame::Kind::Run);
         f.u32(file_idx);
         f.str(file);
         f.str(&self.first_loads);
+        f.u32(u32::from(is_growth_written));
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
         self.dispatched_at = bun_core::time::milli_timestamp();

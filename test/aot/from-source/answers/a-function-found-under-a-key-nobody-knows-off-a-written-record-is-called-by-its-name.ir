@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# const k = JSON.parse('"go"');
+# const T = { go(x) { return x + 1; }, no(x) { return 1; } };
+# function f() { let s = 0; for (let i = 0; i < 12; i++) s += T[k](i); return s; }
+# print(f());
+# -- end of source
+# `T[k](i)`: T is a record written in the file, k a const of which nobody knows anything. A key that is only EXPECTED to be one of a few texts is told apart by tests at the run and the access walked by each name;
+# of such a key nothing was expected. Now the names of the one layout proven or expected of its holder are: one to four. Nothing is proven by it: a wrong guess fails its tests and the loop runs as written.
+# A thousand turns of `c = (c + T[k](i)) & 1023` over a small function: 43,048 > 4,458 instructions, plain Bun 5,056.
+# RUN(EVENT): compile AccessesDispatchedByKeyString mechanisms=all
+# EVENT: statistic AccessesDispatchedByKeyString 1
+# RUN(CHECKED): compile AccessesDispatchedByKeyString mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic AccessesDispatchedByKeyString 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 78
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 78
+# HELD-NEXT: exited with 0

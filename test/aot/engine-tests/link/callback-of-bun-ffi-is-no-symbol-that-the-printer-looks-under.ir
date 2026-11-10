@@ -1,0 +1,49 @@
+# require("bun:ffi"); setImmediate(() => {}); console.log(<a list that the program has just made>), and the body of bun:ffi answers makeCallback(undefined, () => {})
+# A row of the host that answers `any` may answer a symbol under which the printer of objects looks for a method, so what the host loads to call such a method is in the program. This row answers an object.
+# The control: read-of-the-host-that-may-answer-anything-may-give-a-symbol-that-the-printer-looks-under.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f4 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="bun:ffi" displayPath="bun:ffi" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunFfi body=f2
+module m2 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f4
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setImmediate" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(SetImmediate) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, -, v3 calleeName="setImmediate"
+    v5 = RequireModule module=m1 referrer=m0 specifier="bun:ffi"
+    v6 = NewArray contents=anything
+    v7 = Builtin builtin=Console
+    v8 = PropGet v7 key="log"
+    v9 = Convert v8 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v10 = Call v9, v7, v6 calleeKey="log" calleeName="console.log"
+    Return v10
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenFfiBindTsMakeCallback
+    v1 = Undefined
+    v2 = NewClosure function=f3
+    v3 = Call v0, -, v1, v2 calleeName="makeCallback"
+    Return v3
+}
+function f3 module=m1 kind=Arrow role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

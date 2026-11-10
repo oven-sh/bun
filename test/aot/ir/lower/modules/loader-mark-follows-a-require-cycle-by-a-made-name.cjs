@@ -3,7 +3,7 @@
 // RUN(ASKED): link
 // ASKED: path="{{*}}/asked.mjs"{{*}}IsLoadedByLoader, IsRequiredDuringLoad
 // RUN(ASKER): link
-// ASKER: path="{{*}}/asker.cjs"{{*}}IsLoadedByLoader, MayBeImportedWhileItRuns
+// ASKER: path="{{*}}/asker.cjs"{{*}}IsLoadedByLoader, IsImportableDuringEvaluation
 // RUN(ROOT): link
 // ROOT: path="{{*}}/root.mjs"{{*}}IsLoadedByLoader
 

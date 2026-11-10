@@ -234,7 +234,7 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
     const folder = String(tempDir("aot-names-of-unreached-code", sources));
     const executable = join(folder, isWindows ? "program.exe" : "program");
     const executableWithoutAot = join(folder, isWindows ? "without-aot.exe" : "without-aot");
-    const keepsTextOfFunctions = build === "by default";
+    const embedsFunctionSource = build === "by default";
     let bytes = Buffer.alloc(0);
     let bytesWithoutAot = Buffer.alloc(0);
     afterAll(() => rmSync(folder, { recursive: true, force: true }));
@@ -252,7 +252,7 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         return readFileSync(outfile);
       };
       bytes = await buildWith([...compileCommand, ...builds[build]], executable);
-      if (keepsTextOfFunctions) bytesWithoutAot = await buildWith(["build", "--compile"], executableWithoutAot);
+      if (embedsFunctionSource) bytesWithoutAot = await buildWith(["build", "--compile"], executableWithoutAot);
     }, 300_000);
 
     const holds = (held: Buffer, name: string) => held.includes(name, 0, "latin1") || held.includes(name, 0, "utf16le");
@@ -277,7 +277,7 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         "keptMessageQ82",
       ];
       expect(found(names)).toEqual(names);
-      if (keepsTextOfFunctions) expect(names.filter(name => holds(bytesWithoutAot, name))).toEqual(names);
+      if (embedsFunctionSource) expect(names.filter(name => holds(bytesWithoutAot, name))).toEqual(names);
     });
 
     const foldedByTheParser = ["literalFalse", "defined"];
@@ -316,13 +316,10 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         "the properties of the constant objects of a function that only such a branch calls",
         of("importedConstant", propertiesOfConstantObjectsInBranch),
       ],
-      gap(
-        "an object that the program does make has a place for every property that the program as written adds to it",
-        [
-          "the properties that such a branch adds to an object from outside it",
-          of("importedConstant", propertiesAddedInBranch),
-        ],
-      ),
+      [
+        "the properties that such a branch adds to an object from outside it",
+        of("importedConstant", propertiesAddedInBranch),
+      ],
       [
         "a function called where a type rules the branch out",
         ["typeTestCalleeQ53", "typeTestCalleeTextQ54", "typeTestTextQ56"],

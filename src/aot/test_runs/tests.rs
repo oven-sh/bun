@@ -133,15 +133,9 @@ fn the_list_of_the_runner_and_the_imports_say_whose_a_file_is() {
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
             let index = file.unwrap().idx();
             let is_of_product = expected == WhoseFile::OfProduct;
-            assert_eq!(
-                plan.finds_builtins_read_only[index], is_of_product,
-                "{name}"
-            );
+            assert_eq!(plan.has_read_only_builtins[index], is_of_product, "{name}");
             let is_of_tests = expected == WhoseFile::OfTests;
-            assert_eq!(
-                plan.loads_compiled_files_alone[index], !is_of_tests,
-                "{name}"
-            );
+            assert_eq!(plan.rejects_uncompiled_code[index], !is_of_tests, "{name}");
         }
     });
 }
@@ -343,12 +337,12 @@ fn a_file_two_steps_below_a_test_file_that_nothing_speaks_for_is_nobodys_and_so_
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
             let index = file.unwrap().idx();
             assert_eq!(
-                plan.finds_builtins_read_only[index],
+                plan.has_read_only_builtins[index],
                 expected == WhoseFile::OfProduct,
                 "{name}"
             );
             assert_eq!(
-                plan.loads_compiled_files_alone[index],
+                plan.rejects_uncompiled_code[index],
                 expected != WhoseFile::OfTests,
                 "{name}"
             );
@@ -593,7 +587,7 @@ fn tool_may_load(manifest: &str, product: &str) -> bool {
     with_run(&files, (1, 0), |files, run| {
         let may_load = |name: &str| {
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
-            !run.loads_compiled_files_alone[file.unwrap().idx()]
+            !run.rejects_uncompiled_code[file.unwrap().idx()]
         };
         assert!(!may_load("node_modules/tool/index.js"));
         may_load(LOADER)
@@ -953,6 +947,50 @@ fn every_member_that_a_test_may_replace_is_written_as_a_read() {
 }
 
 #[test]
+fn what_the_build_folds_by_in_every_run_is_written_as_a_read_where_a_test_spells_a_store_to_it() {
+    let nothing = "test('a', () => {});";
+    let rows = [
+        (nothing, BuiltinId::Symbol, false),
+        (nothing, BuiltinId::SymbolFor, false),
+        (nothing, BuiltinId::ObjectDefineProperty, false),
+        (nothing, BuiltinId::ObjectDefineProperties, false),
+        (
+            "test('a', () => { Object.defineProperty = () => 1; });",
+            BuiltinId::ObjectDefineProperty,
+            true,
+        ),
+        (
+            "import { spyOn } from 'bun:test';\ntest('a', () => { spyOn(Object, 'defineProperties'); });",
+            BuiltinId::ObjectDefineProperties,
+            true,
+        ),
+        (
+            "test('a', () => { globalThis.Symbol = () => 1; });",
+            BuiltinId::Symbol,
+            true,
+        ),
+        (
+            "test('a', () => { Symbol.for = () => 1; });",
+            BuiltinId::SymbolFor,
+            true,
+        ),
+        (
+            "import { spyOn } from 'bun:test';\ntest('a', () => { spyOn(globalThis, 'Symbol'); });",
+            BuiltinId::Symbol,
+            true,
+        ),
+    ];
+    for (body, member, is_read) in rows {
+        let text = format!("import {{ test }} from 'bun:test';\n{body}\n");
+        with_run(&[("a.test.ts", &text[..])], (1, 0), |_, run| {
+            let listed = &run.members_written_as_reads;
+            let is_listed = listed.binary_search(&member.to_wire()).is_ok();
+            assert_eq!(is_listed, is_read, "{body}");
+        });
+    }
+}
+
+#[test]
 fn a_spy_in_a_text_on_a_module_that_the_text_names_is_kept_with_the_module() {
     let lib = "export function answer() { return 1; }\nexport function other() { return 2; }\n";
     let test_file = |object: &str| {
@@ -1255,6 +1293,111 @@ fn a_name_stored_on_an_object_from_somewhere_may_come_to_lie_on_a_closed_object_
 }
 
 #[test]
+fn a_name_stored_on_what_a_read_off_a_fresh_literal_gave_may_come_to_lie_above_the_literal() {
+    let added = |statements: &str| {
+        let test_file = format!(
+            "import {{ test }} from 'bun:test';\nconst put = (object: any) => {{ object.__mark = 1; }};\ndeclare const name: string;\ndeclare const record: Record<string, object>;\n{statements}\ntest('a', () => {{ put({{}}); }});\n"
+        );
+        with_run(&[("a.test.ts", &test_file[..])], (1, 0), |files, run| {
+            let added = run.names_added.iter();
+            let added = added.filter(|it| it.0 == BuiltinId::ObjectPrototype);
+            texts_of(files, &added.map(|it| it.1).collect::<Vec<_>>())
+        })
+    };
+    for (statements, names) in [
+        (
+            "const above: object = Reflect.get({}, name); Reflect.defineProperty(above, 'shade', {});",
+            "shade",
+        ),
+        (
+            "const above: any = ({} as any)[name]; above.shade = 1; above['tint'] = 1;",
+            "shade tint",
+        ),
+        (
+            "const above: any = ({} as any)['__proto__']; Reflect.set(above, 'shade', 1);",
+            "shade",
+        ),
+        (
+            "function lay(field: string) { const above: object = Reflect.get({}, name); Object.defineProperty(above, field, {}); }\nlay('shade'); lay('tint');",
+            "shade tint",
+        ),
+        (
+            "export function lay(field: 'shade' | 'origin') { const above: object = Reflect.get({}, name); Reflect.defineProperty(above, field, {}); }",
+            "origin shade",
+        ),
+        (
+            "export function lay(field: string) { const above: object = Reflect.get({}, name); Reflect.defineProperty(above, field, {}); }",
+            "",
+        ),
+        (
+            "const above: any = Object.getPrototypeOf({}); above.shade = 1;",
+            "shade",
+        ),
+        (
+            "const above: any = Reflect.getPrototypeOf({ kept: 1 }); Reflect.set(above, 'shade', 1);",
+            "shade",
+        ),
+        (
+            "const { __proto__: above } = {} as any; above.shade = 1;",
+            "shade",
+        ),
+        ("const { kept: above } = {} as any; above.shade = 1;", ""),
+        (
+            "const above: any = Reflect.get({}, name, []); above.shade = 1;",
+            "",
+        ),
+        (
+            "const above: any = ({ ['__proto__']: 1 } as any)[name]; above.shade = 1;",
+            "shade",
+        ),
+        (
+            "const above: any = Object.getPrototypeOf({ __proto__: record }); above.shade = 1;",
+            "shade",
+        ),
+        (
+            "const above: any = Object.getPrototypeOf({ __proto__: { kept: 1 } }); above.shade = 1;",
+            "",
+        ),
+        (
+            "const above: any = ({ ...record } as any)[name]; above.shade = 1;",
+            "shade",
+        ),
+        (
+            "const above: any = ({ [name]: 1 } as any)[name]; above.shade = 1;",
+            "shade",
+        ),
+        (
+            "const fresh = {}; const above: any = Object.getPrototypeOf(fresh); above.shade = 1;",
+            "shade",
+        ),
+        (
+            "let fresh = {}; fresh = record; const above: any = Object.getPrototypeOf(fresh); above.shade = 1;",
+            "",
+        ),
+        (
+            "const above: object = Reflect.get(record, name); Reflect.defineProperty(above, 'shade', {});",
+            "",
+        ),
+        (
+            "const above: any = ({} as any)['toString']; above.shade = 1;",
+            "",
+        ),
+        (
+            "let above: any = ({} as any)[name]; above = {}; above.shade = 1;",
+            "",
+        ),
+        (
+            "const above: object = Reflect.get({}, name); Reflect.defineProperty(above, 'toString', {});",
+            "",
+        ),
+    ] {
+        let mut found = added(statements);
+        found.sort();
+        assert_eq!(found.join(" "), names, "{statements}");
+    }
+}
+
+#[test]
 fn a_stored_name_may_come_to_lie_on_an_object_that_any_file_of_the_tests_lets_go() {
     let added = |lets_go: &str, other: &str| {
         let files = [
@@ -1437,13 +1580,13 @@ fn link_is_told_whose_a_file_is() {
     with_bound_run(&files, (2, 1), |files, graph| {
         let flags = |name: &str| flags_of_module(graph, ModuleRef::File(file_at(files, name)));
         let of_product = flags("src/app.ts");
-        assert!(of_product.contains(ModuleFlags::FINDS_BUILTINS_READ_ONLY));
-        assert!(of_product.contains(ModuleFlags::LOADS_COMPILED_FILES_ALONE));
+        assert!(of_product.contains(ModuleFlags::HAS_READ_ONLY_BUILTINS));
+        assert!(of_product.contains(ModuleFlags::REJECTS_UNCOMPILED_CODE));
         let of_tests = flags("checks/latest.ts");
-        assert!(!of_tests.contains(ModuleFlags::FINDS_BUILTINS_READ_ONLY));
-        assert!(!of_tests.contains(ModuleFlags::LOADS_COMPILED_FILES_ALONE));
+        assert!(!of_tests.contains(ModuleFlags::HAS_READ_ONLY_BUILTINS));
+        assert!(!of_tests.contains(ModuleFlags::REJECTS_UNCOMPILED_CODE));
         let of_neither = flags("node_modules/tool/index.js");
-        assert!(!of_neither.contains(ModuleFlags::FINDS_BUILTINS_READ_ONLY));
-        assert!(of_neither.contains(ModuleFlags::LOADS_COMPILED_FILES_ALONE));
+        assert!(!of_neither.contains(ModuleFlags::HAS_READ_ONLY_BUILTINS));
+        assert!(of_neither.contains(ModuleFlags::REJECTS_UNCOMPILED_CODE));
     });
 }

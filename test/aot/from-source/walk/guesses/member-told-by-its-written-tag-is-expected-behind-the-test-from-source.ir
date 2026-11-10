@@ -28,7 +28,6 @@
 # console.log(s);
 # -- end of source
 # RUN(TOLD): walk f1 mechanisms=all-Inlining
-# REQUIRES(TOLD): entries-of-bun
 # TOLD-LABEL: code f1:Body
 # TOLD: = GetSlot {{*}} key="a" receivers=[L2]
 # TOLD: = GetSlot {{*}} key="b" receivers=[L0]

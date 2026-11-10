@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# class Entry { weight: number; constructor(weight: number) { this.weight = weight; } }
+# function pick(table: Map<string, Entry>, name: string, strict: boolean, wide: boolean): number { const entry = table.get(name); if (entry && strict && entry.weight > 8) return -1; if (entry && wide) return entry.weight; return 0; }
+# (globalThis as any).kept = pick;
+# const table = new Map<string, Entry>([["a", new Entry(3)], ["b", new Entry(9)]]);
+# print([pick(table, "a", true, true), pick(table, "b", true, true), pick(table, "b", false, true), pick(table, "c", true, true), pick(table, "a", false, false)].join());
+# -- end of source
+# `entry` is asked twice. Every way into the block of the second question comes from one side of the first branch, so each goes where the second branch would send it: one question, one reader of its answer, and the word
+# on what is expected stands on it.
+# RUN: walk f1 mechanisms=all
+# CHECK: [[answer]]: boolean @Boolean = ToBoolean {{*}} [expectsObjectOrNothing] {{*}} # uses=1
+# CHECK: Branch [[answer]] ->
+# CHECK-NOT: Branch [[answer]] ->

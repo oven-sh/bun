@@ -1,0 +1,47 @@
+# The specialized version of a loop reads its array through the storage that was read before its iterations. In a user's build no iteration checks whether the array has changed.
+# Everything depends on two things: the iteration exits to the generic version before an operation that may move the storage, and what the iterations do is recorded.
+# Fault injection, testing=IgnoreLoopArrayStores: an iteration of a specialized version does not exit at a store into an array, and the trial visits do not record the store.
+# The store itself is still built, and it invalidates what it writes.
+# The callback of filter appends eight elements to the array that is being filtered, which moves that array's storage, and then stores to an element further ahead.
+# With only the fault injected, filter keeps reading the old storage and misses what was stored: a silently wrong result.
+# With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime) and with proof-checks (testing=CheckProofsAtRunTime) the emitter checks the storage in every iteration.
+# It compares the storage with a fresh read from the array, and the process crashes with a named error.
+# The second function stores to an element further ahead and moves nothing, so its result is right with the fault injected too.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# RIGHT: 5:1,3,5,101,7, 16 5:1,3,5,101,7, 8
+# RIGHT-NEXT: exited with 0
+# RUN(UNHELD): run-in-shell mechanisms=all testing=IgnoreLoopArrayStores
+# UNHELD: 4:1,3,5,7, 16 5:1,3,5,101,7, 8
+# UNHELD-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=IgnoreLoopArrayStores,CheckBoundsAtRunTime
+# HELD: bun: internal AOT error:
+# HELD: crashed with SIGABRT
+# RUN(PROOFS): run-in-shell mechanisms=all testing=IgnoreLoopArrayStores,CheckProofsAtRunTime
+# PROOFS: bun: internal AOT error:
+# PROOFS: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# type Held = { v: number };
+# const rounds: number = JSON.parse("3");
+# const other: Held = { v: 101 };
+# function show(list: Held[]): string { let said = list.length + ":"; for (let i = 0; i < list.length; i++) said += list[i]!.v + ","; return said; }
+# function moves(n: number): string {
+#   let said = "";
+#   for (let turn = 0; turn < n; turn++) {
+#     const list: Held[] = [{ v: 1 }, { v: 2 }, { v: 3 }, { v: 4 }, { v: 5 }, { v: 6 }, { v: 7 }, { v: 8 }];
+#     const got = list.filter((x, i) => { if (i === 1) { list[list.length] = x; list[list.length] = x; list[list.length] = x; list[list.length] = x; list[list.length] = x; list[list.length] = x; list[list.length] = x; list[list.length] = x; list[5] = other; } return x.v % 2 === 1; });
+#     said = show(got) + " " + list.length;
+#   }
+#   return said;
+# }
+# function stays(n: number): string {
+#   let said = "";
+#   for (let turn = 0; turn < n; turn++) {
+#     const list: Held[] = [{ v: 1 }, { v: 2 }, { v: 3 }, { v: 4 }, { v: 5 }, { v: 6 }, { v: 7 }, { v: 8 }];
+#     const got = list.filter((x, i) => { if (i === 1) list[5] = other; return x.v % 2 === 1; });
+#     said = show(got) + " " + list.length;
+#   }
+#   return said;
+# }
+# print(moves(rounds), stays(rounds));
+# -- end of source

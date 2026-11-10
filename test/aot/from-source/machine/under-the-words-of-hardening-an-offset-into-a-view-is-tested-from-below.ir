@@ -1,0 +1,32 @@
+# An access to a DataView or a Buffer that is wider than a byte asks `offset + size - 1 < length` without a sign, which an offset of -1 .. -(size - 1) passes: so `offset >= 0` stands in front of it.
+# A plain build leaves that test out where the walk has told that the offset is no less than nought. Under CheckBoundsAtRunTime and under CheckProofsAtRunTime nothing told is believed: the test stands,
+# and the view is asked anew (Opaque) for its length and for where its bytes lie. Under CheckProofsAtRunTime the range is tested where it is made too, which also reads GreaterEqual: there Opaque is the witness.
+# f1 = word, f2 = lay, f3 = wordOfBytes
+# RUN(PLAIN): emit f1:Body mechanisms=all
+# PLAIN-NOT: GreaterEqual
+# PLAIN-NOT: Opaque
+# RUN(POSITIONS): emit f1:Body mechanisms=all testing=CheckBoundsAtRunTime
+# POSITIONS: GreaterEqual
+# POSITIONS: Opaque
+# RUN(PROOFS): emit f1:Body mechanisms=all testing=CheckProofsAtRunTime
+# PROOFS: GreaterEqual
+# PROOFS: Opaque
+# RUN(STORE): emit f2:Body mechanisms=all
+# STORE-NOT: GreaterEqual
+# RUN(STOREPOSITIONS): emit f2:Body mechanisms=all testing=CheckBoundsAtRunTime
+# STOREPOSITIONS: GreaterEqual
+# STOREPOSITIONS: Opaque
+# RUN(BYTES): emit f3:Body mechanisms=all
+# BYTES-NOT: GreaterEqual
+# RUN(BYTESPOSITIONS): emit f3:Body mechanisms=all testing=CheckBoundsAtRunTime
+# BYTESPOSITIONS: GreaterEqual
+# BYTESPOSITIONS: Opaque
+# -- source: main.ts
+# function word(view: DataView): number { let sum = 0; for (let i = 0; i < 15; i++) sum += view.getInt32(i * 4, true); return sum; }
+# function lay(view: DataView): void { for (let i = 0; i < 15; i++) view.setInt32(i * 4, 7, true); }
+# function wordOfBytes(bytes: Buffer): number { let sum = 0; for (let i = 0; i < 15; i++) sum += bytes.readInt32LE(i * 4); return sum; }
+# const view = new DataView(new ArrayBuffer(64)), bytes = Buffer.alloc(64, 1);
+# let sum = 0;
+# for (let i = 0; i < 40; i++) { lay(view); sum += word(view) + wordOfBytes(bytes); }
+# console.log(sum);
+# -- end of source

@@ -66,7 +66,7 @@ export const Transpiler = b.class({
     capability: "js",
     throws: true,
     length: 0,
-    uses: { options: table.handedOver },
+    uses: { options: table.retainedByNativeCode },
   },
   proto: {
     scan: { ...method, args: { code, loader }, expected: expected("scan"), returns: listOfNames },

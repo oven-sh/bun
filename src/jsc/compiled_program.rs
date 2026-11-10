@@ -50,7 +50,7 @@ unsafe extern "C" {
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
-    safe fn Bun__AOT__willRunEntryPointAgain(global: &JSGlobalObject, path: &bun_core::String);
+    safe fn Bun__AOT__willReevaluateEntryPoint(global: &JSGlobalObject, path: &bun_core::String);
     safe fn Bun__AOT__willRunPreloads(global: &JSGlobalObject);
     safe fn Bun__AOT__didRunPreloads(global: &JSGlobalObject);
     safe fn Bun__AOT__mayHoldPathStartingWith(start: FfiSlice<'_>) -> bool;
@@ -136,7 +136,7 @@ pub extern "C" fn Bun__compiledProgramNamesPlugin() -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__onResolveAnswersFor(
+pub extern "C" fn Bun__AOT__resolveWithPlugins(
     global: &JSGlobalObject,
     name: &bun_core::String,
     importer: &bun_core::String,
@@ -207,7 +207,7 @@ fn find_without_plugins(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__findWithoutPlugins(
+pub extern "C" fn Bun__AOT__resolveWithoutPlugins(
     global: &JSGlobalObject,
     name: &bun_core::String,
     importer: &bun_core::String,
@@ -227,7 +227,8 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     is_form_without_attributes: &mut bool,
 ) -> bun_core::String {
     let (path, type_attribute) = (path.to_utf8(), type_attribute.to_utf8());
-    match bun_aot::module_keys::places_of_form(path.slice(), type_attribute.slice()) {
+    let given = compiled_program().map_or(&b""[..], |it| it.loaders_given_to_build());
+    match bun_aot::module_keys::places_of_form(path.slice(), type_attribute.slice(), given) {
         Some(places) => {
             *is_form_without_attributes = places.is_form_without_attributes;
             bun_core::String::clone_utf8(&places.path_of_form)
@@ -246,7 +247,7 @@ pub extern "C" fn Bun__AOT__pathOfDefaultForm(path: &bun_core::String) -> bun_co
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__AOT__stampOfFile(path: *const u8, length: usize) -> u64 {
+pub unsafe extern "C" fn Bun__AOT__computeFileStamp(path: *const u8, length: usize) -> u64 {
     // SAFETY: the caller hands `length` readable bytes at `path`. No zero byte is asked for behind them.
     let path = unsafe { core::slice::from_raw_parts(path, length) };
     let stat = |file: &[u8]| bun_sys::stat(&bun_core::ZBox::from_bytes(file)).ok();
@@ -386,7 +387,7 @@ fn entry_module_key_in<'a>(graph: &'static dyn StandaloneModuleGraph, path: &'a 
 /// `bun test --rerun-each`: the next load of the test file runs its body again, over what it imports as that stands.
 pub fn will_run_entry_point_again(global: &JSGlobalObject, key: &[u8]) {
     if compiled_program().is_some() {
-        Bun__AOT__willRunEntryPointAgain(global, &bun_core::StringView::from_bytes(key));
+        Bun__AOT__willReevaluateEntryPoint(global, &bun_core::StringView::from_bytes(key));
     }
 }
 
@@ -428,6 +429,7 @@ fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 fn may_hold_module_path_starting_with(start: &[u8]) -> bool {
     let start = with_separators_of_image(start);
     Bun__AOT__mayHoldPathStartingWith(FfiSlice::new(&start))
+        || compiled_program().is_some_and(|it| it.holds_refused_data_starting_with(&start))
 }
 
 fn is_left_to_code_outside_image(specifier: &[u8], directory_of_importer: &[u8]) -> bool {
@@ -444,7 +446,9 @@ fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
         bun_threading::Guarded::new(BTreeSet::new());
     let path = &with_separators_of_image(path)[..];
     // The attributes of the import say which form of the file is asked for, and the resolver does not see them.
-    if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path)) {
+    if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path))
+        && compiled_program().is_none_or(|it| it.find_refused_data(path).is_none())
+    {
         return None;
     }
     let mut paths = PATHS.lock();
@@ -1144,7 +1148,6 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::NotAnImage => "the file is corrupt (bad header)",
         ImageVerdict::Truncated => "the file is truncated. Copy or download it again",
         ImageVerdict::Misaligned => "the code isn't page-aligned. Something modified the executable after it was built",
-        ImageVerdict::AlreadyInUse => "this process has already loaded another compiled program",
         ImageVerdict::LowPagesAccessible => "it needs the lowest pages of the address space to be unmapped, and this system maps them",
         ImageVerdict::NoCode => "it contains no code",
         ImageVerdict::CannotMapCode => "its code could not be mapped as executable memory",

@@ -117,7 +117,10 @@ export const upgradeTLSDeferred = b.fn({
   ),
   capability: "js",
   throws: true,
-  uses: { socket: table.handedOver, options: [...socketOptions, table.runs(table.named("isServer", "initialData"))] },
+  uses: {
+    socket: table.retainedByNativeCode,
+    options: [...socketOptions, table.runs(table.named("isServer", "initialData"))],
+  },
 });
 export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
@@ -148,7 +151,7 @@ export const upgradeDuplexToTLS = b.fn({
   ),
   uses: {
     duplex: [
-      ...table.handedOver,
+      ...table.retainedByNativeCode,
       ...["pause", "resume"].map(name =>
         table.memberCalled([name], { times: "PerEvent", this: table.operand("duplex"), args: [], result: "Ignored" }),
       ),

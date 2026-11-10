@@ -79,6 +79,8 @@ enum PropertyRead {
     Unresolved,
     /// No class member is marked.
     NotPrivate,
+    /// A private member, and this access only writes it: it isn't marked.
+    OnlyWritten,
     Private(Sym),
 }
 
@@ -1000,7 +1002,7 @@ impl Checker<'_, '_> {
         let receiver = self.apparent_type(receiver);
         let symbol = match self.private_property_read(file, receiver, name, at) {
             PropertyRead::Unresolved => return u.note_members_named(name),
-            PropertyRead::NotPrivate => return,
+            PropertyRead::NotPrivate | PropertyRead::OnlyWritten => return,
             PropertyRead::Private(symbol) => symbol,
         };
         // A self-reference from inside any declaration of the member isn't a reference.
@@ -1020,36 +1022,39 @@ impl Checker<'_, '_> {
     /// `markPropertyAsReferenced` where it's called for a member declared in a file other than `file`: the property
     /// `name` of `receiver` is accessed in `file`. `note_private_reads` collects the accesses in the declaration's
     /// file. `at` is the same as for `note_property`. No declaration of the member contains the access, so
-    /// `isSelfTypeAccess` doesn't matter.
+    /// `isSelfTypeAccess` doesn't matter. True if the name is that of no private member, which hangs on `receiver` and
+    /// `name` alone.
     pub(super) fn mark_property_as_referenced(
         &mut self,
         file: FileId,
         receiver: TypeId,
         name: Atom,
         at: Option<ExprId>,
-    ) {
+    ) -> bool {
         let Some(visited) = self.task.file else {
-            return;
+            return false;
         };
         if !self.can_mark_properties_as_referenced(file) {
-            return;
+            return false;
         }
         let receiver = self.apparent_type(receiver);
-        let PropertyRead::Private(symbol) = self.private_property_read(file, receiver, name, at)
-        else {
-            return;
+        let symbol = match self.private_property_read(file, receiver, name, at) {
+            PropertyRead::Private(symbol) => symbol,
+            PropertyRead::NotPrivate => return true,
+            PropertyRead::Unresolved | PropertyRead::OnlyWritten => return false,
         };
         if !self.module_options(symbol.file).no_unused_locals {
-            return;
+            return false;
         }
         // `checkUnusedClassMembers` runs at the end of the declaration's file.
         let files = self.files();
         if symbol.file == file || files.rank_of_file(visited) > files.rank_of_file(symbol.file) {
-            return;
+            return false;
         }
         if self.referenced_properties.insert(symbol) {
             self.p.properties_referenced_before.lock().insert(symbol);
         }
+        false
     }
 
     /// False if no file reports a member as unused that an access in `file` refers to.
@@ -1123,7 +1128,7 @@ impl Checker<'_, '_> {
                 .flags_of_property(symbol)
                 .contains(SymFlags::SET_ACCESSOR)
         {
-            return PropertyRead::NotPrivate;
+            return PropertyRead::OnlyWritten;
         }
         PropertyRead::Private(symbol)
     }

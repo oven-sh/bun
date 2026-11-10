@@ -1,7 +1,7 @@
 # the same program with direct calls withheld: the call by value may write anything, handler or none
 # RUN: walk f2 mechanisms=none+TypedOperations
 # CHECK-LABEL: code f2:Body
-# CHECK: = Call {{*}}mayWriteWhatIsSeen
+# CHECK: = Call {{*}}mayWriteObservableState
 # -- source: what-a-callee-writes-on-the-way-to-a-throw-counts-under-a-handler.ts
 # declare function sink(...values: unknown[]): void;
 # let last = 0;

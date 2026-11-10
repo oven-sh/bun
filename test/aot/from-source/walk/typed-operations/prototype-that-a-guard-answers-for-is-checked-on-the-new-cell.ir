@@ -10,11 +10,14 @@
 # -- end of source
 # f2 = keeps
 # Behind a guard of Dog the allocation names the prototype as that of a class does. That any guard of the class answers for what lies under `prototype` is a conclusion of the walk, which no test of the program's own shows.
-# Where proofs are checked, the object is made below what is read there, and its cell is asked whether that is the object of the class table.
+# Where proofs are checked, the allocation keeps that form, and the function itself is asked: what it holds under `prototype` is the object of the class table.
 # RUN(PLAIN): walk f2 mechanisms=all
 # PLAIN: = NewObject -,
 # RUN(CHECKED): walk f2 mechanisms=all testing=CheckProofsAtRunTime
-# CHECKED-NOT: = NewObject -,
+# CHECKED: = NewObject -,
+# CHECKED: = GetClassPrototype {{*}}[readsClassObjectItself]
+# CHECKED: [[same]]: boolean @Boolean = StrictEq
+# CHECKED-NEXT: CheckProof [[same]] checkedType=true {{*}}source=RememberedFact
 # RUN(QUIET): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = () => { }; globalThis.change = () => { };
 # QUIET: 30
 # QUIET-NEXT: 1030

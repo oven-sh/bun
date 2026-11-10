@@ -19,12 +19,13 @@
 # const pick = hooks[JSON.parse("0")];
 # sink(new Rack(1), few(new Rack(0), pick), few(JSON.parse("[1,2,3]"), pick));
 # -- end of source
-# f1 = few, f7 = next
-# The loop steps a list by its position or, beside it, goes by the protocol; there next is tested for f7 and f7 is copied in. f7 holds a pattern of its own: walking the copy adds an iteration to the walker's
+# f1 = few, f6 = next
+# The loop steps a list by its position or, beside it, goes by the protocol; there next is tested for f6 and f6 is copied in. f6 holds a pattern of its own: walking the copy adds an iteration to the walker's
 # table, the fifth of this unit, and the table's buffer moves. What the step says of the list's position is kept all the same: the position that goes round the head is the one behind the element read.
+# The parameter is typed by a list or by a class of the file: what that class writes under Symbol.iterator returns a literal with a closure of f6 under `next`: the text of the file names f6.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = TypeTest {{*}}testedType=f7
 # CHECK: isLoopHead=true
+# CHECK: = TypeTest {{*}}testedType=f6
 # CHECK: [[inside]]: int[0, 4294967294] @Int64 = Narrowed
 # CHECK: : int[1, 4294967295] @Int64 = Increment [[inside]] form=Integers

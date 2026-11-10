@@ -39,11 +39,16 @@ pub(super) fn collect_module_list(
     let application = loaded.project(ProjectId::Application);
     let files = application.loaded.files();
     let sources = &application.sources;
+    let folders_of_databases = bound.projects.application.graph.folders_of_databases();
     let listed_file = |module: &ProgramModule| match module.file()? {
         ProgramFile {
             project: ProjectId::Application,
             file,
-        } if matches!(sources.kind(file), SourceKind::Program | SourceKind::Data) => Some(file),
+        } if matches!(sources.kind(file), SourceKind::Program | SourceKind::Data)
+            && !folders_of_databases.contains(&file) =>
+        {
+            Some(file)
+        }
         _ => None,
     };
 
@@ -243,7 +248,7 @@ impl Collector<'_, '_> {
         let target = match module {
             ModuleRef::File(target)
             | ModuleRef::Inner { file: target, .. }
-            | ModuleRef::Face(target)
+            | ModuleRef::Facade(target)
             | ModuleRef::Check(target) => target,
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => return None,
         };

@@ -1,6 +1,7 @@
 // What an heir declares is honored: createServer({ IncomingMessage: Mine, ServerResponse: Mine }) with a class of the program below the library's: one member a case: a method of the heir that goes on to the one above,
 // an accessor of the heir that answers another value than the one above, a plain value on the heir's prototype. Compared: the calls of the heir's methods, the answer on the wire, what was thrown.
 import http from "node:http";
+import net from "node:net";
 
 const text = key => (typeof key === "symbol" ? "[" + String(key.description) + "]" : key);
 let seen = [];
@@ -51,25 +52,62 @@ const answers = {
 };
 const chosen = (name, all) => (process.env[name] ? process.env[name].split(",") : Object.keys(all));
 let lists = {};
-function send(port, agent, path, method, body) {
-  return new Promise(resolve => {
-    const request = http.request({ port, host: "127.0.0.1", method, path, agent }, response => {
-      const parts = [];
-      response.on("data", part => parts.push(part));
-      response.on("close", () => {
-        clearTimeout(patience);
-        const heads = [];
-        for (let at = 0; at < response.rawHeaders.length; at += 2) heads.push(response.rawHeaders[at] + ": " + (response.rawHeaders[at].toLowerCase() === "date" ? "*" : response.rawHeaders[at + 1]));
-        resolve(response.statusCode + " " + response.statusMessage + " {" + heads.join("; ") + "} " + JSON.stringify(String(Buffer.concat(parts)).slice(0, 24)) + (response.complete ? "" : " CUT"));
-      });
-    });
-    request.on("error", error => { clearTimeout(patience); resolve("failed " + error.code); });
-    const patience = setTimeout(() => { request.destroy(); resolve("no answer"); }, 250);
-    request.end(body);
+const headsOf = lines => lines.map(line => (/^date:/i.test(line) ? line.slice(0, line.indexOf(":")) + ": *" : line));
+// No clock says that no answer will come. The client is a socket of this thread and sends a request by one write, so all of it has come once the handler is entered. From there the
+// server has its say: what it still does is work of this process alone, and takes the same turns of the loop however busy the machine is. Then the client ends its half of the
+// connection, the server closes, and whatever was written comes in front of the close. What is printed stands still from four turns on.
+const turn = () => new Promise(resolve => setImmediate(resolve));
+const turnsOfTheServer = 16;
+let entered = Promise.withResolvers();
+function read(bytes, isClosed) {
+  const end = bytes.indexOf("\r\n\r\n");
+  if (end < 0) return undefined;
+  const [first, ...lines] = bytes.toString("latin1", 0, end).split("\r\n");
+  const valueOf = name => lines.find(line => line.toLowerCase().startsWith(name + ":"))?.slice(name.length + 1).trim();
+  let rest = bytes.subarray(end + 4), body = [], isWhole = false, trailer = "";
+  if (/chunked/i.test(valueOf("transfer-encoding") ?? "")) {
+    for (let at; (at = rest.indexOf("\r\n")) >= 0; ) {
+      const size = parseInt(rest.toString("latin1", 0, at), 16);
+      if (size === 0) {
+        // Behind the last chunk: an empty line, or lines of a trailer and then an empty line.
+        const last = rest.toString("latin1", at + 2), close = last.startsWith("\r\n") ? 0 : last.indexOf("\r\n\r\n");
+        isWhole = close >= 0; trailer = isWhole ? last.slice(0, close) : last;
+        break;
+      }
+      if (!(rest.length >= at + 2 + size + 2)) { body.push(rest.subarray(at + 2)); break; }
+      body.push(rest.subarray(at + 2, at + 2 + size)); rest = rest.subarray(at + 2 + size + 2);
+    }
+  } else if (valueOf("content-length") !== undefined) { isWhole = rest.length >= Number(valueOf("content-length")); body = [rest.subarray(0, Number(valueOf("content-length")))]; }
+  else { isWhole = isClosed || /^HTTP\/1\.1 (1\d\d|204|304) /.test(first); body = [rest]; }
+  if (!isWhole && !isClosed) return undefined;
+  return first.slice(first.indexOf(" ") + 1) + " {" + headsOf(lines).join("; ") + "} " + JSON.stringify(String(Buffer.concat(body)).slice(0, 24)) + (trailer ? " and then " + JSON.stringify(trailer) : "") + (isWhole ? "" : " CUT");
+}
+function connect(line) {
+  return new Promise(connected => {
+    const socket = (line.socket = net.connect(line.port, "127.0.0.1", () => connected(socket)));
+    socket.on("error", () => {}).on("close", () => { if (line.socket === socket) line.socket = undefined; });
   });
 }
-const turn = () => new Promise(resolve => setImmediate(resolve));
-process.on("uncaughtException", error => seen.push("UNCAUGHT " + (error?.code ?? error?.name)));
+function send(line, path, method, body = "") {
+  return new Promise(async resolve => {
+    const isKept = line.socket !== undefined;
+    const socket = line.socket ?? (await connect(line));
+    let got = Buffer.alloc(0), isEntered = false, hasEnded = false, hasSaid = false, failure;
+    const say = said => { hasSaid = true; socket.off("data", onData).off("error", onError).off("close", onClose); resolve(said); };
+    const onData = part => { got = Buffer.concat([got, part]); const said = read(got, false); if (said) say(said); };
+    const onError = error => { failure = error.code; };
+    // A server may let go of a connection that it has kept. Whoever finds that out by a request that nobody has heard sends it once more, on a new connection.
+    const onClose = () => say(read(got, true) ?? (isKept && !isEntered ? send(line, path, method, body) : failure ? "failed " + failure : hasEnded ? "no answer" : "closed"));
+    socket.on("data", onData).on("error", onError).on("close", onClose);
+    const mine = (entered = Promise.withResolvers());
+    socket.write(method + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\n" + (body ? "Content-Length: " + body.length + "\r\n" : "") + "\r\n" + body);
+    await mine.promise;
+    isEntered = true;
+    for (let i = 0; i < turnsOfTheServer; i++) await turn();
+    if (!hasSaid) { hasEnded = true; socket.end(); }
+  });
+}
+process.on("uncaughtException", error => { seen.push("UNCAUGHT " + (error?.code ?? error?.name)); entered.resolve(); });
 function short(list) { return list.length <= 24 ? list.join(", ") : list.slice(0, 24).join(", ") + ", +" + (list.length - 24); }
 function membersAbove(prototype) {
   const names = new Map();
@@ -91,19 +129,20 @@ for (const answer of chosen("ANSWERS", answers))
         way.lay(Mine.prototype, key, members.get(key));
         let isWatching = false;
         const server = http.createServer(subject === "the request" ? { IncomingMessage: Mine } : { ServerResponse: Mine }, (req, res) => {
+          entered.resolve();
           if (req.url === "/first") { req.resume(); return void res.end("first"); }
           try { Promise.resolve(answers[answer](req, res)).catch(error => seen.push("REJECTED " + (error?.code ?? error?.name))); } catch (error) { seen.push("THREW " + (error?.code ?? error?.name)); try { res.destroy(); } catch {} }
         });
         await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
         const port = server.address().port;
-        const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
-        await send(port, agent, "/first", "GET");
+        const line = { port };
+        await send(line, "/first", "GET");
         for (let i = 0; i < 3; i++) await turn();
         seen = [];
         const takesBody = answer.includes("body");
-        const said = await send(port, agent, "/second", takesBody ? "POST" : "GET", takesBody ? "x".repeat(1000) : undefined);
+        const said = await send(line, "/second", takesBody ? "POST" : "GET", takesBody ? "x".repeat(1000) : undefined);
         for (let i = 0; i < 3; i++) await turn();
-        agent.destroy();
+        line.socket?.destroy();
         server.close();
         out.push(answer + " . " + subject + " . " + wayName + " . " + text(key) + ": " + said + " | " + short(seen));
       }

@@ -1,5 +1,5 @@
 // A key that is one of a few texts is held as the number of its literal. The same texts also come out of sums, slices, joins, walks over keys and parsed text.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const table = { first: "one", second: "two", third: "three" };
 function pick(key) { return table[key]; }

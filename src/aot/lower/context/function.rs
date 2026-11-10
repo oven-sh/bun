@@ -11,9 +11,11 @@ use crate::ir::{
     ValueId,
 };
 use crate::lower::captures;
+use crate::lower::class::Birth;
 use crate::lower::control::ControlState;
 use crate::lower::convert;
 use crate::lower::generator::CoroutineState;
+use crate::lower::object::ListsInside;
 use crate::lower::scope::ScopeState;
 
 pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
@@ -28,8 +30,14 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) callees_read_on_answers: FxHashMap<ValueId, ValueId>,
     pub(in crate::lower) is_call_in_tail_position: bool,
     pub(in crate::lower) object_created_for_maker: Option<bun_sema::hir::ExprId>,
+    pub(in crate::lower) names_that_maker_stores_under: Vec<bun_sema::atom::Atom>,
+    pub(in crate::lower) only_argument_of_construction: Option<bun_sema::hir::ExprId>,
+    pub(in crate::lower) lists_inside_literals:
+        std::cell::RefCell<FxHashMap<bun_sema::hir::ExprId, ListsInside>>,
+    pub(in crate::lower) birth: Option<Birth>,
     pub(in crate::lower) counted_expression: Option<u32>,
     pub(in crate::lower) does_file_name_library_modules: Option<bool>,
+    pub(in crate::lower) made_require_of_site: Option<bun_sema::hir::ExprId>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -58,15 +66,19 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             callees_read_on_answers: FxHashMap::default(),
             is_call_in_tail_position: false,
             object_created_for_maker: None,
+            names_that_maker_stores_under: Vec::new(),
+            only_argument_of_construction: None,
+            lists_inside_literals: Default::default(),
+            birth: None,
             counted_expression: None,
             does_file_name_library_modules: None,
+            made_require_of_site: None,
             handler: None,
             position,
             nesting_depth: 0,
             has_reported_nesting: false,
         };
         lowering.builder.set_position(Some(position));
-        lowering.continue_in_new_block();
         captures::unpack_captures(&mut lowering);
         lowering
     }

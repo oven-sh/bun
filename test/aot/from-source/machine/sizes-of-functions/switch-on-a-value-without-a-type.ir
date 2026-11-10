@@ -1,0 +1,21 @@
+# f1 = apply
+# -- source: switch-on-a-value-without-a-type.js
+# function apply(operation, left, right) {
+#   switch (operation) {
+#     case 0: return left + right;
+#     case 1: return left - right;
+#     case 2: return left * right;
+#     case 3: return left / right;
+#     case 4: return -left;
+#     case 5: return left * left;
+#     default: return 0;
+#   }
+# }
+# globalThis.answer = apply(input, +input, +input);
+# -- end of source
+# The compiler before this one: 36 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 20, patches 0, moves 1, unlikely or rare 6.
+# RUN(X64): steps most:21 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 21

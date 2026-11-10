@@ -1,0 +1,9 @@
+# A for-of around a loop lays its cleanup over every turn of that loop. Under a handler no look counts on turns that begin again, and the tests in front of a read in the turn (the kind of the storage, whether the element is there) only make the turn longer: the read asks for itself there.
+# -- source: an-element-is-not-asked-in-the-turn-under-a-handler.cjs
+# const stalls = JSON.parse('[[1,2],[3,4.5],[5,6],[2,2],[7.5,1],[0,9]]'), marks = JSON.parse('[0,0,0]');
+# function nearest(points, t, count) { const wells = []; for (let k = 0; k < count.length; k++) wells.push(points[(t + k * 2) % 6]); let out = 0; for (const p of points) { let best = 0, least = Infinity; for (let c = 0; c < wells.length; c++) { const dx = p[0] - wells[c][0], dy = p[1] - wells[c][1], v = dx * dx + dy * dy; if (v < least) { least = v; best = c; } } out += best; } return out; }
+# const ways = { nearest, idle(points, t) { return t; } }, steps = JSON.parse('["nearest"]');
+# console.log(ways[steps[0]](stalls, 0, marks), ways[steps[0]](stalls, 1, marks), ways[steps[0]]([[1, , 3], [2], [3, 3], [4, 4], [5, 5], [6, 6]], 0, marks));
+# -- end of source
+# RUN(COUNT): compile ElementsGuardedInIterations mechanisms=all
+# COUNT: statistic ElementsGuardedInIterations 0

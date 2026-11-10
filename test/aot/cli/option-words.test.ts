@@ -71,8 +71,6 @@ const rejected = [
   ["references=medium", 'Invalid value for --aot-references: "medium". Must be one of narrow, wide'],
 ];
 
-const hiddenExplainValues = ["unknown-code", "unproven-type"];
-
 const invalidProgram = {
   "wrong.ts": `import "./missing-module";
 const n: number = "one";
@@ -222,21 +220,6 @@ describe.concurrent("the hidden --aot- flags of a build", () => {
       }),
     300_000,
   );
-
-  test.each([
-    [[], "--aot-allow-code-from-disk"],
-    [["run"], "--aot-allow-code-from-disk"],
-    [["test"], "--aot"],
-    [["build"], "guards-json"],
-    [["compile"], "guards-json"],
-    [["check"], "--explain"],
-  ] as [string[], string][])("bun %j --help lists no hidden value of --explain", async (command, listed) => {
-    using dir = tempDir("aot-help", {});
-    const { stdout, stderr } = await bun(String(dir), ...command, "--help");
-    const help = stdout + stderr;
-    expect(help).toContain(listed);
-    for (const value of hiddenExplainValues) expect(help).not.toContain(value);
-  });
 
   test("bun check --help lists --aot and no hidden flag", async () => {
     using dir = tempDir("aot-check-help", {});

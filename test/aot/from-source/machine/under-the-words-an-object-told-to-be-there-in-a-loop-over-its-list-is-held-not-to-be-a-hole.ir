@@ -1,0 +1,29 @@
+# Fault injection, testing=IgnoreFreshArrayEscapes: the walk assumes that a call does nothing to an array whose allocation the walk has seen.
+# So an element that was present before the call counts as proven to be present after it.
+# The loop reads the array of objects at its counter, so the walk cannot fold the read from the contents that it tracks. The array is read, and the read is marked as proven to find its element.
+# With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), the emitter checks that the word is not a hole. If it is, the process crashes with a named error.
+# There is no run with the fault alone, because the hole of an array of objects is no value at all.
+# RUN(TOLD): walk f1 mechanisms=all testing=IgnoreFreshArrayEscapes,CheckBoundsAtRunTime
+# TOLD: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
+# RUN(EVENT): compile ElementPresenceProofsChecked mechanisms=all testing=IgnoreFreshArrayEscapes,CheckBoundsAtRunTime
+# EVENT: statistic ElementPresenceProofsChecked 1
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# RIGHT: -1 false 3
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes,CheckBoundsAtRunTime
+# HELD: bun: internal AOT error:
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# type Held = { v: number };
+# const which: string = JSON.parse('"poke"');
+# const doers: Record<string, (list: Held[]) => unknown> = { none(list) { return list; }, size(list) { return list.length; }, poke(list) { delete list[1]; return list; } };
+# function run(): void {
+#   const list: Held[] = [{ v: 1 }, { v: 2 }, { v: 3 }];
+#   doers[which]!(list);
+#   let sum = 0;
+#   try { for (let i = 0; i < list.length; i++) sum += list[i]!.v; } catch (error) { sum = -1; }
+#   print(sum, 1 in list, list.length);
+# }
+# run();
+# -- end of source

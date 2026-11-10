@@ -1,0 +1,13 @@
+# What a decorator adds by addInitializer() to the LAST field of a class runs right behind that field: in front of `this.count = count` of a parameter property. It stood behind it under standard decorators: the added function saw the argument where `bun <file>` shows undefined.
+# LIBRARY: own
+# -- source: main.ts
+# declare function publish(run: (count: number) => string): void;
+# const seen: string[] = [];
+# function late(_: undefined, context: ClassFieldDecoratorContext) { context.addInitializer(function (this: any) { seen.push(String(this.count)); }); }
+# class Crate { @late width = 1; constructor(public count = 5) {} }
+# function run(count: number) { const crate = new Crate(count); return seen.join() + " " + crate.count + " " + crate.width; }
+# publish(run);
+# -- end of source
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(3)); print(run(4)); };
+# SHELL: undefined 3 1
+# SHELL-NEXT: undefined,undefined 4 1

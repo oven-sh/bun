@@ -1,0 +1,27 @@
+# -- source: main.js
+# class Meter { raw = 0; get value() { return this.raw * 2; } set value(next) { this.raw = next >> 1; } }
+# function run(count) { const meter = new Meter(); let total = 0; for (let i = 0; i < count; i++) { meter.value = i & 1023; total += meter.value; } return total; }
+# publish(Meter, run);
+# -- end of source
+# Meter is in the hands of code that nobody has seen, so its accessor is kept by a guard. In the plain walk of the loop the closed arm of that guard meets the typed way, and what it may give makes a text of the sum: number|string.
+# The typed copy asks the guard in front and has no such arm. It does not take the type of the sum from the plain walk: it starts at what enters and learns what its own turns bring round.
+# f1 = run, L0 = Meter
+# RUN(HEADS): walk f1 mechanisms=all
+# HEADS-LABEL: code f1:Body
+# HEADS: ({{*}}: number|string @JSValue, {{*}}) isInLoop=true isLoopHead=true:
+# HEADS: ({{*}}: int|whole @Double, {{*}}) isInLoop=true isLoopHead=true:
+# HEADS-NOT: AreMembersUnchanged
+# HEADS: = Add {{*}} form=Numbers
+# Code that nobody has seen calls run, so its own body runs. Where the accessor has been replaced the guard fails in front, and the sum is what the other copy makes of it.
+# RUN(ANSWERS): run-in-shell globalThis.publish = (Meter, run) => { print(run(12)); print(run(12)); };
+# ANSWERS: 60
+# ANSWERS-NEXT: 60
+# ANSWERS-NEXT: exited with 0
+# RUN(TEXT): run-in-shell globalThis.publish = (Meter, run) => { print(run(12)); Object.defineProperty(Meter.prototype, "value", { get() { return "x"; }, set(next) { } }); print(run(3)); };
+# TEXT: 60
+# TEXT-NEXT: 0xxx
+# TEXT-NEXT: exited with 0
+# RUN(FRACTION): run-in-shell globalThis.publish = (Meter, run) => { Object.defineProperty(Meter.prototype, "value", { get() { return 0.5; }, set(next) { } }); print(run(3)); print(run(12)); };
+# FRACTION: 1.5
+# FRACTION-NEXT: 6
+# FRACTION-NEXT: exited with 0

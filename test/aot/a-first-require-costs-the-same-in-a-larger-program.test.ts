@@ -66,7 +66,7 @@ test.concurrent.each(ways.flatMap(way => sizes.map(modules => ({ ...way, modules
     const lines = readdirSync(cwd)
       .filter(name => name.startsWith("counts-"))
       .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))
-      .filter(line => line.endsWith("\tsought:ModulesForWhatHasRun"));
+      .filter(line => line.endsWith("\tsought:ModulesScannedForEvaluationStatus"));
     expect(lines.length).toBeGreaterThan(0);
     sought.set(
       `${way} ${modules}`,

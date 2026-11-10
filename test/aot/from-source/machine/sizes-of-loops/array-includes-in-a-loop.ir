@@ -1,0 +1,21 @@
+# f1 = count
+# -- source: array-includes-in-a-loop.ts
+# function count(list: string[], names: string[]): number {
+#   let hits = 0;
+#   for (let k = 0; k < names.length; k++) if (list.includes(names[k]!)) hits++;
+#   return hits;
+# }
+# declare const input: any;
+# const list: string[] = [];
+# list.push(String(input));
+# const names: string[] = [];
+# names.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = count(list, names);
+# -- end of source
+# The compiler before this one: 9 instructions, 3 of them patches.
+# When the bound was taken: loop: operations 5, patches 1, moves 0, unlikely 0 ; loop: operations 5, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:5,5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 5
+# X64-NEXT: loop: at most 5

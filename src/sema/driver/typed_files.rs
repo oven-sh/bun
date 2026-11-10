@@ -3332,9 +3332,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         };
         // A line that starts without a mapping repeats the last one of the line before it.
         let is_repeated = |at: u32| at > 0 && output.byte(at - 1) == b'\n';
-        // Whether `found` is what is printed from the expression: it starts with the first token of it, has each
-        // token of it, and has no token of another expression. What the build adds around an expression has no
-        // mapping, or one to another place.
+        // Whether `found` starts with the first token of the expression, has each token of it, and has no other.
         let is_printed_from = |found: ExprId, source: u32, expr: &Expr| {
             let (open, end) = output.outer_span(found);
             // The printer maps a token, then may put a space before it.
@@ -3454,8 +3452,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 find_below(found, way, false)
             };
-            // Whether `found` can be what the build prints for a value of `expr`: a constant, or the same kind of
-            // expression as one that the value can be. `!!name` in a test is printed `name`, which is not one.
+            // Whether `found` is a constant, or the kind of expression that a value of `expr` is.
             let is_value_of = |found: ExprId, expr: ExprId| {
                 let output_kind = output_file[found].kind;
                 let is_constant = match output_kind {
@@ -3509,9 +3506,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }
                 is_constant
             };
-            // A root is an expression that no expression is the parent of: a default, the initializer of a field,
-            // the test of a statement. The root of the output that has the tokens of a root of a source is the one
-            // that the build printed for it.
+            // A root is an expression that no expression is the parent of. The build prints it as a root too.
             let find_via_root = |chain: &CastChain| {
                 let (mut root, mut way) = (chain.outermost, Vec::new());
                 while let Some((parent, place)) = places[root.idx()] {
@@ -4883,10 +4878,7 @@ pub fn annotate_implicit_any(
     is_changed
 }
 
-/// The first of two texts of the typed files that `judge` says yes to. The lookup through the root of an expression
-/// finds casts that the other lookups miss, and such a cast can be an error in a typed file that the sources do not
-/// have. Without those casts the typed files are what they were before that lookup. They are only written if they
-/// are another text. If `judge` says no to both, the answer is the one about the second text.
+/// The first text that `judge` accepts: the one with the casts of the lookup through a root, or the one without.
 pub fn first_kept<T, E>(
     with_root_lookup: Result<TypedFiles, TypedFilesError>,
     without_root_lookup: impl FnOnce() -> Result<TypedFiles, TypedFilesError>,

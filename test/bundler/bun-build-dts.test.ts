@@ -155,9 +155,7 @@ export function at(index: number = (process.env.NODE_ENV === "production" ? 1 : 
     ]);
   });
 
-  // The sources allow each cast of `rejected`. index.aot.ts does not allow the first five: `limit` is there a local
-  // constant, which its initializer narrows, and the build prints another expression than the operand of the next
-  // four. Then the build writes index.aot.ts without the casts that only a default or a statement holds.
+  // In index.aot.ts `limit` is narrowed, and the build folds or removes a part of the next four operands.
   const rejected = {
     "src/constants.ts": `export const limit: number | undefined = undefined;
 export const value: unknown = "v";
@@ -211,8 +209,7 @@ export const text = ns.value as string;
     ]);
   });
 
-  // Without the casts that only a default or a statement holds, index.aot.ts has another error. The warning is
-  // about that text.
+  // index.aot.ts has an error with the casts of the defaults and another without them. The warning is the second.
   test.todoIf(isWindows).each([
     [
       "a default needs its cast",

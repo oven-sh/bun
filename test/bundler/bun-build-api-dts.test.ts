@@ -174,8 +174,7 @@ export { join };
     ]);
   });
 
-  // In index.aot.ts `limit` is a local constant, which its initializer narrows, so the first cast is an error there.
-  // On Windows the check of index.aot.ts reads no file, so the build does not see the error.
+  // In index.aot.ts `limit` is narrowed, so the first cast is an error there. On Windows its check reads no file.
   test.todoIf(isWindows).each([
     ["without a minify option", false],
     ["minify.syntax", true],

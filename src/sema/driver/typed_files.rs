@@ -1309,8 +1309,6 @@ impl Mappings {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Order {
-    /// Behind the name of a member. Where no `;` follows it, that is where a line for the end of the class goes too.
-    MemberType,
     Line,
     Signature,
     Directive,
@@ -1319,6 +1317,8 @@ enum Order {
     Open(u32),
     Close(u32),
     Slot,
+    /// A line before the `}` of a class. Where no `;` ends the last member, its type and its casts go there too.
+    ClassEnd,
 }
 
 struct Insertions {
@@ -3080,8 +3080,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 if slot.place == Place::MemberType
                     && let Some(noted) = module.types.and_then(|types| types.member_type(key))
                 {
-                    let annotation = [&b": "[..], noted].concat();
-                    insertions.add(slot.start, Order::MemberType, annotation);
+                    insertions.add(slot.start, Order::Slot, [&b": "[..], noted].concat());
                 }
                 continue;
             };
@@ -3145,10 +3144,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                     (Order::Close(slot.start - slot.key - 1), text)
                 }
                 _ => (Order::Slot, text),
-            };
-            let order = match slot.place {
-                Place::MemberType => Order::MemberType,
-                _ => order,
             };
             insertions.add(slot.start, order, text);
         }
@@ -3935,10 +3930,11 @@ impl<'a> Transfer<'_, 'a, '_> {
                     match next {
                         Some(next) => insertions.add_line_before(javascript, next, text),
                         None if is_terminated => {
-                            insertions.add_line_before(javascript, close, text)
+                            insertions.add_line_in_order(javascript, close, Order::ClassEnd, text)
                         }
                         None => {
-                            insertions.add_line_before(javascript, close, &[b";", text].concat())
+                            let line = [b";", text].concat();
+                            insertions.add_line_in_order(javascript, close, Order::ClassEnd, &line)
                         }
                     }
                 };
@@ -4286,30 +4282,32 @@ fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> O
 fn text_of_types_that_name_nothing(
     services: &mut Services<'_, '_, '_>,
     ty: TypeId,
+    drops_missing: bool,
 ) -> Option<Box<[u8]>> {
     if !services.type_flags(ty).contains(TypeFlags::UNION) {
         return text_that_names_nothing(services, ty);
     }
     let mut texts: Vec<Box<[u8]>> = Vec::new();
-    // The `?` of a member says that it can be absent. Only `exactOptionalPropertyTypes` has a type for that.
     let parts = services.constituents(ty).iter();
-    for &part in parts.filter(|&&part| part != TypeId::MISSING) {
+    for &part in parts.filter(|&&part| !(drops_missing && part == TypeId::MISSING)) {
         let text = text_that_names_nothing(services, part)?;
         if !texts.contains(&text) {
             texts.push(text);
         }
     }
+    let place_of =
+        |texts: &[Box<[u8]>], wanted: &[u8]| texts.iter().position(|text| &text[..] == wanted);
     // In the order of the printer: `boolean` for `false | true`, and `null` and `undefined` last.
-    let place_of = |wanted: &[u8]| texts.iter().position(|text| &text[..] == wanted);
-    if let (Some(no), Some(yes)) = (place_of(b"false"), place_of(b"true")) {
+    if let (Some(no), Some(yes)) = (place_of(&texts, b"false"), place_of(&texts, b"true")) {
         texts[no.min(yes)] = b"boolean"[..].into();
         texts.remove(no.max(yes));
     }
-    texts.sort_by_key(|text| match &text[..] {
-        b"null" => 1,
-        b"undefined" => 2,
-        _ => 0,
-    });
+    for last in [&b"null"[..], b"undefined"] {
+        if let Some(at) = place_of(&texts, last) {
+            let text = texts.remove(at);
+            texts.push(text);
+        }
+    }
     Some(texts.join(&b" | "[..]).into())
 }
 
@@ -4513,8 +4511,8 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
         }
         // The build drops the dead stores that type a member. Only `noImplicitAny` types a member by its stores.
         let mut members = Vec::new();
-        let is_typed_by_stores = services.compiler_options().no_implicit_any;
-        let classes = if is_typed_by_stores {
+        let options = services.compiler_options();
+        let classes = if options.no_implicit_any {
             &hir.classes[..]
         } else {
             &[]
@@ -4532,7 +4530,10 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 file,
                 node: hir.node(id),
             });
-            if let Some(text) = text_of_types_that_name_nothing(services, ty) {
+            // `removeMissingType`: under `exactOptionalPropertyTypes` the `?` of a member says that it can be absent.
+            let is_optional = member.flags.contains(Flags::OPTIONAL);
+            let drops_missing = is_optional && options.exact_optional_property_types;
+            if let Some(text) = text_of_types_that_name_nothing(services, ty, drops_missing) {
                 members.push((syntax.member_key(member), text));
             }
         }

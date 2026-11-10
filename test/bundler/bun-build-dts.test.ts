@@ -191,6 +191,10 @@ export class Sizes {
   width: number;
   [side: string]: number;
 }
+export abstract class Named {
+  name = "n" as const;
+  abstract area(): number;
+}
 `),
     );
     const flags = ["--dts", "--minify-syntax", "--minify-whitespace"];
@@ -203,9 +207,31 @@ kind: string;abstract area(): number;
 class Sizes{constructor(){this.width=1}
 width: number;[side: string]: number;
 }
-export{Shape,Sizes};
+abstract class Named{name="n" as const;abstract area(): number;
+}
+export{Named,Shape,Sizes};
 `,
     );
+  });
+
+  test("noUncheckedIndexedAccess: a member that is stored from an index is undefined too", async () => {
+    const options = { strict: true, noUncheckedIndexedAccess: true };
+    using dir = tempDir("build-dts-unchecked-index", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [] },
+      }),
+      "package.json": JSON.stringify({ name: "greeter", version: "1.0.0", compilerOptions: options }),
+      "src/index.ts": `export class Holder {
+  first;
+  constructor(items: string[]) {
+    this.first = items[0];
+  }
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(membersOf(written(dir, "index.aot.ts"))).toEqual(["first: string | undefined;"]);
   });
 
   test("a class member without an annotation keeps the type of the sources when the build removes what it stores", async () => {

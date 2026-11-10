@@ -138,6 +138,38 @@ fn the_note_of_an_optional_member_has_undefined_only_where_a_value_can_be_undefi
     assert_noted(&exact, &[("label", "string")]);
 }
 
+const INDEXED: &str = "export class Holder {
+    first;
+    second?;
+    constructor(items: string[]) {
+        this.first = items[0];
+        this.second = items[1];
+    }
+}
+";
+
+#[test]
+fn an_index_that_may_have_no_entry_is_undefined_in_a_note() {
+    let unchecked = r#"{
+        "compilerOptions": { "strict": true, "noUncheckedIndexedAccess": true, "noLib": true, "types": [] }
+    }"#;
+    let files = [("main.ts", INDEXED), ("tsconfig.json", unchecked)];
+    let both = [
+        ("first", "string | undefined"),
+        ("second", "string | undefined"),
+    ];
+    assert_noted(&files, &both);
+    let exact = unchecked.replace(
+        "\"noLib\"",
+        "\"exactOptionalPropertyTypes\": true, \"noLib\"",
+    );
+    let files = [("main.ts", INDEXED), ("tsconfig.json", &exact[..])];
+    assert_noted(
+        &files,
+        &[("first", "string | undefined"), ("second", "string")],
+    );
+}
+
 const WITHOUT_NO_IMPLICIT_ANY: &str = r#"{
     "compilerOptions": { "strict": true, "noImplicitAny": false, "noLib": true, "types": [] }
 }"#;

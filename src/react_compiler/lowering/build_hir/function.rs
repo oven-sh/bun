@@ -4,6 +4,7 @@ use crate::collections::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, SourceLocation,
 };
+use crate::hir::environment::OutputMode;
 use crate::hir::{
     Effect, FunctionExpressionType, InstructionKind, InstructionValue, LValue, LoweredFunction,
     ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr, VariableBinding,
@@ -43,9 +44,8 @@ fn lower_function(
     func_loc: Loc,
 ) -> Result<LoweredFunction, CompilerDiagnostic> {
     let loc = convert_loc(func_loc);
-    let id = func
-        .name_ref()
-        .map(|r| StoreStr::new(builder.host().ref_name(r)));
+    let own_name = func.name_ref();
+    let id = own_name.map(|r| StoreStr::new(builder.host().ref_name(r)));
 
     // Bun's parser already linked every function to its scope tree; the
     // synthetic zero-width scope search upstream performs is a Hermes-desugar
@@ -66,6 +66,16 @@ fn lower_function(
         builder.current_scope(),
         component_scope,
     )?;
+    // Not in upstream (facebook/react#38100): codegen can print a read of this name as a symbol that nothing declares.
+    if let Some(own_name) = own_name
+        && let Some(&reference) = captured_context.get(&own_name)
+        && builder.environment().output_mode != OutputMode::Lint
+    {
+        return Err(CompilerDiagnostic::todo(
+            "(BuildHIR::lowerFunction) Handle a function expression that refers to its own name",
+            reference,
+        ));
+    }
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {

@@ -1441,8 +1441,8 @@ describe("bundler", () => {
           export const Deep = memo(function Deep({ x }) {
             return <i x={x} kids={[0].map(n => [n].map(m => <Deep key={m} x={m} />)[0])} />;
           });
-          // A function in it has the name too and reads itself. Its name is printed by its text, so lowering must
-          // not give its reads another.
+          // A function in it has the name too and reads itself: lowering stops there, and the component is left as
+          // written.
           export const NestedSame = memo(function NestedSame({ x, items }) {
             const first = [x].map(function NestedSame(k) { return typeof NestedSame + NestedSame.length + k; });
             return <i first={first} kids={[...items].map(n => <NestedSame key={n} x={n} items={[]} />)} />;
@@ -1535,10 +1535,171 @@ describe("bundler", () => {
         expect(out.match(/function Tree\d*\(t0\)/g)).toHaveLength(5);
         for (const compiled of [
           ...["Default", "Made", "Twice", "Deep", "Dotted", "Early", "Forwarded", "InIf", "Keys", "Member", "Row"],
-          ...["Inner", "Shadowed", "ShadowedFirst", "BlockLocal", "Ternary", "TypeOf", "NestedSame", "Cell", "Item"],
+          ...["Inner", "Shadowed", "ShadowedFirst", "BlockLocal", "Ternary", "TypeOf", "Cell", "Item"],
         ]) {
           expect(out).toMatch(new RegExp(`function ${compiled}\\d*\\(t0(, ref)?\\)`));
         }
+        // As written: a function expression in it refers to its own name.
+        expect(out).toMatch(/function NestedSame\d*\(\{ x, items \}\)/);
+      },
+    });
+  }
+
+  // A function expression inside such a function has a name of its own too. No instruction declares it, and the
+  // function is printed under its source text. A read is an identifier, which lowering renames after another binding of
+  // that name (`walk_0`) and RenameVariables after a name of the module (`Row$0`). A function that is called where it
+  // stands is inlined, and then nothing names it. Each of those printed a read of a name that is not bound. The
+  // function around it is now left as written.
+  for (const [backend, target, minifyIdentifiers] of [
+    ["cli", "browser", false],
+    ["cli", "bun", true],
+    ["api", "browser", true],
+    ["api", "bun", false],
+  ] as const) {
+    const name = `${backend}-${target}-identifiers=${minifyIdentifiers}`;
+    itBundled(`react-compiler/NestedFunctionExpressionThatNamesItself-${name}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { useCallback, useMemo } from "react";
+          const Row = "module";
+
+          function OuterConst({ x }) {
+            const walk = x + 1;
+            return <i a={walk} v={[0].map(function walk(n) { return [n].map(() => typeof walk)[0]; })} />;
+          }
+          function OuterParameter({ walk }) {
+            return <i a={walk} v={[0].map(function walk(n) { return typeof walk + n; })} />;
+          }
+          function ParameterOfAnotherCallback({ items }) {
+            const a = items.map(cb => cb + 1);
+            return <i a={a} v={[0].map(function cb(n) { return typeof cb + n; })} />;
+          }
+          function JsxTag({ Row }) {
+            return <i a={Row} v={[0].map(function Row(n) { return [n].map(() => <Row />)[0]; })} />;
+          }
+          function TwoOfOneName({ x }) {
+            const a = [0].map(function cb(n) { return typeof cb; });
+            const b = [0].map(function cb(n) { return typeof cb; });
+            return <i a={x} v={a.concat(b)} />;
+          }
+          function NameOfTheModule({ x }) {
+            return <i a={Row + x} v={[0].map(function Row(n) { return [n].map(() => <Row />)[0]; })} />;
+          }
+          function NamedLikeATemporary({ x }) {
+            return <i a={x} v={[0].map(function t1(n) { return typeof t1; })} />;
+          }
+          function CalledWhereItStands({ x }) {
+            const v = (function Make() { return [x].map(() => typeof Make); })();
+            return <i a={x} v={v} />;
+          }
+          function InUseMemo({ x }) {
+            const v = useMemo(function Make() { return [x].map(() => typeof Make); }, [x]);
+            return <i a={x} v={v} />;
+          }
+          function Written({ f }) {
+            const v = [0].map(function f(n) {
+              try { f = 1; } catch (e) { return e.constructor.name; }
+              return typeof f;
+            });
+            return <i a={f} v={v} />;
+          }
+          function InADefaultValue({ pick }) {
+            return <i a={pick} v={[undefined].map(function pick(self = pick) { return typeof self; })} />;
+          }
+
+          // Nothing else has the name, so main printed this one right, and so does babel-plugin-react-compiler
+          // 1.0.0. Lowering does not ask whether the name is renamed or the function inlined. "compiled" here, with
+          // the same value, is better than what this pins.
+          function NoOtherBinding({ x }) {
+            return <i a={x} v={[0].map(function Item(n) { return [n].map(() => <Item />)[0]; })} />;
+          }
+
+          // The component is a function expression of the same name, which reads its own name through the symbol
+          // it keeps. Whichever of the two names lowering meets first, the nested one is not the component: it
+          // has two parameters.
+          const NestedFirst = function Same({ x }) {
+            const v = [x].map(function Same(k, i) { return typeof Same + Same.length + k; });
+            return <i v={v.concat([0].map(n => <Same key={n} />)[0].t.length)} />;
+          };
+          const ComponentFirst = function Late({ x }) {
+            const kids = [0].map(n => <Late key={n} />);
+            const v = [x].map(function Late(k, i) { return typeof Late + Late.length + k; });
+            return <i v={v.concat(kids[0].t.length)} />;
+          };
+
+          // Not read: these are compiled.
+          function NeverRead({ f }) {
+            const v = [0].map(function f(n) { return n + 1; });
+            return <i a={f} v={v} />;
+          }
+          function ShadowedByAParameter({ f }) {
+            const v = [7].map(function f(f) { return typeof f; });
+            return <i a={f} v={v} />;
+          }
+          function NamedCallback({ onPick }) {
+            const handleClick = useCallback(function handleClick(e) { return onPick(e); }, [onPick]);
+            return <i v={[handleClick(2)]} />;
+          }
+          function Declaration({ x }) {
+            function walk(n) { return n > 0 ? walk(n - 1) + x : 0; }
+            return <i v={[walk(2)]} />;
+          }
+          function Self({ depth }) {
+            return <i v={[depth ? <Self depth={depth - 1} /> : depth]} />;
+          }
+
+          const forms = {
+            OuterConst, OuterParameter, ParameterOfAnotherCallback, JsxTag, TwoOfOneName, NameOfTheModule,
+            NamedLikeATemporary, CalledWhereItStands, InUseMemo, Written, InADefaultValue, NoOtherBinding,
+            NestedFirst, ComponentFirst, NeverRead, ShadowedByAParameter, NamedCallback, Declaration, Self,
+          };
+          const props = { x: 1, walk: 2, items: [1], Row: 3, f: 4, pick: 5, onPick: n => n * 2, depth: 1 };
+          for (const [name, Component] of Object.entries(forms)) {
+            let v;
+            try {
+              const functions = (key, value) => (typeof value === "function" ? "function" : value);
+              v = JSON.stringify(Component(props).p.v, functions);
+            } catch (e) {
+              v = String(e);
+            }
+            // A compiled function takes its props as one parameter, and destructures that in its body.
+            console.log(name, /^function [\\w$]+\\([\\w$]+\\)/.test(String(Component)) ? "compiled" : "as written", v);
+          }
+        `,
+        "/node_modules/react/index.js": `exports.useMemo = make => make(); exports.useCallback = it => it;`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+        "/node_modules/react/compiler-runtime.js": `
+          exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler: true,
+      target,
+      backend,
+      minifyIdentifiers,
+      run: {
+        stdout: `
+          OuterConst as written ["function"]
+          OuterParameter as written ["function0"]
+          ParameterOfAnotherCallback as written ["function0"]
+          JsxTag as written [{"t":"function","p":{}}]
+          TwoOfOneName as written ["function","function"]
+          NameOfTheModule as written [{"t":"function","p":{}}]
+          NamedLikeATemporary as written ["function"]
+          CalledWhereItStands as written ["function"]
+          InUseMemo as written ["function"]
+          Written as written ["TypeError"]
+          InADefaultValue as written ["function"]
+          NoOtherBinding as written [{"t":"function","p":{}}]
+          NestedFirst as written ["function21",1]
+          ComponentFirst as written ["function21",1]
+          NeverRead compiled [1]
+          ShadowedByAParameter compiled ["number"]
+          NamedCallback compiled [4]
+          Declaration compiled [2]
+          Self compiled [{"t":"function","p":{"depth":0}}]
+        `,
       },
     });
   }

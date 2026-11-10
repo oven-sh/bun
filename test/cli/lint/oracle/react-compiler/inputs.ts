@@ -737,6 +737,21 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "flow-other.jsx": readsRef("// $FlowFixMe[other]"),
   // typescript-eslint parses it. Babel, with the plugin's options, doesn't.
   "decorator.tsx": `@sealed\nclass Store {}\n\n${readsRef("")}`,
+  // The function expression refers to its own name, which no instruction of the compiler declares. The plugin's
+  // compiler stops at the read with an invariant. `bun build --react-compiler` doesn't compile such a function either,
+  // and says so earlier, with a Todo that the plugin doesn't have.
+  "names-itself.jsx": `export function Component() {
+  return (
+    <Button
+      onClick={() => {
+        retry(function attempt() {
+          return attempt;
+        });
+      }}
+    />
+  );
+}
+`,
   // No function is named like a component or a hook, so the plugin doesn't compile anything.
   "memo.jsx": `export default memo(props => {
   const ref = useRef(null);

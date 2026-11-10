@@ -12,7 +12,7 @@ use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::program::{HostLoader, HostModuleId};
 use crate::session::Arena;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::resolve_path::{dirname, join_spill};
 use std::any::Any;
 use std::borrow::Cow;
 
@@ -47,8 +47,18 @@ pub trait CodeHost: Host {
         false
     }
 
+    fn names_file_with_side_effects(&self, directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
+        join_spill::<Posix>(&mut Vec::new(), &[directory, entry]) == path
+    }
+
     fn leaves_packages_outside(&self) -> bool {
         false
+    }
+
+    fn note_guesses_left_out(&self, _file_whose_loader_decides_its_kind: Option<&[u8]>) {}
+
+    fn is_code(&self, _path: &[u8]) -> bool {
+        true
     }
 
     fn is_data_file(
@@ -66,6 +76,10 @@ pub trait CodeHost: Host {
         _path: &[u8],
         _needs_extension: bool,
     ) {
+    }
+
+    fn stands_for_text_that_cannot_be_read(&self, _payload: &HostPayload) -> bool {
+        false
     }
 
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
@@ -86,6 +100,10 @@ pub trait CodeHost: Host {
 
     fn has_loader_at_run_time(&self) -> bool {
         false
+    }
+
+    fn types_asked_where_options_are_unread(&self, _path: &[u8]) -> &'static [&'static [u8]] {
+        &[]
     }
 
     fn add_module_with_query(
@@ -311,6 +329,7 @@ pub enum FoundCode {
         path: Vec<u8>,
         required: Option<Vec<u8>>,
         links_followed: bool,
+        has_side_effects: bool,
     },
     External(Vec<u8>),
     NotFound(CodeFailure),
@@ -351,7 +370,6 @@ pub struct LoaderRequest<'a> {
 
 #[derive(Copy, Clone)]
 pub struct CodeParseRequest<'a> {
-    pub package_module_type: DeclaredModuleType,
     pub path: &'a [u8],
     pub loader: HostLoader,
     pub options: ParseOptions,

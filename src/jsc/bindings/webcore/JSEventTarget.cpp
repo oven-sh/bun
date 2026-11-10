@@ -245,7 +245,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
 
 JSC_DEFINE_HOST_FUNCTION(jsEventTargetPrototypeFunction_addEventListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventTarget>::call<jsEventTargetPrototypeFunction_addEventListenerBody>(*lexicalGlobalObject, *callFrame, "addEventListener");
+    return IDLOperation<JSEventTarget>::callExposingReceiver<jsEventTargetPrototypeFunction_addEventListenerBody>(*lexicalGlobalObject, *callFrame, "addEventListener");
 }
 
 static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_removeEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventTarget>::ClassParameter castedThis)
@@ -294,7 +294,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_dispatchEventBo
 
 JSC_DEFINE_HOST_FUNCTION(jsEventTargetPrototypeFunction_dispatchEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventTarget>::call<jsEventTargetPrototypeFunction_dispatchEventBody>(*lexicalGlobalObject, *callFrame, "dispatchEvent");
+    return IDLOperation<JSEventTarget>::callExposingReceiver<jsEventTargetPrototypeFunction_dispatchEventBody>(*lexicalGlobalObject, *callFrame, "dispatchEvent");
 }
 
 JSC::GCClient::IsoSubspace* JSEventTarget::subspaceForImpl(JSC::VM& vm)

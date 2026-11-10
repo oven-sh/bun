@@ -1,0 +1,23 @@
+# -- source: main.js
+# function make(row) { return row.kind ? new Round(row) : new Flat(row); }
+# function run(count) { var text = ""; for (var i = 0; i < count; i++) { var made = make(rows[i % 3]); text += made.left + made.top + (made.reach ?? made.width) + ":" + Object.keys(made).join("") + " "; } return text; }
+# class Mark { constructor(row) { this.left = row.left; this.top = row.top; } }
+# class Round extends Mark { constructor(row) { super(row); this.reach = row.reach; } }
+# class Flat extends Mark { constructor(row) { super(row); this.width = row.width; } }
+# const rows = [{ kind: 1, left: 1.5, top: 2, reach: 3 }, { kind: 0, left: 4, top: 5.5, width: 6 }, { kind: 1, left: 7, top: 8, reach: 9.5 }];
+# print(run(6));
+# -- end of source
+# f3 = the constructor of Mark, f4 = the constructor of Round
+# The constructor of Mark fills the object from what it reads by name off its parameter. In Round new.target is proven, so the copy makes an object of Round's own layout in line, and all three stores go into a fresh cell of a proven layout.
+# RUN(COPY): walk f4 mechanisms=all
+# COPY: frame 1 callee=f3
+# COPY-NOT: GetConstructPrototype
+# COPY-NOT: function=f3
+# COPY: [[made]]: L1 @Cell = NewObject layout=L1
+# COPY: PutSlotOrAdd [[made]], {{*}} key="left" receivers=[L1] level=Proven
+# COPY: PutSlotOrAdd [[made]], {{*}} key="top" receivers=[L1] level=Proven
+# COPY-NOT: PropSet
+# COPY: PutSlotOrAdd [[made]], {{*}} key="reach" receivers=[L1] level=Proven
+# RUN: run-in-shell void 0;
+# CHECK: 6.5:lefttopreach 15.5:lefttopwidth 24.5:lefttopreach 6.5:lefttopreach 15.5:lefttopwidth 24.5:lefttopreach
+# CHECK-NEXT: exited with 0

@@ -1,0 +1,28 @@
+# exec and test write lastIndex of a global or sticky pattern. A pattern that is frozen, or whose lastIndex is fixed, refuses the write inside the stub that stands for the method.
+# The call of that stub names the built-in at its site, as its sisters in the same emitter do: the stack lists exec or test, and a function that left by a tail call of the method is not listed.
+# RUN(SAID): run-in-shell mechanisms=all
+# SAID: frozen exec,attempt test,attempt exec,keptExec test,keptTest
+# SAID-NEXT: fixed exec,attempt test,attempt exec,keptExec test,keptTest
+# SAID-NEXT: free ["b"] true 1 1
+# SAID-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: frozen exec,attempt test,attempt exec,keptExec test,keptTest
+# HELD-NEXT: fixed exec,attempt test,attempt exec,keptExec test,keptTest
+# HELD-NEXT: free ["b"] true 1 1
+# HELD-NEXT: exited with 0
+# -- source: main.js
+# "use strict";
+# const namesOf = error => String(error.stack).split("\n").slice(0, 2).map(line => line.split("@")[0]).join();
+# function lastExec(given) { return given.exec("abc"); }
+# function lastTest(given) { return given.test("abc"); }
+# function keptExec(given) { const m = given.exec("abc"); return m.index + 0; }
+# function keptTest(given) { const m = given.test("abc"); return m ? 1 : 0; }
+# function attempt(f) { try { return JSON.stringify(f()); } catch (error) { return namesOf(error); } }
+# const kinds = { frozen: () => Object.freeze(/b/g), fixed: () => Object.defineProperty(/b/g, "lastIndex", { writable: false }), free: () => /b/g };
+# for (let round = 0; round < 3; round++) {
+#   for (const [kind, make] of Object.entries(kinds)) {
+#     const said = [attempt(() => { const given = make(); return lastExec(given); }), attempt(() => { const given = make(); return lastTest(given); }), attempt(() => { const given = make(); return keptExec(given); }), attempt(() => { const given = make(); return keptTest(given); })];
+#     if (round === 2) print(kind, said.join(" "));
+#   }
+# }
+# -- end of source

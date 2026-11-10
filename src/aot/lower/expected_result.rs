@@ -1,3 +1,4 @@
+use bun_sema::bind::Parent;
 use bun_sema::check::aot::{CallTarget, FunctionRef, WrittenType};
 use bun_sema::hir::{ExprId, ExprKind, FnBody};
 
@@ -42,17 +43,30 @@ impl FileLowering<'_, '_, '_, '_> {
         if matches!(hir[text].kind, ExprKind::Spread(_)) {
             return None;
         }
-        let written = self.queries.contextual_type_of_settled_value(call).ok()??;
-        let ty = self.result_type(written);
-        if ty == TypeTable::ANYTHING {
-            return None;
-        }
+        let ty = self.find_type_written_over(call)?;
         let limit = LimitId::MaxExpectedResultLayouts;
         let layouts = self.collect_reached_layouts(ty, limit)?;
         self.note_what_is_built(ty, limit);
-        let flags = ExpectedResultFlags::default();
+        let flags = ExpectedResultFlags::IS_MADE_BY_PARSER;
         let expected = ExpectedResult { ty, layouts, flags };
         Some(self.fragment.add_expected_result(expected))
+    }
+
+    fn find_type_written_over(&mut self, mut value: ExprId) -> Option<TypeId> {
+        loop {
+            let written = self.queries.contextual_type_of_settled_value(value).ok()?;
+            let ty = written.map_or(TypeTable::ANYTHING, |written| self.result_type(written));
+            if ty != TypeTable::ANYTHING {
+                return Some(ty);
+            }
+            let Parent::Expr(around) = self.bound.parent_of_expr(value) else {
+                return None;
+            };
+            if !matches!(self.hir[around].kind, ExprKind::As { expr, .. } if expr == value) {
+                return None;
+            }
+            value = around;
+        }
     }
 
     fn find_builtin_of_signature(&self, target: &CallTarget) -> Option<BuiltinId> {
@@ -117,15 +131,17 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let limit = LimitId::MaxExpectedResultLayouts;
         let layouts = self.collect_reached_layouts(ty, limit)?;
-        let flags = match answers_query {
-            true => ExpectedResultFlags::IS_ROWS_OF_QUERY,
-            false => ExpectedResultFlags::default(),
+        let is_made_by_parser = builtin.is_some_and(table::is_parser);
+        let flags = match (answers_query, is_made_by_parser) {
+            (true, _) => ExpectedResultFlags::IS_ROWS_OF_QUERY,
+            (false, true) => ExpectedResultFlags::IS_MADE_BY_PARSER,
+            (false, false) => ExpectedResultFlags::default(),
         };
         let expected = ExpectedResult { ty, layouts, flags };
         if builtin.is_none() {
             return Some(self.fragment.add_described_result(expected));
         }
-        if builtin.is_some_and(table::is_parser) {
+        if is_made_by_parser {
             self.note_what_is_built(ty, limit);
         }
         Some(self.fragment.add_expected_result(expected))

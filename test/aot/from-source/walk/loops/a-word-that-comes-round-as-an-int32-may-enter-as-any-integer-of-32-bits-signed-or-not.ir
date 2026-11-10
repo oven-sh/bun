@@ -1,0 +1,33 @@
+# The words of a hash go round a loop and come round out of `| 0`; what enters is read off a list of numbers, a view of unknown class, a pattern: it may be a double.
+# In front of the typed build each word was asked for an int32. The state of MD5, SHA-1 and SHA-256 is kept as `>>> 0`: half of all words lie over 2 ** 31: one such word and all 64 turns ran in the closed copy, operator by operator through stubs.
+# The word is asked for an integer from -2 ** 31 to 2 ** 32 - 1: bit operators take its low 32 bits, sums are exact in 64 bits, and with no turn at all the word itself is handed back. A fraction, -0, NaN, 2 ** 32 fail the test as before.
+# compared: a word that the head compares stays asked for an int32: the head's relation wants one.
+# -- source: a-word-that-comes-round-as-an-int32-may-enter-as-any-integer-of-32-bits-signed-or-not.ts
+# declare function hidden(): number;
+# declare function say(x: string): void;
+# function run(xs: number[], n: number): string { let a = xs[0]!, b = xs[1]!; for (let i = 0; i < n; i++) { const t = (a + b) | 0; b = a; a = t; } return a + "," + b; }
+# function compared(xs: number[]): string { let a = xs[0]!, turns = 0; while (a < 100) { a = (a + 7) | 0; turns++; } return a + "," + turns; }
+# for (let k = 0; k < 9; k++) say(run([hidden(), hidden()], hidden()));
+# say(String(Object.is(Number(run([hidden(), hidden()], hidden()).split(",")[0]), 0))); say(compared([hidden()])); say(compared([hidden()])); say(compared([hidden()]));
+# -- end of source
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = TypeTest {{*}}testedType=int[-2147483648, 4294967295]
+# CHECK: : int[-2147483648, 4294967295] @Int64, {{*}}: int[-2147483648, 4294967295] @Int64, {{*}}isInLoop=true isLoopHead=true
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: testedType=int[-2147483648, 4294967295]
+# CHECK: = TypeTest {{*}}testedType=i32
+# RUN(SHELL): run-in-shell const all = [4294967295, 1, 0, 4294967295, 1, 1, 4294967295, 1, 2, 0.5, 0.5, 1, 4294967296, 1, 1, 9007199254740992, 1, 1, -2147483649, -1, 1, NaN, 1, 1, 2147483648, 2147483648, 3, -0, 5, 0, 90, 4294967295, -4294967295.5]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: 4294967295,1
+# SHELL-NEXT: 0,4294967295
+# SHELL-NEXT: -1,0
+# SHELL-NEXT: 1,0.5
+# SHELL-NEXT: 1,4294967296
+# SHELL-NEXT: 0,9007199254740992
+# SHELL-NEXT: 2147483646,-2147483649
+# SHELL-NEXT: 0,NaN
+# SHELL-NEXT: -2147483648,-2147483648
+# SHELL-NEXT: true
+# SHELL-NEXT: 104,2
+# SHELL-NEXT: 4294967295,0
+# SHELL-NEXT: 106,15

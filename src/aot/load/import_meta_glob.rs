@@ -4,11 +4,13 @@ use bun_ast::{Loc, Source};
 use bun_core::fmt::format_json_string_utf8;
 use bun_js_parser::{ExpandedImportMetaGlob, ImportMetaGlobFiles, InvalidImportMetaGlob};
 use bun_sema::atom::{Atom, Interner};
+use bun_sema::check::spans::skip_trivia_back;
 use bun_sema::hir::{
-    Call, CallId, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func, Import,
-    ImportEquals, ImportEqualsTarget, ImportId, ImportSpec, Keyword, ListAt, NameKind, Param,
-    ParamId, PatKind, Prop, PropKey, PropKind, ResolutionMode, Span, SpecifierKind, SpecifierUse,
-    StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind, rare,
+    Call, CallId, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func,
+    FunctionWrittenByLoader, Import, ImportEquals, ImportEqualsTarget, ImportId, ImportSpec,
+    Keyword, ListAt, NameKind, Param, ParamId, PatKind, Prop, PropKey, PropKind, ResolutionMode,
+    Span, SpecifierKind, SpecifierUse, StmtId, StmtKind, TextRange, TextWrittenByLoader,
+    TypeNodeId, TypeNodeKind, rare, start_of,
 };
 use bun_sema::resolve::{EarlyTransformRequest, TreeChange};
 use bun_sema::session::Arena;
@@ -33,6 +35,11 @@ struct WrittenCall {
     expression: ExprId,
     call: CallId,
     start: u32,
+    end_of_callee: u32,
+}
+
+fn quote(text: &[u8]) -> String {
+    format_json_string_utf8(text, Default::default()).to_string()
 }
 
 fn find_calls(hir: &File<'_>, glob: Atom) -> Vec<WrittenCall> {
@@ -54,10 +61,13 @@ fn find_calls(hir: &File<'_>, glob: Atom) -> Vec<WrittenCall> {
         let is_glob = name == glob
             && hir[call].chain == Chain::No
             && matches!(object.kind, ExprKind::ImportMeta);
+        let first = hir.ids(hir[call].args).next();
+        let first = first.map_or(hir[call].close_pos, |first| start_of(hir, first));
         is_glob.then_some(WrittenCall {
             expression,
             call,
             start: object.pos,
+            end_of_callee: skip_trivia_back(&hir.text, first as usize) as u32 - 1,
         })
     });
     calls.collect()
@@ -71,6 +81,7 @@ struct Writer<'a, 's> {
     add_module: &'a dyn Fn(&[u8], Vec<u8>),
     pos: u32,
     end: u32,
+    written: String,
 }
 
 impl Writer<'_, '_> {
@@ -156,7 +167,7 @@ impl Writer<'_, '_> {
         })
     }
 
-    fn arrow(&mut self, params: Span<ParamId>, body: FnBody) -> ExprId {
+    fn arrow(&mut self, params: Span<ParamId>, body: FnBody, start_in_text: usize) -> ExprId {
         let function = self.file.add_fn(Func {
             kind: FnKind::Arrow,
             flags: Flags::empty(),
@@ -173,7 +184,21 @@ impl Writer<'_, '_> {
             is_strict: self.file.is_strict,
             is_strict_by_syntax: self.file.is_strict_by_syntax,
         });
+        let written = FunctionWrittenByLoader {
+            function,
+            text: self.file.texts_written_by_loader.len() as u32,
+            start_in_text: start_in_text as u32,
+            end_in_text: self.written.len() as u32,
+        };
+        self.file.functions_written_by_loader.push(written);
         self.expression(ExprKind::Fn(function))
+    }
+
+    fn finish_text(&mut self, start: u32, end: u32) {
+        let text = self.atoms.intern(self.written.as_bytes());
+        self.written.clear();
+        let written = TextWrittenByLoader { start, end, text };
+        self.file.texts_written_by_loader.push(written);
     }
 
     fn attributes(&mut self, import_type: &[u8]) -> ExprId {
@@ -198,24 +223,37 @@ impl Writer<'_, '_> {
         }]);
         let module = self.expression(ExprKind::Ident(parameter));
         let export = self.member(module, name);
-        let callback = self.arrow(params, FnBody::Expr(export));
+        self.written += ".then(";
+        let start_in_text = self.written.len();
+        let is_part = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$');
+        let is_written_behind_dot = !name[0].is_ascii_digit() && name.iter().all(is_part);
+        self.written += &match is_written_behind_dot {
+            true => format!("(m) => m.{}", BStr::new(name)),
+            false => format!("(m) => m[{}]", quote(name)),
+        };
+        let callback = self.arrow(params, FnBody::Expr(export), start_in_text);
+        self.written += ")";
         let then = self.member(import, b"then");
         let call = self.call(then, &[callback]);
         self.expression(ExprKind::Call(call))
     }
 
     fn lazy_entry(&mut self, files: &ImportMetaGlobFiles, path: &[u8]) -> ExprId {
+        let start_in_text = self.written.len();
+        self.written += &format!("() => import({}", quote(path));
         let mut args = vec![self.specifier(path, SpecifierKind::ImportCall)];
         if let Some(import_type) = files.import_type {
+            self.written += &format!(", {{ with: {{ type: {} }} }}", quote(import_type));
             let attributes = self.attributes(import_type);
             args.push(self.object_of(b"with", attributes));
         }
+        self.written += ")";
         let args = self.file.list(&args);
         let mut value = self.expression(ExprKind::ImportCall { args });
         if !files.import.is_empty() {
             value = self.then_export(value, &files.import);
         }
-        self.arrow(Span::EMPTY, FnBody::Expr(value))
+        self.arrow(Span::EMPTY, FnBody::Expr(value), start_in_text)
     }
 
     fn write_require(&mut self, files: &ImportMetaGlobFiles, path: &[u8], local: Atom) {
@@ -294,21 +332,28 @@ impl Writer<'_, '_> {
             true => self.write_require(files, path, local),
             false => self.write_import(files, path, local),
         }
+        self.written += &format!("$glob${number}");
         let entry = self.expression(ExprKind::Ident(local));
         if !self.is_common_js {
             return entry;
         }
+        self.written += &format!(".{EXPORT_OF_EAGER_ENTRY}");
         let entry = self.member(entry, EXPORT_OF_EAGER_ENTRY.as_bytes());
-        match files.import.is_empty() {
-            true => entry,
-            false => self.member(entry, &files.import),
+        if files.import.is_empty() {
+            return entry;
         }
+        self.written += &format!("[{}]", quote(&files.import));
+        self.member(entry, &files.import)
     }
 
     fn write_files(&mut self, expression: ExprId, files: &ImportMetaGlobFiles) {
         let mut properties = Vec::with_capacity(files.entries.len());
+        self.written += "({";
         for (key, path) in &files.entries {
+            let comma = if properties.is_empty() { "" } else { "," };
+            self.written += &format!("{comma} {}: ", quote(key));
             let value = if files.only_keys {
+                self.written += "0";
                 let zero = self.file.number(0.0);
                 self.expression(ExprKind::Number(zero))
             } else if files.eager {
@@ -318,6 +363,8 @@ impl Writer<'_, '_> {
             };
             properties.push((self.atoms.intern(key), NameKind::StringLiteral, value));
         }
+        self.written += " })";
+        self.finish_text(self.pos, self.end);
         let kind = if self.file.is_js {
             self.object_kind(&properties)
         } else {
@@ -328,6 +375,9 @@ impl Writer<'_, '_> {
     }
 
     fn throwing_function(&mut self, message: &[u8]) -> ExprId {
+        self.written += "(";
+        let start_in_text = self.written.len();
+        self.written += &format!("() => {{ throw new TypeError({}); }}", quote(message));
         let type_error = self.atoms.intern(b"TypeError");
         let type_error = self.expression(ExprKind::Ident(type_error));
         let message = self.text(message);
@@ -335,14 +385,16 @@ impl Writer<'_, '_> {
         let error = self.expression(ExprKind::New(error));
         let statement = self.file.stmt(StmtKind::Throw(error), self.pos);
         let body = self.file.list(&[statement]);
-        let function = self.arrow(Span::EMPTY, FnBody::Block(body));
+        let function = self.arrow(Span::EMPTY, FnBody::Block(body), start_in_text);
+        self.written += ")";
         self.untyped(function)
     }
 
-    fn write_throw(&mut self, call: CallId, message: &[u8]) {
+    fn write_throw(&mut self, call: &WrittenCall, message: &[u8]) {
         let callee = self.throwing_function(message);
-        self.file[call].callee = callee;
-        self.file[call].type_args = ListAt::EMPTY;
+        self.finish_text(self.pos, call.end_of_callee);
+        self.file[call.call].callee = callee;
+        self.file[call.call].type_args = ListAt::EMPTY;
     }
 
     fn write_definition(&mut self) -> StmtId {
@@ -351,6 +403,8 @@ impl Writer<'_, '_> {
         let object = self.untyped(object);
         let target = self.member(object, b"glob");
         let value = self.throwing_function(NOT_CALLED_DIRECTLY);
+        let end_of_file = self.file.text.len() as u32;
+        self.finish_text(end_of_file, end_of_file);
         let op = None;
         let assignment = self.expression(ExprKind::Assign { op, target, value });
         self.file.stmt(StmtKind::Expr(assignment), POSITION)
@@ -358,7 +412,6 @@ impl Writer<'_, '_> {
 }
 
 fn write_module_of_eager_entry(import_type: &[u8], path: &[u8]) -> Vec<u8> {
-    let quote = |text: &[u8]| format_json_string_utf8(text, Default::default()).to_string();
     let attributes = match import_type {
         [] => String::new(),
         _ => format!(" with {{ type: {} }}", quote(import_type)),
@@ -440,6 +493,7 @@ pub(crate) fn expand_calls<'s>(
         add_module,
         pos: POSITION,
         end: POSITION,
+        written: String::new(),
     };
     let mut is_expanded = false;
     for call in &calls {
@@ -456,7 +510,7 @@ pub(crate) fn expand_calls<'s>(
                     && !files.only_keys
                     && !files.entries.is_empty() =>
             {
-                writer.write_throw(call.call, EAGER_IN_COMMON_JS);
+                writer.write_throw(call, EAGER_IN_COMMON_JS);
             }
             Ok(files) => {
                 is_expanded = true;
@@ -464,7 +518,7 @@ pub(crate) fn expand_calls<'s>(
             }
             Err(invalid) => {
                 warn(messages, request.path, &request.hir.text, invalid);
-                writer.write_throw(call.call, &invalid.message);
+                writer.write_throw(call, &invalid.message);
             }
         }
     }

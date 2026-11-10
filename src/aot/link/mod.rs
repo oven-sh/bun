@@ -446,6 +446,7 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
         module_failures: records.module_failures,
         ambiguous_exports: records.ambiguous_exports,
         source_stamps: Vec::new(),
+        declared_records: program_tables.declared_records,
         eval_scopes: program_tables.eval_scopes,
         functions: Vec::new(),
         data: program_tables.data,

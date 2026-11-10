@@ -897,8 +897,8 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
 
     if (Bun::hasCompiledModules() && !target->moduleGraph()) [[unlikely]] {
-        String pathOfAsker = Bun::pathOfRequirer(target, referrer ? referrer->toWTFString(BunString::ZeroCopy) : String());
-        JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
+        String requesterPath = Bun::requesterForRequire(target, referrer ? referrer->toWTFString(BunString::ZeroCopy) : String());
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, requesterPath);
         bool hasRun = requireCompiledModule(globalObject, target, specifierWtfString, !!typeAttribute);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun)

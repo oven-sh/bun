@@ -1,0 +1,16 @@
+# -- source: a-number-or-nothing-with-a-user-that-does-more-than-reckon-stays-what-it-is.ts
+# declare function sink(value: unknown): void;
+# const rows: number[][] = [], holed: number[][] = [];
+# for (let i = 0; i < 30; i++) { rows.push([i + 0.5, i * 2.25]); holed.push([i + 0.5, i * 2.25]); }
+# delete holed[11][1]; delete holed[12][1]; delete holed[29][0];
+# function tally(d: number[][], a: number): number { let s = 0, holes = 0; for (let i = 0; i < d.length; i++) { const v = d[i][a]; if (v === undefined) holes++; else s += v * v; } return holes * 1000000 + s; }
+# function kept(d: number[][], a: number, out: unknown[]): number { let s = 0; for (let i = 0; i < d.length; i++) { const v = d[i][a]; s += v; out[i] = v; } return s; }
+# function carried(d: number[][], a: number): number { let s = 0, last: number | undefined = 0; for (let i = 0; i < d.length; i++) { const v = d[i][a]; s += v * 2; last = v; } return last === undefined ? -7 : s; }
+# const answers: unknown[] = [];
+# for (const d of [rows, holed]) for (const a of [0, 1, 2]) { const out: unknown[] = []; answers.push(tally(d, a), kept(d, a, out), out.filter(v => v === undefined).length, out.filter(v => v !== v).length, carried(d, a)); }
+# sink(answers);
+# -- end of source
+# Of the users of `v` one asks whether anything is there, or hands the value on as it is, into a list or to the next turn. No check of the compiler's own stands behind this one: made a number, undefined
+# would be NaN without a word, so the answers are the witness.
+# RUN(SHELL): run-in-shell globalThis.sink = answers => print(answers.join(" "));
+# SHELL: 8997.5 450 0 0 900 43309.6875 978.75 0 0 1957.5 30000000 NaN 30 0 -7 1008127.25 NaN 1 0 -7 2041968.125 NaN 2 0 NaN 30000000 NaN 30 0 -7

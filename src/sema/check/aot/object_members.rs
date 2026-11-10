@@ -7,7 +7,7 @@ use super::type_shape::{ShapeKind, TypeShape};
 use crate::atom::Atom;
 use crate::hir::{ExprId, MemberKey};
 use crate::program::Sym;
-use crate::types::{IndexInfo, MapperId, Origin, TypeData, TypeId};
+use crate::types::{IndexInfo, MapperId, Origin, PropSource, TypeData, TypeId};
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -311,6 +311,36 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return PositionTypes::unwritten(Err(GaveUp::Unresolved));
         };
         self.types_of_prop(prop, members.mapper, members.mapper)
+    }
+
+    pub(super) fn compute_listed_member_hangs_on_type_arguments(
+        &mut self,
+        ty: TypeId,
+        member: ListedMember,
+    ) -> bool {
+        let ty = self.declared_type_of_this(ty);
+        let Some(members) = self.c.members(ty) else {
+            return true;
+        };
+        let listed = members.shape().props.get(member.property_index as usize);
+        let Some(prop) = listed.filter(|prop| prop.name == member.name.atom()) else {
+            return true;
+        };
+        let is_written_out = matches!(
+            prop.source,
+            PropSource::Symbol(_) | PropSource::Literal(..) | PropSource::Type(_)
+        );
+        if !is_written_out || prop.mapper != MapperId::IDENTITY {
+            return true;
+        }
+        let declared = self.ask(|queries| {
+            let declared = queries.c.type_of_prop(prop, MapperId::IDENTITY);
+            queries.resolved(declared)
+        });
+        match declared {
+            Ok(declared) => self.c.could_contain_type_variables(declared),
+            Err(_) => true,
+        }
     }
 
     pub(super) fn compute_index_signatures(

@@ -1,0 +1,21 @@
+# -- source: null-on-one-way-of-a-meeting-is-not-expected-of-what-the-other-way-brings.ts
+# declare function sink(value: unknown): void;
+# const hold: any = JSON.parse('{"v":null}');
+# function sumOf(t: number): unknown { const p = t < 0 ? null : hold.v; let sum = 0; for (let i = 0; i < p.length; i++) sum = sum + 0.5 * p[i]; return sum; }
+# function tried(t: number): unknown { try { return sumOf(t); } catch (thrown) { return thrown instanceof TypeError; } }
+# const seen: unknown[] = [];
+# for (const held of [Float64Array.of(1, 2, 3.5), [1, 2, 3.5], Uint8Array.of(1, 2, 3), JSON.parse('{"0":4,"1":6,"length":2}'), "12", null, undefined]) { hold.v = held; seen.push(tried(1)); }
+# seen.push(tried(-1));
+# sink(seen.join(" "));
+# -- end of source
+# Where ways meet, what is known of some ways was expected of the whole: null on the one way, nothing known of the other, and the walk asked "is it null?" in every turn of the loop; the likely arm threw and
+# the arm that ran was rare and closed: 128 instructions an element. Null alone, beside a way of which nothing is known, says nothing of what that way brings: the use speaks, and the front of the loop tells
+# a list from bytes and from other views.
+# f1 = sumOf
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: TypeTest {{*}} testedType=null
+# CHECK: = GetTypedArrayElement
+# CHECK-NOT: TypeTest {{*}} testedType=null
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 3.25 3.25 3 5 1.5 true true true

@@ -2,9 +2,8 @@ use super::arrow_function_expression::{FormatMaybeCachedFunctionBody, FunctionCa
 use super::block_statement::is_empty_block;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
-use super::semicolon::OptionalSemicolon;
+use super::semicolon::{BodilessDeclarationSemicolon, OptionalSemicolon};
 use super::type_parameters::type_parameters;
-use crate::js::ast_nodes::statement_after;
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
 };
@@ -106,28 +105,26 @@ pub(crate) fn write_function<'a>(
                 }
             ]
         );
-    } else if f.options().semicolons.is_as_needed() && block_follows_declaration(func) {
-        write!(f, ";");
     } else {
-        write!(f, OptionalSemicolon);
+        match declaration_statement(func) {
+            Some(statement) => write!(f, BodilessDeclarationSemicolon(statement)),
+            None => write!(f, OptionalSemicolon),
+        }
     }
 }
 
-/// `function f(): void;⏎{}`: without the `;`, the block is the body of `f`. Prettier and oxfmt print
-/// `function f(): void⏎{}` with `semi: false`.
-fn block_follows_declaration(func: Func<'_>) -> bool {
-    let statement = match func.owner() {
-        Node::Stmt(statement) => statement,
-        // `export default function f(): void;`
+/// The statement that declares `func`: its own, or the `export default` around it.
+fn declaration_statement(func: Func<'_>) -> Option<Stmt<'_>> {
+    match func.owner() {
+        Node::Stmt(statement) => Some(statement),
         Node::Expr(e) => match e.parent() {
             Node::Stmt(statement) if matches!(statement.kind(), StmtKind::ExportDefault(_)) => {
-                statement
+                Some(statement)
             }
-            _ => return false,
+            _ => None,
         },
-        _ => return false,
-    };
-    statement_after(statement).is_some_and(|next| next.tag() == StmtTag::Block)
+        _ => None,
+    }
 }
 
 /// Prettier's `isIifeCalleeOrTaggedTemplateExpressionTag`.

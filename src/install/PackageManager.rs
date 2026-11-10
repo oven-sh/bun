@@ -2645,8 +2645,8 @@ pub fn init(
     }
     // `bunx` sets these for this command alone. They are removed because lifecycle scripts and the
     // security scanner get a copy of this map.
-    env.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
-    env.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
+    env.remove(b"BUN_INTERNAL_BUNX_INSTALL");
+    env.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
 
     initialize_store();
 

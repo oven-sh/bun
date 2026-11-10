@@ -6579,7 +6579,7 @@ impl VirtualMachine {
         self.restore_test_time_zone();
         if let Some(snapshot) = self.test_isolation_state.proxy_env.as_ref() {
             let mut slots = self.proxy_env_storage.lock();
-            slots.restore(&mut self.transpiler.env_mut().map, snapshot);
+            slots.restore(self.transpiler.env_mut(), snapshot);
         }
     }
 

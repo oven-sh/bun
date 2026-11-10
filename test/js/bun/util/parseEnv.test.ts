@@ -40,12 +40,14 @@ describe("Bun.parseEnv", () => {
     LATE: "late",
   });
 
-  test("gives the same values as the startup loader", async () => {
+  test.concurrent("gives the same values as the startup loader", async () => {
     using dir = tempDir("dotenv-parse-env", {
       ".env": content,
       "index.ts": `console.log(JSON.stringify(Object.fromEntries(${JSON.stringify(keys)}.map(k => [k, process.env[k]]))));`,
     });
-    const { stdout } = await bunRun(`${dir}/index.ts`, { PROBE: "fromproc" });
+    const { stdout, stderr, exitCode } = await bunRun(`${dir}/index.ts`, { PROBE: "fromproc" });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
     const fromStartup = JSON.parse(stdout);
     expect(fromStartup).toEqual(expected("fromproc"));
 
@@ -63,13 +65,13 @@ describe("Bun.parseEnv", () => {
       env: { ...bunEnv, PROBE: "fromproc" },
       stderr: "pipe",
     });
-    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [out, err, runtimeExitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).toBe("");
     expect(JSON.parse(out)).toEqual(fromStartup);
-    expect(exitCode).toBe(0);
+    expect(runtimeExitCode).toBe(0);
   });
 
-  test("the default env is the process environment without the .env files Bun loaded", async () => {
+  test.concurrent("the default env is the process environment without the .env files Bun loaded", async () => {
     using dir = tempDir("dotenv-parse-env-default", {
       ".env": "DB_HOST=localhost\nFROM_DOTENV=yes",
       "index.ts": `
@@ -77,7 +79,9 @@ describe("Bun.parseEnv", () => {
         console.log(JSON.stringify([Bun.parseEnv(text), Bun.parseEnv(text, { env: process.env })]));
       `,
     });
-    const { stdout } = await bunRun(`${dir}/index.ts`, { PROBE: "fromproc" });
+    const { stdout, stderr, exitCode } = await bunRun(`${dir}/index.ts`, { PROBE: "fromproc" });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
     expect(JSON.parse(stdout)).toEqual([
       // A key of the text wins over the `.env` that Bun loaded, as it does when the text is the
       // first file the startup loader reads.
@@ -86,7 +90,36 @@ describe("Bun.parseEnv", () => {
     ]);
   });
 
-  test("returns the text's value for a key the environment already has", async () => {
+  test.concurrent("the default env is the same in a Worker and after a proxy variable is deleted", async () => {
+    using dir = tempDir("dotenv-parse-env-worker", {
+      ".env": "FROM_DOTENV=yes\nLAST_DOTENV=last",
+      "index.ts": `
+        const text = "X=$FROM_DOTENV\\nY=$LAST_DOTENV\\nP=$PROBE";
+        const main = Bun.parseEnv(text);
+        // \`delete\` of a proxy variable removes an entry from the native map. The entries of the
+        // .env files must not move into the process environment.
+        delete process.env.HTTP_PROXY;
+        const afterDelete = Bun.parseEnv(text);
+        const worker = new Worker(new URL("./worker.ts", import.meta.url));
+        worker.onmessage = ({ data }) => {
+          console.log(JSON.stringify({ main, afterDelete, worker: data }));
+          worker.terminate();
+        };
+      `,
+      "worker.ts": `postMessage(Bun.parseEnv("X=$FROM_DOTENV\\nY=$LAST_DOTENV\\nP=$PROBE"));`,
+    });
+    const { stdout, stderr, exitCode } = await bunRun(`${dir}/index.ts`, {
+      PROBE: "fromproc",
+      HTTP_PROXY: "http://proxy",
+    });
+    // The worker's loader reads the `.env` files again and names them.
+    expect(stderr.replace(/^\[[\d.]+ms\] "\.env"\n?$/, "")).toBe("");
+    expect(exitCode).toBe(0);
+    const expected = { X: "", Y: "", P: "fromproc" };
+    expect(JSON.parse(stdout)).toEqual({ main: expected, afterDelete: expected, worker: expected });
+  });
+
+  test.concurrent("returns the text's value for a key the environment already has", async () => {
     // The startup loader keeps the environment's value for such a key. The parser returns the
     // text's value, expanded against the environment, and leaves the precedence to the caller.
     await using proc = Bun.spawn({

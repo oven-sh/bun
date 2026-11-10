@@ -526,7 +526,7 @@ pub(crate) fn with_package_script<R>(
     let result = with(env);
     match before {
         Some(before) => env.map.put(key, &before).unwrap_or_oom(),
-        None => env.map.remove(key),
+        None => env.remove(key),
     }
     result
 }

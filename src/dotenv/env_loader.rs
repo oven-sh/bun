@@ -617,8 +617,21 @@ impl Loader {
             }
         }
         self.did_load_process = true;
-        self.process_count = self.map.map.count();
+        // A worker's loader starts from the parent's map, `.env` entries included, and
+        // keeps the parent's count.
+        if self.process_count == 0 {
+            self.process_count = self.map.map.count();
+        }
         Ok(())
+    }
+
+    /// Removes `key` and keeps the process entries at the front of the map.
+    pub fn remove(&mut self, key: &[u8]) {
+        if let Some(index) = self.map.remove(key) {
+            if index < self.process_count {
+                self.process_count -= 1;
+            }
+        }
     }
 
     /// The process environment as `load_process` read it, without the `.env` files.
@@ -1640,8 +1653,10 @@ impl Map {
         Ok(())
     }
 
-    pub fn remove(&mut self, key: &[u8]) {
-        let _ = self.map.swap_remove(key);
+    /// Removes `key` and keeps the order of the others. A loader's map goes through
+    /// [`Loader::remove`], which also keeps its count of process entries right.
+    pub fn remove(&mut self, key: &[u8]) -> Option<usize> {
+        self.map.ordered_remove(key)
     }
 
     pub fn clone_with_allocator(&self) -> Result<Map, AllocError> {

@@ -449,12 +449,12 @@ impl ProxyEnvSlots {
     /// Undo every `Bun__setEnvValue` since `snapshot` was captured: drop the
     /// slot refs and put the captured values back into `map`. Caller holds
     /// the `ProxyEnvStorage` lock, like the setter.
-    pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
+    pub(crate) fn restore(&mut self, env: &mut bun_dotenv::Loader, snapshot: &ProxyEnvSnapshot) {
         self.0 = Default::default();
         for (key, value) in &snapshot.entries {
             match value {
-                Some(value) => bun_core::handle_oom(map.put(key, value)),
-                None => map.remove(key),
+                Some(value) => bun_core::handle_oom(env.map.put(key, value)),
+                None => env.remove(key),
             }
         }
     }

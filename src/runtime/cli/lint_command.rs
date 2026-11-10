@@ -155,9 +155,9 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     let parts = script.source.iter().map(|it| it.text());
     let input: Vec<&[u8]> = std::iter::once(script.head).chain(parts).collect();
     let adapt = |variables: &mut bun_dotenv::Map| {
-        Script::NOT_INHERITED
-            .iter()
-            .for_each(|name| variables.remove(name));
+        for name in Script::NOT_INHERITED {
+            variables.remove(name);
+        }
         true
     };
     match run_to_end(argv, script.cwd, &adapt, &input)? {

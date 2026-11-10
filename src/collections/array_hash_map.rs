@@ -1059,8 +1059,14 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// relative order of remaining entries (unlike `swap_remove`).
     pub fn remove(&mut self, key: &K) -> Option<V> {
         let i = self.get_index(key)?;
-        self.keys.remove(i);
-        self.hashes.remove(i);
+        Some(self.ordered_remove_at(i).1)
+    }
+
+    /// Remove the entry at `index` and shift the entries after it down. O(n); preserves
+    /// insertion order. Returns the removed pair.
+    pub fn ordered_remove_at(&mut self, index: usize) -> (K, V) {
+        let k = self.keys.remove(index);
+        self.hashes.remove(index);
         // Ordered remove shifts every index ≥ i; rebuild rather than patching
         // each slot. Immediate rebuild keeps subsequent lookups O(1) on this
         // rare path.
@@ -1068,7 +1074,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if self.keys.len() > INDEX_THRESHOLD {
             self.rebuild_index();
         }
-        Some(self.values.remove(i))
+        (k, self.values.remove(index))
     }
 
     /// std-HashMap-compat alias for `get_ptr_mut`.
@@ -1352,6 +1358,13 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         };
         self.inner.swap_remove_at(i);
         true
+    }
+
+    /// Removes the entry and keeps the order of the others. Returns its index.
+    pub fn ordered_remove(&mut self, key: &[u8]) -> Option<usize> {
+        let i = self.find(key)?;
+        self.inner.ordered_remove_at(i);
+        Some(i)
     }
 
     /// Removes the entry (swapping the last element into its slot) and

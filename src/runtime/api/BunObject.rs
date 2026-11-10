@@ -1674,13 +1674,14 @@ pub(crate) mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        let env_map = &mut vm.transpiler.env_mut().map;
+        let env = vm.transpiler.env_mut();
 
         // `delete process.env.X`
         if value.tag() == bun_core::Tag::Dead {
-            env_map.remove(slot.key);
+            env.remove(slot.key);
             return;
         }
+        let env_map = &mut env.map;
 
         if value.is_empty() {
             // Store a static empty string rather than removing, so that

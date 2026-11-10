@@ -976,9 +976,9 @@ impl BunxCommand {
             .expect("unreachable");
 
         if opts.package_name == b"bun-repl" {
-            env_loader.map.remove(b"BUN_INSPECT_CONNECT_TO");
-            env_loader.map.remove(b"BUN_INSPECT_NOTIFY");
-            env_loader.map.remove(b"BUN_INSPECT");
+            env_loader.remove(b"BUN_INSPECT_CONNECT_TO");
+            env_loader.remove(b"BUN_INSPECT_NOTIFY");
+            env_loader.remove(b"BUN_INSPECT");
         }
 
         let ignore_cwd: Vec<u8> = env_loader
@@ -986,7 +986,7 @@ impl BunxCommand {
             .unwrap_or(b"")
             .to_vec();
         if !ignore_cwd.is_empty() {
-            env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
+            env_loader.remove(b"BUN_WHICH_IGNORE_CWD");
         }
 
         let path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
@@ -1426,8 +1426,8 @@ impl BunxCommand {
 
         // These are only for the install. A `bunx` or `bun install` that the tool itself runs must
         // not inherit them.
-        env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
-        env_loader.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
+        env_loader.remove(b"BUN_INTERNAL_BUNX_INSTALL");
+        env_loader.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
 
         /// Takes the raw byte, because `signal_code()` would drop real-time signals (>31).
         fn raise(signal: u8) -> ! {

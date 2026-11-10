@@ -301,7 +301,8 @@ public:
         enum class Asker : uint8_t { Import,
             Require,
             RequireResolve,
-            ImportResolve };
+            ImportResolve,
+            ModuleMock };
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer, const BunString* importerNamespace, const BunString* resolveDir, Asker);
 
         // Set by import() and consumed by the loader's resolve hook.

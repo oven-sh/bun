@@ -605,7 +605,7 @@ impl<'a> Resolver<'a> {
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
     ///
     /// # Safety
-    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
+    /// Auto-install receives the copied `env_loader`, and the caller picks `'a`: the
     /// loader that `from.env_loader` points to must outlive `'a`.
     pub unsafe fn for_worker(
         from: &Resolver<'_>,

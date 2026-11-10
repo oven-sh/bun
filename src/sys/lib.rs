@@ -2201,9 +2201,11 @@ mod posix_impl {
     pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(true);
     /// Like `SUPPORTS_STATX_ON_LINUX`, but false once the `fstat()` of some descriptor is overridden.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub static IS_FSTATX_DIRECT: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(true);
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn stop_using_statx() {
         use core::sync::atomic::Ordering;
         SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);

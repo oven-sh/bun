@@ -1,0 +1,23 @@
+# f1 = make
+# -- source: class-instance-with-declared-fields.ts
+# class Point {
+#   x: number;
+#   y: number;
+#   constructor(x: number, y: number) {
+#     this.x = x;
+#     this.y = y;
+#   }
+# }
+# function make(x: number, y: number): Point {
+#   return new Point(x, y);
+# }
+# declare const input: any;
+# const point = make(+input, +input);
+# (globalThis as any).answer = [make, point, point.x + point.y];
+# -- end of source
+# The compiler before this one: 7 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 6, patches 1, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:9 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 9

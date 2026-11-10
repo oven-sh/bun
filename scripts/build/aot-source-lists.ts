@@ -22,6 +22,7 @@ export interface DeclaredAotLists {
   generatedHeaders: string[];
   programSources: string[];
   shellSources: string[];
+  standInHostTestSources: string[];
   tableExportedHeaders: string[];
   /** Names: a build writes them into one folder of its own. */
   tableExportedGeneratedHeaders: string[];
@@ -106,6 +107,7 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
     ],
     programSources: evaluated.list("JavaScriptCore_AOT_PROGRAM_SOURCES"),
     shellSources: evaluated.list("JavaScriptCore_AOT_SHELL_SOURCES"),
+    standInHostTestSources: evaluated.list("JavaScriptCore_AOT_STAND_IN_HOST_TEST_SOURCES"),
     tableExportedHeaders: evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS"),
     tableExportedGeneratedHeaders: evaluated
       .list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS")
@@ -116,7 +118,6 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
 function aotHeadersByName(javaScriptCore: string): Map<string, string> {
   const byName = new Map<string, string>();
   for (const path of filesUnder(javaScriptCore, "aot", isHeader)) {
-    if (path.startsWith("aot/tests/")) continue;
     const other = byName.get(basename(path));
     if (other !== undefined) throw new BuildError(`${other} and ${path} have the same name`);
     byName.set(basename(path), path);
@@ -127,7 +128,10 @@ function aotHeadersByName(javaScriptCore: string): Map<string, string> {
 function exportRoots(javaScriptCore: string, bunRoot: string): Set<string> {
   const roots = new Set<string>();
   const isNativeOrGenerator = (name: string): boolean => /\.(?:cpp|h|mm|ts)$/.test(name);
-  for (const path of filesUnder(bunRoot, "src", isNativeOrGenerator)) {
+  for (const path of [
+    ...filesUnder(bunRoot, "src", isNativeOrGenerator),
+    ...filesUnder(bunRoot, "test/aot/native", isNativeOrGenerator),
+  ]) {
     if (path.endsWith(".ts") && !path.startsWith("src/codegen/")) continue;
     for (const name of includedAotHeaders(join(bunRoot, path))) roots.add(name);
   }
@@ -187,6 +191,7 @@ export function computeAotSourceLists(
     ...declared.generatedSources,
     ...declared.programSources,
     ...declared.shellSources,
+    ...declared.standInHostTestSources,
     ...declared.sourcesCompiledForSize.flat(),
   ]);
   const sources = filesUnder(javaScriptCore, "aot", name => name.endsWith(".cpp")).filter(
@@ -219,6 +224,7 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
     ...written.generatedSources,
     ...written.programSources,
     ...written.shellSources,
+    ...written.standInHostTestSources,
     ...written.sourcesCompiledForSize.flat(),
   ]);
   const present = filesUnder(javaScriptCore, "aot", name => name.endsWith(".cpp"));
@@ -242,7 +248,12 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
       written.includeDirectories,
       headerDirectories(javaScriptCore, written.generatedHeaders),
     ),
-    ...[...written.programSources, ...written.shellSources, ...written.sourcesCompiledForSize.flat()]
+    ...[
+      ...written.programSources,
+      ...written.shellSources,
+      ...written.standInHostTestSources,
+      ...written.sourcesCompiledForSize.flat(),
+    ]
       .filter(path => !present.includes(path))
       .map(path => `${path}: listed, and there is no such file`),
     ...written.sourcesCompiledForSize.flatMap((sources, list) => [

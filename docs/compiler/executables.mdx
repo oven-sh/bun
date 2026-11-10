@@ -975,6 +975,8 @@ const html = await Bun.file(path.join(publicDir, "index.html")).text();
 
 Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
 
+With `--aot`, the build also embeds the data files that a `require()` or `import()` with a path that isn't a constant may name, [where it can hold the whole folder](/compiler/compatibility). `fs.stat()` of such a file gives its size, one link, a number of its own and the times the file had when you built; they don't move later, and the owner is whoever runs the executable. A folder that comes into sight that way is also listed in the folder above it, whose own listing may still leave out what the executable doesn't hold. A file you embed with `--asset` has its size and no times.
+
 With `--aot`, your modules and the files you embed keep their places relative to one another. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`.
 
 Without `--aot`, a single file is embedded under its base name: `--asset ./a/config.json` is at `/$bunfs/root/config.json`. With `--aot` it's at `/$bunfs/root/a/config.json`, and `/$bunfs/root/config.json` finds it too, so code written for either keeps working. Three things differ:

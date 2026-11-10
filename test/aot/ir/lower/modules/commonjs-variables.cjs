@@ -2,10 +2,11 @@
 // CHECK: function {{*}}kind=CommonJsModule flags=[IsSloppy]
 // CHECK-NEXT: b0():
 // CHECK: = NewObject layout=[[layout]]
-// CHECK: PutModuleVariable {{*}}variable=[[held]]
-// CHECK-NEXT: PutModuleVariable {{*}}variable=[[exports]]
-// CHECK-NEXT: = GetModuleVariable variable=[[exports]]
-// CHECK: PropSet {{*}}key="a"
+// CHECK: [[first]] = FinishObject
+// CHECK-NEXT: PutModuleVariable [[first]] variable=[[held]]
+// CHECK-NEXT: PutModuleVariable [[first]] variable=[[exports]]
+// CHECK-NEXT: [[named]] = Convert [[first]]
+// CHECK: PropSet [[named]], {{*}}key="a"
 // CHECK: [[module]] = ModuleBuiltin builtin=ModuleObject module=m
 // CHECK-NEXT: [[object]] = PropGet [[module]] key="exports"
 // CHECK: = Add
@@ -25,7 +26,7 @@
 // INNER: = NewArray [[require]], [[module]], [[exports]]
 // INNER: Return
 
-// The five names of a CommonJS module are no parameters: `exports` is a variable of the module, and so is `module.exports` in a file that hands `module` to nobody (this one does, so it asks the object), `__filename` and `__dirname` are constants of its record, and `require` and `module` as values are operations that make the object when the first of them runs. A function inside captures none of them.
+// The five names of a CommonJS module are no parameters: `exports` is a binding of the body (a variable of the module here, since `load` names it), and a variable of the module is `module.exports` in a file that hands `module` to nobody (this one does, so it asks the object), `__filename` and `__dirname` are constants of its record, and `require` and `module` as values are operations that make the object when the first of them runs. A function inside captures none of them.
 exports.a = 1;
 module.exports.b = __filename + __dirname;
 exports.load = function load() {

@@ -1,0 +1,28 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list: string[] = []; for (let i = 0; i < 12; i++) list.push("name" + (i % 3));
+# const table = new Map<string, string>([["k", "name0"]]);
+# function count(key: string, from: number, writes: boolean): number { let n = from; for (let i = 0; i < list.length; i++) { if (list[i] === table.get(key)) n++; if (writes) table.set(key, "name" + ((i * 2) % 3)); } return n; }
+# (globalThis as any).kept = count;
+# print(count("k", 0, (globalThis as any).writes === true));
+# -- end of source
+# Eight built-ins on texts are called once in front of the typed copy: their answer hangs on their operands alone. That is said by a list of names and by nothing else: a built-in that should have stayed in its turn gave a
+# silent wrong answer which neither the verifier nor testing=CheckProofsAtRunTime saw. Under testing=CallsMadeInFrontOfTurnsAreMadeAgainInThem, beside CheckProofsAtRunTime, the call stands in the turn too and its answer is
+# held against the one made in front. The lie: every built-in in line is taken to answer out of its operands: the read of a table that the turns write is made once in front.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.writes = true;
+# RIGHT: 5
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CallsMadeInFrontOfTurnsAreMadeAgainInThem globalThis.writes = true;
+# HELD: 5
+# HELD-NEXT: exited with 0
+# What the net is for: the lie without it, under the proofs' own word: another number, and nobody stops.
+# RUN(SILENT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands globalThis.writes = true;
+# SILENT: 4
+# SILENT-NEXT: exited with 0
+# Turns that write nothing are not harmed by the lie: so what stops below is the answer that changed and nothing else.
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CallsMadeInFrontOfTurnsAreMadeAgainInThem,EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands
+# PASSES: 4
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CallsMadeInFrontOfTurnsAreMadeAgainInThem,EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands globalThis.writes = true;
+# LIE: AOT: f{{*}} at {{*}}: what a call answers in the turn where the compiler made it once in front of the turns is not of the type that the compiler has proven of it.
+# LIE: crashed with

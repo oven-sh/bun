@@ -1,0 +1,21 @@
+# -- source: main.js
+# function make(n) { const list = []; list.length = n; list.push(1); return list; }
+# function ask(list) { return list.lastIndexOf(1); }
+# print(ask(make(id(4294967294))), ask(make(id(3))), make(id(4294967294)).length);
+# -- end of source
+# f1 = make, f2 = ask. The row of lastIndexOf writes positions in a list: up to 2^32: the rung "an int32 or a length". Native code hands back an int32 wherever the number fits one, so in line the door looks at the tag alone: the one
+# test of a range in `ask` is not the door's: it stands on the rare way, where the list is not as it was made and the call goes by name; what is no int32 goes to the rare block, where the run time looks again and comes back for a whole number on the rung that is boxed as a double: here 4294967294.
+# RUN(RECORD): walk f2 mechanisms=all
+# RECORD: : int[-2147483648, 4294967296] @JSValue = CallBuiltin {{*}} overload=ArrayPrototypeLastIndexOf/0
+# RUN(DOOR): emit f2:Body mechanisms=all
+# REQUIRES(DOOR): x86_64 as-written
+# DOOR-COUNT-1: = BelowEqual(
+# DOOR-NOT: = BelowEqual(
+# RUN(TAG): emit f2:Body mechanisms=all
+# REQUIRES(TAG): x86_64 as-written
+# TAG-COUNT-1: = Equal(
+# TAG-NOT: = Equal(
+# RUN(ANSWERS): run-in-shell mechanisms=all globalThis.id = (x) => x;
+# ANSWERS: 4294967294 3 4294967295
+# ANSWERS-NEXT: exited with 0
+# ANSWERS-NEXT: the source prints the same

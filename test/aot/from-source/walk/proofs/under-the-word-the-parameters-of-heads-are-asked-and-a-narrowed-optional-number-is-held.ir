@@ -1,0 +1,27 @@
+# -- source: under-the-word-the-parameters-of-heads-are-asked-and-a-narrowed-optional-number-is-held.ts
+# declare function print(...values: unknown[]): void;
+# function last(list: number[], limit: number): number { let held: number | undefined = undefined; let sum = 0; for (let i = 0; i < list.length; i++) { if (held !== undefined && -1 < held && held <= limit) sum += held; held = i & 1 ? list[i] | 0 : undefined; } return sum; }
+# function halves(list: number[]): number { let held: number | undefined = undefined; let sum = 0; for (let i = 0; i < list.length; i++) { if (held !== undefined && held < 100.5) sum += held; held = i & 1 ? list[i] / 2 : undefined; } return sum; }
+# function wide(a: number, b: number): string { const product = (a & 131071) * (b & 131071); if (product < 2147483648) return String(product + 0.5); return "none"; }
+# const shelf: any[] = [last, halves, wide];
+# const at: number[] = JSON.parse("[0, 1, 2]");
+# print(shelf[at[0]]([1, 2, 3, 4, 5, 6], 1000), shelf[at[1]]([1, 2, 3, 4, 5, 6]), shelf[at[2]](3, 4), shelf[at[2]](32768, 65536));
+# -- end of source
+# f1 = last, f2 = halves, f3 = wide. Where proofs are checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for):
+# a parameter of a loop's head that lies boxed is asked, each turn, for what is shown of it: that was done only under the word that checks the walk;
+# what a branch has narrowed is held also where it lies as an optional number, as it is for raw numbers: an Int64 is the third row. As users build, nothing is asked.
+# RUN(HEADS): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# HEADS: ([[held]]: undefined|i32 @JSValue, {{*}}isLoopHead=true:
+# HEADS-NEXT: = CheckProof [[held]] checkedType=undefined|i32 {{*}}source=OtherOperation
+# RUN(OPTIONAL): walk f2 mechanisms=all testing=CheckProofsAtRunTime
+# OPTIONAL: [[narrowed]]: number @OptionalDouble = Narrowed
+# OPTIONAL-NEXT: = CheckProof [[narrowed]] checkedType=number {{*}}source=Test
+# RUN(WIDE): walk f3 mechanisms=all testing=CheckProofsAtRunTime
+# WIDE: [[narrowed]]: int[0, 2147483647] @Int64 = Narrowed
+# WIDE-NEXT: = CheckProof [[narrowed]] checkedType=int[0, 2147483647] {{*}}source=Test
+# RUN(PLAIN): walk f1 f2 f3 mechanisms=all
+# PLAIN-NOT: source=Test
+# PLAIN-NOT: source=OtherOperation
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 6 3 12.5 none
+# RIGHT-NEXT: exited with 0

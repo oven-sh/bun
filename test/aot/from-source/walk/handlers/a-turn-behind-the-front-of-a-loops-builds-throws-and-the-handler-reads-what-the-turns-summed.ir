@@ -1,0 +1,47 @@
+# -- source: a-turn-behind-the-front-of-a-loops-builds-throws-and-the-handler-reads-what-the-turns-summed.js
+# const box = { a: -1 };
+# function make() {
+#   let held = null;
+#   const run = (end, list, bad) => {
+#     let same = -1;
+#     try {
+#       for (let round = 0; round < 3; round++) {
+#         for (let at = 4; at <= end - 1; ++at) {
+#           const one = list[at];
+#           if (one === bad) throw new RangeError("at " + at + " in round " + round);
+#           same += held == null ? 1 : 0;
+#           box.a += one * 0.5;
+#         }
+#       }
+#     } catch (error) {
+#       return [error.message, same, box.a].join("|");
+#     } finally {
+#       same += 100;
+#     }
+#     return [String(box.a), String(held), same].join("|");
+#   };
+#   return run;
+# }
+# const run = make();
+# const made = (function () { return arguments; })(1, 2, 3, 4, 5, 6);
+# print(run(6, made, 6));
+# print(run(6, made, 0));
+# print(run(2, made, 5));
+# -- end of source
+# The loop inside takes turns, and one of them throws: the handler reads what the turns have summed, not what entered.
+# RUN: run-in-shell mechanisms=all
+# CHECK: at 5 in round 0|0|1.5
+# CHECK-NEXT: 18|null|105
+# CHECK-NEXT: 18|null|99
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# FAILING: at 5 in round 0|0|1.5
+# FAILING-NEXT: 18|null|105
+# FAILING-NEXT: 18|null|99
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: at 5 in round 0|0|1.5
+# HELD-NEXT: 18|null|105
+# HELD-NEXT: 18|null|99
+# HELD-NEXT: exited with 0

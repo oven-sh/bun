@@ -1,0 +1,28 @@
+# -- source: main.cjs
+# "use strict";
+# const lib = {};
+# function fill(target) { target.add = function (a, b) { return a + b; }; Object.defineProperty(target, "marker", { value: true }); }
+# fill(lib);
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = lib.add(s, i); return s; }
+# print(called(5), called(6));
+# -- end of source
+# f1 = fill, f2 = called, f3 = the function stored under add
+# The universal form of a library: the names are stored and the marker is laid by a descriptor. The definition leaves the LAYOUT the change GetsAccessor: the run time's leave for a redefinition: it stays.
+# But every definition on this record is in sight and under a WRITTEN key, and none is under `add`: that FIELD is never redefined (FieldStability::IsNeverRedefined: the run time ends the process where one is, field by field).
+# So its empty slot says that the name is missing: the read needs no look at the cell, its type is the cell's, the call of what is no function throws and meets nothing: no closed arm stands in the loop.
+# RUN(LAYOUT): link layouts mechanisms=all
+# LAYOUT: layout L0 changes=[IsFrozen, GainsProperty, GetsAccessor]
+# RUN(FIELD): link fields mechanisms=all
+# FIELD: "add" appended proven={{*}}f3 {{*}}beside-what-descriptors-define
+# RUN(MARKER): link fields mechanisms=all
+# MARKER-NOT: "marker" {{*}}beside-what-descriptors-define
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED: = GetSlotOrUndefined {{*}}key="add" receivers=[L0] level=Proven
+# RUN(LOOK): walk f2 mechanisms=all
+# LOOK-NOT: = HasNoFieldOutsideSlot
+# RUN(ANSWER): run-in-shell
+# ANSWER: 11 16
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 11 16
+# CHECKED-NEXT: exited with 0

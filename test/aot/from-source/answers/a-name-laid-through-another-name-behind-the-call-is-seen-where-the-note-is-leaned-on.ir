@@ -1,0 +1,19 @@
+# -- source: a-name-laid-through-another-name-behind-the-call-is-seen-where-the-note-is-leaned-on.ts
+# declare function print(...values: unknown[]): void;
+# function pass(x: unknown): unknown { return x; }
+# function main(): string { const promise: any = Promise.resolve(1);
+#   const held: unknown = JSON.parse("true") ? promise : 1; const same: any = Promise.resolve(held); promise.then = (): string => "own"; return String(same.then(pass)); }
+# print(main());
+# -- end of source
+# LIBRARY: own
+# The then of its own is laid on the operand BEHIND the call that handed it back: at the call the cell is still as made. So the cell is asked at the use, not where the note is laid.
+# The lie, testing=OneRowSpeaksForAllThatCallMayTake: where a call may take several rows the first alone is asked whether what it hands back is fresh, though another hands back the operand: the result is noted as made. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the cell is asked where the note is leaned on: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: own
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: own
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,OneRowSpeaksForAllThatCallMayTake
+# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE: crashed with

@@ -65,32 +65,32 @@ random.mock.results;
 
 Mock functions implement the following properties and methods:
 
-| Property/Method                           | Description                                    |
-| ----------------------------------------- | ---------------------------------------------- |
-| `mockFn.getMockName()`                    | Returns the mock name                          |
-| `mockFn.getMockImplementation()`          | Returns the implementation as a function       |
-| `mockFn.mock.calls`                       | Array of call arguments for each invocation    |
-| `mockFn.mock.results`                     | Array of return values for each invocation     |
-| `mockFn.mock.settledResults`              | Resolved or rejected value for each invocation |
-| `mockFn.mock.instances`                   | `this` for each call (the instance for `new`)  |
-| `mockFn.mock.contexts`                    | Array of `this` contexts for each invocation   |
-| `mockFn.mock.lastCall`                    | Arguments of the most recent call              |
-| `mockFn.mockClear()`                      | Clears call history                            |
-| `mockFn.mockReset()`                      | Clears call history and removes implementation |
-| `mockFn.mockRestore()`                    | Restores original implementation               |
-| `mockFn.mockImplementation(fn)`           | Sets a new implementation                      |
-| `mockFn.mockImplementationOnce(fn)`       | Sets implementation for next call only         |
-| `mockFn.mockName(name)`                   | Sets the mock name                             |
-| `mockFn.mockReturnThis()`                 | Sets the return value to `this`                |
-| `mockFn.mockReturnValue(value)`           | Sets a return value                            |
-| `mockFn.mockReturnValueOnce(value)`       | Sets return value for next call only           |
-| `mockFn.mockResolvedValue(value)`         | Sets a resolved Promise value                  |
-| `mockFn.mockResolvedValueOnce(value)`     | Sets resolved Promise for next call only       |
-| `mockFn.mockRejectedValue(value)`         | Sets a rejected Promise value                  |
-| `mockFn.mockRejectedValueOnce(value)`     | Sets rejected Promise for next call only       |
-| `mockFn.mockThrow(value)`                 | Throws `value` on every call                   |
-| `mockFn.mockThrowOnce(value)`             | Throws `value` on the next call only           |
-| `mockFn.withImplementation(fn, callback)` | Temporarily changes implementation             |
+| Property/Method                           | Description                                                                                                 |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `mockFn.getMockName()`                    | Returns the mock name                                                                                       |
+| `mockFn.getMockImplementation()`          | Returns the implementation as a function                                                                    |
+| `mockFn.mock.calls`                       | Array of call arguments for each invocation                                                                 |
+| `mockFn.mock.results`                     | Array of return values for each invocation                                                                  |
+| `mockFn.mock.settledResults`              | Resolved or rejected value for each invocation                                                              |
+| `mockFn.mock.instances`                   | `this` for each call (the instance for `new`)                                                               |
+| `mockFn.mock.contexts`                    | Array of `this` contexts for each invocation                                                                |
+| `mockFn.mock.lastCall`                    | Arguments of the most recent call                                                                           |
+| `mockFn.mockClear()`                      | Clears call history                                                                                         |
+| `mockFn.mockReset()`                      | Clears call history and removes implementation. After `vi.fn()` and `vi.spyOn()`, goes back to the original |
+| `mockFn.mockRestore()`                    | Restores original implementation                                                                            |
+| `mockFn.mockImplementation(fn)`           | Sets a new implementation                                                                                   |
+| `mockFn.mockImplementationOnce(fn)`       | Sets implementation for next call only                                                                      |
+| `mockFn.mockName(name)`                   | Sets the mock name                                                                                          |
+| `mockFn.mockReturnThis()`                 | Sets the return value to `this`                                                                             |
+| `mockFn.mockReturnValue(value)`           | Sets a return value                                                                                         |
+| `mockFn.mockReturnValueOnce(value)`       | Sets return value for next call only                                                                        |
+| `mockFn.mockResolvedValue(value)`         | Sets a resolved Promise value                                                                               |
+| `mockFn.mockResolvedValueOnce(value)`     | Sets resolved Promise for next call only                                                                    |
+| `mockFn.mockRejectedValue(value)`         | Sets a rejected Promise value                                                                               |
+| `mockFn.mockRejectedValueOnce(value)`     | Sets rejected Promise for next call only                                                                    |
+| `mockFn.mockThrow(value)`                 | Throws `value` on every call                                                                                |
+| `mockFn.mockThrowOnce(value)`             | Throws `value` on the next call only                                                                        |
+| `mockFn.withImplementation(fn, callback)` | Temporarily changes implementation                                                                          |
 
 ### Practical Examples
 
@@ -339,7 +339,7 @@ test("mock.module", async () => {
 });
 ```
 
-Like the rest of Bun, module mocks support both `import` and `require`.
+Like the rest of Bun, module mocks support both `import` and `require`. A `require()` can't wait for a factory that awaits: if the factory hasn't been called yet, a `require()` of the mocked module returns the original, and a `require()` of a module that imports it throws.
 
 ### Overriding Already Imported Modules
 
@@ -420,7 +420,7 @@ When one import leads to several mocked modules, Bun calls their factories one a
 
 ### Getters and Missing Exports
 
-Bun reads an export from the object the factory returned every time it's used, so getters stay live.
+Bun reads an export from the object the factory returned every time it's used, so getters stay live. Where a mock updates the real module in place, an `import` of it sees what each getter returned at that moment.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -499,7 +499,7 @@ test("automock", () => {
 | `using _ = vi.doMock(path, factory)`                       | Removes the mock at the end of the block                       |
 | `vi.resetModules`, `jest.resetModules`                     | Re-evaluates each module on its next `import()` or `require()` |
 
-Mocked modules stay mocked after `resetModules()`. After `jest.resetModules()`, the next import also calls the factory again. Existing imports keep their values.
+Mocked modules stay mocked after `resetModules()`. After `jest.resetModules()`, the next import also calls the factory again. Existing imports keep their values. With [`--aot`](/compiler/compatibility#under-bun-test---aot), an `import()` of a loaded module fails if its mock was made after a reset and uses the original.
 
 As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a module imported again still shares its copy of `react` with the rest of the test. It does load the `.js` files again that Vitest loads like your own code (see [Mocking a Package](#mocking-a-package)). As in Jest, `jest.resetModules()` loads them again too.
 
@@ -578,7 +578,7 @@ preload = ["./my-preload"]
 
 Mocking a module that's already been imported updates the module cache, so anything that imports it gets the mocked version. Bun has already evaluated the original module, though, so its side effects have already happened.
 
-To prevent the original module from being evaluated at all, mock it before it's imported. Use `vi.mock()` or `jest.mock()`, which are hoisted, or mock it in a `--preload` script.
+To prevent the original module from being evaluated at all, mock it before it's imported, with a factory that doesn't declare `importOriginal` (see [Import Timing Effects](#import-timing-effects)). Use `vi.mock()` or `jest.mock()`, which are hoisted, or mock it in a `--preload` script.
 
 #### Practical Module Mock Examples
 
@@ -816,7 +816,7 @@ Module mocks interact with both ESM and CommonJS module caches.
 
 ### Lazy Evaluation
 
-Bun evaluates the mock factory callback only when the module is imported or required.
+Bun calls the factory at the next `import` or `require()` that gets the mock. If the mock updates a loaded module in place, Bun calls it when you mock the module instead. `mock.module()`, `jest.mock()` and `jest.doMock()` do that with a loaded module, and so do some `vi.mock()` and `vi.doMock()` calls (see [Differences from Vitest](#differences-from-vitest)).
 
 ### Path Resolution
 
@@ -828,14 +828,14 @@ Bun resolves the module specifier the same way it resolves an `import`, supporti
 
 ### Import Timing Effects
 
-- **When mocking before first import**: No side effects from the original module occur
+- **When mocking before first import**: The original module isn't evaluated, unless something still asks for it, such as a factory that declares `importOriginal`, `vi.importActual()`, a mock that has neither a factory nor a `__mocks__` file, or a module in `node_modules` that imports a package you mock with `vi.mock()`
 - **When mocking after import**: The original module's side effects have already happened
 
 For this reason, use `vi.mock()`, `jest.mock()` or `--preload` for mocks that need to prevent side effects.
 
 ### Live Bindings
 
-Mocked ESM modules maintain live bindings, so changing the mock updates all existing imports.
+Mocked ESM modules keep live bindings, so `mock.module()`, `jest.mock()` and `jest.doMock()` update what the existing imports see. For `vi.mock()` and `vi.doMock()` it depends on the module and on who loaded it: see [Mocking a Package](#mocking-a-package) and [Differences from Vitest](#differences-from-vitest).
 
 ## Advanced Patterns
 

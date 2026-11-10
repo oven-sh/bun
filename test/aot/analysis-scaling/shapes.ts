@@ -219,6 +219,18 @@ export const shapes: Shape[] = [
     write: count => ({ "main.ts": unionOfGenericClasses(2, 1 + count) }),
   },
   {
+    name: "exported functions that load under a parameter",
+    counted: "functions",
+    sizes: [4_000, 16_000],
+    instructionsPerItem: 250_000,
+    bytesPerItem: 16 * 1024,
+    write: count => ({
+      "main.ts": `import "./helpers.cjs";\n`,
+      // One more than is counted: what the first such function costs, the library behind require() among it, is no cost of an item.
+      "helpers.cjs": Array.from({ length: count + 1 }, (_, index) => `function load${index}(name) { return require(name); }\nexports.load${index} = load${index};\n`).join(""),
+    }),
+  },
+  {
     name: "declared interface recursing through conditional types",
     counted: "properties",
     sizes: [1, 2, 3, 12],

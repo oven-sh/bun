@@ -1,0 +1,32 @@
+# two classes tell themselves apart by a boolean that each holds alone, and the program asks for its truth without comparing it. That says as much as `=== true`:
+# the front end narrows the holder on both sides (so the key counts as tested, and the plan keeps the single value in the door of the byte), and the walk tests the shape once: nothing is read.
+# inside a try the handler sees the local, so narrowing it begins a new block: both sides of the test are reached from there: nothing of `guarded` ends in Unreachable.
+# f1 = make, f2 = weigh, f3 = guarded
+# -- source: a-bare-test-of-truth-of-a-tag-is-a-test-of-the-shape.ts
+# declare function sink(...values: unknown[]): void;
+# class Ok { readonly ok = true; readonly p = false; readonly q = false; readonly r = true; constructor(readonly value: number) {} }
+# class Err { readonly ok = false; readonly p = true; readonly q = false; readonly r = false; constructor(readonly error: number) {} }
+# function make(i: number): Ok | Err { return i % 3 ? new Ok(i) : new Err(i); }
+# function weigh(one: Ok | Err) { if (one.ok) return one.value; return one.error; }
+# function guarded(one: Ok | Err) { try { if (one.ok) return one.value; return one.error; } catch { return -1; } }
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += weigh(make(i)) + guarded(make(i));
+# sink(sum);
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "ok" {{*}} doors=true
+# PLAN: "ok" {{*}} doors=false
+# RUN(WALK): walk f2 mechanisms=all
+# WALK-LABEL: code f2:Body
+# WALK: = ShapeTest {{*}}layouts=[L0]
+# WALK: = GetSlot {{*}}key="value" receivers=[L0] level=Proven
+# WALK: = GetSlot {{*}}key="error" receivers=[L1] level=Proven
+# RUN(NOTHING): walk f2 mechanisms=all
+# NOTHING-NOT: ToBoolean
+# NOTHING-NOT: key="ok"
+# RUN(TRY): walk f3 mechanisms=all
+# TRY-LABEL: code f3:Body
+# TRY: = GetSlot {{*}}key="value"
+# TRY: = GetSlot {{*}}key="error"
+# RUN(SIDES): walk f3 mechanisms=all
+# SIDES-NOT: Unreachable

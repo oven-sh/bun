@@ -1,0 +1,24 @@
+# -- source: a-store-into-an-object-that-may-have-been-frozen-is-held-to-the-fact-that-nobody-has-seen.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { weight: number; constructor(weight: number) { this.weight = weight; } }
+# function make(weight: number, freezes: boolean) { const parcel = new Parcel(weight); if (freezes) Object.freeze(parcel); parcel.weight = 7; return parcel; }
+# const makes = id(make);
+# print(makes(1, false).weight);
+# try { print(makes(5, true).weight); } catch { print("threw"); }
+# -- end of source
+# LIBRARY: own
+# A store at Proven leans on the cell not being frozen where objects of its class may be. Behind a join with a way that freezes, the state remembers it no longer.
+# The lie, testing=GuardsAndFactsAreTakenToHold: the planner of typed accesses takes every guard of a class for held and every fact of a cell for seen, and the state is not touched. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) what the access leans on is asked where nobody has answered it: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 7
+# RIGHT-NEXT: threw
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: 7
+# HARDENED-NEXT: threw
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold
+# LIE: 7
+# LIE-NEXT: AOT: f1 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE: crashed with

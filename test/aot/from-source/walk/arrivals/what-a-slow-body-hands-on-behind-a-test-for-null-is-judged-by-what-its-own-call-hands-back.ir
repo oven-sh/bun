@@ -1,0 +1,46 @@
+# -- source: main.js
+# import { matches, match } from "./lib.js";
+# globalThis.sink(JSON.stringify(matches("ab", "a b")), matches("x", "abc"), JSON.stringify(match(["a", "b"], ["A", " ", "B"], 0, 0)));
+# -- source: lib.js
+# /** @typedef {{ start: number, end: number }} Span */
+# /** @param {Span} head @param {Span[]} tail @returns {Span[]} */
+# function join(head, tail) {
+#   if (tail.length === 0) tail = [head];
+#   else if (head.end === tail[0].start) tail[0].start = head.start;
+#   else tail.unshift(head);
+#   return tail;
+# }
+# function next(text, from) { for (let i = from; i < text.length; i++) if (text[i] === " ") return i + 1; return text.length; }
+# /** @param {string} word @param {string} target @param {number} i @param {number} j @returns {Span[] | null} */
+# export function match(word, target, i, j) {
+#   if (i === word.length) return [];
+#   else if (j === target.length) return null;
+#   else if (word[i] !== target[j].toLowerCase()) return null;
+#   else {
+#     let result = null, at = j + 1;
+#     result = match(word, target, i + 1, j + 1);
+#     while (!result && (at = next(target, at)) < target.length) { result = match(word, target, i + 1, at); at++; }
+#     return result === null ? null : join({ start: j, end: j + 1 }, result);
+#   }
+# }
+# export function matches(word, target) {
+#   if (!target || target.length === 0) return null;
+#   let result = null, at = 0;
+#   word = word.toLowerCase();
+#   while (at < target.length && (result = match(word, target, 0, at)) === null) at = next(target, at + 1);
+#   return result;
+# }
+# -- end of source
+# f1 = match, f3 = join
+# `match` calls itself by the value of its own variable and hands what came back, behind a test for null, to `join`, which goes by what its callers leave. In the slow body the record of that call says anything (a slow body reads no tables);
+# the walk knows by what `match` hands back that it is a list and lays no check. The judge of calls follows the same way: through the Narrowed, where what the test took away is apart from what it left.
+# RUN(SLOW): walk f1:SlowBody mechanisms=all
+# SLOW: = Call {{*}}calleeName="match"
+# SLOW: = Narrowed
+# SLOW: = CallDirect {{*}}function=f3
+# RUN(UNCHECKED): walk f1:SlowBody mechanisms=all
+# UNCHECKED: code f1:SlowBody
+# UNCHECKED-NOT: CheckProof {{*}}checkedType=null|Array
+# RUN(SILENT): walk f1:SlowBody mechanisms=all
+# SILENT: code f1:SlowBody
+# SILENT-NOT: TypeOutOfDate

@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# "use strict";
+# const whole = new Uint8Array(32).fill(200);
+# const views = [new Uint8Array(whole.buffer, 8, 12), new Uint8Array(whole.buffer, 24, 4)];
+# function fill(at, t) { const b = views[at]; for (let i = 0; i < 14; i++) b[i] = i + t; return t; }
+# print(fill(0, 3));
+# print(whole.join());
+# try { fill(2, 3); } catch (error) { print(error.constructor.name); }
+# -- end of source
+# An element of a list of views is a view or undefined. Every turn asked whether it is there, and read its length and its memory anew behind that question.
+# It is asked once in front of the loop: behind the question stands the copy of the loop for the view, beside it the loop as it is written, which throws where the text does.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: PutTypedArrayElement {{*}} level=Proven [keyIsIntegral, isInsideView]
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 3
+# RIGHT-NEXT: 200,200,200,200,200,200,200,200,3,4,5,6,7,8,9,10,11,12,13,14,200,200,200,200,200,200,200,200,200,200,200,200
+# RIGHT-NEXT: TypeError
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# HELD: 3
+# HELD-NEXT: 200,200,200,200,200,200,200,200,3,4,5,6,7,8,9,10,11,12,13,14,200,200,200,200,200,200,200,200,200,200,200,200
+# HELD-NEXT: TypeError
+# HELD-NEXT: exited with 0

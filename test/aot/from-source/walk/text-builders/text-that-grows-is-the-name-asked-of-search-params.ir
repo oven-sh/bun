@@ -6,7 +6,6 @@
 # print(last);
 # -- end of source
 # RUN(FORM): walk f1 mechanisms=all
-# REQUIRES(FORM): entries-of-bun
 # FORM-LABEL: code f1:Body
 # FORM: StringBuilderBegin
 # FORM: StringBuilderToString

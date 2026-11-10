@@ -1,0 +1,17 @@
+# -- source: each-constructor-that-a-way-brings-is-constructed-on-its-way.ts
+# declare function print(...values: unknown[]): void;
+# class Ash { k = 1; }
+# class Birch { k = 2; }
+# function count(turns: number) { let sum = 0; for (let i = 0; i < turns; i++) { const Tree = i & 1 ? Ash : Birch; const tree = new Tree(); sum += tree.k; } return sum; }
+# print(count(5), count(6));
+# -- end of source
+# f1 = count, f2 = Ash, f3 = Birch
+# Two ways lead into the block that constructs, and each brings one class object: the block is walked once for each way. So both constructors are copied, and no test asks which class object came. The construction as written stays in the closed copy of the loop alone.
+# RUN(WAYS): walk f1 mechanisms=all
+# WAYS-LABEL: code f1:Body
+# WAYS: frame {{*}} callee=f2 {{*}}isConstruction=true
+# WAYS: frame {{*}} callee=f3 {{*}}isConstruction=true
+# WAYS-NOT: testedType=f2
+# WAYS-NOT: testedType=f3
+# RUN: run-in-shell
+# CHECK: 8 9

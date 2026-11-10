@@ -206,6 +206,13 @@ fn order_program_layouts(merged: &Merged<'_>, definitions: &Definitions) -> Vec<
         .filter_map(|(layout, site)| Some(((*site)?, layout)));
     let mut defined: Vec<(DefinitionSite, u32)> = defined.collect();
     defined.sort_by_u64(|&(site, layout)| number_of_pair(site.unit, layout));
+    let key_of = |layout: u32| &merged.layouts.keys[layout as usize].key;
+    let tied = defined.chunk_by_mut(|&(site, layout), &(next_site, next)| {
+        site.unit == next_site.unit && key_of(layout).differs_in_files_alone(key_of(next))
+    });
+    for tied in tied {
+        tied.sort_unstable_by_key(|&(site, _)| site.index);
+    }
     let mut roots: Vec<u32> = defined.into_iter().map(|(_, layout)| layout).collect();
     let without_definition = sites.filter(|(_, site)| site.is_none());
     roots.extend(without_definition.map(|(layout, _)| layout));

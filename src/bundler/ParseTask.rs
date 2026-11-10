@@ -1443,6 +1443,7 @@ pub mod parse_worker {
         fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
         file_path: &mut Fs::Path,
+        loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1509,14 +1510,27 @@ pub mod parse_worker {
                 // has already deep-copied every additional-file body into its
                 // `OutputFile`). This avoids churning the global allocator with
                 // one `Vec<u8>` per file.
-                let read_arena: Option<&Bump> = Some(bump);
-                break 'brk match fs_cache.read_file_with_allocator(
-                    file_path.text,
-                    contents_dir,
-                    false,
-                    contents_file.unwrap_valid(),
-                    read_arena,
-                ) {
+                let is_carried_unparsed = matches!(
+                    loader,
+                    Loader::File
+                        | Loader::Wasm
+                        | Loader::Napi
+                        | Loader::Base64
+                        | Loader::Dataurl
+                        | Loader::Sqlite
+                        | Loader::SqliteEmbedded
+                );
+                let (path, file) = (file_path.text, contents_file.unwrap_valid());
+                break 'brk match match is_carried_unparsed {
+                    true => fs_cache.read_bytes_into_arena(path, contents_dir, file, bump),
+                    false => fs_cache.read_file_with_allocator(
+                        path,
+                        contents_dir,
+                        false,
+                        file,
+                        Some(bump),
+                    ),
+                } {
                     Ok(e) => {
                         // `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
                         // are structurally identical twins; convert
@@ -1617,7 +1631,10 @@ pub mod parse_worker {
         };
 
         if !might_have_on_parse_plugins {
-            return get_code_for_parse_task_without_plugins(task, log, fs_cache, bump, file_path);
+            let loader = *loader;
+            return get_code_for_parse_task_without_plugins(
+                task, log, fs_cache, bump, file_path, loader,
+            );
         }
 
         let should_continue_running = core::cell::Cell::new(1i32);
@@ -1927,6 +1944,7 @@ pub mod parse_worker {
                 this.fs_cache,
                 this.bump,
                 this.file_path,
+                *this.loader,
             ) {
                 Ok(e) => e,
                 Err(e) => {
@@ -2191,6 +2209,7 @@ pub mod parse_worker {
                 self.fs_cache,
                 self.bump,
                 self.file_path,
+                *self.loader,
             )
         }
     }

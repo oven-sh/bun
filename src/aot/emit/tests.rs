@@ -12,12 +12,12 @@ use super::{
 use crate::builtins::{BuiltinId, RuntimeFunction};
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
-    AmbiguousExport, BuiltinUsedAtStart, Data, DataMember, DataNode, Entry, EvalBinding, EvalScope,
-    ExpectedResult, Field, Function, FunctionFlags, FunctionVisibility, Header, HostRead,
-    ImportPhase, Layout, LayoutKind, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest,
-    ModuleRequestKind, OpenedName, ProgramList, QuotedText, ReplaceableBuiltin, RequiredName,
-    RuntimeFunctionEntry, SCHEMA_HASH, SourcePositions, SourceStamp, StaticField, SyntheticExport,
-    TypeSite, TypeSiteKind, Variable, WebAssemblyModule,
+    AmbiguousExport, BuiltinUsedAtStart, Data, DataMember, DataNode, DeclaredRecord, Entry,
+    EvalBinding, EvalScope, ExpectedResult, Field, Function, FunctionFlags, FunctionVisibility,
+    Header, HostRead, ImportPhase, Layout, LayoutKind, MAGIC, Module, ModuleExport, ModuleFailure,
+    ModuleRequest, ModuleRequestKind, OpenedName, ProgramList, QuotedText, ReplaceableBuiltin,
+    RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, SourcePositions, SourceStamp, StaticField,
+    SyntheticExport, TypeSite, TypeSiteKind, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -98,8 +98,7 @@ fn create_layout(names: &Names) -> Layout {
             ..Field::default()
         }],
         static_fields: vec![StaticField {
-            key: Some(names.key),
-            computed_key: None,
+            key: names.key,
             variable: VARIABLE,
         }],
         supertypes: vec![LAYOUT],
@@ -121,6 +120,7 @@ fn create_module(names: &Names) -> Module {
             kind: ModuleRequestKind::Import,
             completes: true,
             is_hoisted: false,
+            star_place: None,
         }],
         exports: vec![ModuleExport {
             name: names.name,
@@ -140,6 +140,7 @@ fn create_module(names: &Names) -> Module {
             export_name: Some(names.name),
             specifier: Some(names.text),
             drops_export_if_absent: false,
+            is_asked_for_by_star: false,
         }],
         positions: SourcePositions {
             quoted_texts: vec![QuotedText {
@@ -228,6 +229,12 @@ fn create_full_program() -> Program {
         module: MODULE,
         low: 7,
         high: 9,
+    });
+    program.declared_records.push(DeclaredRecord {
+        module: MODULE,
+        position: 7,
+        parameter: 1,
+        names: vec![names.key],
     });
     program.eval_scopes.push(EvalScope {
         bindings: vec![EvalBinding {
@@ -639,6 +646,7 @@ fn counts_match_program() {
             program.ambiguous_exports.len(),
         ),
         (ProgramList::SourceStamps, program.source_stamps.len()),
+        (ProgramList::DeclaredRecords, program.declared_records.len()),
         (ProgramList::EvalScopes, program.eval_scopes.len()),
         (ProgramList::Functions, program.functions.len()),
         (ProgramList::Data, program.data.len()),

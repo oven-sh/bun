@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# const box = JSON.parse('{"name":"rows","second":"other","holder":{"rows":[1,2,3,4,5,6,7,8,9,10,11,12],"other":[100,200,300]},"spare":{"rows":[50,60,70,80,90,100],"other":[7,7]}}');
+# const data = box.holder, w = box.name, spare = box.spare, otherKey = box.second;
+# let cursor = data;
+# function f() { let s = 0, n = 0; for (let i = 0; i < data[w].length; i++) { s = s + data[w][i]; cursor = spare; const second = cursor; cursor = data; n = n + second[w].length; } return s * 1000 + n; }
+# print(f(), f());
+# -- end of source
+# The row under a key is remembered under two VALUES: the holder and the key as they were read in front of the loop. A read that is walked asks for it by what its own operands were bound to when they were read.
+# A first form of this named the operand by what its VARIABLE held when the read was walked: `const second = cursor` read while `cursor` held another record, `cursor = data` behind it,
+# and `second[w]` took the row of `data`: 78144 for 78072, in silence, and no check of ours saw it. The lie names operands so again. Where proofs are checked, a row taken from what is remembered is held against the
+# operation that runs no code, asked of the operands themselves in the turn: under the lie that check stops at the read.
+# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
+# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 78072 78072
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 78072 78072
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow
+# LIE: 78144 78144
+# LIE-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow
+# STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# STOPPED: crashed with

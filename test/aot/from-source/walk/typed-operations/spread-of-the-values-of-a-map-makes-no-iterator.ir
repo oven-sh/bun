@@ -1,0 +1,31 @@
+# `[...m.values()]`, `[...m.keys()]`, `[...s.values()]`: at the read of the method the members are appended off the collection: the iterator is never made and nothing goes through the run time's append of an iterable.
+# The pairs of `[...m.entries()]` are lists that must be made: they go as before.
+# -- source: main.ts
+# declare function print(value: any): void;
+# const m = new Map([[1, 10], [2, 20], [3, 30]]);
+# const s = new Set(["a", "b"]);
+# function values() { return [...m.values()]; }
+# function keys() { return [0, ...m.keys()]; }
+# function members() { return [...s.values(), ...s.keys()]; }
+# function pairs() { return [...m.entries()]; }
+# print(values().join() + " " + keys().join() + " " + members().join() + " " + pairs().join("/"));
+# -- end of source
+# f2 = keys, f3 = members, f4 = pairs, f1 = values
+# RUN(VALUES): walk f1 mechanisms=all
+# VALUES: AppendValuesOfMap
+# RUN(NOTHING): walk f1 mechanisms=all
+# NOTHING-NOT: MapIterator
+# NOTHING-NOT: AppendIterable
+# RUN(KEYS): walk f2 mechanisms=all
+# KEYS: AppendMembers
+# KEYS-NOT: AppendIterable
+# RUN(MEMBERS): walk f3 mechanisms=all
+# MEMBERS: AppendMembers
+# MEMBERS: AppendMembers
+# MEMBERS-NOT: AppendIterable
+# RUN(PAIRS): walk f4 mechanisms=all
+# PAIRS-NOT: AppendMembers
+# PAIRS-NOT: AppendValuesOfMap
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 10,20,30 0,1,2,3 a,b,a,b 1,10/2,20/3,30
+# ANSWERS-NEXT: exited with 0

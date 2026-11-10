@@ -1,0 +1,17 @@
+# -- source: a-number-from-in-front-of-a-loop-under-an-operator-on-bits-is-asked-for-no-int32.cjs
+# "use strict";
+# const word = JSON.parse('"tally"');
+# const shelf = { count(s) { return s.length + 1; }, text(s) { return String(s); }, wrap(s) { return [s]; }, kind(s) { return typeof s; }, none(s) { return s === null; }, tally(x, turns) { let c = 0; for (let i = 0; i < turns; i++) c = (c + (~x) + i) & 1023; return c; } };
+# function wide(t) { return shelf[word](4000000000 + t % 5, 10) + t % 2; }
+# const rounds = +JSON.parse('"4"'); let all = 0; for (let t = 0; t < rounds; t++) all = (all + wide(t)) % 1000003; print(Math.floor(all));
+# -- end of source
+# f7 = tally. x is proven a whole number or undefined, and comes boxed. The front end expects an int32 of what operators on bits alone take, and the typed copy of the loop
+# proved that in front of itself or went into the closed copy: 4,000,000,000 ran every turn closed. The operator cuts any number to an int32 without running code, and what comes
+# from in front of the loop is converted once in front of it: x is asked for nothing; the bound of the counter is asked as before.
+# RUN: walk f7 mechanisms=all
+# CHECK: ([[x]]: undefined|int|whole @JSValue {{*}}, [[turns]]: anything
+# CHECK: = TypeTest [[turns]] testedType=i32
+# CHECK-NOT: = TypeTest [[x]] testedType=i32
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 82
+# ANSWER-NEXT: exited with 0

@@ -68,6 +68,11 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the class of a name (an index, a number as JavaScript prints it, a word that the schema lists) is read off its text once",
   },
   {
+    paths: /^src\/aot\/lower\/function\/original_asked_for\.rs$/,
+    reason:
+      "what `bun test` finds by searching the printed text of a mock's factory for three words is said at the build: the words are that search's own",
+  },
+  {
     paths: /^src\/aot\/options\.rs$/,
     reason: "option words are the build's own, not the program's",
   },
@@ -79,6 +84,11 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     paths: /^src\/aot\/(load\/react_compiler\/module_items|lower\/quoted_text)\.rs$/,
     lines: /\.strip_prefix\(NAME_PREFIX\)|\.starts_with\(b"%"\)/,
     reason: "an identifier that begins with % is the build's own too: what is asked is who made the variable",
+  },
+  {
+    paths: /^src\/aot\/lower\/function\/text_read_back\.rs$/,
+    reason:
+      "a check of the compiler on itself: it holds the words of a kept text that it reads back against the tree's, and nothing is compiled by what it finds",
   },
   {
     paths:
@@ -100,6 +110,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/aot\/lower\/module\/loads\.rs$/,
     lines: /match bytes\.ends_with\(b"\/"\)/,
+    reason:
+      "whether the base that is written for createRequire() ends as a folder: the last byte of a path, and a path is bound to nothing",
+  },
+  {
+    paths: /^src\/aot\/compile\/summary\.rs$/,
+    lines: /_ if path\.ends_with\(b"\/"\) =>/,
     reason:
       "whether the base that is written for createRequire() ends as a folder: the last byte of a path, and a path is bound to nothing",
   },
@@ -145,16 +161,16 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     paths:
       /^src\/sema\/(import_sites\/(alternatives|call_sites|made_requires)|fold\/(folder_names|known_to_bun_run|removed_by_bun_run|string_affixes))\.rs$/,
     lines:
-      /known::(?:require|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|platform|arch|fileURLToPath|pathToFileURL)"/,
+      /known::(?:require|module|exports|arguments|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|platform|arch|fileURLToPath|pathToFileURL)"/,
     reason:
       "a member behind a thing: of `import.meta`, which is syntax; of `require`, `module` and `process`, where the binder has said that the object is the module's own parameter or the global; of what node:module, node:path, node:url, node:os and node:process export, found by the record of the import",
   },
   {
     paths: /^src\/sema\/(import_sites\/alternatives|fold\/folder_calls)\.rs$/,
     lines:
-      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
+      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|entries|getOwnPropertyNames|ownKeys|defineProperty|mainModule|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
     reason:
-      "a member behind a value: whoever follows a text has the list, the Set that `new Set(..)` of the free name made, the text, the URL, the object literal or the global `Object` in hand where it reads the name of the member, and built-ins are frozen",
+      "a member behind a value: whoever follows a text has the list, the Set that `new Set(..)` of the free name made, the text, the URL, the object literal or the global `Object` or `Reflect` in hand where it reads the name of the member, and built-ins are frozen",
   },
   {
     paths: /^src\/sema\/import_sites\/alternatives\.rs$/,
@@ -164,11 +180,17 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "a table of built-ins: what every object inherits from `Object.prototype`, asked of a key that an object literal does not write",
   },
   {
+    paths: /^src\/sema\/import_sites\/touched_exports\.rs$/,
+    lines: /b"[\w:]+"|known::(?:exports|default|arguments)\b/,
+    reason:
+      "tables of what leads to the objects of modules: members behind `module`, `require`, `process` and the global object where the binder has said that the name is free, a few members behind anything, names of built-in modules, and the export that another file's import names. Each makes what a file follows through its own exports unknown: none decides for following",
+  },
+  {
     paths: /^src\/sema\/import_sites\/changed_files\.rs$/,
     lines:
-      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive)"/,
+      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive|text|json|bytes|arrayBuffer|stream|constants)"|b"O_[A-Z]+"/,
     reason:
-      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change a file, and which operand names it. find_function() finds the holder first, by the record of the import or as the free name `Bun`",
+      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change or read a file, which operand names it, and which flags of `fs.constants` only read. find_function() and find_members_below_holder() find the holder first, by the record of the import or as the free name `Bun`",
   },
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,
@@ -182,6 +204,11 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     lines: /known::(?:toMatchInlineSnapshot|setup)\b/,
     reason:
       "left by text: Bun's transpiler keeps the frame of whoever calls a member `toMatchInlineSnapshot`, whatever the object is, and a build does as it does; and nobody follows an object literal with the key `setup` to `Bun.plugin`, which only takes a module in",
+  },
+  {
+    paths: /^src\/sema\/import_sites\/call_sites\.rs$/,
+    lines: /contains_char\(inputs\.atoms\.bytes\(name\), b'\?'\)/,
+    reason: "whether a specifier has a query is a question about a path",
   },
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,

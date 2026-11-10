@@ -15,44 +15,32 @@
 # sink(leftByReturn, twoTurns, walkedApart, readInside, madeInFront, { flags: 1 });
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: isLoopHead=true
 # CHECK-NOT: isLoopHead=true
 # RUN(LEFT): walk f1 mechanisms=all
-# REQUIRES(LEFT): entries-of-bun
 # LEFT-COUNT-1: overload=URL/
 # RUN(LEFTMADE): walk f1 mechanisms=all
-# REQUIRES(LEFTMADE): entries-of-bun
 # LEFTMADE: CompilerHelpersScanPlainURL
 # RUN(TURNS): walk f2 mechanisms=all
-# REQUIRES(TURNS): entries-of-bun
 # TURNS-COUNT-2: overload=URL/
 # RUN(TURNSMADE): walk f2 mechanisms=all
-# REQUIRES(TURNSMADE): entries-of-bun
 # TURNSMADE-NOT: isLoopHead=true
 # TURNSMADE-NOT: CompilerHelpersScanPlainURL
 # TURNSMADE-NOT: undefined|URL
 # RUN(APART): walk f3 mechanisms=all
-# REQUIRES(APART): entries-of-bun
 # APART: = ShapeTest
 # APART-COUNT-2: overload=URL/
 # RUN(APARTMADE): walk f3 mechanisms=all
-# REQUIRES(APARTMADE): entries-of-bun
 # APARTMADE-NOT: CompilerHelpersScanPlainURL
 # APARTMADE-NOT: undefined|URL
 # RUN(INSIDE): walk f4 mechanisms=all
-# REQUIRES(INSIDE): entries-of-bun
 # INSIDE-COUNT-2: isLoopHead=true
 # RUN(INSIDESCANNED): walk f4 mechanisms=all
-# REQUIRES(INSIDESCANNED): entries-of-bun
 # INSIDESCANNED-COUNT-1: CompilerHelpersScanPlainURL
 # RUN(FRONT): walk f5 mechanisms=all
-# REQUIRES(FRONT): entries-of-bun
 # FRONT-COUNT-2: isLoopHead=true
 # RUN(FRONTSCANNED): walk f5 mechanisms=all
-# REQUIRES(FRONTSCANNED): entries-of-bun
 # FRONTSCANNED-COUNT-1: CompilerHelpersScanPlainURL
 # RUN(FRONTONCE): walk f5 mechanisms=all
-# REQUIRES(FRONTONCE): entries-of-bun
 # FRONTONCE-COUNT-1: overload=URL/

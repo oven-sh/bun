@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# const kept = [{ id: 1, active: true }];
+# globalThis.held = kept;
+# const rows = JSON.parse('[{"id":3,"active":true},{"id":4,"active":false},{"id":5,"active":true}]');
+# function sum(t) { let s = t; for (let i = 0; i < rows.length; i++) { const row = rows[i]; if (row.active) s = s + row.id; } return s; }
+# sink(sum(1) + " " + kept.length);
+# -- end of source
+# Nothing is known of `row` but the names read off it, and one literal of the file is the only layout in sight that has them. The literal is handed to unseen code, so unseen code may hand it back (of a layout that stays with compiled code the test is not made at all), and the walk tests for that layout. What comes out of JSON.parse fails the test in
+# every turn: in a loop the arm behind the failed test stays a rare block, apart from the passing way, and bears a mark by which the reads in it keep their sites.
+# f1 = sum
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="active" receivers=[L0] level=Proven
+# CHECK: frequency=Rare isInLoop=true keepsSitesThoughRare=true
+# CHECK-NEXT: = PropGet {{*}}key="active"
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 9 1

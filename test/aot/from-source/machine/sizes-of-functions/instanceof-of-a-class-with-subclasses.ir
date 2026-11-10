@@ -1,0 +1,25 @@
+# f1 = measure
+# -- source: instanceof-of-a-class-with-subclasses.ts
+# class Shape {
+#   area: number;
+#   constructor(area: number) { this.area = area; }
+# }
+# class Circle extends Shape {}
+# class Square extends Shape {}
+# class Label {
+#   size: number;
+#   constructor(size: number) { this.size = size; }
+# }
+# function measure(thing: Shape | Label): number {
+#   if (thing instanceof Shape) return thing.area;
+#   return thing.size;
+# }
+# declare const input: any;
+# (globalThis as any).answer = measure(input > 2 ? new Circle(+input) : input > 1 ? new Square(+input) : new Label(+input));
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 12, patches 0, moves 0, unlikely or rare 4.
+# RUN(X64): steps most:12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 12

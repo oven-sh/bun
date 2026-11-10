@@ -306,9 +306,9 @@ mod tests {
         let object = write_out(&|index| format!("k{index}: () => {index}"));
         let indexes = write_out(&|index| format!("{index}: () => {index}"));
         let heads = [
-            ("async function", [32, 33, 32]),
-            ("function*", [32, 33, 32]),
-            ("function", [40, 40, 40]),
+            ("async function", [32, 9, 31]),
+            ("function*", [32, 9, 31]),
+            ("function", [40, 9, 31]),
         ];
         for (head, expected) in heads {
             let program = format!(

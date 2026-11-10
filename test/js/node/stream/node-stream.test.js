@@ -1,6 +1,7 @@
 import { exposedInternals } from "bun:internal-for-testing";
-import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { afterEach, describe, expect, it, jest } from "bun:test";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { once } from "node:events";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -707,6 +708,429 @@ it("Readable.fromWeb: a stream that ended while paused still delivers every byte
   r.resume();
   await closed;
   expect(bytes).toBe(size);
+});
+
+// A native source can hand _read() its bytes synchronously. When the stream's decoder keeps them whole (part of a
+// character, less than one base64 group), that push gives the stream no text. A node stream reads on after such a push
+// only through maybeReadMore_, which stops when the push came from its own _read() and never reads for a paused stream
+// at highWaterMark 0. The source reads only when _read() asks, so the stream stopped there: no more text, no 'end'.
+describe("Readable.fromWeb over a native source: a pull inside _read() that returns bytes the decoder holds back", () => {
+  afterEach(() => {
+    delete Object.prototype.setFlowing;
+  });
+
+  // A stream whose native source returns what the test scripts, one step a pull. _read() calls `setFlowing?.(true)`
+  // on the source first and the Blob source has no setFlowing, so one on Object.prototype runs with the source as
+  // `this`.
+  function scripted(script, options) {
+    const log = { pulls: 0 };
+    Object.defineProperty(Object.prototype, "setFlowing", {
+      configurable: true,
+      value() {
+        delete Object.prototype.setFlowing;
+        this.start = () => 0;
+        this.drain = () => undefined;
+        this.cancel = () => {};
+        this.updateRef = () => {};
+        this.setFlowing = () => {};
+        this.pull = (view, closer) => {
+          log.pulls++;
+          const step = script.shift();
+          if (step === undefined) throw new Error("script exhausted at pull " + log.pulls);
+          return step(view, closer);
+        };
+      },
+    });
+    return { stream: Readable.fromWeb(new Blob(["unused"]).stream(), options), log };
+  }
+  // Steps. A pull returns its bytes at once, copied into the view it was given or in an array of their own, or it
+  // returns false at EOF, or a promise of one of those.
+  const into = bytes => view => (view.set(bytes), bytes.length);
+  const owned = bytes => () => Buffer.from(bytes);
+  const done = () => false;
+  function parked() {
+    const { promise, resolve } = Promise.withResolvers();
+    const step = (view, closer) => promise.then(settle => settle(view, closer));
+    step.settle = resolve;
+    return step;
+  }
+  const hex = text => [...Buffer.from(text, "hex")];
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+  // Each push as [bytes, made inside _read()], and null for EOF.
+  function recordPushes(stream) {
+    const pushed = [];
+    const push = stream.push;
+    stream.push = function (chunk) {
+      pushed.push(chunk === null ? null : [chunk.length, this._readableState.sync]);
+      return push.call(this, chunk);
+    };
+    return pushed;
+  }
+
+  // The first chunk settles a pull that waits, so its 'data' is followed by a pull from maybeReadMore_. That pull
+  // returns the held bytes at once.
+  it.each([
+    ["utf8, bytes copied into the view", "utf8", into, ["78", "e2", "82ac"], "x€"],
+    ["utf8, bytes in an array of their own", "utf8", owned, ["78", "e2", "82ac"], "x€"],
+    ["base64", "base64", into, ["616263", "61", "62"], "YWJjYWI="],
+    ["utf16le", "utf16le", into, ["7800", "3dd8", "00de"], "x😀"],
+  ])("after text, %s: the stream pulls again and reaches 'end'", async (_, encoding, held, chunks, output) => {
+    const first = parked();
+    const rest = parked();
+    const { stream, log } = scripted([first, held(hex(chunks[1])), rest, done]);
+    stream.setEncoding(encoding);
+    const seen = { text: "", end: 0 };
+    stream.on("data", text => (seen.text += text));
+    stream.on("end", () => seen.end++);
+    await turn();
+    first.settle(into(hex(chunks[0])));
+    await turn();
+    // The held bytes are in, and the pull for what follows them is out.
+    expect(log.pulls).toBe(3);
+    rest.settle(into(hex(chunks[2])));
+    await turn();
+    await turn();
+    expect({ ...seen, pulls: log.pulls }).toEqual({ text: output, end: 1, pulls: 4 });
+  });
+
+  // The shape of the report: two bytes that arrive one by one, and neither becomes text before the end.
+  it.each([
+    ["base64: 61, then 62", "base64", ["61", "62"], "YWI="],
+    ["base64url: 61, then 62", "base64url", ["61", "62"], "YWI"],
+    ["utf8: e2, then 82", "utf8", ["e2", "82"], "\ufffd"],
+  ])("no text before the end, %s: the stream pulls again and reaches 'end'", async (_, encoding, chunks, output) => {
+    const first = parked();
+    const { stream, log } = scripted([first, into(hex(chunks[1])), done]);
+    stream.setEncoding(encoding);
+    const pushed = recordPushes(stream);
+    const seen = { text: "", end: 0 };
+    stream.on("data", text => (seen.text += text));
+    stream.on("end", () => seen.end++);
+    await turn();
+    first.settle(into(hex(chunks[0])));
+    await turn();
+    await turn();
+    expect({ ...seen, pushed, pulls: log.pulls }).toEqual({
+      text: output,
+      end: 1,
+      pushed: [[1, false], [1, true], null],
+      pulls: 3,
+    });
+  });
+
+  // Five characters stay in the stream's buffer the whole time, so its length is never 0. The first held pull is
+  // made by read(10), the second by maybeReadMore_.
+  it("a 'readable' listener with read(n) and text buffered: two held pulls in a row", async () => {
+    const first = parked();
+    const rest = parked();
+    const { stream, log } = scripted([first, into([0xe2]), into([0x82]), rest, done]);
+    stream.setEncoding("utf8");
+    const seen = { read: [], end: 0 };
+    let calls = 0;
+    stream.on("readable", () => {
+      if (++calls === 1) {
+        seen.read.push(stream.read(10));
+        return;
+      }
+      let text;
+      while ((text = stream.read(10)) !== null) seen.read.push(text);
+    });
+    stream.on("end", () => seen.end++);
+    await turn();
+    first.settle(into(hex("6162636465")));
+    await turn();
+    await turn();
+    expect(log.pulls).toBe(4);
+    rest.settle(into(hex("ac66676869")));
+    await turn();
+    await turn();
+    expect(seen).toEqual({ read: [null, "abcde€fghi"], end: 1 });
+  });
+
+  // The held byte comes back from the pull that read() makes. (When it settles a pull that waits, a paused stream at
+  // highWaterMark 0 stops in Node too.)
+  it("highWaterMark 0 and a 'readable' listener: a held pull made by read()", async () => {
+    const first = parked();
+    const rest = parked();
+    const { stream, log } = scripted([first, into([0xe2]), rest, done], { highWaterMark: 0 });
+    stream.setEncoding("utf8");
+    const seen = { text: "", end: 0 };
+    stream.on("readable", () => {
+      let text;
+      while ((text = stream.read()) !== null) seen.text += text;
+    });
+    stream.on("end", () => seen.end++);
+    await turn();
+    first.settle(into([0x78]));
+    await turn();
+    await turn();
+    expect(log.pulls).toBe(3);
+    rest.settle(into([0x82, 0xac]));
+    await turn();
+    await turn();
+    expect(seen).toEqual({ text: "x€", end: 1 });
+  });
+
+  // The stream asks again only after a pull that was held. A read(0) at any other time is work for every chunk, and
+  // at EOF it emits 'end' on a paused stream before anything reads it.
+  describe("the stream does not ask again when nothing was held", () => {
+    it.each([
+      ["Buffer mode", undefined],
+      ["utf8", "utf8"],
+      ["base64", "base64"],
+    ])("%s: one read(0) for 32 KiB in 1 KiB pulls", async (_, encoding) => {
+      const stream = Readable.fromWeb(new Blob([Buffer.alloc(32 * 1024, "a")]).stream(), { highWaterMark: 1024 });
+      if (encoding) stream.setEncoding(encoding);
+      const seen = { zeroReads: 0, manyPulls: false, bytes: 0 };
+      const read = stream.read;
+      stream.read = function (n) {
+        if (n === 0) seen.zeroReads++;
+        return read.call(this, n);
+      };
+      const pushed = recordPushes(stream);
+      stream.on("data", chunk => (seen.bytes += Buffer.from(chunk, encoding).length));
+      await once(stream, "end");
+      // Every pull after the first returned its bytes inside _read().
+      seen.manyPulls = pushed.filter(push => push !== null && push[1]).length > 4;
+      expect(seen).toEqual({ zeroReads: 1, manyPulls: true, bytes: 32 * 1024 });
+    });
+
+    const turnsAfterEof = async stream => {
+      while (!stream._readableState.ended) await turn();
+      for (let i = 0; i < 3; i++) await turn();
+    };
+    function recordEvents(stream) {
+      const events = [];
+      stream.on("end", () => events.push("end"));
+      stream.on("close", () => events.push("close"));
+      return { events, closed: once(stream, "close") };
+    }
+
+    it("a pull that returns EOF: a paused stream emits 'end' only once it is read", async () => {
+      const stream = Readable.fromWeb(new Blob(["abc"]).stream());
+      const { events, closed } = recordEvents(stream);
+      stream.once("readable", () => events.push(`read ${stream.read()}`));
+      await turnsAfterEof(stream);
+      events.push("turns");
+      events.push(`read ${stream.read()}`);
+      await closed;
+      expect(events).toEqual(["read abc", "turns", "read null", "end", "close"]);
+    });
+
+    it("a pull that returns EOF: pause() in a 'data' listener holds 'end' back until resume()", async () => {
+      const stream = Readable.fromWeb(new Blob(["abc"]).stream());
+      const { events, closed } = recordEvents(stream);
+      stream.on("data", chunk => {
+        events.push(`data ${chunk}`);
+        stream.pause();
+      });
+      await turnsAfterEof(stream);
+      events.push("resume");
+      stream.resume();
+      await closed;
+      expect(events).toEqual(["data abc", "resume", "end", "close"]);
+    });
+
+    // The source hands over 16384 bytes when it starts. Its next pull returns the last byte together with EOF, and
+    // the utf16le decoder holds that byte.
+    it("a held pull that comes with EOF: a paused stream emits 'end' only once it is read", async () => {
+      const stream = Readable.fromWeb(new Blob([Buffer.alloc(16384 + 1, "a\0")]).stream());
+      stream.setEncoding("utf16le");
+      const pushed = recordPushes(stream);
+      const { events, closed } = recordEvents(stream);
+      stream.once("readable", () => events.push(`read ${stream.read().length}`));
+      await turnsAfterEof(stream);
+      events.push("turns");
+      events.push(`read ${stream.read()}`);
+      await closed;
+      expect({ pushed: pushed.filter(push => push !== null), events }).toEqual({
+        pushed: [
+          [16384, true],
+          [1, true],
+        ],
+        events: ["read 8192", "turns", "read null", "end", "close"],
+      });
+    });
+  });
+
+  // The producer writes a chunk when the reader asks for it and stays alive (no EOF) until it is told to exit. The
+  // reader asks for the held byte from inside the handler that takes the first text, so the pull that read() makes
+  // next finds it in the pipe. Only on POSIX does a pull read the pipe itself.
+  it.skipIf(isWindows)(
+    "Bun.spawn().stdout with highWaterMark 0 and a 'readable' listener: a held pull made by read()",
+    async () => {
+      using dir = tempDir("fromweb-held-pull", {
+        "producer.js": `
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const chunks = process.argv.slice(2);
+          const file = name => path.join(__dirname, name);
+          const deadline = Date.now() + 15_000;
+          function waitFor(name) {
+            while (!fs.existsSync(file(name))) {
+              if (Date.now() > deadline) throw new Error("producer timed out waiting for " + name);
+              Bun.sleepSync(1);
+            }
+          }
+          chunks.forEach((hex, i) => {
+            waitFor("write-" + i);
+            fs.writeSync(1, Buffer.from(hex, "hex"));
+            fs.writeFileSync(file("wrote-" + i), "");
+          });
+          waitFor("exit");
+        `,
+        "reader.js": `
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const { Readable } = require("node:stream");
+          const chunks = process.argv.slice(2);
+          const file = name => path.join(__dirname, name);
+          const deadline = Date.now() + 15_000;
+          // Returns once chunk i is in the pipe. The producer is still alive.
+          function write(i) {
+            fs.writeFileSync(file("write-" + i), "");
+            while (!fs.existsSync(file("wrote-" + i))) {
+              if (Date.now() > deadline) throw new Error("reader timed out waiting for chunk " + i);
+              Bun.sleepSync(1);
+            }
+          }
+          const child = Bun.spawn({
+            cmd: [process.execPath, file("producer.js"), ...chunks],
+            stdio: ["ignore", "pipe", "inherit"],
+          });
+          const stream = Readable.fromWeb(child.stdout, { highWaterMark: 0 });
+          stream.setEncoding("utf8");
+          const seen = { pushed: [], text: "", end: 0 };
+          const push = stream.push;
+          stream.push = function (chunk) {
+            seen.pushed.push(chunk === null ? null : [chunk.length, this._readableState.sync]);
+            return push.call(this, chunk);
+          };
+          stream.on("readable", () => {
+            let text;
+            while ((text = stream.read()) !== null) {
+              if (seen.text === "") {
+                write(1);
+                // After the pull that the next read() makes: the rest, then EOF.
+                setImmediate(() => {
+                  write(2);
+                  fs.writeFileSync(file("exit"), "");
+                });
+              }
+              seen.text += text;
+            }
+          });
+          stream.on("end", () => seen.end++);
+          // The 'readable' listener made the stream's first read() a tick ago and it found the pipe empty, so
+          // chunk 0 settles that read.
+          setImmediate(() => write(0));
+          process.on("exit", () => console.log(JSON.stringify(seen)));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "reader.js", "78", "e2", "82ac"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        // The second push is the held byte, made inside _read().
+        stdout: JSON.stringify({ pushed: [[1, false], [1, true], [2, false], null], text: "x€", end: 1 }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      // The fixtures give up on their markers after 15 s, so their own error, not a test timeout, is what gets reported.
+    },
+    30_000,
+  );
+
+  // A fetch body keeps the bytes that do not fit the buffer of the pull that waits for them, and returns them to the
+  // next pull at once. A pull reads into what the pull before it left of a highWaterMark-sized buffer, if that is 512
+  // bytes or more. So the pull that waits for part 1 has room for 512 bytes, and part 1 is one byte longer.
+  describe("a fetch body", () => {
+    const reader = `
+      const net = require("node:net");
+      const { Readable } = require("node:stream");
+      const ending = process.argv[2];
+      const parts = [Buffer.alloc(512, "a"), Buffer.concat([Buffer.alloc(512, "b"), Buffer.from([0xe2])])];
+      const wanted = [0, 1, 2].map(() => Promise.withResolvers());
+      const server = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", async () => {
+          socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 1027\\r\\nConnection: close\\r\\n\\r\\n");
+          for (let i = 0; i < parts.length; i++) {
+            await wanted[i].promise;
+            socket.write(parts[i]);
+          }
+          await wanted[2].promise;
+          // The rest of the character and a clean end, or a connection that dies two bytes short.
+          if (ending === "end") socket.end(Buffer.from([0x82, 0xac]));
+          else socket.destroy();
+          server.close();
+        });
+      });
+      server.listen(0, "127.0.0.1", async () => {
+        const response = await fetch("http://127.0.0.1:" + server.address().port + "/");
+        const stream = Readable.fromWeb(response.body, { highWaterMark: 1024 });
+        stream.setEncoding("utf8");
+        let text = "";
+        const seen = { pushed: [], length: 0, tail: "", events: [] };
+        const push = stream.push;
+        stream.push = function (chunk) {
+          seen.pushed.push(chunk === null ? null : [chunk.length, this._readableState.sync]);
+          return push.call(this, chunk);
+        };
+        // 'resume' is emitted after the stream's first read() has been made, so part 0 settles that read.
+        stream.once("resume", () => wanted[0].resolve());
+        stream.on("data", chunk => {
+          text += chunk;
+          if (text.length === 512) wanted[1].resolve();
+          // After the pull that follows this handler, which returns the held byte.
+          if (text.length === 1024) setImmediate(() => wanted[2].resolve());
+        });
+        stream.on("end", () => seen.events.push("end"));
+        stream.on("error", error => seen.events.push("error " + error.code));
+        stream.on("close", () => seen.events.push("close"));
+        process.on("exit", () => {
+          seen.length = text.length;
+          seen.tail = text.slice(-2);
+          console.log(JSON.stringify(seen));
+        });
+      });
+    `;
+    // The third push is the held byte, made inside _read().
+    const heldPushes = [
+      [512, false],
+      [512, false],
+      [1, true],
+    ];
+
+    it.each([
+      [
+        "the rest arrives: 'end'",
+        "end",
+        { pushed: [...heldPushes, [2, false], null], length: 1025, tail: "b€", events: ["end", "close"] },
+      ],
+      [
+        "the connection dies: 'error'",
+        "destroy",
+        { pushed: heldPushes, length: 1024, tail: "bb", events: ["error ECONNRESET", "close"] },
+      ],
+    ])("after a held pull, %s", async (_, ending, seen) => {
+      using dir = tempDir("fromweb-held-pull-fetch", { "reader.js": reader });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "reader.js", ending],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(seen) + "\n", stderr: "", exitCode: 0 });
+    });
+  });
 });
 
 it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {

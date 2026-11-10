@@ -1811,3 +1811,100 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
 });
+
+// A pull can return bytes that the stream's decoder holds back whole: part of
+// a character, or less than one base64 group. That push hands the stream no
+// text. A node stream reads on after such a push only through maybeReadMore_,
+// which stops when the push came from its own _read(). This source reads only
+// when _read() asks, so the stream stopped there: the EOF was never read,
+// 'end', 'close' and execFile's callback never came, and the parent exited
+// with code 0. The other shapes of this are in node-stream.test.js.
+//
+// This is the shape of the report: two bytes in two writes, and neither
+// becomes text before the end. Pinned down with markers: the producer writes
+// a byte when the reader asks for it and stays alive (no EOF) until it is told
+// to exit. No 'data' comes before the end, so the reader asks from inside
+// push(): when the push of byte 0 returns, byte 1 is in the pipe, and the pull
+// that follows finds it there.
+it.skipIf(!isPosix)(
+  "execFile() calls back when a pull inside _read() returns a byte that the decoder holds back",
+  async () => {
+    using dir = tempDir("child-stdout-held-pull", {
+      "producer.js": `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const bytes = process.argv.slice(2);
+        const file = name => path.join(__dirname, name);
+        const deadline = Date.now() + 15_000;
+        function waitFor(name) {
+          while (!fs.existsSync(file(name))) {
+            if (Date.now() > deadline) throw new Error("producer timed out waiting for " + name);
+            Bun.sleepSync(1);
+          }
+        }
+        bytes.forEach((hex, i) => {
+          waitFor("write-" + i);
+          fs.writeSync(1, Buffer.from(hex, "hex"));
+          fs.writeFileSync(file("wrote-" + i), "");
+        });
+        waitFor("exit");
+      `,
+      "reader.js": `
+        const { execFile } = require("node:child_process");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const file = name => path.join(__dirname, name);
+        const deadline = Date.now() + 15_000;
+        // Returns once byte i is in the pipe. The producer is still alive.
+        function write(i) {
+          fs.writeFileSync(file("write-" + i), "");
+          while (!fs.existsSync(file("wrote-" + i))) {
+            if (Date.now() > deadline) throw new Error("reader timed out waiting for byte " + i);
+            Bun.sleepSync(1);
+          }
+        }
+        const seen = { pushed: [], callback: null, close: 0 };
+        const child = execFile(process.execPath, [file("producer.js"), "e2", "82"], (error, stdout, stderr) => {
+          seen.callback = { error: error ? error.message : null, stdout, stderr };
+        });
+        // 'resume' is emitted after the stream's first read() has been made
+        // and found the pipe empty, so byte 0 settles that read.
+        child.stdout.once("resume", () => write(0));
+        const push = child.stdout.push;
+        child.stdout.push = function (chunk) {
+          const insideRead = this._readableState.sync;
+          const more = push.call(this, chunk);
+          seen.pushed.push(chunk === null ? null : [chunk.length, insideRead]);
+          if (seen.pushed.length === 1) write(1);
+          // After the pull that follows the push of byte 1: EOF.
+          else if (seen.pushed.length === 2) setImmediate(() => fs.writeFileSync(file("exit"), ""));
+          return more;
+        };
+        child.on("close", () => seen.close++);
+        process.on("exit", () => console.log(JSON.stringify(seen)));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "reader.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        JSON.stringify({
+          // Byte 0 settles the read that waited. Byte 1 is pushed inside _read().
+          pushed: [[1, false], [1, true], null],
+          callback: { error: null, stdout: "\ufffd", stderr: "" },
+          close: 1,
+        }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    // The fixtures give up on their markers after 15 s, so their own error,
+    // not a test timeout, is what gets reported.
+  },
+  30_000,
+);

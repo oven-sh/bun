@@ -38,6 +38,7 @@ pub(crate) struct RetryPolicy {
     pub(crate) condition: RetryCondition,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum RetryCondition<RegExp = Strong> {
     Always,
     /// What Vitest's `passesRetryCondition` gives for a truthy condition that is no RegExp and no function.

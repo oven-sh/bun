@@ -371,3 +371,9 @@ template void AbortSignal::visitAbortAlgorithms(JSC::AbstractSlotVisitor&);
 template void AbortSignal::visitAbortAlgorithms(JSC::SlotVisitor&);
 
 } // namespace WebCore
+
+// What `AbortController.prototype.abort(reason)` does, for a signal that Rust holds.
+extern "C" void WebCore__AbortSignal__signalWithReason(WebCore::AbortSignal* abortSignal, JSC::EncodedJSValue reason)
+{
+    abortSignal->signalAbort(JSC::JSValue::decode(reason));
+}

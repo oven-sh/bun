@@ -552,6 +552,8 @@ test("flaky network request", { retry: { count: 3, delay: 500, condition: /ECONN
 - A hook can change the array in `task.result.errors`, and the `condition` is tested against what the hook leaves. Bun doesn't read a new array that a hook assigns to `task.result.errors`.
 - Vitest's types also allow a function as `condition`. Vitest 5 never calls the function and retries after every error, and so does Bun.
 - The `retry` of a `describe` block is the default for its tests. A test's own `retry` replaces all of it. Bun doesn't read `tags` or `meta` from the options, so a tag can't give a `retry` to its tests.
+- With a number, or with `count` alone, Bun retries after every failed attempt and doesn't read `task.result.errors`. Vitest reads them for a number too, so it doesn't retry a failure that leaves no error, like `throw []`.
+- As in Vitest, every attempt gets the same test context. After an attempt that timed out, [`signal`](#test-context) stays aborted in the next attempts.
 - `task.retry` is the count.
 - `test.for()`, `test.extend()` and `describe.for()` from `"bun:test"` take the object too.
 

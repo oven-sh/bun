@@ -4941,60 +4941,6 @@ bool JSC__JSValue__isAggregateError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     return false;
 }
 
-// Vitest's `failTask`: what a thrown value adds to `task.result.errors`. A thrown array adds each of its elements, and an
-// AggregateError each member of its `errors`. A value that is no object is added as `{ message: String(value) }`.
-// Only own data is read and each entry is defined, not set, so none of the test's code runs here.
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__TestContext__recordError(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedErrors, JSC::EncodedJSValue encodedThrown)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* errors = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedErrors));
-
-    const auto add = [&](JSC::JSValue value) {
-        JSC::JSString* message = nullptr;
-        if (value.isSymbol()) {
-            auto description = asSymbol(value)->tryGetDescriptiveString();
-            if (!description) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return;
-            }
-            message = jsString(vm, *description);
-        } else if (!value.isObject()) {
-            message = value.toString(globalObject);
-        }
-        RETURN_IF_EXCEPTION(scope, );
-        if (message) {
-            auto* entry = JSC::constructEmptyObject(globalObject);
-            entry->putDirect(vm, vm.propertyNames->message, message);
-            value = entry;
-        }
-        errors->putDirectIndex(globalObject, errors->length(), value, 0, JSC::PutDirectIndexShouldThrow);
-    };
-    // False if `value` is no array. A hole is undefined, as it is for the iteration in Vitest.
-    const auto forEachElement = [&](JSC::JSValue value, const auto& visit) -> bool {
-        auto* array = value ? dynamicDowncast<JSC::JSArray>(value) : nullptr;
-        if (!array)
-            return false;
-        // `array` can be `errors`, so its length is read once.
-        for (unsigned index = 0, length = array->length(); index < length; index++) {
-            visit(array->canGetIndexQuickly(index) ? array->getIndexQuickly(index) : JSC::jsUndefined());
-            RETURN_IF_EXCEPTION(scope, true);
-        }
-        return true;
-    };
-    const auto addErrorOrItsMembers = [&](JSC::JSValue value) {
-        auto* error = dynamicDowncast<JSC::ErrorInstance>(value);
-        bool isAggregateError = error && error->errorType() == JSC::ErrorType::AggregateError;
-        // An `errors` that the test made an accessor is a GetterSetter here, which is no array.
-        if (!isAggregateError || !forEachElement(error->getDirect(vm, vm.propertyNames->errors), add))
-            add(value);
-    };
-
-    JSC::JSValue thrown = JSC::JSValue::decode(encodedThrown);
-    if (!forEachElement(thrown, addErrorOrItsMembers))
-        addErrorOrItsMembers(thrown);
-}
-
 bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* global)
 {
     return JSC::hasIteratorMethod(global, JSC::JSValue::decode(JSValue));
@@ -6703,11 +6649,6 @@ extern "C" void WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JS
     abortSignal->signalAbort(
         globalObject,
         static_cast<WebCore::CommonAbortReason>(reason));
-}
-
-extern "C" void WebCore__AbortSignal__signalWithReason(WebCore::AbortSignal* abortSignal, JSC::EncodedJSValue reason)
-{
-    abortSignal->signalAbort(JSC::JSValue::decode(reason));
 }
 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__reasonIfAborted(WebCore::AbortSignal* signal, JSC::JSGlobalObject* globalObject, CommonAbortReason* reason)

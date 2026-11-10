@@ -543,6 +543,13 @@ describe.concurrent("test context", () => {
           while (performance.now() < end);
           throw new Error("own error");
         });
+        // The context is the same in every attempt, so the signal that the first attempt did not read is aborted too.
+        let attemptOfLateReader = 0;
+        test("reads the signal in its second attempt", { timeout: 20, retry: 1 }, async (ctx) => {
+          if (++attemptOfLateReader === 1) await new Promise(() => {});
+          console.log("first read in attempt", attemptOfLateReader, ctx.signal.aborted);
+          throw new Error("boom");
+        });
       `,
     });
     expect({ log, results, exitCode }).toEqual({
@@ -555,6 +562,7 @@ describe.concurrent("test context", () => {
         "attempt 1 false",
         "attempt 2 true",
         "finished false",
+        "first read in attempt 2 true",
       ],
       results: [
         "(pass) in time",
@@ -562,6 +570,7 @@ describe.concurrent("test context", () => {
         "(fail) looks at the signal afterwards",
         "(fail) is retried (attempt 2)",
         "(fail) throws after its deadline",
+        "(fail) reads the signal in its second attempt (attempt 2)",
       ],
       exitCode: 1,
     });
@@ -4119,6 +4128,8 @@ describe.concurrent("retry delay and condition", () => {
           ["undefined", /^undefined$/, undefined],
           ["null", /^null$/, null],
           ["an object with a message", /^of an object$/, { message: "of an object" }],
+          ["an object without a message", /^$/, { code: "E" }],
+          ["an object without a message, and undefined is asked for", /undefined/, { code: "E" }],
           ["an error without a message", /^$/, new Error("")],
           ["an error whose name matches", /TypeError/, new TypeError("bad")],
         ]) test("throws " + name, { retry: { count: 1, condition } }, once(() => { throw value; }));
@@ -4148,6 +4159,9 @@ describe.concurrent("retry delay and condition", () => {
         "throws null: 2",
         "throws an object with a message: 1",
         "throws an object with a message: 2",
+        "throws an object without a message: 1",
+        "throws an object without a message: 2",
+        "throws an object without a message, and undefined is asked for: 1",
         "throws an error without a message: 1",
         "throws an error without a message: 2",
         "throws an error whose name matches: 1",
@@ -4166,6 +4180,8 @@ describe.concurrent("retry delay and condition", () => {
         "(pass) throws undefined (attempt 2)",
         "(pass) throws null (attempt 2)",
         "(pass) throws an object with a message (attempt 2)",
+        "(pass) throws an object without a message (attempt 2)",
+        "(fail) throws an object without a message, and undefined is asked for",
         "(pass) throws an error without a message (attempt 2)",
         "(fail) throws an error whose name matches",
       ],
@@ -4199,6 +4215,8 @@ describe.concurrent("retry delay and condition", () => {
           ["a symbol", /^Symbol\\(boom\\)$/, () => Symbol("boom")],
         ]) test("throws " + name, { retry: { count: 1, condition } }, once(() => { throw thrown(); }));
         test("throws an empty array, and the retry has a delay alone", { retry: { count: 1, delay: 1 } }, once(() => { throw []; }));
+        // Not as in Vitest, which reads the errors for a number too and does not retry this. Bun reads them for the object alone.
+        test("throws an empty array, and the retry is a number", { retry: 1 }, once(() => { throw []; }));
         test("Promise.any()", { retry: { count: 1, condition: /^last$/ } }, once(() => Promise.any(members().map(error => Promise.reject(error)))));
       `,
     });
@@ -4238,6 +4256,9 @@ describe.concurrent("retry delay and condition", () => {
         "throws a symbol: 2",
         "throws an empty array, and the retry has a delay alone: 1",
         "[]",
+        "throws an empty array, and the retry is a number: 1",
+        "[]",
+        "throws an empty array, and the retry is a number: 2",
         "Promise.any(): 1",
         `["first","last"]`,
         "Promise.any(): 2",
@@ -4256,13 +4277,15 @@ describe.concurrent("retry delay and condition", () => {
         "(fail) throws an empty array",
         "(pass) throws a symbol (attempt 2)",
         "(fail) throws an empty array, and the retry has a delay alone",
+        "(pass) throws an empty array, and the retry is a number (attempt 2)",
         "(pass) Promise.any() (attempt 2)",
       ],
       exitCode: 1,
     });
   });
 
-  test("the errors of a connection that every address of a host refuses", async () => {
+  // Not beside the other tests: a debug build takes two seconds to load node:net, and longer while twenty other child runs start.
+  test.serial("the errors of a connection that every address of a host refuses", async () => {
     // Where "localhost" has an IPv4 and an IPv6 address, the connection fails with an AggregateError of one error for each.
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
@@ -4286,8 +4309,7 @@ describe.concurrent("retry delay and condition", () => {
       results: ["(fail) a refused connection (attempt 2)"],
       exitCode: 1,
     });
-    // A debug build takes seconds to load node:net and to exit after a lookup.
-  }, 30_000);
+  });
 
   test("the message of a matcher is tested without the colours that a terminal gets", async () => {
     const { log, exitCode } = await runTests(
@@ -4964,26 +4986,28 @@ describe.concurrent("retry delay and condition", () => {
   });
 
   test("a process that the earlier attempt runs during the delay is not ended at the deadline of that attempt", async () => {
-    // The process lives longer than the 250 ms of the test. Bun.spawnSync() ends its process at the deadline of the test that calls it.
+    // The process lives longer than the 50 ms of the test. Bun.spawnSync() ends its process at the deadline of the test that calls it.
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test } from "vitest";
-        test("retried", { timeout: 250, retry: { count: 1, delay: 20 } }, ({ task }) => {
-          if (task.result.retryCount > 0) return;
-          setImmediate(() => {
-            const { exitCode, signalCode } = Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(500)"] });
-            console.log("exited with", exitCode, signalCode);
-          });
+        // Each attempt fails, so none has to end before the deadline on a slow machine.
+        test("retried", { timeout: 50, retry: { count: 1, delay: 20 } }, ({ task }) => {
+          if (task.result.retryCount === 0) {
+            setImmediate(() => {
+              const { exitCode, signalCode } = Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(200)"] });
+              console.log("exited with", exitCode, signalCode);
+            });
+          }
           throw new Error("boom");
         });
       `,
     });
     expect({ log, results, exitCode }).toEqual({
       log: ["exited with 0 undefined"],
-      results: ["(pass) retried (attempt 2)"],
-      exitCode: 0,
+      results: ["(fail) retried (attempt 2)"],
+      exitCode: 1,
     });
-  }, 30_000);
+  });
 
   test("hooks can change the errors that the condition reads", async () => {
     const { log, results, exitCode } = await runTests({

@@ -99,6 +99,10 @@ test/js/bun/test/mock/mock-hoist.test.ts: not hoisted > a call into another bloc
 test/js/bun/test/mock/mock-hoist.test.ts: not hoisted > a call into another block of a TypeScript namespace keeps its this: a file without any test API
 test/js/bun/test/mock/mock-module.test.ts: a factory doesn't wait for an onLoad() callback in an unrelated load > a module that the factory shares with the importers of the mock stays linked to the mock
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
+# The next three: the file is imported under two import types, and its mock evicts it with its importers under `bun test`. A compiled module has one instance: what is imported again does not all follow the mock or its end.
+test/js/bun/test/mock/mock-module.test.ts: a module imported under two types that require() has loaded too > is mocked for the next test file's imports by that file's own mock
+test/js/bun/test/mock/mock-module.test.ts: a module imported under two types that require() has loaded too > is mocked, mocked again and unmocked for the next import() and require()
+test/js/bun/test/mock/mock-module.test.ts: a module imported under two types that require() has loaded too > is unmocked after a second mock whose factory has loaded the second type
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing
@@ -108,6 +112,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
+test/js/bun/test/mock/mock-module.test.ts: a preload's mock is back after a test file mocked the module and loaded it under another import type
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept

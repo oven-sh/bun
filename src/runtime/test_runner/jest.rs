@@ -704,6 +704,8 @@ pub(crate) mod on_unhandled_rejection {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry)
                         // An expected failure has to come from the test's own callback, not from a stray rejection.
                         || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
+                        // No callback of the test runs while it waits for its next attempt.
+                        || sequence.stage == bun_test::Execution::Stage::RetryWaiting
                     {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;

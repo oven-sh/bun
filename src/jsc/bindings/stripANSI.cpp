@@ -132,16 +132,11 @@ extern "C" bool Bun__ANSI__next(BunANSIIterator* it)
     it->cursor = slice_end - it->input;
     return true;
 }
-JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// `jsString` itself when it has nothing to strip.
+static JSC::EncodedJSValue stripANSIFromString(JSC::JSGlobalObject* globalObject, JSC::JSString* const jsString)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    const JSC::JSValue input = callFrame->argument(0);
-
-    // Convert to JSString to get the view
-    JSC::JSString* const jsString = input.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
 
     // Get StringView to avoid joining sliced strings
     const auto view = jsString->view(globalObject);
@@ -167,5 +162,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalOb
         return {};
     }
     return JSC::JSValue::encode(JSC::jsString(vm, *result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    // Convert to JSString to get the view
+    JSC::JSString* const jsString = callFrame->argument(0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    RELEASE_AND_RETURN(scope, stripANSIFromString(globalObject, jsString));
+}
+
+// `Bun.stripANSI()` for a string that native code holds.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__stripANSI(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue string)
+{
+    return stripANSIFromString(globalObject, JSC::asString(JSC::JSValue::decode(string)));
 }
 }

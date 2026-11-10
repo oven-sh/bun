@@ -23,6 +23,7 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
 
 extern "C" uint64_t Bun__hashPluginContents(const EncodedSlice* contents, BunLoaderType loader);
 extern "C" bool Bun__VM__hasGlobalsOfVitest(void* bunVM);
+extern "C" bool Bun__canReuseCachedSource(void* bunVM, const BunString* path, uint8_t validatorKind, uint64_t validator);
 
 static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
@@ -35,7 +36,7 @@ static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeStri
     return Bun__VM__hasGlobalsOfVitest(bunVM) ? ~hash : hash;
 }
 
-Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
+static Zig::SourceProvider* findProvider(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
     auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
     auto it = cache.find(key);
@@ -44,6 +45,49 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
     ASSERT(it->value);
     auto* provider = static_cast<Zig::SourceProvider*>(it->value.get());
     return provider->m_madeFromHash == madeFromHash(vm, key, pluginContents) ? provider : nullptr;
+}
+
+// WebCore::clientData() without its type check, which findProvider() has made by then.
+static ALWAYS_INLINE uint32_t isolationCacheGeneration(JSC::VM& vm)
+{
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->isolationCacheGeneration;
+}
+
+// The first lookup of an entry since isolationCacheGeneration moved: it stays only if its file is still what it was made from.
+static COLD NEVER_INLINE Zig::SourceProvider* revalidate(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
+{
+    auto* clientData = WebCore::clientData(vm);
+    bool canReuse = false;
+    switch (provider.m_validatorKind) {
+    case ResolvedSourceValidatorKind::NotAFile:
+        canReuse = true;
+        break;
+    // Cached before the first resetModules() of the process, when no validator is taken.
+    case ResolvedSourceValidatorKind::None:
+        break;
+    case ResolvedSourceValidatorKind::Stamp:
+    case ResolvedSourceValidatorKind::Content: {
+        size_t query = key.find('?');
+        WTF::String path = query == WTF::notFound ? key : key.left(query);
+        BunString borrowedPath = Bun::toString(path);
+        canReuse = Bun__canReuseCachedSource(clientData->bunVM, &borrowedPath, static_cast<uint8_t>(provider.m_validatorKind), provider.m_validator);
+        break;
+    }
+    }
+    if (!canReuse) {
+        clientData->isolationSourceProviderCache.remove(key);
+        return nullptr;
+    }
+    provider.m_cacheGeneration = clientData->isolationCacheGeneration;
+    return &provider;
+}
+
+Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
+{
+    auto* provider = findProvider(vm, key, pluginContents);
+    if (provider && provider->m_cacheGeneration != isolationCacheGeneration(vm)) [[unlikely]]
+        provider = revalidate(vm, key, *provider);
+    return provider;
 }
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
@@ -81,6 +125,21 @@ void IsolatedModuleCache::dropForReset(JSC::VM& vm, const WTF::ScopedLambda<bool
         return !keeps(entry.key, *static_cast<Zig::SourceProvider*>(entry.value.get()));
     });
     Bun__VM__didResetModules(clientData->bunVM);
+}
+
+void IsolatedModuleCache::didReset(JSC::VM& vm)
+{
+    auto* clientData = WebCore::clientData(vm);
+    clientData->isolationCacheGeneration++;
+    clientData->isolationCacheWasResetInFile = true;
+    Bun__VM__didResetModules(clientData->bunVM);
+}
+
+void IsolatedModuleCache::didFinishFile(JSC::VM& vm)
+{
+    auto* clientData = WebCore::clientData(vm);
+    if (std::exchange(clientData->isolationCacheWasResetInFile, false))
+        clientData->isolationCacheGeneration++;
 }
 
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)

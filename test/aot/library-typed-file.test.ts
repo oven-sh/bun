@@ -157,6 +157,43 @@ console.log(wrong);
     expect(typed).toContain('  unit: "cm" | "in" | undefined;\n');
   });
 
+  // The bundle calls the decorator behind the class. A decorator that index.aot.ts states too runs a second time.
+  // The comment between a decorator and its member stays in index.aot.ts: here it is a directive.
+  test("a decorator of a member that has no JavaScript runs once in a program", async () => {
+    const options = { ...JSON.parse(tsconfig).compilerOptions, experimentalDecorators: true };
+    using dir = tempDir("aot-library-typed-file-decorated-members", {
+      ...library,
+      "library/tsconfig.json": JSON.stringify({ compilerOptions: options }),
+      "library/src/index.ts": library["library/src/index.ts"] + `export { seen, Row } from "./row";\n`,
+      // The helper of the bundle reads Reflect.decorate. A package that imports `reflect-metadata` has it declared.
+      "library/src/row.ts": `declare global {
+  namespace Reflect {
+    function decorate(decorators: unknown[], target: object, key?: string | symbol, desc?: PropertyDescriptor | null): any;
+  }
+}
+export const seen: string[] = [];
+function column(target: object, key: string): void {
+  seen.push(key);
+}
+export class Base {
+  id: string = "";
+}
+export abstract class Row extends Base {
+  @column
+  // @ts-expect-error The table has numbers.
+  declare id: number;
+  @column abstract name: string;
+}
+`,
+      "app/app.ts": `import { seen } from "shapes";
+console.log(seen.join());
+`,
+    });
+    await install(String(dir));
+    // The program is compiled from app.ts and index.aot.ts.
+    expect(await compile(String(dir))).toEqual({ ...USED, typedFiles: 2, stdout: "id,name\n" });
+  });
+
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {
     using dir = tempDir("aot-library-typed-file-patched", library);
     await install(String(dir));

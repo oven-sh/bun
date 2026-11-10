@@ -479,6 +479,18 @@ impl<'a, 's> Syntax<'a, 's> {
         false
     }
 
+    /// Where the decorators in front of a member or a parameter end. The bundle calls them: a typed file states none.
+    fn decorators_end(&self, modifiers: &[Modifier]) -> Option<u32> {
+        let is_decorator =
+            |modifier: &&Modifier| matches!(modifier.kind, ModifierKind::Decorator(_));
+        let last = modifiers.iter().take_while(is_decorator).last()?;
+        Some(self.modifier_end(last))
+    }
+
+    fn after_decorators(&self, modifiers: &[Modifier], start: u32) -> u32 {
+        (self.decorators_end(modifiers)).map_or(start, |end| self.after_trivia(end))
+    }
+
     fn member_key(&self, member: &Member) -> u32 {
         if self.byte(member.name_pos) != b'[' {
             return member.name_pos;
@@ -499,15 +511,7 @@ impl<'a, 's> Syntax<'a, 's> {
         }
         let key = self.member_key(member);
         let modifiers = self.file.modifier_list(member.modifiers);
-        let is_decorator =
-            |modifier: &&Modifier| matches!(modifier.kind, ModifierKind::Decorator(_));
-        let first = modifiers
-            .iter()
-            .take_while(is_decorator)
-            .last()
-            .map_or(member.start, |last| {
-                self.after_trivia(self.modifier_end(last))
-            });
+        let first = self.after_decorators(modifiers, member.start);
         let span_of = |flags: Flags| {
             let mut listed = modifiers.iter().filter(|modifier| {
                 flags.contains(modifier.kind.flag()) && !modifier.kind.flag().is_empty()
@@ -1445,11 +1449,14 @@ impl Written<'_, '_> {
 
     /// A member with no annotation up to its name or `?`, and then the type that the check of the sources noted.
     fn noted_member(&self, member: &Member) -> Option<Vec<u8>> {
+        let syntax = &self.syntax;
         let types = self.types.filter(|_| !self.is_unchecked())?;
-        let noted = types.member_type(self.syntax.member_key(member))?;
+        let noted = types.member_type(syntax.member_key(member))?;
         let mut slots = Vec::new();
-        self.syntax.member_slots(member, &mut slots);
-        let name = self.text(member.start, slots.last()?.end);
+        syntax.member_slots(member, &mut slots);
+        let modifiers = syntax.file.modifier_list(member.modifiers);
+        let start = syntax.after_decorators(modifiers, member.start);
+        let name = self.text(start, slots.last()?.end);
         Some([&name[..], b": ", noted].concat())
     }
 
@@ -3950,12 +3957,19 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 for (place, member) in members.iter().enumerate() {
                     if syntax.is_type_only_member(member) {
-                        add(place, &module.text(member.start, member.loc.end));
+                        let modifiers = file.modifier_list(member.modifiers);
+                        let text = match syntax.decorators_end(modifiers) {
+                            Some(end) => module.trimmed_text(end, member.loc.end),
+                            None => module.text(member.start, member.loc.end),
+                        };
+                        add(place, &text);
                     } else if member.kind == MemberKind::Property
                         && !output_members.contains_key(&(index as u32, syntax.member_key(member)))
                     {
                         let typed = if member.ty.is_some() {
-                            Some(module.text(member.start, syntax.type_span(member.ty).1))
+                            let modifiers = file.modifier_list(member.modifiers);
+                            let start = syntax.after_decorators(modifiers, member.start);
+                            Some(module.text(start, syntax.type_span(member.ty).1))
                         } else {
                             module.noted_member(member)
                         };
@@ -3970,12 +3984,12 @@ impl<'a> Transfer<'_, 'a, '_> {
                     else {
                         continue;
                     };
-                    for parameter in file[constructor]
+                    for id in file[constructor]
                         .params
                         .iter()
-                        .map(|parameter| &file[parameter])
-                        .filter(|parameter| parameter.flags.contains(Flags::PARAMETER_PROPERTY))
+                        .filter(|&id| file[id].flags.contains(Flags::PARAMETER_PROPERTY))
                     {
+                        let parameter = &file[id];
                         let Some(binding) = syntax.binding_slot(
                             parameter.pat,
                             parameter.ty,
@@ -3984,14 +3998,12 @@ impl<'a> Transfer<'_, 'a, '_> {
                             continue;
                         };
                         if !output_members.contains_key(&(index as u32, binding.key)) {
+                            let modifiers = file.modifier_list(file.param_modifiers(id));
+                            let start = syntax.after_decorators(modifiers, parameter.pos);
                             add(
                                 0,
-                                &[
-                                    &b"declare "[..],
-                                    &module.text(parameter.pos, binding.end),
-                                    b";",
-                                ]
-                                .concat(),
+                                &[&b"declare "[..], &module.text(start, binding.end), b";"]
+                                    .concat(),
                             );
                         }
                     }

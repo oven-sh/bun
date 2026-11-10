@@ -302,6 +302,74 @@ export class Counter {
     ]);
   });
 
+  test("experimentalDecorators: a line that index.aot.ts adds for a member has none of its decorators", async () => {
+    const options = { strict: true, experimentalDecorators: true, useDefineForClassFields: false };
+    using dir = tempDir("build-dts-decorated-members", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [] },
+      }),
+      "package.json": JSON.stringify({ name: "greeter", version: "1.0.0", compilerOptions: options }),
+      // The helper of the bundle reads Reflect.decorate. A package that imports `reflect-metadata` has it declared.
+      "src/index.ts": `declare const __DEV__: boolean;
+declare global {
+  namespace Reflect {
+    function decorate(decorators: unknown[], target: object, key?: string | symbol, desc?: PropertyDescriptor | null): any;
+  }
+}
+export const columns: string[] = [];
+function column(target: object, key: string): void {
+  columns.push(key);
+}
+function indexed(name: string) {
+  return (target: object, key: string): void => {
+    columns.push(name + ":" + key);
+  };
+}
+export class Row {
+  @column id: number;
+  @column
+  @indexed("by name")
+  name;
+  @column private readonly note?;
+  @column declare owner: string;
+  constructor(id: number) {
+    this.id = id;
+    if (__DEV__) this.name = "row";
+    if (__DEV__) this.note = "n";
+  }
+}
+export const load = () => import("./service");
+`,
+      // A decorator of a parameter assigns to the class. The bundle has the class of a module in a variable only
+      // where it loads the module this way.
+      "src/service.ts": `function inject(target: object, key: string | undefined, index: number): void {}
+export class Service {
+  constructor(@inject private readonly name: string) {}
+  read(): string {
+    return this.name;
+  }
+}
+`,
+    });
+    const flags = ["--dts", "--define", "__DEV__=false"];
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // The bundle has none of these fields: it stores in the constructor, and it calls the decorators behind the class.
+    expect(written(dir, "index.aot.ts").match(/^ +declare .*$/gm)).toEqual([
+      "    declare private readonly name: string;",
+      "  declare id: number;",
+      "  declare name: string | undefined;",
+      "  declare private readonly note?: string | undefined;",
+      "  declare owner: string;",
+    ]);
+    // A decorator that index.aot.ts stated too would run twice.
+    const erased = (name: string, loader: "ts" | "js") =>
+      new Bun.Transpiler({ loader, target: "node", tsconfig: { compilerOptions: options } })
+        .transformSync(written(dir, name))
+        .replace(/\s+/g, "");
+    expect(erased("index.aot.ts", "ts")).toBe(erased("index.js", "js"));
+  });
+
   test("a class member without an annotation keeps the type of the sources when the build removes what it stores", async () => {
     using dir = tempDir(
       "build-dts-dead-stores",

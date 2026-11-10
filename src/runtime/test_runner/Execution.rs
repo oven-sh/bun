@@ -1208,8 +1208,7 @@ fn record_runner_error(context: JSValue, global: &JSGlobalObject, error: JSValue
     }
 }
 
-/// A timeout has one error, as in Vitest: the reason that `signal` is aborted with is the error in `task.result.errors`.
-/// `evaluate_timeout` leaves the failure of an around hook to its error here, which says what the reporter can't.
+/// A timeout has one error, as in Vitest: `signal` is aborted with it, and it is recorded, or thrown for an around hook that `evaluate_timeout` left to fail here.
 fn report_timeout(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,

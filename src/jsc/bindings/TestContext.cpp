@@ -59,8 +59,7 @@ static void addErrorOrItsMembersToErrorsOfTest(JSC::JSGlobalObject* globalObject
     }
 }
 
-// Vitest's `failTask`: what a thrown value adds to `task.result.errors`. A thrown array adds each of its elements.
-// Only own data is read, so none of the test's code runs here.
+// Vitest's `failTask`: a thrown array adds each of its elements to `task.result.errors`. Only own data is read, so no code of the test runs.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__TestContext__recordError(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedErrors, JSC::EncodedJSValue encodedThrown)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));

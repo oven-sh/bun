@@ -1764,6 +1764,9 @@ pub(crate) fn to_bytes(
                 has_entry_point |= is_entry_point(output_file);
 
                 string_builder.count_z(bytes);
+                if bytes.len() >= bun_sys::private_copy::MIN_MAPPED_BYTES {
+                    string_builder.cap += bun_sys::private_copy::ALIGNMENT - 1;
+                }
                 if is_stored_as_string(output_file) {
                     // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
                     string_builder.cap += bytes.len() + 3;
@@ -2083,7 +2086,11 @@ pub(crate) fn to_bytes(
             (module.contents, module.encoding, hash) =
                 encode_text_module(&mut string_builder, output_file.value.as_slice());
         } else {
-            module.contents = string_builder.append_count_z(output_file.value.as_slice());
+            let bytes = output_file.value.as_slice();
+            if bytes.len() >= bun_sys::private_copy::MIN_MAPPED_BYTES {
+                align_next_append(&mut string_builder, bun_sys::private_copy::ALIGNMENT);
+            }
+            module.contents = string_builder.append_count_z(bytes);
         }
         // `Flags::HAS_SOURCE_HASHES`: JSC's SourceCodeKey hash, so a launch from bytecode never reads the source text.
         if !output_file.loader.is_javascript_like() {
@@ -3775,6 +3782,14 @@ fn append_shared_bytecode(
         module_info_string_table_ptr,
         prelinked_module_graph_ptr,
     )
+}
+
+/// What is appended next starts at a multiple of `alignment` once mapped. The section data begins 8 bytes after a page-aligned address (the length header).
+fn align_next_append(string_builder: &mut bun_core::StringBuilder, alignment: usize) {
+    let padding = (string_builder.len + size_of::<u64>()).next_multiple_of(alignment)
+        - (string_builder.len + size_of::<u64>());
+    string_builder.writable()[..padding].fill(0);
+    string_builder.len += padding;
 }
 
 /// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins

@@ -171,6 +171,31 @@ for (let i = 0; i < 20; i++) {
     120_000,
   );
 
+  test("the bytes of a large embedded file are aligned as an allocator's", async () => {
+    using dir = tempDir("aot-asset-bytes-aligned", {
+      "app/main.cjs": `const fs = require("node:fs");
+const { join } = require("node:path");
+const { ptr } = require("bun:ffi");
+const buf = fs.readFileSync(join(__dirname, "data", "b-large.bin"));
+console.log(fs.readFileSync(join(__dirname, "data", "a-small.bin")).length, buf.length, new Uint8Array(buf.buffer, buf.byteOffset).length);
+console.log(ptr(buf) % 16);
+const words = new Int32Array(buf.buffer, 0, 4);
+console.log(Atomics.add(words, 1, 5), words[1]);
+const wide = new BigInt64Array(buf.buffer, 0, 2);
+console.log(String(Atomics.add(wide, 1, 7n)), String(wide[1]));
+`,
+      "app/data/a-small.bin": "abc",
+      "app/data/b-large.bin": Buffer.alloc((1 << 20) + 1, 1),
+    });
+    const { plain, compiled } = await bothWays(String(dir), "./main.cjs", "--asset", "data");
+    expect(plain).toEqual({
+      stdout: `3 1048577 1048577\n0\n16843009 16843014\n72340172838076673 72340172838076680\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
   test("an asset beside the entry point leaves the entry point at the root", async () => {
     using dir = tempDir("aot-asset-beside-the-entry-point-itself", {
       "app/main.cjs": `const fs = require("node:fs");

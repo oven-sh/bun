@@ -536,9 +536,8 @@ fn access_in_graph(
 
 /// A writable copy of `contents`.
 fn embedded_file_buffer(graph: &bun_standalone_graph::Graph, contents: &[u8]) -> Buffer {
-    const MIN_MAPPED_BYTES: usize = 1 << 20;
     if graph.compiled_program.is_some()
-        && contents.len() >= MIN_MAPPED_BYTES
+        && contents.len() >= sys::private_copy::MIN_MAPPED_BYTES
         && let Some(copy) = sys::private_copy::map(contents)
     {
         return Buffer::from_private_copy(copy, contents.len());

@@ -2,12 +2,18 @@
 
 use core::ffi::c_void;
 
+/// Smaller files are copied.
+pub const MIN_MAPPED_BYTES: usize = 1 << 20;
+/// What an allocator gives a buffer. `Atomics` on a typed array over the bytes needs it.
+pub const ALIGNMENT: usize = 16;
+
 /// `None` if the bytes have to be copied instead.
 #[cfg(target_os = "linux")]
 pub fn map(bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
     use crate::{CloseOnDrop, O};
 
-    let offset = offset_in_executable(bytes)?;
+    // The writer aligns a file of `MIN_MAPPED_BYTES`. Another writer or an older layout may not have.
+    let offset = offset_in_executable(bytes).filter(|it| it.is_multiple_of(ALIGNMENT))?;
     let executable =
         crate::open(bun_core::zstr!("/proc/self/exe"), O::RDONLY | O::CLOEXEC, 0).ok()?;
     let _close = CloseOnDrop::new(executable);

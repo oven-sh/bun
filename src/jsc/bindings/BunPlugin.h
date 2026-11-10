@@ -160,6 +160,16 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // What the `{ spy: true }` mocks of the running test file wrote to the objects that their modules export. Written back when the file ends:
+        // the module that a mock evaluated for itself goes with the mock, but an object that the module imports belongs to another module.
+        struct SpyWrittenInPlace {
+            JSC::Strong<JSC::JSObject> object;
+            JSC::Identifier key;
+            // Empty if the object had no property of its own under the key.
+            JSC::Strong<JSC::Unknown> replaced;
+            JSC::Strong<JSC::Unknown> spy;
+        };
+        Vector<SpyWrittenInPlace> spiesWrittenInPlace = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };

@@ -262,6 +262,57 @@ describe.concurrent("vi.mock(path, { spy: true })", () => {
     ]);
   });
 
+  // The instance of the module that the mock evaluates imports what the module imports: those objects are not its own.
+  test.each([
+    ["after a file that loaded the modules", ["./a.test.ts", "./b.test.ts", "./c.test.ts"]],
+    ["with nothing loaded before", ["./b.test.ts", "./c.test.ts"]],
+  ])("what the spies write to the objects of another module is put back when the file ends, %s", async (_, order) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `
+          export class Database {
+            #rows = "rows of ";
+            query(sql) { return this.#rows + sql; }
+          }
+          export const db = new Database();
+          export const other = new Database();
+        `,
+        "barrel.ts": `export { db, other, Database } from "./dep";`,
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          import { db } from "./barrel";
+          test("an earlier file loads the modules", () => expect(db.query("x")).toBe("rows of x"));
+        `,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { db, other, Database } from "./barrel";
+          vi.mock("./barrel", { spy: true });
+          test("the objects of the other module are spied on while the file runs", async () => {
+            expect([db.query("x"), new Database().query("y")]).toEqual(["rows of x", "rows of y"]);
+            expect(db.query).toHaveBeenCalledWith("x");
+            expect(Database.prototype.query).toHaveBeenCalledWith("y");
+            expect((await vi.importActual("./dep")).db).toBe(db);
+            db.query.mockReturnValue("left by this file");
+            Database.prototype.query.mockReturnValue("left by this file");
+            // What the test itself assigns over a spy is not the mock's to take back.
+            other.query = globalThis.assigned = () => "assigned by the test";
+          });
+        `,
+        "c.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { db, other, Database } from "./dep";
+          test("the next file gets them as the module made them", () => {
+            expect([db.query("x"), new Database().query("y")]).toEqual(["rows of x", "rows of y"]);
+            expect([vi.isMockFunction(db.query), vi.isMockFunction(Database.prototype.query), Object.getOwnPropertyNames(db)]).toEqual([false, false, []]);
+            expect(other.query).toBe(assigned);
+          });
+        `,
+      },
+      order.length,
+      order,
+    );
+  });
+
   // Where the file has the module already, the call updates the loaded module in place, as it does when no earlier file loaded it.
   test("a call made after the file has the module does the same alone and after an earlier file", async () => {
     const shapes: [string, string, (db: string, mocks: string, log: string) => string][] = [

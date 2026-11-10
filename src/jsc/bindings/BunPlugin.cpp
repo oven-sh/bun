@@ -1668,7 +1668,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockImportOriginal, (JSC::JSGlobalObjec
     return JSValue::encode(original);
 }
 
-static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const String& key, JSValue moduleNamespace, bool spy, bool& isCommonJS)
+static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const String& key, JSValue moduleNamespace, bool spy, bool& isCommonJS, bool undoSpiesWhenTestFileEnds = false)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1693,7 +1693,7 @@ static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const 
     } else if (JSObject* object = moduleNamespace.getObject())
         exports = withoutUninitializedExports(globalObject, object);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy));
+    RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy, false, undoSpiesWhenTestFileEnds));
 }
 
 static JSObject* exportsOfModuleMockWithoutFactory(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSValue moduleNamespace)
@@ -1719,7 +1719,8 @@ static JSObject* exportsOfModuleMockWithoutFactory(Zig::GlobalObject* globalObje
     String key = dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, nullptr);
     bool isCommonJS = false;
-    JSValue mocked = mockExportsOfLoadedModule(globalObject, key, moduleNamespace, mock->spy, isCommonJS);
+    // A mock of a preload stays for every test file, and so do its spies.
+    JSValue mocked = mockExportsOfLoadedModule(globalObject, key, moduleNamespace, mock->spy, isCommonJS, Bun::isBunTest && !mock->isFromPreload);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!isCommonJS)
         return mocked.getObject();
@@ -6538,6 +6539,30 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 #endif
 }
 
+// Bindings that the file took before vi.doUnmock() keep their spies, so this runs once, when the file ends, and not with each mock.
+static void undoSpiesWrittenInPlace(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto written = std::exchange(globalObject->onLoadPlugins.spiesWrittenInPlace, {});
+    for (size_t i = written.size(); i--;) {
+        auto& write = written[i];
+        JSObject* object = write.object.get();
+        JSC::PropertyDescriptor descriptor;
+        // Only a spy that is still where the mock put it: the test may have written over it, or restored it.
+        bool isStillThere = object->getOwnPropertyDescriptor(globalObject, write.key, descriptor) && descriptor.isDataDescriptor() && descriptor.value() == write.spy.get();
+        if (isStillThere && !scope.exception()) {
+            if (JSValue replaced = write.replaced.get()) {
+                JSC::PutPropertySlot slot(object);
+                object->methodTable()->put(object, globalObject, write.key, replaced, slot);
+            } else
+                JSC::JSCell::deleteProperty(object, globalObject, write.key);
+        }
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+    }
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules)
 {
     auto& plugins = globalObject->onLoadPlugins;
@@ -6589,8 +6614,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             (void)scope.tryClearException();
 #endif
     }
-    if (!nextLoadSharesModules)
+    if (!nextLoadSharesModules) {
+        plugins.spiesWrittenInPlace.clear();
         return;
+    }
 
     MarkedArgumentBuffer mocks;
 #if ENABLE(AOT)
@@ -6645,6 +6672,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             mockOfPreloadThatComesBack->isUnderActualKey = false;
 #endif
     }
+    undoSpiesWrittenInPlace(globalObject);
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
 
 #if ENABLE(AOT)
     for (size_t i = 0; i < mocksOfPreloadsThatCameBack.size(); ++i) {

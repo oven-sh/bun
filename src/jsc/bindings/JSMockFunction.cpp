@@ -2535,6 +2535,7 @@ struct Automocker {
     Zig::GlobalObject* globalObject;
     bool spy;
     bool leaveOriginalAlone;
+    bool undoWhenTestFileEnds;
     JSC::JSMap* replacements;
     // Work list of (original, replacement, AutomockKind) triples.
     JSC::MarkedArgumentBuffer pending {};
@@ -2761,6 +2762,9 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
                     continue;
                 JSC::PutPropertySlot slot(replacement);
                 replacement->methodTable()->put(replacement, globalObject, key, mocked, slot);
+                // An inherited method becomes a property of the object itself, which the undo deletes.
+                if (undoWhenTestFileEnds && !scope.exception())
+                    globalObject->onLoadPlugins.spiesWrittenInPlace.append(Zig::BunPlugin::OnLoad::SpyWrittenInPlace { { vm, replacement }, key, holder == original ? JSC::Strong<JSC::Unknown> { vm, value } : JSC::Strong<JSC::Unknown> {}, { vm, mocked } });
             } else if (isFunction && key == vm.propertyNames->prototype) {
                 uncheckedDowncast<JSMockFunction>(replacement)->setPrototypeProperty(vm, mocked);
             } else {
@@ -2780,12 +2784,12 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
     }
 }
 
-__attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject, JSValue value, AutomockRole role, bool spy, bool leaveOriginalAlone)
+__attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject, JSValue value, AutomockRole role, bool spy, bool leaveOriginalAlone, bool undoWhenTestFileEnds = false)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Automocker automocker { globalObject, spy, leaveOriginalAlone, JSC::JSMap::create(vm, globalObject->mapStructure()) };
+    Automocker automocker { globalObject, spy, leaveOriginalAlone, undoWhenTestFileEnds, JSC::JSMap::create(vm, globalObject->mapStructure()) };
     JSValue result = automocker.replacementFor(value, role);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2803,9 +2807,9 @@ __attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject
     return result;
 }
 
-JSC::JSValue mockObject(Zig::GlobalObject* globalObject, JSC::JSValue value, bool spy, bool leaveOriginalAlone)
+JSC::JSValue mockObject(Zig::GlobalObject* globalObject, JSC::JSValue value, bool spy, bool leaveOriginalAlone, bool undoWhenTestFileEnds)
 {
-    return automock(globalObject, value, AutomockRole::Exports, spy, leaveOriginalAlone);
+    return automock(globalObject, value, AutomockRole::Exports, spy, leaveOriginalAlone, undoWhenTestFileEnds);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockObject, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))

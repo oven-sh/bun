@@ -19,7 +19,8 @@ using namespace WebCore;
 class JSMockFunction;
 
 // Automocks a module's exports. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
-JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
+// With `undoWhenTestFileEnds`, each property that is written in place goes to `onLoadPlugins.spiesWrittenInPlace`.
+JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false, bool undoWhenTestFileEnds = false);
 
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.

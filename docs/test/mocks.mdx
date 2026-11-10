@@ -475,7 +475,7 @@ You can call `vi.mock(path)` and `jest.mock(path)` without a factory. `mock.modu
 
 - If a `__mocks__` directory has a file with the same name, Bun loads that file instead. For a file, that's `__mocks__/<file>` in the same directory. For a package or a builtin like `fs`, it's `__mocks__/<package>` in the directory where `bun test` runs.
 - Otherwise, Bun loads the original module and mocks its exports. Functions and classes become mocks that return `undefined`, arrays become empty, and other values are kept.
-- `vi.mock(path, { spy: true })` keeps every function's implementation and records its calls. Bun evaluates the module once more for the mock, at the first import, and replaces the methods of the objects and class instances it exports in place. A module that an earlier test file loaded isn't written to, and `vi.importActual()` returns it. The evaluation is removed with the mock, so the next `{ spy: true }` mock of the module starts with new spies.
+- `vi.mock(path, { spy: true })` keeps every function's implementation and records its calls. Bun evaluates the module once more for the mock, at the first import, and replaces the methods of the objects and class instances it exports in place. A module that an earlier test file loaded isn't written to, and `vi.importActual()` returns it. The evaluation is removed with the mock, so the next `{ spy: true }` mock of the module starts with new spies. An object that the module imports from another module is shared with that module: its methods are replaced in place too, and put back when the test file ends.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";

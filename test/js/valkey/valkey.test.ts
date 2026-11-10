@@ -7578,8 +7578,9 @@ describe("RedisClient argument validation", () => {
 
   // An undefined/null that a real argument follows is refused with its position in
   // the call. set, sadd, srem and hmget used to stop there and drop every later
-  // argument; mget and zmscore dropped the hole, so the replies no longer lined up
-  // with the keys asked for; hscan dropped it, so MATCH took the next option as its pattern.
+  // argument; the others dropped the hole and moved the later arguments up, so the
+  // replies of mget and zmscore no longer lined up with the keys asked for, and
+  // hscan's MATCH took the next option as its pattern.
   test.each<[call: string, invoke: (client: any) => unknown, label: string, received: string, index: number]>([
     ['sadd("s", "a", undefined, "b")', c => c.sadd("s", "a", undefined, "b"), "member", "undefined", 2],
     ['sadd("s", "a", null, "b")', c => c.sadd("s", "a", null, "b"), "member", "null", 2],
@@ -7611,6 +7612,43 @@ describe("RedisClient argument validation", () => {
       "additional arguments",
       "undefined",
       2,
+    ],
+    ['del("a", undefined, "c")', c => c.del("a", undefined, "c"), "additional arguments", "undefined", 1],
+    ['unlink("a", null, "c")', c => c.unlink("a", null, "c"), "additional arguments", "null", 1],
+    ['touch("a", undefined, "c")', c => c.touch("a", undefined, "c"), "additional arguments", "undefined", 1],
+    [
+      'hdel("h", "f1", undefined, "f2")',
+      c => c.hdel("h", "f1", undefined, "f2"),
+      "additional arguments",
+      "undefined",
+      2,
+    ],
+    ['hdel("h", null, "f2")', c => c.hdel("h", null, "f2"), "additional arguments", "null", 1],
+    ['zrem("z", "a", null, "b")', c => c.zrem("z", "a", null, "b"), "additional arguments", "null", 2],
+    ['lpush("l", "a", undefined, "b")', c => c.lpush("l", "a", undefined, "b"), "additional arguments", "undefined", 2],
+    [
+      'lpushx("l", "a", undefined, "b")',
+      c => c.lpushx("l", "a", undefined, "b"),
+      "additional arguments",
+      "undefined",
+      2,
+    ],
+    ['rpush("l", "a", undefined, "b")', c => c.rpush("l", "a", undefined, "b"), "additional arguments", "undefined", 2],
+    ['rpushx("l", "a", null, "b")', c => c.rpushx("l", "a", null, "b"), "additional arguments", "null", 2],
+    ['lpop("l", undefined, 2)', c => c.lpop("l", undefined, 2), "additional arguments", "undefined", 1],
+    [
+      'zrank("z", "m", undefined, "WITHSCORE")',
+      c => c.zrank("z", "m", undefined, "WITHSCORE"),
+      "additional arguments",
+      "undefined",
+      2,
+    ],
+    [
+      'zrangebylex("z", "-", "+", "LIMIT", null, 10)',
+      c => c.zrangebylex("z", "-", "+", "LIMIT", null, 10),
+      "additional arguments",
+      "null",
+      4,
     ],
   ])("%s throws instead of sending a shorter command", (call, invoke, label, received, index) => {
     const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
@@ -7785,6 +7823,10 @@ describe("RedisClient command encoding", () => {
         () => client.hmget("h", "f1", undefined, "f2"),
         () => client.set("lock", "owner-2", undefined, "NX"),
         () => client.hscan("h", 0, "MATCH", undefined, "NOVALUES"),
+        () => client.del("a", undefined, "c"),
+        () => client.zrem("z", "a", null, "b"),
+        () => client.hdel("h", "f1", undefined, "f2"),
+        () => client.rpush("l", "a", undefined, "b"),
         () => client.zrank("z", undefined, "WITHSCORE"),
         () => client.rpush(undefined, "a", "b"),
       ]) {
@@ -7810,11 +7852,6 @@ describe("RedisClient command encoding", () => {
     "append", "decrby", "expire", "expireat", "getbit", "getset", "hexists", "hget", "hstrlen", "incrby",
     "incrbyfloat", "lindex", "pexpire", "pexpireat", "pfadd", "rename", "renamenx", "rpoplpush", "setnx", "sismember",
     "spop", "spublish", "srandmember", "wait", "zscore",
-  ];
-  // prettier-ignore
-  const dropsTheArgument = [
-    "del", "hdel", "hrandfield", "lpop", "lpush", "lpushx", "rpop", "rpush", "rpushx", "touch", "unlink", "zpopmax",
-    "zpopmin", "zrandmember", "zrangebylex", "zrank", "zrem", "zrevrangebylex", "zrevrank",
   ];
   // hincrby and hincrbyfloat are not called: they send an undefined/null increment as the text
   // "undefined" or "null". #41640 makes them throw.
@@ -7846,7 +7883,6 @@ describe("RedisClient command encoding", () => {
       ...Object.fromEntries(readsNoArgument.map(name => [name, [name.toUpperCase()]])),
       ...Object.fromEntries(readsOneArgument.map(name => [name, [name.toUpperCase(), "a"]])),
       ...Object.fromEntries(readsTwoArguments.map(name => [name, [name.toUpperCase(), "a", "1"]])),
-      ...Object.fromEntries(dropsTheArgument.map(name => [name, [name.toUpperCase(), "a", "1", "d"]])),
       getBuffer: ["GET", "a"],
     });
     expect(received.slice(wrote.length)).toEqual([["PING"]]);

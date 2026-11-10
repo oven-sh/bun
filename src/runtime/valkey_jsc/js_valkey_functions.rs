@@ -130,27 +130,6 @@ fn push_rest_args_out_of_line(
     push_rest_args(global, fn_name, arg_label, args, rest)
 }
 
-/// The behaviour before `push_rest_args`: a hole is dropped and the arguments after it move up.
-#[inline(never)]
-fn push_rest_args_skipping_holes(
-    global: &JSGlobalObject,
-    fn_name: &'static str,
-    arg_label: &'static str,
-    args: &mut Vec<JSArgument>,
-    rest: &[JSValue],
-) -> JsResult<()> {
-    for arg in rest {
-        if arg.is_undefined_or_null() {
-            continue;
-        }
-        let Some(value) = from_js(global, *arg)? else {
-            return Err(global.throw_invalid_argument_type(fn_name, arg_label, "string or buffer"));
-        };
-        args.push(value);
-    }
-    Ok(())
-}
-
 /// Shim around `protocol::valkey_error_to_js` that:
 /// 1. accepts whatever error type `JSValkeyClient::send` currently returns
 ///    (presently `crate::Error`) and
@@ -275,7 +254,7 @@ macro_rules! cmd {
     (
         $fn_name:ident, $name:literal, $command:literal, $state:ident
         $(, $arg:ident: $arg_name:literal)+;
-        ...$rest:ident: $rest_name:literal $(, first: $first_name:literal)? $(; $holes:ident)?
+        ...$rest:ident: $rest_name:literal $(, first: $first_name:literal)?
     ) => {
         pub(crate) fn $fn_name(
             &self,
@@ -314,7 +293,7 @@ macro_rules! cmd {
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(NAMED + $rest.len());
             $(args.push($arg);)+
-            cmd!(@rest $($holes)?)(
+            push_rest_args_out_of_line(
                 global,
                 $name,
                 $rest_name,
@@ -342,12 +321,6 @@ macro_rules! cmd {
     };
     (@first $first_name:literal) => {
         Some($first_name)
-    };
-    (@rest) => {
-        push_rest_args_out_of_line
-    };
-    (@rest SkipHoles) => {
-        push_rest_args_skipping_holes
     };
 }
 
@@ -1160,11 +1133,11 @@ impl JSValkeyClient {
 
     cmd!(
         hdel, "hdel", "HDEL", NotSubscriber,
-        key: "key"; ...fields: "additional arguments", first: "field"; SkipHoles
+        key: "key"; ...fields: "additional arguments", first: "field"
     );
     cmd!(
         hrandfield, "hrandfield", "HRANDFIELD", NotSubscriber,
-        key: "key"; ...options: "additional arguments"; SkipHoles
+        key: "key"; ...options: "additional arguments"
     );
     cmd!(
         hscan, "hscan", "HSCAN", NotSubscriber,
@@ -1312,10 +1285,7 @@ impl JSValkeyClient {
     cmd!(llen, "llen", "LLEN", NotSubscriber, key: "key");
     cmd_strings_varargs!(lmove, "lmove", "LMOVE", NotSubscriber);
     cmd_strings_varargs!(lmpop, "lmpop", "LMPOP", NotSubscriber);
-    cmd!(
-        lpop, "lpop", "LPOP", NotSubscriber,
-        key: "key"; ...options: "additional arguments"; SkipHoles
-    );
+    cmd!(lpop, "lpop", "LPOP", NotSubscriber, key: "key"; ...options: "additional arguments");
     cmd_strings_varargs!(lpos, "lpos", "LPOS", NotSubscriber);
     cmd!(lrange, "lrange", "LRANGE", NotSubscriber, key: "key", start: "start", stop: "stop");
     cmd!(lrem, "lrem", "LREM", NotSubscriber, key: "key", count: "count", element: "element");
@@ -1330,10 +1300,7 @@ impl JSValkeyClient {
     cmd!(pexpiretime, "pexpiretime", "PEXPIRETIME", NotSubscriber, key: "key");
     cmd!(pttl, "pttl", "PTTL", NotSubscriber, key: "key");
     cmd!(randomkey, "randomkey", "RANDOMKEY", NotSubscriber);
-    cmd!(
-        rpop, "rpop", "RPOP", NotSubscriber,
-        key: "key"; ...options: "additional arguments"; SkipHoles
-    );
+    cmd!(rpop, "rpop", "RPOP", NotSubscriber, key: "key"; ...options: "additional arguments");
     cmd!(
         rpoplpush, "rpoplpush", "RPOPLPUSH", NotSubscriber,
         source: "source", destination: "destination"
@@ -1356,15 +1323,15 @@ impl JSValkeyClient {
     cmd!(zlexcount, "zlexcount", "ZLEXCOUNT", NotSubscriber, key: "key", min: "min", max: "max");
     cmd!(
         zpopmax, "zpopmax", "ZPOPMAX", NotSubscriber,
-        key: "key"; ...options: "additional arguments"; SkipHoles
+        key: "key"; ...options: "additional arguments"
     );
     cmd!(
         zpopmin, "zpopmin", "ZPOPMIN", NotSubscriber,
-        key: "key"; ...options: "additional arguments"; SkipHoles
+        key: "key"; ...options: "additional arguments"
     );
     cmd!(
         zrandmember, "zrandmember", "ZRANDMEMBER", NotSubscriber,
-        key: "key"; ...options: "additional arguments"; SkipHoles
+        key: "key"; ...options: "additional arguments"
     );
     cmd_strings_varargs!(zrange, "zrange", "ZRANGE", NotSubscriber);
     cmd_strings_varargs!(zrevrange, "zrevrange", "ZREVRANGE", NotSubscriber);
@@ -1382,11 +1349,11 @@ impl JSValkeyClient {
     );
     cmd!(
         zrangebylex, "zrangebylex", "ZRANGEBYLEX", NotSubscriber,
-        key: "key", min: "min"; ...rest: "additional arguments", first: "max"; SkipHoles
+        key: "key", min: "min"; ...rest: "additional arguments", first: "max"
     );
     cmd!(
         zrevrangebylex, "zrevrangebylex", "ZREVRANGEBYLEX", NotSubscriber,
-        key: "key", max: "max"; ...rest: "additional arguments", first: "min"; SkipHoles
+        key: "key", max: "max"; ...rest: "additional arguments", first: "min"
     );
     cmd!(append, "append", "APPEND", NotSubscriber, key: "key", value: "value");
     cmd!(getset, "getset", "GETSET", NotSubscriber, key: "key", value: "value");
@@ -1399,20 +1366,20 @@ impl JSValkeyClient {
     cmd!(decrby, "decrby", "DECRBY", NotSubscriber, key: "key", decrement: "decrement");
     cmd!(
         lpush, "lpush", "LPUSH", NotSubscriber,
-        key: "key"; ...elements: "additional arguments", first: "value"; SkipHoles
+        key: "key"; ...elements: "additional arguments", first: "value"
     );
     cmd!(
         lpushx, "lpushx", "LPUSHX", NotSubscriber,
-        key: "key"; ...elements: "additional arguments", first: "value"; SkipHoles
+        key: "key"; ...elements: "additional arguments", first: "value"
     );
     cmd!(pfadd, "pfadd", "PFADD", NotSubscriber, key: "key", element: "value");
     cmd!(
         rpush, "rpush", "RPUSH", NotSubscriber,
-        key: "key"; ...elements: "additional arguments", first: "value"; SkipHoles
+        key: "key"; ...elements: "additional arguments", first: "value"
     );
     cmd!(
         rpushx, "rpushx", "RPUSHX", NotSubscriber,
-        key: "key"; ...elements: "additional arguments", first: "value"; SkipHoles
+        key: "key"; ...elements: "additional arguments", first: "value"
     );
     cmd!(setnx, "setnx", "SETNX", NotSubscriber, key: "key", value: "value");
     cmd!(setex, "setex", "SETEX", NotSubscriber, key: "key", seconds: "seconds", value: "value");
@@ -1442,7 +1409,7 @@ impl JSValkeyClient {
     cmd_strings_varargs!(bzmpop, "bzmpop", "BZMPOP", NotSubscriber);
     cmd_strings_varargs!(bzpopmin, "bzpopmin", "BZPOPMIN", NotSubscriber);
     cmd_strings_varargs!(bzpopmax, "bzpopmax", "BZPOPMAX", NotSubscriber);
-    cmd!(del, "del", "DEL", NotSubscriber, key: "key"; ...keys: "additional arguments"; SkipHoles);
+    cmd!(del, "del", "DEL", NotSubscriber, key: "key"; ...keys: "additional arguments");
     cmd!(mget, "mget", "MGET", NotSubscriber, key: "key"; ...keys: "additional arguments");
     cmd_strings_varargs!(mset, "mset", "MSET", NotSubscriber);
     cmd_strings_varargs!(msetnx, "msetnx", "MSETNX", NotSubscriber);
@@ -1489,12 +1456,12 @@ impl JSValkeyClient {
     cmd!(hstrlen, "hstrlen", "HSTRLEN", NotSubscriber, key: "key", field: "field");
     cmd!(
         zrank, "zrank", "ZRANK", NotSubscriber,
-        key: "key", member: "member"; ...options: "additional arguments"; SkipHoles
+        key: "key", member: "member"; ...options: "additional arguments"
     );
     cmd_strings_varargs!(zrangestore, "zrangestore", "ZRANGESTORE", NotSubscriber);
     cmd!(
         zrem, "zrem", "ZREM", NotSubscriber,
-        key: "key"; ...members: "additional arguments", first: "member"; SkipHoles
+        key: "key"; ...members: "additional arguments", first: "member"
     );
     cmd!(
         zremrangebylex, "zremrangebylex", "ZREMRANGEBYLEX", NotSubscriber,
@@ -1510,7 +1477,7 @@ impl JSValkeyClient {
     );
     cmd!(
         zrevrank, "zrevrank", "ZREVRANK", NotSubscriber,
-        key: "key", member: "member"; ...options: "additional arguments"; SkipHoles
+        key: "key", member: "member"; ...options: "additional arguments"
     );
     cmd_strings_varargs!(
         psubscribe,
@@ -1528,14 +1495,8 @@ impl JSValkeyClient {
     );
     cmd_strings_varargs!(pubsub, "pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, "copy", "COPY", NotSubscriber);
-    cmd!(
-        unlink, "unlink", "UNLINK", NotSubscriber,
-        key: "key"; ...keys: "additional arguments"; SkipHoles
-    );
-    cmd!(
-        touch, "touch", "TOUCH", NotSubscriber,
-        key: "key"; ...keys: "additional arguments"; SkipHoles
-    );
+    cmd!(unlink, "unlink", "UNLINK", NotSubscriber, key: "key"; ...keys: "additional arguments");
+    cmd!(touch, "touch", "TOUCH", NotSubscriber, key: "key"; ...keys: "additional arguments");
     cmd!(rename, "rename", "RENAME", NotSubscriber, key: "key", newkey: "newkey");
     cmd!(renamenx, "renamenx", "RENAMENX", NotSubscriber, key: "key", newkey: "newkey");
 

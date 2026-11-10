@@ -361,7 +361,7 @@ mod _impl {
             Error::ok()
         }
 
-        /// As in node, the new stream has the dictionary and the parameters of the old one.
+        /// As in node since nodejs/node#66157, the new stream has the dictionary and the parameters of the old one.
         pub(crate) fn reset(&mut self) -> Error {
             // `init` was not called, or it refused.
             if matches!(self.state, State::None) {

@@ -1,0 +1,47 @@
+------------------
+{ printWidth: 80 }
+------------------
+interface A {
+  a: string; /* c1 */
+  b: string /* c2 */;
+  c: string; /* c3 */
+  d: string; // c4
+  e(): void; /* c5 */
+  f: string;
+  /* c6 */ g: number;
+  h: string; /* c7 */
+}
+type B = {
+  a: string; /* c1 */
+  b: string;
+};
+class C {
+  a: string; /* c1 */
+  b = 1; /* c2 */
+  c(): void; /* c3 */
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+interface A {
+  a: string; /* c1 */
+  b: string /* c2 */;
+  c: string; /* c3 */
+  d: string; // c4
+  e(): void; /* c5 */
+  f: string;
+  /* c6 */ g: number;
+  h: string; /* c7 */
+}
+type B = {
+  a: string; /* c1 */
+  b: string;
+};
+class C {
+  a: string; /* c1 */
+  b = 1; /* c2 */
+  c(): void; /* c3 */
+}
+
+===================== End =====================

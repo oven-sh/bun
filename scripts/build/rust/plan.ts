@@ -301,8 +301,7 @@ function manifestLints(manifest: TomlTable, manifestPath: string): ManifestLints
   if (table.workspace === true)
     table =
       ((workspaceManifestOf(manifest, manifestPath).workspace as TomlTable | undefined)?.lints as
-        | TomlTable
-        | undefined) ?? {};
+        TomlTable | undefined) ?? {};
   const lints: { priority: number; lint: string; flag: string }[] = [];
   const checkCfg: string[] = [];
   for (const [tool, entries] of Object.entries(table)) {

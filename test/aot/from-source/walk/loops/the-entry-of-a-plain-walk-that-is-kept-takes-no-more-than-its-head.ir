@@ -1,0 +1,22 @@
+# -- source: the-entry-of-a-plain-walk-that-is-kept-takes-no-more-than-its-head.ts
+# declare function sink(value: unknown): void;
+# function* ticks(count: number) { for (let i = 0; i < count; i++) yield i; }
+# function run(count: number) {
+#   const list: number[] = [];
+#   for (let i = 0; i < count; i++) list.push(i & 3);
+#   const spare = ticks(2), end = list.length;
+#   let held, sum = 0;
+#   for (let i = 0; i < end; i++) { sum = (sum + list[i]) | 0; held = spare; }
+#   return sum + " " + typeof held + " " + (held === spare);
+# }
+# sink(run(8));
+# sink(run(0));
+# -- end of source
+# `held` enters the second loop as undefined and comes round as what `ticks` hands back, through no join: the head holds undefined or that very generator.
+# The plain walk of the loop is kept beside a typed build, and an entry is laid in front of its head. The entry was typed by a join, which lets an object named by its maker
+# give way to its class: any generator. So the entry handed its head more than the head takes, and the verifier stopped the build.
+# f2 = run
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: undefined|coroutine(f1) {{*}}isLoopHead=true

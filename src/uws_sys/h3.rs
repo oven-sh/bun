@@ -315,19 +315,19 @@ impl Response {
         let _ = self;
         handler();
     }
-    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
+    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(&UD), ud: &UD) {
         // cork is synchronous, so we stack-allocate the (handler, ud) pair and
         // recover it inside the trampoline — same shape as H1's
         // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<UD> = (fn(*mut UD), *mut UD);
+        type Ctx<'a, UD> = (fn(&UD), &'a UD);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
+            let ctx = unsafe { &*p.cast::<Ctx<'_, UD>>() };
             (ctx.0)(ctx.1);
         }
-        let mut ctx: Ctx<UD> = (handler, ud);
+        let mut ctx: Ctx<'_, UD> = (handler, ud);
         c::uws_h3_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
     }
 }
@@ -384,7 +384,7 @@ macro_rules! h3_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
         where
-            H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
             Self::route(RouteKind::$kind, self, p, ud, h);
         }
@@ -424,18 +424,18 @@ impl App {
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
             // `p` is the registered `*mut UD` (non-null by route registration).
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                let Some(ud) = p.cast::<UD>().as_ref() else {
                     return;
                 };
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
@@ -497,7 +497,7 @@ impl App {
 
     pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
     where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
         if let Some(kind) = RouteKind::from_method(m) {
             Self::route(kind, self, p, ud, h);
@@ -531,18 +531,18 @@ impl App {
 
     pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: &ListenConfig)
     where
-        H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
+        H: Fn(&UD, Option<&mut ListenSocket>) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(ls: *mut ListenSocket, p: *mut c_void)
         where
-            H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
+            H: Fn(&UD, Option<&mut ListenSocket>) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `p` is the registered `*mut UD`;
             // `ls` (when non-null) is a live listen-socket for this call.
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                let Some(ud) = p.cast::<UD>().as_ref() else {
                     return;
                 };
                 thunk::zst::<H>()(ud, ls.as_mut());

@@ -9,7 +9,8 @@ on:
   pull_request:
   merge_group:
 env:
-  BUN_VERSION: "1.4.2"
+  # `bun lint` and `bun fmt` aren't in a release yet. Pin this to 1.5.0 once it's out.
+  BUN_VERSION: "canary"
   LLVM_VERSION: "23.1.1"
   LLVM_VERSION_MAJOR: "23"
 
@@ -34,6 +35,8 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          # The action's default bucket can be many commits behind for canary.
+          download-url: https://github.com/oven-sh/bun/releases/download
       - name: Setup Dependencies
         run: |
           bun install
@@ -54,16 +57,18 @@ jobs:
           # autofix step below to push back to the PR (it also fails the run
           # whenever it has something to push, so staleness stays a red check
           # where it can't push, e.g. the merge queue). Runs before the
-          # formatters start so prettier isn't rewriting a `.string-map.ts`
+          # formatters start so `bun fmt` isn't rewriting a `.string-map.ts`
           # while the generator imports it.
           echo "::group::String maps"
           bun run codegen:string-maps 2>&1 | sed 's/^/[string-maps] /'
           echo "::endgroup::"
 
-          # Start prettier in background with prefixed output
-          echo "::group::Prettier"
-          (bun run prettier 2>&1 | sed 's/^/[prettier] /') &
-          PRETTIER_PID=$!
+          # Start bun fmt in background with prefixed output. What it formats is in bunfig.toml.
+          # The plugin is built into Bun. It's only on here: on save, it would remove an import
+          # that the next edit is about to use.
+          echo "::group::bun fmt"
+          (bun fmt --plugin=prettier-plugin-organize-imports 2>&1 | sed 's/^/[bun fmt] /') &
+          BUN_FMT_PID=$!
 
           # Start clang-format installation and formatting in background with prefixed output
           echo "::group::Clang-format"
@@ -95,8 +100,8 @@ jobs:
           echo "Running formatters in parallel..."
           FAILED=0
 
-          if ! wait $PRETTIER_PID; then
-            echo "::error::Prettier failed"
+          if ! wait $BUN_FMT_PID; then
+            echo "::error::bun fmt failed"
             FAILED=1
           fi
           echo "::endgroup::"

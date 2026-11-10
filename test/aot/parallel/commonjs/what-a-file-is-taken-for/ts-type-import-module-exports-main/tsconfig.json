@@ -1,0 +1,1 @@
+{ "compilerOptions": { "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "strict": true, "noEmit": true, "verbatimModuleSyntax": false } }

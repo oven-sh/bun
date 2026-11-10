@@ -1,0 +1,60 @@
+# -- source: main.mjs
+# function Shown(n) { this.tag = n; }
+# Shown.prototype.weigh = function () { return "weigh " + this.tag; };
+# const kept = new Shown(1);
+# print(kept.weigh(), kept.kind);
+# Shown.prototype.kind = "laid";
+# Shown.prototype.weigh = function () { return "again " + this.tag; };
+# print(kept.weigh(), kept.kind);
+# function Swapped(n) { this.tag = n; }
+# print(new Swapped(1).tag);
+# Swapped.prototype = { weigh() { return "swapped"; } };
+# print(new Swapped(2).weigh());
+# function first() { return 1; }
+# function second() { return 2; }
+# async function third() { return 3; }
+# const either = kept.tag ? first : second;
+# either[Symbol.for("mark")] = "marked";
+# const orAsync = kept.tag ? third : second;
+# orAsync.call = function () { return "own call"; };
+# print(first[Symbol.for("mark")], first.call(null), second.call(null), third.call(null));
+# class Frozen { weigh() { return "weigh"; } static make() { return "make"; } }
+# Object.freeze(Frozen.prototype);
+# Object.freeze(Frozen);
+# function frozen() { return "frozen"; }
+# Object.freeze(frozen);
+# function Made(n) { this.tag = n; }
+# const made = new Made(1);
+# Object.freeze(Made);
+# print(new Frozen().weigh(), Frozen.make(), frozen.call(null), made.tag, new Made(2).tag, Object.isFrozen(Frozen.prototype), Object.isFrozen(Frozen), Object.isFrozen(Made));
+# function Keyed() { }
+# function Below() { }
+# Below.prototype = Object.create(Keyed.prototype);
+# Object.defineProperty(Keyed.prototype, "size", { value: function () { return "size"; }, writable: true, configurable: true });
+# const keyed = new Keyed();
+# function isKeyed(other) { return other === keyed; }
+# Object.defineProperty(Keyed.prototype, kept.tag ? "size" : "other", { value: function () { return "defined"; }, writable: true, configurable: true });
+# print(isKeyed(kept), isKeyed(keyed));
+# -- end of source
+# Nothing leaves compiled code, and every change is one that Link reads: behind the first object a name with a text is laid on the prototype object and the method is stored over; another function gets a literal as its `prototype`.
+# A name under a symbol, and `call` where one of the two is an async function, are laid on one of two closures: Link follows neither name, so neither function is taken to stay as made.
+# A prototype object that nobody has touched yet, a class object, a closure and a constructor function are frozen: every member is defined again as it is, but for being read-only.
+# `Keyed` stores nothing by name and nobody looks a name up through its objects, so a definition under a key that is worked out lets nothing leave. It lays another function under `size` behind the first object: where such a definition stands no proof speaks of a name, and no name is held to its function.
+# RUN: run-in-shell
+# CHECK: weigh 1 undefined
+# CHECK-NEXT: again 1 laid
+# CHECK-NEXT: 1
+# CHECK-NEXT: swapped
+# CHECK-NEXT: marked 1 2 own call
+# CHECK-NEXT: weigh make frozen 1 2 true true true
+# CHECK-NEXT: false true
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: weigh 1 undefined
+# CALLED-NEXT: again 1 laid
+# CALLED-NEXT: 1
+# CALLED-NEXT: swapped
+# CALLED-NEXT: marked 1 2 own call
+# CALLED-NEXT: weigh make frozen 1 2 true true true
+# CALLED-NEXT: false true
+# CALLED-NEXT: exited with 0

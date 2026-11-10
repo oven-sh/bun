@@ -1,0 +1,39 @@
+# `for (let i = 0; i < n; i += len)`: an int32 and an int32 make more than an int32, so the looks cannot close such a counter: it ran on doubles, and so did every sum made of it, and every key was a double asked for its index.
+# A counter that enters as a box or a double was held to an int32 where it comes round already (what is none goes into the closed copy with what has come round). One that enters as an int32 was not: nothing was to be asked in front.
+# Now it is held too, with no test in front of the loop.
+# f1 = up, f2 = down, f3 = pairs
+# -- source: a-counter-that-enters-as-an-int32-is-held-to-one-where-it-comes-round.ts
+# declare function print(...values: unknown[]): void;
+# const cells: number[] = [];
+# for (let i = 0; i < 64; i++) cells.push(i + 0.5);
+# function up(step: number, n: number): string { const by = step | 0; let s = 0, i = 0; for (; i < n; i += by) s += cells[i & 63]; return s + " " + i; }
+# function down(step: number, n: number): string { const by = step | 0; let s = 0, i = 0; for (; i > n; i -= by) s += cells[i & 63]; return s + " " + i; }
+# function pairs(step: number, n: number): number { const by = step | 0; let s = 0; for (let i = 0; i < n; i += by) for (let k = 0; k < by >> 1; k++) { const p = i + k, r = p + (by >> 1); s += cells[p] - cells[r]; } return s; }
+# function hidden(n: number): number { return Date.now() > 0 ? n : 0; }
+# print(up(hidden(3), hidden(64)), up(hidden(2147483647), hidden(1e10)), up(hidden(1073741824), hidden(5e9)), up(hidden(5), hidden(0)));
+# print(down(hidden(3), hidden(-64)), down(hidden(2147483647), hidden(-1e10)), down(hidden(-2147483648), hidden(0)), down(hidden(1073741824), hidden(-5e9)));
+# print(pairs(hidden(8), hidden(64)), pairs(hidden(16), hidden(70)), pairs(hidden(2), hidden(3)));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: int|whole @Double) frequency=Rare isLoopHead=true
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK: @Int64 = Add {{*}}form=Integers
+# CHECK-NEXT: = TypeTest {{*}}testedType=i32
+# RUN(DOWN): walk f2 mechanisms=all
+# DOWN-LABEL: code f2:Body
+# DOWN: i32 @Int32) isInLoop=true isLoopHead=true
+# DOWN: @Int64 = Sub {{*}}form=Integers
+# DOWN-NEXT: = TypeTest {{*}}testedType=i32
+# RUN(PAIRS): walk f3 mechanisms=all
+# PAIRS-LABEL: code f3:Body
+# PAIRS: i32 @Int32) isInLoop=true isLoopHead=true
+# PAIRS: @Int64 = Add {{*}}form=Integers
+# PAIRS: @Int64 = Add {{*}}form=Integers
+# PAIRS: = GetArrayElement {{*}}keyIsIntegral
+# PAIRS: = GetArrayElement {{*}}keyIsIntegral
+# PAIRS: = TypeTest {{*}}testedType=i32
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 704 66 248.5 10737418235 2.5 5368709120 0 0
+# ANSWERS: 662 -66 12.5 -10737418235 0 0 2.5 -5368709120
+# ANSWERS: -128 NaN -2

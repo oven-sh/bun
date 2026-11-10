@@ -1,5 +1,5 @@
 import { sleepSync } from "bun";
-import { expect, it } from "bun:test";
+import { expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 
 it("sleepSync uses milliseconds", async () => {
@@ -12,18 +12,48 @@ it("sleepSync uses milliseconds", async () => {
 
 it("sleepSync with no arguments throws", async () => {
   // @ts-expect-error
-  expect(() => sleepSync()).toThrow();
+  expect(() => sleepSync()).toThrow(
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "milliseconds must be a number",
+    }),
+  );
 });
 
 it("sleepSync with non-numbers throws", async () => {
-  const invalidValues = [true, false, "hi", {}, [], undefined, null] as any[];
+  const valueOf = jest.fn(() => 1);
+  const invalidValues = [true, false, "hi", "1", 1n, {}, [], undefined, null, new Number(1), { valueOf }] as any[];
   for (const v of invalidValues) {
-    expect(() => sleepSync(v)).toThrow();
+    expect(() => sleepSync(v)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "milliseconds must be a number",
+      }),
+    );
   }
+  expect(valueOf).not.toHaveBeenCalled();
 });
 
 it("sleepSync with negative number throws", async () => {
-  expect(() => sleepSync(-10)).toThrow();
+  for (const [v, got] of [
+    [-10, -10],
+    [-1.5, -1],
+    [-Infinity, -2147483648],
+  ]) {
+    expect(() => sleepSync(v)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `argument to sleepSync must not be negative, got ${got}`,
+      }),
+    );
+  }
+});
+
+it("sleepSync takes -0, a fraction above -1 and NaN as 0", async () => {
+  for (const v of [-0, -0.9, NaN]) expect(sleepSync(v)).toBeUndefined();
 });
 
 it("can map with sleepSync", async () => {

@@ -122,7 +122,17 @@ module.exports = debugMode => {
       const obj = nativeModule.test_v8_define_own_property();
       for (const key of ["writable", "readonly", "hidden"]) {
         const d = Object.getOwnPropertyDescriptor(obj, key);
-        console.log(key, "=", d.value, "writable =", d.writable, "enumerable =", d.enumerable, "configurable =", d.configurable);
+        console.log(
+          key,
+          "=",
+          d.value,
+          "writable =",
+          d.writable,
+          "enumerable =",
+          d.enumerable,
+          "configurable =",
+          d.configurable,
+        );
       }
       console.log("enumerable keys =", JSON.stringify(Object.keys(obj).sort()));
     },
@@ -182,6 +192,31 @@ module.exports = debugMode => {
         console.log("did not throw");
       } catch (e) {
         console.log("caught", e.constructor.name, e.message);
+      }
+    },
+
+    test_v8_exception_empty_message() {
+      for (const e of nativeModule.test_v8_exception_empty_message()) {
+        console.log(e.constructor.name, "message =", JSON.stringify(e.message), "own =", Object.hasOwn(e, "message"));
+      }
+    },
+
+    test_v8_throw_error_empty_message() {
+      try {
+        nativeModule.test_v8_throw_error_empty_message();
+        console.log("did not throw");
+      } catch (e) {
+        const own = Object.hasOwn(e, "message");
+        console.log("caught", e.constructor.name, "message =", JSON.stringify(e.message), "own =", own);
+      }
+    },
+
+    test_v8_new_values_with_pending_exception() {
+      try {
+        nativeModule.test_v8_new_values_with_pending_exception();
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
       }
     },
 
@@ -257,6 +292,11 @@ module.exports = debugMode => {
       console.log("setter.call(5):", describe(holderSeenBySetter(5)));
       console.log("setter.call(obj):", describe(holderSeenBySetter(obj)));
       keep();
+    },
+
+    test_uv_queue_work_on_current_event_loop() {
+      const rc = nativeModule.queue_work_and_call((...args) => console.log("after_work_cb", ...args));
+      console.log("uv_queue_work", rc);
     },
 
     test_v8_object_get_set_exceptions() {

@@ -106,6 +106,21 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         default:
             ASSERT_NOT_REACHED();
         }
+    } else if (stackFrame.isCompiledFrame() && stackFrame.hasLineAndColumnInfo()) [[unlikely]] {
+        switch (stackFrame.codeType()) {
+        case JSC::EvalCode:
+            frame.code_type = ZigStackFrameCodeEval;
+            return;
+        case JSC::ModuleCode:
+            frame.code_type = ZigStackFrameCodeModule;
+            return;
+        case JSC::GlobalCode:
+            frame.code_type = ZigStackFrameCodeGlobal;
+            return;
+        case JSC::FunctionCode:
+            frame.code_type = !stackFrame.isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
+            break;
+        }
     }
 
     WTF::String functionName = Zig::functionName(vm, stackFrame, nullptr);
@@ -119,6 +134,16 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
+#if ENABLE(AOT)
+    if (stackFrame.isCompiledFrame()) [[unlikely]] {
+        if (auto reported = stackFrame.compiledPosition(); reported && stackFrame.hasLineAndColumnInfo()) {
+            position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->startOfExpression().line).zeroBasedInt();
+            position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->startOfExpression().column).zeroBasedInt();
+            position.byte_position = -1;
+        }
+        return;
+    }
+#endif
     auto code = stackFrame.codeBlock();
     if (!code)
         return;
@@ -147,22 +172,25 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     memcpy(&position, &location, sizeof(ZigStackFramePosition));
     if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;
+    if (location.byte_position < 0 || static_cast<unsigned>(location.byte_position) > sourceString.length())
+        return;
 
-    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
-        // Search for the beginning of the line
-        unsigned int lineStart = location.byte_position;
+    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit() && !sourceString.isEmpty()) {
+        unsigned int maxSearch = sourceString.length();
+
+        // Search for the beginning of the line. byte_position equals the source length when the expression ends at the end of the source.
+        unsigned int lineStart = std::min<unsigned int>(location.byte_position, maxSearch - 1);
         while (lineStart > 0 && sourceString[lineStart] != '\n') {
             lineStart--;
         }
 
         // Search for the end of the line
         unsigned int lineEnd = location.byte_position;
-        unsigned int maxSearch = sourceString.length();
         while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
             lineEnd++;
         }
 
-        const unsigned char* bytes = sourceString.span8().data();
+        const unsigned char* bytes = byteCast<uint8_t>(sourceString.span8().data());
 
         // Most of the time, when you look at a stack trace, you want a couple lines above.
 
@@ -220,6 +248,8 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
         populateStackFramePosition(stackFrame, nullptr,
             nullptr,
             0, frame.position, referenced_source_provider, flags);
+        if (Zig::hasOriginalSourcePosition(stackFrame))
+            frame.remapped = true;
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
         populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
             is_top ? trace.source_lines_numbers : nullptr,
@@ -277,12 +307,12 @@ public:
         StringView line = stack.substring(start, end - start);
         offset = end;
 
-        // the proper singular spelling is parenthesis
-        auto openingParentheses = line.reverseFind('(');
-        auto closingParentheses = line.reverseFind(')');
-
-        if (openingParentheses > closingParentheses)
-            openingParentheses = WTF::notFound;
+        // A path can have parentheses of its own. The location is in parentheses only if the line ends with one,
+        // and they open after the function's name.
+        auto closingParentheses = line.endsWith(')') ? line.length() - 1 : WTF::notFound;
+        auto openingParentheses = closingParentheses == WTF::notFound ? WTF::notFound : line.find(" ("_s);
+        if (openingParentheses != WTF::notFound)
+            openingParentheses++;
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             // Special case: "unknown" frames don't have parentheses but are valid
@@ -495,16 +525,21 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     }
     if (except.type == SYNTAX_ERROR_CODE) {
         except.message = Bun::toStringRef(err->sanitizedMessageString(global));
-
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        RETURN_IF_EXCEPTION(scope, );
-        except.message = Bun::toStringRef(global, message);
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-            return;
     } else {
-        RETURN_IF_EXCEPTION(scope, );
-
-        except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        // This one intentionally calls getters.
+        JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.clearExceptionExceptTermination())
+                return;
+            message = {};
+        }
+        if (message) {
+            except.message = Bun::toStringRef(global, message);
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                return;
+        } else {
+            except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        }
     }
 
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
@@ -823,12 +858,11 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)
 {
-    populateStackTrace(arg0->vm(), arg0->stack(), *trace, PopulateStackTraceFlags::OnlyPosition);
+    populateStackTrace(arg0->vm(), arg0->stackForReporting(arg0->vm()), *trace, PopulateStackTraceFlags::OnlyPosition);
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+static void toZigException(JSC::JSValue value, JSC::JSGlobalObject* global, ZigException* exception)
 {
-    JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
         exception->type = JSErrorCodeError;
         exception->name = Bun::toStringRef("Error"_s);
@@ -861,6 +895,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     exceptionFromString(*exception, value, global);
 }
 
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(global));
+    toZigException(JSC::JSValue::decode(jsException), global, exception);
+    // The caller prints whatever could be read, so drop anything the error's getters threw.
+    (void)scope.clearExceptionExceptTermination();
+}
+
 extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
 {
     JSC::JSValue value = JSC::JSValue::decode(jsException);
@@ -872,8 +914,9 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
-        if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
+        auto& stack = jscException->stackForReporting(global->vm());
+        if (stack.size() > 0) {
+            populateStackTrace(global->vm(), stack, exception->stack, PopulateStackTraceFlags::OnlySourceLines);
         }
 
         exceptionFromString(*exception, unwrapped, global);

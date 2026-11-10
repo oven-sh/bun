@@ -290,7 +290,8 @@ for (const path of ["the listener of the server", "emit('connection')"]) {
       events: ["prefinish"],
       finished: true,
       writableEnded: true,
-      writableFinished: true,
+      // Since v26.7.0 node's says whether 'finish' was emitted. Bun's still says that nothing is left to write.
+      writableFinished: typeof Bun !== "undefined",
     });
   });
 }
@@ -399,8 +400,9 @@ for (const expectation of ["100-continue", "something-else"]) {
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExe } = await import("harness");
-  const node = nodeExe();
+  const { bunEnv, nodeExeAtLeast } = await import("harness");
+  // Before v26.7.0 node's writableFinished did not wait for 'finish'.
+  const node = nodeExeAtLeast("26.7.0");
 
   describe("Node.js compatibility", () => {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {

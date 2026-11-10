@@ -1,0 +1,26 @@
+# -- source: in-the-copy-of-a-loop-for-bytes-another-holder-walked-in-step-is-expected-to-be-bytes.js
+# function unmask(payload, mask) {
+#   for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+#   return payload;
+# }
+# function checksum(bytes, table) {
+#   let sum = 0;
+#   for (let i = 0; i < bytes.length; i++) sum = table[(sum ^ bytes[i]) & 3] ^ (sum >>> 1);
+#   return sum;
+# }
+# const table = { unmask, checksum }, names = JSON.parse('["unmask", "checksum"]'), first = table[names[0]], second = table[names[1]];
+# print(Array.from(first(new Uint8Array([1, 2, 3, 4, 5]), new Uint8Array([1, 2, 130, 77]))).join(), first([1, 2, 3], [1, 1, 1, 1]).join(), Array.from(first(new Uint8Array([9, 9]), [1, 2, 3, 4])).join());
+# print(second(new Uint8Array([1, 2, 3]), [7, 11, 13, 17]), second([1, 2, 3], new Uint8Array([7, 11, 13, 17])));
+# -- end of source
+# Nobody has written a type in this file. The front of the loop tells `payload` apart: a list, bytes, another view. In the copy for bytes `mask` was then asked for the list that its use had written; bytes
+# came, the front failed, and the whole loop ran closed: two hundred instructions a byte. Two holders that the turns walk in step, and whose elements meet in an operator, are of one kind: for the span of
+# that copy the other is expected to be what the copy is built for. No loop is built once more for it.
+# `table` is read under what was read out of the other holder: a table, not walked in step: its word stays.
+# f1 = unmask, f2 = checksum
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest v1 testedType=Buffer|Uint8Array
+# RUN(TABLE): walk f2:Body mechanisms=all
+# TABLE-NOT: = TypeTest v1 testedType=Buffer|Uint8Array
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 0,0,129,73,4 0,3,2 8,11
+# ANSWERS: 12 12

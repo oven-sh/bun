@@ -47,3 +47,23 @@ test("Listener.getsockname throws with no argument", () => {
   // when called without an object argument. Now it should throw a TypeError.
   expect(() => (listener as any).getsockname()).toThrow();
 });
+
+test("Listener.getsockname handles an argument that rejects property writes", () => {
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data() {},
+    },
+  });
+
+  const frozen = Object.freeze({});
+  expect((listener as any).getsockname(frozen)).toBeUndefined();
+  expect(Reflect.ownKeys(frozen)).toEqual([]);
+
+  // (module (type $s (struct (field (mut i32)))) (func (export "mk") (result (ref null $s)) struct.new_default $s))
+  // prettier-ignore
+  const bytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,10,2, 0x5f,1,0x7f,1, 0x60,0,1,0x63,0, 3,2,1,1, 7,6,1,2,0x6d,0x6b,0,0, 10,7,1,5,0,0xfb,1,0,0x0b]);
+  const struct = (new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk as Function)();
+  expect(() => (listener as any).getsockname(struct)).toThrow("Cannot set property for WebAssembly GC object");
+});

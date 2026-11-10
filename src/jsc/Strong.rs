@@ -34,16 +34,6 @@ impl Strong {
         debug_assert!(!new_value.is_empty());
         Impl::set(self.handle, global, new_value);
     }
-
-    /// Adopt an `Impl` handle allocated externally (e.g. by C++ bindgen glue),
-    /// taking ownership. The handle will be destroyed on `Drop`.
-    ///
-    /// # Safety
-    /// `handle` must have been produced by `Bun__StrongRef__new` (or equivalent)
-    /// and must not be owned by any other `Strong`/`Optional`.
-    pub(crate) unsafe fn adopt(handle: NonNull<Impl>) -> Strong {
-        Strong { handle }
-    }
 }
 
 impl Drop for Strong {

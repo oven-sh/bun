@@ -1,0 +1,7 @@
+import { test, vi } from "bun:test";
+test("the namespace, the descriptor and the name under the mock", async () => {
+  vi.doMock("./shapes.mjs", () => ({ round: 10 }));
+  vi.doMock("./between.mjs", () => ({ round: 20 }));
+  const user = await import("./user.mjs");
+  console.log("SAID", user.look());
+});

@@ -30,7 +30,9 @@ namespace uWS {
 
 /* Contiguous buffer with a moving head cursor: erase() bumps head,
  * append()/resize() compact into the drained head gap before growing, so
- * draining never memmoves or reallocates. */
+ * draining never memmoves or reallocates. Growing reserves TAIL_ROOM spare
+ * bytes, so appending framing after a buffered payload doesn't reallocate and
+ * copy that payload. */
 struct BackPressure {
     BackPressure() = default;
     BackPressure(BackPressure &&other) noexcept
@@ -93,6 +95,9 @@ struct BackPressure {
         }
     }
 
+    /* Enough for the chunk's CRLF and the next chunk-size line (HttpResponse::CHUNK_HEAD_MAX). */
+    static constexpr size_t TAIL_ROOM = 12;
+
 private:
     static constexpr size_t MIN_CAPACITY = 4096;
 
@@ -117,7 +122,8 @@ private:
             return;
         }
 
-        size_t newCap = std::max(std::max(cap * 2, live + n), MIN_CAPACITY);
+        if (live + n > SIZE_MAX - TAIL_ROOM) std::abort();
+        size_t newCap = std::max(std::max(cap * 2, live + n + TAIL_ROOM), MIN_CAPACITY);
         char *nb;
         if (head == 0) {
             /* mi_realloc may extend in place. */

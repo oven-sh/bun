@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+a: /* prettier-ignore */ for (;;) { continue   a; }
+b:
+// prettier-ignore
+while (c) { break   b; }
+for (;;) /* prettier-ignore */ { d  ; }
+switch (e) {
+  default: /* prettier-ignore */ { f  ; }
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a: /* prettier-ignore */ for (;;) { continue   a; }
+b:
+// prettier-ignore
+while (c) { break   b; }
+for (;;) /* prettier-ignore */ { d  ; }
+switch (e) {
+  default: /* prettier-ignore */ { f  ; }
+}
+
+===================== End =====================

@@ -205,10 +205,16 @@ function uv() {
 }
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const getDefaultAutoSelectFamily = $bindgen("node_net_binding.bind.ts", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $bindgen("node_net_binding.bind.ts", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $bindgen(
+  "node_net_binding.bind.ts",
+  "getDefaultAutoSelectFamilyAttemptTimeout",
+);
+const setDefaultAutoSelectFamilyAttemptTimeout = $bindgen(
+  "node_net_binding.bind.ts",
+  "setDefaultAutoSelectFamilyAttemptTimeout",
+);
 
 /**
  * `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here,
@@ -260,24 +266,20 @@ function appendTlsKeylog(path: string, line: Buffer) {
 }
 let BlockList, SocketAddress;
 function lazyBlockList() {
-  return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
+  return (BlockList ??= $bindgen("BlockList.bind.ts", "BlockList"));
 }
-const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
-const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
+const doConnect = $bindgen("node_net_binding.bind.ts", "doConnect");
 
-const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+const addServerName = $bindgen("Listener.bind.ts", "addServerName");
+const upgradeDuplexToTLS = $bindgen("socket_body.bind.ts", "upgradeDuplexToTLS");
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
-const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
-const checkServerIdentityInHandshake = $newRustFunction(
-  "runtime/socket/socket.rs",
-  "jsCheckServerIdentityInHandshake",
-  2,
-);
+const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred");
+const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkServerIdentityInHandshake");
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
-const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
-const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
+const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
+const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -350,6 +352,7 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
+const kLastWriteQueueSize = Symbol("lastWriteQueueSize");
 const kRejectedWrite = Symbol("kRejectedWrite");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -416,6 +419,14 @@ function failWriteWith(self, er, callback) {
       self.destroy();
     }
   }
+}
+// No drain comes from a handle that has closed. Node cancels the write that waits for one after 'error' and before 'close'.
+function cancelPendingWriteNT(self) {
+  const callback = self[kwriteCallback];
+  if (!callback || !self[kclosed]) return;
+  self._pendingData = self[kwriteCallback] = null;
+  const reason = self.encrypted ? "Canceled because of SSL destruction" : undefined;
+  callback(new ErrnoException(uv().UV_ECANCELED, "write", reason));
 }
 // Node's errnoException(status, 'write') for the negative errno $write returns.
 function writeErrnoException(negErrno) {
@@ -822,19 +833,22 @@ const SocketHandlers = {
     self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
-  drain(socket) {
+  // `rejected`: the -errno of the send that failed for what a TLS handle still held of the pending write.
+  drain(socket, rejected?: number) {
     const self = socket.data;
     if (!self) return;
     const callback = self[kwriteCallback];
     self.connecting = false;
     if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
-      const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
+        self._unrefTimer();
+        self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
         callback(null);
       } else {
@@ -1166,7 +1180,7 @@ const ServerHandlers = {
     if (typeof cb !== "function") return false;
     const wire = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols: string[] = [];
-    for (let i = 0; i + 1 <= wire.length; ) {
+    for (let i = 0; i + 1 <= wire.length;) {
       const n = wire[i];
       protocols.push(wire.toString("latin1", i + 1, i + 1 + n));
       i += 1 + n;
@@ -1469,8 +1483,8 @@ const ServerHandlers = {
   timeout(socket) {
     SocketHandlers.timeout(socket);
   },
-  drain(socket) {
-    SocketHandlers.drain(socket);
+  drain(socket, rejected?: number) {
+    SocketHandlers.drain(socket, rejected);
   },
   binaryType: "buffer",
 } as const satisfies InternalServerHandler<SocketInstance>;
@@ -1679,14 +1693,15 @@ const SocketHandlers2 = {
     self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
-  drain(socket) {
+  // See SocketHandlers.drain.
+  drain(socket, rejected?: number) {
     $debug("Bun.Socket drain");
     const { self } = socket.data;
     const callback = self[kwriteCallback];
     self.connecting = false;
     if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
-      const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         self[kBytesWritten] = socket.bytesWritten;
@@ -1694,6 +1709,8 @@ const SocketHandlers2 = {
       } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
+        self._unrefTimer();
+        self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
         callback(null);
       } else {
@@ -2001,6 +2018,7 @@ function Socket(options?): void {
   this._port = undefined;
   this[bunTLSConnectOptions] = null;
   this.timeout = 0;
+  this[kLastWriteQueueSize] = 0;
   // node initializes the timer slot to null so it is observable before setTimeout() is called.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L401
   this[kTimeout] = null;
@@ -2201,17 +2219,16 @@ Socket.prototype.address = function address() {
 };
 
 Socket.prototype._onTimeout = function () {
-  // if there is pending data, write is in progress
-  // so we suppress the timeout
-  if (this._pendingData) {
-    return;
-  }
-
   const handle = this._handle;
-  // if there is a handle, and it has pending data,
-  // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
-    return;
+  if (handle) {
+    // As in Node, a write that moved since the last look puts the timeout off. Its first look is at the size of the write, this one at 0.
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L872-L887
+    const writeQueueSize = getBufferedAmount(handle);
+    if (writeQueueSize !== this[kLastWriteQueueSize]) {
+      this[kLastWriteQueueSize] = writeQueueSize;
+      this._unrefTimer();
+      return;
+    }
   }
   this.emit("timeout");
 };
@@ -2541,9 +2558,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     }
     callback(err);
     closeOwedRaw(this, upgraded);
+    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
   } else {
     callback(err);
     closeOwedRaw(this, upgraded);
+    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
     if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
@@ -3053,6 +3072,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   this._unrefTimer();
+  this[kLastWriteQueueSize] = 0;
   if (this.secureConnecting) this[kPreHandshakeWrite] = true;
   if (socket.readyState < 0) {
     // The handle's native socket was already closed (e.g. handle.close() was
@@ -4509,18 +4529,24 @@ function closeSocketHandle(self, handle, isException, isCleanupPending = false) 
   // The owner of a wrapped socket destroyed it: the TLS socket goes first, so the close of their fd is nothing to report.
   handle[kAdoptedTLSRaw]?.destroy();
   handle.close(onSocketHandleClosed);
-  setImmediate(() => {
-    $debug("emit close", isCleanupPending);
-    self.emit("close", isException);
-    if (isCleanupPending) {
-      // self._handle may have been detached or replaced since.
-      handle.onread = noop;
-      if (self._handle === handle) {
-        self._handle = null;
-        self._sockname = null;
-      }
-    }
-  });
+  // Arguments instead of a closure, so no scope keeps the closed handle alive.
+  if (isCleanupPending) setImmediate(emitCloseAndDetachHandle, self, isException, handle);
+  else setImmediate(emitClose, self, isException);
+}
+
+function emitClose(self, isException) {
+  $debug("emit close");
+  self.emit("close", isException);
+}
+
+function emitCloseAndDetachHandle(self, isException, handle) {
+  emitClose(self, isException);
+  // self._handle may have been detached or replaced since.
+  handle.onread = noop;
+  if (self._handle === handle) {
+    self._handle = null;
+    self._sockname = null;
+  }
 }
 
 // Reformat a native listen error to Node's "listen <CODE>: <description> <addr>"
@@ -4621,7 +4647,7 @@ const netExports = {
     Object.defineProperty(netExports, "BlockList", { value, writable: true, enumerable: true, configurable: true });
   },
   get SocketAddress() {
-    return (SocketAddress ??= $rust("node_net_binding.rs", "SocketAddress"));
+    return (SocketAddress ??= $bindgen("SocketAddress.bind.ts", "SocketAddress"));
   },
   set SocketAddress(value) {
     Object.defineProperty(netExports, "SocketAddress", { value, writable: true, enumerable: true, configurable: true });

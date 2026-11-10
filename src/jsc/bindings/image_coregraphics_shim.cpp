@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cstring>
 #include <dlfcn.h>
+#include <mimalloc.h>
 #include <mutex>
 
 namespace {
@@ -69,6 +70,7 @@ struct Syms {
     void* objc_msgSend; // cast at use site
     // CoreFoundation
     void (*CFRelease)(CFRef);
+    CFRef (*CFAllocatorCreate)(CFRef, const void*);
     CFRef (*CFDataCreateWithBytesNoCopy)(CFRef, const uint8_t*, long, CFRef);
     CFRef (*CFDataCreateMutable)(CFRef, long);
     long (*CFDataGetLength)(CFRef);
@@ -110,6 +112,21 @@ struct Syms {
     CFRef* kCGImageDestinationLossyCompressionQuality;
     const void* kCFTypeDictionaryKeyCallBacks;
     const void* kCFTypeDictionaryValueCallBacks;
+    // Not a dlsym: a CFAllocator over mimalloc, made once by load().
+    CFRef mimallocAllocator;
+};
+
+// Same layout as CFAllocatorContext.
+struct AllocatorContext {
+    long version;
+    void* info;
+    const void* (*retain)(const void*);
+    void (*release)(const void*);
+    CFRef (*copyDescription)(const void*);
+    void* (*allocate)(long size, unsigned long hint, void* info);
+    void* (*reallocate)(void* block, long size, unsigned long hint, void* info);
+    void (*deallocate)(void* block, void* info);
+    long (*preferredSize)(long size, unsigned long hint, void* info);
 };
 
 #define SYM(x) { offsetof(Syms, x), #x }
@@ -123,6 +140,7 @@ constexpr struct {
     SYM(sel_registerName),
     SYM(objc_msgSend),
     SYM(CFRelease),
+    SYM(CFAllocatorCreate),
     SYM(CFDataCreateWithBytesNoCopy),
     SYM(CFDataCreateMutable),
     SYM(CFDataGetLength),
@@ -186,6 +204,12 @@ const Syms* load()
             if (!p) return nullptr;
             *reinterpret_cast<void**>(base + f.off) = p;
         }
+        AllocatorContext context {};
+        context.allocate = [](long size, unsigned long, void*) { return mi_malloc(static_cast<size_t>(size)); };
+        context.reallocate = [](void* block, long size, unsigned long, void*) { return mi_realloc(block, static_cast<size_t>(size)); };
+        context.deallocate = [](void* block, void*) { mi_free(block); };
+        s.mimallocAllocator = s.CFAllocatorCreate(nullptr, &context);
+        if (!s.mimallocAllocator) return nullptr;
         return &s;
     }();
     return table;
@@ -205,6 +229,7 @@ constexpr int kBunCFNumberDoubleType = 13;
 // keep them in sync, a wrong constant silently turns every CG decode into garbage.
 constexpr uint32_t kBunVImageEdgeExtend = 8;
 constexpr uint32_t kBunVImageDoNotTile = 16;
+constexpr uint32_t kBunVImageGetTempBufferSize = 128;
 // (kvImageHighQualityResampling = 32 — unused; default kernel is already
 // Lanczos-3, which is what we route here.)
 constexpr uint32_t kBunVImageNoAllocate = 512;
@@ -427,7 +452,7 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
 
     r.ustr = s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8);
     if (!r.ustr) return CG_UNAVAILABLE;
-    r.sink = s->CFDataCreateMutable(nullptr, 0);
+    r.sink = s->CFDataCreateMutable(s->mimallocAllocator, 0);
     if (!r.sink) return CG_UNAVAILABLE;
     r.dest = s->CGImageDestinationCreateWithData(r.sink, r.ustr, 1, nullptr);
     if (!r.dest) {
@@ -471,8 +496,8 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
 // dlsyms. kvImageDoNotTile: this is already a WorkPool thread, and the
 // pipeline stages run back-to-back in one task, so vImage's internal
 // libdispatch fan-out would oversubscribe (and dominates wall-clock for the
-// tiny images the test suite uses). tempBuffer = nullptr lets vImage manage
-// its own scratch.
+// tiny images the test suite uses). The scratch buffer is ours, like the
+// pixels; it is about the size of the image.
 
 int32_t bun_coregraphics_scale(const uint8_t* src, uint32_t sw, uint32_t sh,
     uint8_t* dst, uint32_t dw, uint32_t dh)
@@ -483,11 +508,14 @@ int32_t bun_coregraphics_scale(const uint8_t* src, uint32_t sw, uint32_t sh,
     VBuf out { dst, dh, dw, static_cast<size_t>(dw) * 4 };
     // Apple's default vImageScale kernel is Lanczos-3; the high-quality flag
     // widens to Lanczos-5. We only route `.lanczos3` here, so HQ stays off.
-    return s->vImageScale_ARGB8888(&in, &out, nullptr,
-               kBunVImageEdgeExtend | kBunVImageDoNotTile)
-            == 0
-        ? CG_OK
-        : CG_UNAVAILABLE;
+    constexpr uint32_t flags = kBunVImageEdgeExtend | kBunVImageDoNotTile;
+    long scratchSize = s->vImageScale_ARGB8888(&in, &out, nullptr, flags | kBunVImageGetTempBufferSize);
+    if (scratchSize < 0) return CG_UNAVAILABLE;
+    void* scratch = scratchSize ? mi_malloc(static_cast<size_t>(scratchSize)) : nullptr;
+    if (scratchSize && !scratch) return CG_UNAVAILABLE;
+    long result = s->vImageScale_ARGB8888(&in, &out, scratch, flags);
+    mi_free(scratch);
+    return result == 0 ? CG_OK : CG_UNAVAILABLE;
 }
 
 // `quarters` is in CW quarter-turns (matching Sharp/CSS); vImage's constant is

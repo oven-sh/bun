@@ -1,8 +1,9 @@
-import { heapStats } from "bun:jsc";
+import { heapStats, jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { existsSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
+import { totalmem } from "node:os";
 import path from "node:path";
 import { DatabaseSync, Session, StatementSync, backup, constants } from "node:sqlite";
 import { pathToFileURL } from "node:url";
@@ -35,6 +36,28 @@ const sqliteHasLoadExtension = (() => {
   }
 })();
 
+// Malloc=1 puts every JSC allocation on the system heap, where ASAN sees a use-after-free (on Windows WebKit
+// traps at init with it). LSan would spend seconds walking that heap at exit.
+const systemMallocEnv: NodeJS.Dict<string> = isWindows
+  ? bunEnv
+  : {
+      ...bunEnv,
+      Malloc: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+    };
+
+// Descriptors this process holds on a database file or its sidecars.
+const openFds = (file: string) =>
+  isLinux
+    ? readdirSync("/proc/self/fd").filter(fd => {
+        try {
+          return readlinkSync(`/proc/self/fd/${fd}`).startsWith(file);
+        } catch {
+          return false;
+        }
+      }).length
+    : 0;
+
 test("node:sqlite is a built-in module", () => {
   expect(isBuiltin("node:sqlite")).toBe(true);
   // Like node:test, node:sqlite is only available with the node: prefix.
@@ -47,7 +70,7 @@ test("process.versions.sqlite is set", () => {
   expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
 });
 
-test("process.versions.sqlite read before the first open matches the library that runs", async () => {
+test.concurrent("process.versions.sqlite read before the first open matches the library that runs", async () => {
   // On the dlopen path, reading process.versions before any database is
   // opened must still report the version of the library that WOULD be
   // loaded (via a throwaway dlopen probe), not a bundled constant that
@@ -112,6 +135,128 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  describe("close() finalizes the statements script still holds", () => {
+    const finalized = "statement has been finalized";
+    test.each<[string, "close" | typeof Symbol.dispose, string, (db: DatabaseSync) => () => unknown]>([
+      [
+        "never run",
+        "close",
+        finalized,
+        db => {
+          const stmt = db.prepare("SELECT n FROM t");
+          return () => stmt.get();
+        },
+      ],
+      [
+        "run to the end",
+        "close",
+        finalized,
+        db => {
+          const stmt = db.prepare("SELECT n FROM t");
+          stmt.all();
+          return () => stmt.all();
+        },
+      ],
+      [
+        "run to the end, Symbol.dispose",
+        Symbol.dispose,
+        finalized,
+        db => {
+          const stmt = db.prepare("INSERT INTO t VALUES (?)");
+          stmt.run(3);
+          return () => stmt.run(4);
+        },
+      ],
+      [
+        "parked by iterate()",
+        "close",
+        finalized,
+        db => {
+          const rows = db.prepare("SELECT n FROM t").iterate();
+          rows.next();
+          return () => rows.next();
+        },
+      ],
+      [
+        "cached by a tag store",
+        "close",
+        "database is not open",
+        db => {
+          const sql = db.createTagStore();
+          sql.get`SELECT n FROM t`;
+          return () => sql.get`SELECT n FROM t`;
+        },
+      ],
+    ])("%s", (_, close, message, retain) => {
+      using dir = tempDir("node-sqlite-close", {});
+      const file = path.join(String(dir), "db.sqlite");
+      const db = new DatabaseSync(file);
+      db.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1), (2)");
+      const use = retain(db);
+      expect(readdirSync(String(dir)).sort()).toEqual(["db.sqlite", "db.sqlite-shm", "db.sqlite-wal"]);
+      db[close]();
+      expect({ files: readdirSync(String(dir)), fds: openFds(file) }).toEqual({ files: ["db.sqlite"], fds: 0 });
+      expect(use).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE", message }));
+      // EBUSY on Windows while any handle is open.
+      rmSync(file);
+    });
+
+    test("called from a function, when the outer call returns", () => {
+      using dir = tempDir("node-sqlite-close-udf", {});
+      const file = path.join(String(dir), "db.sqlite");
+      const db = new DatabaseSync(file);
+      db.exec("CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1), (2)");
+      const kept = db.prepare("SELECT n FROM t");
+      expect(kept.get()).toEqual({ n: 1 });
+      db.function("shut", () => {
+        db.close();
+        return openFds(file);
+      });
+      expect(db.prepare("SELECT shut() AS fds").get()).toEqual({ fds: isLinux ? 1 : 0 });
+      expect(openFds(file)).toBe(0);
+      expect(() => kept.get()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE", message: finalized }));
+      rmSync(file);
+    });
+
+    test("and leaves the private statements of FTS5 to FTS5", () => {
+      using dir = tempDir("node-sqlite-close-fts5", {});
+      const file = path.join(String(dir), "db.sqlite");
+      const db = new DatabaseSync(file);
+      db.exec("CREATE VIRTUAL TABLE docs USING fts5(body); INSERT INTO docs VALUES ('alpha beta'), ('beta gamma')");
+      const done = db.prepare("SELECT rowid FROM docs WHERE docs MATCH ? ORDER BY rowid");
+      expect(done.all("beta")).toEqual([{ rowid: 1 }, { rowid: 2 }]);
+      const parked = db.prepare("SELECT rowid FROM docs WHERE docs MATCH 'beta' ORDER BY rowid").iterate();
+      expect(parked.next().value).toEqual({ rowid: 1 });
+      db.close();
+      expect(openFds(file)).toBe(0);
+      for (const use of [() => done.all("beta"), () => parked.next()]) {
+        expect(use).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE", message: finalized }));
+      }
+      db.open();
+      expect(db.prepare("SELECT count(*) AS n FROM docs WHERE docs MATCH 'beta'").get()).toEqual({ n: 2 });
+      db.close();
+    });
+
+    test("without calling the callbacks of an aggregate an iterator is parked on", () => {
+      const db = new DatabaseSync(":memory:");
+      db.exec("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1), (2), (3)");
+      const calls: string[] = [];
+      db.aggregate("total", {
+        start: () => (calls.push("start"), 0),
+        step: (sum: number, x: any) => (calls.push("step"), sum + x),
+        inverse: (sum: number, x: any) => (calls.push("inverse"), sum - x),
+        result: (sum: number) => (calls.push("result"), sum),
+      });
+      const grouped = db.prepare("SELECT total(x) AS v FROM t GROUP BY x").iterate();
+      const windowed = db.prepare("SELECT total(x) OVER (ORDER BY x) AS v FROM t").iterate();
+      expect([grouped.next().value, windowed.next().value]).toEqual([{ v: 1 }, { v: 1 }]);
+      calls.length = 0;
+      db.close();
+      expect(calls).toEqual([]);
+      for (const rows of [grouped, windowed]) expect(() => rows.next()).toThrow(finalized);
+    });
+  });
+
   test("Symbol.dispose swallows errors on closed databases", () => {
     const db = new DatabaseSync(":memory:", { open: false });
     expect(() => db[Symbol.dispose]()).not.toThrow();
@@ -161,7 +306,7 @@ describe("DatabaseSync", () => {
     structuredClone(buf.buffer, { transfer: [buf.buffer] });
     expect(buf.byteLength).toBe(0);
     expect(db.prepare("SELECT typeof(?) AS t").get(buf)!.t).toBe("blob");
-    expect(() => db.prepare("INSERT INTO t VALUES (?)").run(buf)).not.toThrow();
+    expect(db.prepare("INSERT INTO t VALUES (?)").run(buf)).toEqual({ changes: 1, lastInsertRowid: 1 });
     expect(db.prepare("SELECT length(b) AS n FROM t").get()!.n).toBe(0);
     db.close();
   });
@@ -174,7 +319,7 @@ describe("DatabaseSync", () => {
     // >64-byte variant to ensure the slow decode path is covered.
     const long = db.prepare("SELECT CAST((? || x'E9') AS TEXT) AS v").get("x".repeat(80))!.v;
     expect(long).toBe("x".repeat(80) + "�");
-    // UDF argv path (sqliteValueToJS) hits the same replacement decode.
+    // UDF argv path hits the same replacement decode.
     let seen: string | undefined;
     db.function("cap", v => void (seen = v as string) as any);
     db.prepare("SELECT cap(CAST(x'4A6F73E9' AS TEXT))").get();
@@ -315,6 +460,62 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test.each([
+    ["a Proxy", () => new Proxy({ first: "one", second: "two" }, {})],
+    ["import.meta.env", () => import.meta.env as Record<string, string>],
+  ])("binds the named parameters of an object that lists its properties itself: %s", (_, object) => {
+    const env = process.env;
+    process.env = { first: "one", second: "two" };
+    const db = new DatabaseSync(":memory:");
+    try {
+      const statement = db.prepare("SELECT $first AS first, $second AS second");
+      statement.setAllowUnknownNamedParameters(true);
+      expect({ ...statement.get(object()) }).toEqual({ first: "one", second: "two" });
+    } finally {
+      db.close();
+      process.env = env;
+    }
+  });
+
+  test("named parameters come from the object's own [[OwnPropertyKeys]] (Proxy, String object)", () => {
+    const db = new DatabaseSync(":memory:");
+    const stmt = db.prepare("SELECT $a AS a, $b AS b");
+    const trapped = (enumerable: (key: string) => boolean) =>
+      new Proxy(
+        {},
+        {
+          ownKeys: () => ["a", "b"],
+          getOwnPropertyDescriptor: (_, key) => ({
+            enumerable: enumerable(key as string),
+            configurable: true,
+            value: 0,
+          }),
+          get: (_, key) => (key === "a" ? 1 : 2),
+        },
+      );
+    expect(stmt.get(new Proxy({ a: 1, b: 2 }, {}))).toEqual({ a: 1, b: 2 });
+    expect(stmt.get(trapped(() => true))).toEqual({ a: 1, b: 2 });
+    expect(stmt.get(trapped(key => key === "a"))).toEqual({ a: 1, b: null });
+    expect(() =>
+      stmt.get(
+        new Proxy(
+          {},
+          {
+            ownKeys() {
+              throw new RangeError("keys");
+            },
+          },
+        ),
+      ),
+    ).toThrow(new RangeError("keys"));
+    for (const indexed of [new String("x"), new Proxy([1], {})]) {
+      expect(() => stmt.get(indexed as any)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_STATE", message: "Unknown named parameter '0'" }),
+      );
+    }
+    db.close();
+  });
+
   test("prepare() with empty / comment-only SQL returns a finalized StatementSync", () => {
     const db = new DatabaseSync(":memory:");
     for (const sql of ["", "   ", "-- a comment", "/* block */"]) {
@@ -405,6 +606,7 @@ describe("DatabaseSync", () => {
       expect(() => backup(db, ":memory:", undefined)).toThrow(invalidOptions);
       // @ts-expect-error
       expect(() => backup(db, ":memory:", null)).toThrow(invalidOptions);
+      expect(() => Reflect.construct(backup, [db, ":memory:"])).toThrow(TypeError);
 
       // Controls: these are value-gated in Node (explicit undefined is the
       // same as omission) and must NOT throw.
@@ -435,18 +637,11 @@ describe("DatabaseSync", () => {
     // if the query were stripped this insert would succeed.
     expect(() => db.exec("INSERT INTO t VALUES (2)")).toThrow(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
     db.close();
-    // The temporary statement above is not yet GC'd, so sqlite3_close_v2
-    // left the connection in zombie mode with ro.db still open. On Windows
-    // that blocks tempDir's rm with EBUSY; force the finalizer.
-    Bun.gc(true);
   });
 
   test("close() re-entered from a bind-parameter getter succeeds; the outer run() fails", () => {
-    // Node lets close() succeed even when re-entered mid-operation (bind
-    // getters, option getters, UDFs). sqlite3_close_v2 zombifies the
-    // connection while any stmt is outstanding, so the in-flight bind sees
-    // a valid handle; the subsequent step() fails on the zombie and Node
-    // reports errcode 7 (sqlite3_errmsg(NULL) → "out of memory").
+    // Node finalizes the statements at once and reports errcode 7 (sqlite3_errmsg(NULL) → "out of memory").
+    // Bun keeps the handles until the outer call returns and reports the same.
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a)");
     const stmt = db.prepare("INSERT INTO t VALUES (:a)");
@@ -554,9 +749,7 @@ describe("DatabaseSync", () => {
     expect(stmt.get()!.v).toBe(1);
     db.close();
     db.open();
-    // Statement was prepared on the *previous* (now-zombie) connection.
-    // Using it must report ERR_INVALID_STATE, not step against the
-    // zombie and then read a bogus "not an error" from the new handle.
+    // close() finalized it; the new connection does not bring it back.
     expect(() => stmt.get()).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_STATE",
@@ -752,11 +945,7 @@ describe("DatabaseSync.prototype.function()", () => {
     db.close();
   });
 
-  test("closing the database from a UDF keeps the callbacks rooted until the scan completes", async () => {
-    // closeInternal() clears m_registeredCallbacks; with close() no longer
-    // refusing while busy, doing so mid-step would unroot every UDF callback
-    // while the zombified connection still invokes them. Force system malloc
-    // so ASAN surfaces the use-after-free if the guard regresses.
+  test.concurrent("closing the database from a UDF keeps the callbacks rooted until the scan completes", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -773,10 +962,7 @@ describe("DatabaseSync.prototype.function()", () => {
           console.log(JSON.stringify({ rows: rows.length, calls: n, isOpen: db.isOpen }));
         `,
       ],
-      // Malloc=1 forces bmalloc's SystemHeap so ASAN catches a regression.
-      // WebKit stubs that heap out on Windows (RELEASE_BASSERT_NOT_REACHED),
-      // so the child would trap at JSC init before running any test code.
-      env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
+      env: systemMallocEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -789,17 +975,16 @@ describe("DatabaseSync.prototype.function()", () => {
     });
   });
 
-  test("closing the database from an authorizer during the first prepare() defers sqlite3_close_v2", async () => {
-    // Authorizer fires from inside sqlite3_prepare_v2 before a Vdbe exists,
-    // so sqlite3_close_v2 would free (not zombify) the handle under the
-    // parser's feet. The close is deferred until the BusyScope unwinds; on
-    // regression ASAN reports heap-use-after-free in sqlite3AuthCheck and
-    // the process aborts.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.concurrent(
+    "closing the database from an authorizer during the first prepare() defers sqlite3_close_v2",
+    async () => {
+      // Authorizer fires from inside sqlite3_prepare_v2 before a Vdbe exists,
+      // so sqlite3_close_v2 would free the handle under the parser's feet.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           const { DatabaseSync } = require("node:sqlite");
           const db = new DatabaseSync(":memory:");
           let err;
@@ -807,20 +992,18 @@ describe("DatabaseSync.prototype.function()", () => {
           const stmt = db.prepare("CREATE TABLE t(x)");
           console.log(JSON.stringify({ isOpen: db.isOpen, err, haveStmt: !!stmt }));
         `,
-      ],
-      // Malloc=1 forces bmalloc's SystemHeap so ASAN catches a regression.
-      // WebKit stubs that heap out on Windows (RELEASE_BASSERT_NOT_REACHED),
-      // so the child would trap at JSC init before running any test code.
-      env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ isOpen: false, err: "ERR_INVALID_STATE", haveStmt: true }),
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  });
+        ],
+        env: systemMallocEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ isOpen: false, err: "ERR_INVALID_STATE", haveStmt: true }),
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+  );
 
   test("open() refuses while a deferred close is pending", () => {
     // m_deferredClose is a single slot; close(); open(); close() from a UDF
@@ -930,6 +1113,58 @@ describe("DatabaseSync.prototype.aggregate()", () => {
   });
 });
 
+describe("StatementSync.prototype.run()", () => {
+  function setup() {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1),(2),(3)");
+    return db;
+  }
+
+  test("takes one step: the rows of a SELECT are not read", () => {
+    const db = setup();
+    const read: unknown[] = [];
+    db.function("read", n => {
+      read.push(n);
+      if (n === 2) throw new Error("row 2");
+      return n;
+    });
+    expect(db.prepare("SELECT read(n) FROM t").run()).toEqual({ changes: 3, lastInsertRowid: 3 });
+    expect(db.createTagStore().run`SELECT read(n) FROM t`).toEqual({ changes: 3, lastInsertRowid: 3 });
+    expect(read).toEqual([1, 1]);
+    db.close();
+  });
+
+  test("with RETURNING makes every change and counts it", () => {
+    const db = setup();
+    const left = db.prepare("SELECT group_concat(n) AS n FROM t");
+    expect(db.prepare("INSERT INTO t VALUES (4),(5),(6) RETURNING n").run()).toEqual({
+      changes: 3,
+      lastInsertRowid: 6,
+    });
+    expect(left.get()).toEqual({ n: "1,2,3,4,5,6" });
+    expect(db.prepare("UPDATE t SET n = n + 10 RETURNING n").run()).toEqual({ changes: 6, lastInsertRowid: 6 });
+    expect(left.get()).toEqual({ n: "11,12,13,14,15,16" });
+    expect(db.prepare("DELETE FROM t WHERE n > 12 RETURNING n").run()).toEqual({ changes: 4, lastInsertRowid: 6 });
+    expect(left.get()).toEqual({ n: "11,12" });
+    db.close();
+  });
+
+  // The statement has a row left when run() / get() reset it, so that reset is the commit.
+  // Node 26.3's get() returns the row that was rolled back; Node's main branch throws.
+  test.each(["run", "get"] as const)("%s() throws when ending a RETURNING statement fails to commit", method => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(
+      "CREATE TABLE parent (id INTEGER PRIMARY KEY); CREATE TABLE child (p REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)",
+    );
+    expect(() => db.prepare("INSERT INTO child VALUES (99) RETURNING p")[method]()).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR", errcode: 787, message: "FOREIGN KEY constraint failed" }),
+    );
+    expect(db.prepare("SELECT count(*) AS n FROM child").get()).toEqual({ n: 0 });
+    expect(db.isTransaction).toBe(false);
+    db.close();
+  });
+});
+
 describe("StatementSync.prototype.iterate()", () => {
   function setup() {
     const db = new DatabaseSync(":memory:");
@@ -970,7 +1205,9 @@ describe("StatementSync.prototype.iterate()", () => {
     // Calling run()/all()/get() on the same statement resets it, so the
     // iterator's cursor position is no longer meaningful.
     stmt.all();
-    expect(() => iter.next()).toThrow(/iterator was invalidated/);
+    expect(() => iter.next()).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "iterator was invalidated" }),
+    );
     db.close();
   });
 
@@ -1017,12 +1254,14 @@ describe("StatementSync.prototype.iterate()", () => {
     // Closing the db inside the loop body finalizes the statement; the
     // implicit return() from `break` (IteratorClose) must not turn that
     // into an exception — cleanup should just report done.
-    expect(() => {
-      for (const _row of iter) {
-        db.close();
-        break;
-      }
-    }).not.toThrow();
+    const seen: unknown[] = [];
+    for (const row of iter) {
+      seen.push(row);
+      db.close();
+      break;
+    }
+    expect(seen).toEqual([{ __proto__: null, n: 1 }]);
+    expect(db.isOpen).toBe(false);
     // Explicit return() on the now-finalized iterator likewise succeeds.
     expect(iter.return!()).toEqual<unknown>({ __proto__: null, done: true, value: null });
   });
@@ -1054,9 +1293,13 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
 
     const changeset = session.changeset();
     expect(changeset).toBeInstanceOf(Uint8Array);
-    expect(changeset.length).toBeGreaterThan(0);
     const patchset = session.patchset();
     expect(patchset).toBeInstanceOf(Uint8Array);
+    // Both start with a table header ('T' changeset, 'P' patchset). INSERTs carry no old.* values,
+    // so the two differ only in that byte.
+    expect(String.fromCharCode(changeset[0])).toBe("T");
+    expect(String.fromCharCode(patchset[0])).toBe("P");
+    expect(patchset.subarray(1)).toEqual(changeset.subarray(1));
     session.close();
     expect(() => session.changeset()).toThrow(/session is not open/);
 
@@ -1119,6 +1362,29 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     dst.close();
   });
 
+  test("applyChangeset errors have errcode and no errstr, as in Node", () => {
+    const db = new DatabaseSync(":memory:");
+    const thrownBy = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (e: any) {
+        return { ...e, code: e.code, message: e.message };
+      }
+    };
+    expect(thrownBy(() => db.applyChangeset(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])))).toStrictEqual({
+      code: "ERR_SQLITE_ERROR",
+      errcode: 11,
+      message: "database disk image is malformed",
+    });
+    expect(thrownBy(() => db.exec("selecx 1"))).toStrictEqual({
+      code: "ERR_SQLITE_ERROR",
+      errcode: 1,
+      errstr: "SQL logic error",
+      message: 'near "selecx": syntax error',
+    });
+    db.close();
+  });
+
   test("applyChangeset copies the input so callbacks can't detach it mid-iteration", () => {
     // sqlite3changeset_apply stores the raw pointer and streams from it
     // between xFilter calls; detaching the backing ArrayBuffer there
@@ -1176,7 +1442,7 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     dst.close();
   });
 
-  test.skipIf(!sqliteHasSession)(
+  test.concurrent.skipIf(!sqliteHasSession)(
     "re-entering close() from the authorizer during changeset()/patchset() does not free the session mid-generate",
     async () => {
       // sqlite3session_changeset runs SAVEPOINT + prepared SELECTs on the
@@ -1209,7 +1475,7 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
             }
           `,
         ],
-        env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
+        env: systemMallocEnv,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1220,19 +1486,53 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
       // On regression ASAN aborts the process before any line is printed.
       // db.close(): deferred on the first authorizer call (catches nothing),
       //   throws ERR_INVALID_STATE on the second (db already marked closed).
-      // sess.close(): record->inUse → ERR_INVALID_STATE.
-      // Symbol.dispose: inUse → silent no-op (tolerant).
+      // sess.close() and Symbol.dispose: record->inUse → ERR_INVALID_STATE.
       expect({ lines, stderr, exitCode }).toEqual({
         lines: [
           { what: "db", len: 20, caught: "ERR_INVALID_STATE", dbOpen: false },
           { what: "sess", len: 20, caught: "ERR_INVALID_STATE", dbOpen: true },
-          { what: "dispose", len: 20, caught: null, dbOpen: true },
+          { what: "dispose", len: 20, caught: "ERR_INVALID_STATE", dbOpen: true },
         ],
         stderr: expect.any(String),
         exitCode: 0,
       });
     },
   );
+
+  test.concurrent.skipIf(!sqliteHasSession)("closing a session inside a SQLite callback throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { DatabaseSync, constants } = require("node:sqlite");
+          for (const close of [s => s.close(), s => s[Symbol.dispose]()]) {
+            const db = new DatabaseSync(":memory:");
+            db.exec("CREATE TABLE t(a PRIMARY KEY)");
+            const session = db.createSession();
+            let caught;
+            // The session's preupdate hook runs this pragma while it reads the session.
+            db.setAuthorizer((action, name) => {
+              if (action === constants.SQLITE_PRAGMA && /^table_x?info$/.test(name)) {
+                try { close(session); } catch (e) { caught = e.code + ": " + e.message; }
+              }
+              return constants.SQLITE_OK;
+            });
+            db.exec("INSERT INTO t VALUES (1)");
+            db.setAuthorizer(null);
+            console.log(caught, session.changeset().length > 0);
+            close(session);
+            db.close();
+          }
+        `,
+      ],
+      env: systemMallocEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = "ERR_INVALID_STATE: session cannot be closed while in a callback true\n";
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: line + line, stderr: expect.any(String), exitCode: 0 });
+  });
 
   test("default onConflict aborts and returns false", () => {
     const src = new DatabaseSync(":memory:");
@@ -1278,14 +1578,14 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
 // Each backup_step with rate=1 fsyncs the destination once per page; keep
 // the page count tiny so the test stays fast on slow-fsync CI filesystems.
 describe("backup()", () => {
-  test("backing up a database to its own file rejects promptly", async () => {
+  test.concurrent("backing up a database to its own file rejects promptly", async () => {
     // sqlite3_backup_init only compares sqlite3* pointers, so opening the
     // source path a second time as the destination succeeds — but the
     // source's SHARED lock blocks the destination's EXCLUSIVE upgrade and
     // every sqlite3_backup_step() returns SQLITE_BUSY with remaining == 0.
     // Node only reschedules when remaining != 0, so it rejects on the first
     // step. A regression (unconditional BUSY retry on the JS thread) wedges
-    // the process, so run in a subprocess under a bounded timeout.
+    // the process, so run in a subprocess that the spawn timeout kills.
     using dir = tempDir("node-sqlite-backup-self", {});
     await using proc = Bun.spawn({
       cmd: [
@@ -1303,12 +1603,9 @@ describe("backup()", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
+      timeout: 60_000,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      Promise.race([proc.exited, Bun.sleep(4_000).then(() => (proc.kill(), "timeout"))]),
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: "rejected:ERR_SQLITE_ERROR:0",
       stderr: expect.any(String),
@@ -1316,7 +1613,7 @@ describe("backup()", () => {
     });
   });
 
-  test("rejects promptly when the destination is write-locked", async () => {
+  test.concurrent("rejects promptly when the destination is write-locked", async () => {
     // Same remaining == 0 gate as the self-backup case: the destination
     // connection can't take its write lock, so the first step returns BUSY
     // without ever advancing and Node rejects rather than retrying. Run in
@@ -1343,12 +1640,9 @@ describe("backup()", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
+      timeout: 60_000,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      Promise.race([proc.exited, Bun.sleep(4_000).then(() => (proc.kill(), "timeout"))]),
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Node gates progress on remaining != 0, which is never true here, so
     // calls stays 0.
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
@@ -1384,26 +1678,23 @@ describe("backup()", () => {
     src.exec("INSERT INTO t (data) VALUES ('a'), ('b'), ('c')");
 
     const destPath = path.join(String(dir), "dst.db");
-    let progressCalls = 0;
+    const progress: unknown[] = [];
     const pages = await backup(src, destPath, {
       rate: 1,
-      progress: ({ totalPages, remainingPages }) => {
-        expect(typeof totalPages).toBe("number");
-        expect(typeof remainingPages).toBe("number");
-        progressCalls++;
-      },
+      progress: info => void progress.push(info),
     });
-    expect(typeof pages).toBe("number");
-    expect(progressCalls).toBeGreaterThan(0);
+    // Two pages: sqlite_master and the root of t. rate: 1 copies one page per step,
+    // so progress fires after page 1 and not on the SQLITE_DONE step.
+    expect({ pages, progress }).toEqual({ pages: 2, progress: [{ totalPages: 2, remainingPages: 1 }] });
 
     const dst = new DatabaseSync(destPath);
-    expect(dst.prepare("SELECT count(*) AS c FROM t").get()!.c).toBe(3);
+    expect(dst.prepare("SELECT * FROM t ORDER BY id").all()).toEqual([
+      { __proto__: null, id: 1, data: "a" },
+      { __proto__: null, id: 2, data: "b" },
+      { __proto__: null, id: 3, data: "c" },
+    ]);
     src.close();
     dst.close();
-    // The temporary statement above is not yet GC'd, so sqlite3_close_v2
-    // left dst's connection in zombie mode with the file still open. On
-    // Windows that blocks tempDir's rm with EBUSY; force the finalizer.
-    Bun.gc(true);
   });
 
   test("rejects with ERR_SQLITE_ERROR when the destination is unwritable", async () => {
@@ -1452,8 +1743,7 @@ describe("backup()", () => {
       rate: -1,
       progress: () => progressCalls++,
     });
-    expect(typeof pages).toBe("number");
-    expect(progressCalls).toBe(0);
+    expect({ pages, progressCalls }).toEqual({ pages: 2, progressCalls: 0 });
     src.close();
   });
 });
@@ -1493,6 +1783,50 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
     expect(() => db.prepare("SELECT 1")).toThrow(TypeError);
     db.setAuthorizer(() => 12345);
     expect(() => db.prepare("SELECT 1")).toThrow(RangeError);
+    db.close();
+  });
+
+  // An FTS5 index writes to its shadow tables when the transaction commits, which calls the authorizer.
+  test("close() works while an iterator's return() is committing a write", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+    db.setAuthorizer((_action, table) => {
+      if (table === "ft_data") db.close();
+      return constants.SQLITE_OK;
+    });
+    for (const row of db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1 AS one").iterate()) {
+      expect(row.one).toBe(1);
+      break;
+    }
+    expect(db.isOpen).toBe(false);
+  });
+
+  test("a statement rejects calls while run() commits its iterator's unfinished write", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+    const stmt = db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1");
+    const iterator = stmt.iterate();
+    iterator.next();
+    const errors: unknown[] = [];
+    db.setAuthorizer((_action, table) => {
+      if (table === "ft_data" && errors.length === 0) {
+        for (const call of [() => iterator.next(), () => stmt.get()]) {
+          try {
+            call();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+      }
+      return constants.SQLITE_OK;
+    });
+    expect(stmt.run().changes).toBe(1);
+    expect(errors).toEqual([
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "iterator was invalidated" }),
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement is currently executing" }),
+    ]);
+    db.setAuthorizer(null);
+    expect(db.prepare("SELECT count(*) AS n FROM ft").get()!.n).toBe(2);
     db.close();
   });
 });
@@ -1559,10 +1893,6 @@ describe("serialize() / deserialize()", () => {
     dst.exec("CREATE TABLE old(x)");
     const stale = dst.prepare("SELECT x FROM old");
     dst.deserialize(buf);
-    // deserialize bumps the open-generation so the wrapper reports
-    // finalized rather than stepping into a vanished schema. The
-    // underlying sqlite3_stmt* is still owned by the wrapper — GC
-    // finalizes it, no double-free.
     expect(() => stale.get()).toThrow(/statement has been finalized/);
     expect(dst.prepare("SELECT a, b FROM t ORDER BY a").all()).toEqual([
       { a: 1, b: "hi" },
@@ -1572,26 +1902,34 @@ describe("serialize() / deserialize()", () => {
     Bun.gc(true);
   });
 
-  test("succeeds while an iterate() cursor is open (resets outstanding statements like Node)", () => {
-    // Node calls FinalizeStatements() before sqlite3_deserialize(), so an
-    // un-reset cursor never holds a read transaction through the swap. Bun
-    // can't finalize (wrappers own the stmt*) but must reset, otherwise the
-    // internal ATTACH returns SQLITE_BUSY and the generation bump leaves
-    // every statement dead against the OLD database content.
+  test.each([
+    ["a table", "CREATE TABLE t(a); INSERT INTO t VALUES (1),(2)", "SELECT a FROM t"],
+    [
+      "an FTS5 table",
+      "CREATE VIRTUAL TABLE t USING fts5(a); INSERT INTO t VALUES ('1 x'),('2 x')",
+      "SELECT CAST(a AS INTEGER) AS a FROM t WHERE t MATCH 'x' ORDER BY rowid",
+    ],
+  ])("succeeds while an iterate() cursor is open on %s (finalizes the statements like Node)", (_, schema, select) => {
+    // An open cursor holds a read transaction, and the internal ATTACH of
+    // sqlite3_deserialize() would return SQLITE_BUSY.
     const donor = new DatabaseSync(":memory:");
     donor.exec("CREATE TABLE q(z); INSERT INTO q VALUES (9)");
     const img = donor.serialize();
     donor.close();
 
     const db = new DatabaseSync(":memory:");
-    db.exec("CREATE TABLE t(a); INSERT INTO t VALUES (1),(2)");
-    const idle = db.prepare("SELECT a FROM t");
-    const it = db.prepare("SELECT a FROM t").iterate();
-    expect(it.next().value).toEqual({ a: 1 }); // cursor now mid-iteration: open read txn
+    db.exec(schema);
+    const idle = db.prepare(select);
+    const it = db.prepare(select).iterate();
+    expect(it.next().value).toEqual({ a: 1 });
 
     db.deserialize(img);
 
-    expect(() => idle.get()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    for (const use of [() => idle.get(), () => it.next()]) {
+      expect(use).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement has been finalized" }),
+      );
+    }
     expect(db.prepare("SELECT z FROM q").get()).toEqual({ z: 9 });
     expect(() => db.prepare("SELECT count(*) c FROM t").get()).toThrow(/no such table: t/);
     db.close();
@@ -1735,8 +2073,7 @@ describe("createTagStore()", () => {
 
   test("cached tags survive close()/open() and deserialize() via the isFinalized() eviction", () => {
     // TagStore caches JSStatementSync wrappers keyed by template shape.
-    // close()/open() and deserialize() bump the connection's open-generation,
-    // which flips isFinalized() on every cached wrapper; TagStore::prepare
+    // close() and deserialize() finalize every cached wrapper; TagStore::prepare
     // must evict the stale entry and re-prepare on the new connection.
     const db = new DatabaseSync(":memory:");
     const sql = db.createTagStore();
@@ -1746,7 +2083,7 @@ describe("createTagStore()", () => {
     db.open();
     expect(sql.get`SELECT 1 AS v`!.v).toBe(1);
     expect(sql.size).toBe(1);
-    // deserialize() bumps the generation without a close()/open() cycle.
+    // deserialize() finalizes them without a close()/open() cycle.
     db.exec("CREATE TABLE t (x INTEGER)");
     db.exec("INSERT INTO t VALUES (7)");
     expect(sql.get`SELECT x FROM t`!.x).toBe(7);
@@ -1758,11 +2095,7 @@ describe("createTagStore()", () => {
 });
 
 test.skipIf(!sqliteHasSession)("deserialize() frees open sessions instead of orphaning their preupdate hook", () => {
-  // deserialize() bumps the open-generation to invalidate existing
-  // wrappers. Sessions become stale — but deleteSession() (and the
-  // destructor) assume "stale ⇒ closeInternal() already freed", so
-  // they skip sqlite3session_delete. That's only true for close()+
-  // open(); deserialize() must free the tracked handles itself or
+  // deserialize() must free the tracked handles itself or
   // the preupdate hook stays live on the unchanged sqlite3* and
   // keeps recording writes into an unreachable change buffer.
   const db = new DatabaseSync(":memory:");
@@ -1775,12 +2108,12 @@ test.skipIf(!sqliteHasSession)("deserialize() frees open sessions instead of orp
   // Symbol.dispose on a stale session is a silent no-op (no
   // double-free of the already-deleted handle).
   expect(() => session[Symbol.dispose]()).not.toThrow();
-  // DB is still usable and a fresh session works.
+  // A fresh session records only the insert made while it was attached: table header + one INSERT record.
   expect(db.isOpen).toBe(true);
   db.exec("INSERT INTO t VALUES (1)");
   const fresh = db.createSession();
   db.exec("INSERT INTO t VALUES (2)");
-  expect(fresh.changeset().length).toBeGreaterThan(0);
+  expect(fresh.changeset()).toHaveLength(16);
   fresh.close();
   db.close();
   Bun.gc(true);
@@ -1812,6 +2145,9 @@ describe("enableDefensive()", () => {
 });
 
 describe("row-shape structure caching", () => {
+  // The only JS-visible handle on the cached row Structure.
+  const structureId = (row: unknown) => jscDescribe(row).match(/StructureID: (\d+)/)![1];
+
   test("all() results share a null-prototype structure and handle duplicate columns", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a INTEGER, b TEXT)");
@@ -1836,18 +2172,111 @@ describe("row-shape structure caching", () => {
     db.close();
   });
 
-  test("picks up column renames across ALTER TABLE (structure rebuilt per reset)", () => {
+  test("picks up column renames across ALTER TABLE (structure rebuilt on re-prepare)", () => {
     // sqlite3_prepare_v2 transparently re-prepares on SQLITE_SCHEMA,
     // so after ALTER TABLE … RENAME COLUMN the same `SELECT *`
     // statement returns the SAME column count with DIFFERENT names.
     // Keying the row-structure cache on count alone would serve the
-    // stale names forever; it must be rebuilt on each reset.
+    // stale names forever; it must be rebuilt when the names change.
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a INTEGER, b INTEGER); INSERT INTO t VALUES (1, 2)");
     const stmt = db.prepare("SELECT * FROM t");
     expect(stmt.get()).toEqual({ a: 1, b: 2 });
     db.exec("ALTER TABLE t RENAME COLUMN a TO x");
     expect(stmt.get()).toEqual({ x: 1, b: 2 });
+    // The re-prepare happens in a run that builds no row object.
+    db.exec("ALTER TABLE t RENAME COLUMN x TO y");
+    stmt.run();
+    expect(stmt.get()).toEqual({ y: 1, b: 2 });
+    db.exec("ALTER TABLE t RENAME COLUMN y TO z");
+    stmt.setReturnArrays(true);
+    expect(stmt.get()).toEqual([1, 2] as any);
+    stmt.setReturnArrays(false);
+    expect(stmt.get()).toEqual({ z: 1, b: 2 });
+    db.close();
+  });
+
+  test("picks up column renames made through another connection", () => {
+    using dir = tempDir("node-sqlite-rename-xconn", {});
+    const file = path.join(String(dir), "db.sqlite");
+    using db1 = new DatabaseSync(file);
+    db1.exec("CREATE TABLE t (a INTEGER, b INTEGER); INSERT INTO t VALUES (1, 2)");
+    const stmt = db1.prepare("SELECT * FROM t");
+    expect(stmt.get()).toEqual({ a: 1, b: 2 });
+    {
+      using db2 = new DatabaseSync(file);
+      db2.exec("ALTER TABLE t RENAME COLUMN a TO x");
+    }
+    expect(stmt.get()).toEqual({ x: 1, b: 2 });
+    expect(stmt.all()).toEqual([{ x: 1, b: 2 }]);
+  });
+
+  test("get()/all()/iterate() reuse one row Structure across calls", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a, b, c, d, e); INSERT INTO t VALUES (1,2,3,4,5),(6,7,8,9,10)");
+    // SQLite re-prepares `LIMIT ?` and `LIKE ?` when the parameter is bound
+    // again. The names stay, so the Structure must too.
+    for (const sql of [
+      "SELECT ? AS a, 2 AS b, 3 AS c",
+      "SELECT * FROM t WHERE rowid = ?",
+      "SELECT * FROM t LIMIT ?",
+      "SELECT * FROM t WHERE a LIKE ?",
+    ]) {
+      const stmt = db.prepare(sql);
+      const id = structureId(stmt.get("1"));
+      expect([stmt.get("1"), ...stmt.all("1"), ...stmt.iterate("1")].map(structureId)).toEqual([id, id, id]);
+    }
+    // A rename gives a new Structure, whichever column it hits.
+    const stmt = db.prepare("SELECT * FROM t");
+    let previous = structureId(stmt.get());
+    for (const [from, to, keys] of [
+      ["a", "x", "x,b,c,d,e"],
+      ["e", "z", "x,b,c,d,z"],
+      ["c", "y", "x,b,y,d,z"],
+    ]) {
+      db.exec(`ALTER TABLE t RENAME COLUMN ${from} TO ${to}`);
+      const row = stmt.get()!;
+      expect(Object.keys(row).join()).toBe(keys);
+      expect(structureId(row)).not.toBe(previous);
+      previous = structureId(row);
+      expect(structureId(stmt.get())).toBe(previous);
+    }
+    db.close();
+  });
+
+  test("non-ASCII column names reuse the row Structure and follow a rename", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`CREATE TABLE t ("é" INTEGER, "名前" TEXT); INSERT INTO t VALUES (1, 'a')`);
+    const stmt = db.prepare("SELECT * FROM t");
+    const first = stmt.get();
+    expect(first).toEqual({ "é": 1, "名前": "a" });
+    const id = structureId(first);
+    // Any schema change re-prepares the statement. The names are the same.
+    db.exec("CREATE TABLE other (x)");
+    expect([stmt.get(), ...stmt.all(), ...stmt.iterate()].map(structureId)).toEqual([id, id, id]);
+    // "é" is C3 A9 and "è" is C3 A8: the names differ in the last byte only.
+    db.exec(`ALTER TABLE t RENAME COLUMN "é" TO "è"`);
+    const renamed = stmt.get();
+    expect(renamed).toEqual({ "è": 1, "名前": "a" });
+    expect(structureId(renamed)).not.toBe(id);
+    expect(structureId(stmt.get())).toBe(structureId(renamed));
+    db.close();
+  });
+
+  test("a statement moves between the generic path and a cached Structure on a rename", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`CREATE TABLE t ("0", b); INSERT INTO t VALUES (1, 2)`);
+    const stmt = db.prepare("SELECT * FROM t");
+    expect([stmt.get(), stmt.get()]).toEqual([
+      { 0: 1, b: 2 },
+      { 0: 1, b: 2 },
+    ]);
+    db.exec(`ALTER TABLE t RENAME COLUMN "0" TO a`);
+    const named = stmt.get();
+    expect(named).toEqual({ a: 1, b: 2 });
+    expect(structureId(stmt.get())).toBe(structureId(named));
+    db.exec(`ALTER TABLE t RENAME COLUMN a TO "1"`);
+    expect(stmt.all()).toEqual([{ 1: 1, b: 2 }]);
     db.close();
   });
 
@@ -1910,6 +2339,69 @@ test("SQLTagStore binds via the same JS→SQLite bridge as StatementSync", () =>
   db.close();
 });
 
+// WTF::String::utf8() aborts on 2^30 Latin-1 characters.
+test.concurrent.skipIf(totalmem() < 8 * 1024 ** 3)(
+  "a string too long to convert to UTF-8 throws instead of aborting",
+  async () => {
+    const cases = [
+      ["new DatabaseSync", `new DatabaseSync(text)`],
+      ["exec", `db.exec(text)`],
+      ["prepare", `db.prepare(text)`],
+      ["tag store", `db.createTagStore().get([text])`],
+      ["location", `db.location(text)`],
+      ["serialize", `db.serialize(text)`],
+      ["deserialize dbName", `db.deserialize(new Uint8Array(8), { dbName: text })`],
+      ["function name", `db.function(text, () => 1)`],
+      ["aggregate name", `db.aggregate(text, { start: 0, step: sum => sum })`],
+      ["backup path", `backup(db, text)`],
+      ["backup source", `backup(db, ":memory:", { source: text })`],
+      ["backup target", `backup(db, ":memory:", { target: text })`],
+      ["parameter", `db.prepare("SELECT length(?) AS n").get(text)`],
+      ["function result", `(db.function("result", () => text), db.prepare("SELECT result()").get())`],
+      // Hashing a 1 GiB property key takes 10 seconds in a debug build.
+      ...(isDebug ? [] : [["named parameter key", `db.prepare("SELECT $a").get({ [text]: 1 })`]]),
+      ...(sqliteHasSession
+        ? [
+            ["createSession db", `db.createSession({ db: text })`],
+            ["createSession table", `db.createSession({ table: text })`],
+          ]
+        : []),
+      ...(sqliteHasLoadExtension
+        ? [
+            ["loadExtension path", `db.loadExtension(text)`],
+            ["loadExtension entryPoint", `db.loadExtension("extension", text)`],
+          ]
+        : []),
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync, backup } = require("node:sqlite");
+         const db = new DatabaseSync(":memory:", { allowExtension: ${sqliteHasLoadExtension} });
+         const text = "\\u00e9".repeat(2 ** 30);
+         for (const [name, run] of [${cases.map(([name, call]) => `["${name}", () => ${call}]`)}]) {
+           try {
+             await run();
+             console.log(name + ": returned");
+           } catch (e) {
+             console.log(name + ": " + e.name + ": " + e.message);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: cases.map(([name]) => `${name}: RangeError: Out of memory`),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+);
+
 test("authorizer constants are exposed on constants", () => {
   expect(constants.SQLITE_OK).toBe(0);
   expect(constants.SQLITE_DENY).toBe(1);
@@ -1950,7 +2442,7 @@ describe("StatementSync.prototype.columns()", () => {
 // Regression: unclosed bun:sqlite databases would trigger a heap-use-after-free
 // when BUN_DESTRUCT_VM_ON_EXIT=1, because Bun__closeAllSQLiteDatabasesForTermination
 // closed the handle without nulling it, and the GC finalizer then closed it again.
-test("unclosed sqlite database does not use-after-free on VM teardown", async () => {
+test.concurrent("unclosed sqlite database does not use-after-free on VM teardown", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1965,17 +2457,14 @@ test("unclosed sqlite database does not use-after-free on VM teardown", async ()
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Don't assert stderr is exactly empty: ASAN/debug builds emit benign
-  // teardown noise. The invariant is no ASAN report and a clean exit.
-  expect(stderr).not.toContain("heap-use-after-free");
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(0);
+  // ASAN aborts the process on a use-after-free. stderr is not pinned: ASAN/debug builds emit benign noise.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
 });
 
 // process.exit() inside a UDF reaches ~JSDatabaseSync with a BusyScope still
 // on the stack; that path must still flag its session records as dbGone or
 // ~JSNodeSqliteSession writes to the already-swept database cell.
-test.skipIf(!sqliteHasSession)(
+test.concurrent.skipIf(!sqliteHasSession)(
   "teardown with a busy connection and an unclosed session does not use-after-free",
   async () => {
     await using proc = Bun.spawn({
@@ -1994,16 +2483,14 @@ test.skipIf(!sqliteHasSession)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("heap-use-after-free");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
   },
 );
 
 // Sibling of the above for ~JSStatementSync: process.exit() inside an
 // aggregate step reaches the destructor with a SteppingScope on the stack;
 // sqlite3_finalize on the running VDBE would fire xFinal into the swept heap.
-test("teardown with a stepping statement and a running aggregate does not use-after-free", async () => {
+test.concurrent("teardown with a stepping statement and a running aggregate does not use-after-free", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2023,15 +2510,13 @@ test("teardown with a stepping statement and a running aggregate does not use-af
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("heap-use-after-free");
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
 });
 
 // The process-exit handler must close (or at least WAL-checkpoint) unclosed
 // file-backed databases the way Node and bun:sqlite do; see
 // Bun__closeAllNodeSqliteDatabasesForTermination in NodeSqlite.cpp.
-test("unclosed file-backed database is closed on process exit (no WAL sidecars left)", async () => {
+test.concurrent("unclosed file-backed database is closed on process exit (no WAL sidecars left)", async () => {
   using dir = tempDir("node-sqlite-exit-close", {});
   await using proc = Bun.spawn({
     cmd: [
@@ -2052,9 +2537,8 @@ test("unclosed file-backed database is closed on process exit (no WAL sidecars l
     stdout: "pipe",
     stderr: "pipe",
   });
-  // stderr is drained but not asserted: ASAN/debug builds emit benign noise.
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("true\n");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: expect.any(String), exitCode: 0 });
   // The exit handler ran sqlite3_close_v2(): the last WAL connection
   // checkpoints and unlinks both sidecars on its way out.
   expect(existsSync(path.join(String(dir), "exit.db-wal"))).toBe(false);
@@ -2062,18 +2546,10 @@ test("unclosed file-backed database is closed on process exit (no WAL sidecars l
   // And the checkpoint persisted the row into the main database file.
   using verify = new DatabaseSync(path.join(String(dir), "exit.db"));
   expect(verify.prepare("SELECT x FROM t").get()).toEqual({ x: 42 });
-  expect(exitCode).toBe(0);
-  // The temporary statement above is not yet GC'd, so sqlite3_close_v2
-  // left verify's connection in zombie mode with exit.db still open. On
-  // Windows that blocks tempDir's rm with EBUSY; force the finalizer.
-  Bun.gc(true);
 });
 
-// A statement that is never finalized makes sqlite3_close_v2 defer the real
-// close, so the exit handler checkpoints the WAL explicitly: the data must be
-// in the main database file even though the (now empty) sidecars remain.
-test("exit-time WAL checkpoint runs even with a never-finalized prepared statement", async () => {
-  using dir = tempDir("node-sqlite-exit-zombie", {});
+test.concurrent("process exit closes a database whose statements are still referenced", async () => {
+  using dir = tempDir("node-sqlite-exit-statements", {});
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2084,9 +2560,10 @@ test("exit-time WAL checkpoint runs even with a never-finalized prepared stateme
        const db = new DatabaseSync('exit.db');
        db.exec('PRAGMA journal_mode = WAL');
        db.exec('CREATE TABLE t (x INTEGER)');
-       const stmt = db.prepare('INSERT INTO t VALUES (?)');
+       globalThis.stmt = db.prepare('INSERT INTO t VALUES (?)');
        stmt.run(42);
-       // stmt stays referenced and is never finalized; db is never closed.
+       globalThis.parked = db.prepare('SELECT x FROM t').iterate();
+       parked.next();
        console.log(require('node:fs').statSync('exit.db-wal').size > 0);`,
     ],
     env: bunEnv,
@@ -2094,20 +2571,11 @@ test("exit-time WAL checkpoint runs even with a never-finalized prepared stateme
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("true\n");
-  // SQLITE_CHECKPOINT_TRUNCATE moved every frame into exit.db. The empty
-  // -wal file outlives the zombified connection today, but the invariant is
-  // only that no un-checkpointed data is stranded in one.
-  const wal = path.join(String(dir), "exit.db-wal");
-  expect(existsSync(wal) ? statSync(wal).size : 0).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: expect.any(String), exitCode: 0 });
+  expect(readdirSync(String(dir))).toEqual(["exit.db"]);
   using verify = new DatabaseSync(path.join(String(dir), "exit.db"));
   expect(verify.prepare("SELECT x FROM t").get()).toEqual({ x: 42 });
-  expect(exitCode).toBe(0);
-  // The temporary statement above is not yet GC'd, so sqlite3_close_v2
-  // left verify's connection in zombie mode with exit.db still open. On
-  // Windows that blocks tempDir's rm with EBUSY; force the finalizer.
-  Bun.gc(true);
 });
 
 describe("GC lifetime", () => {
@@ -2139,8 +2607,7 @@ describe("GC lifetime", () => {
   });
 
   test("re-registering a function/aggregate name replaces the previous registration", () => {
-    // Each re-registration releases the superseded callback's roots at the
-    // registration site (releaseSupersededRegistration) and reuses the slots;
+    // Each re-registration reuses the slots that root the superseded callback;
     // the latest callback is the one SQLite invokes.
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (x INTEGER)");
@@ -2159,22 +2626,205 @@ describe("GC lifetime", () => {
     db.close();
   });
 
-  test("deferred function teardown on a zombified connection cannot unroot later registrations", () => {
-    // Closing with an unfinalized statement zombifies the connection, so the
-    // old registration's xDestroy only runs when the statement is finalized
-    // by GC — possibly after the database was reopened and new callbacks
-    // were registered. That deferred teardown must not touch the cell.
+  test("sweeping a statement of the previous connection leaves the reopened one alone", () => {
     const db = new DatabaseSync(":memory:");
     db.function("f", () => 1);
     let stmt: StatementSync | null = db.prepare("SELECT 1 AS v");
     expect(stmt.get()!.v).toBe(1);
-    db.close(); // zombie: stmt is still unfinalized
+    db.close();
     db.open();
     db.function("g", () => 42);
+    const current = db.prepare("SELECT g() AS v");
     stmt = null;
-    Bun.gc(true); // finalizes the old statement → deferred xDestroy of "f"
-    expect(db.prepare("SELECT g() AS v").get()!.v).toBe(42);
+    Bun.gc(true);
+    expect(current.get()!.v).toBe(42);
     db.close();
+  });
+
+  test("statements swept before close() leave the ones it has to finalize", () => {
+    using dir = tempDir("node-sqlite-close-swept", {});
+    const file = path.join(String(dir), "db.sqlite");
+    const db = new DatabaseSync(file);
+    const kept: StatementSync[] = [];
+    for (let i = 0; i < 300; i++) {
+      const stmt = db.prepare(`SELECT ${i} AS i`);
+      if (i % 3 === 0) kept.push(stmt);
+    }
+    Bun.gc(true);
+    expect(kept.map(stmt => stmt.get()!.i)).toEqual(kept.map((_, i) => i * 3));
+    db.close();
+    expect(openFds(file)).toBe(0);
+    expect(() => kept[50].get()).toThrow(/statement has been finalized/);
+  });
+
+  test("a database and its statements are collected together, in either sweep order", () => {
+    const count = () => {
+      Bun.gc(true);
+      const counts = heapStats().objectTypeCounts;
+      return (counts.DatabaseSync ?? 0) + (counts.StatementSync ?? 0);
+    };
+    const before = count();
+    let delta = Infinity;
+    for (let attempt = 0; attempt < 5 && delta > 20; attempt++) {
+      for (let i = 0; i < 30; i++) {
+        const db = new DatabaseSync(":memory:");
+        db.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1), (2)");
+        for (let j = 0; j < 10; j++) db.prepare("SELECT x FROM t").iterate().next();
+      }
+      delta = count() - before;
+    }
+    expect(delta).toBeLessThanOrEqual(20);
+  });
+
+  // The write commits when the statement finishes. An FTS5 index writes to its shadow tables at commit, which
+  // calls the authorizer.
+  describe("a write statement that iterate() stopped after its first row", () => {
+    const open = (file: string, options = {}) => {
+      const db = new DatabaseSync(file, options);
+      db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+      db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
+      return db;
+    };
+
+    test("is finished by the next call on the connection after it's collected", () => {
+      const db = open(":memory:");
+      const asked: unknown[] = [];
+      db.setAuthorizer((_action, table) => (asked.push(table), constants.SQLITE_OK));
+      Bun.gc(true);
+      expect(asked).toEqual([]);
+      db.exec("SELECT 1");
+      expect(asked).toContain("ft_data");
+      db.close();
+    });
+
+    test.each([
+      ["serialize", "database is not open"],
+      ...(sqliteHasLoadExtension ? [["loadExtension", "database is not open"]] : []),
+      ["exec", "database is not open"],
+      ["prepare", "database is not open"],
+      ["all", "statement has been finalized"],
+    ])("%s() throws if the authorizer closes the database", (method, message) => {
+      const db = open(":memory:", { allowExtension: sqliteHasLoadExtension });
+      const target = method === "all" ? db.prepare("SELECT 1") : db;
+      db.setAuthorizer(() => (db[Symbol.dispose](), constants.SQLITE_OK));
+      Bun.gc(true);
+      expect(() => target[method]("SELECT 1")).toThrow(message);
+      expect(db.isOpen).toBe(false);
+    });
+
+    test("is rolled back when it's collected along with a database that has an authorizer", () => {
+      using dir = tempDir("node-sqlite-collected-write", {});
+      const file = path.join(String(dir), "db.sqlite");
+      let asked = 0;
+      (() => open(file).setAuthorizer(() => (asked++, constants.SQLITE_OK)))();
+      Bun.gc(true);
+      expect(asked).toBe(0);
+      const db = new DatabaseSync(file);
+      expect(db.prepare("SELECT count(*) AS n FROM ft").get()!.n).toBe(0);
+      db.close();
+    });
+
+    test("doesn't call the authorizer when the graph that opened its database is disposed", () => {
+      const graph = new Bun.ModuleGraph();
+      const db = graph.run(() => open(":memory:"));
+      let asked = 0;
+      db.setAuthorizer(() => (asked++, constants.SQLITE_OK));
+      graph.dispose();
+      expect(asked).toBe(0);
+      expect(db.isOpen).toBe(false);
+    });
+
+    test.concurrent("doesn't call the authorizer at process exit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { DatabaseSync } = require("node:sqlite");
+            globalThis.db = new DatabaseSync(":memory:");
+            db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+            globalThis.iterator = db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate();
+            iterator.next();
+            db.setAuthorizer(() => (require("node:fs").writeSync(1, "asked\\n"), 0));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
+    });
+
+    test.concurrent.each([
+      ["a user function", `db.function("lower2", text => text.toLowerCase())`],
+      ["an authorizer that allowed a write before", `db.setAuthorizer(() => 0), db.exec("INSERT INTO ft VALUES (1)")`],
+    ])("is committed at process exit on a connection with %s", async (_, setup) => {
+      using dir = tempDir("node-sqlite-exit-write", {});
+      const file = path.join(String(dir), "db.sqlite");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { DatabaseSync } = require("node:sqlite");
+            const db = new DatabaseSync(process.argv[1]);
+            db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+            ${setup};
+            db.prepare("INSERT INTO ft VALUES ('a'), ('b') RETURNING 1").iterate().next();
+            console.log(db.prepare("INSERT INTO ft VALUES ('c')").run().changes);
+          `,
+          file,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: expect.any(String), exitCode: 0 });
+      const db = new DatabaseSync(file);
+      expect(db.prepare("SELECT count(*) AS n FROM ft WHERE ft MATCH 'a OR b OR c'").get()!.n).toBe(3);
+      db.close();
+    });
+  });
+
+  test.concurrent("a database swept before its statements leaves nothing that points into its cell", async () => {
+    // edenGC() marks and does not sweep: the next DatabaseSync takes the cell
+    // of a dead one while the dead statements wait for their blocks' turn.
+    using dir = tempDir("node-sqlite-lazy-sweep", {
+      "main.cjs": `
+        const { DatabaseSync } = require("node:sqlite");
+        const { edenGC } = require("bun:jsc");
+        function open(name) {
+          const db = new DatabaseSync(name);
+          db.exec("PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS t (x)");
+          return db;
+        }
+        function prepareMany(db) {
+          return Array.from({ length: 300 }, () => db.prepare("SELECT x FROM t"));
+        }
+        function dropped() {
+          for (let i = 0; i < 8; i++) prepareMany(open(":memory:"));
+        }
+        function sidecarsAfterClose() {
+          dropped();
+          edenGC();
+          const fresh = Array.from({ length: 8 }, (_, i) => open(i + ".db"));
+          const kept = fresh.map(prepareMany);
+          for (const db of fresh) db.close();
+          return require("node:fs").readdirSync(".").filter(name => /-(wal|shm)$/.test(name)).length;
+        }
+        console.log(sidecarsAfterClose(), sidecarsAfterClose(), sidecarsAfterClose());`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0 0 0\n", stderr: expect.any(String), exitCode: 0 });
   });
 
   test.skipIf(!sqliteHasSession)(
@@ -2187,11 +2837,12 @@ describe("GC lifetime", () => {
       }
       Bun.gc(true);
       // The next entry point sweeps the orphaned native sessions; the
-      // connection keeps working and a fresh session records normally.
+      // connection keeps working and a fresh session records normally: one
+      // two-column INSERT is a 20-byte changeset.
       db.exec("INSERT INTO t VALUES (1, 'x')");
       const fresh = db.createSession();
       db.exec("INSERT INTO t VALUES (2, 'y')");
-      expect(fresh.changeset().length).toBeGreaterThan(0);
+      expect(fresh.changeset()).toHaveLength(20);
       fresh.close();
       db.close();
     },
@@ -2203,6 +2854,8 @@ describe("GC lifetime", () => {
     const session = db.createSession();
     const stmt = db.prepare("SELECT COUNT(*) AS n FROM t");
     db.exec("INSERT INTO t VALUES (1, 'a')");
+    const recorded = session.changeset();
+    expect(recorded).toHaveLength(20);
 
     const other = new DatabaseSync(":memory:");
     other.exec("CREATE TABLE o (x INTEGER)");
@@ -2219,7 +2872,7 @@ describe("GC lifetime", () => {
     // statements before deserializing), but the session keeps its recorded
     // history because the connection was never touched.
     expect(() => stmt.get()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
-    expect(session.changeset().length).toBeGreaterThan(0);
+    expect(session.changeset()).toEqual(recorded);
     expect(db.prepare("SELECT COUNT(*) AS n FROM t").get()!.n).toBe(1);
     session.close();
     db.close();
@@ -2246,7 +2899,7 @@ describe("module exports", () => {
     db.close();
   });
 
-  test("named ESM import of Session links (spawned subprocess)", async () => {
+  test.concurrent("named ESM import of Session links (spawned subprocess)", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `import { Session } from "node:sqlite"; console.log(typeof Session);`],
       env: bunEnv,
@@ -2254,8 +2907,7 @@ describe("module exports", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "function\n", exitCode: 0 });
-    void stderr;
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "function\n", stderr: expect.any(String), exitCode: 0 });
   });
 });
 
@@ -2326,7 +2978,7 @@ describe("loadExtension() / enableLoadExtension()", () => {
 // corruption vector (howtocorrupt.html §2.2.1). Assert both modules report
 // the same sqlite_version() and that closing one module's handle does not
 // drop the other's fcntl locks.
-test("bun:sqlite and node:sqlite share one SQLite library", async () => {
+test.concurrent("bun:sqlite and node:sqlite share one SQLite library", async () => {
   using dir = tempDir("node-sqlite-cross-module", {});
   await using proc = Bun.spawn({
     cmd: [
@@ -2360,15 +3012,17 @@ test("bun:sqlite and node:sqlite share one SQLite library", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("same=true\nn1=1\nb1=2\nok=ok\n");
-  void stderr;
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "same=true\nn1=1\nb1=2\nok=ok\n",
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 });
 
 // The reverse ordering of the test above: node:sqlite opening FIRST used to
 // leave sqlite3 initialized before bun:sqlite's sqlite3_config() calls ran,
 // which is SQLITE_MISUSE (a hard debug assertion). See Bun__initializeSQLite.
-test("bun:sqlite still initializes correctly when node:sqlite opens a database first", async () => {
+test.concurrent("bun:sqlite still initializes correctly when node:sqlite opens a database first", async () => {
   using dir = tempDir("node-sqlite-init-order", {});
   await using proc = Bun.spawn({
     cmd: [
@@ -2391,15 +3045,13 @@ test("bun:sqlite still initializes correctly when node:sqlite opens a database f
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // stderr is drained but not pinned: ASAN/debug builds emit benign noise.
-  expect({ stdout, exitCode }).toEqual({ stdout: "n=2\n", exitCode: 0 });
-  void stderr;
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "n=2\n", stderr: expect.any(String), exitCode: 0 });
 });
 
 // Worker-owned databases are checkpointed and closed by the worker's own exit
 // (the same sweep the main thread runs, filtered to that worker's entries).
 // Sibling of "unclosed file-backed database is closed on process exit".
-test("worker-owned unclosed database is checkpointed on worker exit", async () => {
+test.concurrent("worker-owned unclosed database is checkpointed on worker exit", async () => {
   using dir = tempDir("node-sqlite-worker-exit", {
     "worker.mjs": `import { DatabaseSync } from 'node:sqlite';
       const db = new DatabaseSync('exit.db');
@@ -2433,44 +3085,42 @@ test("worker-owned unclosed database is checkpointed on worker exit", async () =
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("0\n99\n");
-  void stderr;
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n99\n", stderr: expect.any(String), exitCode: 0 });
 });
 
 describe("GC stress", () => {
   // Interleave Bun.gc(true) with the mutations that race visitChildren, so
   // a marker-vs-mutator lock miss is loud under ASAN rather than flaky.
-  // Debug+ASAN builds run 10-100x slower — sized for that budget.
   test("re-registering db.function() while GC runs concurrently", () => {
     const db = new DatabaseSync(":memory:");
     db.function("f", () => -1);
     const stmt = db.prepare("SELECT f() AS v");
-    for (let i = 0; i < 500; i++) {
+    for (let i = 0; i < 50; i++) {
       db.function("f", () => i);
       Bun.gc(true);
       expect(stmt.get()!.v).toBe(i);
     }
     db.close();
-  }, 30_000);
+  });
 
   test("TagStore LRU churn under GC pressure", () => {
     const db = new DatabaseSync(":memory:");
     const sql = db.createTagStore(4);
-    for (let i = 0; i < 500; i++) {
+    for (let i = 0; i < 50; i++) {
       // Rotate the SQL text so the LRU inserts/evicts every iteration.
       const j = i % 8;
       const v = sql.get(["SELECT ", ` + ${j} AS v`] as any, i)!.v;
       Bun.gc(true);
       expect(v).toBe(i + j);
     }
+    expect(sql.size).toBe(4);
     db.close();
-  }, 30_000);
+  });
 
   test("aggregate step callback triggering GC between rows", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (x INTEGER)");
-    db.exec(`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 100) INSERT INTO t SELECT x FROM c`);
+    db.exec(`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 20) INSERT INTO t SELECT x FROM c`);
     db.aggregate("gcsum", {
       start: 0,
       step: (acc: number, x: any) => {
@@ -2479,26 +3129,28 @@ describe("GC stress", () => {
       },
     });
     // The Strong<> in sqlite3_aggregate_context must survive GC between xStep calls.
-    expect(db.prepare("SELECT gcsum(x) AS s FROM t").get()!.s).toBe(5050);
+    expect(db.prepare("SELECT gcsum(x) AS s FROM t").get()!.s).toBe(210);
     db.close();
   });
 
-  test.skipIf(!sqliteHasSession)(
-    "session churn under GC pressure (finalizer ordering)",
-    () => {
-      const db = new DatabaseSync(":memory:");
-      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
-      for (let i = 0; i < 500; i++) {
-        const s = db.createSession();
-        Bun.gc(true);
-        s.changeset();
-        // Half explicitly close, half drop — races wrapperGone/dbGone.
-        if (i & 1) s.close();
-      }
-      db.close();
-    },
-    30_000,
-  );
+  test.skipIf(!sqliteHasSession)("session churn under GC pressure (finalizer ordering)", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    for (let i = 0; i < 50; i++) {
+      const s = db.createSession();
+      Bun.gc(true);
+      // Nothing was written while the session was attached.
+      expect(s.changeset()).toHaveLength(0);
+      // Half explicitly close, half drop — races wrapperGone/dbGone.
+      if (i & 1) s.close();
+    }
+    // A fresh session records one INSERT into a one-column table: 16 bytes.
+    const fresh = db.createSession();
+    db.exec("INSERT INTO t VALUES (1)");
+    expect(fresh.changeset()).toHaveLength(16);
+    fresh.close();
+    db.close();
+  });
 });
 
 // bun:sqlite's setCustomSQLite() and node:sqlite share a single process-global

@@ -89,5 +89,3 @@ test.each(modes)(
   },
   240_000,
 );
-
-test.todo("--isolate=modules as one program");

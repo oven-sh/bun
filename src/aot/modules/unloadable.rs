@@ -10,7 +10,7 @@ use super::requests::{FileScan, ScannedSite, Scans, is_jsx_site};
 use crate::load::sources::{SourceKind, parsed_source};
 use crate::module_keys::is_name_of_text;
 use bun_sema::hir::ExportId;
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSite, ImportSiteKind, is_load_found_late};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 
@@ -94,10 +94,28 @@ fn imported_files(scans: &Scans, file: FileId) -> impl Iterator<Item = FileId> +
     })
 }
 
-fn written_files(scans: &Scans, file: FileId) -> impl Iterator<Item = FileId> + '_ {
-    let sites = scans.find(file).map_or(&[][..], |scan| &scan.sites);
-    sites.iter().filter_map(|site| match *site {
-        ScannedSite::Module(ModuleRef::File(target)) => Some(target),
+fn is_found_late(input: &BindInput<'_, '_>, file: FileId, site: &ImportSite) -> bool {
+    let (ImportSiteKind::Require(call) | ImportSiteKind::RequireResolve(call)) = site.kind else {
+        return false;
+    };
+    let files = input.files;
+    let decisions = &files.analysis(file).decisions;
+    is_load_found_late(files.hir(file), files.bound(file), decisions, call)
+}
+
+fn written_files<'a>(
+    input: &'a BindInput<'_, '_>,
+    scans: &'a Scans,
+    file: FileId,
+) -> impl Iterator<Item = FileId> + 'a {
+    let scan = scans.find(file);
+    let answers = scan.map_or(&[][..], |scan| &scan.sites);
+    let written = scan.map_or(&[][..], |_| input.files.analysis(file).import_sites);
+    let sites = answers.iter().zip(written);
+    sites.filter_map(move |(answer, site)| match *answer {
+        ScannedSite::Module(ModuleRef::File(target)) if !is_found_late(input, file, site) => {
+            Some(target)
+        }
         _ => None,
     })
 }
@@ -130,7 +148,7 @@ fn find_modules_loaded_at_start(input: &BindInput<'_, '_>, scans: &Scans) -> Vec
 }
 
 pub(super) fn find_files_that_sites_name(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<bool> {
-    find_files_reached_from_entry_points(input, |file| written_files(scans, file))
+    find_files_reached_from_entry_points(input, |file| written_files(input, scans, file))
 }
 
 fn may_fail_where_loaded(

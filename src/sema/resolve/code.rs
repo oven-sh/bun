@@ -89,6 +89,7 @@ pub struct SiteOfComputedLoad<'a> {
     pub folder: &'a [u8],
     pub type_attribute: Option<&'a [u8]>,
     pub opens_database: bool,
+    pub starts_at_own_folder: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -191,6 +192,7 @@ pub(super) struct CodeState<'h> {
     resolutions: Memo<&'h [u8], CodeResolution<'h>>,
     manifests: Memo<&'h [u8], Option<&'h CodeManifest<'h>>>,
     required_files: bun_threading::Guarded<FxHashMap<&'h [u8], &'h [u8]>>,
+    files_found_with_side_effects: bun_threading::Guarded<FxHashSet<&'h [u8]>>,
     configs: ConfigCaches<'h>,
 }
 
@@ -211,6 +213,7 @@ impl<'h> Resolver<'h> {
             resolutions: Memo::new(false),
             manifests: Memo::new(false),
             required_files: Default::default(),
+            files_found_with_side_effects: Default::default(),
             configs: ConfigCaches::new(false),
         };
         Resolver {
@@ -238,6 +241,11 @@ impl<'h> Resolver<'h> {
         entries
             .map(|(&imported, &required)| (imported, required))
             .collect()
+    }
+
+    pub fn is_found_with_side_effects(&self, path: &[u8]) -> bool {
+        let files = self.code_state().files_found_with_side_effects.lock();
+        files.contains(path)
     }
 
     fn code_options(&self) -> &'h CodeOptions {

@@ -1,0 +1,18 @@
+# f1 = total
+# -- source: map-get-with-integer-keys.ts
+# function total(weights: Map<number, number>, limit: number): number {
+#   let sum = 0;
+#   for (let k = 0; k < limit; k++) sum += weights.get(k) ?? 0;
+#   return sum;
+# }
+# declare const input: any;
+# const weights = new Map<number, number>();
+# weights.set(input | 0, +input);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = total(weights, input | 0);
+# -- end of source
+# The compiler before this one: 22 instructions, 2 of them patches.
+# When the bound was taken: loop: operations 21, patches 2, moves 3, unlikely 0.
+# RUN(X64): loops most:24 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 24

@@ -1,0 +1,39 @@
+# process.nextTick(() => {}); require("node:path").sep.scan()
+# The control of read-of-an-export-of-a-compiled-library-module-lets-no-class-exist.ir: the same program, and the code of node:path is not in it. Nobody sees what makes the export, so the row of the table is all there is,
+# and it says nothing: the value may be an object of a class of the host that no row names, and a method that is called on it by name is called.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=GlobScan function=f2
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    v2 = Convert v1 declared={type=builtin(ProcessNextTick) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, v0, v3 calleeKey="nextTick" calleeName="process.nextTick"
+    v5 = Builtin builtin=NodePath
+    v6 = PropGet v5 key="sep"
+    v7 = PropGet v6 key="scan"
+    v8 = Call v7, v6 calleeKey="scan"
+    Return v8
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="scan" module=m2 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=GlobScan thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
-import { closed, completeness, notYet, retainsFeature } from "./runtime-use-expectations";
+import { closed, completeness, retainsFeature } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
-import { eachRow, gap } from "./supported";
+import { eachRow } from "./supported";
 
 const numberFormatting = ["IntlNumberFormat", "IntlUnits"];
 const namedByNoProgramHere = [
@@ -29,18 +29,18 @@ describe.concurrent("the engine's own JavaScript reads its arrays by index", () 
       "await using",
       `{ await using held = { async [Symbol.asyncDispose]() { console.log("disposed"); } }; console.log("inside"); }`,
     ],
-    gap(notYet.everyBuiltin, [
+    [
       "await using of what has only a synchronous method",
       `{ await using held = { [Symbol.dispose]() { console.log("disposed"); } }; console.log("inside"); }`,
-    ]),
-    gap(notYet.everyBuiltin, [
+    ],
+    [
       "DisposableStack",
       `const stack = new DisposableStack(); stack.use({ [Symbol.dispose]() { console.log("used"); } }); stack.adopt(1, n => console.log("adopted", n)); stack.defer(() => console.log("deferred")); stack.move().dispose();`,
-    ]),
-    gap(notYet.everyBuiltin, [
+    ],
+    [
       "AsyncDisposableStack",
       `const stack = new AsyncDisposableStack(); stack.use({ async [Symbol.asyncDispose]() { console.log("used"); } }); stack.adopt(1, async n => console.log("adopted", n)); stack.defer(async () => console.log("deferred")); await stack.move().disposeAsync();`,
-    ]),
+    ],
     [
       "a dispose method found by its symbol on an unknown value",
       `const value: any = JSON.parse(process.argv[2]); value[Symbol.dispose]();`,

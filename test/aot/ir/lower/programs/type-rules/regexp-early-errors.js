@@ -30,7 +30,7 @@ console.log(typeof unused);
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="unused"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = NewRegExp pattern="\\1" regExpFlags=[Unicode]
 // CHECK-NEXT: v1 = NewRegExp pattern="a**"

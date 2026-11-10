@@ -63,9 +63,9 @@ export const {
   functionsConvertedUnderNamesOnly,
   generic,
   handedBackFrom,
-  handedOutBySteps,
-  handedOutFrom,
-  handedOver,
+  stepValueSlot,
+  exposedFrom,
+  retainedByNativeCode,
   handwritten,
   hostCall,
   hostClassRoles,
@@ -196,8 +196,10 @@ export const {
   whenOperandOfCallOn,
   whenOperandStartsWith,
   whenProgramStores,
+  whenPropertyOfOperandStartsWith,
   whenTestsReplaceBuiltins,
   withoutEntryColumns,
+  wordOfCell,
   writesContents,
 } = engineModule;
 const null_ = engineModule.null;

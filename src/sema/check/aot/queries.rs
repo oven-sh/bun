@@ -8,7 +8,8 @@ use super::answers::{
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
 use super::inferred_from_use::{
-    MembersByName, ReferenceIndex, Subject, TypeState, TypesInProgress, Usage, UsageState,
+    MembersByName, PartsRemembered, ReferenceIndex, Subject, TypeState, TypesInProgress, Usage,
+    UsageState,
 };
 use super::kept_answers::{
     GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, ObjectRow, TypeAnswers, TypeQuestion, TypeRow,
@@ -21,13 +22,15 @@ use crate::atom::{Atom, known};
 use crate::bind::{BindingKind, Bound, Decl, Parent, SymbolId};
 use crate::check::jsx::{JsxName, JsxReferenceKind};
 use crate::check::print::to_valid_utf8;
-use crate::check::relate::Relation;
+use crate::check::relate::{RecursionId, Relation};
 use crate::check::{Checker, ContextFlags, Requested, WORK_TRAP_DISARMED};
 use crate::hir::{self, EnumMemberId, ExprId, ExprKind, FnId, ParamId, PatId, TypeNodeId};
 use crate::program::{FileId, FileRole, Files, Sym};
 use crate::session::Arena;
-use crate::types::{EnumValue, SigId, TypeId, tf};
+use crate::types::{EnumValue, SigId, TypeData, TypeId, tf};
 use crate::util::{FxHashMap, FxHashSet};
+use smallvec::{SmallVec, smallvec};
+use std::cell::RefCell;
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -81,6 +84,7 @@ fn is_accessor(kind: ObjectMemberKind) -> bool {
 #[derive(Default)]
 pub(super) struct Memo<'c> {
     gave_up: GaveUpAnswers,
+    nesting_sizes: FxHashMap<TypeId, usize>,
     members: FxHashMap<TypeId, Result<&'c [ObjectMember], GaveUp>>,
     most_recent_checked_members: [Option<(TypeId, Vec<CheckedMember>)>; 2],
     pub(super) names_typed_by_this: FxHashMap<Sym, (&'c [Atom], usize)>,
@@ -92,6 +96,9 @@ pub(super) struct Memo<'c> {
     classes: FxHashMap<ClassDeclaration, Option<&'c ClassShape<'c>>>,
     classes_with_accessor_at_or_above: FxHashMap<ClassDeclaration, bool>,
     names_of_accessors: FxHashSet<MemberName>,
+    pub(super) names_of_fields_asked_about: FxHashMap<u32, (crate::hir::ClassId, Atom)>,
+    pub(super) reads_of_fields_off_this:
+        Option<FxHashMap<(crate::hir::ClassId, Atom), Vec<ExprId>>>,
     inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
     places_of_classes: FxHashMap<ClassDeclaration, PlaceInRow>,
     highest_places_of_fields: FxHashMap<MemberName, PlaceInRow>,
@@ -116,11 +123,20 @@ pub(super) struct Memo<'c> {
     pub(super) usages_that_lacked_stack: Vec<Subject>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
     pub(super) types_of_parts: FxHashMap<*const Usage, (Rc<Usage>, TypeId)>,
+    pub(super) parts_remembered: Rc<RefCell<PartsRemembered>>,
     pub(super) members_found: FxHashMap<(TypeId, *const MembersByName), (Rc<MembersByName>, bool)>,
     pub(super) unions_without_nullish: FxHashMap<TypeId, TypeId>,
     pub(super) types_in_progress: TypesInProgress,
     pub(super) sums_used_as_int32: FxHashMap<ExprId, bool>,
+    pub(super) symbols_given_products: FxHashMap<SymbolId, GivenProduct>,
+    pub(super) evaluated_for_some_values_only: FxHashMap<ExprId, bool>,
     pub(super) declared_signatures: Option<Rc<DeclaredSignatures>>,
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct GivenProduct {
+    pub(super) is_given: bool,
+    pub(super) ran_out_of_terms: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -230,6 +246,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn note_idle_between_statements(&mut self) {
         debug_assert!(self.depth == 0);
         self.c.idle_between_statements();
+        if self.c.was_discarded() {
+            self.answer_nothing_from_now_on();
+        }
     }
 
     pub fn answer_nothing_from_now_on(&mut self) {
@@ -1025,6 +1044,139 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
+    pub fn what_uses_of_field_say(
+        &mut self,
+        shape: &ClassShape<'_>,
+        member: &ClassMember,
+    ) -> CheckedType {
+        let (ClassDeclaration::Class(class), MemberName::String(field)) =
+            (shape.declaration, member.name)
+        else {
+            return Ok(TypeId::ANY);
+        };
+        if class.file != self.file {
+            return Ok(TypeId::ANY);
+        }
+        let position = match member.source {
+            ClassMemberSource::ThisStore(store) => self.hir()[store].pos,
+            ClassMemberSource::Member(node) => self.hir()[node].name_pos,
+            ClassMemberSource::ParameterProperty(_)
+            | ClassMemberSource::PrototypeStore(_)
+            | ClassMemberSource::StaticStore(_) => return Ok(TypeId::ANY),
+        };
+        let said = self.ask(|queries| Ok(queries.infer_field_type(class, field, position)))?;
+        let int32 = self.c.p.aot_symbols().int32_alias();
+        let int32 = int32.map(|alias| self.c.declared_type(alias));
+        let mut names_list = false;
+        let mut holds_numbers_alone = true;
+        for &part in self.c.parts(said) {
+            if !self.c.is_array(part) {
+                if self.c.flags(part) & tf::OBJECT != 0 {
+                    return Ok(TypeId::ANY);
+                }
+                continue;
+            }
+            names_list = true;
+            let element = self.c.array_element(part);
+            holds_numbers_alone &= element.is_some_and(|element| {
+                self.c.every_type(element, |c, held| {
+                    c.is_number_like(held) || Some(held) == int32
+                })
+            });
+        }
+        if !(names_list && holds_numbers_alone) {
+            return Ok(said);
+        }
+        match self.ask(|queries| Ok(queries.are_names_alone_read_off_field(class, field)))? {
+            true => Ok(said),
+            false => Ok(TypeId::ANY),
+        }
+    }
+
+    pub fn uses_say_what_read_is(&mut self, pattern: PatId, is_element: bool) -> bool {
+        let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
+        else {
+            return false;
+        };
+        if self.c.is_any(said) {
+            return false;
+        }
+        let is_list_of_numbers = |c: &Checker<'_, '_>, part: TypeId| c.is_array(part);
+        if self.c.some_type(said, is_list_of_numbers) {
+            let mut holds_numbers_alone = true;
+            for &part in self.c.parts(said) {
+                if self.c.is_array(part) {
+                    let element = self.c.array_element(part);
+                    holds_numbers_alone &= element.is_some_and(|element| {
+                        self.c.every_type(element, |c, held| c.is_number_like(held))
+                    });
+                }
+            }
+            if holds_numbers_alone {
+                return false;
+            }
+        }
+        let is_primitive = self
+            .c
+            .every_type(said, |c, part| c.flags(part) & tf::PRIMITIVE != 0);
+        if is_primitive && is_element {
+            return false;
+        }
+        let names_record = self.c.some_type(said, |c, part| {
+            c.flags(part) & tf::OBJECT != 0 && !c.is_array(part)
+        });
+        if names_record {
+            return false;
+        }
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        });
+        checked.is_ok_and(|ty| self.c.is_any(ty))
+    }
+
+    pub fn uses_say_list_of_lists(&mut self, pattern: PatId) -> bool {
+        let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
+        else {
+            return false;
+        };
+        let mut names_list = false;
+        let mut rows_may_be_texts = false;
+        for &part in self.c.parts(said) {
+            if self.c.flags(part) & tf::NULLABLE != 0 {
+                continue;
+            }
+            let Some(element) = self.c.array_element(part) else {
+                return false;
+            };
+            let holds_lists_alone = self.c.some_type(element, |c, held| c.is_array(held))
+                && self.c.every_type(element, |c, held| {
+                    c.is_array(held) || c.flags(held) & (tf::NULLABLE | tf::STRING_LIKE) != 0
+                });
+            if !holds_lists_alone {
+                return false;
+            }
+            rows_may_be_texts |= self
+                .c
+                .some_type(element, |c, held| c.flags(held) & tf::STRING_LIKE != 0);
+            names_list = true;
+        }
+        if !names_list {
+            return false;
+        }
+        if rows_may_be_texts {
+            let Ok(true) = self.ask(|queries| Ok(queries.is_read_under_numbers_alone(pattern)))
+            else {
+                return false;
+            };
+        }
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        });
+        checked.is_ok_and(|ty| self.c.is_any(ty))
+    }
+
     pub fn return_type(&mut self, function: FnId) -> CheckedType {
         self.ask(|queries| {
             let ty = queries.c.return_type_of_fn(queries.file, function);
@@ -1665,20 +1817,56 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Some(&ty) = path.last() else {
             return false;
         };
-        let identity = self.c.recursion_identity_of_family(ty);
-        let is_instantiation =
-            |&on_path: &TypeId| self.c.recursion_identity_of_family(on_path) == identity;
-        let mut family = path.iter().rev().copied().filter(is_instantiation);
-        let mut last = [ty; MAX_DEPTH];
-        for place in last.iter_mut().rev() {
-            let Some(on_path) = family.next() else {
-                return false;
-            };
-            *place = on_path;
+        let family = self.family_of(ty);
+        let is_kin = |&on_path: &TypeId| self.family_of(on_path) == family;
+        let kin: SmallVec<[TypeId; 8]> = path.iter().copied().filter(is_kin).collect();
+        if kin.len() < MAX_DEPTH {
+            return false;
         }
         let types = self.c.types();
-        let mut neighbors = last.iter().zip(last.iter().skip(1));
-        neighbors.all(|(&outer, &inner)| types.nesting_order(inner, outer).is_gt())
+        let sizes = &mut self.memo.nesting_sizes;
+        let mut size_of = |ty: TypeId| {
+            let size = sizes.entry(ty);
+            *size.or_insert_with(|| types.nesting_size(ty))
+        };
+        let mut lowest_ends_of_rows: SmallVec<[TypeId; MAX_DEPTH]> = SmallVec::new();
+        for on_path in kin {
+            let mut ends = lowest_ends_of_rows.iter_mut();
+            let not_less = ends.find(|end| {
+                let by_height = types.nesting_order(**end, on_path);
+                let order = by_height.then_with(|| size_of(**end).cmp(&size_of(on_path)));
+                order.is_ge()
+            });
+            match not_less {
+                Some(end) => *end = on_path,
+                None => lowest_ends_of_rows.push(on_path),
+            }
+            if lowest_ends_of_rows.len() == MAX_DEPTH {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn family_of(&self, ty: TypeId) -> SmallVec<[RecursionId; 2]> {
+        let TypeData::Intersection(sides) = self.c.data(ty) else {
+            return smallvec![self.c.recursion_identity_of_family(ty)];
+        };
+        let families = sides
+            .iter()
+            .map(|&side| self.c.recursion_identity_of_family(side));
+        let mut families: SmallVec<[RecursionId; 2]> = families.collect();
+        families.sort_unstable();
+        families.dedup();
+        families
+    }
+
+    pub fn listed_member_hangs_on_type_arguments(
+        &mut self,
+        object_type: TypeId,
+        member: ListedMember,
+    ) -> bool {
+        self.compute_listed_member_hangs_on_type_arguments(object_type, member)
     }
 
     pub fn type_text(&mut self, ty: TypeId) -> Vec<u8> {

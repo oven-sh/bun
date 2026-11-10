@@ -55,6 +55,7 @@ pub(super) struct LoadInputs<'a, 's> {
     pub(super) texts_of_data_files: &'a [TextOfDataFile],
     pub(super) imported_file_changers: &'a [ImportedFileChanger],
     pub(super) texts_of_other_files: &'a [TextOfOtherFile],
+    pub(super) exports_that_others_touch: &'a [Atom],
 }
 
 pub(super) fn load_code_file<'s, 'r>(
@@ -107,7 +108,8 @@ pub(super) fn load_code_file<'s, 'r>(
     }
     let (bound, analyzed) = analyze(context, arena, key, settings, stored_by_mocks, &mut tree);
     if !tree.request.options.keeps_comments {
-        crate::erasure::keep_only_comments_beside_types(&mut tree.hir, arena);
+        let is_read_later = crate::import_sites::may_spell_word_that_mock_looks_for;
+        crate::erasure::keep_only_comments_beside_types_and(&mut tree.hir, arena, is_read_later);
     }
     rename_private_names_with(&mut tree.hir, &bound, atoms, path, |reference, _| {
         bound.runtime.private_class(reference)
@@ -139,6 +141,8 @@ fn write_what_other_files_say<'s>(
         ArenaFew::from_iter_in(inputs.imported_file_changers.iter().copied(), arena);
     hir.texts_of_other_files =
         ArenaFew::from_iter_in(inputs.texts_of_other_files.iter().copied(), arena);
+    hir.exports_that_others_touch =
+        ArenaFew::from_iter_in(inputs.exports_that_others_touch.iter().copied(), arena);
 }
 
 fn fold_inputs_of<'c, 's: 'c>(
@@ -305,7 +309,6 @@ fn accept_tree<'s, 'r>(
     } = context;
     let path = key.path;
     let request = CodeParseRequest {
-        package_module_type: context.resolver.package_module_type(path),
         path,
         loader: key.loader,
         options: parse_options_of(context, path, settings),

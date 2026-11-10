@@ -1,0 +1,19 @@
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`.
+# So 2147483648 passes `wide < 2147483648`, after which the walk has proven that `wide` fits in an int32.
+# A 64-bit integer that is proven to fit in an int32 is converted to a double, a boxed value or a 32-bit integer from its low half alone. So 2147483648 silently became -2147483648.
+# With CheckProofsAtRunTime, the low half is checked against the whole value where the integer is truncated, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: none 12.5
+# RIGHT-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: type check failed at {{*}} (halved)
+# STOPPED: crashed with SIGABRT
+# RUN(ALONE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,TreatEqualIntegersAsLess
+# ALONE: bun: internal AOT error: type check failed at {{*}} (halved)
+# ALONE: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function halved(a: number, b: number): string { const wide = (a & 131071) * (b & 131071); if (wide < 2147483648) return String(wide + 0.5); return "none"; }
+# print(halved(id(32768), id(65536)), halved(id(3), id(4)));
+# -- end of source

@@ -1,4 +1,4 @@
-// STATISTIC: MethodCallsToldApartByShape >= 1
+// STATISTIC: MethodCallsDispatchedByShape >= 1
 abstract class Shape { abstract area(): number; twice(): number { return this.area() * 2; } }
 class Square extends Shape { constructor(private side: number) { super(); } area(): number { return this.side * this.side; } }
 class Rect extends Shape { constructor(private w: number, private h: number) { super(); } area(): number { return this.w * this.h; } }

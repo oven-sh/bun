@@ -1,0 +1,20 @@
+# `const memo = {}; memo[id] = new Item(v); .. memo[id]` with a number for a key. Whatever was stored under a key that is no written name went to code that nobody sees, whatever the record: the Item, its field and its class went out of sight by one store into a table.
+# It lies beside the fields of the table's own layout: a read under a number or under any key finds it there, so does a read or a call under a written name where the key may spell it, and so do the rows that read every own value.
+# A layout that gains a name by such a store is not opened by it: what the store lays is followed. Unseen code gets it where the table itself goes out of sight: `leaked` is handed to `sink`, and what lies in it goes with it.
+# -- source: what-is-stored-under-a-name-nobody-knows-stays-beside-the-fields-of-its-layout.ts
+# declare function number(): number;
+# declare function sink(...values: unknown[]): void;
+# class Item { v: number; constructor(v: number) { this.v = v; } }
+# class Lost { w: number; constructor(w: number) { this.w = w; } }
+# const memo: Record<number, Item> = {};
+# const leaked: Record<number, Lost> = { 0: new Lost(0) };
+# function put(id: number, v: number): void { memo[id] = new Item(v); }
+# function get(id: number): number { const found = memo[id]; return found ? found.v : -1; }
+# function lose(id: number, w: number): void { leaked[id] = new Lost(w); }
+# put(number() | 0, 5); lose(number() | 0, 6); sink(get(number() | 0), get(number() | 0), leaked);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "v" proven=i32
+# CHECK-NOT: field L1.0 "w" proven=
+# RUN(SHELL): run-in-shell const all = [7, 8, 7, 9]; let at = 0; globalThis.number = () => all[at++]; globalThis.sink = (a, b, c) => print(a + " " + b + " " + c[8].w);
+# SHELL: 5 -1 6

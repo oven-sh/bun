@@ -11,7 +11,6 @@ use super::EvalContext;
 use crate::ir::generated::{EvalBinding, EvalBindingKind, EvalScopeFlags, HomeObjectKind};
 use crate::ir::{ClassSlot, StringId, ValueId, VariableKey};
 use crate::lower::captures::Capture;
-use crate::lower::member::PropertyName;
 use crate::lower::private_names::{PrivateBinding, PrivateHolder};
 use crate::lower::scope::{
     ArgumentsObject, BindingForm, BindingRef, ScopeSlot, Storage, environments, find_entry,
@@ -94,6 +93,21 @@ fn find_functions_entered_from_parameters(
     entered
 }
 
+fn name_private_functions_by_index(bindings: &mut [EvalBinding]) {
+    for (index, binding) in bindings.iter_mut().enumerate() {
+        if matches!(
+            binding.kind,
+            EvalBindingKind::PrivateMethod | EvalBindingKind::PrivateAccessor
+        ) {
+            for distance in [&mut binding.function, &mut binding.setter]
+                .into_iter()
+                .flatten()
+            {
+                *distance = index as u32 - *distance;
+            }
+        }
+    }
+}
 fn class_slot(scope: ScopeId, slot: ClassSlot) -> BindingRef {
     BindingRef::Slot(scope, ScopeSlot::Class(slot))
 }
@@ -235,6 +249,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             from = bound.scopes[scope.idx()].kind;
         }
         record.bindings.shared_sort_by_key(|binding| binding.depth);
+        name_private_functions_by_index(&mut record.bindings);
         (record.bindings, record.operands)
     }
 }
@@ -462,6 +477,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         resolved: PrivateBinding,
         scope: ScopeId,
     ) {
+        let depth = binding.depth;
         let (kind, function, setter) = match resolved.members {
             PrivateMembers::AutoAccessor(member) if resolved.is_decorated => {
                 match resolved.holder {
@@ -470,14 +486,9 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                     }
                     PrivateHolder::ClassObject => {}
                 }
-                let stored_pair = class_slot(scope, ClassSlot::PrivateMethod(member));
-                let pair = self.lowering.get_stored(stored_pair);
-                let [function, setter] = [known::get, known::set].map(|name| {
-                    let key = self.lowering.file.name_key(name);
-                    let function = self.lowering.emit_get(pair, PropertyName::Constant(key));
-                    Some(self.add_value_operand(function))
-                });
-                (EvalBindingKind::PrivateAccessor, function, setter)
+                let kind = EvalBindingKind::PrivateAccessorPair;
+                let pair = self.add_private_function(kind, scope, Some(member), depth);
+                (EvalBindingKind::PrivateAccessor, pair, pair)
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
                 match resolved.holder {
@@ -489,25 +500,38 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                 return;
             }
             PrivateMembers::Method(member) => {
-                let function = self.add_private_function(scope, Some(member));
+                let kind = EvalBindingKind::PrivateFunction;
+                let function = self.add_private_function(kind, scope, Some(member), depth);
                 (EvalBindingKind::PrivateMethod, function, None)
             }
             PrivateMembers::Accessor { getter, setter } => {
-                let function = self.add_private_function(scope, getter);
-                let setter = self.add_private_function(scope, setter);
+                let kind = EvalBindingKind::PrivateFunction;
+                let function = self.add_private_function(kind, scope, getter, depth);
+                let setter = self.add_private_function(kind, scope, setter, depth);
                 (EvalBindingKind::PrivateAccessor, function, setter)
             }
         };
+        let position = self.bindings.len() as u32;
+        let distance_to = |function: Option<u32>| function.map(|function| position - function);
         self.bindings.push(EvalBinding {
             kind,
-            function,
-            setter,
+            function: distance_to(function),
+            setter: distance_to(setter),
             ..binding
         });
     }
 
-    fn add_private_function(&mut self, scope: ScopeId, member: Option<MemberId>) -> Option<u32> {
-        Some(self.add_stored_operand(class_slot(scope, ClassSlot::PrivateMethod(member?))))
+    fn add_private_function(
+        &mut self,
+        kind: EvalBindingKind,
+        scope: ScopeId,
+        member: Option<MemberId>,
+        depth: u32,
+    ) -> Option<u32> {
+        let stored = class_slot(scope, ClassSlot::PrivateMethod(member?));
+        let position = self.bindings.len() as u32;
+        self.add_stored(create_binding(kind, None, depth), stored);
+        (self.bindings.len() as u32 > position).then_some(position)
     }
 
     fn add_commonjs_bindings(&mut self, depth: u32) {

@@ -1,0 +1,10 @@
+# nobody adds a listener: the warning of addEventListener() stays out, and the standard streams with it
+# -- source: the-signal-of-a-request-that-is-only-asked-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch(request) { return new Response(String(request.signal.aborted)); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by AbortSignal
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

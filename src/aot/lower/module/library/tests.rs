@@ -133,7 +133,8 @@ fn lower_library_file_for(
     let files = [("main.js", program), (path, text)];
     let options = LoweringOptions {
         platform: host_platform(),
-        embeds_function_text: false,
+        embeds_function_source: false,
+        reparses_function_sources: false,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
@@ -284,9 +285,13 @@ fn directive_selects_function_form_and_without_one_it_is_method() {
 }
 
 #[test]
-fn always_inline_changes_nothing() {
+fn always_inline_is_kept_for_the_function_behind_it() {
     let directives = collect_directives("$alwaysInline;\nexport function probe() {}");
-    assert_eq!(directives, [PendingDirectives::default()]);
+    let expected = PendingDirectives {
+        is_always_inlined: true,
+        ..PendingDirectives::default()
+    };
+    assert_eq!(directives, [expected]);
 }
 
 #[test]

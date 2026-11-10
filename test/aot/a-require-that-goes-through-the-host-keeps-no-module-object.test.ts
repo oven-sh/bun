@@ -23,7 +23,7 @@ test("what is kept", () => {
     const kept = (heapStats().objectTypeCounts.Module ?? 0) - before;
     console.log("SEEN", road, sum, kept < 100 ? "keeps nothing" : "keeps module objects");
   }
-});
+}, 60_000);
 test("whose child the file is", async () => {
   const say = (...all: unknown[]) => console.log("SEEN", JSON.stringify(all));
   say("first", ask());

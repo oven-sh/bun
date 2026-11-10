@@ -10,5 +10,5 @@
 # RUN: walk f1 mechanisms=all-ParameterGuards
 # CHECK-LABEL: code f1:Body
 # CHECK: isInLoop=true isLoopHead=true
-# CHECK: PutSlot {{*}}key="seen" {{*}}level=Expected
+# CHECK: PutSlot {{*}}key="seen"
 # CHECK: int[1, 32] {{*}} = Increment

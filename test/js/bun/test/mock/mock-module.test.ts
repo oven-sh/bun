@@ -686,6 +686,155 @@ const manualMocks = {
 };
 
 describe.concurrent("the original of a mocked module", () => {
+  const logged = {
+    "own.ts": `(globalThis.order ??= []).push("own"); export const value = "own";`,
+    "other.ts": `(globalThis.order ??= []).push("other"); export const other = "other";`,
+    "user.ts": `import { value } from "./own"; export const look = () => value;`,
+  };
+  const testOf = (setup: string, mock: string, order: string[]) => `
+    import { expect, jest, mock, test, vi } from "bun:test";
+    ${setup}
+    test("loads", async () => {
+      ${mock}
+      const { look } = await import("./user");
+      expect([look(), ...globalThis.order]).toEqual(${JSON.stringify(["mock", ...order])});
+    });
+  `;
+  const body = `(globalThis.order ??= []).push("factory"); return { ...(await vi.importActual("./own")), value: "mock" };`;
+
+  test("is evaluated before a factory that requests it by name, however the factory is passed", async () => {
+    const requested = ["own", "factory"];
+    await expectFixturesToPass(
+      {
+        ...logged,
+        "factory.ts": `import { vi } from "bun:test"; export const factory = async () => { ${body} };`,
+        "factory.cjs": `exports.factory = () => { (globalThis.order ??= []).push("factory"); return { ...jest.requireActual("./own"), value: "mock" }; };`,
+        "arrow.test.ts": testOf("", `vi.doMock("./own", async () => { ${body} });`, requested),
+        "type-argument.test.ts": testOf(
+          "",
+          `vi.doMock("./own", async () => { ${body.replace("importActual(", 'importActual<typeof import("./own")>(')} });`,
+          requested,
+        ),
+        "function-expression.test.ts": testOf("", `vi.doMock("./own", async function () { ${body} });`, requested),
+        "variable.test.ts": testOf(
+          `const factory = async () => { ${body} };`,
+          `vi.doMock("./own", factory);`,
+          requested,
+        ),
+        "declaration.test.ts": testOf(
+          `async function factory() { ${body} }`,
+          `vi.doMock("./own", factory);`,
+          requested,
+        ),
+        "method.test.ts": testOf(
+          `const holder = { async factory() { ${body} } };`,
+          `vi.doMock("./own", holder.factory);`,
+          requested,
+        ),
+        "another-file.test.ts": testOf(
+          `import { factory } from "./factory";`,
+          `vi.doMock("./own", factory);`,
+          requested,
+        ),
+        "commonjs.test.ts": testOf(
+          `import { factory } from "./factory.cjs";`,
+          `jest.doMock("./own", factory);`,
+          requested,
+        ),
+        "mock-module.test.ts": testOf("", `mock.module("./own", async () => { ${body} });`, requested),
+        "after-non-ascii.test.ts": testOf(
+          `const text = "grüß dich 😀";`,
+          `vi.doMock("./own", async () => { ${body} });`,
+          requested,
+        ),
+        "nested.test.ts": testOf(
+          "",
+          `vi.doMock("./own", async () => { const load = async () => { ${body} }; return load(); });`,
+          requested,
+        ),
+      },
+      11,
+      ["--isolate"],
+    );
+  });
+
+  test("is not evaluated for a factory that requests another module", async () => {
+    await expectFixturesToPass(
+      {
+        ...logged,
+        "another-module.test.ts": testOf(
+          "",
+          `vi.doMock("./own", async () => { (globalThis.order ??= []).push("factory"); await vi.importActual("./other"); return { value: "mock" }; });`,
+          ["factory", "other"],
+        ),
+      },
+      1,
+    );
+  });
+
+  test("is not evaluated for a request in code that never runs", async () => {
+    const mocked = (statements: string, order = ["factory"]) =>
+      testOf(
+        "",
+        `vi.doMock("./own", async () => { (globalThis.order ??= []).push("factory"); ${statements} });`,
+        order,
+      );
+    await expectFixturesToPass(
+      {
+        ...logged,
+        "after-return.test.ts": mocked(`return { value: "mock" }; await vi.importActual("./own");`),
+        "after-throw.test.ts": mocked(
+          `if (globalThis.never) { throw 1; await vi.importActual("./own"); } return { value: "mock" };`,
+        ),
+        "under-false.test.ts": mocked(`if (false) await vi.importActual("./own"); return { value: "mock" };`),
+        "else-of-true.test.ts": mocked(`if (true) return { value: "mock" }; else await vi.importActual("./own");`),
+        "behind-false-and.test.ts": mocked(`false && (await vi.importActual("./own")); return { value: "mock" };`),
+        "dead-arm.test.ts": mocked(`void (0 ? await vi.importActual("./own") : 1); return { value: "mock" };`),
+        "declared.test.ts": mocked(`declare const made = vi.importActual; return { value: "mock" };`),
+        "sum-names-another-module.test.ts": mocked(`await vi.importActual("./ot" + "her"); return { value: "mock" };`, [
+          "factory",
+          "other",
+        ]),
+        // A function declaration is hoisted.
+        "function-after-return.test.ts": mocked(
+          `return { ...(await load()), value: "mock" }; function load() { return vi.importActual("./own"); }`,
+          ["own", "factory"],
+        ),
+      },
+      9,
+      ["--isolate"],
+    );
+  });
+
+  test("reads a very long sum", async () => {
+    const sum = Array(100_000).fill(`"a"`).join(" + ");
+    const factory = `() => { (globalThis.order ??= []).push("factory"); return vi.importActual("./other" + ${sum}).catch(() => ({ value: "mock" })); }`;
+    const files = { "sum.test.ts": testOf(`const long = ${sum};`, `vi.doMock("./own", ${factory});`, ["factory"]) };
+    await expectFixturesToPass({ ...logged, ...files }, 1);
+  });
+
+  const setup = `mock.module("./own", async () => { ${body} });`;
+  test.each([
+    ["script", `require("./setup.cjs");`],
+    ["wrapper", `require("node:module").wrapper[0] += " "; require("./setup.cjs");`],
+    [
+      "plugin",
+      `Bun.plugin({ name: "setup", setup: ({ onLoad }) => onLoad({ filter: /virtual/ }, () => ({ contents: ${JSON.stringify(setup)}, loader: "ts" })) });
+       await import("./virtual");`,
+    ],
+  ])("is evaluated first in a %s", async (_, start) => {
+    using dir = tempDir("mock-in-script", {
+      ...logged,
+      "globals.ts": `import { mock, vi } from "bun:test"; Object.assign(globalThis, { mock, vi });`,
+      "setup.cjs": setup,
+      "virtual.ts": "",
+      "index.ts": `import "./globals"; ${start} const { look } = await import("./user"); console.log(look(), ...globalThis.order);`,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.ts"], env: bunEnv, cwd: String(dir), stderr: "inherit" });
+    expect(await proc.stdout.text()).toBe("mock own factory\n");
+    expect(await proc.exited).toBe(0);
+  });
+
   test("importOriginal and vi.importActual load a module that was never loaded, once", async () => {
     await expectFixturesToPass(
       {
@@ -1742,7 +1891,7 @@ describe.concurrent("a module mocked without a factory", () => {
 
 describe.concurrent("unmock", () => {
   test.each([{}, { BUN_JSC_useDFGJIT: "0" }])(
-    "an export still uninitialized when it was mocked is the mock's, and then the value its module assigned %j",
+    "an export still uninitialized when it was mocked keeps the value its module assigned later %j",
     async env => {
       using dir = tempDir("mock-module-uninitialized", {
         "late.js": `
@@ -1788,10 +1937,7 @@ describe.concurrent("unmock", () => {
         timeout: 60_000,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout.split("\n").slice(1, 3)).toEqual([
-        '["mocked","string","mocked",true]',
-        '["real","string","real",true]',
-      ]);
+      expect(stdout.split("\n").slice(1, 3)).toEqual(Array(2).fill('["real","string","real",true]'));
       expect(stderr).toContain(" 1 pass\n 0 fail\n");
       expect(exitCode).toBe(0);
     },
@@ -6821,279 +6967,6 @@ test.concurrent.each(isolationFlags)(
     await expectFixturesToPass(files, ticks, args);
   },
 );
-
-describe.concurrent("a module whose body has yet to run to its end when it is mocked", () => {
-  // The module that is mocked. `made` is what its own body makes of its own exports: the body never runs on the mock.
-  const tax = (before: string) => `
-    const evaluations = (globalThis.evaluations ??= {});
-    evaluations[import.meta.dir] = (evaluations[import.meta.dir] ?? 0) + 1;
-    ${before}
-    export const send = () => "real";
-    export let label = "real";
-    export class Kind {}
-    export function fn() { return "real"; }
-    export const made = [send(), label, Kind.name, fn()].join();
-  `;
-  // A module that imports it, and reads every export while it loads.
-  const reader = (from = "./tax", imports = "") => `
-    import { send, label, Kind, fn, made } from ${JSON.stringify(from)};
-    ${imports}
-    export const atLoad = [send(), label, Kind.name, fn(), made];
-    export const later = () => [send(), label, Kind.name, fn(), made];
-  `;
-  const factory = `() => ({ send: () => "mock", label: "mock", Kind: class Mock {}, fn: () => "mock" })`;
-  const real = ["real", "real", "Kind", "real", "real,real,Kind,real"];
-  const mocked = ["mock", "mock", "Mock", "mock", "real,real,Kind,real"];
-  const functions = ["mock.module", "jest.mock", "jest.doMock", "vi.mock", "vi.doMock"];
-  // JSON in which `undefined` stays `undefined`, for what a mock function without an implementation returns.
-  const literal = (value: unknown) =>
-    JSON.stringify(value, (_, item) => (item === undefined ? "\0" : item)).replaceAll(`"\\u0000"`, "undefined");
-  const mocks = (call: string) => `import { jest, mock, vi } from "bun:test";\n${call};`;
-  const reads = (from: string, expected: readonly unknown[]) => `
-    expect([early.atLoad, late.atLoad, early.later(), late.later()]).toEqual(${literal(Array(4).fill(expected))});
-    const tax = await import(${JSON.stringify(from)});
-    expect([tax.send(), tax.label, tax.Kind.name, tax.fn(), tax.made]).toEqual(${literal(expected)});
-  `;
-  const testFile = (name: string, imports: string, body: string) => `
-    import { expect, jest, test, vi } from "bun:test";
-    ${imports}
-    import * as late from "./late";
-    test(${JSON.stringify(name)}, async () => {${body}});
-  `;
-  const theOriginal = (from = "./tax") => `
-    const actual = await vi.importActual(${JSON.stringify(from)});
-    expect([actual.send(), actual.label, actual.Kind.name, actual.fn(), actual.made]).toEqual(${JSON.stringify(real)});
-    expect(globalThis.evaluations[require("node:path").dirname(Bun.resolveSync(${JSON.stringify(from)}, import.meta.dir))]).toBe(1);
-  `;
-
-  // mocks.ts is a static import of a test file that hoists nothing: it runs while the module is where each of these says.
-  const earlyThenMocks = `import * as early from "./early"; import "./mocks";`;
-  const mocksThenEarly = `import "./mocks"; import * as early from "./early";`;
-  const states: [name: string, startOfTax: string, imports: string, files: Record<string, string>][] = [
-    ["it waits at an await of its own", "await 0;", earlyThenMocks, {}],
-    ["it waits for an import that awaits", `import "./slow";`, earlyThenMocks, { "slow.ts": `await 0; export {};` }],
-    [
-      "it waits at an await of its own, in an import cycle whose first module has yet to run",
-      `import "./early"; await 0;`,
-      `import * as early from "./early";`,
-      { "early.ts": reader("./tax", `import "./mocks";`) },
-    ],
-    ["it imports the module that mocks it", `import "./mocks";`, `import * as early from "./early";`, {}],
-    ["it is linked, and imports the module that mocks it", `import "./mocks";`, mocksThenEarly, {}],
-    ["it is linked, and waits at an await of its own", "await 0;", mocksThenEarly, {}],
-  ];
-
-  test.each(states)(
-    "every importer and every later import() get the mock: %s",
-    async (state, startOfTax, imports, more) => {
-      const files: Record<string, string> = {};
-      for (const fn of functions) {
-        Object.assign(files, {
-          [`${fn}/tax.ts`]: tax(startOfTax),
-          [`${fn}/early.ts`]: reader(),
-          [`${fn}/late.ts`]: reader(),
-          [`${fn}/mocks.ts`]: mocks(`${fn}("./tax", ${factory})`),
-          [`${fn}/x.test.ts`]: testFile(`${fn}(): ${state}`, imports, reads("./tax", mocked) + theOriginal()),
-        });
-        for (const [file, text] of Object.entries(more)) files[`${fn}/${file}`] = text;
-      }
-      await expectFixturesToPass(files, functions.length);
-    },
-  );
-
-  test("a package that waits at an await of its own", async () => {
-    const files: Record<string, string> = {};
-    for (const fn of functions) {
-      Object.assign(files, {
-        [`${fn}/node_modules/tax/package.json`]: `{ "name": "tax", "type": "module", "main": "index.js" }`,
-        [`${fn}/node_modules/tax/index.js`]: tax("await 0;"),
-        [`${fn}/early.ts`]: reader("tax"),
-        [`${fn}/late.ts`]: reader("tax"),
-        [`${fn}/mocks.ts`]: mocks(`${fn}("tax", ${factory})`),
-        [`${fn}/x.test.ts`]: testFile(
-          `${fn}() of a package`,
-          earlyThenMocks,
-          reads("tax", mocked) + theOriginal("tax"),
-        ),
-      });
-    }
-    await expectFixturesToPass(files, functions.length);
-  });
-
-  // What the mock has yet to store is not stored at the call: the call returns nothing to wait for, and a factory's getter is read once.
-  test("the call returns nothing, and the exports of the mock are read once", async () => {
-    const counting = `() => ({
-      get send() {
-        const reads = (globalThis.reads ??= {});
-        reads[import.meta.dir] = (reads[import.meta.dir] ?? 0) + 1;
-        return () => "mock";
-      },
-      label: "mock",
-      Kind: class Mock {},
-      fn: () => "mock",
-    })`;
-    const files: Record<string, string> = {};
-    for (const [folder, imports] of [
-      ["await", earlyThenMocks],
-      ["linked-await", mocksThenEarly],
-    ]) {
-      for (const fn of ["mock.module", "vi.mock"]) {
-        Object.assign(files, {
-          [`${folder}/${fn}/tax.ts`]: tax("await 0;"),
-          [`${folder}/${fn}/early.ts`]: reader(),
-          [`${folder}/${fn}/late.ts`]: reader(),
-          [`${folder}/${fn}/mocks.ts`]: mocks(`globalThis.returned = [${fn}("./tax", ${counting})]`),
-          [`${folder}/${fn}/x.test.ts`]: testFile(
-            `${fn}(), ${folder}`,
-            imports,
-            `expect([globalThis.returned, globalThis.reads[import.meta.dir]]).toEqual([[undefined], 1]);` +
-              reads("./tax", mocked),
-          ),
-        });
-      }
-    }
-    await expectFixturesToPass(files, 4);
-  });
-
-  test.each(isolationFlags)("the next test file gets the original %j", async args => {
-    await expectFixturesToPass(
-      {
-        "tax.ts": tax("await 0;"),
-        "early.ts": reader(),
-        "late.ts": reader(),
-        "mocks.ts": mocks(`mock.module("./tax", ${factory})`),
-        "first.test.ts": testFile("the file that mocks it", earlyThenMocks, reads("./tax", mocked)),
-        "second.test.ts": testFile(
-          "the next file",
-          `import * as early from "./early";`,
-          reads("./tax", real) + theOriginal(),
-        ),
-      },
-      2,
-      args,
-    );
-  });
-
-  test("a factory that returns a promise", async () => {
-    const files: Record<string, string> = {};
-    // The promise settles while the body still waits, or after the body and the modules that waited for it have run.
-    for (const [folder, startOfTax, startOfFactory, atLoad] of [
-      ["settles-first", "await 0; ".repeat(8), "await 0;", mocked],
-      ["settles-last", "await 0;", "await 0; ".repeat(8), real],
-    ] as const) {
-      Object.assign(files, {
-        [`${folder}/tax.ts`]: tax(startOfTax),
-        [`${folder}/early.ts`]: reader(),
-        [`${folder}/late.ts`]: reader(),
-        [`${folder}/mocks.ts`]: mocks(
-          `globalThis.returned = mock.module("./tax", async () => { ${startOfFactory} return (${factory})(); })`,
-        ),
-        [`${folder}/x.test.ts`]: testFile(
-          folder,
-          earlyThenMocks,
-          `
-            expect(globalThis.returned).toBeInstanceOf(Promise);
-            expect([early.atLoad, late.atLoad, early.later(), late.later()]).toEqual(${literal([atLoad, atLoad, mocked, mocked])});
-          ` + theOriginal(),
-        ),
-      });
-    }
-    await expectFixturesToPass(files, 2);
-  });
-
-  test("an export that another module declares, whose body has yet to end", async () => {
-    await expectFixturesToPass(
-      {
-        // tax.ts has run to its end. impl.ts, which it imports in a cycle, waits at an await.
-        "tax.ts": `export { send, fn } from "./impl"; export const label = "real";`,
-        "impl.ts": `import "./tax"; await 0; export const send = () => "real"; export function fn() { return "real"; }`,
-        "reader.ts": `
-          import { send, fn, label } from "./tax";
-          export const atLoad = [send(), fn(), label];
-          export const later = () => [send(), fn(), label];
-        `,
-        "mocks.ts": mocks(`mock.module("./tax", () => ({ send: () => "mock", fn: () => "mock", label: "mock" }))`),
-        "reexport.test.ts": `
-          import { expect, test } from "bun:test";
-          import "./impl";
-          import "./mocks";
-          import { atLoad, later } from "./reader";
-          test("a re-export", async () => {
-            expect([atLoad, later()]).toEqual([["mock", "mock", "mock"], ["mock", "mock", "mock"]]);
-            const impl = await import("./impl");
-            expect([impl.send(), impl.fn()]).toEqual(["mock", "mock"]);
-          });
-        `,
-      },
-      1,
-    );
-  });
-
-  test("a mock that takes the place of another one before the body ends", async () => {
-    await expectFixturesToPass(
-      {
-        "tax.ts": tax("await 0;"),
-        "early.ts": reader(),
-        "late.ts": reader(),
-        "mocks.ts": mocks(`
-          mock.module("./tax", () => ({ send: () => "first", fn: () => "first" }));
-          mock.module("./tax", () => ({ send: () => "second", label: "second" }))
-        `),
-        "twice.test.ts": testFile(
-          "the second mock, and what only the first one has",
-          earlyThenMocks,
-          reads("./tax", ["second", "second", "Kind", "first", "real,real,Kind,real"]) + theOriginal(),
-        ),
-      },
-      1,
-    );
-  });
-
-  // The mock is made of what the module exports, so it is made when the body has assigned that.
-  test("a mock without a factory is made when the body ends", async () => {
-    const files: Record<string, string> = {};
-    const automocked = [undefined, "real", "Kind", undefined, "real,real,Kind,real"];
-    for (const [folder, call, expected] of [
-      ["vi.mock", `vi.mock("./tax")`, automocked],
-      ["jest.mock", `jest.mock("./tax")`, automocked],
-      ["vi.doMock", `vi.doMock("./tax")`, automocked],
-      ["jest.doMock", `jest.doMock("./tax")`, automocked],
-      ["spy", `vi.mock("./tax", { spy: true })`, real],
-    ] as const) {
-      Object.assign(files, {
-        [`${folder}/tax.ts`]: tax("await 0;"),
-        [`${folder}/early.ts`]: reader(),
-        [`${folder}/late.ts`]: reader(),
-        [`${folder}/mocks.ts`]: mocks(call),
-        [`${folder}/x.test.ts`]: testFile(
-          call,
-          earlyThenMocks,
-          reads("./tax", expected) +
-            `expect([vi.isMockFunction(tax.send), vi.isMockFunction(tax.fn), tax.fn.mock.calls.length]).toEqual([true, true, 5]);` +
-            theOriginal(),
-        ),
-      });
-    }
-    await expectFixturesToPass(files, 5);
-  });
-
-  test("a body that throws fails the module that imports it, with what it threw", async () => {
-    await expectFixturesToPass(
-      {
-        "tax.ts": `await 0; export const send = () => "real"; throw new Error("thrown by tax.ts");`,
-        "reader.ts": `import { send } from "./tax"; import "./mocks"; export const atLoad = send();`,
-        "mocks.ts": mocks(`mock.module("./tax", () => ({ send: () => "mock" }))`),
-        "throws.test.ts": `
-          import { expect, test } from "bun:test";
-          test("the module that imports it fails to load", async () => {
-            await expect(import("./reader")).rejects.toThrow("thrown by tax.ts");
-          });
-        `,
-      },
-      1,
-    );
-  });
-});
 
 describe.concurrent("a module that is linked, but not evaluated yet, when it is mocked", () => {
   // linked.test.ts hoists nothing, so all its imports are linked before the first of them is evaluated, which mocks the last.

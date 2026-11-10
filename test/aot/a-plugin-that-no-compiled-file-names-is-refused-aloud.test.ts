@@ -38,7 +38,7 @@ async function answersOf(files: Record<string, string>, ...flags: string[]) {
 describe("an executable", () => {
   test.each([
     ["Bun is handed to a helper", `import { use } from "./use.mjs";\nuse(Bun, ${options});`],
-    ["by a key that is made", `Bun[["plu", "gin"].join("")](${options});`],
+    ["by a key that the build cannot read", `Bun[JSON.parse('"plugin"')](${options});`],
     ["off the global object by a key that is made", `globalThis[["B", "un"].join("")].plugin(${options});`],
   ])("%s", async (_, registers) => {
     const { plain, compiled } = await answersOf({ ...modules, "main.mjs": registers + "\n" + loads });
@@ -54,8 +54,12 @@ describe("an executable", () => {
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
 
-  test("named in sight, the plugin answers", async () => {
-    const { plain, compiled } = await answersOf({ ...modules, "main.mjs": `Bun.plugin(${options});\n` + loads });
+  test.each([
+    ["named in sight", `Bun.plugin(${options});`],
+    ["named by a key that the build folds", `Bun[["plu", "gin"].join("")](${options});`],
+    ["read by Reflect.get under its name", `Reflect.get(Bun, "plugin")(${options});`],
+  ])("%s, the plugin answers", async (_, registers) => {
+    const { plain, compiled } = await answersOf({ ...modules, "main.mjs": registers + "\n" + loads });
     expect(plain.stdout).toBe("the plugin's ./a.mjs\n");
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
@@ -100,7 +104,7 @@ describe("an executable where code may come from disk, away from its sources", (
 
   test.each([
     ["Bun is handed to a helper", `import { use } from "./use.mjs";\nuse(Bun, ${options});\n${loads}`, "./a.mjs"],
-    ["by a key that is made", `Bun[["plu", "gin"].join("")](${options});\n${loads}`, "./a.mjs"],
+    ["by a key that the build cannot read", `Bun[JSON.parse('"plugin"')](${options});\n${loads}`, "./a.mjs"],
     [
       "off the global object by a key that is made",
       `globalThis[["B", "un"].join("")].plugin(${options});\n${loads}`,

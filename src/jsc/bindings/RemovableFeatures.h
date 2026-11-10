@@ -8,6 +8,13 @@ extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobal
 
 namespace Bun {
 
+struct RemovedFunction {
+    ASCIILiteral name;
+    ASCIILiteral api;
+    unsigned length { 0 };
+    bool hasPrototype { true };
+};
+JSC::JSValue createRemovedFunction(JSC::JSGlobalObject*, JSC::RemovableFeature, const RemovedFunction&);
 template<JSC::RemovableFeature feature, auto function, uint32_t builtin, typename Realm>
 ALWAYS_INLINE std::invoke_result_t<decltype(function), Realm> createRemovableBinding(Realm realm)
 {

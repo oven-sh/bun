@@ -3807,12 +3807,18 @@ describe("bundler", () => {
   // not come to gets a memo block of its own, and each render runs the store again on the object of an earlier render.
   //
   // Each component renders several times on one memo cache, and has to render what the plain build renders. The
-  // compiled runs are `todo`. babel-plugin-react-compiler 1.0.0 renders what Bun renders for each component but one:
+  // compiled runs are `todo`, but for the last group, which has three components that are compiled right.
+  // babel-plugin-react-compiler 1.0.0 renders what Bun renders for each component but one:
   // `react-compiler/StoreReachesWhatAPushKeepsCached` says which.
-  const storeThroughAJoin = (name: string, files: Record<string, string>, stdout: string) => {
+  const storeThroughAJoin = (
+    name: string,
+    files: Record<string, string>,
+    stdout: string,
+    { compiledIsTodo = true }: { compiledIsTodo?: boolean } = {},
+  ) => {
     for (const reactCompiler of [false, true]) {
       itBundled(`react-compiler/${name}-${reactCompiler ? "compiled" : "plain"}`, {
-        todo: reactCompiler,
+        todo: reactCompiler && compiledIsTodo,
         files: {
           ...files,
           // One memo cache per component, kept between renders, as a fiber keeps it.
@@ -3852,7 +3858,7 @@ describe("bundler", () => {
     }
   `;
 
-  // The store is in the component. 20 of the 22 render wrong.
+  // The store is in the component.
   storeThroughAJoin(
     "StoreReachesEachValueOfAJoin",
     {
@@ -3860,22 +3866,12 @@ describe("bundler", () => {
         import { render, useMemo, useState } from "react";
         import { same } from "./helpers";
 
-        // In the first eight the local holds an object, or an array or an object that holds that object.
+        // In the first seven the local holds an object, or an array or an object that holds that object.
         function ElementOrArray({ n }) {
           const x = { n };
           const w = [x];
           const first = w[0];
           const y = n < 100 ? first : w;
-          y.n = y.n + 1;
-          return <b>{x.n}</b>;
-        }
-
-        // The operands the other way round. The walk comes to the array from its element first, and this one is right.
-        function ArrayOrElement({ n }) {
-          const x = { n };
-          const w = [x];
-          const first = w[0];
-          const y = n > 100 ? w : first;
           y.n = y.n + 1;
           return <b>{x.n}</b>;
         }
@@ -3933,23 +3929,12 @@ describe("bundler", () => {
           return <b>{leaf.n}</b>;
         }
 
-        // In the next seven one of the values of the join is a join itself.
+        // In the next six one of the values of the join is a join itself.
         function JoinOfAJoin({ n }) {
           const b = { n };
           const a = { n };
           const p = n > 100 ? a : b;
           const z = n < 100 ? p : a;
-          z.n = z.n + 1;
-          return <b>{b.n}</b>;
-        }
-
-        // The operands the other way round. The walk comes to the inner join before it comes to a, and this one is
-        // right.
-        function JoinOfAJoinOtherOrder({ n }) {
-          const b = { n };
-          const a = { n };
-          const p = n > 100 ? a : b;
-          const z = n > 100 ? a : p;
           z.n = z.n + 1;
           return <b>{b.n}</b>;
         }
@@ -4100,7 +4085,6 @@ describe("bundler", () => {
 
         ${rendersOfAStoreThroughAJoin}
         run(ElementOrArray);
-        run(ArrayOrElement);
         run(NullishElementOrArray);
         run(DestructuredOrArray);
         run(ChildOrTree);
@@ -4108,7 +4092,6 @@ describe("bundler", () => {
         run(LastOfAList);
         run(PathIntoATree);
         run(JoinOfAJoin);
-        run(JoinOfAJoinOtherOrder);
         run(NestedJoin);
         run(TwoJoins);
         run(OneOfTwoLists, [1, 2, 3].map(n => ({ n, side: "r" })));
@@ -4134,7 +4117,6 @@ describe("bundler", () => {
     },
     `
       ElementOrArray 2 2 200 200
-      ArrayOrElement 2 2 200 200
       NullishElementOrArray 2 2 201 201
       DestructuredOrArray 2 2 200 200
       ChildOrTree 2 2 201 201
@@ -4142,7 +4124,6 @@ describe("bundler", () => {
       LastOfAList 2 2 201 201
       PathIntoATree 2 2 201 201
       JoinOfAJoin 2 2 200 200
-      JoinOfAJoinOtherOrder 2 2 200 200
       NestedJoin 2 2 200 200
       TwoJoins 2 2 200 200
       OneOfTwoLists "0/1" "0/1" "0/1"
@@ -4354,8 +4335,7 @@ describe("bundler", () => {
 
   // Here babel-plugin-react-compiler 1.0.0 renders right, and Bun does not. The element reads the object in the test
   // of a conditional alone, so upstream gives the object no memo block and makes it again in each render. Bun keeps
-  // the block: to its PruneNonEscapingScopes, what a method of a mutable array is given escapes by the array. The
-  // second component has no push and is right.
+  // the block: to its PruneNonEscapingScopes, what a method of a mutable array is given escapes by the array.
   storeThroughAJoin(
     "StoreReachesWhatAPushKeepsCached",
     {
@@ -4372,6 +4352,43 @@ describe("bundler", () => {
           return <b>{x.n > 2 ? "big" : "small"}</b>;
         }
 
+        ${rendersOfAStoreThroughAJoin}
+        run(PushedThenReadInATest, [1, 1, 1, 200, 200].map(n => ({ n })));
+      `,
+    },
+    `
+      PushedThenReadInATest "small" "small" "small" "big" "big"
+    `,
+  );
+
+  // Three that are compiled right, so the compiled run is a test that runs. The first two are ElementOrArray and
+  // JoinOfAJoin with the operands of the join the other way round: the walk comes to the array from its element first,
+  // and to the inner join before it comes to a. The third is PushedThenReadInATest with an array literal in place of
+  // the push: the object then has no memo block.
+  storeThroughAJoin(
+    "StoreThroughAJoinThatIsCompiledRight",
+    {
+      "/entry.jsx": /* jsx */ `
+        import { render } from "react";
+
+        function ArrayOrElement({ n }) {
+          const x = { n };
+          const w = [x];
+          const first = w[0];
+          const y = n > 100 ? w : first;
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        function JoinOfAJoinOtherOrder({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n > 100 ? a : p;
+          z.n = z.n + 1;
+          return <b>{b.n}</b>;
+        }
+
         function ArrayLiteralThenReadInATest({ n }) {
           const x = { n };
           const w = [x];
@@ -4382,15 +4399,17 @@ describe("bundler", () => {
         }
 
         ${rendersOfAStoreThroughAJoin}
-        const small = [1, 1, 1, 200, 200].map(n => ({ n }));
-        run(PushedThenReadInATest, small);
-        run(ArrayLiteralThenReadInATest, small);
+        run(ArrayOrElement);
+        run(JoinOfAJoinOtherOrder);
+        run(ArrayLiteralThenReadInATest, [1, 1, 1, 200, 200].map(n => ({ n })));
       `,
     },
     `
-      PushedThenReadInATest "small" "small" "small" "big" "big"
+      ArrayOrElement 2 2 200 200
+      JoinOfAJoinOtherOrder 2 2 200 200
       ArrayLiteralThenReadInATest "small" "small" "small" "big" "big"
     `,
+    { compiledIsTodo: false },
   );
 
   // Codegen prints an instruction with an unnamed result inside the statement

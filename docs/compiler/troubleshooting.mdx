@@ -64,7 +64,7 @@ const found = Bun.resolveSync(name, root); // bun-ignore TS100087
 - Any text after the codes is yours, so say why.
 - To silence several warnings on one line, list their codes: `// bun-ignore TS100064, TS100087`. No form silences every warning.
 - It silences the compiler's own warnings and notes, `TS100000` to `TS100999`. It never silences a type error, an error that stops the build, or a warning that isn't about a line, such as `TS100308`.
-- A comment that silences nothing gets a warning of its own, `TS100073`, so stale comments don't pile up. A comment in code that this build leaves out, such as a function it never calls, isn't stale: another build of the same file may need it.
+- A comment that silences nothing gets a warning of its own, `TS100073`, so stale comments don't pile up. A comment in code that this build leaves out, such as a function it never calls, isn't stale: another build of the same file may need it. A build that stops at an error calls no comment stale.
 - It works in `.js`, `.ts`, `.jsx` and `.tsx` files, and in dependencies. Between JSX elements, write `{/* bun-ignore TS100064 */}`.
 - `--explain` still lists each warning that a comment silenced.
 

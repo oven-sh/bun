@@ -315,6 +315,7 @@ pub(crate) struct Diagnostics {
     int32_flows: FxHashMap<(Vec<u8>, u32), Int32Flow>,
     ignore_comments: Vec<IgnoreComment>,
     withheld: Vec<Entry>,
+    pub(crate) has_run_to_end: bool,
     should_list_silenced: bool,
     pub(crate) has_all_project_code: bool,
 }

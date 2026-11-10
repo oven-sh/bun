@@ -5,7 +5,7 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Ref, S, Stmt};
-use bun_collections::VecExt;
+use bun_collections::{HashMap, VecExt};
 
 use crate::p::P;
 use crate::parser::{Jest, RefMap};
@@ -33,8 +33,8 @@ pub(crate) use bun_ast::import_record::is_test_module;
 pub(crate) struct OriginalRequest<'a> {
     /// Where the name is.
     loc: js_ast::Loc,
-    /// What it is called with, and where its variables are looked up. `None`: it may request any module.
-    module: Option<(Literal<'a>, js_ast::StoreRef<js_ast::Scope>)>,
+    /// How what it is called with begins, and where a variable is looked up. `None`: it may request any module.
+    module: Option<(Beginning<'a>, js_ast::StoreRef<js_ast::Scope>)>,
 }
 
 /// The requests in the body of one function.
@@ -43,43 +43,22 @@ pub(crate) struct FunctionRequests<'a> {
     requests: &'a [OriginalRequest<'a>],
 }
 
-/// An expression that is written with strings, numbers and names alone. It is evaluated once every declaration is
-/// parsed: see `evaluate_literal`.
+/// The leftmost part of an expression. `bun test` always read the first string literal of the argument, as the
+/// transpiler printed it, and no further.
 #[derive(Clone, Copy)]
-pub(crate) enum Literal<'a> {
+pub(crate) enum Beginning<'a> {
     /// A lone surrogate is a NUL here.
     String(&'a [u8]),
-    Number(f64),
     Variable(&'a [u8]),
     /// `object.name` or `object["name"]`
     Member(&'a [u8], &'a [u8]),
-    Sum(&'a [Literal<'a>; 2]),
-    /// The strings and the holes, in order.
-    Template(&'a [Literal<'a>]),
 }
 
-/// A `const`, or a member of an enum, that is initialized with a `Literal`.
+/// A `const`, or a member of an enum, that is initialized with a string.
 pub(crate) struct Constant<'a> {
     declared: Ref,
     enum_member: Option<&'a [u8]>,
-    value: Literal<'a>,
-}
-
-enum LiteralValue {
-    String(Vec<u8>),
-    Number(f64),
-}
-
-impl LiteralValue {
-    /// As JavaScript converts it to a string. `None` for a number that JavaScript may print otherwise than Rust.
-    fn into_string(self) -> Option<Vec<u8>> {
-        match self {
-            LiteralValue::String(value) => Some(value),
-            LiteralValue::Number(value) => (value == 0.0
-                || (1e-6..9007199254740992.0).contains(&value))
-            .then(|| value.to_string().into_bytes()),
-        }
-    }
+    value: &'a [u8],
 }
 
 fn requests_original(name: &[u8]) -> bool {
@@ -580,106 +559,73 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    fn find_literal(&self, expr: &Expr) -> Option<Literal<'a>> {
-        let arena = self.arena;
-        let string = |literal: &E::String| -> Literal<'a> {
-            if literal.is_utf8() {
-                return Literal::String(literal.data.slice());
-            }
-            Literal::String(match String::from_utf16(literal.slice16()) {
-                Ok(literal) => arena.alloc_slice_copy(literal.as_bytes()),
-                Err(_) => b"\0",
-            })
-        };
-        Some(match expr.data {
-            ExprData::EString(literal) => string(&literal),
-            ExprData::ENumber(literal) => Literal::Number(literal.value()),
-            ExprData::EIdentifier(id) => Literal::Variable(self.load_name_from_ref(id.ref_)),
-            ExprData::EDot(dot) if dot.optional_chain.is_none() => {
-                let ExprData::EIdentifier(object) = dot.target.data else {
-                    return None;
-                };
-                Literal::Member(self.load_name_from_ref(object.ref_), dot.name.slice())
-            }
-            ExprData::EIndex(index) if index.optional_chain.is_none() => {
-                let (ExprData::EIdentifier(object), ExprData::EString(name)) =
-                    (index.target.data, index.index.data)
-                else {
-                    return None;
-                };
-                let Literal::String(name) = string(&name) else {
-                    return None;
-                };
-                Literal::Member(self.load_name_from_ref(object.ref_), name)
-            }
-            ExprData::EBinary(sum) if sum.op == js_ast::OpCode::BinAdd => {
-                let operands = [
-                    self.find_literal(&sum.left)?,
-                    self.find_literal(&sum.right)?,
-                ];
-                Literal::Sum(arena.alloc(operands))
-            }
-            ExprData::ETemplate(template) if template.tag.is_none() => {
-                let E::TemplateContents::Cooked(head) = &template.head else {
-                    return None;
-                };
-                let mut pieces = vec![string(head)];
-                for part in template.parts.slice() {
-                    let E::TemplateContents::Cooked(tail) = &part.tail else {
-                        return None;
-                    };
-                    pieces.push(self.find_literal(&part.value)?);
-                    pieces.push(string(tail));
-                }
-                Literal::Template(arena.alloc_slice_copy(&pieces))
-            }
-            _ => return None,
-        })
+    fn bytes_of_string(&self, literal: &E::String) -> &'a [u8] {
+        if literal.is_utf8() {
+            return literal.data.slice();
+        }
+        match String::from_utf16(literal.slice16()) {
+            Ok(literal) => self.arena.alloc_slice_copy(literal.as_bytes()),
+            Err(_) => b"\0",
+        }
     }
 
-    /// A name has a value if it is a `Constant`. The initializer of a `Constant` is evaluated without a `scope`, so a
-    /// name in it has none.
-    fn evaluate_literal(
+    /// In a loop: programs write sums of a hundred thousand terms.
+    fn find_beginning(&self, expr: &Expr) -> Option<Beginning<'a>> {
+        let mut first = *expr;
+        loop {
+            first = match first.data {
+                ExprData::EString(literal) => {
+                    return Some(Beginning::String(self.bytes_of_string(&literal)));
+                }
+                ExprData::ETemplate(template) if template.tag.is_none() => {
+                    let E::TemplateContents::Cooked(head) = &template.head else {
+                        return None;
+                    };
+                    return (head.len() != 0)
+                        .then(|| Beginning::String(self.bytes_of_string(head)));
+                }
+                ExprData::EIdentifier(id) => {
+                    return Some(Beginning::Variable(self.load_name_from_ref(id.ref_)));
+                }
+                ExprData::EDot(dot) => match dot.target.data {
+                    ExprData::EIdentifier(object) if dot.optional_chain.is_none() => {
+                        let object = self.load_name_from_ref(object.ref_);
+                        return Some(Beginning::Member(object, dot.name.slice()));
+                    }
+                    _ => dot.target,
+                },
+                ExprData::EIndex(index) => match (index.target.data, index.index.data) {
+                    (ExprData::EIdentifier(object), ExprData::EString(name))
+                        if index.optional_chain.is_none() =>
+                    {
+                        let object = self.load_name_from_ref(object.ref_);
+                        return Some(Beginning::Member(object, self.bytes_of_string(&name)));
+                    }
+                    _ => index.target,
+                },
+                ExprData::ECall(call) => call.target,
+                ExprData::EIf(conditional) => conditional.test,
+                ExprData::EBinary(binary) if binary.op == js_ast::OpCode::BinComma => binary.right,
+                ExprData::EBinary(binary) => binary.left,
+                _ => return None,
+            };
+        }
+    }
+
+    fn find_declared(
         &self,
-        literal: Literal<'a>,
-        scope: Option<js_ast::StoreRef<js_ast::Scope>>,
-    ) -> Option<LiteralValue> {
-        let (variable, enum_member) = match literal {
-            Literal::String(value) => return Some(LiteralValue::String(value.to_vec())),
-            Literal::Number(value) => return Some(LiteralValue::Number(value)),
-            Literal::Sum(&[left, right]) => {
-                let left = self.evaluate_literal(left, scope)?;
-                let right = self.evaluate_literal(right, scope)?;
-                if let (&LiteralValue::Number(left), &LiteralValue::Number(right)) = (&left, &right)
-                {
-                    return Some(LiteralValue::Number(left + right));
-                }
-                let mut joined = left.into_string()?;
-                joined.extend_from_slice(&right.into_string()?);
-                return Some(LiteralValue::String(joined));
-            }
-            Literal::Template(pieces) => {
-                let mut joined = Vec::new();
-                for &piece in pieces {
-                    joined.extend_from_slice(&self.evaluate_literal(piece, scope)?.into_string()?);
-                }
-                return Some(LiteralValue::String(joined));
-            }
-            Literal::Variable(variable) => (variable, None),
-            Literal::Member(object, name) => (object, Some(name)),
-        };
-        let hash = js_ast::Scope::get_member_hash(variable);
-        let mut scope = scope;
-        let declared = loop {
+        name: &[u8],
+        mut scope: Option<js_ast::StoreRef<js_ast::Scope>>,
+    ) -> Option<Ref> {
+        let hash = js_ast::Scope::get_member_hash(name);
+        loop {
             let current = scope?;
-            if let Some(member) = current.get_member_with_hash(variable, hash) {
-                break member.ref_;
+            if let Some(member) = current.get_member_with_hash(name, hash) {
+                // The blocks of an enum are linked.
+                return Some(js_ast::symbol::follow_symbols(&self.symbols, member.ref_));
             }
             scope = current.parent;
-        };
-        let constant = (self.constants.iter())
-            .find(|it| it.declared == declared && it.enum_member == enum_member)?;
-        self.evaluate_literal(constant.value, None)
+        }
     }
 
     #[cold]
@@ -703,11 +649,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         enum_member: Option<&'a [u8]>,
         value: Option<&Expr>,
     ) {
-        if let Some(value) = value.and_then(|value| self.find_literal(value)) {
+        if let Some(ExprData::EString(value)) = value.map(|value| value.data)
+            && declared.is_valid()
+        {
             self.constants.push(Constant {
                 declared,
                 enum_member,
-                value,
+                value: self.bytes_of_string(&value),
             });
         }
     }
@@ -721,7 +669,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
             _ => return,
         };
-        let module = args.first().and_then(|arg| self.find_literal(arg));
+        let module = args.first().and_then(|arg| self.find_beginning(arg));
         let module = module.map(|module| (module, self.current_scope));
         let Some(member_loc) = member_loc else {
             self.original_requests.push(OriginalRequest {
@@ -809,20 +757,37 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         &mut self,
     ) -> js_ast::StoreSlice<js_ast::RequestedOriginals> {
         let mut functions = BumpVec::new_in(self.arena);
+        let mut constants: HashMap<(Ref, Option<&[u8]>), &'a [u8]> = HashMap::default();
+        if !self.requested_originals.is_empty() {
+            for constant in self.constants.iter() {
+                let declared = js_ast::symbol::follow_symbols(&self.symbols, constant.declared);
+                constants.insert((declared, constant.enum_member), constant.value);
+            }
+        }
         for function in &self.requested_originals {
             let mut names = BumpVec::new_in(self.arena);
             let mut may_be_any_module = false;
             for request in function.requests {
-                let module = request.module;
-                match module.and_then(|(name, scope)| self.evaluate_literal(name, Some(scope))) {
+                let constant = |variable: &[u8], enum_member, scope| {
+                    let declared = self.find_declared(variable, Some(scope))?;
+                    constants.get(&(declared, enum_member)).copied()
+                };
+                let name: Option<&'a [u8]> = match request.module {
+                    Some((Beginning::String(name), _)) => Some(name),
+                    Some((Beginning::Variable(variable), scope)) => constant(variable, None, scope),
+                    Some((Beginning::Member(object, name), scope)) => {
+                        constant(object, Some(name), scope)
+                    }
+                    None => None,
+                };
+                match name {
                     // Any other is a name that no module has.
-                    Some(LiteralValue::String(name)) => {
+                    Some(name) => {
                         if !name.is_empty() && name.iter().all(|byte| *byte >= b' ') {
-                            let name: &'a [u8] = self.arena.alloc_slice_copy(&name);
                             names.push(js_ast::StoreStr::new(name));
                         }
                     }
-                    _ => may_be_any_module = true,
+                    None => may_be_any_module = true,
                 }
             }
             if may_be_any_module {

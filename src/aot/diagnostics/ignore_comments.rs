@@ -20,7 +20,9 @@ pub(super) struct IgnoreComment {
 struct IgnoredCode {
     number: u32,
     has_silenced: bool,
+    has_met_error: bool,
     complaint: Option<Msg>,
+    error_complaint: Option<Msg>,
 }
 
 #[derive(Copy, Clone)]
@@ -138,16 +140,19 @@ fn is_edited_by_user(origin: FileOrigin) -> bool {
 
 fn silence(comments: &mut [IgnoreComment], entry: &Entry) -> bool {
     let (_, file, line, _, number, _) = &entry.key;
-    if !matches!(entry.message.kind, Kind::Warn | Kind::Note) || !can_be_silenced(*number) {
+    if !can_be_silenced(*number) {
         return false;
     }
+    let is_error = !matches!(entry.message.kind, Kind::Warn | Kind::Note);
     let here = comments
         .iter_mut()
         .filter(|it| it.line == *line && it.file == *file);
     let mut is_silenced = false;
     for code in here.flat_map(|it| it.codes.iter_mut()) {
         if code.number == *number {
-            (code.has_silenced, is_silenced) = (true, true);
+            code.has_met_error |= is_error;
+            code.has_silenced |= !is_error;
+            is_silenced = !is_error;
         }
     }
     is_silenced
@@ -225,8 +230,12 @@ impl Diagnostics {
         let Some(location) = there.and_then(|it| it.data.location) else {
             return;
         };
+        let complain_if_edited =
+            |reason: String| can_complain.then(|| complain(reason.as_bytes())).flatten();
         let codes = numbers.into_iter().map(|number| {
-            let reason = if can_be_silenced(number) {
+            let reason = if number == Code::IgnoreCommentSilencesNothing.number() {
+                Some(format!("TS{number} can't be silenced"))
+            } else if can_be_silenced(number) {
                 options.should_report_stale.then(|| {
                     format!("the build reports no TS{number} on the line that it applies to")
                 })
@@ -238,9 +247,11 @@ impl Diagnostics {
             IgnoredCode {
                 number,
                 has_silenced: false,
-                complaint: reason
-                    .filter(|_| can_complain)
-                    .and_then(|reason| complain(reason.as_bytes())),
+                has_met_error: false,
+                complaint: reason.and_then(complain_if_edited),
+                error_complaint: complain_if_edited(format!(
+                    "TS{number} is an error here, and a comment can't silence an error"
+                )),
             }
         });
         self.ignore_comments.push(IgnoreComment {
@@ -297,9 +308,24 @@ impl Diagnostics {
                 self.entries.push(Entry::new(number, message));
             }
         }
-        let codes = comments.into_iter().flat_map(|it| it.codes);
-        for complaint in codes.filter_map(|it| it.complaint.filter(|_| !it.has_silenced)) {
-            self.add_message(Code::IgnoreCommentSilencesNothing.number(), complaint);
+        for code in comments.into_iter().flat_map(|it| it.codes) {
+            let is_judged = self.has_run_to_end || !can_be_silenced(code.number);
+            let complaint = match code {
+                IgnoredCode {
+                    has_met_error: true,
+                    error_complaint,
+                    ..
+                } => error_complaint,
+                IgnoredCode {
+                    has_silenced: false,
+                    complaint,
+                    ..
+                } if is_judged => complaint,
+                _ => None,
+            };
+            if let Some(complaint) = complaint {
+                self.add_message(Code::IgnoreCommentSilencesNothing.number(), complaint);
+            }
         }
     }
 }

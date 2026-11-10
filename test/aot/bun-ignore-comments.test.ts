@@ -111,6 +111,32 @@ test("a type error is not silenced", async () => {
   expect(exitCode).not.toBe(0);
 });
 
+// A build that stops computes no warning of the engine, so it can't know that a comment is stale.
+test.each([
+  ["an engine's warning", `// bun-ignore TS100058\nnew RegExp(${path});\n`],
+  ["a computed import", `// bun-ignore TS100064\nrequire(${path});\n`],
+  ["a computed lookup", `// bun-ignore TS100087\nBun.resolveSync(${path}, __dirname);\n`],
+])("a build that stops at a type error calls no comment stale: %s", async (_, text) => {
+  expect(await build({ "main.cjs": text })).toEqual(nothing);
+  const files = { "main.cjs": text, "wrong.ts": `export const count: number = "one";\n` };
+  const { said, exitCode } = await build({ ...files, "main.ts": `import "./main.cjs";\nimport "./wrong.ts";\n` }, [
+    "main.ts",
+  ]);
+  expect(said).toEqual(["error: TS2322"]);
+  expect(exitCode).not.toBe(0);
+});
+
+test("a comment on the line of an error says that an error can't be silenced", async () => {
+  const declared = `declare module "bun" { type int32 = number & { readonly "bun.int32"?: true }; }\n`;
+  const text = `import type { int32 } from "bun";\n// bun-ignore TS100031\nconst made: int32 = Number(process.argv[2]);\nconsole.log(made);\n`;
+  const { said, exitCode } = await build({ "main.ts": text, "bun.d.ts": declared }, ["main.ts"]);
+  expect(said).toContain("error: TS100031");
+  expect(said.filter(line => line.includes("TS100073"))).toEqual([
+    stale("TS100031 is an error here, and a comment can't silence an error"),
+  ]);
+  expect(exitCode).not.toBe(0);
+});
+
 test("the code of a type error silences nothing", async () => {
   expect(await build({ "main.cjs": `// bun-ignore TS2322\nconsole.log(1);\n` })).toEqual({
     said: [stale("TS2322 isn't one of the compiler's own warnings, which are TS100000 to TS100999")],
@@ -132,6 +158,7 @@ test("the warning of a stale comment can't be silenced", async () => {
   const text = `// bun-ignore TS100073\n// bun-ignore TS100064\nconsole.log(1);\n`;
   const { said } = await build({ "main.cjs": text });
   expect(said).toContain(stale("the build reports no TS100064 on the line that it applies to"));
+  expect(said).toContain(stale("TS100073 can't be silenced"));
 });
 
 test.each(["js", "ts", "jsx", "tsx", "mjs", "cjs"])("in a .%s file", async extension => {

@@ -2,8 +2,8 @@ use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, BindingKind, Bound, Decl};
 use crate::fold::{TreeNode, push_children};
 use crate::hir::{
-    BinOp, Branches, Chain, EnumId, ExprId, ExprKind, File, FnBody, FnId, IdList, MemberKey,
-    StmtId, StmtKind, UnOp, find_transpiled_mark,
+    BinOp, Branches, Chain, EnumId, ExprId, ExprKind, File, FnBody, FnId, IdList, StmtId, StmtKind,
+    UnOp, find_transpiled_mark,
 };
 
 #[derive(Default)]
@@ -65,22 +65,6 @@ struct Literals<'f, 's, B> {
     hir: &'f File<'s>,
     bound: &'f Bound<'s>,
     bytes_of: B,
-}
-
-enum LiteralValue {
-    String(Vec<u8>),
-    Number(f64),
-}
-
-impl LiteralValue {
-    fn into_string(self) -> Option<Vec<u8>> {
-        match self {
-            LiteralValue::String(value) => Some(value),
-            LiteralValue::Number(value) => (value == 0.0
-                || (1e-6..9007199254740992.0).contains(&value))
-            .then(|| value.to_string().into_bytes()),
-        }
-    }
 }
 
 impl<'x, B: Fn(Atom) -> &'x [u8]> Literals<'_, '_, B> {
@@ -147,61 +131,61 @@ impl<'x, B: Fn(Atom) -> &'x [u8]> Literals<'_, '_, B> {
         hir[member].init.some()
     }
 
-    fn evaluate(&self, expr: ExprId, follows_names: bool) -> Option<LiteralValue> {
+    fn find_name(&self, argument: ExprId) -> Option<Vec<u8>> {
         let hir = self.hir;
         let string = |literal: Atom| {
             let bytes = (self.bytes_of)(literal);
-            core::str::from_utf8(bytes).map_or(&b"\0"[..], str::as_bytes)
+            core::str::from_utf8(bytes)
+                .map_or(&b"\0"[..], str::as_bytes)
+                .to_vec()
         };
-        let expr = hir.skip_type_assertions(expr);
-        match hir[expr].kind {
-            ExprKind::String(literal) => Some(LiteralValue::String(string(literal).to_vec())),
-            ExprKind::Number(number) => Some(LiteralValue::Number(hir.numbers[number as usize])),
-            ExprKind::Ident(_) if follows_names => {
-                self.evaluate(self.find_constant(expr, None)?, false)
-            }
-            ExprKind::Dot {
-                obj,
-                name,
-                chain: Chain::No,
-                ..
-            } if follows_names => self.evaluate(self.find_constant(obj, Some(name))?, false),
-            ExprKind::Index {
-                obj,
-                index,
-                chain: Chain::No,
-            } if follows_names => {
-                let MemberKey::Name(name) = hir.index_member_key(hir.skip_type_assertions(index))
-                else {
-                    return None;
-                };
-                self.evaluate(self.find_constant(obj, Some(name))?, false)
-            }
-            ExprKind::Binary {
-                op: BinOp::Add,
-                left,
-                right,
-            } => {
-                let left = self.evaluate(left, follows_names)?;
-                let right = self.evaluate(right, follows_names)?;
-                if let (&LiteralValue::Number(left), &LiteralValue::Number(right)) = (&left, &right)
-                {
-                    return Some(LiteralValue::Number(left + right));
+        let constant = |variable: ExprId, enum_member: Option<Atom>| {
+            let value = hir.skip_type_assertions(self.find_constant(variable, enum_member)?);
+            match hir[value].kind {
+                ExprKind::String(literal) => Some(string(literal)),
+                ExprKind::Template { exprs } if exprs.is_empty() => {
+                    hir.ids(hir.template_texts(exprs)).next().map(string)
                 }
-                let mut joined = left.into_string()?;
-                joined.extend_from_slice(&right.into_string()?);
-                Some(LiteralValue::String(joined))
+                _ => None,
             }
-            ExprKind::Template { exprs } => {
-                let mut strings = hir.ids(hir.template_texts(exprs));
-                let mut joined = string(strings.next()?).to_vec();
-                for (hole, tail) in hir.ids(exprs).zip(strings) {
-                    joined.extend_from_slice(&self.evaluate(hole, follows_names)?.into_string()?);
-                    joined.extend_from_slice(string(tail));
+        };
+        let is_variable =
+            |expr: ExprId| matches!(hir[hir.skip_type_assertions(expr)].kind, ExprKind::Ident(_));
+        let mut first = argument;
+        loop {
+            first = hir.skip_type_assertions(first);
+            first = match hir[first].kind {
+                ExprKind::String(literal) => return Some(string(literal)),
+                ExprKind::Template { exprs } => {
+                    let head = string(hir.ids(hir.template_texts(exprs)).next()?);
+                    return (exprs.is_empty() || !head.is_empty()).then_some(head);
                 }
-                Some(LiteralValue::String(joined))
-            }
-            _ => None,
+                ExprKind::Ident(_) => return constant(first, None),
+                ExprKind::Dot {
+                    obj,
+                    name,
+                    chain: Chain::No,
+                    ..
+                } if is_variable(obj) => return constant(obj, Some(name)),
+                ExprKind::Dot { obj, .. } => obj,
+                ExprKind::Index { obj, index, chain } => {
+                    match hir[hir.skip_type_assertions(index)].kind {
+                        ExprKind::String(name) if chain == Chain::No && is_variable(obj) => {
+                            return constant(obj, Some(name));
+                        }
+                        _ => obj,
+                    }
+                }
+                ExprKind::Call(call) => hir[call].callee,
+                ExprKind::Cond { test, .. } => test,
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => right,
+                ExprKind::Binary { left, .. } => left,
+                _ => return None,
+            };
         }
     }
 }
@@ -301,13 +285,13 @@ pub fn find_requested_originals<'x, 's>(
                         continue;
                     }
                     let first = hir.ids(hir[call].args).next();
-                    match first.and_then(|first| literals.evaluate(first, true)) {
-                        Some(LiteralValue::String(name)) => {
+                    match first.and_then(|first| literals.find_name(first)) {
+                        Some(name) => {
                             if !name.is_empty() && name.iter().all(|byte| *byte >= b' ') {
                                 requested.names.push(name);
                             }
                         }
-                        _ => requested.may_be_any_module = true,
+                        None => requested.may_be_any_module = true,
                     }
                     let callee_at = stack[below..]
                         .iter()

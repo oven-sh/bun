@@ -410,6 +410,7 @@ pub fn compile(
     #[cfg(not(test))]
     let started_workers = core::mem::take(&mut build.started_workers);
     build.clock.add_to(&mut build.statistics);
+    build.diagnostics.has_run_to_end = !has_errors;
     build.diagnostics.write_to(log);
     let statistics = build.statistics;
     #[cfg(not(test))]

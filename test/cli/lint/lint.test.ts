@@ -1402,6 +1402,21 @@ describe.concurrent("bun lint", () => {
         "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
       ],
       ['function f(yield) { return function() { "use strict"; 08 } }', "1:55: Parsing error: Invalid number"],
+      [
+        'function f(a = delete b) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      [
+        'function f(a = (yield) => 1) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      [
+        'function f(a = function (b, b) {}) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      ['function f(a = function g(yield) { "use strict" }) { }', "1:27: Parsing error: Binding yield in strict mode"],
+      ['function f(a, a) { "use strict" }', "1:15: Parsing error: Argument name clash"],
+      ['function f(a = (b, b) => 1) { "use strict" }', "1:20: Parsing error: Argument name clash"],
     ];
     // With an older `ecmaVersion`, newer syntax is a tokenizer error, which comes before a deferred check.
     const editions: [ecmaVersion: number, code: string, error: string][] = [

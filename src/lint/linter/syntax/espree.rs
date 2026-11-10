@@ -882,14 +882,33 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// True if the code at `node` is strict.
+    /// True if the code at `node` is strict: acorn's `this.strict` when it reads the node. A function's own
+    /// `"use strict"` makes its body strict, not its name or parameters.
     fn is_strict(&self, node: Node<'a>) -> bool {
         // Prettier still formats code with errors that only apply in strict mode.
         !self.is_babel
             && (self.is_all_strict()
                 || match self.is_oxc {
                     true => !self.only_parser && is_strict_mode(node.scope(), self.file),
-                    false => self.is_whole && node.scope().is_strict(),
+                    false => {
+                        self.is_whole && Self::is_strict_for_acorn(node.scope(), node.span().start)
+                    }
+                })
+    }
+
+    /// True if acorn's `checkParams` is strict for `func`: the code around the function is strict, or its body has a
+    /// `"use strict"`.
+    fn is_strict_in_params(&self, func: Func<'a>) -> bool {
+        let scope = Node::Func(func).scope();
+        !self.is_babel
+            && (self.is_all_strict()
+                || match self.is_oxc {
+                    true => !self.only_parser && is_strict_mode(scope, self.file),
+                    false => {
+                        self.is_whole
+                            && (Self::is_strict_for_acorn(scope, func.span().start)
+                                || makes_strict(scope))
+                    }
                 })
     }
 
@@ -1591,41 +1610,57 @@ impl<'a, 'c> Checks<'a, 'c> {
                 return true;
             }
             "Cannot use keyword 'await' outside an async function"
-        } else if name == known::r#await
-            || name == known::eval
-            || name == known::arguments
-            || !self.is_strict(node)
-        {
+        } else if name == known::r#await || name == known::eval || name == known::arguments {
             return false;
-        } else if !self.is_oxc
-            && !self.is_all_strict()
-            && !Self::is_strict_for_acorn(node.scope(), at)
-        {
-            // Only the function's own `"use strict"` makes it strict. acorn reads the function's name and parameters
-            // before that, and `checkParams` then rejects a binding among them.
-            return self.strict_binding(node, at);
-        } else {
+        } else if self.is_strict(node) {
             self.reserved(at);
             return true;
+        } else if !self.is_oxc && matches!(node, Node::Pat(_) | Node::Func(_)) {
+            // acorn reads a function's name and parameters before its own `"use strict"` makes it strict, and
+            // `checkParams` then rejects a binding among them.
+            return self.strict_binding(node, at);
+        } else {
+            return false;
         };
         self.after_identifier(at, |checks| checks.fail(at, message));
         true
     }
 
     /// `checkLValSimple` for a function's name or parameter that is a reserved word in strict code: `Binding yield in
-    /// strict mode`. False for a reference, which acorn accepts.
+    /// strict mode`. Only the function's own directive makes it strict here.
     fn strict_binding(&mut self, node: Node<'a>, at: u32) -> bool {
-        let checked_at = match node {
-            Node::Pat(pat) => self.binding_checked_at(pat),
+        let (func, checked_at) = match node {
+            Node::Pat(pat) => match Self::param_of(pat).and_then(Param::func) {
+                Some(func) => (func, self.binding_checked_at(pat)),
+                None => return false,
+            },
             Node::Func(func) => match self.params_checked_at(func) {
-                Some(at) => at,
+                Some(at) => (func, at),
                 None => return false,
             },
             _ => return false,
         };
+        // A directive after non-simple parameters is an error of its own.
+        let is_simple = |it: Param<'a>| {
+            it.default().is_none() && !it.is_rest() && it.pat().tag() == PatTag::Ident
+        };
+        let has_directive_error =
+            !func.params().iter().all(is_simple) && self.file.language().ecma_version >= 2016;
+        if has_directive_error || !self.is_strict_in_params(func) {
+            return false;
+        }
         let message = [b"Binding ", self.token_at(at), b" in strict mode"].concat();
         self.when_read_to(checked_at, |checks| checks.fail(at, message));
         true
+    }
+
+    /// The parameter that `pat` is or is in.
+    fn param_of(pat: Pat<'a>) -> Option<Param<'a>> {
+        Node::Pat(pat).ancestors().find_map(|it| match it {
+            Node::Pat(_) | Node::PatElem(_) | Node::PatProp(_) => None,
+            Node::Param(param) => Some(Some(param)),
+            _ => Some(None),
+        })?
     }
 
     fn keyword_as_reference(&mut self, it: Expr<'a>, name: Atom) {
@@ -1738,7 +1773,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             };
             let allows = are_simple
                 && matches!(raw.kind, FnKind::Decl | FnKind::Expr)
-                && !self.is_strict(Node::Func(func));
+                && !self.is_strict_in_params(func);
             if !allows && func.is_in_tree() {
                 let noticed = self.params_checked_at(func).unwrap_or(at);
                 self.when_read_to(noticed, |checks| checks.fail(at, "Argument name clash"));

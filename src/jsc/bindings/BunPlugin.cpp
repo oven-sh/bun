@@ -529,7 +529,7 @@ public:
     ModuleMockFunction function;
     // The factory's promise is pending and will patch the already-loaded module when it settles.
     bool hasPendingPatch { false };
-    // The pending patch waits for the body of the module alone: the call has stored the exports, and storeAgainOverEndedBodies() stores again what the body assigns over.
+    // The pending patch waits for the body of the module alone: the call has stored the exports.
     bool wasPatchedAheadOfBody { false };
     bool spy { false };
     bool isFromPreload { false };
@@ -2904,8 +2904,7 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
 
 using ExportStoredAheadOfBody = BunPlugin::OnLoad::ExportStoredAheadOfBody;
 
-// The module, if its body may still assign to its variables: it has yet to start, it waits at an `await`, or it is up the stack. One that has run to its end
-// and that a cycle still holds at Status::Evaluating counts too. The status does not tell the two apart, and storeAgainOverEndedBodies() finds nothing to do for it.
+// The module, if its body may still assign to its variables. Status::Evaluating counts whole: for a body that has ended there, nothing is found to store again.
 static JSC::CyclicModuleRecord* moduleWhoseBodyMayStillRun(JSC::AbstractModuleRecord* record)
 {
     using Status = JSC::CyclicModuleRecord::Status;
@@ -2915,7 +2914,7 @@ static JSC::CyclicModuleRecord* moduleWhoseBodyMayStillRun(JSC::AbstractModuleRe
     return module;
 }
 
-// Settles behind the end of that body. Null where no promise is the body's own: the module is linked, or an evaluation that is under way holds it.
+// Settles behind the end of that body. Null for a module that is linked, or that an evaluation under way holds.
 static JSC::JSPromise* promiseOfBodyThatMayStillRun(Zig::GlobalObject* globalObject, JSC::CyclicModuleRecord* module)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2924,11 +2923,11 @@ static JSC::JSPromise* promiseOfBodyThatMayStillRun(Zig::GlobalObject* globalObj
         return ownBody;
     if (module->status() != JSC::CyclicModuleRecord::Status::EvaluatingAsync)
         return nullptr;
-    // It waits for an import. As for an import() that comes to it, the promise is that of its cycle.
+    // It waits for an import: the promise of its cycle, as an import() of it gets.
     JSC::JSPromise* ofCycle = module->evaluate(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ofCycle->markAsHandled();
-    // The cycle has failed ahead of this body, which the engine then never runs. A reaction to a settled promise would run at once, and come back here.
+    // The cycle has failed, and the engine never runs this body. A reaction to a settled promise would run at once and come back here.
     return ofCycle->status() == JSC::JSPromise::Status::Pending ? ofCycle : nullptr;
 }
 
@@ -2946,7 +2945,7 @@ static void lookAgainWhenBodiesEnd(Zig::GlobalObject* globalObject)
         auto* module = uncheckedDowncast<JSC::CyclicModuleRecord>(stored[i].module.get());
         JSC::JSPromise* end = promiseOfBodyThatMayStillRun(globalObject, module);
         RETURN_IF_EXCEPTION(scope, );
-        // The evaluation that is under way comes to the body, or past it, before the next job runs. No second turn: it would never end where the jobs are run from inside that evaluation.
+        // The evaluation under way comes to the body, or past it, before the next job. One turn only: jobs that are run from inside that evaluation would never end.
         bool isTurn = !end;
         if (isTurn) {
             if (stored[i].hasWaitedTurn)
@@ -2964,7 +2963,7 @@ static void lookAgainWhenBodiesEnd(Zig::GlobalObject* globalObject)
     }
 }
 
-// What the body has assigned to the export since Bun last stored there, if anything. It is the module's own: from here on, what the export was ahead of every mock.
+// What the body has assigned to the export since Bun last stored there, if anything. From here on that is the saved original of the export.
 static JSValue takeValueAssignedOver(Zig::GlobalObject* globalObject, const ExportStoredAheadOfBody& stored)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2978,8 +2977,7 @@ static JSValue takeValueAssignedOver(Zig::GlobalObject* globalObject, const Expo
     return found;
 }
 
-// The body of a module assigns its `const`, `let` and `class` exports, and each `var` that it gives a value, over what a mock stored there ahead of it.
-// When the body has ended, what it assigned is the original of the export, and the export is the mock's again. A `function` export has been the mock's all along.
+// Where a body has ended and has assigned over what Bun stored in an export (a `const`, `let` or `class`, or a `var` that it gives a value), Bun stores again.
 static void storeAgainOverEndedBodies(Zig::GlobalObject* globalObject)
 {
     auto& stored = globalObject->onLoadPlugins.exportsStoredAheadOfBodies;
@@ -3038,8 +3036,7 @@ static void forgetExportsStoredAheadOfBodies(Zig::GlobalObject* globalObject, JS
     }
 }
 
-// Stores `value` in an export: for a mock, which has saved what it found there in `originals`, for a spy, or for the end of either. Where a body may still assign
-// to the variable of the export, storeAgainOverEndedBodies() stores the newest of those values again.
+// Stores `value` in an export for a mock (`originals` holds what it found there), for a spy, or for the end of either, and notes it for storeAgainOverEndedBodies().
 static void storeExportAheadOfBody(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, const JSC::Identifier& name, JSValue value, JSObject* originals)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -632,7 +632,7 @@ static std::pair<JSModuleMock*, T*> toModuleMockWith(JSC::JSGlobalObject* global
     return { toModuleMock(globalObject, scope, cell ? tuple->getInternalField(0) : jsUndefined()), cell };
 }
 
-bool BunPlugin::OnLoad::hasVirtualModuleFunction() const
+__attribute__((minsize)) bool BunPlugin::OnLoad::hasVirtualModuleFunction() const
 {
     if (!virtualModules)
         return false;
@@ -643,7 +643,7 @@ bool BunPlugin::OnLoad::hasVirtualModuleFunction() const
     return false;
 }
 
-void BunPlugin::OnLoad::setVirtualModuleFunction(JSC::VM& vm, const String& name, JSC::JSObject* function)
+__attribute__((minsize)) void BunPlugin::OnLoad::setVirtualModuleFunction(JSC::VM& vm, const String& name, JSC::JSObject* function)
 {
     if (auto* mock = dynamicDowncast<JSModuleMock>(virtualModule(name)); mock && mock->importKey->tryGetValue().data == name)
         removeModuleMock(vm, mock);
@@ -654,7 +654,7 @@ void BunPlugin::OnLoad::setVirtualModuleFunction(JSC::VM& vm, const String& name
 
 // Whether `mock` answers for the path that require() resolves its name to, or will once it is registered.
 // The own path of another mock goes before it, and so does what build.module() gave. Of two mocks that have the path as their second one, the later one answers.
-static bool answersForRequirePath(const BunPlugin::OnLoad& plugins, const JSModuleMock* mock)
+__attribute__((minsize)) static bool answersForRequirePath(const BunPlugin::OnLoad& plugins, const JSModuleMock* mock)
 {
     if (!mock->requireKey)
         return false;
@@ -666,7 +666,7 @@ static bool answersForRequirePath(const BunPlugin::OnLoad& plugins, const JSModu
     return other && other->importKey->tryGetValue().data != requireKey;
 }
 
-void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, JSC::JSObject* object)
+__attribute__((minsize)) void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, JSC::JSObject* object)
 {
     auto* mock = uncheckedDowncast<JSModuleMock>(object);
     String importKey = mock->importKey->tryGetValue().data;
@@ -684,7 +684,7 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, JSC::JSObject* object)
         virtualModules->set(mock->requireKey->tryGetValue().data, JSC::Strong<JSC::JSObject> { vm, mock });
 }
 
-void BunPlugin::OnLoad::removeModuleMock(JSC::VM& vm, JSC::JSObject* object)
+__attribute__((minsize)) void BunPlugin::OnLoad::removeModuleMock(JSC::VM& vm, JSC::JSObject* object)
 {
     auto* mock = uncheckedDowncast<JSModuleMock>(object);
     if (virtualModule(mock->importKey->tryGetValue().data) != mock)
@@ -709,7 +709,7 @@ void BunPlugin::OnLoad::removeModuleMock(JSC::VM& vm, JSC::JSObject* object)
     }
 }
 
-void BunPlugin::OnLoad::replaceModuleMock(JSC::VM& vm, JSC::JSObject* object, JSC::JSObject* with)
+__attribute__((minsize)) void BunPlugin::OnLoad::replaceModuleMock(JSC::VM& vm, JSC::JSObject* object, JSC::JSObject* with)
 {
     auto* mock = uncheckedDowncast<JSModuleMock>(object);
     for (JSString* path : { mock->importKey.get(), mock->requireKey.get() }) {
@@ -718,7 +718,7 @@ void BunPlugin::OnLoad::replaceModuleMock(JSC::VM& vm, JSC::JSObject* object, JS
     }
 }
 
-void BunPlugin::OnLoad::listModuleMocks(JSC::MarkedArgumentBuffer& mocks) const
+__attribute__((minsize)) void BunPlugin::OnLoad::listModuleMocks(JSC::MarkedArgumentBuffer& mocks) const
 {
     if (!virtualModules)
         return;
@@ -849,7 +849,7 @@ static JSString* requireCacheKey(Zig::GlobalObject* globalObject, const JSModule
 }
 
 // The mock's own path, and the path of its module object in require.cache where that is another one.
-static Vector<String, 2> pathsOfMockedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
+__attribute__((minsize)) static Vector<String, 2> pathsOfMockedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
 {
     Vector<String, 2> paths { mock->importKey->tryGetValue().data };
     if (JSString* key = requireCacheKey(globalObject, mock); key != mock->importKey.get())
@@ -858,7 +858,7 @@ static Vector<String, 2> pathsOfMockedModule(Zig::GlobalObject* globalObject, co
 }
 
 // What is loaded of the module that `mock` stands for: the ES module under the mock's own path, and the module object of require.cache under the path that require() resolves the mocked name to.
-static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
+__attribute__((minsize)) static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -872,7 +872,7 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, const JSMo
 }
 
 // The test file that loaded the module. 0: a preload did, or nothing has loaded it.
-static unsigned testFileOfMockedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
+__attribute__((minsize)) static unsigned testFileOfMockedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
 {
     for (auto& path : pathsOfMockedModule(globalObject, mock)) {
         if (unsigned testFile = globalObject->onLoadPlugins.testFileOfModule.get(path))
@@ -2618,7 +2618,7 @@ struct ModulesToEvict {
 };
 
 // Lists the module that `mock` stands for, under each of its paths. What was patched in place stays where it is, and only its importers go.
-static void appendMockedModule(Zig::GlobalObject* globalObject, ModulesToEvict& evict, const JSModuleMock* mock, bool isESModulePatched, bool isCommonJSModulePatched)
+__attribute__((minsize)) static void appendMockedModule(Zig::GlobalObject* globalObject, ModulesToEvict& evict, const JSModuleMock* mock, bool isESModulePatched, bool isCommonJSModulePatched)
 {
     String importKey = mock->importKey->tryGetValue().data;
     String requireKey = requireCacheKey(globalObject, mock)->tryGetValue().data;
@@ -5699,8 +5699,10 @@ String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, 
 // Each gets the other as it is on disk. Any other import of the path that require() resolves the name to gets the mock's one ES module.
 String keyOfImportOfModuleMock(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
+    if (!globalObject->onLoadPlugins.hasModuleMockWithTwoPaths()) [[likely]]
+        return keyOfImportByPackage(globalObject, key, importer, isESM);
     String given = keyOfImportByPackage(globalObject, key, importer, isESM);
-    if (given != key || !globalObject->onLoadPlugins.hasModuleMockWithTwoPaths()) [[likely]]
+    if (given != key)
         return given;
     auto* mock = Zig::registeredModuleMock(globalObject, key);
     if (!mock || !mock->requireKey)

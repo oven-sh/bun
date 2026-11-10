@@ -362,6 +362,15 @@ impl PackageManager {
         if list.is_dependency {
             append_path_without_ancestor_bins(&mut env_path, &original_path, cwd)?;
         }
+        let conflicting_bins = crate::bin::link_conflicting_bins(
+            &self.lockfile,
+            &list.bin_conflicts,
+            cwd,
+            env_path.slice(),
+        )?;
+        if let Some(bin_dir) = &conflicting_bins {
+            path.append(bin_dir.as_slice())?;
+        }
         let mut inherited_path = list.is_dependency.then_some(env_path.slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
@@ -386,12 +395,6 @@ impl PackageManager {
             None => path.append(original_path.as_slice())?,
         }
         script_env.put(b"PATH", path.slice())?;
-        crate::bin::link_conflicting_bins(
-            &self.lockfile,
-            &list.bin_conflicts,
-            cwd,
-            env_path.slice(),
-        )?;
 
         put_npm_package_env(&mut script_env, cwd, &list.package_name)?;
 

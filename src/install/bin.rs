@@ -2153,18 +2153,22 @@ fn for_each_bin_name(
     }
 }
 
-/// Links `conflicts` into the `node_modules/.bin` of `cwd`, except for names in `env_path`.
+/// Links `conflicts`, except for names in `env_path`, into a directory that only the scripts of the
+/// package at `cwd` search, and returns the directory. The package's `node_modules/.bin` also
+/// belongs to the packages nested in it.
 pub(crate) fn link_conflicting_bins(
     lockfile: &Lockfile,
     conflicts: &[BinConflict],
     cwd: &[u8],
     env_path: &[u8],
-) -> Result<(), Error> {
+) -> Result<Option<Vec<u8>>, Error> {
     if conflicts.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let mut node_modules_path = AbsPath::from(cwd)?;
     node_modules_path.append(b"node_modules")?;
+    node_modules_path.append(b".scripts")?;
+    let bin_dir = [node_modules_path.slice(), &[SEP][..], b".bin"].concat();
     let mut seen: StringHashMap<()> = StringHashMap::default();
     let mut which_buf = path::path_buffer_pool::get();
     let mut abs_target_buf = path::path_buffer_pool::get();
@@ -2172,7 +2176,6 @@ pub(crate) fn link_conflicting_bins(
     let mut rel_buf = path::path_buffer_pool::get();
     for conflict in conflicts {
         let target_node_modules_path = AbsPath::from(&conflict.node_modules)?;
-        let bin_dir = [node_modules_path.slice(), &[SEP][..], b".bin", &[SEP][..]].concat();
         for_each_bin_name(
             lockfile,
             conflict.package_id,
@@ -2182,7 +2185,7 @@ pub(crate) fn link_conflicting_bins(
                 let is_conflict = (conflict.names.iter()).any(|conflict| **conflict == *name)
                     && bun_which::which(&mut which_buf, env_path, cwd, name).is_none();
                 if !is_conflict {
-                    let _ = seen.put(&[&bin_dir[..], name].concat(), ());
+                    let _ = seen.put(&[&bin_dir[..], &[SEP][..], name].concat(), ());
                 }
             },
         );
@@ -2213,5 +2216,5 @@ pub(crate) fn link_conflicting_bins(
             return Err(err);
         }
     }
-    Ok(())
+    Ok(Some(bin_dir))
 }

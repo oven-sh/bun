@@ -1582,14 +1582,14 @@ describe.concurrent("bun test --isolate=modules", () => {
     },
   );
 
-  test("the restore puts back what it can when one variable of process.env can't be put back", async () => {
+  test("the restore puts back what it can when one variable of process.env can't be put back, and reports that one", async () => {
     using dir = tempDir("isolate-modules-restore-goes-on", {
-      // Where process.env refuses to be closed, every variable is put back, and b finds the same.
+      // The prototype answers the read of the deleted variable with a throw, so the restore can't put that one back.
       "a.test.js": `test("a", () => {
         process.env.ISOLATION_A = process.env.ISOLATION_Z = "changed";
         process.on("exit", () => {});
         delete process.env.ISOLATION_M;
-        try { Object.preventExtensions(process.env); } catch {}
+        Object.setPrototypeOf(process.env, { get ISOLATION_M() { throw new Error("the getter that a left ran"); } });
       });`,
       "b.test.js": `test("b", () => {
         expect([process.env.ISOLATION_A, process.env.ISOLATION_Z, process.listenerCount("exit")]).toEqual(["start", "start", 0]);
@@ -1597,8 +1597,20 @@ describe.concurrent("bun test --isolate=modules", () => {
     });
     // One of the two changed variables comes after the deleted one, in whichever order the variables are restored.
     const env = { ...bunEnv, ISOLATION_A: "start", ISOLATION_M: "start", ISOLATION_Z: "start" };
-    const { stderr } = await runTests(String(dir), ["--isolate=modules"], ["./a.test.js", "./b.test.js"], env);
-    expect(stderr.match(/^\((?:pass|fail)\) [ab]/gm), stderr).toEqual(["(pass) a", "(pass) b"]);
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules"],
+      ["./a.test.js", "./b.test.js"],
+      env,
+    );
+    expect(
+      {
+        results: stderr.match(/^\((?:pass|fail)\) [ab]/gm),
+        errors: stderr.match(/^error: .*$/gm),
+        exitCode,
+      },
+      stderr,
+    ).toEqual({ results: ["(pass) a", "(pass) b"], errors: ["error: the getter that a left ran"], exitCode: 1 });
   });
 
   // The stack is too small for the walk over the globals. Linux only: the size that the walk needs was measured there.

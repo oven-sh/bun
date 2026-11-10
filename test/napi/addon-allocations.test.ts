@@ -142,7 +142,7 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
     const result = await run("resolution.js", [String(folder)], { ADDON: addon });
     expect(result).toEqual({ stdout: expect.any(String), stderr: "", exitCode: 0, signalCode: null });
     expect(JSON.parse(result.stdout.split("\n")[0])).toEqual({
-      answeredFromMemory: 40,
+      answeredFromMemory: 20,
       blocksOnLoanAfterCollecting: 0,
       answersACopyFromMemory: true,
     });

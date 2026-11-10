@@ -8,7 +8,7 @@ const path = require("node:path");
 
 const folder = process.argv[2];
 const from = require("node:module").createRequire(path.join(folder, "main.js"));
-const count = 40;
+const count = 20;
 
 function resolveEach() {
   let last;

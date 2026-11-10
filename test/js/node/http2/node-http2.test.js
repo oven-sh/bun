@@ -6460,6 +6460,72 @@ describe.concurrent("write() after end()", () => {
     expect([closedBeforeLateWrite, events]).toEqual([true, ["finish", ...lateWriteEvents]]);
   });
 
+  it("client stream, peer RST_STREAM(NO_ERROR) before the late write", async () => {
+    // A stream that the peer resets with NO_ERROR stays readable, and its destroy waits for 'end'.
+    // HEADERS (:status 200), DATA that nothing reads, RST_STREAM(NO_ERROR)
+    const frame = (type, flags, payload) => {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(1, 5);
+      return Buffer.concat([header, payload]);
+    };
+    const answer = Buffer.concat([
+      frame(1, 4, Buffer.from([0x88])),
+      frame(0, 0, Buffer.from("ok")),
+      frame(3, 0, Buffer.alloc(4)),
+    ]);
+    const server = net.createServer(socket => {
+      let received = Buffer.alloc(0);
+      let sawPreface = false;
+      socket.on("error", () => {});
+      socket.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]));
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        if (!sawPreface) {
+          if (received.length < 24) return;
+          received = received.subarray(24);
+          sawPreface = true;
+        }
+        while (received.length >= 9) {
+          const length = received.readUIntBE(0, 3);
+          if (received.length < 9 + length) break;
+          const [type, flags, payload] = [received[3], received[4], received.subarray(9, 9 + length)];
+          received = received.subarray(9 + length);
+          // The END_STREAM of the request
+          if (type === 0 && flags & 1) socket.write(answer);
+          // Answered after the reset, so its ack is the first point where the client has read the reset.
+          if (type === 6 && !(flags & 1))
+            socket.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 1, 0, 0, 0, 0]), payload]));
+        }
+      });
+    });
+    let client;
+    try {
+      const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      const closed = Promise.withResolvers();
+      client.on("error", closed.reject);
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      const late = record(req, closed);
+      let resetBeforeLateWrite, liveAtError;
+      req.on("error", () => (liveAtError = !req.destroyed && req.session !== undefined));
+      req.end("body");
+      req.on("response", () => {
+        client.ping(() => {
+          resetBeforeLateWrite = req.rstCode === 0 && !req.destroyed;
+          req.write("late", late);
+        });
+      });
+      const events = await closed.promise;
+      expect([resetBeforeLateWrite, liveAtError, events]).toEqual([true, true, ["finish", ...lateWriteEvents]]);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
   // Guard, passes without the fix too: an 'error' that user code emits does not make the stream
   // errored. The natively closed stream still waits for 'end', and a late reader gets the response.
   it("client stream, 'error' emitted by user code on a stream that is not errored", async () => {
@@ -6490,17 +6556,24 @@ describe.concurrent("write() after end()", () => {
       return Buffer.concat([header, payload]);
     }
 
-    // Calls onFrame(type, flags, streamId, length) for each HTTP/2 frame that the socket receives.
-    function readFrames(socket, onFrame) {
+    // Calls onFrame(type, flags, streamId, length, payload) for each HTTP/2 frame that the socket receives,
+    // after the first `skip` bytes (the preface of a client).
+    function readFrames(socket, onFrame, skip = 0) {
       let received = Buffer.alloc(0);
       socket.on("data", chunk => {
         received = Buffer.concat([received, chunk]);
+        if (skip > 0) {
+          if (received.length < skip) return;
+          received = received.subarray(skip);
+          skip = 0;
+        }
         while (received.length >= 9) {
           const length = received.readUIntBE(0, 3);
           if (received.length < 9 + length) break;
           const [type, flags, streamId] = [received[3], received[4], received.readUInt32BE(5)];
+          const payload = received.subarray(9, 9 + length);
           received = received.subarray(9 + length);
-          onFrame(type, flags, streamId, length);
+          onFrame(type, flags, streamId, length, payload);
         }
       });
     }
@@ -6550,7 +6623,8 @@ describe.concurrent("write() after end()", () => {
 
     // Raw HTTP/2 client with a stream window of 1024 bytes that it never reopens. It asks for
     // /blocked on stream 1 and, once that stream has used its window, for /late on stream 3. Then it
-    // is silent. Resolves with [length, END_STREAM flag] of each DATA frame of stream 3.
+    // is silent. Resolves with [length, END_STREAM flag] of each DATA frame of stream 3, and with the
+    // code of its RST_STREAM frame if that is how the stream ends.
     function rawBlockedThenLate(port) {
       return new Promise((resolve, reject) => {
         const socket = net.connect(port, "127.0.0.1");
@@ -6564,9 +6638,13 @@ describe.concurrent("write() after end()", () => {
           socket.write(frame(4, 0, 0, Buffer.from([0, 4, 0, 0, 4, 0])));
           socket.write(rawRequest(1, "/blocked"));
         });
-        readFrames(socket, (type, flags, streamId, length) => {
+        readFrames(socket, (type, flags, streamId, length, payload) => {
           const endStream = flags & 1;
           if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
+          if (type === 3 && streamId === 3) {
+            resolve({ data, reset: payload.readUInt32BE(0) });
+            socket.destroy();
+          }
           if (type !== 0) return;
           if (streamId === 1) {
             if (blocked < 1024 && (blocked += length) >= 1024) socket.write(rawRequest(3, "/late"));
@@ -6574,7 +6652,7 @@ describe.concurrent("write() after end()", () => {
           }
           data.push([length, endStream]);
           if (endStream) {
-            resolve(data);
+            resolve({ data, reset: null });
             socket.destroy();
           }
         });
@@ -6816,7 +6894,7 @@ describe.concurrent("write() after end()", () => {
           });
         });
         const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
-        const data = await rawBlockedThenLate(port);
+        const { data, reset } = await rawBlockedThenLate(port);
         expect({
           queued,
           length: data.reduce((sum, [length]) => sum + length, 0),
@@ -6824,8 +6902,9 @@ describe.concurrent("write() after end()", () => {
             .map(([, endStream]) => endStream)
             .join("")
             .replace(/^0+/, ""),
+          reset,
           events: await serverClosed.promise,
-        }).toEqual({ queued: 1, length: 4, endStream: "1", events: lateWriteEvents });
+        }).toEqual({ queued: 1, length: 4, endStream: "1", reset: null, events: lateWriteEvents });
       } finally {
         server.close();
       }
@@ -6971,11 +7050,14 @@ describe.concurrent("write() after end()", () => {
     // The native side drops a reset stream on the read after the RST_STREAM, and JS hears about
     // the reset a tick later. With the writes and both reads in one turn, the first write
     // completes in between, when the native stream is already gone. That must not throw.
-    it("peer reset that drops the native stream before the write completes", async () => {
+    it.each([
+      ["INTERNAL_ERROR", http2.constants.NGHTTP2_INTERNAL_ERROR],
+      ["CANCEL", http2.constants.NGHTTP2_CANCEL],
+    ])("peer reset (%s) that drops the native stream before the write completes", async (_, code) => {
       // HEADERS (:status 200), RST_STREAM, then frames of an unknown type, which the receiver
       // ignores. They make the burst longer than the 64 KiB that one read of a TLS socket decrypts.
       const rstCode = Buffer.alloc(4);
-      rstCode.writeUInt32BE(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      rstCode.writeUInt32BE(code);
       const burst = Buffer.concat([
         frame(1, 4, 1, Buffer.from([0x88])),
         frame(3, 0, 1, rstCode),
@@ -7061,6 +7143,458 @@ describe.concurrent("write() after end()", () => {
         raw?.destroy();
         server.close();
       }
+    });
+
+    // The server twin of the test above. The session reads from a JS Duplex, so two pushes in one turn are
+    // two reads with no tick in between: RST_STREAM, then a frame of an unknown type, which the receiver ignores.
+    it.each([
+      ["INTERNAL_ERROR", http2.constants.NGHTTP2_INTERNAL_ERROR],
+      ["CANCEL", http2.constants.NGHTTP2_CANCEL],
+    ])(
+      "server stream, peer reset (%s) that drops the native stream before the late write's 'error'",
+      async (_, code) => {
+        const transport = new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            callback();
+          },
+        });
+        const server = http2.createServer();
+        try {
+          const closed = Promise.withResolvers();
+          server.on("stream", stream => {
+            const late = record(stream, closed);
+            stream.respond({ ":status": 200 });
+            // Outside the read that delivered the request.
+            setImmediate(() => {
+              stream.write("done");
+              stream.end();
+              stream.write("late", late);
+              const rstCode = Buffer.alloc(4);
+              rstCode.writeUInt32BE(code);
+              transport.push(frame(3, 0, 1, rstCode));
+              transport.push(frame(0xfa, 0, 0, Buffer.alloc(16)));
+            });
+          });
+          server.emit("connection", transport);
+          const request = rawRequest(1, "/");
+          // END_HEADERS alone
+          request[4] = 4;
+          transport.push(Buffer.concat([Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), frame(4, 0, 0), request]));
+          expect(await closed.promise).toEqual(lateWriteEvents);
+        } finally {
+          transport.destroy();
+          server.close();
+        }
+      },
+    );
+
+    it("server stream that the peer resets with NO_ERROR before the late write", async () => {
+      const server = http2.createServer();
+      let liveAtError;
+      try {
+        const serverClosed = Promise.withResolvers();
+        server.on("stream", stream => {
+          const late = record(stream, serverClosed);
+          stream.on("error", () => (liveAtError = !stream.destroyed && stream.session !== undefined));
+          // This listener does not read, so the stream stays readable after the reset and its destroy waits
+          // for 'end'. The request has no body: the only 'readable' is the one for the end that the reset brings.
+          stream.on("readable", () => stream.write("late", late));
+          stream.respond({ ":status": 200 });
+          stream.end("done");
+        });
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        const socket = net.connect(port, "127.0.0.1");
+        try {
+          socket.on("error", serverClosed.reject);
+          socket.on("connect", () => {
+            socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+            socket.write(frame(4, 0, 0));
+            const request = rawRequest(1, "/");
+            // END_HEADERS alone
+            request[4] = 4;
+            socket.write(request);
+          });
+          readFrames(socket, (type, flags, streamId) => {
+            if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0));
+            // RST_STREAM(NO_ERROR), once the response has ended
+            if (type === 0 && streamId === 1 && flags & 1) socket.write(frame(3, 0, 1, Buffer.alloc(4)));
+          });
+          const events = await serverClosed.promise;
+          expect([liveAtError, events]).toEqual([true, ["finish", ...lateWriteEvents]]);
+        } finally {
+          socket.destroy();
+        }
+      } finally {
+        server.close();
+      }
+    });
+
+    // close() ends a stream that end() did not end. Like node, RST_STREAM then takes the place of END_STREAM, which
+    // would tell the peer that the body is complete. The RST_STREAM of a close() with NO_ERROR waits for 'finish',
+    // which an errored stream never emits.
+    describe("close() before the late write", () => {
+      // Raw HTTP/2 client: one GET on stream 1, with no END_STREAM if `open`. If `blocked`, it never reopens its
+      // window. Resolves with what stream 1 got, once the server has answered a PING that follows the END_STREAM
+      // or the first RST_STREAM of that stream.
+      function rawResponse(port, { open = false, blocked = false } = {}) {
+        return new Promise((resolve, reject) => {
+          const socket = net.connect(port, "127.0.0.1");
+          const response = { length: 0, endStream: false, resets: [] };
+          let pinged = false;
+          socket.on("error", reject);
+          socket.on("close", () => reject(new Error("closed before the PING was answered")));
+          socket.on("connect", () => {
+            socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+            socket.write(frame(4, 0, 0));
+            const request = rawRequest(1, "/");
+            // END_HEADERS alone
+            if (open) request[4] = 4;
+            socket.write(request);
+          });
+          readFrames(socket, (type, flags, streamId, length, payload) => {
+            const endStream = (flags & 1) !== 0;
+            if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
+            if (type === 6 && endStream) {
+              resolve(response);
+              socket.destroy();
+            }
+            if (streamId !== 1 || (type !== 0 && type !== 3)) return;
+            if (type === 3) {
+              response.resets.push(payload.readUInt32BE(0));
+            } else {
+              response.length += length;
+              response.endStream ||= endStream;
+              if (length > 0 && !blocked) {
+                const increment = Buffer.alloc(4);
+                increment.writeUInt32BE(length);
+                socket.write(frame(8, 0, 0, increment));
+                if (!endStream) socket.write(frame(8, 0, 1, increment));
+              }
+            }
+            if ((type === 3 || endStream) && !pinged) {
+              pinged = true;
+              socket.write(frame(6, 0, 0, Buffer.alloc(8)));
+            }
+          });
+        });
+      }
+
+      // Resolves with what the raw client got on the stream and with the events of the server stream.
+      async function closeThenLateWrite(respond, client) {
+        const server = http2.createServer();
+        try {
+          const serverClosed = Promise.withResolvers();
+          server.on("stream", stream => respond(stream, record(stream, serverClosed)));
+          const port = await new Promise(resolve =>
+            server.listen(0, "127.0.0.1", () => resolve(server.address().port)),
+          );
+          return [await rawResponse(port, client), await serverClosed.promise];
+        } finally {
+          server.close();
+        }
+      }
+
+      it.each([
+        ["the request has ended", {}],
+        ["the request is open", { open: true }],
+      ])("close() resets the stream with NO_ERROR (%s)", async (_, client) => {
+        const result = await closeThenLateWrite((stream, late) => {
+          stream.respond({ ":status": 200 });
+          stream.write("done");
+          stream.close();
+          stream.write("late", late);
+        }, client);
+        expect(result).toEqual([{ length: 4, endStream: false, resets: [0] }, lateWriteEvents]);
+      });
+
+      it("close() resets a stream whose write is blocked on flow control", async () => {
+        const result = await closeThenLateWrite(
+          (stream, late) => {
+            stream.respond({ ":status": 200 });
+            stream.write(big);
+            stream.close();
+            stream.write("late", late);
+          },
+          { blocked: true },
+        );
+        expect(result).toEqual([{ length: 65535, endStream: false, resets: [0] }, lateWriteEvents]);
+      });
+
+      it("close() on a later turn resets a stream whose write is still blocked", async () => {
+        const result = await closeThenLateWrite(
+          (stream, late) => {
+            stream.respond({ ":status": 200 });
+            stream.write(big);
+            setImmediate(() => {
+              stream.close();
+              stream.write("late", late);
+            });
+          },
+          { blocked: true },
+        );
+        expect(result).toEqual([{ length: 65535, endStream: false, resets: [0] }, lateWriteEvents]);
+      });
+
+      it("close() resets a stream that waits for trailers, and does not ask for them", async () => {
+        let asked = false;
+        const [response, events] = await closeThenLateWrite((stream, late) => {
+          stream.on("wantTrailers", () => (asked = true));
+          stream.respond({ ":status": 200 }, { waitForTrailers: true });
+          stream.write("done");
+          stream.close();
+          stream.write("late", late);
+        });
+        // Node emits 'finish' ahead of these events, because its write completes inside close().
+        expect([asked, response, events.filter(name => name !== "finish")]).toEqual([
+          false,
+          { length: 4, endStream: false, resets: [0] },
+          lateWriteEvents,
+        ]);
+      });
+
+      it("close() while another stream of the session is blocked", async () => {
+        // The frames of the blocked stream stay queued on the session, so the chunk of the other stream is
+        // queued too. The reset must not overtake that chunk.
+        const server = http2.createServer();
+        try {
+          const serverClosed = Promise.withResolvers();
+          let queued;
+          server.on("stream", (stream, headers) => {
+            stream.respond({ ":status": 200 });
+            if (headers[":path"] === "/blocked") {
+              stream.on("error", () => {});
+              // 1024 bytes fit the window of the peer. The rest stays queued for the whole test.
+              stream.write(Buffer.alloc(8192, "x"));
+              return;
+            }
+            const late = record(stream, serverClosed);
+            setImmediate(() => {
+              queued = stream.session.state.outboundQueueSize;
+              stream.write("done");
+              stream.close();
+              stream.write("late", late);
+            });
+          });
+          const port = await new Promise(resolve =>
+            server.listen(0, "127.0.0.1", () => resolve(server.address().port)),
+          );
+          const { data, reset } = await rawBlockedThenLate(port);
+          expect({ queued, data, reset, events: await serverClosed.promise }).toEqual({
+            queued: 1,
+            data: [[4, 0]],
+            reset: 0,
+            events: lateWriteEvents,
+          });
+        } finally {
+          server.close();
+        }
+      });
+
+      it("destroy(err) from an 'error' listener adds no second RST_STREAM", async () => {
+        // The session reads from a JS Duplex, so a push is a read with no tick in between.
+        const resets = [];
+        const pingAnswered = Promise.withResolvers();
+        let written = Buffer.alloc(0);
+        const transport = new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            written = Buffer.concat([written, chunk]);
+            while (written.length >= 9 && written.length >= 9 + written.readUIntBE(0, 3)) {
+              const [type, flags, streamId] = [written[3], written[4], written.readUInt32BE(5)];
+              if (type === 3 && streamId === 1) resets.push(written.readUInt32BE(9));
+              if (type === 6 && flags & 1) pingAnswered.resolve();
+              written = written.subarray(9 + written.readUIntBE(0, 3));
+            }
+            callback();
+          },
+        });
+        const server = http2.createServer();
+        try {
+          const closed = Promise.withResolvers();
+          server.on("stream", stream => {
+            const late = record(stream, closed);
+            stream.on("error", err => {
+              stream.destroy(err);
+              // The native side forgets a closed stream at its next read. It ignores a frame of an unknown type.
+              transport.push(frame(0xfa, 0, 0, Buffer.alloc(16)));
+            });
+            stream.respond({ ":status": 200 });
+            // Outside the read that delivered the request: a read from inside it forgets no stream.
+            setImmediate(() => {
+              stream.write("done");
+              stream.close();
+              stream.write("late", late);
+            });
+          });
+          server.emit("connection", transport);
+          transport.push(
+            Buffer.concat([Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), frame(4, 0, 0), rawRequest(1, "/")]),
+          );
+          const events = await closed.promise;
+          // _destroy() leaves its RST_STREAM, if it sends one, to the next turn of the event loop. The answer to
+          // a PING that the server reads after that turn comes after that frame.
+          await new Promise(resolve => setImmediate(resolve));
+          transport.push(frame(6, 0, 0, Buffer.alloc(8)));
+          await pingAnswered.promise;
+          expect([resets, events]).toEqual([[0], lateWriteEvents]);
+        } finally {
+          transport.destroy();
+          server.close();
+        }
+      });
+
+      it("close() after an error on a stream that has not ended", async () => {
+        // The error came first, so its listener had nothing to send. close() cannot wait for 'finish' either.
+        const result = await closeThenLateWrite(stream => {
+          stream.on("error", () => stream.close());
+          stream.respond({ ":status": 200 });
+          stream.resume();
+          // unshift() after 'end' errors the stream (ERR_STREAM_UNSHIFT_AFTER_END_EVENT) and does not destroy it.
+          stream.on("end", () => stream.unshift("x"));
+        });
+        expect(result).toEqual([
+          { length: 0, endStream: false, resets: [0] },
+          ["error:ERR_STREAM_UNSHIFT_AFTER_END_EVENT", "close"],
+        ]);
+      });
+
+      // Like node, and like _final on a stream with no late write: END_STREAM goes out ahead of a CANCEL.
+      it.each([
+        ["the request has ended", {}, []],
+        ["the request is open", { open: true }, [http2.constants.NGHTTP2_CANCEL]],
+      ])("close(NGHTTP2_CANCEL) ends the stream first (%s)", async (_, client, resets) => {
+        const result = await closeThenLateWrite((stream, late) => {
+          stream.respond({ ":status": 200 });
+          stream.write("done");
+          stream.close(http2.constants.NGHTTP2_CANCEL);
+          stream.write("late", late);
+        }, client);
+        expect(result).toEqual([{ length: 4, endStream: true, resets }, lateWriteEvents]);
+      });
+
+      it("close(NGHTTP2_CANCEL) after end() and the late write ends the stream first", async () => {
+        const result = await closeThenLateWrite(
+          (stream, late) => {
+            stream.respond({ ":status": 200 });
+            stream.write("done");
+            stream.end();
+            stream.write("late", late);
+            stream.close(http2.constants.NGHTTP2_CANCEL);
+          },
+          { open: true },
+        );
+        expect(result).toEqual([
+          { length: 4, endStream: true, resets: [http2.constants.NGHTTP2_CANCEL] },
+          lateWriteEvents,
+        ]);
+      });
+
+      // Raw HTTP/2 server for one session. `request` resolves with what the client sent on stream 1, once the
+      // client has answered a PING that follows the END_STREAM or the first RST_STREAM of that stream.
+      function rawServer() {
+        const request = Promise.withResolvers();
+        const server = net.createServer(socket => {
+          const got = { length: 0, endStream: false, resets: [] };
+          let pinged = false;
+          socket.on("error", request.reject);
+          socket.write(frame(4, 0, 0));
+          readFrames(
+            socket,
+            (type, flags, streamId, length, payload) => {
+              const ack = (flags & 1) !== 0;
+              if (type === 4 && !ack) socket.write(frame(4, 1, 0));
+              if (type === 6) ack ? request.resolve(got) : socket.write(frame(6, 1, 0, payload));
+              if (streamId !== 1) return;
+              if (type === 0) {
+                got.length += length;
+                got.endStream ||= ack;
+              }
+              if (type === 3) got.resets.push(payload.readUInt32BE(0));
+              if (type === 3 && !pinged) {
+                pinged = true;
+                socket.write(frame(6, 0, 0, Buffer.alloc(8)));
+              }
+            },
+            24,
+          );
+        });
+        return { server, request: request.promise };
+      }
+
+      // Resolves with what the raw server got on stream 1, whether the request was pending when `drive` ran,
+      // and the events of the request.
+      async function rawRequestThenLateWrite(drive) {
+        const { server, request } = rawServer();
+        let client;
+        try {
+          const port = await new Promise(resolve =>
+            server.listen(0, "127.0.0.1", () => resolve(server.address().port)),
+          );
+          client = http2.connect(`http://127.0.0.1:${port}`);
+          const closed = Promise.withResolvers();
+          client.on("error", closed.reject);
+          const req = client.request({ ":path": "/", ":method": "POST" });
+          const pending = drive(req, record(req, closed));
+          return [await request, pending, await closed.promise];
+        } finally {
+          client?.destroy();
+          server.close();
+        }
+      }
+
+      it("close() resets a request with NO_ERROR", async () => {
+        const result = await rawRequestThenLateWrite((req, late) => {
+          // Written at 'ready' so that the chunk is dispatched before close().
+          req.on("ready", () => {
+            req.write("body");
+            req.close();
+            req.write("late", late);
+          });
+          return req.pending;
+        });
+        expect(result).toEqual([{ length: 4, endStream: false, resets: [0] }, true, lateWriteEvents]);
+      });
+
+      it("close() on a request that has no id yet", async () => {
+        // The write that the request holds and the RST_STREAM of close() go out at 'ready'. The reset then
+        // closes the errored request.
+        const [{ length, resets }, pending, events] = await rawRequestThenLateWrite((req, late) => {
+          req.write("body");
+          req.close();
+          req.write("late", late);
+          return req.pending;
+        });
+        expect([length, resets, pending, events]).toEqual([4, [0], true, lateWriteEvents]);
+      });
+
+      it.each(heldWrites)(
+        "close() on a request that gets its id before the late write's 'error' (held %s)",
+        async (_, hold) => {
+          // The reset of close() waits for 'ready', like the write that the request holds. A reset at the late
+          // write's 'error' would go out ahead of the body.
+          const result = await pairRequest((req, late) => {
+            hold(req);
+            req.close();
+            req.write("late", late);
+          });
+          expect(result).toEqual([true, 4, lateWriteEvents]);
+        },
+      );
+
+      // Guard, passes without the fix too: the END_STREAM must not go out ahead of a reset with an error code.
+      it("close(code) resets the stream with that code", async () => {
+        const result = await closeThenLateWrite((stream, late) => {
+          stream.respond({ ":status": 200 });
+          stream.write("done");
+          stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+          stream.write("late", late);
+        });
+        expect(result).toEqual([
+          { length: 4, endStream: false, resets: [http2.constants.NGHTTP2_INTERNAL_ERROR] },
+          lateWriteEvents,
+        ]);
+      });
     });
   });
 });

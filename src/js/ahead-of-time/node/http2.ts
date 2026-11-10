@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 bbd90a2c0e02cfcb73996a8583ea8e6bdf5b1007d727169fa524b5f61c8ceda9.
+// Written against that file with the SHA-256 e3e9a0cf30e92b524d468cee89666a773c2f77fff2cadb6c998a05f585bd1554.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -2157,12 +2157,14 @@ enum StreamState {
   EndedBeforeHeaders = 1 << 11, // 100000000000 = 2048
   // The native side closed the stream (the peer's RST_STREAM, a protocol error), not destroy().
   ClosedByNative = 1 << 12, // 1000000000000 = 4096
-  // The native side closed the stream and reported it through streamError. The destroy is queued.
+  // The native side dropped the stream and reported it through streamError or aborted. Set in that dispatch.
   NativeErrored = 1 << 13, // 10000000000000 = 8192
   // A client request made with waitForTrailers. The native side keeps that flag for the request.
   RequestWaitsForTrailers = 1 << 14, // 100000000000000 = 16384
   // A write waits for 'ready', which comes one tick after the stream gets its id. It is not on the wire yet.
   WriteHeldUntilReady = 1 << 15, // 1000000000000000 = 32768
+  // close() left its RST_STREAM(NO_ERROR) to 'finish'.
+  ResetAtFinish = 1 << 16, // 10000000000000000 = 65536
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2349,18 +2351,18 @@ function endErroredStream(stream: Http2Stream) {
   // A chunk buffered behind the write in flight carries END_STREAM itself (isFinalWrite). It can be empty.
   if (state.bufferedRequestCount !== 0) return;
   const status = stream[bunHTTP2StreamStatus];
-  // The native side drops a closed stream at the next read, and writeStream throws on an id it dropped.
-  if ((status & (StreamState.EndStreamSent | StreamState.NativeErrored)) !== 0) return;
+  if ((status & StreamState.EndStreamSent) !== 0) return;
   // Pending trailers carry END_STREAM themselves. So does a write held until 'ready'.
   if ((status & (StreamState.RequestWaitsForTrailers | StreamState.WriteHeldUntilReady)) !== 0) return;
   if (stream[bunHTTP2WaitForTrailers]) return;
   const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
-  // A pending reset must not follow a clean end.
-  if (!native || stream.rstCode) return;
+  if (!native) return;
+  // Like node, a reset with an error code takes the place of END_STREAM. CANCEL follows it.
+  const rstCode = stream.rstCode;
+  if (rstCode && rstCode !== NGHTTP2_CANCEL) return;
   stream[bunHTTP2StreamStatus] = status | StreamState.EndStreamSent;
-  const settled = native.writeStream(stream.id, "", "ascii", true);
+  native.writeStream(stream.id, "", "ascii", true);
   native.flush();
-  if (settled === 5) markWritableDone(stream);
 }
 // The 'ready' listeners of a _write or _writev that found the stream without an id.
 function writeWhenReady(this: Http2Stream, chunk, encoding, callback: $Node.ErrorCallback) {
@@ -2371,14 +2373,24 @@ function writevWhenReady(this: Http2Stream, data, callback: $Node.ErrorCallback)
   this[bunHTTP2StreamStatus] &= ~StreamState.WriteHeldUntilReady;
   this._writev(data, callback);
 }
-// An error cancels what the Writable owed the stream: _final, and the 'finish' or 'end' a native close waits for.
+// An error cancels what the Writable owed the stream: _final, and the 'finish' or 'end' that a close waits for.
 function streamOnErrored(this: Http2Stream) {
   if (this.destroyed || !this.errored) return;
-  if ((this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) {
+  const status = this[bunHTTP2StreamStatus];
+  if ((status & (StreamState.NativeClosed | StreamState.NativeErrored)) !== 0) {
     // Deferred so the 'error' listeners observe the same live stream as when the close comes second.
     process.nextTick(destroyIfNotDestroyedNT, this);
-  } else {
+    return;
+  }
+  if ((status & StreamState.EndedByClose) === 0 || this.rstCode === NGHTTP2_CANCEL) {
+    // Like _final, a stream that close() ended sends END_STREAM only ahead of a CANCEL.
     endErroredStream(this);
+  } else if ((status & StreamState.ResetAtFinish) !== 0) {
+    this[bunHTTP2StreamStatus] = status | StreamState.ResetScheduled;
+    const native = this[bunHTTP2Session]?.[bunHTTP2Native];
+    // A frame that waits behind the frames of another stream goes out ahead of the reset.
+    native?.flush();
+    native?.rstStream(this.id, NGHTTP2_NO_ERROR);
   }
 }
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
@@ -2728,10 +2740,12 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
-      } else if (this.writableFinished || code) {
+      } else if (this.writableFinished || code || (!ending && this.errored)) {
+        // An errored stream never emits 'finish', so its reset cannot wait for that event either.
         this[bunHTTP2StreamStatus] |= StreamState.ResetScheduled;
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
+        this[bunHTTP2StreamStatus] |= StreamState.ResetAtFinish;
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
       // node destroys the stream once both halves have finished; without this a stream closed
@@ -4300,6 +4314,7 @@ class ServerHttp2Session extends Http2Session {
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeErrored;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
         stream[kAborted] = true;
@@ -5335,6 +5350,7 @@ class ClientHttp2Session extends Http2Session {
     aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeErrored;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
         stream[kAborted] = true;

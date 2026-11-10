@@ -1815,17 +1815,23 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
           });
           test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
         `;
+        const key = (count: number) =>
+          "\nexports[`h" + (format === "vitest" ? " > " : " ") + "c new " + count + "`] = ";
+        const added = headers[format] + old + "\nexports[`gone 1`] = `0`;\n" + key(1) + '`"s"`;\n' + key(2) + "`5`;\n";
         using dir = tempDir("snapshot-out-of-order", {
           "a.test.js": testsOf("expect(5).toMatchSnapshot();"),
           "__snapshots__/a.test.js.snap": headers[format] + old + "\nexports[`gone 1`] = `0`;\n",
         });
         const first = await runTests(String(dir), { CI: "false" });
+        expect(first.stderr).toContain("1 passed, 2 added");
+        expect(snap(dir)).toBe(added);
         writeFileSync(
           join(String(dir), "a.test.js"),
           testsOf("expect(5).toMatchSnapshot(); expect(6).toMatchSnapshot();"),
         );
         const second = await runTests(String(dir), { CI: "false" });
         expect(second.stderr).toContain("3 passed, 1 added");
+        expect(snap(dir)).toBe(added + key(3) + "`6`;\n");
         const all = await runTests(String(dir), { CI: "true" });
         expect({ pass: all.pass, stderr: all.pass === 2 ? "" : all.stderr }).toEqual({ pass: 2, stderr: "" });
         expect([first.exitCode, second.exitCode, all.exitCode]).toEqual([0, 0, 0]);

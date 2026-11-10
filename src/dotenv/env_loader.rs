@@ -621,7 +621,27 @@ impl Loader {
         str: &[u8],
     ) -> Result<(), AllocError> {
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer, &())
+    }
+
+    /// Parses `content` into a new map that holds only the keys `content` defines, with the
+    /// values the startup loader gives them when `env` is the process environment.
+    ///
+    /// `$NAME` resolves against `env` first, then against the keys `content` defined before
+    /// it. A key that `env` already has keeps the value from `env`: the startup loader skips
+    /// such a key, so a later `$NAME` in the file reads the environment's value, and this
+    /// function returns that same value for the key itself.
+    pub fn parse_expanded(content: &[u8], env: &Map) -> Result<Map, AllocError> {
+        let mut map = Map::init();
+        let mut value_buffer: Vec<u8> = Vec::new();
+        Parser::parse_bytes::<true, false, true>(content, &mut map, &mut value_buffer, env)?;
+        for idx in 0..map.map.count() {
+            let from_env = env.get(&map.map.keys()[idx]).map(Box::<[u8]>::from);
+            if let Some(value) = from_env {
+                map.map.values_mut()[idx] = HashTableValue { value };
+            }
+        }
+        Ok(map)
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -837,7 +857,12 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                    &(),
+                )?;
             }
         }
 
@@ -881,7 +906,12 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                    &(),
+                )?;
             }
         }
 
@@ -948,17 +978,40 @@ fn read_env_file_contents(
     }
 }
 
-struct Parser<'a> {
+/// A read-only environment that `$NAME` resolves against before the map the parser fills.
+///
+/// The startup loaders pass `()`: their map already holds the process environment, so the
+/// lookup folds away. `Loader::parse_expanded` passes the caller's environment.
+trait EnvFallback {
+    fn get(&self, key: &[u8]) -> Option<&[u8]>;
+}
+
+impl EnvFallback for () {
+    #[inline(always)]
+    fn get(&self, _key: &[u8]) -> Option<&[u8]> {
+        None
+    }
+}
+
+impl EnvFallback for Map {
+    #[inline]
+    fn get(&self, key: &[u8]) -> Option<&[u8]> {
+        Map::get(self, key)
+    }
+}
+
+struct Parser<'a, F: EnvFallback> {
     pos: usize,
     src: &'a [u8],
     value_buffer: &'a mut Vec<u8>,
+    fallback: &'a F,
 }
 
 // Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
 // there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
 const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
 
-impl<'a> Parser<'a> {
+impl<'a, F: EnvFallback> Parser<'a, F> {
     fn skip_line(&mut self) {
         if let Some(i) = strings::index_of_any(&self.src[self.pos..], b"\n\r") {
             self.pos += i + 1;
@@ -1128,17 +1181,24 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.value_buffer.clear();
-        if !Self::expand_into(map, value, self.value_buffer, 0) {
+        if !Self::expand_into(self.fallback, map, value, self.value_buffer, 0) {
             return Ok(None);
         }
         Ok(Some(self.value_buffer.as_slice()))
+    }
+
+    /// `fallback` wins over `map`: a file that repeats a variable the process already has
+    /// resolves to the process value, the same precedence the startup loader applies.
+    #[inline]
+    fn lookup<'m>(fallback: &'m F, map: &'m Map, key: &[u8]) -> Option<&'m [u8]> {
+        fallback.get(key).or_else(|| map.get(key))
     }
 
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
     /// `\x` skipped); malformed forms fall through as literal text. The `:-`
     /// default clause is expanded recursively.
-    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+    fn expand_into(fallback: &F, map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
         #[inline]
         fn is_ident(b: u8) -> bool {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
@@ -1200,14 +1260,14 @@ impl<'a> Parser<'a> {
                 let key = &inner[..key_end];
                 let rest = &inner[key_end..];
                 if rest.is_empty() {
-                    if let Some(v) = map.get(key) {
+                    if let Some(v) = Self::lookup(fallback, map, key) {
                         out.extend_from_slice(v);
                     }
                 } else if let Some(default) = rest.strip_prefix(b":-") {
-                    if let Some(v) = map.get(key) {
+                    if let Some(v) = Self::lookup(fallback, map, key) {
                         out.extend_from_slice(v);
                     } else if depth < 200 {
-                        Self::expand_into(map, default, out, depth + 1);
+                        Self::expand_into(fallback, map, default, out, depth + 1);
                     } else {
                         out.extend_from_slice(default);
                     }
@@ -1224,7 +1284,7 @@ impl<'a> Parser<'a> {
                 while k < value.len() && is_ident(value[k]) {
                     k += 1;
                 }
-                if let Some(v) = map.get(&value[key_start..k]) {
+                if let Some(v) = Self::lookup(fallback, map, &value[key_start..k]) {
                     out.extend_from_slice(v);
                 }
                 pos = k;
@@ -1289,6 +1349,7 @@ impl<'a> Parser<'a> {
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
+        fallback: &F,
     ) -> Result<(), AllocError> {
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clear();
@@ -1298,6 +1359,7 @@ impl<'a> Parser<'a> {
             // first key fails `parse_key` and `skip_line` silently drops line 1.
             src: strings::without_utf8_bom(src),
             value_buffer,
+            fallback,
         };
         parser.parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
     }
@@ -1397,7 +1459,7 @@ impl Map {
     }
 
     #[inline]
-    pub(crate) fn init() -> Map {
+    pub fn init() -> Map {
         Map {
             map: HashTable::default(),
         }

@@ -143,11 +143,18 @@ pub(crate) fn normalize_encoding<'a>(heap: &JsHeap<'a>, encoding: &BunString) ->
 pub(crate) fn parse_env<'a>(heap: &JsHeap<'a>, content: &[u8]) -> bindgen::Result<'a, JsLocal<'a>> {
     let mut p = envloader::Loader::init();
     p.load_from_string::<true, false>(content)?;
+    env_map_to_js(heap, &p.map)
+}
 
+/// A new plain object with one string property per entry of `map`, in insertion order.
+pub(crate) fn env_map_to_js<'a>(
+    heap: &JsHeap<'a>,
+    map: &envloader::Map,
+) -> bindgen::Result<'a, JsLocal<'a>> {
     // SAFETY: the object is new and plain, and its properties are defined and not set.
     let global = unsafe { heap.global() };
-    let obj = JSValue::create_empty_object(global, p.map.map.count());
-    for (k, v) in p.map.map.iter() {
+    let obj = JSValue::create_empty_object(global, map.map.count());
+    for (k, v) in map.map.iter() {
         // A key like `0=` or `2023=` is an array index. `put` asserts on those.
         obj.put_may_be_index(
             global,

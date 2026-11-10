@@ -84,7 +84,7 @@ use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::{
     BracesOptions, Bun__BunObject__inspect, Bun__BunObject__table, EditorOptions, InspectOptions,
-    InspectOptionsOrDepth, MMapOptions, WhichOptions, ZlibCompressionOptions,
+    InspectOptionsOrDepth, MMapOptions, ParseEnvOptions, WhichOptions, ZlibCompressionOptions,
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
@@ -326,6 +326,74 @@ pub(crate) fn which<'a>(
     bun_which::which(&mut *path_buf, path, cwd, command)
         .map(|bin_path| heap.create_utf8_string(bin_path))
         .transpose()
+}
+
+/// `Bun.parseEnv(content, options)`: the keys `content` defines, with the values the startup
+/// loader gives them. `options.env` replaces the environment Bun started with as the source
+/// that `$NAME` resolves against.
+pub(crate) fn parse_env<'a>(
+    cx: &mut JsScope<'a>,
+    content: &'a [u8],
+    options: &ParseEnvOptions<'a>,
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    if !options.expand {
+        return node::node_util_binding::parse_env(&cx.heap, content);
+    }
+    let env = options.env.to_js();
+    let map = if env.is_undefined_or_null() {
+        bun_dotenv::Loader::parse_expanded(content, &VirtualMachine::get().env_loader().map)?
+    } else {
+        let seed = env_map_from_js(cx.global(), env)?;
+        bun_dotenv::Loader::parse_expanded(content, &seed)?
+    };
+    node::node_util_binding::env_map_to_js(&cx.heap, &map)
+}
+
+/// The own enumerable properties of `env` as a dotenv map. A value that is `undefined` is
+/// skipped, every other value is converted to a string, as `Bun.spawn`'s `env` does.
+fn env_map_from_js(global: &JSGlobalObject, env: JSValue) -> JsResult<bun_dotenv::Map> {
+    let Some(env_object) = env.get_object() else {
+        let received = JSGlobalObject::determine_specific_type(global, env)?;
+        return Err(global
+            .err(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!(
+                    "The \"options.env\" property must be of type object. Received {}",
+                    received
+                ),
+            )
+            .throw());
+    };
+    let iter = jsc::JSPropertyIterator::init(
+        global,
+        env_object,
+        jsc::PropertyIteratorOptions {
+            skip_empty_name: false,
+            include_value: true,
+        },
+    )?;
+    let mut seed = bun_dotenv::Map::init();
+    seed.ensure_unused_capacity(iter.len)?;
+    while let Some((key, value)) = iter.next()? {
+        if value.is_undefined() {
+            continue;
+        }
+        let key = key.to_utf8();
+        let value = value.to_utf8(global)?;
+        if strings::contains_char(&key, 0) || strings::contains_char(&value, 0) {
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The property 'options.env['{}']' must be a string without null bytes",
+                        bstr::BStr::new(&key)
+                    ),
+                )
+                .throw());
+        }
+        seed.put(&key, &value)?;
+    }
+    Ok(seed)
 }
 
 fn apply_inspect_options(

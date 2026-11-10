@@ -158,6 +158,39 @@ process.env.BAR; // => "hello$FOO"
 
 Bun reads `.env` files automatically, so `dotenv` and `dotenv-expand` are unnecessary.
 
+### Parsing `.env` files at runtime
+
+`Bun.parseEnv(content, options)` parses the text of a `.env` file the way the startup loader does, with the same expansion. It returns a plain object with the keys that the text defines and does not change `process.env`. Use it when the file to load is only known at runtime, for example a file beside a compiled executable, or a mode that a CLI flag picks.
+
+```ts
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+
+const mode = process.env.NODE_ENV ?? "development";
+const dir = dirname(process.execPath);
+const files = [`.env.${mode}.local`, `.env.local`, `.env.${mode}`, `.env`];
+
+const values: Record<string, string> = {};
+for (const file of files) {
+  let content: string;
+  try {
+    content = readFileSync(join(dir, file), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+    throw error;
+  }
+  const parsed = Bun.parseEnv(content, { env: { ...process.env, ...values } });
+  for (const [key, value] of Object.entries(parsed)) {
+    values[key] ??= value;
+  }
+}
+for (const [key, value] of Object.entries(values)) {
+  process.env[key] ??= value;
+}
+```
+
+`$NAME` resolves against `options.env` first (the environment Bun started with by default), then against the keys defined earlier in the text. A key that the environment already has keeps the environment's value, the same precedence `bun run` applies. Pass `expand: false` to get the values as written, like `util.parseEnv`.
+
 ## Reading environment variables
 
 Read the current environment variables from `process.env`.

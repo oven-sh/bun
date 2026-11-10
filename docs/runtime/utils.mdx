@@ -113,6 +113,21 @@ console.log(ls); // null
 
 This is a built-in alternative to the [`which`](https://www.npmjs.com/package/which) npm package.
 
+## `Bun.parseEnv()`
+
+`Bun.parseEnv(content: string, options?: { expand?: boolean; env?: Record<string, string> })`
+
+Parses the text of a `.env` file the way Bun parses `.env` files at startup, with the same variable expansion. The result holds only the keys that `content` defines. `process.env` is not changed.
+
+```ts
+const values = Bun.parseEnv("HOST=localhost\nURL=http://$HOST:${PORT:-3000}");
+console.log(values); // { HOST: "localhost", URL: "http://localhost:3000" }
+```
+
+`$NAME` resolves against `options.env` first, then against the keys defined earlier in the text. `options.env` defaults to the environment Bun started with. A key that this environment already has keeps the environment's value, as it does when `bun run` loads a `.env` file. Pass `expand: false` to get the values as written, like `util.parseEnv`.
+
+See [Environment variables](/runtime/environment-variables#parsing-env-files-at-runtime) for a loader that reads a set of `.env` files at runtime.
+
 ## `Bun.randomUUIDv7()`
 
 `Bun.randomUUIDv7()` returns a [UUID v7](https://www.ietf.org/archive/id/draft-peabody-dispatch-new-uuid-format-01.html#name-uuidv7-layout-and-bit-order), which is monotonic and suitable for sorting and databases.

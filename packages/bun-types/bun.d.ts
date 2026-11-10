@@ -836,6 +836,49 @@ declare module "bun" {
    */
   function which(command: string, options?: WhichOptions): string | null;
 
+  interface ParseEnvOptions {
+    /**
+     * Expand `$NAME`, `${NAME}` and `${NAME:-default}` in the values, and turn `\$` into `$`,
+     * as Bun does when it loads `.env` files at startup. With `false`, the values are returned
+     * as written, like `util.parseEnv`.
+     *
+     * @default true
+     */
+    expand?: boolean;
+
+    /**
+     * The environment that `$NAME` resolves against before the keys defined earlier in
+     * `content`. A key that this environment already has keeps the environment's value, as it
+     * does when Bun loads `.env` files at startup.
+     *
+     * Defaults to the environment Bun started with. A later write to `process.env` is not part
+     * of that default. Pass `process.env` to include it.
+     */
+    env?: Record<string, string | undefined>;
+  }
+
+  /**
+   * Parse the text of a `.env` file the way Bun parses `.env` files at startup, including
+   * variable expansion.
+   *
+   * The result holds only the keys that `content` defines. `process.env` is not changed.
+   *
+   * @category Utilities
+   *
+   * @example
+   * ```ts
+   * const values = Bun.parseEnv(await Bun.file(".env").text());
+   * for (const [key, value] of Object.entries(values)) {
+   *   process.env[key] ??= value;
+   * }
+   * ```
+   *
+   * @param content The text of a `.env` file
+   * @param options Expansion options
+   * @returns A plain object with one string property per key in `content`
+   */
+  function parseEnv(content: string, options?: ParseEnvOptions): Record<string, string>;
+
   interface StringWidthOptions {
     /**
      * If `true`, count ANSI escape codes as part of the string width. If `false`, ignore them.

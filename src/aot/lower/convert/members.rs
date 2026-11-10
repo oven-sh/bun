@@ -1,10 +1,12 @@
 use bun_sema::bind::Binding;
-use bun_sema::check::aot::{GaveUp, MemberLookup, PositionTypes, ShapeKind, WrittenType};
+use bun_sema::check::aot::{
+    GaveUp, MemberLookup, ObjectOrigin, PositionTypes, ShapeKind, WrittenType,
+};
 use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 use smallvec::{SmallVec, smallvec};
 
 use super::patterns::find_tuple_elements;
-use crate::ir::ValueId;
+use crate::ir::{TypeId, ValueId};
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, expression};
 
 #[derive(Copy, Clone)]
@@ -104,6 +106,52 @@ impl FileLowering<'_, '_, '_, '_> {
         true
     }
 
+    fn is_added_by_an_interface_to_what_it_extends(&mut self, read: ExprId) -> bool {
+        let Some((receiver, MemberKey::Name(name))) = self.hir.member_key(read) else {
+            return false;
+        };
+        let Ok(ty) = self.queries.expression_type(receiver) else {
+            return false;
+        };
+        let Ok(present) = self.queries.without_nullish(ty) else {
+            return false;
+        };
+        let ObjectOrigin::Symbol(interface) = self.queries.object_origin(present) else {
+            return false;
+        };
+        let bases = self
+            .queries
+            .declared_base_types(interface)
+            .unwrap_or_default();
+        !bases.is_empty()
+            && bases.iter().all(|&base| {
+                !matches!(
+                    self.queries.find_member(base, name),
+                    Ok(MemberLookup::Member(_))
+                )
+            })
+    }
+
+    fn find_objects_expected_of_member_read(&mut self, object: ExprId) -> Option<TypeId> {
+        if !self.is_checked() {
+            return None;
+        }
+        let mut read = object;
+        while let ExprKind::NonNull(operand) = self.hir[read].kind {
+            read = operand;
+        }
+        if !self.is_added_by_an_interface_to_what_it_extends(read) {
+            return None;
+        }
+        let checked = self.queries.expression_type(object);
+        let written = WrittenType::Unwritten;
+        let expected = self
+            .create_member_position(PositionTypes { written, checked })
+            .ty;
+        let names_layouts = !self.fragment.types.get(expected).layouts.is_empty();
+        names_layouts.then_some(expected)
+    }
+
     pub(super) fn find_written_type(&mut self, expression: ExprId) -> Option<CheckerTypeId> {
         if let Some(&written) = self.types.conversions.written_expressions.get(&expression) {
             return written;
@@ -162,6 +210,17 @@ fn find_contents_type(
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn claim_member_read_like_an_object(
+        &mut self,
+        object: ExprId,
+        value: ValueId,
+    ) -> ValueId {
+        match self.file.find_objects_expected_of_member_read(object) {
+            Some(expected) => super::expect_type(self, value, expected),
+            None => value,
+        }
+    }
+
     pub(crate) fn convert_to_member(
         &mut self,
         access: ExprId,

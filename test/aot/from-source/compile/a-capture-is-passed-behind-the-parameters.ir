@@ -1,0 +1,9 @@
+# An arrow that captures and is entered by value: its parameters arrive where they stay, the entry loads the capture alone.
+# f1 = make, f2 = the arrow
+# -- source: captures.ts
+# function make(a: string) { return (x: unknown, y: unknown) => [a, x, y].join(); }
+# (globalThis as any).kept = make(String(Date.now()));
+# -- end of source
+# REQUIRES: x86_64 not-windows unsanitized-code
+# RUN: units-with-code f2:GenericCallEntry mechanisms=all
+# CHECK: unit f2:GenericCallEntry fused into f2:Body, 4 bytes

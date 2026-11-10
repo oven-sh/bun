@@ -104,6 +104,98 @@ export async function loadWritten(text: string) {
 }
 `,
   },
+  "REFUSED-the-product-imports-an-index-file-by-the-dots-of-its-folder-alone": {
+    "a.test.ts": `import { test } from "bun:test";
+import { loadWritten } from "./support/index";
+test("a", async () => {
+  const loaded = await loadWritten("export const answer = 42;");
+  console.log("SEEN", loaded.answer);
+});
+`,
+    "package.json": `{ "name": "p", "type": "module" }
+`,
+    "support/index.ts": `import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+export async function loadWritten(text: string) {
+  const path = join(mkdtempSync(join(tmpdir(), "whose-")), "written.mjs");
+  writeFileSync(path, text);
+  return await import(path);
+}
+`,
+    "support/tools/cli.ts": `import { loadWritten } from "..";
+console.log((await loadWritten("export const answer = 1;")).answer);
+`,
+  },
+  "REFUSED-the-product-imports-an-index-file-of-its-own-folder": {
+    "a.test.ts": `import { test } from "bun:test";
+import { loadWritten } from "./support/index";
+test("a", async () => {
+  const loaded = await loadWritten("export const answer = 42;");
+  console.log("SEEN", loaded.answer);
+});
+`,
+    "package.json": `{ "name": "p", "type": "module" }
+`,
+    "support/cli.ts": `import { loadWritten } from "./index";
+console.log((await loadWritten("export const answer = 1;")).answer);
+`,
+    "support/index.ts": `import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+export async function loadWritten(text: string) {
+  const path = join(mkdtempSync(join(tmpdir(), "whose-")), "written.mjs");
+  writeFileSync(path, text);
+  return await import(path);
+}
+`,
+  },
+  "REFUSED-the-product-imports-an-index-file-of-the-folder-above": {
+    "a.test.ts": `import { test } from "bun:test";
+import { loadWritten } from "./support/index";
+test("a", async () => {
+  const loaded = await loadWritten("export const answer = 42;");
+  console.log("SEEN", loaded.answer);
+});
+`,
+    "package.json": `{ "name": "p", "type": "module" }
+`,
+    "support/tools/cli.ts": `import { loadWritten } from "../index";
+console.log((await loadWritten("export const answer = 1;")).answer);
+`,
+    "support/index.ts": `import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+export async function loadWritten(text: string) {
+  const path = join(mkdtempSync(join(tmpdir(), "whose-")), "written.mjs");
+  writeFileSync(path, text);
+  return await import(path);
+}
+`,
+  },
+  "REFUSED-the-product-imports-an-index-file-through-its-folder": {
+    "a.test.ts": `import { test } from "bun:test";
+import { loadWritten } from "./support/index";
+test("a", async () => {
+  const loaded = await loadWritten("export const answer = 42;");
+  console.log("SEEN", loaded.answer);
+});
+`,
+    "package.json": `{ "name": "p", "type": "module" }
+`,
+    "src/main.ts": `import { loadWritten } from "../support/index";
+console.log((await loadWritten("export const answer = 1;")).answer);
+`,
+    "support/index.ts": `import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+export async function loadWritten(text: string) {
+  const path = join(mkdtempSync(join(tmpdir(), "whose-")), "written.mjs");
+  writeFileSync(path, text);
+  return await import(path);
+}
+`,
+  },
   "REFUSED-the-product-imports-the-fixture-too": {
     "a.test.ts": `import { test } from "bun:test";
 import { loadWritten } from "./support/helper";

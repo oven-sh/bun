@@ -130,6 +130,10 @@ interface::define_linked_functions! {
         report::write_summary(&unwrap_input(input), out);
     }
 
+    fn bun_aot_write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>) {
+        report::write_developer_options(option_words, out);
+    }
+
     fn bun_aot_write_untyped_note(statistics: &interface::statistics::Statistics, out: &mut Vec<u8>) {
         report::write_untyped_note(statistics.0.get(), out);
     }
@@ -157,8 +161,8 @@ interface::define_linked_functions! {
         crate::load::asked_by_test_runner::lists_laid_anew_between_test_files()
     }
 
-    fn bun_aot_find_importer_outside_run(root: &[u8], file: &[u8], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Option<Vec<u8>> {
-        crate::test_runs::files_of_run::find_importer_outside_run(root, file, is_compiled)
+    fn bun_aot_find_importers_outside_run(root: &[u8], files: &[Vec<u8>], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Vec<Option<Vec<u8>>> {
+        crate::test_runs::files_of_run::find_importers_on_disk(root, files, is_compiled)
     }
 
     fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool {

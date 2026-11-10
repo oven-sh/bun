@@ -1,0 +1,16 @@
+# f1 = halves
+# -- source: push-of-doubles-in-a-loop.ts
+# function halves(limit: number): number[] {
+#   const list: number[] = [];
+#   for (let k = 0; k < limit; k++) list.push(k * 0.5);
+#   return list;
+# }
+# declare const input: any;
+# (globalThis as any).answer = halves(input | 0);
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches ; 43 instructions, 0 of them patches ; 13 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 31, patches 2, moves 0, unlikely 0.
+# RUN(X64): loops most:31 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 31

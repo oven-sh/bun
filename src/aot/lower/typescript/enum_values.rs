@@ -56,6 +56,21 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(read)
     }
 
+    pub(in crate::lower) fn find_read_of_enum_member_of_this_file(
+        &mut self,
+        access: ExprId,
+    ) -> Option<Constant> {
+        let members = KnownObjects::new(
+            self.queries.files(),
+            self.inputs.modules,
+            &self.modules.known_member_values,
+        );
+        if members.find_read(self.file, access)?.object.file != self.file {
+            return None;
+        }
+        self.find_enum_member_read(access)
+    }
+
     pub(in crate::lower) fn find_member_of_loaded_module(&self, access: ExprId) -> Option<ExprId> {
         let (member, root) = self.find_member_and_root(access)?;
         let is_imported = self.symbol_named_by(root).is_some_and(|name| {

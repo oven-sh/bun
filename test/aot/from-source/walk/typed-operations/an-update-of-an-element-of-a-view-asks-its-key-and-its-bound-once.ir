@@ -1,0 +1,15 @@
+# -- source: an-update-of-an-element-of-a-view-asks-its-key-and-its-bound-once.ts
+# declare function sink(...values: unknown[]): void;
+# declare function size(): number;
+# class Tally { counts = new Uint32Array(size()); seen = 0; bump(op: number | undefined) { this.seen++; this.counts[op!]!++; return this.seen; } }
+# const tally = new Tally();
+# sink(tally.bump(3), tally.bump(undefined), tally.bump(70), tally.counts[3]);
+# -- end of source
+# `counts[op]++` outside of a loop, under a key that may be undefined: the key is asked once whether it is a number and once whether it lies below the length.
+# In the arm behind both the element is read, one is added to an integer, and the sum is stored, all inside the view. It was: the read and the store each asked the key, what was read met what the closed read gives, and one was added by the closed operation.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetTypedArrayLength
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = Increment {{*}}form=Integers
+# CHECK: PutTypedArrayElement {{*}}isInsideView

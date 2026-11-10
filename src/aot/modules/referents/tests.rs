@@ -266,3 +266,55 @@ fn store_in_dead_code_is_ignored() {
         );
     });
 }
+
+#[test]
+fn long_literal_answers_as_short_one() {
+    let cases = [
+        ("m: class {}, FILLER", Some(0)),
+        ("FILLER m: class {}", Some(0)),
+        ("m: class {}, FILLER m: class {}", Some(1)),
+        ("m: class {}, m: class {}, FILLER", Some(1)),
+        ("m: class {}, FILLER ...other", None),
+        ("...other, FILLER m: class {}", Some(0)),
+        ("m: class {}, FILLER [key]: 0", None),
+        ("[key]: 0, FILLER m: class {}", Some(0)),
+        ("m: class {}, FILLER get m() { return 0; }", None),
+        ("get m() { return 0; }, FILLER m: class {}", Some(0)),
+        ("m: class {}, FILLER set m(value) {}", None),
+        ("m: class {}, ...other, FILLER n: class {}", None),
+        ("n: class {}, FILLER", None),
+    ];
+    let many: String = (0..20)
+        .map(|index| format!("f{index}: {index}, "))
+        .collect();
+    let mut wrong = Vec::new();
+    for (literal, class) in cases {
+        let referent_with = |filler: &str| {
+            let literal = literal.replace("FILLER", filler);
+            let main = format!(
+                "const other = {{}}, key = String(1);\nconst table = {{ {literal} }};\nconst used = table.m;\nconsole.log(used, other, key);\nexport {{}};\n"
+            );
+            let mut found = None;
+            with_program(&[("main.js", &main)], |program| {
+                let referent = program.referent("main.js", "used");
+                let file = file_named(program.input, "main.js");
+                let expected = class.map(|class| ClassRef {
+                    file,
+                    class: ClassId(class),
+                });
+                let is_expected = match (referent, expected) {
+                    (StaticReferent::Class(found), Some(expected)) => found == expected,
+                    (StaticReferent::Unknown(_), None) => true,
+                    _ => false,
+                };
+                found = Some((referent, is_expected));
+            });
+            found.unwrap()
+        };
+        let (short, long) = (referent_with(""), referent_with(&many));
+        if short != long || !long.1 {
+            wrong.push(literal);
+        }
+    }
+    assert_eq!(wrong, Vec::<&str>::new());
+}

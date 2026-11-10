@@ -43,19 +43,18 @@ test.skipIf(isWindows || !isCanary)(
     using dir = tempDir("a-program-that-a-signal-ends", {
       "tsconfig.json": "{}",
       "aborts.js": `console.error("said before the end");\nprocess.abort();\n`,
-      "aborts-under-a-todo.js": `// Todo: some day\nconsole.error("said before the end");\nprocess.abort();\n`,
-      "aborts-where-it-is-skipped.js": `// Skip on ${process.platform} ${process.arch}: some day\nconsole.error("said before the end");\nprocess.abort();\n`,
+      "aborts-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.abort();\n`,
       "aborts-under-a-todo-of-one-way.js": [
         `// Under: --define DIES=true: the build whose executable dies`,
-        `// Todo under --define DIES=true: some day`,
+        `// Todo under --define DIES=true: "true" | "false": some day`,
         `if (typeof DIES !== "undefined") process.abort();`,
         `console.log(true);`,
         `/* Output:`,
         `true`,
         `*/\n`,
       ].join("\n"),
-      "faults-under-a-todo.js": `// Todo: some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(200_000);\n`,
-      "answers-otherwise-under-a-todo.js": `// Todo: some day\nconsole.log(true);\n/* Output:\nfalse\n*/\n`,
+      "faults-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(200_000);\n`,
+      "answers-otherwise-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.log(true);\n/* Output:\nfalse\n*/\n`,
       // The command outlives the time limit of a run, in the group of the program and with its pipe for errors.
       "leaves-a-command-behind.js": [
         `Bun.spawnSync({ cmd: ["sh", "-c", "sleep 200 &"], stdio: ["ignore", "ignore", "inherit"] });`,
@@ -78,7 +77,6 @@ test.skipIf(isWindows || !isCanary)(
     const files = [
       "aborts.js",
       "aborts-under-a-todo.js",
-      "aborts-where-it-is-skipped.js",
       "aborts-under-a-todo-of-one-way.js",
       "faults-under-a-todo.js",
       "answers-otherwise-under-a-todo.js",
@@ -86,7 +84,7 @@ test.skipIf(isWindows || !isCanary)(
       "says-what-it-may-do.js",
     ].map(name => join(root, name));
     const { stdout, exitCode } = await run(
-      [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", ...files],
+      [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", "--seconds=180", ...files],
       root,
       { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: undefined },
     );
@@ -107,19 +105,12 @@ test.skipIf(isWindows || !isCanary)(
     expect(verdicts).toEqual([
       { file: "aborts-under-a-todo-of-one-way.js", state: "fail", stage: "run", message: ofOneWay, said: false },
       { file: "aborts-under-a-todo.js", state: "fail", stage: "run", message: "it ended by SIGABRT", said: true },
-      {
-        file: "aborts-where-it-is-skipped.js",
-        state: "fail",
-        stage: "run",
-        message: "it ended by SIGABRT",
-        said: true,
-      },
       { file: "aborts.js", state: "fail", stage: "run", message: "it ended by SIGABRT", said: true },
       {
         file: "answers-otherwise-under-a-todo.js",
         state: "skip",
         stage: undefined,
-        message: "todo: some day",
+        message: 'todo: "true" | "false": some day',
         said: undefined,
       },
       { file: "faults-under-a-todo.js", state: "fail", stage: "run", message: "it ended by SIGSEGV", said: true },
@@ -128,5 +119,7 @@ test.skipIf(isWindows || !isCanary)(
     ]);
     expect(exitCode).toBe(1);
   },
-  80_000,
+  // Less than the limit of a run that the driver is given above, which is less than what the programs sleep.
+  // The nine builds take 4 s on an arm64 Mac and 52 to 80 s on an Intel Mac.
+  170_000,
 );

@@ -1,0 +1,33 @@
+# -- source: main.cjs
+# "use strict";
+# function add(out, a, b) { out[0] = a[0] + b[0]; out[1] = a[1] + b[1]; out[2] = a[2] + b[2]; return out; }
+# function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+# const sizes = JSON.parse("[3, 3, 3, 2]");
+# const o = new Float64Array(sizes[0]), p = new Float64Array(sizes[1]), q = new Float64Array(sizes[2]), short = new Float64Array(sizes[3]);
+# p.set([1.5, 2.5, 3.5]); q.set([0.5, 0.25, 4]);
+# function f(t, b) { p[0] = t & 7; let s = 0; for (let i = 0; i < 100; i++) { add(o, p, b); s += dot(o, p); } return s; }
+# print(f(1, q), f(2, q), f(1, short));
+# -- end of source
+# f3 = f
+# Every callee is known and every view is proven: nothing in the loop is guessed, so it was not built twice, there was no closed copy to leave for, and each read and each store at a written place asked
+# the length of its view in its turn. The walk of the loop now notes that its turns ask such lengths of views from in front, also in functions copied in line; a quiet loop of which that is noted is
+# built twice, and the typed copy holds the places below the lengths once, in front. A purchase that asks nothing there is given back, as one for lists found from in front is.
+# Where a test in front fails, the turns run in a third loop, the plain walk (the loop bought once more without the question): its reads ask their places again.
+# RUN(COUNT): compile BoundsAskedOfViewsInFrontOfTypedCopies LoopsBuiltTwice mechanisms=all
+# COUNT-NOT: statistic BoundsAskedOfViewsInFrontOfTypedCopies 0
+# COUNT-NOT: statistic LoopsBuiltTwice 0
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: isLoopHead=true:
+# CHECK: @OptionalDouble = GetTypedArrayElement
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK-NOT: @OptionalDouble = GetTypedArrayElement
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: @OptionalDouble = GetTypedArrayElement
+# CHECK: Return
+# RUN(ANSWER): run-in-shell
+# ANSWER: 3462.5 3812.5 NaN
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 3462.5 3812.5 NaN
+# CHECKED-NEXT: exited with 0

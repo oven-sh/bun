@@ -13,5 +13,4 @@
 # console.log(sum, readsTheSumToo(odd, 0, 1000, two));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body

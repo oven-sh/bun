@@ -1,0 +1,37 @@
+# -- source: one-name-asked-tells-no-class.js
+# class Reply {
+#   constructor(start) { this.replyCode = start; this.replySent = false; }
+#   askHeader(name) { return name.length + this.replyCode; }
+# }
+# class Other {
+#   constructor(start) { this.otherMark = start; }
+# }
+# const shell = {
+#   get status() { return this.inner.replyCode; },
+# };
+# function wrap(inner) {
+#   const made = Object.create(shell);
+#   made.inner = inner;
+#   return made;
+# }
+# const listeners = {};
+# function on(name, listener) { listeners[name] = listener; }
+# function emit(name, value) { return listeners[name](value); }
+# on("reply", inner => { const made = wrap(inner); return made.status; });
+# on("other", other => other.otherMark);
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += emit("reply", new Reply(i)) + emit("other", new Other(i));
+# print(sum);
+# -- end of source
+# The twin: one name alone is asked.
+# RUN(HELD): link held fields mechanisms=all
+# Every class that is handed through the table of listeners is held of the field; the names asked narrow that to none of them.
+# HELD: "inner" appended proven=L0|L1 writers-known
+# RUN(COUNTS): link held counts mechanisms=all
+# COUNTS: counts cells of fields expected by the names asked of what lies in them | 0
+# RUN(PROVING): link fields mechanisms=all
+# PROVING-NOT: "inner" appended proven=L
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 12
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 12

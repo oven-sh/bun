@@ -1,0 +1,24 @@
+# f1 = apply
+# -- source: dense-switch-jumps-through-a-table.ts
+# function apply(operation: number, left: number, right: number): number {
+#   switch (operation) {
+#     case 0: return left + right;
+#     case 1: return left - right;
+#     case 2: return left * right;
+#     case 3: return left / right;
+#     case 4: return -left;
+#     case 5: return left * left;
+#     case 6: return right - left;
+#     case 7: return right / left;
+#     default: return 0;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = apply(input | 0, +input, +input);
+# -- end of source
+# The compiler before this one: 26 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 22, patches 0, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:25 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 25

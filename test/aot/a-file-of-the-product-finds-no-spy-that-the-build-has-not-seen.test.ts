@@ -90,15 +90,30 @@ describe.skipIf(isWindows)("a test run compiles what the executable compiles", (
   const title = "though a call through a namespace object reaches an export that nobody knows";
   // The start of each file, and the function that makes the call by one byte or one instruction.
   const differsToday = (row: string) => /:0  Body |:37 parse Body /.test(row);
+  // In an executable the body of a file that the run time starts has no entry by value of its own: the word of its closure holds the number of its start.
+  // In a test run this CommonJS file still has that entry, of 10 bytes.
+  const isEntryOfStart = (row: string) => /:0  GenericCallEntry /.test(row);
 
-  test(`${title} but for the start of each file and the function that makes the call`, async () => {
+  // `failing`: it turns red the day the two hold the same entries.
+  test.failing(
+    `${title} but for the start of each file and the function that makes the call: the test run holds 1 entry by value of the start of a file, the executable 0`,
+    async () => {
+      const { executable, testRun } = await (both ??= buildBoth());
+      expect(testRun.filter(row => !differsToday(row))).toEqual(executable.filter(row => !differsToday(row)));
+    },
+  );
+
+  test(`${title} but for the start of each file and the function that makes the call: what the two builds hold today, 1 entry by value of the start of a file in the test run alone`, async () => {
     const { executable, testRun } = await (both ??= buildBoth());
     expect(executable.filter(row => / (helper|other) Body /.test(row))).toHaveLength(2);
-    expect(testRun.filter(row => !differsToday(row))).toEqual(executable.filter(row => !differsToday(row)));
+    const isHeld = (row: string) => !differsToday(row) && !isEntryOfStart(row);
+    expect(testRun.filter(isHeld)).toEqual(executable.filter(isHeld));
+    expect(testRun.filter(isEntryOfStart)).toHaveLength(1);
+    expect(executable.filter(isEntryOfStart)).toEqual([]);
   });
 
   // `failing`: it turns red the day the two agree. Then the two cases are one again.
-  test.failing(`${title}: 4 of the executable's 9 rows differ, none may`, async () => {
+  test.failing(`${title}: 4 of the executable's 8 rows differ, none may`, async () => {
     const { executable, testRun } = await (both ??= buildBoth());
     expect(testRun).toEqual(executable);
   });

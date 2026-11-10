@@ -1,9 +1,9 @@
 // answers: without-library
 // # A function whose parameters are tested at its entry has a slow body for whatever the test turns away. It is built for size and reads none of Link's tables, so it is written straight, with no switch.
-// # Three functions have a guard here: norm, with a loop, label and grow. With the guards withheld there is no slow body, and nothing is written straight.
+// # Three functions have a guard here: norm, label and grow. norm holds a loop, so its slow body is walked; the other two are written straight. With the guards withheld there is no slow body, and nothing is written straight.
 // # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
 // # REQUIRES(STRAIGHT): faulting-loop-polls
-// # STRAIGHT: statistic UnitsWrittenStraight 3
+// # STRAIGHT: statistic UnitsWrittenStraight 2
 // # RUN(WITHHELD): compile UnitsWrittenStraight mechanisms=all-ParameterGuards
 // # WITHHELD: statistic UnitsWrittenStraight 0
 // # At the end the shell runs the same text itself: every answer is the same.

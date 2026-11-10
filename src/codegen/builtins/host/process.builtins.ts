@@ -703,6 +703,7 @@ export default b.declarations(
     instanceStructureCppExpression: "globalObject->domStructure(WebCore::DOMStructureSlot::JSEventEmitter)",
     hasConstructor: false,
     instancesAreEntries: true,
+    lockedMembers: ["prototype"],
     proto: {
       on: addsListener,
       once: addsListener,
@@ -729,6 +730,9 @@ export default b.declarations(
     "process.nextTick",
     queuesTick.map(overload => ("returns" in overload ? overload : { ...overload, returns: b.instance("Object") })),
   ),
+  // BunProcess.cpp lays one native function on each of the two. Neither looks at `this` or at an operand.
+  b.static("process.hrtime.bigint", { ...systemCall, returns: b.bigint }),
+  b.static("process.memoryUsage.rss", { ...systemCall, returns: b.f64 }),
   b.inherits("process", "%EventEmitter%.prototype"),
   // Object.prototype, until node:events is evaluated: jsFunctionMakeProcessInheritFrom lays its EventEmitter.prototype there.
   // Every other name of that one lies on the native prototype too: test/aot/what-node-events-lays-above-process.test.ts.

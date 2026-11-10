@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Meter { reads = 0; get size(): number { this.reads++; return 1; } }
+# function read(meter: Meter) { return meter.size; }
+# const reads = id(read);
+# print(reads(new Meter()));
+# Object.defineProperty(Meter.prototype, "size", { get() { return 9; }, configurable: true });
+# print(reads(new Meter()));
+# -- end of source
+# LIBRARY: own
+# f1 = read, f3 = the getter
+# A read that finds a getter of the class runs it, in line or by a call. Behind it the getter, which does something, may have changed what the name finds, so nothing can be asked there.
+# Under testing=CheckWalkAtRunTime the object is asked in front of the getter whether the name finds an accessor whose getter is a closure of that function. 3330 says "an accessor, answered by the function that the compiler takes a name to find".
+# RUN(FRONT): walk f1 mechanisms=all testing=CheckWalkAtRunTime
+# FRONT: AskObjectAgain {{*}} key="size" function=f3 [functionIsGetter]
+# FRONT: AskObjectAgain {{*}} key="reads"
+# FRONT-NOT: key="size"
+# RUN(EMIT): emit f1 mechanisms=all testing=CheckWalkAtRunTime
+# EMIT: = Const32(3330)
+# RUN(PLAIN): walk f1 mechanisms=all
+# PLAIN-NOT: AskObjectAgain
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime
+# ASKED: 1
+# ASKED-NEXT: 9
+# ASKED-NEXT: exited with 0

@@ -1,5 +1,6 @@
 use super::runtime_reach::{
-    Application, LoadedLibrary, ReachInput, ReachedRuntimeCode, find_reached_runtime_code,
+    Application, KeptCodeInput, LoadedLibrary, ReachInput, ReachedRuntimeCode,
+    find_reached_runtime_code, find_uses_of_kept_code,
 };
 use super::{BoundBuild, Build, LoadedBuild, LoadedProject};
 use crate::diagnostic_codes::Code;
@@ -20,6 +21,7 @@ use crate::lower::{
 use crate::modules::{Library, LinkedProject, ModuleGraph, ModuleKind};
 use crate::report;
 use crate::statistics::{Stage, StatisticId, instructions_of_all_threads, logs_stages};
+use bun_ast::runtime::ReactCompilerMode;
 use bun_core::current_work;
 use bun_sema::atom::known;
 use bun_sema::bind::{Binding, CommonJsVariable};
@@ -31,11 +33,12 @@ use bun_sema::hir_from_data::DataValue;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::messages;
 use bun_sema::program::{FileId, FileRole, Files};
+use bun_sema::resolve::AOT_CONDITION;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Incomplete, RoleDecision,
     TextLocator, decide_roles, keep_verified_roles, run_on_one_thread_while,
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -47,6 +50,7 @@ pub(crate) struct LoweredUnit {
     pub functions_lowered: u64,
     pub values_lowered: u64,
     pub known_helpers: KnownHelpersLowered,
+    pub texts_read_back: u64,
     pub written_function_names: Vec<u8>,
     pub throws_at_load: bool,
 }
@@ -202,6 +206,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
     fn may_fail_where_loaded(&self, file: FileId) -> bool {
         let runs_tests = self.inputs.options.runs_tests;
         may_fail_where_loaded(self.keys.project, runs_tests, self.keys.graph, file)
+            || self.loaded.view().origin(file) == FileOrigin::EvaluatedText
     }
 
     fn cannot_be_lowered(&self, checker: &Checker<'_, '_>, file: FileId) -> bool {
@@ -235,7 +240,10 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             let locator = TextLocator::new(files.module(file).file_name(), &hir.text[..]);
             with_position(sentence, locator.line_and_column(offset))
         };
-        if let Some(first) = syntax_errors_of(hir).next() {
+        let is_no_javascript =
+            |it: &&bun_sema::hir::Diagnostic| it.kind == bun_sema::hir::DiagnosticKind::Js;
+        let of_parser = syntax_errors_of(hir).next();
+        if let Some(first) = of_parser.or_else(|| hir.diagnostics.iter().find(is_no_javascript)) {
             let (_, template) = messages::message(first.code)?;
             let mut sentence = Vec::new();
             messages::format(&mut sentence, template, &first.args);
@@ -321,6 +329,7 @@ impl Build<'_> {
             let graph = &bound.projects.get(id).graph;
             let mut files_to_lower = find_files_to_lower(all_compiled_files, &roles, |file| {
                 may_fail_where_loaded(id, runs_tests, graph, file)
+                    || project.loaded.origin(file) == FileOrigin::EvaluatedText
             });
             files_to_lower.retain(|&file| {
                 left_out.files.binary_search(&file).is_err() || graph.is_placeholder(file)
@@ -365,6 +374,20 @@ impl Build<'_> {
             graph: &bound.projects.runtime.graph,
         };
         let used_at_start = builtins_used_at_start(self.options.aot);
+        let rewrites_no_text = self.options.load.react_compiler == ReactCompilerMode::Disabled;
+        let uses_of_kept_code = match loaded.holds_it_for_uses_of_files_alone && rewrites_no_text {
+            true => find_uses_of_kept_code(&KeptCodeInput {
+                application: loaded.project(ProjectId::Application).loaded.files(),
+                graph: &bound.projects.application.graph,
+                left_out_functions: &bound.projects.application.left_out.functions,
+                left_out_declarations: &bound.projects.application.left_out.declarations,
+                names: loaded.builtin_names,
+                platform: self.platform,
+                replaced: &loaded.contents.replaced_builtins,
+                runs_tests: self.options.load.runs_tests,
+            }),
+            false => None,
+        };
         let reach_input = ReachInput {
             application: Application::Bound {
                 files: loaded.project(ProjectId::Application).loaded.files(),
@@ -374,7 +397,9 @@ impl Build<'_> {
             names: loaded.builtin_names,
             platform: self.platform,
             used_at_start: &used_at_start,
-            holds_what_unseen_code_finds: loaded.holds_what_unseen_code_finds,
+            holds_what_unseen_code_finds: loaded.holds_what_unseen_code_finds
+                && uses_of_kept_code.is_none(),
+            uses_of_kept_code: uses_of_kept_code.as_ref(),
             can_load_code_at_run_time: loaded.can_load_code_at_run_time
                 && !(loaded.loads_code_by_unknown_names_alone
                     && bound
@@ -477,7 +502,28 @@ impl Build<'_> {
         self.report_check_diagnostics(roles.diagnostics.clone(), &roles.incomplete);
         let in_parallel = self.parallel_runner();
         report::count_files(&mut self.statistics, view, roles, &in_parallel);
-        self.report_check_diagnostics(checked.diagnostics, &checked.incomplete);
+        let mut found = checked.diagnostics;
+        let files = loaded.project(project).loaded.files();
+        let brings_declarations = files.brings_declarations();
+        let host = loaded.project(project).host;
+        let held_in_memory = &self.options.load.in_memory_files;
+        let read_texts_of_build = || {
+            let held = held_in_memory.iter();
+            let held = held.map(|(path, text)| (driver::host::from_native(path), text.clone()));
+            let given = files.compiled_files().iter().filter_map(|&file| {
+                let path = files.module(file).file_name();
+                let is_file_on_disk =
+                    parsed_source(files, file).is_some_and(|it| it.plugin_module.is_none());
+                (is_file_on_disk && host.is_plugin_source(path))
+                    .then(|| (path.to_vec(), host.read_source(path).into_owned()))
+            });
+            held.chain(given).collect()
+        };
+        self.keep_what_project_itself_reports(&mut found, &read_texts_of_build, |it| {
+            let file = it.diagnostic.file;
+            brings_declarations || file.is_some_and(|file| files.hir(file).is_script_for_project)
+        });
+        self.report_check_diagnostics(found, &checked.incomplete);
         self.diagnostics.add_load_messages(loaded.messages);
 
         let mut lowered_units = Vec::with_capacity(checked.lowered.len());
@@ -502,6 +548,10 @@ impl Build<'_> {
             let known_helpers = lowered.known_helpers;
             statistics.count(StatisticId::KnownHelperFunctions, known_helpers.functions);
             statistics.count(StatisticId::KnownHelperCalls, known_helpers.calls);
+            statistics.count(
+                StatisticId::TextsOfFunctionsReadBack,
+                lowered.texts_read_back,
+            );
             self.written_function_names
                 .extend_from_slice(&lowered.written_function_names);
             lowered_units.push(lowered.unit);
@@ -519,6 +569,115 @@ impl Build<'_> {
             Some(_) => self.threads,
             None => self.threads.min(useful),
         }
+    }
+
+    fn keep_what_project_itself_reports(
+        &self,
+        diagnostics: &mut Vec<BuildDiagnostic>,
+        read_texts_of_build: &dyn Fn() -> driver::host::AlreadyRead,
+        is_seen_otherwise_by_project: impl Fn(&BuildDiagnostic) -> bool,
+    ) {
+        let is_asked = |it: &BuildDiagnostic| {
+            matches!(
+                it.diagnostic.class,
+                DiagnosticClass::Semantic
+                    | DiagnosticClass::MissingDeclaration
+                    | DiagnosticClass::Style
+            ) && matches!(it.effect, Effect::StopsBuild | Effect::Warns)
+                && !it.diagnostic.path.is_empty()
+                && is_seen_otherwise_by_project(it)
+        };
+        let asked = diagnostics.iter().filter(|it| is_asked(it));
+        let mut paths: Vec<Vec<u8>> = asked.map(|it| it.diagnostic.path.clone()).collect();
+        if paths.is_empty() {
+            return;
+        }
+        paths.sort();
+        paths.dedup();
+        let has_no_extension = |path: &&Vec<u8>| bun_paths::extension(path).is_empty();
+        let script_kinds: Vec<(Vec<u8>, driver::ScriptKind)> = (paths.iter())
+            .filter(has_no_extension)
+            .map(|path| (path.clone(), driver::ScriptKind::Ts))
+            .collect();
+        let conditions = self.options.code.custom_conditions.iter();
+        let conditions = conditions.filter(|it| it[..] != *AOT_CONDITION);
+        let conditions: Vec<Box<[u8]>> = conditions.map(|it| it[..].into()).collect();
+        let request = driver::Request {
+            cwd: &self.options.code.working_directory,
+            project: self.options.code.tsconfig_override.as_deref(),
+            listed_projects: None,
+            build: false,
+            errors: &[],
+            paths: &paths,
+            are_entry_points: false,
+            script_kinds: &script_kinds,
+            script_kinds_by_extension: &[],
+            conditions: &conditions,
+            compiler_options: &[],
+            threads: self.threads.get(),
+            libs: self.options.typescript_libs,
+            progress: None,
+            order: 1,
+            plan_options: driver::PlanOptions {
+                checks_only_requested_paths: true,
+                takes_defaults_of_tsc: true,
+                ..Default::default()
+            },
+            stops_like_tsc: false,
+            uses_typescript_wording: false,
+            after_file: None,
+        };
+        let place_of = |it: &driver::Diagnostic| {
+            let is_about_name = driver::says_that_name_is_not_found(it.code);
+            let is_style = it.class == DiagnosticClass::Style;
+            (it.path.clone(), it.start, is_about_name, is_style)
+        };
+        let needs_extension = |it: &&driver::Diagnostic| matches!(it.code, 2834 | 2835);
+        type Places = FxHashSet<(Vec<u8>, u32, bool, bool)>;
+        let mut spans: FxHashMap<Vec<u8>, Vec<(u32, u32)>> = FxHashMap::default();
+        let provided = driver::host::Provided {
+            already_read: read_texts_of_build(),
+            ..Default::default()
+        };
+        let (reported, unasked): (Places, FxHashSet<Vec<u8>>) =
+            driver::check_provided_then(&request, provided, |report| {
+                let reported = report.diagnostics.iter();
+                let errors = reported.filter(|it| it.category == driver::Category::Error);
+                for it in errors.clone() {
+                    if let (path, _, false, false) = place_of(it) {
+                        spans.entry(path).or_default().push((it.start, it.end));
+                    }
+                }
+                let unasked = errors.clone().filter(needs_extension).map(|it| &it.path);
+                let not_found = (report.files_checked < paths.len()).then_some(&paths);
+                let unasked = unasked
+                    .chain(not_found.into_iter().flatten())
+                    .cloned()
+                    .collect();
+                (errors.map(place_of).collect(), unasked)
+            });
+        for spans in spans.values_mut() {
+            spans.sort_unstable();
+            let mut furthest = 0;
+            for (_, end) in spans {
+                furthest = furthest.max(*end);
+                *end = furthest;
+            }
+        }
+        let is_held = |found: &driver::Diagnostic| {
+            let Some(spans) = spans.get(&found.path) else {
+                return false;
+            };
+            let until = spans.partition_point(|&(start, _)| start <= found.start);
+            until > 0 && found.end <= spans[until - 1].1
+        };
+        diagnostics.retain(|it| {
+            let found = &it.diagnostic;
+            !is_asked(it)
+                || unasked.contains(&found.path)
+                || reported.contains(&place_of(found))
+                || place_of(found).2 && is_held(found)
+        });
     }
 
     fn report_check_diagnostics(
@@ -544,6 +703,7 @@ impl Build<'_> {
         LoweringOptions {
             platform: self.platform,
             embeds_function_text: self.options.aot.embeds_function_source,
+            reads_function_texts_back: self.options.reads_back_what_it_writes(),
             removable: self.options.removable,
             minifies_identifiers: self.options.minifies_identifiers,
             obfuscates: self.options.aot.hides_names(),
@@ -608,6 +768,7 @@ impl Build<'_> {
             let file = demotion.file;
             if roles.has_early_error(file)
                 && !may_fail_where_loaded(project, runs_tests, &bound_project.graph, file)
+                && loaded_project.loaded.origin(file) != FileOrigin::EvaluatedText
             {
                 file_inputs[file.idx()] = None;
             }
@@ -814,12 +975,16 @@ fn drop_reports_on_unloadable_modules(
         let found = checked.lowered.binary_search_by_key(file, |entry| entry.0);
         found.is_ok_and(|at| checked.lowered[at].1.is_some())
     };
-    let lowered = graph.unloadable_files().filter(is_lowered);
-    let paths: FxHashSet<&[u8]> = lowered.map(|file| files.module(file).file_name()).collect();
+    let lowered: FxHashSet<FileId> = graph.unloadable_files().filter(is_lowered).collect();
+    let paths = lowered.iter().map(|&file| files.module(file).file_name());
+    let paths: FxHashSet<&[u8]> = paths.collect();
     if !paths.is_empty() {
         checked
             .diagnostics
-            .retain(|reported| !paths.contains(&reported.diagnostic.path[..]));
+            .retain(|reported| match reported.diagnostic.file {
+                Some(file) => !lowered.contains(&file),
+                None => !paths.contains(&reported.diagnostic.path[..]),
+            });
     }
 }
 
@@ -886,6 +1051,7 @@ fn finish_lowered_file(keys: &KeyContext<'_>, lowered: LoweredFile) -> LoweredUn
         diagnostics,
         queries,
         known_helpers,
+        texts_read_back,
         written_function_names,
     } = lowered;
     let functions = fragment.functions.iter().map(|(_, function)| function);
@@ -901,6 +1067,7 @@ fn finish_lowered_file(keys: &KeyContext<'_>, lowered: LoweredFile) -> LoweredUn
         functions_lowered,
         values_lowered,
         known_helpers,
+        texts_read_back,
         written_function_names,
         throws_at_load: false,
     }

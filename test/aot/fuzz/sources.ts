@@ -784,6 +784,10 @@ const standAlone = new Set([
 const flagsOfSource: Record<string, string[]> = {
   "unseen-code-mutates-arguments": ["--aot-allow-code-from-disk"],
 };
+/** Sources that know of an intended difference that only shows in the output. */
+const meantOfSource: Record<string, Program["meant"]> = {
+  "regexp-heavy-backtracking": (plain, compiled) => require("./regexp-heavy-backtracking.ts").meant(plain, compiled),
+};
 
 /** A source for the product runner only. `isTyped` says which seeds generate TypeScript. */
 const productSource =
@@ -795,6 +799,7 @@ const productSource =
       text: generate(new Random(seed), typed, { library: true }),
       extension: typed ? "ts" : "js",
       ...(flagsOfSource[source] ? { flags: flagsOfSource[source] } : {}),
+      ...(meantOfSource[source] ? { meant: meantOfSource[source] } : {}),
     };
     return runner.accepts(program) && runner.allows(program.text)
       ? {
@@ -931,6 +936,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "tables-asked-and-then-read",
     "a-store-through-a-second-name-between-two-reads",
     "locals-that-change-their-kind-compared-in-loops",
+    "numbers-in-either-box",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(

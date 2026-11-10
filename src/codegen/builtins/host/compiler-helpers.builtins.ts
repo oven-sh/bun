@@ -20,7 +20,7 @@ const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByPar
   );
 
 // A list that the program makes by its length. The length is converted where it is no number, and the mapper gets what lies at each index and the index.
-const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh.dense;
+const newArrayOf = (elements: b.TableType) => b.instance("Array").exactly.holding({ element: elements }).fresh.dense;
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
   b.called({
@@ -41,6 +41,19 @@ const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =
     runsOnlyOperandCode: true,
     runsUnseenCode: false,
     uses,
+    implementation: b.compiled("prelude/written-lists", name),
+  }) satisfies b.FunctionField;
+
+// Math.max(...list) and Math.min(...list) of a list of numbers. Undefined of anything else, which the call as written gets.
+const extremumOfList = (name: string) =>
+  ({
+    args: { list: b.any },
+    returns: b.union(b.f64, b.undefined),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: { list: [b.readsContents()] },
     implementation: b.compiled("prelude/written-lists", name),
   }) satisfies b.FunctionField;
 
@@ -360,6 +373,8 @@ export default b.declarations(
       runInitializers: { initializers: calledOrChanged, receiver: calledOrChanged },
       runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
     }),
+    maxOfList: extremumOfList("maxOfList"),
+    minOfList: extremumOfList("minOfList"),
     checkedArrayLength: arrayMaker("checkedArrayLength", b.operand("length"), { length: [b.returned] }),
     // The front end writes arrayOfUndefined where the mapper is undefined, so this one never gets that.
     arrayFromLength: arrayMaker("arrayFromLength", newArrayOf(b.callbackResult("mapper")), {

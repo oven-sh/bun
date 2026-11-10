@@ -1,5 +1,5 @@
 // Measures one idiom of ./idioms or ./everyday three ways: compiled ahead of time as TypeScript and as JavaScript, and the same JavaScript under the same binary's JIT.
-// ./idioms-against-the-jit.ts says how, and prints the table; ./idioms-against-the-jit.measure.ts holds each idiom against a bound.
+// ./idioms-against-the-jit.ts says how, and prints the table.
 import { existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { measureCommand, measureCommandWithMemory } from "../analysis-scaling/measure-check";
@@ -23,16 +23,6 @@ export const ratioOf = (row: WholeRow) =>
   Math.max(row.typed.instructions, row.untyped.instructions) / row.jit.instructions;
 /** Compiled code is to take fewer instructions than the JIT's last tier. What takes more is listed, with the ratio. */
 export const lineAgainstTheJit = 1;
-export const behindPath = join(import.meta.dir, `behind-the-jit.${process.platform}-${process.arch}.json`);
-export const typedOverUntyped = (row: WholeRow) => row.typed.instructions / row.untyped.instructions;
-export const isTypedDearer = (row: WholeRow, bound = 1.05, slack = 1) =>
-  typedOverUntyped(row) > bound && row.typed.instructions > row.untyped.instructions + slack;
-export const dearerPath = join(import.meta.dir, `typed-dearer-than-untyped.${process.platform}-${process.arch}.json`);
-export const everydayPinsPath = join(import.meta.dir, `everyday-pins.${process.platform}-${process.arch}.json`);
-export const behindInVeryLargeProgramPath = join(
-  import.meta.dir,
-  `behind-the-jit-in-a-very-large-program.${process.platform}-${process.arch}.json`,
-);
 
 /**
  * A turn's cost can come in lumps. names-seen.one-of-256-lists-of-40-by-in (./everyday/dictionaries-built-anew.txt) takes 7,000 instructions a turn, plus 80 million every 9,000 turns: a full
@@ -70,16 +60,7 @@ export function runsOfReading(turns: number) {
 }
 
 /** How many turns each of the hundred short calls of ./idioms/host.ts takes. Only the JIT needs them: ten million instructions a call. ./README.md, "How many turns a number needs". */
-export function turnsOfCallThatWarmsUp({
-  aTurn,
-  waits,
-  underTheJit,
-}: {
-  aTurn: number;
-  waits: boolean;
-  underTheJit: boolean;
-}) {
-  if (!underTheJit) return 1;
+export function turnsOfCallThatWarmsUp({ aTurn, waits }: { aTurn: number; waits: boolean }) {
   return Math.round(Math.min(5000, Math.max(100, waits ? 0 : 10e6 / aTurn)));
 }
 
@@ -105,7 +86,6 @@ export function mostlyWaits({
  */
 export async function planOf(
   count: (plan: Turns) => Promise<{ instructions: number; seconds: number; timesItGaveUpTheProcessor: number }>,
-  { underTheJit }: { underTheJit: boolean },
 ): Promise<Turns> {
   const few = await count({ turns: 1000, warmUp: 20 });
   const more = await count({ turns: 5000, warmUp: 20 });
@@ -114,7 +94,7 @@ export async function planOf(
   const timesATurnItGivesUpTheProcessor = (more.timesItGaveUpTheProcessor - few.timesItGaveUpTheProcessor) / 4000;
   const waits = mostlyWaits({ aTurn, secondsATurn, timesATurnItGivesUpTheProcessor });
   const turns = Math.round(Math.min(20e6, Math.max(8000, waits ? 20 / secondsATurn : 800e6 / aTurn)));
-  const warmUp = turnsOfCallThatWarmsUp({ aTurn, waits, underTheJit });
+  const warmUp = turnsOfCallThatWarmsUp({ aTurn, waits });
   if (waits) return { turns, warmUp };
   const counts = new Map<number, number>();
   for (const part of partsThatShowLumps)
@@ -125,12 +105,11 @@ export async function planOf(
 /**
  * Writes every idiom's sources into `folder`: the TypeScript into one folder with a tsconfig.json, the JavaScript into another without. `collections: false` leaves out the run that counts them; `buildFlags` go to every `bun build --compile --aot`.
  * With `inVeryLargeProgram` the idioms of ./everyday find turn() at run time.
- * `jit: false` leaves out the runs under the JIT, and the warming up that only they need.
  */
 export function idiomsAgainstTheJit(
   bun: string,
   folder: string,
-  { collections = true, buildFlags = [] as string[], inVeryLargeProgram = false, jit: measuresJit = true } = {},
+  { collections = true, buildFlags = [] as string[], inVeryLargeProgram = false } = {},
 ) {
   const sources = { typed: join(folder, "idioms"), untyped: join(folder, "untyped-idioms") };
   const environment = {
@@ -248,15 +227,14 @@ export function idiomsAgainstTheJit(
     try {
       for (const form of ["typed", "untyped"] as const) await build(form, name, executables[form]);
       const underTheJit = [bun, "run", "--no-install", join(sources.untyped, name + ".js")];
-      const planned =
+      const plan =
         name in pinnedTurns
-          ? { turns: pinnedTurns[name], warmUp: measuresJit ? 5000 : 1 }
-          : await planOf(plan => counted([executables.untyped], plan), { underTheJit: measuresJit });
-      const plan = measuresJit && !(name in pinnedTurns) ? await withinReachOf(underTheJit, planned) : planned;
+          ? { turns: pinnedTurns[name], warmUp: 5000 }
+          : await withinReachOf(underTheJit, await planOf(plan => counted([executables.untyped], plan)));
       const typed = await cost([executables.typed], plan);
       const untyped = await cost([executables.untyped], plan);
-      const jit = measuresJit ? await cost(underTheJit, plan) : undefined;
-      const printed = [typed.printed, untyped.printed, ...(jit ? [jit.printed] : [])];
+      const jit = await cost(underTheJit, plan);
+      const printed = [typed.printed, untyped.printed, jit.printed];
       const failure = printed.every(text => text === printed[0]) ? undefined : `prints ${JSON.stringify(printed)}`;
       return { name, failure, typed, untyped, jit };
     } catch (error) {

@@ -34,9 +34,11 @@ impl NameFacts {
 
     #[inline]
     fn new(class: NameClass, builtin: Option<BuiltinName>) -> NameFacts {
-        const { assert!(NameClass::COUNT <= 1 << NameFacts::CLASS_BITS) };
+        const {
+            assert!(NameClass::COUNT <= 1 << NameFacts::CLASS_BITS);
+            assert!(BuiltinName::COUNT <= u32::MAX >> NameFacts::CLASS_BITS);
+        }
         let builtin = builtin.map_or(0, |name| name.0 + 1);
-        debug_assert!(builtin <= u32::MAX >> NameFacts::CLASS_BITS);
         NameFacts(builtin << NameFacts::CLASS_BITS | class.to_wire())
     }
 

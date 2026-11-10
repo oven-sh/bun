@@ -29,6 +29,7 @@ use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, 
 use bun_sema_driver::host::{from_native, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 pub(crate) struct BuildContext {
     bundle: NonNull<BundleV2<'static>>,
@@ -248,6 +249,16 @@ pub(super) fn is_at_or_below(path: &[u8], folder: &[u8]) -> bool {
     rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
 }
 
+/// The front end writes `/` on every platform, as in `C:/a`. Paths are compared by their bytes here.
+fn with_platform_separators(path: &[u8]) -> Cow<'_, [u8]> {
+    if bun_paths::SEP == b'/' {
+        return Cow::Borrowed(path);
+    }
+    let mut path = path.to_vec();
+    posix_to_platform_in_place(&mut path);
+    Cow::Owned(path)
+}
+
 fn count_levels_above(root: &[u8], asset: &[u8]) -> usize {
     let Some(written_folder) = bun_paths::dirname(asset) else {
         return 0;
@@ -361,6 +372,7 @@ impl BundlerServices {
     }
 
     fn is_embeddable_as_asset(&self, source_path: &[u8]) -> bool {
+        let source_path = &*with_platform_separators(source_path);
         let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
         let is_around = |asset: &&Vec<u8>| is_at_or_below(source_path, asset);
         let mut around = self.assets.iter().filter(is_around).peekable();
@@ -645,6 +657,8 @@ impl SourceProvider for BundlerServices {
     }
 
     fn is_asset_unreachable(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        let module_path = &*with_platform_separators(module_path);
+        let source_path = &*with_platform_separators(source_path);
         let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
         // Almost every file is below the root.
         if self.names_wanted.runs_in_place || is_at_or_below(source_path, root) {
@@ -659,6 +673,7 @@ impl SourceProvider for BundlerServices {
     }
 
     fn find_symlink_in_asset(&self, source_path: &[u8]) -> Option<Vec<u8>> {
+        let source_path = &*with_platform_separators(source_path);
         let is_around = |asset: &&Vec<u8>| is_at_or_below(source_path, asset);
         let around = self.assets.iter().filter(is_around);
         let asset = around.max_by_key(|it| it.len())?;

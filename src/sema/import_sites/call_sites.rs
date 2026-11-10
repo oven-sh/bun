@@ -1346,7 +1346,7 @@ fn find_known_worker_names(
         found.alternatives.push(unknown);
     }
     found.is_from_data_file = false;
-    record_alternatives(inputs, argument, unknown, found, alternatives)
+    record_alternatives(inputs, argument, unknown, &found, alternatives)
 }
 
 fn is_ordinary_builtin_call(site: &ImportSite) -> bool {
@@ -1509,14 +1509,14 @@ fn find_specifier(
     let Some(found) = found else {
         return folded;
     };
-    record_alternatives(inputs, argument, folded, found, alternatives)
+    record_alternatives(inputs, argument, folded, &found, alternatives)
 }
 
 fn record_alternatives(
     inputs: &ScanInputs<'_, '_>,
     argument: ExprId,
     folded: ImportSpecifier,
-    found: Found,
+    found: &Found,
     alternatives: &mut FoundAlternatives,
 ) -> ImportSpecifier {
     if found.is_from_data_file {

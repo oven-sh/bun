@@ -1331,15 +1331,22 @@ impl StandaloneModuleGraph {
         let Some(slot) = descriptors.get_mut(fd.native() as usize) else {
             return Ok(now);
         };
-        let Some(Descriptor { opened, path }) = slot.as_deref() else {
+        let Some(Descriptor { opened, path }) = slot.as_deref_mut() else {
             return Ok(now);
         };
+        // macOS and FreeBSD move the birth time back to a modification time that is set earlier. A file that reuses the inode is born later.
+        let (born, recorded) = (now.birthtim, opened.birthtim);
+        if born == now.mtim && (born.sec, born.nsec) < (recorded.sec, recorded.nsec) {
+            opened.birthtim = born;
+        }
         let made = (opened.dev, opened.ino, opened.nlink, opened.birthtim);
         if (now.dev, now.ino, now.nlink, now.birthtim) != made {
             *slot = None;
             return Ok(now);
         }
-        let mut shown = self.stat(path).map_or(now, |named| PosixStat::init(&named));
+        let mut shown = self
+            .stat(*path)
+            .map_or(now, |named| PosixStat::init(&named));
         if now.mode != opened.mode {
             shown.mode = now.mode;
         }
@@ -1441,7 +1448,7 @@ impl StandaloneModuleGraph {
             }
             let asset = program.join_public_asset_path(root, path)?;
             let key = program.join_public_asset_path(root, &[path, below_asset].concat())?;
-            key.starts_with(&asset).then(|| (key, asset.len()))
+            key.starts_with(&asset).then_some((key, asset.len()))
         });
         let mut earlier_folders: Vec<Vec<u8>> = Vec::new();
         Some(keys.filter_map(move |(key, folder_length)| {

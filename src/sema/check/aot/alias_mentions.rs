@@ -11,6 +11,11 @@ pub struct AliasMentions {
     files: Box<[OnceLock<Box<[AtomicU64]>>]>,
 }
 
+struct BitPosition {
+    word: usize,
+    shift: usize,
+}
+
 impl AliasMentions {
     pub fn new(file_count: usize) -> AliasMentions {
         AliasMentions {
@@ -18,13 +23,16 @@ impl AliasMentions {
         }
     }
 
-    fn place(node: TypeNodeId) -> (usize, usize) {
+    fn bit_position(node: TypeNodeId) -> BitPosition {
         let node = node.0 as usize;
-        (node / NODES_PER_WORD, node % NODES_PER_WORD * 2)
+        BitPosition {
+            word: node / NODES_PER_WORD,
+            shift: node % NODES_PER_WORD * 2,
+        }
     }
 
     pub(super) fn get(&self, file: FileId, node: TypeNodeId) -> Option<bool> {
-        let (word, shift) = AliasMentions::place(node);
+        let BitPosition { word, shift } = AliasMentions::bit_position(node);
         let words = self.files.get(file.idx())?.get()?;
         let known = words.get(word)?.load(Ordering::Relaxed) >> shift & IS_KNOWN_TO_MENTION;
         (known != 0).then_some(known == IS_KNOWN_TO_MENTION)
@@ -44,7 +52,7 @@ impl AliasMentions {
             let words = (0..node_count.div_ceil(NODES_PER_WORD)).map(|_| AtomicU64::new(0));
             words.collect()
         });
-        let (word, shift) = AliasMentions::place(node);
+        let BitPosition { word, shift } = AliasMentions::bit_position(node);
         let known = match mentions_alias {
             true => IS_KNOWN_TO_MENTION,
             false => IS_KNOWN,

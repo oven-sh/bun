@@ -3,11 +3,11 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./harness/commands";
+import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
 import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
-const env = { ...bunEnv, NO_COLOR: "1", BUN_ENABLE_CRASH_REPORTING: "0" };
+const env = { ...bunEnv, NO_COLOR: "1", ...withoutCrashReport };
 const files = {
   "entry.mjs": `import "./prelude.mjs";
 await import("./main.ts");

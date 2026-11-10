@@ -26,7 +26,7 @@ fn read_type(words: &mut WordReader<'_>) -> DeclaredType {
     DeclaredType {
         ty: words.next_id(),
         site: words.next_optional_id(),
-        flags: PositionFlags(words.next()),
+        flags: PositionFlags::from_wire(words.next()).expect("a packed type has its flags"),
     }
 }
 
@@ -160,8 +160,9 @@ fn unpack(packed: &[u32], scratch: &mut PackScratch) -> Function {
     let end = start.wrapping_add(words.next());
     let kind = FunctionKind::from_wire(words.next()).expect("a packed function has a kind");
     let role = FunctionRole::from_wire(words.next()).expect("a packed function has a role");
-    let (flags, length) = (FunctionFlags(words.next()), words.next());
-    let syntax = FunctionSyntax(words.next());
+    let flags = FunctionFlags::from_wire(words.next()).expect("a packed function has its flags");
+    let length = words.next();
+    let syntax = FunctionSyntax::from_wire(words.next()).expect("a packed function has its syntax");
     let (block_count, value_count) = (words.next(), words.next());
     let [captures, parameters, results, requested_originals] =
         core::array::from_fn(|_| words.next());

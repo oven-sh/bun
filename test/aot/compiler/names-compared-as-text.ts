@@ -98,8 +98,8 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "a name that begins with % is the build's own: no program can write one",
   },
   {
-    paths: /^src\/aot\/(load\/react_compiler\/module_items|lower\/quoted_source)\.rs$/,
-    lines: /\.strip_prefix\(NAME_PREFIX\)|\.starts_with\(b"%"\)/,
+    paths: /^src\/aot\/(load\/(hoisted_mocks|react_compiler\/module_items)|lower\/quoted_source)\.rs$/,
+    lines: /\.strip_prefix\(NAME_PREFIX\)|\.starts_with\((?:b"%"|NAMESPACE_PREFIX)/,
     reason: "an identifier that begins with % is the build's own too: what is asked is who made the variable",
   },
   {

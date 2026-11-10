@@ -31,6 +31,23 @@ pub(in crate::lower) struct QuotedSources {
     line: Cell<Option<(usize, usize)>>,
 }
 
+impl QuotedSources {
+    fn keep(&mut self, printed: PrintedSource) -> Option<(u32, u32)> {
+        let PrintedSource {
+            text,
+            places,
+            places_of_patterns,
+            start,
+            gaps,
+        } = printed;
+        let end = text.len();
+        self.text = text;
+        self.places = places;
+        self.places_of_patterns = places_of_patterns;
+        (gaps == 0).then_some((start as u32, end as u32))
+    }
+}
+
 #[derive(Default)]
 struct PlacesOfPatterns {
     bound: FxHashMap<PatId, (u32, u32)>,
@@ -147,6 +164,14 @@ struct Printer<'f, 'a, 'c, 'p, 's> {
     start_of_arrow_body: usize,
 }
 
+struct PrintedSource {
+    text: Vec<u8>,
+    places: FxHashMap<ExprId, (u32, u32)>,
+    places_of_patterns: PlacesOfPatterns,
+    start: usize,
+    gaps: u32,
+}
+
 struct OpenOperator {
     expression: ExprId,
     op: BinOp,
@@ -166,6 +191,36 @@ fn is_truthy(constant: Constant, is_empty: impl FnOnce(Atom) -> bool) -> Option<
         Constant::String(text) => !is_empty(text),
         Constant::BigInt(_) => return None,
     })
+}
+
+impl<'f, 'a, 'c, 'p, 's> Printer<'f, 'a, 'c, 'p, 's> {
+    fn new(file: &'f mut FileLowering<'a, 'c, 'p, 's>) -> Printer<'f, 'a, 'c, 'p, 's> {
+        let text = core::mem::take(&mut file.quoted_sources.text);
+        let start = text.len();
+        Printer {
+            text,
+            places: core::mem::take(&mut file.quoted_sources.places),
+            places_of_patterns: core::mem::take(&mut file.quoted_sources.places_of_patterns),
+            is_assigned_pattern: false,
+            minifies_syntax: file.inputs.options.removable.minifies_syntax(),
+            file,
+            gaps: 0,
+            end_of_number: usize::MAX,
+            start,
+            start_of_statement: usize::MAX,
+            start_of_arrow_body: usize::MAX,
+        }
+    }
+
+    fn finish(self) -> PrintedSource {
+        PrintedSource {
+            text: self.text,
+            places: self.places,
+            places_of_patterns: self.places_of_patterns,
+            start: self.start,
+            gaps: self.gaps,
+        }
+    }
 }
 
 impl Printer<'_, '_, '_, '_, '_> {
@@ -1263,34 +1318,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         &mut self,
         print: impl FnOnce(&mut Printer<'_, 'a, 'c, 'p, 's>),
     ) -> Option<(u32, u32)> {
-        let text = core::mem::take(&mut self.quoted_sources.text);
-        let start = text.len();
-        let mut printer = Printer {
-            text,
-            places: core::mem::take(&mut self.quoted_sources.places),
-            places_of_patterns: core::mem::take(&mut self.quoted_sources.places_of_patterns),
-            is_assigned_pattern: false,
-            minifies_syntax: self.inputs.options.removable.minifies_syntax(),
-            file: self,
-            gaps: 0,
-            end_of_number: usize::MAX,
-            start,
-            start_of_statement: usize::MAX,
-            start_of_arrow_body: usize::MAX,
-        };
+        let mut printer = Printer::new(self);
         print(&mut printer);
-        let Printer {
-            text,
-            places,
-            places_of_patterns,
-            gaps,
-            ..
-        } = printer;
-        let end = text.len();
-        self.quoted_sources.text = text;
-        self.quoted_sources.places = places;
-        self.quoted_sources.places_of_patterns = places_of_patterns;
-        (gaps == 0).then_some((start as u32, end as u32))
+        let printed = printer.finish();
+        self.quoted_sources.keep(printed)
     }
 
     #[inline]

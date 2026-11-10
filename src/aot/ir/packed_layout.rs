@@ -136,11 +136,14 @@ fn read_field(before: &mut Before, words: &mut WordReader<'_>) -> Field {
         declared: DeclaredType {
             ty,
             site: has(HAS_SITE).then(|| words.next_id()),
-            flags: PositionFlags(part(POSITION_AT, PositionFlags::ALL.0)),
+            flags: PositionFlags::from_wire(part(POSITION_AT, PositionFlags::ALL.0))
+                .expect("a packed field has the flags of its position"),
         },
         computed_key: has(HAS_COMPUTED_KEY).then(|| words.next()),
-        flags: FieldFlags(part(FLAGS_AT, FieldFlags::ALL.0)),
-        form: FieldForm(part(FORM_AT, FieldForm::ALL.0)),
+        flags: FieldFlags::from_wire(part(FLAGS_AT, FieldFlags::ALL.0))
+            .expect("a packed field has its flags"),
+        form: FieldForm::from_wire(part(FORM_AT, FieldForm::ALL.0))
+            .expect("a packed field has its form"),
         origin_layout: has(HAS_ORIGIN_LAYOUT).then(|| words.next_id()),
         origin_field: has(HAS_ORIGIN_FIELD).then(|| words.next()),
         variable_name: has(HAS_VARIABLE_NAME).then(|| words.next_id()),
@@ -224,7 +227,7 @@ impl PackedLayout {
         let kind = LayoutKind::from_wire(words.next()).expect("a packed layout has a kind");
         let (name, constructor) = (words.next_optional_id(), words.next_optional_id());
         let computed_key_count = words.next();
-        let flags = LayoutFlags(words.next());
+        let flags = LayoutFlags::from_wire(words.next()).expect("a packed layout has its flags");
         let place = words.next_optional();
         let [
             field_count,

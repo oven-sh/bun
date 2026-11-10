@@ -679,7 +679,12 @@ fn find_fields_to_be_filled(text: ClassText<'_, '_>, plan: &ClassPlan) -> Option
     (has_empty || parameter_properties != 0).then_some(fields)
 }
 
-fn find_assignment(hir: &hir::File<'_>, statement: StmtId) -> Option<(ExprId, ExprId)> {
+struct Assignment {
+    target: ExprId,
+    value: ExprId,
+}
+
+fn find_assignment(hir: &hir::File<'_>, statement: StmtId) -> Option<Assignment> {
     let StmtKind::Expr(expression) = hir[statement].kind else {
         return None;
     };
@@ -688,7 +693,7 @@ fn find_assignment(hir: &hir::File<'_>, statement: StmtId) -> Option<(ExprId, Ex
             op: None,
             target,
             value,
-        } => Some((target, value)),
+        } => Some(Assignment { target, value }),
         _ => None,
     }
 }
@@ -744,7 +749,7 @@ fn find_stores_behind_super_call(
         if file.decisions().is_dead_stmt(statement) {
             continue;
         }
-        let Some((target, value)) = find_assignment(hir, statement) else {
+        let Some(Assignment { target, value }) = find_assignment(hir, statement) else {
             break;
         };
         if hir.skip_type_assertions(value) != value
@@ -803,7 +808,7 @@ pub(super) fn find_fields_at_birth(
             is_plain_row = false;
             continue;
         }
-        let Some((target, value)) = find_assignment(hir, statement) else {
+        let Some(Assignment { target, value }) = find_assignment(hir, statement) else {
             break;
         };
         let written = hir.skip_type_assertions(value);

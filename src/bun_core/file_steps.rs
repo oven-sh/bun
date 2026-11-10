@@ -155,7 +155,7 @@ mod counter {
         *KEY.get_or_init(|| {
             let mut key = 0;
             // SAFETY: it writes `key`.
-            let result = unsafe { libc::pthread_key_create(&mut key, Some(free)) };
+            let result = unsafe { libc::pthread_key_create(&raw mut key, Some(free)) };
             (result == 0).then_some(key)
         })
     }

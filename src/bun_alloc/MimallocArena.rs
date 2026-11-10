@@ -23,7 +23,7 @@ use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 #[cfg(debug_assertions)]
 use core::sync::atomic::AtomicU64;
-use core::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering, fence};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering, fence};
 
 use crate::ast_alloc::thread_key;
 use crate::mimalloc;
@@ -89,7 +89,7 @@ pub struct BlockChunk {
     /// The arena allocates from another chunk now.
     is_full: AtomicBool,
     /// For each system page, the units of `UNIT` bytes in use. The chunk need not start at a page boundary.
-    page_units: [AtomicU16; MAX_PAGES],
+    page_units: [AtomicU32; MAX_PAGES],
 }
 
 /// Blocks start and end at multiples of this.
@@ -136,7 +136,7 @@ impl BlockChunk {
             owner_thread: thread_key(),
             holes: Cell::new([Hole::NONE; MAX_HOLES]),
             is_full: AtomicBool::new(false),
-            page_units: [const { AtomicU16::new(0) }; MAX_PAGES],
+            page_units: [const { AtomicU32::new(0) }; MAX_PAGES],
         }
     }
 
@@ -150,7 +150,7 @@ impl BlockChunk {
         blocks.div_ceil(page_size)..(self.address() + MimallocArena::CHUNK_SIZE) / page_size
     }
 
-    fn units_in_page(&self, page: usize, page_size: usize) -> &AtomicU16 {
+    fn units_in_page(&self, page: usize, page_size: usize) -> &AtomicU32 {
         &self.page_units[page - self.address() / page_size]
     }
 
@@ -160,12 +160,12 @@ impl BlockChunk {
         start: usize,
         size: usize,
         page_size: usize,
-        mut each: impl FnMut(usize, u16),
+        mut each: impl FnMut(usize, u32),
     ) {
         let (mut at, end) = (self.address() + start, self.address() + start + size);
         while at < end {
             let next = ((at / page_size + 1) * page_size).min(end);
-            each(at / page_size, ((next - at) / UNIT) as u16);
+            each(at / page_size, ((next - at) / UNIT) as u32);
             at = next;
         }
     }
@@ -178,47 +178,37 @@ impl BlockChunk {
         });
     }
 
-    /// Once the chunk is full, discards the pages without a block in use.
     fn remove_block_units(&self, start: usize, size: usize) {
         let page_size = crate::page_size();
-        let mut emptied = 0..0;
         self.for_each_page(start, size, page_size, |page, units| {
-            let before = self
-                .units_in_page(page, page_size)
+            self.units_in_page(page, page_size)
                 .fetch_sub(units, Ordering::SeqCst);
-            if before == units {
-                emptied = if emptied.is_empty() {
-                    page
-                } else {
-                    emptied.start
-                }..page + 1;
-            }
         });
-        // `stop_filling` sets the flag before it reads the counts, so one of the two sees the other.
-        if self.is_full.load(Ordering::SeqCst) {
-            self.discard(&emptied, page_size);
-        }
     }
 
-    fn discard(&self, pages: &core::ops::Range<usize>, page_size: usize) {
+    /// Once the chunk is full, discards those of the pages without a block in use.
+    fn discard_empty_if_full(&self, pages: core::ops::Range<usize>, page_size: usize) {
+        // `stop_filling` sets the flag before it reads the counts, so whoever comes second of the two sees that a page is
+        // empty. The count is read only behind the flag: until the flag is set, the arena may lay another block into the
+        // page. From then on the counts only fall, so a page that is empty stays so.
+        if !self.is_full.load(Ordering::SeqCst) {
+            return;
+        }
         let own = self.whole_pages(page_size);
-        let (first, end) = (pages.start.max(own.start), pages.end.min(own.end));
-        if first < end {
+        let mut pages = pages.start.max(own.start)..pages.end.min(own.end);
+        let is_empty =
+            |page: usize| self.units_in_page(page, page_size).load(Ordering::SeqCst) == 0;
+        while let Some(first) = pages.find(|&page| is_empty(page)) {
+            let end = pages.find(|&page| !is_empty(page)).unwrap_or(pages.end);
             discard_pages(first * page_size, (end - first) * page_size);
         }
     }
 
-    /// Discards the pages without a block in use. Called on the owner thread when it moves on to another chunk.
+    /// Called on the owner thread when it moves on to another chunk.
     fn stop_filling(&self) {
         self.is_full.store(true, Ordering::SeqCst);
         let page_size = crate::page_size();
-        let is_empty =
-            |page: usize| self.units_in_page(page, page_size).load(Ordering::SeqCst) == 0;
-        let mut pages = self.whole_pages(page_size);
-        while let Some(first) = pages.find(|&page| is_empty(page)) {
-            let end = pages.find(|&page| !is_empty(page)).unwrap_or(pages.end);
-            self.discard(&(first..end), page_size);
-        }
+        self.discard_empty_if_full(self.whole_pages(page_size), page_size);
     }
 
     /// A hole that does not fit in the list is not reused until the chunk is freed.
@@ -257,6 +247,19 @@ impl BlockChunk {
     /// Must be called once for each block from `alloc_block`, with the same `size`, while the arena is alive.
     /// The block must not be used again.
     pub unsafe fn free_block(chunk: NonNull<BlockChunk>, block: NonNull<u8>, size: usize) {
+        // SAFETY: caller contract.
+        unsafe { BlockChunk::begin_free(chunk, block, size) }.finish();
+    }
+
+    /// The first half of `free_block`: the block no longer counts.
+    ///
+    /// # Safety
+    /// As for `free_block`.
+    pub unsafe fn begin_free(
+        chunk: NonNull<BlockChunk>,
+        block: NonNull<u8>,
+        size: usize,
+    ) -> FreeInProgress {
         // SAFETY: the caller's use keeps the chunk alive.
         let head = unsafe { chunk.as_ref() };
         let start = block.addr().get() - chunk.addr().get();
@@ -268,8 +271,7 @@ impl BlockChunk {
             });
         }
         head.remove_block_units(start, size);
-        // SAFETY: caller contract.
-        unsafe { BlockChunk::stop_using(chunk) };
+        FreeInProgress { chunk, start, size }
     }
 
     /// # Safety
@@ -291,6 +293,28 @@ impl BlockChunk {
                 MimallocArena::CHUNK_SIZE,
                 align_of::<BlockChunk>(),
             );
+        }
+    }
+}
+
+/// `BlockChunk::begin_free`. Keeps the chunk alive.
+#[must_use]
+pub struct FreeInProgress {
+    chunk: NonNull<BlockChunk>,
+    start: usize,
+    size: usize,
+}
+
+impl FreeInProgress {
+    pub fn finish(self) {
+        // SAFETY: the use of the block, which ends here, keeps the chunk alive.
+        unsafe {
+            let head = self.chunk.as_ref();
+            let page_size = crate::page_size();
+            let start = head.address() + self.start;
+            let pages = start / page_size..(start + self.size).div_ceil(page_size);
+            head.discard_empty_if_full(pages, page_size);
+            BlockChunk::stop_using(self.chunk);
         }
     }
 }

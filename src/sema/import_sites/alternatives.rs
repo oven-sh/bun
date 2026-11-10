@@ -1102,7 +1102,7 @@ impl Follower<'_, '_, '_> {
                     false => 0,
                 };
                 let key = (context, FollowedKey::Expr(written));
-                self.follow_once(key, |follower| follower.values_of_written(written))
+                self.follow_once(key, written)
             }
             _ => self.values_of_written(written),
         };
@@ -1121,11 +1121,7 @@ impl Follower<'_, '_, '_> {
         context
     }
 
-    fn follow_once(
-        &mut self,
-        key: (u32, FollowedKey),
-        follow: impl FnOnce(&mut Self) -> Option<Values>,
-    ) -> Option<Values> {
+    fn follow_once(&mut self, key: (u32, FollowedKey), mention: ExprId) -> Option<Values> {
         let settled = || self.findings.followed.get(&key);
         if let Some(followed) = self.followed.get(&key).or_else(settled) {
             self.open_parameters.extend(followed.open_parameter);
@@ -1157,7 +1153,10 @@ impl Follower<'_, '_, '_> {
         let met_before = std::mem::replace(&mut self.met_in_progress, MetInProgress::NONE);
         let had_run_out = self.has_run_out.replace(false);
         let had_read_data_file = self.has_read_data_file.replace(false);
-        let values = follow(self);
+        let values = match key.1 {
+            FollowedKey::Expr(written) => self.values_of_written(written),
+            FollowedKey::Symbol(symbol) => self.values_of_symbol(mention, symbol),
+        };
         let met = self.met_in_progress;
         let leans_on_itself_alone = met.variable >= variables && met.function >= functions;
         let is_asking =
@@ -1663,7 +1662,7 @@ impl Follower<'_, '_, '_> {
             None => 0,
         };
         let key = (context, FollowedKey::Symbol(symbol));
-        self.follow_once(key, |follower| follower.values_of_symbol(name, symbol))
+        self.follow_once(key, name)
     }
 
     fn values_of_symbol(&mut self, name: ExprId, symbol: SymbolId) -> Option<Values> {

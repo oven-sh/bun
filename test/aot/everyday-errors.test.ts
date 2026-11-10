@@ -16,10 +16,12 @@ test.skipIf(!!unsupported)("everyday errors have the message and the stack that 
       "main.mjs": readFileSync(join(import.meta.dir, "everyday-errors.fixture.mjs"), "utf8"),
     });
     const folder = String(dir);
+    // A build with assertions records positions inside built-in functions, so plain Bun gives `from (native:17:36)` there and `from (native:1:11)` in a release build. An executable gives `from (native:1:11)` in both.
     const linesOf = (stdout: string) =>
       stdout
         .replaceAll(folder.replaceAll("\\", "/") + "/", "./")
         .replaceAll(folder + "\\", "./")
+        .replace(/\(native:\d+:\d+\)/g, "(native)")
         .split("\n");
     const build = [
       bunExe(),

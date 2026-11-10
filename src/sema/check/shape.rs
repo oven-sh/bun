@@ -3112,11 +3112,20 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if resolving the members of a reference to the class or interface `sym` can request members while it
     /// instantiates the base types, as in `class L<T> extends B<T["a"]>`.
     fn base_types_request_members(&mut self, sym: Sym) -> bool {
+        self.base_types_request_members_past(sym, &mut Default::default())
+    }
+
+    fn base_types_request_members_past(
+        &mut self,
+        sym: Sym,
+        asked: &mut crate::util::FxHashSet<Sym>,
+    ) -> bool {
         for &base in self.base_types(sym).iter() {
             if self.requests_members_when_instantiated(base)
                 || matches!(*self.data(base), TypeData::Ref { target, .. } if target != sym
                     && self.has_type_variables(base)
-                    && self.base_types_request_members(target))
+                    && asked.insert(target)
+                    && self.base_types_request_members_past(target, asked))
             {
                 return true;
             }

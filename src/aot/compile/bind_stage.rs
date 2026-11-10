@@ -707,13 +707,9 @@ impl Build<'_> {
                 steps.end_with(|| format!("{project_name}: finish modules"));
                 if !self.options.load.runs_tests {
                     for &replaced in &reached.replaced_loader_hooks {
-                        let ReplacedLoaderHook {
-                            file,
-                            assignment,
-                            hook,
-                        } = replaced;
+                        let ReplacedLoaderHook { file, store, hook } = replaced;
                         let hir = view.files().hir(file);
-                        let span = Span::of_node(hir, file, NodeData::Expr(assignment));
+                        let span = Span::of_node(hir, file, NodeData::Expr(store));
                         let code = Code::LoaderFunctionNotAsked;
                         let warning = Diagnostic::new(code, Some(span), &[hook.name()]);
                         self.diagnostics.add(Some(view), warning);

@@ -236,7 +236,7 @@ impl Outcome {
             }
         }
         let hooks = reached.replaced_loader_hooks.iter();
-        let hooks = hooks.map(|it| (it.file, it.assignment.0)).collect();
+        let hooks = hooks.map(|it| (it.file, it.store.0)).collect();
         let fingerprint = fingerprint(input, &left_out, &reached, in_parallel);
         Outcome {
             left_out,
@@ -477,7 +477,7 @@ fn find_stores_of_loader_hooks(name: &str, text: &str) -> (Vec<String>, bool) {
         let (_, reached) = find_left_out_code(input, &run_serially);
         let describe = |replaced: &ReplacedLoaderHook| {
             let hir = input.files.hir(replaced.file);
-            let before = &hir.text[..hir[replaced.assignment].pos as usize];
+            let before = &hir.text[..hir[replaced.store].pos as usize];
             let line = 1 + count_char(before, b'\n');
             let column = before.len() - last_index_of_char(before, b'\n').map_or(0, |at| at + 1);
             let hook = replaced.hook.name().as_bstr();

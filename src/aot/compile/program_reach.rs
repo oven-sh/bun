@@ -152,7 +152,7 @@ impl LoaderHook {
 #[derive(Copy, Clone)]
 pub(crate) struct ReplacedLoaderHook {
     pub file: FileId,
-    pub assignment: ExprId,
+    pub store: ExprId,
     pub hook: LoaderHook,
 }
 
@@ -3608,12 +3608,8 @@ impl Reacher<'_, '_, '_> {
             Interest::StoreOfLoaderFunction(replaced) => {
                 self.keep_every_module_object(file);
                 self.found.stores_loader_function = true;
-                if let Some((assignment, hook)) = replaced {
-                    let replaced = ReplacedLoaderHook {
-                        file,
-                        assignment,
-                        hook,
-                    };
+                if let Some((store, hook)) = replaced {
+                    let replaced = ReplacedLoaderHook { file, store, hook };
                     self.found.replaced_loader_hooks.push(replaced);
                 }
             }
@@ -4081,7 +4077,7 @@ fn fingerprint(
         }
     }
     for replaced in &reached.replaced_loader_hooks {
-        add(9, replaced.file, u64::from(replaced.assignment.0));
+        add(9, replaced.file, u64::from(replaced.store.0));
     }
     for &(file, entry) in &reached.deletions_from_module_cache {
         add(10, file, u64::from(entry.0));
@@ -4259,7 +4255,7 @@ pub(crate) fn find_left_out_code_seeding_last(
     reached_modules.places_that_hand_module_cache_on.dedup();
     reached_modules
         .replaced_loader_hooks
-        .sort_unstable_by_key(|replaced| (replaced.file, replaced.assignment.0));
+        .sort_unstable_by_key(|replaced| (replaced.file, replaced.store.0));
     if !loads.packages.is_empty() {
         let is_data = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Data;
         let data_files = input.files.compiled_files().iter().filter(is_data);

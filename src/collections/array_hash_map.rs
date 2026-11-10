@@ -2065,6 +2065,37 @@ mod index_tests {
     }
 
     #[test]
+    fn swap_entries_keeps_every_key_findable() {
+        let mut m: StringArrayHashMap<usize> = StringArrayHashMap::new();
+        let keys: Vec<String> = (0..500).map(|i| format!("key{i}")).collect();
+        for (i, k) in keys.iter().enumerate() {
+            m.put(k.as_bytes(), i).unwrap();
+        }
+        // Many pairs, including the last entry with a middle one, and a slot swapped twice.
+        let pairs = [
+            (0, 499),
+            (1, 250),
+            (250, 2),
+            (3, 3),
+            (498, 499),
+            (100, 400),
+            (0, 1),
+        ];
+        let mut order: Vec<usize> = (0..500).collect();
+        for &(a, b) in &pairs {
+            m.swap_entries(a, b);
+            order.swap(a, b);
+        }
+        for (index, &value) in order.iter().enumerate() {
+            let key = keys[value].as_bytes();
+            assert_eq!(m.get_index(key), Some(index));
+            assert_eq!(m.get(key), Some(&value));
+            assert_eq!(m.keys()[index].as_ref(), key);
+        }
+        assert_eq!(m.get(b"missing"), None);
+    }
+
+    #[test]
     fn string_map_indexed() {
         let mut m: StringArrayHashMap<usize> = StringArrayHashMap::new();
         let keys: Vec<String> = (0..200).map(|i| format!("key{i}")).collect();

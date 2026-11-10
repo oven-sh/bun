@@ -179,7 +179,7 @@ walk is as it was, and no mark and no range changes.
   transitive arrival. Upstream passes that over in every order, and so a `push` changes the array alone.
 - When the scopes are known, `refuse_a_store_after_the_scope_of_a_missed_value` refuses the function if such a value
   has a scope that ends before the store. A value with no scope is not cached, and a value in the scope of the store
-  is made again whenever the store runs, so those are right as they are.
+  is made again whenever the store runs. The first of the gaps below is where that is not enough.
 - Only a store is judged, and only in the outermost function. The callback of `useMemo` and a function that is
   called where it stands are a part of that function by then. A call that may store and a store in another function
   expression miss values the same way, and stay as in upstream (`react-compiler/CallThatMayStoreThroughAJoin`,
@@ -197,6 +197,32 @@ product of such components with and without the switch. The rule can go when ups
 The rule does not see a value that the container got in a statement of its own (`w.push(x)`, `tree.child = leaf`).
 The statement gave the value to a read of the container, and the second walk comes to that read only along an edge
 (`react-compiler/StoreReachesWhatAValueOfAJoinWasGiven`).
+
+A review found these gaps, and they are open:
+
+- A value in the scope of the store can be stale all the same. An inner memo block of that scope can lose its
+  dependency on the value: PruneNonReactiveDependencies visits the inner block before it marks what the outer block
+  declares. The component below is compiled, and its store goes to the `totals` of an earlier render. A check of the
+  range of the value in place of its scope refuses that function. It also leaves more functions as written that are
+  right.
+
+  ```js
+  function Totals({ items, pick, extra }) {
+    const totals = { count: 0 };
+    const seen = [];
+    totals.label = "all";
+    const holder = { totals };
+    const target = pick ? holder.totals : holder;
+    target.count += items.length;
+    seen.push(extra);
+    return <b data-holder={holder}>{totals.count + "/" + seen.length}</b>;
+  }
+  ```
+
+- `Environment::missed_values` has a record for each store and each value that its walk misses. One record for a
+  value is enough, with the last such store.
+- A function that is left as written takes its outlined functions with it, so the outlined functions of a later
+  function of the file get other numbers.
 
 ## Hook placement
 

@@ -261,14 +261,30 @@ impl<'s> Folder<'_, 's> {
     }
 
     pub(super) fn is_enum_member_written_in_place(&self, e: ExprId) -> bool {
-        if self.enum_members.values.is_empty() {
-            return false;
-        }
+        !self.enum_members.values.is_empty()
+            && self.finds_where_written_in_place(e, |e| self.enum_members.reads.contains(e.idx()))
+    }
+
+    fn is_member_known_by_kind_written_in_place(&self, e: ExprId) -> bool {
+        let hir = self.hir;
+        let is_known_by_kind = |member: &ExprId| {
+            matches!(
+                hir[*member].kind,
+                ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Regex { .. }
+            )
+        };
+        !self.written_in_place.is_empty()
+            && self.finds_where_written_in_place(e, |read| {
+                (self.written_in_place.get(&read)).is_some_and(is_known_by_kind)
+            })
+    }
+
+    fn finds_where_written_in_place(&self, e: ExprId, is_found: impl Fn(ExprId) -> bool) -> bool {
         let hir = self.hir;
         let mut e = e;
         loop {
             e = hir.skip_type_assertions(e);
-            if self.enum_members.reads.contains(e.idx()) {
+            if is_found(e) {
                 return true;
             }
             let select = |is_first: bool, first: ExprId, second: ExprId| match is_first {
@@ -313,7 +329,10 @@ impl<'s> Folder<'_, 's> {
         let mut found = PositionSet::new(self.hir.exprs.len());
         self.holds_under_minify_syntax(|folder| {
             for index in folder.folded_under_minify_syntax.iter() {
-                if !folder.is_enum_member_written_in_place(ExprId(index as u32)) {
+                let e = ExprId(index as u32);
+                let is_written_in_place = folder.is_enum_member_written_in_place(e)
+                    || folder.is_member_known_by_kind_written_in_place(e);
+                if !is_written_in_place {
                     found.insert(index);
                 }
             }

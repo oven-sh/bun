@@ -2,6 +2,7 @@ use super::Constant;
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use crate::atom::known;
+use crate::bind::decorator_metadata::has_decorators;
 use crate::hir::{
     Chain, ExprId, ExprKind, IdList, MemberKey, NameKind, PropId, PropKey, PropKind, Span,
 };
@@ -102,7 +103,9 @@ impl Folder<'_, '_> {
         };
         let written = self.find_written_in_place(part);
         let is_literal = matches!(hir[written].kind, ExprKind::Array(_) | ExprKind::Object(_));
-        if !is_literal && matches!(folded.value, Value::Unknown) {
+        let is_known_by_kind =
+            self.is_known_by_kind(written, index.is_none()) && self.is_read_of_only_member(access);
+        if !is_literal && !is_known_by_kind && matches!(folded.value, Value::Unknown) {
             return Folded::UNKNOWN;
         }
         self.written_in_place.insert(access, written);
@@ -111,6 +114,43 @@ impl Folder<'_, '_> {
         self.note_condition_told_in_place(access, part, index);
         let effects_of_index = index.map_or(Effects::None, |index| self.folded(index).effects);
         Folded::new(folded.value, folded.effects.min(effects_of_index))
+    }
+
+    fn is_known_by_kind(&self, member: ExprId, is_named_by_key: bool) -> bool {
+        let hir = self.hir;
+        match hir[member].kind {
+            ExprKind::Regex { .. } => true,
+            ExprKind::Fn(function) => !(is_named_by_key && hir[function].name.is_none()),
+            ExprKind::Class(class) => {
+                let class = hir[class];
+                !(is_named_by_key && class.name.is_none()) && !has_decorators(hir, class.modifiers)
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn is_read_of_only_member(&self, access: ExprId) -> bool {
+        let hir = self.hir;
+        let Some((object, key)) = hir.member_key(access) else {
+            return false;
+        };
+        let is_unchained = matches!(
+            hir[access].kind,
+            ExprKind::Dot {
+                chain: Chain::No,
+                ..
+            } | ExprKind::Index {
+                chain: Chain::No,
+                ..
+            }
+        );
+        match (hir[hir.skip_type_assertions(object)].kind, key) {
+            (ExprKind::Array(items), MemberKey::Computed(_)) => items.len() == 1,
+            (ExprKind::Object(properties), MemberKey::Name(name)) => {
+                properties.len() == 1 && is_unchained && self.atoms.bytes(name).is_ascii()
+            }
+            _ => false,
+        }
     }
 
     fn note_who_writes_in_place(&mut self, access: ExprId, part: ExprId, index: Option<ExprId>) {

@@ -94,6 +94,14 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
     }
   });
 
+  test("in a file that is an ES module by a read out of a literal that bun run replaces", async () => {
+    await expectEarlyError(
+      "main.js",
+      `if ({ b: function named() {} }.b) {} else module.exports = 1;\nconsole.log("never printed");\nvar yield = 1;\n`,
+      3,
+    );
+  });
+
   test("in a CommonJS module", async () => {
     await expectEarlyError(
       "main.cjs",

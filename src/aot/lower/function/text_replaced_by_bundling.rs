@@ -250,6 +250,10 @@ impl Finder<'_, '_> {
         let hir = self.hir;
         let Some(kept) = self.find_operand_kept(expression) else {
             if let ExprKind::Binary { left, right, .. } = hir[expression].kind {
+                if self.would_be_reference(expression, left) {
+                    let start = start_inside_parentheses(hir, expression);
+                    self.replace(start, start, Box::new(*b"0, "));
+                }
                 self.leave_out(end_of_expr(hir, left), end_of_expr(hir, right));
             }
             return;

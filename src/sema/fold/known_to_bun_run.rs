@@ -460,6 +460,17 @@ impl<'s> Folder<'_, 's> {
                 }
                 ExprKind::Binary { .. } => Some(false),
                 ExprKind::Assign { op: Some(op), .. } => (!is_logical(op)).then_some(false),
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                    match self.written_in_place.get(&e).copied() {
+                        Some(member)
+                            if self.is_folded_by_bun_run(e) && self.is_read_of_only_member(e) =>
+                        {
+                            e = member;
+                            continue;
+                        }
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
         }
@@ -514,7 +525,8 @@ impl<'s> Folder<'_, 's> {
             match hir[e].kind {
                 ExprKind::Fn(_) | ExprKind::Regex { .. } => return true,
                 ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    return self.is_condition_told_by_shape(e);
+                    return self.is_condition_told_by_shape(e)
+                        && !self.is_told_by_class_in_place(e);
                 }
                 ExprKind::Unary {
                     op: UnOp::Not,
@@ -527,6 +539,45 @@ impl<'s> Folder<'_, 's> {
                 _ => return false,
             }
         }
+    }
+
+    fn is_told_by_class_in_place(&self, read: ExprId) -> bool {
+        let hir = self.hir;
+        let mut parts = vec![read];
+        while let Some(part) = parts.pop() {
+            let part = hir.skip_type_assertions(part);
+            match hir[part].kind {
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                    match self.written_in_place.get(&part) {
+                        Some(&member) if matches!(hir[member].kind, ExprKind::Class(_)) => {
+                            return true;
+                        }
+                        Some(&member) => parts.push(member),
+                        None => {}
+                    }
+                }
+                ExprKind::Unary {
+                    op: UnOp::Not,
+                    operand,
+                } => parts.push(operand),
+                ExprKind::Cond { test, branches } => {
+                    let branches = hir.branches(branches);
+                    parts.extend([test, branches.yes, branches.no]);
+                }
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } => parts.extend([left, right]),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => parts.push(right),
+                _ => {}
+            }
+        }
+        false
     }
 
     pub(super) fn leaves_out_known_test(&self, test: ExprId) -> bool {

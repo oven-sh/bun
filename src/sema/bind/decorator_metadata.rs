@@ -190,7 +190,7 @@ pub fn is_field_moved_by_legacy_decorators(hir: &File<'_>, member: MemberId) -> 
         && is_legacy_decorated_member(hir, member)
 }
 
-pub(super) fn has_decorators(hir: &File<'_>, modifiers: Span<ModifierId>) -> bool {
+pub(crate) fn has_decorators(hir: &File<'_>, modifiers: Span<ModifierId>) -> bool {
     modifiers.iter().any(|modifier| match hir[modifier].kind {
         ModifierKind::Decorator(_) => true,
         ModifierKind::Keyword(_) => false,

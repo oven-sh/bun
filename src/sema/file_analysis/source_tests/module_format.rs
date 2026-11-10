@@ -820,6 +820,14 @@ const NO_FORMAT_ERROR: &[(&str, &str)] = &[
     ("a.js", r#"import a from "m"; a; return;"#),
     (
         "a.js",
+        r#"import a from "m"; a; if ([() => {}][0]) {} else module.exports = 1;"#,
+    ),
+    (
+        "a.js",
+        r#"import a from "m"; a; var v = { b: function named() {} }.b ?? module.exports;"#,
+    ),
+    (
+        "a.js",
         r#"import a from "m"; export default a; module.exports = 1;"#,
     ),
     (
@@ -1068,6 +1076,9 @@ const TOP_LEVEL_AWAITS: &[(&str, bool, bool)] = &[
         true,
         false,
     ),
+    ("if ([() => 1][0]) {} else await 0;", true, false),
+    ("var v = { b: class Named {} }.b ?? (await 0);", true, false),
+    ("let i = 0; if ([/x/][i]) {} else await 0;", true, true),
     ("async function f() { await 0; }", false, false),
     ("const f = async () => { await 0; };", false, false),
     ("1;", false, false),
@@ -1894,6 +1905,99 @@ fn what_and_and_or_give_decides_the_format_where_bun_run_knows_the_left_operand(
     ] {
         analyzed("a.js", text, |s| {
             assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+        });
+    }
+}
+
+const REMOVED_BEHIND_ONLY_MEMBERS_KNOWN_BY_KIND: &[&str] = &[
+    "if ({ b: function named() {} }.b) {} else module.exports = 1;",
+    "if ({ b: class Named {} }.b) {} else module.exports = 1;",
+    "var v = { a: function named() {} }.a ?? module.exports;",
+    "if ({ b: /x/ }.b) {} else module.exports = 1;",
+    "if ([() => {}][0]) {} else module.exports = 1;",
+    "if ([function () {}][0]) {} else module.exports = 1;",
+    "if ([class {}][0]) {} else module.exports = 1;",
+    "if ([class A { static m() {} a = b(); constructor() { b(); } }][0]) {} else module.exports = 1;",
+    "if ([class { static { f() } }][0]) {} else module.exports = 1; function f() {}",
+    "if ([class extends f { static a = f(); [f()]() {} }][0]) {} else module.exports = 1; function f() {}",
+    "if ([class { accessor a = 1; @f m() {} }][0]) {} else module.exports = 1; function f() {}",
+    "if ([async () => {}][0]) {} else module.exports = 1;",
+    "if ({ b: function named() {} }[\"b\"]) {} else module.exports = 1;",
+    "if ({ \"a-b\": function named() {} }[\"a-b\"]) {} else module.exports = 1;",
+    "if ([[() => {}][0]][0]) {} else module.exports = 1;",
+    "if ([() => {}]?.[0]) {} else module.exports = 1;",
+    "if (![() => {}][0]) module.exports = 1;",
+    "if (!{ b: function named() {} }.b) module.exports = 1;",
+    "[function () {}][0] || (module.exports = 1);",
+    "[class {}][0] ? 1 : (module.exports = 1);",
+    "var v = [() => {}][0] || module.exports;",
+    "var v = [() => {}][0] ?? module.exports;",
+    "var v = [class {}][0] ?? module.exports;",
+    "var v = [/x/][0] ?? module.exports;",
+    "var v = [[]][0] ?? module.exports;",
+    "var v = { a: {} }.a ?? module.exports;",
+    "if (([![[]][0]][0] || 1) === 1) {} else module.exports = 1;",
+];
+
+const LEFT_BEHIND_MEMBERS_THAT_BUN_RUN_KEEPS: &[&str] = &[
+    "if ({ b() {} }.b) {} else module.exports = 1;",
+    "if ({ b: function named() {} }.b()) {} else module.exports = 1;",
+    "if ({ b: function named() {}, c: 1 }.b) {} else module.exports = 1;",
+    "if ({ __proto__: function named() {} }.__proto__) {} else module.exports = 1;",
+    "if ({ [\"b\"]: function named() {} }.b) {} else module.exports = 1;",
+    "if ([a(), () => {}][1]) {} else module.exports = 1;",
+    "if ([a()][0]) {} else module.exports = 1;",
+    "if ([@f class {}][0]) {} else module.exports = 1; function f() {}",
+    "var v = { b: @f class Named {} }.b ?? module.exports; function f() {}",
+    "const f = [() => {}][0]; if (f) {} else module.exports = 1;",
+    "let i = 0; if ([() => {}][i]) {} else module.exports = 1;",
+    "let i = 0; var v = [[]][i] ?? module.exports;",
+    "var v = [a][0] ?? module.exports;",
+    "var v = [[]][0] && module.exports;",
+    "if (([[class {}][0] ? 1 : 2][0] && 1) === 1) {} else module.exports = 1;",
+    "if (([[class {}][0] && 0][0] || 1) === 1) {} else module.exports = 1;",
+];
+
+const LEFT_BEHIND_MEMBERS_OUTSIDE_THE_RULE: &[&str] = &[
+    "if ({ b: () => {} }.b) {} else module.exports = 1;",
+    "if ({ b: function () {} }.b) {} else module.exports = 1;",
+    "if ({ b: class {} }.b) {} else module.exports = 1;",
+    "var v = { b: [() => {}][0] }.b ?? module.exports;",
+    "if ([1, () => {}][1]) {} else module.exports = 1;",
+    "var v = [1, []][1] ?? module.exports;",
+    "if ([{ b: function named() {} }][0].b) {} else module.exports = 1;",
+    "if ({ b: function named() {} }?.b) {} else module.exports = 1;",
+];
+
+#[test]
+fn only_member_that_the_parser_knows_by_its_kind_decides_the_format_behind_a_read() {
+    for text in REMOVED_BEHIND_ONLY_MEMBERS_KNOWN_BY_KIND {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, Esm, "{text}");
+        });
+    }
+    for text in LEFT_BEHIND_MEMBERS_THAT_BUN_RUN_KEEPS {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+        });
+    }
+}
+
+#[test]
+fn member_outside_the_rule_stays_unknown_behind_a_read() {
+    for text in LEFT_BEHIND_MEMBERS_OUTSIDE_THE_RULE {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+        });
+    }
+    let under_decorator = "if ([@f class {}][0]) {} else module.exports = 1; function f() {}";
+    for experimental_decorators in [false, true] {
+        let source = Source {
+            experimental_decorators,
+            ..Source::new("a.ts", under_decorator)
+        };
+        analyzed_source(&source, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs);
         });
     }
 }

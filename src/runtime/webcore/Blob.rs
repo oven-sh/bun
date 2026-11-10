@@ -3191,7 +3191,7 @@ impl BlobExt for Blob {
                 }
 
                 if let Some(file) = bun_standalone_graph::Graph::get_ref()
-                    .and_then(|graph| graph.find_ref(path_or_fd.path().slice()))
+                    .and_then(|graph| graph.find_data(path_or_fd.path().slice()))
                 {
                     return named(
                         crate::api::standalone_graph_jsc::file_blob(file, global_this),

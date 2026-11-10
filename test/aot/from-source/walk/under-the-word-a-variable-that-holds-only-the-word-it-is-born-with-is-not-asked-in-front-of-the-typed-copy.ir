@@ -1,0 +1,25 @@
+# `tool.held` off the exports of another CommonJS file, which nobody stores: the variable is proven to hold the word that it is born with and nothing else.
+# Under the word the read is not folded, and it comes to the builder in the typed copy of the loop. "It holds a list or the word that it is born with" was said of it too: what is left without that word is nothing, and nothing is of every kind.
+# So "is it still as born?" was asked in front of the typed copy, the way on from there was never, the read stayed without a name, and the build of a right program stopped at the operator.
+# -- source: main.cjs
+# const tool = require("./tool.cjs");
+# function work(most) {
+#   let total = 0;
+#   for (let turn = 0; turn < most; turn++) total = total * 3 + ((turn * 7 + 3) % tool.held);
+#   return total;
+# }
+# console.log("SAID " + work(Number("0")) + " " + work(Number("3")));
+# -- source: tool.cjs
+# exports.lay = value => {
+#   exports.held = value;
+# };
+# -- end of source
+# STATISTIC: BlocksInFrontOfOpenLoopsEndedByWhatIsNever = 0
+# RUN: walk f2 mechanisms=all testing=CheckProofsAtRunTime
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK: undefined @JSValue = GetModuleVariable variable=g2
+# CHECK-NEXT: CheckProof {{*}}checkedType=undefined typeWithoutProof=undefined|absent source=Variable
+# CHECK: Mod {{*}}form=Numbers
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime
+# RIGHT: SAID 0 NaN

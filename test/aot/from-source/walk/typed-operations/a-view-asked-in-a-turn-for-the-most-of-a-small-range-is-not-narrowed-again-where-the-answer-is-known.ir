@@ -1,0 +1,14 @@
+# -- source: a-view-asked-in-a-turn-for-the-most-of-a-small-range-is-not-narrowed-again-where-the-answer-is-known.ts
+# declare function sink(...values: unknown[]): void;
+# declare function size(): number;
+# function mix(a: Float64Array, turns: number): number { let s = 0; for (let i = 0; i < turns; i++) { s += a[i & 7]!; if (i & 1) s += a[i & 15]!; s += a[(i + 1) & 7]!; } return s; }
+# sink(mix, mix(new Float64Array(size()), size()));
+# -- end of source
+# `a[i & 7]` asks in the turn whether 7 lies below the length and narrows the length behind that question. `a[(i + 1) & 7]` meets the same question answered: no block begins there, and the length was
+# narrowed again where the read stood, behind other operations of its block: the verifier stopped the build under check=Validate and in every build with assertions.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = GetTypedArrayElement {{*}}isInsideView

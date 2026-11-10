@@ -1,0 +1,13 @@
+import { test, vi } from "bun:test";
+let calls = 0;
+const rest = time => new Promise(done => setTimeout(done, time));
+const asked = name => { try { return String(require(name).seen); } catch { return "threw"; } };
+test("a", async () => {
+  vi.doMock("./wick.mjs", async () => { calls++; await rest(5); return { width: "mocked " + calls }; });
+  console.log(asked("./lamp.mjs"));
+  await rest(40);
+  console.log(asked("./lamp.mjs"));
+  vi.doUnmock("./wick.mjs");
+  vi.doMock("./wick.mjs", async () => { calls++; await new Promise(() => {}); });
+  console.log(asked("./both.mjs"), "|", asked("./lamp.mjs"), "|", calls);
+});

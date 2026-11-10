@@ -1,0 +1,20 @@
+# -- source: a-list-made-in-front-of-an-endless-loop-that-is-never-reached-is-known-where-the-copy-for-another-kind-of-list-begins.js
+# const nothing = JSON.parse("null");
+# function walk(a) {
+#   const out = [];
+#   a.slice;
+#   for (let i = a;; i--)
+#     if (a[i] === 3) ;
+# }
+# try { walk(nothing); } catch (error) { print(error instanceof TypeError); }
+# -- end of source
+# The form in which a fuzzer met it: the loop is never reached. The tests in front of the typed turns lead, where a list has another kind of storage, to a block that is begun late, behind the walks of the other copies, when nothing is left of what met there. Its copy was walked with nothing known, it and the purchases inside it handed over to the closed copy without what is believed there, and a purchase failed.
+# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
+# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: true
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: true
+# HELD-NEXT: exited with 0

@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# function level() { return process.env.LOG_LEVEL || "info"; }
+# function home() { return process.env.MADE_UP_HOME; }
+# function counted(t) { let s = 0; for (let i = 0; i < 20; i++) s += level().length + (home() === undefined ? 1 : 2); return s + t % 2; }
+# console.log(counted(0), counted(1));
+# -- end of source
+# process.env is made by the host at its first read and kept. On Windows a function of the library makes it, a proxy; that function does not exist on any other platform, and there the host makes the object
+# by itself and runs no code of the library or of the program. So outside Windows the read bears what its row of the table says (the heap, a throw), and it stands in front of a loop whose every turn asks for it.
+# f3 = counted
+# RUN: walk f3:Body mechanisms=all
+# REQUIRES: not-windows
+# CHECK: = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0 traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="LOG_LEVEL"
+# CHECK: isLoopHead=true
+# CHECK: Return

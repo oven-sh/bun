@@ -1,0 +1,129 @@
+# other.js:  export function Reply() { this.x = 1; }   Reply.prototype.own = function () { };   export function lay(brought) { Reply.prototype.has = brought; }
+# main.js:   import { Reply, lay } from "./other.js";   lay(wrapped);   wrap.call(Reply.prototype);   extend(Reply.prototype, { copied: wrapped });   new Reply();
+# the library:  function wrap() { this.laid = function () { }; }      function extend(origin, add) { Object.assign(origin, add); }      `wrapped`: what util.deprecate() makes
+#               function Stream() { }   const kept = { destroy: function () { } };   Stream.prototype.destroy = kept.destroy;      in the body of a file of the library
+# The library asks `$findsDeclaredMember(this, "has")` in order to go by what it knows of its own function. "The function under the name is library code" does not say that.
+# A NAME ON A PROTOTYPE IS UNMARKED ONLY WHERE THE BODY OF A FILE LAYS IT: a body takes no `this` and no arguments, so nobody brings it the prototype or the value:
+# the body of a file of the library, whatever it stores; the body of a file of the program, where the store spells the function: that function is the program's, and the walk refuses it by its role.
+# "has": the store stands in the class's own file, ANOTHER FILE BRINGS THE FUNCTION . "laid": a function of the library writes the function at the store, THE PROGRAM BRINGS THE PROTOTYPE (Readable.prototype.wrap)
+# "copied": a function of the library copies what the program brings (util._extend) . "own": written at the store in the body of the class's file . "destroy": the library's own body stores what it reads off its own record
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN(BROUGHT): link held members mechanisms=all
+# BROUGHT: on-prototype L0 "has" function=f5 stored-into-from-outside
+# RUN(LAID): link held members mechanisms=all
+# LAID: on-prototype L0 "laid" function=f7 stored-into-from-outside
+# RUN(COPIED): link held members mechanisms=all
+# COPIED: on-prototype L0 "copied" function=f5 stored-into-from-outside
+# RUN(WRITTEN): link held members mechanisms=all
+# WRITTEN: on-prototype L0 "own" function=f3
+# WRITTEN-NOT: "own" function=f3 stored-into-from-outside
+# RUN(BODY): link held members mechanisms=all
+# BODY: on-prototype L2 "destroy" function=f11
+# BODY-NOT: "destroy" function=f11 stored-into-from-outside
+
+layout L0 kind=Instance name="Reply" module=m1 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 fields=[{key="copied" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="Stream" module=m2 constructor=f10 flags=[IsConstructorFunction]
+layout L3 module=m2 fields=[{key="destroy" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="Reply" module=m1 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="lay" module=m1 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g2 name="Stream" module=m2 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="other.js" displayPath="other.js" body=f1 exports=[{name="Reply" variable=g0}, {name="lay" variable=g1}]
+module m2 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f9
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = NewClosure function=f5
+    v2 = Call v0, -, v1 calleeName="lay"
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v3 key="prototype"
+    v5 = NewClosure function=f6
+    v6 = Call v5, v4 calleeName="wrap.call"
+    v7 = NewObject -, v1 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f8
+    v10 = Call v9, -, v4, v8 calleeName="extend"
+    v11 = Construct v3
+    v12 = GetModuleVariable variable=g2
+    v13 = Construct v12
+    v14 = Undefined
+    Return v14
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="own"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="Reply" module=m1 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="lay" module=m1 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="prototype"
+    PropSet v2, v0 key="has"
+    v4 = Undefined
+    Return v4
+}
+function f5 name="wrapped" module=m2 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f6 name="wrap" module=m2 role=Library flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f7
+    PropSet v0, v1 key="laid"
+    v3 = Undefined
+    Return v3
+}
+function f7 module=m2 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f8 name="extend" module=m2 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectAssign
+    v4 = Call v3, v2, v0, v1 calleeName="Object.assign"
+    v5 = Undefined
+    Return v5
+}
+function f9 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f11
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = FinishObject v1
+    v3 = GetModuleVariable variable=g2
+    v4 = PropGet v3 key="prototype"
+    v5 = PropGet v2 key="destroy"
+    PropSet v4, v5 key="destroy"
+    Return v2
+}
+function f10 name="Stream" module=m2 role=Library flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Undefined
+    Return v1
+}
+function f11 name="destroy" module=m2 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

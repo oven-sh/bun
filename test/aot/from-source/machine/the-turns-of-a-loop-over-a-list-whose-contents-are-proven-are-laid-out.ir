@@ -1,0 +1,12 @@
+# Where Link has proven what a list holds, the walk writes `CheckProof source=Contents [isLeftToTestBehind]` in front of the test that asks in full. That check has no code: the test behind it is the check. It was not
+# among the operations of turns laid out, so an operation without code shut every loop over a list of the file out of the row. The loop is built twice (the list's storage is asked in front): both builds are laid out.
+# RUN(EVENT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all
+# EVENT: statistic LoopsWhoseTurnsAreLaidOut 2
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: = CheckProof {{*}} source=Contents [isLeftToTestBehind]
+# -- source: main.cjs
+# const rows = []; for (const i of JSON.parse("[1,2,3,4,5,6,7,8,9,10,11]")) rows.push({ id: i, price: i * 2 });
+# function proven() { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i].price; return s; }
+# globalThis.kept = proven;
+# console.log(proven());
+# -- end of source

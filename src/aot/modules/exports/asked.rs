@@ -1,5 +1,5 @@
 use super::entries::{ExportEntries, ExportEntry};
-use super::{DynamicStarTargets, find_table};
+use super::{DynamicStarTargets, Resolution, captured_resolution, find_table};
 use crate::modules::imports::{ImportedItem, MockedModules, imported_items};
 use crate::modules::interop::ImportPhase;
 use crate::modules::module_set::ModuleSet;
@@ -82,6 +82,7 @@ impl AskedNames {
         let mut owners: FxHashMap<Atom, u32> = FxHashMap::default();
         let mut more_than_variables: FxHashSet<Atom> = FxHashSet::default();
         let mut handed_on: Vec<Vec<u32>> = vec![Vec::new(); stars.components.len()];
+        let mut comes_to_run: Vec<bool> = stars.dynamic_targets.iter().map(is_dynamic).collect();
         for (table, module) in entries.iter().enumerate() {
             let sites = &scans.of(module.file).sites;
             let is_among_stars = !module.stars.is_empty() || stars.is_taken_by_star[table];
@@ -89,13 +90,25 @@ impl AskedNames {
                 let is_variable = match entry {
                     ExportEntry::Local(_) => true,
                     ExportEntry::Indirect {
-                        site, name: asked, ..
+                        site,
+                        name: asked,
+                        written,
                     } => {
                         names.insert(asked);
-                        if let ScannedSite::Module(target) = sites[site as usize]
-                            && let Some(component) = component_of(target)
-                        {
-                            handed_on[stars.component_of[table] as usize].push(component as u32);
+                        let handing_on = stars.component_of[table] as usize;
+                        if let ScannedSite::Module(target) = sites[site as usize] {
+                            match component_of(target) {
+                                Some(component) => handed_on[handing_on].push(component as u32),
+                                None => {
+                                    let may_yield_to_stars = written.is_some()
+                                        && !module.stars.is_empty()
+                                        && name != known::default
+                                        && asked != known::default;
+                                    let found = captured_resolution(modules, target, asked);
+                                    comes_to_run[handing_on] |= may_yield_to_stars
+                                        || matches!(found, Resolution::LiveName { .. });
+                                }
+                            }
                         }
                         false
                     }
@@ -234,6 +247,28 @@ impl AskedNames {
                         }
                         Some(_) | None => look_at(symbol),
                     }
+                }
+            }
+        }
+        let mut asking: Vec<Vec<u32>> = vec![Vec::new(); stars.components.len()];
+        for (component, members) in stars.components.iter().enumerate() {
+            let behind_stars = members.iter().flat_map(|&member| &stars.edges[member]);
+            let behind_stars = behind_stars.map(|&target| stars.component_of[target as usize]);
+            for target in behind_stars.chain(handed_on[component].iter().copied()) {
+                asking[target as usize].push(component as u32);
+            }
+        }
+        let mut reached: Vec<usize> = (0..comes_to_run.len())
+            .filter(|&it| comes_to_run[it])
+            .collect();
+        for &component in &reached {
+            is_whole[component] |= has_stars(component);
+        }
+        while let Some(component) = reached.pop() {
+            for &above in &asking[component] {
+                if !core::mem::replace(&mut comes_to_run[above as usize], true) {
+                    is_whole[above as usize] |= has_stars(above as usize);
+                    reached.push(above as usize);
                 }
             }
         }

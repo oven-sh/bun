@@ -5,9 +5,7 @@
 # node:events lays its EventEmitter.prototype above the native prototype of `process`. Written as statements of the library that asks for what stands above `process`, tests it with `instanceof` and relinks it:
 # whoever loaded the module let `process` go, and with it all that `process` can do. In compiled text a native function does it, and its row names neither `process` nor the native emitter.
 # RUN: link lookups mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: NativeNewCppFunctionBunProcessCppJsFunctionMakeProcessInheritFrom
 # RUN(STAYS): link lookups mechanisms=all
-# REQUIRES(STAYS): entries-of-bun
 # STAYS-NOT: lookup let-go Process
 # STAYS-NOT: lookup at-unseen Process

@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# "use strict";
+# function fill(t) { const b = globalThis.held; for (let i = 0; i < 14; i++) b[i] = i > t; return t; }
+# const whole = new Uint8Array(32).fill(200);
+# globalThis.held = new Uint8Array(whole.buffer, 8, 12);
+# print(fill(3));
+# print(whole.join());
+# -- end of source
+# What the loop stores makes the front end write "a list of booleans" over what the name finds. Those contents say what the loop does, not what the holder is: a list is told from the views in front of the loop here too,
+# and a boolean goes into a view as one or nought without any code being run.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: TypeTest {{*}} testedType=Buffer|Uint8Array
+# WALK: PutTypedArrayElement {{*}} level=Proven [keyIsIntegral, isInsideView]
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 3
+# RIGHT-NEXT: 200,200,200,200,200,200,200,200,0,0,0,0,1,1,1,1,1,1,1,1,200,200,200,200,200,200,200,200,200,200,200,200
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# HELD: 3
+# HELD-NEXT: 200,200,200,200,200,200,200,200,0,0,0,0,1,1,1,1,1,1,1,1,200,200,200,200,200,200,200,200,200,200,200,200
+# HELD-NEXT: exited with 0

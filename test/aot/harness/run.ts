@@ -6,14 +6,20 @@ import { reportsToTheRunnerAlone, throughAtOnce } from "./without-core-dump";
 
 const { watch } = endAtMemoryLimitTogether();
 
-/** Runs a command to its end. */
-export async function run(cmd: string[], cwd?: string, env: Record<string, string | undefined> = bunEnv) {
+/** Runs a command to its end, or for `limit` milliseconds: then the command is killed, and what it has printed comes back. */
+export async function run(
+  cmd: string[],
+  cwd?: string,
+  env: Record<string, string | undefined> = bunEnv,
+  limit?: number,
+) {
   await using proc = Bun.spawn({
     cmd: throughAtOnce(cmd),
     cwd,
     env: reportsToTheRunnerAlone(env),
     stdout: "pipe",
     stderr: "pipe",
+    ...(limit && { timeout: limit, killSignal: "SIGKILL" as const }),
   });
   using held = watch(proc);
   // A program with a small heap fills it in a second or two. One that goes on for much longer says where its threads are.

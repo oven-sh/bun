@@ -338,7 +338,7 @@ four "four" "four" true
 one "one" undefined false
 --- sources with more than plain properties
 true 1 2 3
-__esModule{value=true writable=false enumerable=false configurable=false} plain{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} counted{get=function () { return ++reads; } set=undefined enumerable=true configurable=false} fixed{value="fixed" writable=false enumerable=true configurable=false}
+__esModule{value=true writable=false enumerable=false configurable=false} plain{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} counted{get=function() { return ++reads; } set=undefined enumerable=true configurable=false} fixed{value="fixed" writable=false enumerable=true configurable=false}
 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} computed{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
 --- a collection between the star and the first look
 20000 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}

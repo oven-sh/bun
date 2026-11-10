@@ -1,0 +1,30 @@
+# a slow version remembers no place. It keeps Folding, because the scan passes over the blocks that constants rule out, and direct calls. With both it also kept what the state remembers of memory: behind
+# `last = 5; idle();` the read of `last` was the constant 5, on the word of Link's effects that `idle` writes no such variable. No net stands in a slow version, so a false word about a callee was a silent
+# wrong answer there. Now each read is a read: a slow version leans on no effect of any callee, and there is nothing to check. It is entered only behind a guard that failed.
+# f1 = idle, f2 = bump, f3 = read
+# -- source: a-slow-version-reads-a-variable-again-wherever-it-is-written.ts
+# class Tag { n = 1; m = 2; }
+# const unseen = (x: any): any => [x][JSON.parse("0")];
+# let last = 0, other = 0;
+# function idle(): void { other = other + 1; }
+# function bump(): void { last = last + 1; }
+# function read(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; last = 5; idle(); const first = last; bump(); return first * 100 + last + Math.abs(work); }
+# const real = new Tag(), liar = unseen({ n: 1, m: 2 });
+# print(read(real), read(liar));
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN: walk f3:SlowBody mechanisms=all
+# CHECK-LABEL: code f3:SlowBody
+# CHECK: PutModuleVariable
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK: [[first]]: {{*}} = GetModuleVariable
+# CHECK: = CallDirect {{*}}function=f2
+# CHECK: = GetModuleVariable
+# RUN(NEVER): walk f3:SlowBody mechanisms=all
+# NEVER-NOT: Integer integer=500
+# The fast version goes on remembering.
+# RUN(FAST): walk f3:Body mechanisms=all
+# FAST-LABEL: code f3:Body
+# FAST: integer=500
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 512 512

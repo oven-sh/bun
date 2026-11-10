@@ -79,12 +79,26 @@ function nextMethodOf(log: Log, value: unknown): Function | undefined {
   return typeof next === "function" && log.originOf(next) === undefined ? next : undefined;
 }
 
+// What nobody feeds never answers: the iterator of a stream without a source, or of the readable end of a transform that nobody writes to.
+const staysAway = Symbol("stays away");
+const millisecondsForStep = 200;
+function settledSoon(log: Log, step: Promise<unknown>): Promise<unknown> {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, millisecondsForStep, staysAway);
+    const settle = (value: unknown) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    withoutRecording(log, () => Reflect.apply(promiseThen, step, [settle, () => settle(undefined)]));
+  });
+}
+
 async function stepIterator(log: Log, iterator: unknown, next: Function): Promise<unknown[]> {
   const yielded: unknown[] = [];
   try {
     for (let step = 0; step < maxIteratorSteps; step++) {
       let result: any = Reflect.apply(next, iterator, []);
-      if (types.isPromise(result)) result = await result;
+      if (types.isPromise(result)) result = await settledSoon(log, result);
       if (!isObject(result) || log.originOf(result) !== undefined) break;
       const { done, value } = result as IteratorResult<unknown>;
       if (done) break;

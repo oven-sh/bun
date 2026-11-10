@@ -3,7 +3,7 @@ use super::queue::{ROLE_ROUNDS, run_queue};
 use super::{
     BuildDiagnostic, CompileRequest, Demotion, DemotionCause, FileWork, LoadedProgram, RoleDecision,
 };
-use bun_sema::check::aot::Effect;
+use bun_sema::check::aot::{Effect, FileOrigin};
 use bun_sema::program::{FileId, FileRole, Files};
 use bun_sema::resolve::Host;
 use bun_sema::util::SharedSort;
@@ -20,6 +20,14 @@ pub fn decide_roles<'s>(
     let mut demoted = find_unverified_files(files);
     for demotion in &demoted {
         roles[demotion.file.idx()] = FileRole::Inferred;
+    }
+    for &file in files.compiled_files() {
+        let is_trusted = roles[file.idx()] == FileRole::Checked;
+        if is_trusted && loaded.origin(file) == FileOrigin::EvaluatedText {
+            roles[file.idx()] = FileRole::Inferred;
+            let cause = DemotionCause::UnverifiedTypes;
+            demoted.push(Demotion { file, cause });
+        }
     }
     let mut candidates: Vec<FileId> = files_to_lower
         .iter()

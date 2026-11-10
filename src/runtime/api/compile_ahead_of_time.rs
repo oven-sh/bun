@@ -75,12 +75,16 @@ fn add_compile_logs(
     log: &mut Log,
     report_messages: Vec<ReportMessage>,
     trim_log_lines: Vec<Vec<u8>>,
+    developer_options: &[u8],
 ) {
     for ReportMessage { mut message, .. } in report_messages {
         message.kind = Kind::Verbose;
         log.add_msg(message);
     }
     add_notes(log, trim_log_lines);
+    if let Some(line) = developer_options.strip_suffix(b"\n") {
+        add_notes(log, vec![line.to_vec()]);
+    }
 }
 
 impl JSBundleCompletionTask {
@@ -306,11 +310,17 @@ impl JSBundleCompletionTask {
         let CompileOutcome {
             output_files,
             metafile,
+            developer_options,
             report_messages,
             trim_log_lines,
             ..
         } = outcome;
-        add_compile_logs(&mut self.log, report_messages, trim_log_lines);
+        add_compile_logs(
+            &mut self.log,
+            report_messages,
+            trim_log_lines,
+            &developer_options,
+        );
 
         let Some(mut entry) = output_files.into_iter().next() else {
             return self.fail_compilation(&CompileResult::fail(CompileErrorReason::NoEntryPoint));

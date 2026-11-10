@@ -1,0 +1,18 @@
+# f1 = add
+# -- source: push-a-reference-onto-an-array.ts
+# type Entry = { weight: number };
+# function add(list: Entry[], entry: Entry): void {
+#   list.push(entry);
+# }
+# declare const input: any;
+# const list: Entry[] = [];
+# add(list, { weight: +input });
+# add(list, { weight: 1.5 });
+# (globalThis as any).answer = list[0].weight + list[1].weight;
+# -- end of source
+# The compiler before this one: 11 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 18, patches 0, moves 1, unlikely or rare 6.
+# RUN(X64): steps most:19 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 19

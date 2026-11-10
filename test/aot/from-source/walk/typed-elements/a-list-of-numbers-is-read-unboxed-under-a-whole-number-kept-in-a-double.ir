@@ -1,0 +1,15 @@
+# -- source: main.js
+# function Table(size) {
+#   this.size = size | 0;
+#   const table = new Array(this.size);
+#   for (let i = 0; i < table.length; i += 2) { table[i] = Math.cos(i) / 3; table[i + 1] = -Math.sin(i) / 3; }
+#   this.table = table;
+# }
+# Table.prototype.sum = function (width) { const table = this.table, step = 1 << width; let s = 0; for (let i = 0, k = 0; i < 20; i += 2, k += step) s += table[k] * 0.5 + table[k + 1] * table[2 * k]; return s; };
+# const T = new Table(64);
+# for (let width = 0; width < 5; width++) console.log(T.sum(width));
+# -- end of source
+# `k` grows by a step: a whole number that may leave the integers, kept in a double. The list of numbers is read under it in line and gives its numbers unboxed.
+# RUN(WALK): walk f2 mechanisms=all
+# WALK: int|whole @Double
+# WALK-COUNT-3: undefined|number @OptionalDouble = GetArrayElement {{*}}level=Expected [keyIsIntegral]

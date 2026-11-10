@@ -1,0 +1,27 @@
+# -- source: a-getter-or-a-proxy-met-in-the-typed-copy-runs-once-and-in-its-turn.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# const seen: string[] = [];
+# const rows = id([{ price: 1 }, { price: 2 }, { price: 4 }, { price: 8 }, { price: 16 }]);
+# function total(): number { let sum = 0; for (const row of rows) sum += row.price; return sum; }
+# for (let call = 0; call < 200; call++) id(total)();
+# Object.defineProperty(rows[1], "price", { get() { seen.push("getter"); rows[2].price = 32; return 64; } });
+# rows[3] = new Proxy({ price: 128 }, { get(target: any, key: string) { seen.push("proxy " + key); return target[key]; } });
+# print(id(total)());
+# print(seen.join());
+# rows[4] = null;
+# try { id(total)(); } catch (error) { print((error as Error).constructor.name); }
+# print(seen.join());
+# -- end of source
+# LIBRARY: own
+# 200 calls teach the site the one shape. Then a row gets a getter that writes the next row, another row becomes a Proxy, a third null. Each is "no" at the site: the turn begins again in the closed copy:
+# the getter runs once, what it stores is seen by the next turn, the Proxy's trap sees one read, and null throws behind both.
+# RUN(TWICE): walk f1 mechanisms=all
+# TWICE-LABEL: code f1:Body
+# TWICE: = GetValueAtSiteOrAbsent {{*}}key="price"
+# RUN: run-in-shell mechanisms=all
+# CHECK: 241
+# CHECK-NEXT: getter,proxy price
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: getter,proxy price,getter,proxy price
+# CHECK-NEXT: exited with 0

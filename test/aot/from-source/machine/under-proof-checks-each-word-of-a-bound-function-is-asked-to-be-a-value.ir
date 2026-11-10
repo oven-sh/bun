@@ -1,0 +1,20 @@
+# A call of a bound function in a loop is done in place behind a test of the number of its bound arguments; the word behind that number is empty.
+# THE LIE, testing=BoundFunctionsAreTakenToBindOneMore: one word more is read off the bound function than the number that was tested.
+# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) each word read off a bound function is asked to be a value, or the process stops by name.
+# RUN(READS): walk f2:Body mechanisms=all
+# READS: = HasNumberOfBoundArguments {{*}}count=1
+# READS: = GetWordOfBoundFunction {{*}}index=2
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 248
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=BoundFunctionsAreTakenToBindOneMore,CheckProofsAtRunTime
+# HELD: AOT: f{{*}}
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function join(a: string, b: string, c: number): number { return a.length + b.length + c; }
+# function method(rows: number[], turns: number): number { const bound = join.bind(null, "x"); let sum = 0; for (let i = 0; i < turns; i++) { if (rows[i & 7]! > 3) sum += bound("ab", 1); } return sum; }
+# const rows: number[] = JSON.parse("[1,9,2,8,3,7,4,6]");
+# print(method(rows, id(100)));
+# -- end of source

@@ -1,0 +1,19 @@
+# A fence behind late stores of a new object. `fill` makes its objects in a loop under a prototype that is asked for at run time; where it is another one than the layout's, the structure is stored behind the fence of the fields and wants a fence of its own. THE LIE, testing=FencesBehindLateStoresAreLeftOut: the emitters leave that fence out. Every build asks for it, on every processor, so the build stops by name. Without the lie: object-made-under-another-prototype-in-a-loop-has-a-fence-behind-its-structure.ir.
+# f3 = fill
+# -- source: object-made-under-another-prototype-in-a-loop-and-no-fence-behind-its-structure-stops-the-build-by-name.ts
+# declare function sink(...values: unknown[]): void;
+# interface Mark { flags: number; name: string; who(): number }
+# function MarkObject(this: Mark, flags: number, name: string) { this.flags = flags; this.name = name; }
+# MarkObject.prototype.who = function () { return 2; };
+# const allocator = { markConstructor: () => MarkObject as any as new (flags: number, name: string) => Mark };
+# const Made = allocator.markConstructor();
+# function create(flags: number, name: string): Mark { return new Made(flags, name); }
+# const kept: Mark[] = [];
+# for (let i = 0; i < 4; i++) kept.push(create(0, "x"));
+# function fill(round: number) { for (let i = 0; i < kept.length; i++) kept[i] = create(i + round, "p"); }
+# (MarkObject as any).prototype = { who() { return 2; } };
+# fill(1);
+# sink(kept[0].who());
+# -- end of source
+# DIAGNOSTIC: NoFenceBehindLateStores
+# RUN: emit f3 mechanisms=all testing=FencesBehindLateStoresAreLeftOut

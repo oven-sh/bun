@@ -13,7 +13,12 @@ impl NamedValues for NoNamedValues {
     }
 }
 
+fn unchecked(text: &str) -> String {
+    format!("// @ts-nocheck\n{text}")
+}
+
 fn ask_for_names(text: &str, far_walk: u32) -> (Vec<String>, usize) {
+    let text = &unchecked(text);
     with_program(&[("main.ts", text)], &["./main.ts"], 1, |program| {
         let all = program.files();
         let roles = vec![FileRole::Checked; all.modules.len()];
@@ -103,13 +108,92 @@ const isText = typeof constant === \"string\";
 fn a_walk_that_skips_whole_statements_finds_what_a_walk_through_them_finds() {
     for statement in STATEMENTS_IN_BETWEEN {
         let text = write_program(statement, 12);
-        let (through, _) = ask_for_names(&text, u32::MAX);
-        let (skipping, _) = ask_for_names(&text, 0);
+        let (through, kept_through) = ask_for_names(&text, u32::MAX);
+        let (skipping, kept_skipping) = ask_for_names(&text, 0);
         assert_eq!(skipping, through, "{statement}");
+        assert!(
+            kept_skipping < kept_through,
+            "{statement}: {kept_skipping}, {kept_through}"
+        );
     }
 }
 
 const FAR_WALK_OF_A_BUILD: u32 = 1024;
+
+const STATEMENTS_BETWEEN_LISTS_THAT_GROW: &[&str] = &[
+    "grown.push(\"text\");",
+    "grown[0] = true;",
+    "if (flag) grown.push(null);",
+    "if (flag) other.push(null); else grown.push(1n);",
+    "(grown as any).push({});",
+    "(0, grown).push(\"comma\");",
+    "grown!.push(\"sure\");",
+    "holder.list.push(\"of a holder\");",
+    "holder[key].push(\"under a key\");",
+    "for (const item of items) { if (item > 1) grown.push(flag); }",
+    "for (const item of items) { other.push(grown[0]); grown.push(flag); }",
+    "while (other.length < 3) { other.push(grown.length); if (flag) break; }",
+    "do { other[0] = grown[0]; } while (flag);",
+    "if (grown.length) other.push(\"asked\");",
+    "grown = [];",
+    "for (const item of items) { grown = []; grown.push(item); }",
+    "switch (other.length) { case 1: grown.push(4); break; default: other.push(5); }",
+    "try { grown.push(6); } catch { other.push(7); } finally { other.push(8); }",
+    "const read = () => grown; other.push(read);",
+    "fail();",
+];
+
+const FILLER_WITH_LOOPS: &str = "for (const item of items) other.push(item);\nother[0] = other[1];\nfor (let i = 0; i < 3; i++) other.push(i);\n";
+const FILLER_OF_ONE_RUN: &str =
+    "other.push(1); spare[0] = 2; spare.push(\"spare\"); other[1] = 3;\n";
+
+fn write_program_of_lists_that_grow(statement: &str, filler: &str, padding: usize) -> String {
+    let mut text = String::from(
+        "declare const items: number[];
+declare const flag: boolean;
+declare const key: \"list\";
+declare function fail(): void;
+const holder: any = { list: [] };
+const spare = [];
+let grown = [];
+grown.push(1);
+const other = [];
+other.push(\"first\");
+other.push(0);
+",
+    );
+    text.push_str(&filler.repeat(padding));
+    writeln!(text, "{statement}").unwrap();
+    text.push_str(&filler.repeat(padding));
+    text.push_str("export const seen = [grown, other];\n");
+    text
+}
+
+#[test]
+fn a_walk_for_a_list_that_grows_finds_behind_what_grows_other_lists_what_a_walk_through_it_finds() {
+    for statement in STATEMENTS_BETWEEN_LISTS_THAT_GROW {
+        let near = write_program_of_lists_that_grow(statement, "", 0);
+        let (near, _) = ask_for_names(&near, u32::MAX);
+        let near = types_of_the_last_names(&near, 2);
+        assert!(
+            near[1].ends_with(")[]"),
+            "nothing grows: {statement}: {near:?}"
+        );
+        for filler in [FILLER_WITH_LOOPS, FILLER_OF_ONE_RUN] {
+            let text = write_program_of_lists_that_grow(statement, filler, 40);
+            let (through, _) = ask_for_names(&text, u32::MAX);
+            assert_eq!(
+                types_of_the_last_names(&through, 2)[0],
+                near[0],
+                "{statement}: {filler}"
+            );
+            for far_walk in [0, 32, FAR_WALK_OF_A_BUILD] {
+                let (skipping, _) = ask_for_names(&text, far_walk);
+                assert_eq!(skipping, through, "{statement}: {filler}: {far_walk}");
+            }
+        }
+    }
+}
 
 const STATEMENTS_ABOUT_A_FIELD: &[&str] = &[
     "holder.part = 1;",
@@ -179,6 +263,53 @@ fn a_walk_that_takes_what_an_earlier_walk_left_finds_what_a_walk_through_the_tes
     }
 }
 
+const STATE_AND_A_TRY_STATEMENT_WITH_A_BRANCH_IN_ITS_FINALLY_BLOCK: (&str, &str) = (
+    "// @ts-nocheck
+declare function mayThrow(): void;
+declare const quiet: boolean;
+let state: \"idle\" | \"open\" | \"done\" = \"idle\";
+",
+    "try { state = \"open\"; mayThrow(); state = \"done\"; } catch { mayThrow(); state = \"idle\"; } finally { if (quiet) void 0; }",
+);
+
+fn types_of_the_last_names(types: &[String], count: usize) -> Vec<&str> {
+    let last = &types[types.len() - count..];
+    (last.iter())
+        .map(|it| it.split_once(": ").unwrap().1)
+        .collect()
+}
+
+#[test]
+fn a_walk_that_went_through_a_finally_block_twice_leaves_nothing_for_a_walk_that_goes_through_it_once()
+ {
+    let (state, inner) = STATE_AND_A_TRY_STATEMENT_WITH_A_BRANCH_IN_ITS_FINALLY_BLOCK;
+    let text = format!(
+        "{state}try {{\n  try {{\n    {inner}\n  }} finally {{ state; state; }}\n}} catch {{ state; }}\n"
+    );
+    let (through, _) = ask_for_names(&text, u32::MAX);
+    let (taking, _) = ask_for_names(&text, FAR_WALK_OF_A_BUILD);
+    assert_eq!(taking, through);
+    let twice = "\"done\" | \"idle\"";
+    let expected = [twice, twice, "\"done\" | \"idle\" | \"open\""];
+    assert_eq!(types_of_the_last_names(&through, 3), expected);
+}
+
+#[test]
+fn a_walk_that_goes_through_a_finally_block_twice_takes_nothing_from_a_walk_that_went_through_it_once()
+ {
+    let (state, inner) = STATE_AND_A_TRY_STATEMENT_WITH_A_BRANCH_IN_ITS_FINALLY_BLOCK;
+    let text =
+        format!("{state}try {{\n  {inner}\n}} catch {{ state; state; }} finally {{ state; }}\n");
+    let (through, _) = ask_for_names(&text, u32::MAX);
+    let (taking, _) = ask_for_names(&text, FAR_WALK_OF_A_BUILD);
+    assert_eq!(taking, through);
+    let once = "\"done\" | \"idle\" | \"open\"";
+    assert_eq!(
+        types_of_the_last_names(&through, 3),
+        [once, once, "\"done\" | \"idle\""]
+    );
+}
+
 #[test]
 fn what_hangs_on_where_a_field_is_read_is_not_left_for_the_next_walk() {
     let text = "type Fixed = { readonly part: string | number[] };
@@ -208,10 +339,61 @@ export function apart(holder: { readonly part: string | number[] }, flag: boolea
     assert_eq!(taking, through);
 }
 
+#[test]
+fn lists_that_grow_behind_many_loops_do_not_each_leave_a_type_at_every_loop() {
+    const COUNT: usize = 120;
+    let mut text = String::from("declare const items: number[];\n");
+    for index in 0..COUNT {
+        writeln!(
+            text,
+            "const made{index} = [];\nfor (const item of items) made{index}.push(item);"
+        )
+        .unwrap();
+    }
+    for index in 0..COUNT {
+        writeln!(text, "made{index}[0] = made{index}[1];").unwrap();
+    }
+    let (through, kept_through) = ask_for_names(&text, u32::MAX);
+    let (skipping, kept_skipping) = ask_for_names(&text, 32);
+    assert_eq!(skipping, through);
+    assert!(kept_through > COUNT * COUNT / 4, "{kept_through}");
+    assert!(kept_skipping < COUNT * 20, "{kept_skipping}");
+}
+
+#[test]
+fn a_list_that_grows_in_a_finally_block_has_the_type_that_each_way_out_of_it_brings() {
+    for inner in [
+        "",
+        "grown.push(\"tried\");",
+        "if (items.length) grown.push(\"tried\");",
+        "for (const item of items) other.push(item);",
+    ] {
+        for caught in [
+            "",
+            "catch { grown.push(true); }",
+            "catch { other.push(true); }",
+        ] {
+            let filler = "for (const item of items) other.push(item);\n".repeat(20);
+            let mut text =
+                String::from("declare const items: number[];\nconst grown = [], other = [];\n");
+            text.push_str("grown.push(1); other.push(1);\n");
+            text.push_str(&filler);
+            writeln!(text, "try {{ {inner}\n{filler} }} {caught}").unwrap();
+            writeln!(text, "finally {{\n{filler}grown.push(null); grown;").unwrap();
+            writeln!(text, "{filler} }}\n{filler}grown; other;").unwrap();
+            text.push_str("try { grown; } finally { grown; }\ngrown;\n");
+            let (through, _) = ask_for_names(&text, u32::MAX);
+            for far_walk in [0, 32] {
+                let (skipping, _) = ask_for_names(&text, far_walk);
+                assert_eq!(skipping, through, "{inner} {caught}: {far_walk}");
+            }
+        }
+    }
+}
+
 fn write_program_with_calls_beside_commas(filler: usize) -> String {
     let mut text = String::from(
-        "// @ts-nocheck
-var isFirst = x => 0, isSecond = x => 0, fetchRows = () => [], place = 0, drain = () => {}, one = 0, two = 0, spare = 0;
+        "var isFirst = x => 0, isSecond = x => 0, fetchRows = () => [], place = 0, drain = () => {}, one = 0, two = 0, spare = 0;
 var meter = { total: 0, add(v) { this.total += v } };
 function fill(meter) {
   const mark = meter ? 1 : \"s\";
@@ -264,6 +446,7 @@ export const seen = [fill(meter), meter.total, gather([{ kind: \"a\", inner: { k
 }
 
 fn ask_for_every_expression_from_the_last(text: &str, far_walk: u32) -> Vec<String> {
+    let text = &unchecked(text);
     with_program(&[("main.ts", text)], &["./main.ts"], 1, |program| {
         let all = program.files();
         let roles = vec![FileRole::Checked; all.modules.len()];
@@ -337,11 +520,48 @@ fn many_ways_back_to_the_head_of_a_loop_do_not_double_the_wait_between_far_skips
 }
 
 #[test]
+fn what_walks_have_left_goes_with_the_file() {
+    const PARTS: usize = 300;
+    let part = "export function pick(value: string | number | undefined, flag: boolean) {
+    let seen = 0;
+    if (flag) { seen = 1; } else { seen = 2; }
+    if (typeof value === \"string\") { return value.length + seen; }
+    if (flag) { return value; }
+    return value;
+}
+";
+    let names: Vec<String> = (0..PARTS).map(|index| format!("part{index}.ts")).collect();
+    let mut main = String::new();
+    for index in 0..PARTS {
+        writeln!(
+            main,
+            "import {{ pick as pick{index} }} from \"./part{index}\";"
+        )
+        .unwrap();
+        writeln!(main, "pick{index}({index}, true);").unwrap();
+    }
+    let mut files: Vec<(&str, &str)> = names.iter().map(|name| (name.as_str(), part)).collect();
+    files.push(("main.ts", &main));
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let main = program.file("main.ts");
+        let kept = Mutex::new(Vec::new());
+        check(program, &|checker, file| {
+            if file != main {
+                kept.lock().unwrap().push(checker.count_kept_walks());
+            }
+        });
+        let kept = kept.into_inner().unwrap();
+        assert_eq!(kept.len(), PARTS);
+        assert_ne!(kept[0], 0);
+        assert!(kept.iter().all(|&count| count == kept[0]), "{kept:?}");
+    })
+}
+
+#[test]
 fn names_behind_many_loops_do_not_each_leave_a_type_at_every_loop() {
     const COUNT: usize = 300;
-    let mut text = String::from(
-        "// @ts-nocheck\ndeclare const items: number[];\ndeclare function make(): string | number;\n",
-    );
+    let mut text =
+        String::from("declare const items: number[];\ndeclare function make(): string | number;\n");
     for index in 0..COUNT {
         writeln!(
             text,

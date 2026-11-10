@@ -61,7 +61,7 @@ record from cached `module_info` with zero re-parsing.
 - `preload-reset.ts`: a preload with a `beforeAll` hook that calls
   `jest.resetModules()`.
 
-These files import `bun:test`, so only Bun runs them.
+The test files and the preload import `bun:test`, so only Bun runs them.
 
 ```sh
 bun isolate/setup.ts
@@ -92,11 +92,11 @@ preload's `beforeAll` hook runs in every test file.
 With it on, Bun reads the transpiled `big.ts` and `src/index.ts` from disk
 instead of transpiling them.
 
-`jest.resetModules()` keeps the SourceProvider cache. The next load of a module
-checks its cached source against the file, and Bun transpiles the file again
-only if that check fails. `reset per test` makes one check per module in every
-test. `preload reset` makes one check of `big.ts` per test file, because each
-file resets after it has imported `big.ts`.
+`jest.resetModules()` keeps the SourceProvider cache. After a reset, the next
+load of a module checks its cached source against the file, and Bun transpiles
+the file again only if that check fails. `reset per test` makes one check per
+module in every test. `preload reset` makes one check of `big.ts` per test
+file, because each file resets after it has imported `big.ts`.
 
 - The check is one `stat` if the file last changed more than two seconds before
   `bun test` started. Otherwise Bun reads the file and compares a hash of its

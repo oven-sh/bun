@@ -528,6 +528,8 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Bun__TestFile__enterModuleGraph(global: &JSGlobalObject) -> u32;
     safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
+    /// BunPlugin.cpp: `key` is the module key of the test file that is loaded next.
+    safe fn JSMock__didBeginTestFile(global: &JSGlobalObject, key: &bun_core::String);
     safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
@@ -6215,13 +6217,12 @@ impl VirtualMachine {
             }
         }
 
-        // After the preloads, so the modules they loaded still count as loaded by a preload.
-        crate::cpp::JSMock__didBeginTestFile(self.global());
-
         // Note: reshaped for borrowck.
         let global = self.global;
         let main = (self.main()).expect("set to the test file above");
         let main_str = bun_core::StringView::from_bytes(main);
+        // After the preloads, so the modules they loaded still count as loaded by a preload.
+        JSMock__didBeginTestFile(self.global(), &main_str);
         let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
             global, &main_str,
         ) {

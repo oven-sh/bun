@@ -4379,6 +4379,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        if (imported && isBunTest) [[unlikely]]
+            Bun::didCallImport(globalObject, loader, sourceURL.protocolIsFile() ? referrer.string() : String(), key.string());
 #if ENABLE(AOT)
         if (imported && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
             Bun::didStartDynamicImport(globalObject, imported, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
@@ -4395,6 +4397,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     }
 
     ASSERT(result);
+    if (isBunTest) [[unlikely]]
+        Bun::didCallImport(globalObject, loader, sourceURL.protocolIsFile() ? referrer.string() : String(), key.string());
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
         RETURN_IF_EXCEPTION(scope, nullptr);

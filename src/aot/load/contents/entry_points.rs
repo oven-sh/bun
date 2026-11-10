@@ -500,6 +500,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         written_in: file,
                         requires,
                         is_guess,
+                        is_name_followed: false,
                         may_be_left_out: is_guess,
                     }),
                 }));
@@ -579,13 +580,16 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 (held.texts).extend_from_slice(&contents.texts_behind_object_urls);
                 sought.extend(contents.names.sought_from_unknown_folders.iter().copied());
                 let arms = contents.names.written_arms_of_unknown_names.iter();
-                let arms = arms.map(|&(name, requires)| (name, requires, false, false));
+                let arms = arms.map(|&(name, requires)| (name, requires, false, false, false));
                 let guessed = contents.names.guessed_arms.iter();
-                let arms = arms.chain(guessed.map(|&name| (name, true, true, false)));
+                let arms = arms.chain(guessed.map(|&name| (name, true, true, false, false)));
                 let called_first = contents.names.arms_of_makers_called_first.iter();
-                let arms = arms.chain(called_first.map(|&name| (name, true, false, true)));
-                mentions.extend(
-                    arms.map(|(name, requires, is_guess, is_called_first)| Mention {
+                let arms = arms.chain(called_first.map(|&name| (name, true, false, true, false)));
+                let followed = contents.names.followed_names.iter();
+                let arms = arms
+                    .chain(followed.map(|&(name, requires)| (name, requires, false, false, true)));
+                mentions.extend(arms.map(
+                    |(name, requires, is_guess, is_called_first, is_name_followed)| Mention {
                         named: Named::ByName(Question {
                             file_name: code.file_name(file).to_vec(),
                             read_as: match requires {
@@ -602,10 +606,11 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             written_in: file,
                             requires,
                             is_guess: is_guess || is_called_first,
+                            is_name_followed,
                             may_be_left_out: is_guess,
                         }),
-                    }),
-                );
+                    },
+                ));
                 for load in &contents.names.under_parameters {
                     let under_name = loads.entry((load.property, load.place)).or_default();
                     if under_name.last() != Some(&(file, load.requires)) {
@@ -678,6 +683,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         written_in: caller,
                         requires,
                         is_guess,
+                        is_name_followed: false,
                         may_be_left_out: false,
                     }),
                 });

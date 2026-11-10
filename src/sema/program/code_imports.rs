@@ -101,12 +101,15 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             }
             _ => resolution,
         };
-        let mut arms = match site.specifier {
+        let arms = match site.specifier {
             ImportSpecifier::Unknown => find_written_arms(hir, bound, decisions, site),
             _ => SmallVec::new(),
         };
-        arms.extend(analyzed.analysis.known_load_names_at(site.specifier_node));
         let resolution = add_written_arms(context, key, site, &arms, resolution);
+        let written_count = files_of(resolution).count();
+        let followed = analyzed.analysis.known_load_names_at(site.specifier_node);
+        let followed: SmallVec<[Atom; 2]> = followed.collect();
+        let resolution = add_written_arms(context, key, site, &followed, resolution);
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
@@ -123,13 +126,15 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             ),
             increases_depth: (alternatives.iter())
                 .any(|&specifier| !is_relative(constant_prefix(atoms, specifier))),
+            is_name_followed: false,
         };
-        for file in files_of(resolution) {
+        for (place, file) in files_of(resolution).enumerate() {
             let increases_depth = origin.increases_depth
                 && (file.host_module.is_some()
                     || !context.resolver.is_same_package(key.path, file.path));
             let origin = TargetOrigin {
                 increases_depth,
+                is_name_followed: place >= written_count,
                 ..origin
             };
             add_target(context, &mut targets, origin, file);
@@ -732,6 +737,7 @@ struct TargetOrigin<'a> {
     embed_attribute: Option<&'a [u8]>,
     is_statement: bool,
     increases_depth: bool,
+    is_name_followed: bool,
 }
 
 const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
@@ -742,6 +748,7 @@ const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
     embed_attribute: None,
     is_statement: true,
     increases_depth: false,
+    is_name_followed: false,
 };
 
 fn add_target<'r>(
@@ -759,6 +766,7 @@ fn add_target<'r>(
         embed_attribute,
         is_statement,
         increases_depth,
+        is_name_followed,
     } = origin;
     let request = LoaderRequest {
         is_linked_by_bundler,
@@ -781,6 +789,7 @@ fn add_target<'r>(
         is_loaded_with_importer: is_statement,
         has_shared_type: is_statement && has_type_of_shared_kind,
         has_type_of_shared_kind,
+        is_name_followed,
     });
     index
 }

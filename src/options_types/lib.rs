@@ -81,4 +81,23 @@ pub mod standalone_path {
             is_bun_standalone_file_path_canonicalized(str_)
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn prefix_ignores_drive_case() {
+            for (path, is_found) in [
+                (&b"B:/~BUN/root/a.txt"[..], true),
+                (b"b:/~BUN/root/a.txt", true),
+                (b"C:/~BUN/root/a.txt", false),
+                (b"b:/~bun/root/a.txt", false),
+                (b"b", false),
+                (b"", false),
+            ] {
+                assert_eq!(has_prefix_ignoring_drive_case(path, b"B:/~BUN/"), is_found);
+            }
+        }
+    }
 }

@@ -1,3 +1,4 @@
+mod certain_code;
 mod imported_constants;
 mod only_imported;
 
@@ -2039,6 +2040,7 @@ fn import_what_is_required<'r>(
                     *loaded = required;
                     *target = CodeTarget {
                         increases_depth: target.increases_depth,
+                        is_name_followed: target.is_name_followed,
                         ..required_target
                     };
                 }

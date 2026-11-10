@@ -1,5 +1,7 @@
+use super::certain_code::CertainCode;
 use super::*;
 use crate::bind::{Bound, FnOwner, MemberOwner, Parent};
+use crate::file_analysis::find_first_top_level_await;
 use crate::hir::{ExprId, ExprKind, FnId};
 use crate::import_sites::ImportSite;
 use crate::module_format::ModuleFormat;
@@ -29,45 +31,61 @@ fn loading_kind(site: ImportSiteKind) -> Option<CodeImportKind> {
 
 fn visit_named_files(
     file: &WalkedFile<'_, '_>,
-    visit: &mut dyn FnMut(u32, Option<ImportSiteKind>),
+    visit: &mut dyn FnMut(u32, Option<ImportSiteKind>, bool),
 ) {
     let Some(parsed) = &file.parsed else {
         return;
     };
-    let mut targets = file.targets.iter().copied();
+    let is_followed = parsed.code.targets.iter().map(|it| it.is_name_followed);
+    let mut targets = file.targets.iter().copied().zip(is_followed);
     let sites = parsed.code.analyzed.analysis.import_sites;
     for (site, &resolution) in sites.iter().zip(&parsed.code.resolutions) {
-        for target in targets.by_ref().take(files_of(resolution).count()) {
+        for (target, is_followed) in targets.by_ref().take(files_of(resolution).count()) {
             if target != NOT_LOADED {
-                visit(target, Some(site.kind));
+                visit(target, Some(site.kind), is_followed);
             }
         }
     }
-    for target in targets.filter(|&target| target != NOT_LOADED) {
-        visit(target, None);
+    for (target, _) in targets.filter(|&(target, _)| target != NOT_LOADED) {
+        visit(target, None, false);
     }
 }
 
 struct NamedFiles {
     starts: Vec<u32>,
     named: Vec<(u32, Option<ImportSiteKind>)>,
+    /// For each entry of `named`, `CodeTarget::is_name_followed`.
+    is_followed: Vec<bool>,
 }
 
 impl NamedFiles {
     fn new(files: &[WalkedFile<'_, '_>]) -> NamedFiles {
         let mut starts = Vec::with_capacity(files.len() + 1);
         let mut named = Vec::with_capacity(files.iter().map(|file| file.targets.len()).sum());
+        let mut is_followed = Vec::with_capacity(named.capacity());
         starts.push(0);
         for file in files {
-            visit_named_files(file, &mut |target, site| named.push((target, site)));
+            visit_named_files(file, &mut |target, site, followed| {
+                named.push((target, site));
+                is_followed.push(followed);
+            });
             starts.push(named.len() as u32);
         }
-        NamedFiles { starts, named }
+        NamedFiles {
+            starts,
+            named,
+            is_followed,
+        }
     }
 
     fn of(&self, file: u32) -> &[(u32, Option<ImportSiteKind>)] {
         let file = file as usize;
         &self.named[self.starts[file] as usize..self.starts[file + 1] as usize]
+    }
+
+    fn is_followed_of(&self, file: u32) -> &[bool] {
+        let file = file as usize;
+        &self.is_followed[self.starts[file] as usize..self.starts[file + 1] as usize]
     }
 
     fn loaded_by(&self, file: u32) -> impl Iterator<Item = (u32, Option<CodeImportKind>)> + '_ {
@@ -401,15 +419,7 @@ fn follow_statements(
     let mut imported_in_order: Vec<(u32, u32)> = Vec::new();
     for index in of_program() {
         for &(target, site) in named.of(index) {
-            let is_statement = matches!(
-                site,
-                Some(
-                    ImportSiteKind::Import(_)
-                        | ImportSiteKind::ExportFrom(_)
-                        | ImportSiteKind::ExportStar(_)
-                )
-            );
-            if !is_statement {
+            if !is_import_statement(site) {
                 continue;
             }
             if !is_any_file_mocked && !may_be_mocked[target as usize] {
@@ -560,6 +570,135 @@ fn loads_under_unknown_name(file: &WalkedFile<'_, '_>) -> bool {
     names_unknown_file(file, &|site| loading_kind(site).is_some())
 }
 
+/// How `import()` and import statements load a file.
+#[derive(Copy, Clone, Default)]
+struct LoadsByImport {
+    is_spelled: bool,
+    /// An `import()` of it runs whenever the program does.
+    is_certain: bool,
+    /// The file of all its `import()` calls.
+    caller: Option<u32>,
+    has_several_callers: bool,
+}
+
+struct ImportsAndRequires<'a, 's, 'r> {
+    files: &'a [WalkedFile<'s, 'r>],
+    named: &'a NamedFiles,
+    loads: FxHashMap<u32, LoadsByImport>,
+    runs_at_start: Vec<bool>,
+    /// For each file, the position of its first top-level `await`.
+    first_await: Vec<std::cell::OnceCell<u32>>,
+    certain_code: Vec<std::cell::OnceCell<Option<CertainCode<'a, 's>>>>,
+}
+
+impl<'a, 's, 'r> ImportsAndRequires<'a, 's, 'r> {
+    fn new(
+        files: &'a [WalkedFile<'s, 'r>],
+        named: &'a NamedFiles,
+        is_of_program: &[bool],
+        asked: &[(u32, ())],
+        entry_points: Vec<u32>,
+    ) -> Self {
+        let mut runs_at_start = vec![false; files.len()];
+        let mut to_visit = entry_points;
+        while let Some(file) = to_visit.pop() {
+            if !std::mem::replace(&mut runs_at_start[file as usize], true) {
+                let imported = named.of(file).iter().filter(|it| is_import_statement(it.1));
+                to_visit.extend(imported.map(|&(target, _)| target));
+            }
+        }
+        let mut imports = ImportsAndRequires {
+            files,
+            named,
+            loads: asked
+                .iter()
+                .map(|&(file, ())| (file, LoadsByImport::default()))
+                .collect(),
+            runs_at_start,
+            first_await: files.iter().map(|_| Default::default()).collect(),
+            certain_code: files.iter().map(|_| Default::default()).collect(),
+        };
+        for (file, _) in (0..).zip(is_of_program).filter(|it| *it.1) {
+            imports.add_imports_of(file);
+        }
+        imports
+    }
+
+    fn add_imports_of(&mut self, file: u32) {
+        let is_followed = self.named.is_followed_of(file).iter();
+        for (&(target, site), &is_followed) in self.named.of(file).iter().zip(is_followed) {
+            if !self.loads.contains_key(&target) {
+                continue;
+            }
+            let is_certain = match site {
+                Some(ImportSiteKind::ImportCall(call)) => {
+                    self.runs_at_start[file as usize] && self.place_of(file, call).is_some()
+                }
+                _ if is_import_statement(site) => false,
+                _ => continue,
+            };
+            let loads = self.loads.get_mut(&target).expect("it was asked for");
+            loads.is_spelled |= !is_followed;
+            loads.is_certain |= is_certain;
+            if !is_import_statement(site) {
+                loads.has_several_callers |= loads.caller.is_some_and(|it| it != file);
+                loads.caller = Some(file);
+            }
+        }
+    }
+
+    fn place_of(&self, file: u32, expression: ExprId) -> Option<u32> {
+        let parsed = self.files[file as usize].parsed.as_ref();
+        let code = self.certain_code[file as usize]
+            .get_or_init(|| parsed.map(|it| CertainCode::new(&it.parse.hir, &it.parse.bound)));
+        code.as_ref()?.place_of(expression)
+    }
+
+    /// A `require()` whose name the build has followed gives way to an import that spells the name, and to one that runs.
+    fn gives_way(&self, loads: LoadsByImport, is_name_followed: bool) -> bool {
+        is_name_followed && (loads.is_spelled || loads.is_certain)
+    }
+
+    fn of(&self, target: u32) -> LoadsByImport {
+        self.loads.get(&target).copied().unwrap_or_default()
+    }
+
+    /// Whether a `require()` that gives way runs in front of every import all the same.
+    fn runs_in_front(&self, file: u32, target: u32, site: Option<ImportSiteKind>) -> bool {
+        let loads = self.of(target);
+        let is_only_caller = !loads.has_several_callers && loads.caller.is_none_or(|it| it == file);
+        if !self.runs_at_start[file as usize] || !is_only_caller {
+            return false;
+        }
+        let call = site.and_then(ImportSiteKind::call);
+        let place = call.and_then(|call| self.place_of(file, call));
+        place.is_some_and(|place| place < self.first_await(file))
+    }
+
+    /// No `import()` of the file evaluates anything in front of this position.
+    fn first_await(&self, file: u32) -> u32 {
+        *self.first_await[file as usize].get_or_init(|| {
+            let parsed = self.files[file as usize].parsed.as_ref();
+            let first = parsed.and_then(|it| {
+                let decisions = &it.code.analyzed.analysis.decisions;
+                find_first_top_level_await(&it.parse.hir, decisions)
+            });
+            first.unwrap_or(u32::MAX)
+        })
+    }
+}
+
+fn is_import_statement(site: Option<ImportSiteKind>) -> bool {
+    matches!(
+        site,
+        Some(
+            ImportSiteKind::Import(_)
+                | ImportSiteKind::ExportFrom(_)
+                | ImportSiteKind::ExportStar(_)
+        )
+    )
+}
+
 fn find_files_that_require_may_load(
     context: &CodeLoadContext<'_, '_, '_>,
     state: &WalkState<'_, '_>,
@@ -587,6 +726,15 @@ fn find_files_that_require_may_load(
         });
         imported[index as usize]
     };
+    // The other entry points of an executable run in workers.
+    let started_count = match context.inputs.code.builds_executable {
+        true => 1,
+        false => context.written_entry_point_count(),
+    };
+    let entry_points = context.entry_points();
+    let started = entry_points.iter().take(started_count);
+    let started = started.map(|it| state.index_of[&context.canonical_key(it.key)]);
+    let imports = ImportsAndRequires::new(files, &named, &is_of_program, asked, started.collect());
     for entry_point in &context.entry_points() {
         let index = state.index_of[&context.canonical_key(entry_point.key)];
         let Some(loads) = context.loads_that_alone_name(entry_point.key) else {
@@ -597,6 +745,7 @@ fn find_files_that_require_may_load(
             load.requires
                 && is_of_program.get(load.written_in.0 as usize) == Some(&true)
                 && !(load.is_guess && is_imported(index))
+                && !imports.gives_way(imports.of(index), load.is_name_followed)
         };
         for load in loads.iter().filter(counts) {
             let behind = order.load_in(load.file.0);
@@ -611,7 +760,8 @@ fn find_files_that_require_may_load(
             continue;
         }
         let awaited = find_awaited_imports(file, named.of(index));
-        for &(target, site) in named.of(index) {
+        let is_followed = named.is_followed_of(index).iter();
+        for (&(target, site), &is_followed) in named.of(index).iter().zip(is_followed) {
             let kind = match site.map(loading_kind) {
                 None => None,
                 Some(None) => continue,
@@ -622,6 +772,11 @@ fn find_files_that_require_may_load(
                     && order.is_loaded_by_import_of(target, awaited.imported)
             };
             if awaited.iter().any(is_loaded) || kind == Some(CodeImportKind::Import) {
+                continue;
+            }
+            if imports.gives_way(imports.of(target), is_followed)
+                && !imports.runs_in_front(index, target, site)
+            {
                 continue;
             }
             order.note(&order.load_in(index), &mut named_behind[target as usize]);

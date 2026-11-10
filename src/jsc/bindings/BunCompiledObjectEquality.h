@@ -58,35 +58,44 @@ inline bool onlyOneCompiledObjectHasOwn(JSC::VM& vm, JSC::JSCell* first, JSC::JS
     return !PropertyWalk::getDirect(vm, JSC::asObject(first), name, nullptr) != !PropertyWalk::getDirect(vm, JSC::asObject(second), name, nullptr);
 }
 
-// std::nullopt: the caller compares by its generic path, or an exception is pending.
-template<bool isStrict, typename CompareValues>
-std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, bool sameIsEqual, const CompareValues& compareValues)
+template<typename CompareValues>
+bool areCompiledValuesEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue left, JSC::JSValue right, bool sameIsEqual, const CompareValues& compareValues)
 {
-    JSC::VM& vm = globalObject->vm();
-    auto valuesAreEqual = [&](JSC::JSValue left, JSC::JSValue right) -> bool {
-        if (!sameIsEqual) [[unlikely]]
-            RELEASE_AND_RETURN(scope, compareValues(left, right));
+    if (sameIsEqual) [[likely]] {
         if (left == right)
             return true;
         bool isSame = JSC::sameValue(globalObject, left, right);
         RETURN_IF_EXCEPTION(scope, false);
         if (isSame)
             return true;
-        RELEASE_AND_RETURN(scope, compareValues(left, right));
-    };
+    }
+    bool isEqual = compareValues(left, right);
+    RETURN_IF_EXCEPTION(scope, false);
+    return isEqual;
+}
+
+// std::nullopt: an exception is pending.
+template<typename CompareValues>
+std::optional<bool> areCompiledPairsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::MarkedArgumentBuffer& pairs, bool sameIsEqual, const CompareValues& compareValues)
+{
+    for (size_t i = 0; i < pairs.size(); i += 2) {
+        bool isEqual = areCompiledValuesEqual(globalObject, scope, pairs.at(i), pairs.at(i + 1), sameIsEqual, compareValues);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!isEqual)
+            return false;
+    }
+    return true;
+}
+
+// std::nullopt: the caller compares by its generic path, or an exception is pending.
+template<bool isStrict, typename CompareValues>
+std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, bool sameIsEqual, const CompareValues& compareValues)
+{
+    JSC::VM& vm = globalObject->vm();
     JSC::MarkedArgumentBuffer pairs;
-    auto pairsAreEqual = [&]() -> std::optional<bool> {
-        for (size_t i = 0; i < pairs.size(); i += 2) {
-            bool isEqual = valuesAreEqual(pairs.at(i), pairs.at(i + 1));
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-            if (!isEqual)
-                return false;
-        }
-        return true;
-    };
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
     if (PropertyWalk::appendDifferingValues(o1, o2, sameIsEqual ? PropertyWalk::IdenticalValues::Skip : PropertyWalk::IdenticalValues::Append, pairs))
-        return pairsAreEqual();
+        return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
 
     OwnEnumerableProperties properties1;
     OwnEnumerableProperties properties2;
@@ -94,7 +103,7 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
         return std::nullopt;
     if (properties1.names == properties2.names) {
         for (size_t i = 0; i < properties1.names.size(); i++) {
-            bool isEqual = valuesAreEqual(properties1.values.at(i), properties2.values.at(i));
+            bool isEqual = areCompiledValuesEqual(globalObject, scope, properties1.values.at(i), properties2.values.at(i), sameIsEqual, compareValues);
             RETURN_IF_EXCEPTION(scope, std::nullopt);
             if (!isEqual)
                 return false;
@@ -131,7 +140,7 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
             return false;
         remain--;
     }
-    return pairsAreEqual();
+    return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
 }
 
 } // namespace Bun

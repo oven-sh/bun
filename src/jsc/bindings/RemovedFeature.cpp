@@ -321,12 +321,18 @@ public:
             return true;
         if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::VMInquiry)
             return false;
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         // These are read off arbitrary functions, so they behave as if absent.
-        auto& names = *JSC::getVM(globalObject).propertyNames;
+        auto& names = *vm.propertyNames;
         bool isCommonProperty = key.isSymbol() ? key != names.asyncDisposeSymbol : key == names.then || key == names.toJSON;
-        if (isCommonProperty || JSC::asObject(object->getPrototypeDirect())->hasProperty(globalObject, key))
+        if (isCommonProperty)
             return false;
-        return throwRemovedSQLError(globalObject, object);
+        bool isInherited = JSC::asObject(object->getPrototypeDirect())->hasProperty(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isInherited)
+            return false;
+        RELEASE_AND_RETURN(scope, throwRemovedSQLError(globalObject, object));
     }
     static bool put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName key, JSC::JSValue value, JSC::PutPropertySlot& slot)
     {

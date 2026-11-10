@@ -5,7 +5,7 @@ mod top_level_await;
 
 pub use top_level_await::has_live_await;
 use top_level_await::has_live_top_level_await;
-pub(crate) use top_level_await::has_written_top_level_await;
+pub(crate) use top_level_await::{find_first_top_level_await, has_written_top_level_await};
 
 use crate::atom::{Atom, Interner};
 use crate::bind::{BindOptions, Binding, Bound, Decl, SymbolId};

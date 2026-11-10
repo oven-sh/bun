@@ -15,6 +15,7 @@ use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::mapped_file::FileBytes;
 use bun_exe_format::{macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
+pub use bun_options_types::standalone_path::is_bun_standalone_file_path;
 #[cfg(not(windows))]
 use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
@@ -101,20 +102,6 @@ impl Default for RuntimeOptions {
     }
 }
 
-// We never want to hit the filesystem for these files
-// We use the `/$bunfs/` prefix to indicate that it's a virtual path
-// It is `/$bunfs/` because:
-//
-// - `$` makes it unlikely to collide with a real path
-// - `/$bunfs/` is 8 characters which is fast to compare for 64-bit CPUs
-#[cfg(not(windows))]
-pub const BASE_PATH: &str = "/$bunfs/";
-// Special case for windows because of file URLs being invalid
-// if they do not have a drive letter. B drive because 'bun' but
-// also because it's more unlikely to collide with a real path.
-#[cfg(windows)]
-pub const BASE_PATH: &str = "B:\\~BUN\\";
-
 // Rust cannot const-concat with a runtime enum branch nor across a `const fn`
 // boundary, so the two call-site combinations are materialized directly with
 // `const_format::concatcp!`.
@@ -181,37 +168,6 @@ pub fn target_base_public_path(
             b"root/" => b"/$bunfs/root/",
             _ => unreachable!("target_base_public_path: unsupported suffix literal"),
         },
-    }
-}
-
-pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
-    if cfg!(windows) {
-        return has_prefix_ignoring_drive_case(str_, BASE_PATH.as_bytes())
-            || has_prefix_ignoring_drive_case(str_, BASE_PUBLIC_PATH.as_bytes());
-    }
-    str_.starts_with(BASE_PATH.as_bytes())
-}
-
-/// Drive letters are case-insensitive on Windows.
-pub(crate) fn has_prefix_ignoring_drive_case(path: &[u8], base: &[u8]) -> bool {
-    match (path.split_first(), base.split_first()) {
-        (Some((drive, rest)), Some((base_drive, base_rest))) => {
-            drive.eq_ignore_ascii_case(base_drive) && rest.starts_with(base_rest)
-        }
-        _ => base.is_empty(),
-    }
-}
-
-pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
-    #[cfg(windows)]
-    {
-        // On Windows, remove NT path prefixes before checking
-        let canonicalized = strings::paths::without_nt_prefix::<u8>(str_);
-        return is_bun_standalone_file_path_canonicalized(canonicalized);
-    }
-    #[cfg(not(windows))]
-    {
-        is_bun_standalone_file_path_canonicalized(str_)
     }
 }
 

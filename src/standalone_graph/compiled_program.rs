@@ -1760,8 +1760,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::StandaloneModuleGraph::{
         BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, CompileTarget, Flags, GraphRequest, Offsets,
-        RuntimeOptions, has_prefix_ignoring_drive_case, normalize_windows_key, to_bytes,
-        to_graph_bytes, with_graph_slices,
+        RuntimeOptions, normalize_windows_key, to_bytes, to_graph_bytes, with_graph_slices,
     };
     use crate::executable_request::graph_bytes;
 
@@ -2193,20 +2192,6 @@ pub(crate) mod tests {
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)
         );
-    }
-
-    #[test]
-    fn prefix_ignores_drive_case() {
-        for (path, is_found) in [
-            (&b"B:/~BUN/root/a.txt"[..], true),
-            (b"b:/~BUN/root/a.txt", true),
-            (b"C:/~BUN/root/a.txt", false),
-            (b"b:/~bun/root/a.txt", false),
-            (b"b", false),
-            (b"", false),
-        ] {
-            assert_eq!(has_prefix_ignoring_drive_case(path, b"B:/~BUN/"), is_found);
-        }
     }
 
     #[test]

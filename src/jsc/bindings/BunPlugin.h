@@ -156,6 +156,8 @@ public:
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
+        // Mocks of modules that a load in flight had asked for, oldest first. Each patches its module: an ES module once its body has run, another once it has loaded.
+        Vector<JSC::Strong<JSC::JSObject>> moduleMocksWaitingForModule = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
 
@@ -189,6 +191,7 @@ public:
             modulesAskedFor.clear();
             fetchesOfModulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
+            moduleMocksWaitingForModule.clear();
             loadedByImportActual.clear();
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
@@ -316,6 +319,7 @@ class GlobalObject;
 } // namespace Zig
 
 namespace JSC {
+class JSMap;
 class JSModuleNamespaceObject;
 class JSSourceCode;
 }
@@ -358,5 +362,15 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
+// The loader is about to run the body of an ES module. Patches what that module imports, if a mock waited for it and it has loaded, except ES modules.
+void patchImportsThatHaveLoaded(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
+// The loader has run the body of an ES module, to the end or to its first await. Patches the module if a mock waited for that.
+void patchModuleWhoseBodyHasRun(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
+// The loader has made the record of `key` of the module object in `requireMap`. If a waiting mock had patched that module object, the record has no original.
+void didMakeRecordOfModuleObject(Zig::GlobalObject*, JSC::JSMap* requireMap, const JSC::Identifier& key);
+// The loader has made the record of `key` and found no module object in `requireMap` to make it of. If a mock waits for the module, the record goes once its load has settled.
+void didMakeRecordOfNoModuleObject(Zig::GlobalObject*, JSC::JSMap* requireMap, const JSC::Identifier& key);
+// require() has made `moduleObject` of `moduleMock`. If the mock waits for its module, the module object moves to a key of its own.
+void didRequireModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, JSC::JSObject* moduleObject);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

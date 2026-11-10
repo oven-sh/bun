@@ -4126,19 +4126,35 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
+// Whether a module whose body is on the stack imports `record` through modules that have yet to run: the evaluation under way comes to `record`.
+__attribute__((minsize)) static bool isReachedByEvaluationUnderWay(Zig::GlobalObject* globalObject, JSC::CyclicModuleRecord* record)
+{
+    for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
+        auto* onStack = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (onStack && onStack->status() == JSC::CyclicModuleRecord::Status::Evaluating && anyUnevaluatedImport(onStack, [&](JSC::CyclicModuleRecord* imported) { return imported == record; }))
+            return true;
+    }
+    return false;
+}
+
 // Whether a module that Vitest doesn't externalize is linked to `record` and has yet to run. `running` is the one that asks.
-__attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running)
+// `waiting` is a mock that would wait for the next import of `record`. Then only a module that the evaluation under way runs counts: the eviction behind
+// such a mock takes out the others that a test file loaded, and they are loaded again behind the mock. A mock of Jest's kind is also for what Vitest externalizes.
+__attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running, JSModuleMock* waiting = nullptr)
 {
     for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
         auto* importer = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
         if (!importer || importer->status() < JSC::CyclicModuleRecord::Status::Linked || importer->status() > JSC::CyclicModuleRecord::Status::Evaluating)
             continue;
         String key(mapKey.first);
-        if (key == running || isExternalizedByVitest(globalObject, key))
+        if (key == running || ((!waiting || waiting->isOfVitest()) && isExternalizedByVitest(globalObject, key)))
             continue;
         for (auto& loaded : importer->loadedModules().values()) {
-            if (loaded.m_module.get() == record)
+            if (loaded.m_module.get() != record)
+                continue;
+            if (!waiting || importer->status() == JSC::CyclicModuleRecord::Status::Evaluating || isReachedByEvaluationUnderWay(globalObject, importer))
                 return true;
+            break;
         }
     }
     return false;
@@ -5763,9 +5779,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         JSC::Exception* thrownByFactory = compiledModuleWaits ? scope.exception() : nullptr;
         if (compiledModuleWaits && scope.tryClearException()) [[unlikely]] {
             JSC::AOT::ModuleID compiled = *loaded.compiledModule;
-            bool staysAsItIs = JSC::AOT::tryKeepOriginalIntact(globalObject, compiled, false, Bun::compiledModuleForPath(callerPath(vm, callframe)), true);
+            auto asking = Bun::compiledModuleForPath(callerPath(vm, callframe));
+            // No load comes from a module that is linked to a standing mock and has yet to run, nor from the calling module where it imports the module with a statement.
+            bool isLinkedToModuleYetToRun = JSC::AOT::hasUnevaluatedActiveMockImporter(globalObject, compiled, asking) || (asking && JSC::AOT::importsStatically(globalObject, *asking, compiled));
+            bool staysAsItIs = !isLinkedToModuleYetToRun && JSC::AOT::tryKeepOriginalIntact(globalObject, compiled, false, asking, true);
             RETURN_IF_EXCEPTION(scope, {});
-            if (!staysAsItIs && JSC::AOT::tryKeepActiveMock(globalObject, compiled, staysTheOriginal, isDoMock && !loadedByTestFile)) {
+            if (!isLinkedToModuleYetToRun && !staysAsItIs && JSC::AOT::tryKeepActiveMock(globalObject, compiled, staysTheOriginal, isDoMock && !loadedByTestFile)) {
                 mock->leavesStandingMockToItsImporters = true;
                 staysAsItIs = true;
             }
@@ -5789,7 +5808,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             mock->droppedSavedOriginal = !!JSC::AOT::mockedModuleEvaluationError(globalObject, compiled);
         }
 #endif
-        if (scope.exception() && mock->readUninitializedVariable && !loaded.compiledModule && scope.tryClearException()) [[unlikely]] {
+        JSC::Exception* thrown = scope.exception();
+        if (thrown && mock->readUninitializedVariable && !loaded.compiledModule && scope.tryClearException()) [[unlikely]] {
+            // No load comes from a module that is linked to the module and has yet to run, the calling module among them. The mock would never reach it, so the error of the factory is thrown.
+            if (loaded.esmNamespace && isImportedByModuleYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), String(), mock)) {
+                scope.throwException(globalObject, thrown);
+                return {};
+            }
             if (previous && !previous->isFromPreload) {
                 unmockModule(globalObject, previous, specifier, mock);
                 RETURN_IF_EXCEPTION(scope, {});

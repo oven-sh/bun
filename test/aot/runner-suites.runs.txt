@@ -100,3 +100,6 @@ test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wai
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the cycle is first loaded by vi.importActual() of the mocked module
 # This one: a require() gives up on a mock whose factory has not settled, and the mock is removed or replaced. Every test of the fixture passes. Plain runs what the require() had begun to load once more.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
+# The next one: a hoisted factory reads a variable below its call, over a module that an import that failed left linked, and the test file imports that module with no statement.
+# Plain lets the mock wait, and a later import() gets it. Compiled throws the error of the factory at the mock call.
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > over a module that an import that failed left linked > waits for the next import where it doesn't

@@ -7386,6 +7386,217 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       1,
     );
   });
+
+  // Such a factory throws where it is called from the hoisted call, and the mock then waits for the next import of the module
+  // (mock-hoist.test.ts, "can read a later const"). A module that is linked to the module and has yet to run imports it no more:
+  // the mock would never reach it, so there the error is thrown.
+  describe("a hoisted factory that reads a variable which its file declares below the call", () => {
+    const note =
+      "\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted().";
+    const thrown = (variable: string) => `ReferenceError: Cannot access '${variable}' before initialization.${note}`;
+    const mail = `export const send = () => "real";`;
+    const service = (target: string) => `
+      import { send } from ${JSON.stringify(target)};
+      export const atLoad = send();
+      export const notify = () => send();
+    `;
+    // The test file imports mocks.ts first and service.ts second, so service.ts is linked to the module when mocks.ts runs.
+    function mocksFirst(name: string, target: string, mock: string, more: Record<string, string> = {}) {
+      return {
+        [`${name}/service.ts`]: service(target),
+        [`${name}/mocks.ts`]: `
+          import { jest, vi } from "bun:test";
+          ${mock}
+        `,
+        [`${name}/below.test.ts`]: `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { atLoad, notify } from "./service";
+          test(${JSON.stringify(name)}, () => expect([atLoad, notify()]).toEqual(["mock", "mock"]));
+        `,
+        ...more,
+      };
+    }
+    async function run(files: Record<string, string>, args: string[] = []) {
+      using dir = tempDir("mock-module-reads-below", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    test.each(isolationFlags)("throws where a module that has yet to run is linked to the module %j", async args => {
+      const { stderr, exitCode } = await run(
+        mocksFirst(
+          "package",
+          "mail-a",
+          `const ofPackage = () => "mock"; vi.mock("mail-a", () => ({ send: ofPackage }));`,
+          {
+            "node_modules/mail-a/package.json": JSON.stringify({ name: "mail-a", main: "index.js" }),
+            "node_modules/mail-a/index.js": `exports.send = () => "real";`,
+          },
+        ),
+        args,
+      );
+      expect(stderr).toContain(thrown("ofPackage"));
+      expect(stderr).toContain(" 0 pass\n 1 fail\n 1 error\n");
+      expect(exitCode).toBe(1);
+    });
+
+    test("throws whichever file makes the call, and however the factory comes to the variable", async () => {
+      const { stderr, exitCode } = await run({
+        ...mocksFirst(
+          "own-module",
+          "./mail",
+          `const ofOwnModule = () => "mock"; jest.mock("./mail", () => ({ send: ofOwnModule }));`,
+          { "own-module/mail.ts": mail },
+        ),
+        // The test file is such a module too.
+        "test-file/mail.ts": mail,
+        "test-file/mocks.ts": `
+          import { vi } from "bun:test";
+          const ofTestFile = () => "mock";
+          vi.mock("./mail", () => ({ send: ofTestFile }));
+        `,
+        "test-file/own.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { send } from "./mail";
+          test("the test file reads the module", () => expect(send()).toBe("mock"));
+        `,
+        // The file that makes the call is linked to the module itself: an import that a file hands on stays a statement.
+        "hands-on/mod.ts": `export const value = "real";`,
+        "hands-on/own.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { value } from "./mod";
+          export { value };
+          const handedOn = String("mock");
+          vi.mock("./mod", () => ({ value: handedOn }));
+          test("an import that the file hands on", () => expect(value).toBe("mock"));
+        `,
+        // mocks.ts waits for an import of its own, and service.ts runs meanwhile.
+        ...mocksFirst(
+          "awaits",
+          "./mail",
+          `import { tag } from "./tag"; const awaited = () => tag; vi.mock("./mail", () => ({ send: awaited }));`,
+          { "awaits/mail.ts": mail, "awaits/tag.ts": `export const tag = "mock";` },
+        ),
+        ...mocksFirst(
+          "calls",
+          "./mail",
+          `const called = () => "mock"; function make() { return { send: called }; } vi.mock("./mail", () => make());`,
+          { "calls/mail.ts": mail },
+        ),
+        // jest.mock() is for a package that imports the module too, so such a package counts.
+        "library/node_modules/lib-a/package.json": JSON.stringify({ name: "lib-a", type: "module", main: "index.js" }),
+        "library/node_modules/lib-a/index.js": `import { send } from "dep-a"; export const notify = () => send();`,
+        "library/node_modules/dep-a/package.json": JSON.stringify({ name: "dep-a", type: "module", main: "index.js" }),
+        "library/node_modules/dep-a/index.js": mail,
+        "library/mocks.ts": `
+          import { jest } from "bun:test";
+          const ofLibrary = () => "mock";
+          jest.mock("dep-a", () => ({ send: ofLibrary }));
+        `,
+        "library/library.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { notify } from "lib-a";
+          test("a package that imports the module", () => expect(notify()).toBe("mock"));
+        `,
+        // A CommonJS file that mocks.ts requires while the modules of the test file run.
+        ...mocksFirst("commonjs-file", "./mail", `require("./mocks.cjs");`, {
+          "commonjs-file/mail.ts": mail,
+          "commonjs-file/mocks.cjs": `
+            const ofCommonJS = () => "mock";
+            jest.mock("./mail", () => ({ send: ofCommonJS }));
+          `,
+        }),
+      });
+      for (const variable of ["ofOwnModule", "ofTestFile", "handedOn", "awaited", "called", "ofLibrary", "ofCommonJS"])
+        expect(stderr).toContain(thrown(variable));
+      expect(stderr).toContain(" 0 pass\n 7 fail\n 7 errors\n");
+      expect(exitCode).toBe(1);
+    });
+
+    // As in Vitest and Jest, a module that ran before the call keeps the real module.
+    test("still waits for the next import where every module that is linked to the module has run", async () => {
+      await expectFixturesToPass(
+        {
+          "mail.ts": mail,
+          "service.ts": service("./mail"),
+          "mocks.ts": `
+            import { vi } from "bun:test";
+            const impl = () => "mock";
+            vi.mock("./mail", () => ({ send: impl }));
+          `,
+          "first.test.ts": `
+            import { expect, test } from "bun:test";
+            import { atLoad, notify } from "./service";
+            import "./mocks";
+            test("the importer ran first", async () => {
+              expect([atLoad, notify()]).toEqual(["real", "real"]);
+              expect((await import("./mail")).send()).toBe("mock");
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    // An import that fails leaves service.ts linked, and not run. The next test file runs it where it imports it with a statement.
+    // Where it doesn't, the mock evicts service.ts, and a later import() loads it again.
+    describe("over a module that an import that failed left linked", () => {
+      const leftBy = (test: string) => ({
+        "mail.ts": mail,
+        "service.ts": service("./mail"),
+        "config.ts": `throw new Error("no config");`,
+        "app.ts": `import "./config"; import "./service";`,
+        "mocks.ts": `
+          import { vi } from "bun:test";
+          const impl = () => "mock";
+          vi.mock("./mail", () => ({ send: impl }));
+        `,
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          test("an import that fails", async () => { await expect(import("./app")).rejects.toThrow("no config"); });
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          ${test}
+        `,
+      });
+
+      test("throws where the running test file imports that module with a statement", async () => {
+        const { stderr, exitCode } = await run(
+          leftBy(`
+            import { atLoad, notify } from "./service";
+            test("a statement", () => expect([atLoad, notify()]).toEqual(["mock", "mock"]));
+          `),
+        );
+        expect(stderr).toContain(thrown("impl"));
+        expect(stderr).toContain(" 1 pass\n 1 fail\n 1 error\n");
+        expect(exitCode).toBe(1);
+      });
+
+      test("waits for the next import where it doesn't", async () => {
+        await expectFixturesToPass(
+          leftBy(`
+            test("a call of import()", async () => {
+              const { atLoad, notify } = await import("./service");
+              expect([atLoad, notify()]).toEqual(["mock", "mock"]);
+            });
+          `),
+          2,
+        );
+      });
+    });
+  });
 });
 
 // In a URL, the "%de" in "50%deposit.ts" escapes the byte 0xDE, which isn't valid UTF-8. Windows decodes it to U+FFFD.

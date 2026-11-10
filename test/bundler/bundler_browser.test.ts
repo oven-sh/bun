@@ -383,12 +383,15 @@ describe("bundler", () => {
     }
     {
       // Something listens for "removeListener": each removal is a removeListener() call, and each event an emit() call.
+      // The log has each emit() that reaches a listener. When the last listener of an emitter is a "removeListener"
+      // listener, Node and the runtime also call emit() for its removal, and nothing receives the event. The polyfill
+      // does not make that call.
       const calls = [];
-      let logEmit = true;
       class Spy extends EventEmitter {
         emit(name, ...args) {
-          if (logEmit) calls.push("emit " + name);
-          return super.emit(name, ...args);
+          const delivered = super.emit(name, ...args);
+          if (delivered) calls.push("emit " + name);
+          return delivered;
         }
         removeListener(name, listener) {
           calls.push("removeListener " + name);
@@ -405,9 +408,6 @@ describe("bundler", () => {
       e.on("z", g);
       e.removeAllListeners("z");
       log("calls of removeAllListeners(name) while something listens", calls.splice(0));
-      // When the last listener of an emitter is a "removeListener" listener, Node and the runtime call emit() for its
-      // removal, and nothing receives the event. The polyfill does not make that call.
-      logEmit = false;
       e.removeAllListeners();
       log("calls of removeAllListeners() while something listens", calls);
     }
@@ -508,7 +508,7 @@ describe("bundler", () => {
     removeAllListeners() before the constructor ran: [true,"undefined"]
     calls while nothing listens for removeListener: ["on x","removeListener x","on y","emit y","removeListener y","on z","on z","on z"]
     calls of removeAllListeners(name) while something listens: ["removeAllListeners(z)","removeListener z","emit removeListener"]
-    calls of removeAllListeners() while something listens: ["removeAllListeners()","removeAllListeners(keep)","removeListener keep","removeAllListeners(removeListener)","removeListener removeListener"]
+    calls of removeAllListeners() while something listens: ["removeAllListeners()","removeAllListeners(keep)","removeListener keep","emit removeListener","removeAllListeners(removeListener)","removeListener removeListener"]
     on() while a newListener listener removes every listener: [[1,["x"],1,true],[1,["x"],1,true],[1,["x"],1,true]]
     listenerCount(name, listener): {"all":3,"f":2,"g":1,"h":0,"null":3,"otherName":0,"length":2}
     events.once(): [[1],["x","error"],["removeListener"]]

@@ -32,16 +32,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Extract the commit hash from the line after COMMIT
           current=$(bun -p '(await Bun.file("test/vendor.json").json()).filter(v=>v.package===process.argv[1])[0].tag' ${{ matrix.package }})
+          current_commit=$(bun -p '(await Bun.file("test/vendor.json").json()).filter(v=>v.package===process.argv[1])[0].commit' ${{ matrix.package }})
           repository=$(bun -p '(await Bun.file("test/vendor.json").json()).filter(v=>v.package===process.argv[1])[0].repository' ${{ matrix.package }} | cut -d'/' -f4,5)
 
           if [ -z "$current" ]; then
-            echo "Error: Could not find COMMIT line in test/vendor.json"
+            echo "Error: Could not find the tag in test/vendor.json"
             exit 1
           fi
 
           echo "current=$current" >> $GITHUB_OUTPUT
+          echo "current_commit=$current_commit" >> $GITHUB_OUTPUT
           echo "repository=$repository" >> $GITHUB_OUTPUT
 
           LATEST_RELEASE=$(curl -sL https://api.github.com/repos/${repository}/releases/latest)
@@ -56,16 +57,24 @@ jobs:
             exit 1
           fi
 
+          LATEST_COMMIT=$(curl -sL "https://api.github.com/repos/${repository}/commits/${LATEST_TAG}" | jq -r '.sha')
+          if [[ ! "$LATEST_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Could not find the commit of $LATEST_TAG"
+            exit 1
+          fi
+
           echo "latest=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "latest_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
 
       - name: Update version if needed
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
         env:
           PACKAGE: ${{ matrix.package }}
           LATEST_TAG: ${{ steps.check-version.outputs.latest }}
+          LATEST_COMMIT: ${{ steps.check-version.outputs.latest_commit }}
         run: |
           set -euo pipefail
-          bun -e 'await Bun.write("test/vendor.json", JSON.stringify((await Bun.file("test/vendor.json").json()).map(v=>{if(v.package===process.argv[1])v.tag=process.argv[2];return v;}), null, 2) + "\n")' "$PACKAGE" "$LATEST_TAG"
+          bun -e 'await Bun.write("test/vendor.json", JSON.stringify((await Bun.file("test/vendor.json").json()).map(v=>{if(v.package===process.argv[1]){v.tag=process.argv[2];v.commit=process.argv[3];}return v;}), null, 2) + "\n")' "$PACKAGE" "$LATEST_TAG" "$LATEST_COMMIT"
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
@@ -83,6 +92,6 @@ jobs:
 
             Updates ${{ matrix.package }} to version ${{ steps.check-version.outputs.latest }}
 
-            Compare: https://github.com/${{ steps.check-version.outputs.repository }}/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+            Compare: https://github.com/${{ steps.check-version.outputs.repository }}/compare/${{ steps.check-version.outputs.current_commit }}...${{ steps.check-version.outputs.latest_commit }}
 
             Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-vendor.yml)

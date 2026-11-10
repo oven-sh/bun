@@ -82,6 +82,7 @@ import {
   type JunitFileSuite,
 } from "./buildkite.ts";
 import { costOfNewTests } from "./ci-cost-of-new-tests.ts";
+import { checkoutVendor } from "./vendor-checkout.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -3144,7 +3145,10 @@ function getTests(cwd: string): string[] {
 interface Vendor {
   package: string;
   repository: string;
+  /** The release `commit` is of. */
   tag: string;
+  /** What is checked out. */
+  commit: string;
   packageManager?: string;
   testPath?: string;
   testRunner?: string;
@@ -3185,34 +3189,22 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
 
   return Promise.all(
     relevantVendors.map(
-      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+      async ({
+        package: name,
+        repository,
+        commit,
+        testPath,
+        testExtensions,
+        testRunner,
+        packageManager,
+        skipTests,
+      }) => {
         const vendorPath = join(cwd, "vendor", name);
 
-        if (!existsSync(vendorPath)) {
-          const { ok, error } = await spawnWithTimeout({
-            command: "git",
-            args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
-            timeout: testTimeout,
-            cwd,
-          });
-          if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
-        }
-
-        let { ok, error } = await spawnWithTimeout({
-          command: "git",
-          args: ["fetch", "--depth", "1", "origin", "tag", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
+        await checkoutVendor({ repository, commit, vendorPath }, async (...args) => {
+          const { ok, error } = await spawnWithTimeout({ command: "git", args, timeout: testTimeout, cwd });
+          if (!ok) throw new Error(`failed to git ${args.join(" ")} for vendor '${name}': ${error}`);
         });
-        if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
-
-        ({ ok, error } = await spawnWithTimeout({
-          command: "git",
-          args: ["checkout", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
-        }));
-        if (!ok) throw new Error(`failed to checkout tag ${tag} for vendor '${name}': ${error}`);
 
         const packageJsonPath = join(vendorPath, "package.json");
         if (!existsSync(packageJsonPath)) {

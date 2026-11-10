@@ -345,10 +345,11 @@ test.if(reportsTruncation)(
   TIMEOUT,
 );
 
-/// The word that holds the payload's address: the ".bun" section of bun itself, or ".bun.pointer" of a bun that is a compiled executable already.
-function elfFindPointerWord(fd: number): { fileOffset: number; vaddr: bigint } {
-  const pointer = elfSections(fd).find(section => section.name === ".bun.pointer");
-  return pointer ? { fileOffset: pointer.fileOffset, vaddr: pointer.vaddr } : elfFindBunSection(fd);
+/// The address of the word that holds the payload's address: the ".bun" section of bun itself, or ".bun.pointer" of a bun that is a
+/// compiled executable already. The address stays through a compile. The file offset does not: `--trim` cuts bytes in front of it.
+function elfFindPointerWordAddress(fd: number): bigint {
+  const sections = elfSections(fd);
+  return (sections.find(section => section.name === ".bun.pointer") ?? elfFindBunSection(fd)).vaddr;
 }
 
 // GNU strip and objcopy write a new file from the section headers. Bytes that no section covers are lost. The word
@@ -364,26 +365,27 @@ test.skipIf(!isLinux)(
     const bun = openSync(bunExe(), "r");
     const fd = openSync(exe, "r");
     try {
-      const word = elfFindPointerWord(bun);
+      const word = elfFindPointerWordAddress(bun);
       const payload = elfFindBunSection(fd);
-      expect(readAt(fd, word.fileOffset, 8).readBigUInt64LE()).toBe(payload.vaddr);
 
       const coveringSections = elfSections(fd).filter(
         section =>
           (section.flags & SHF_ALLOC) !== 0n &&
-          section.fileOffset <= word.fileOffset &&
-          word.fileOffset + 8 <= section.fileOffset + section.size,
+          section.type === SHT_PROGBITS &&
+          section.vaddr <= word &&
+          word + 8n <= section.vaddr + BigInt(section.size),
       );
       expect(coveringSections).toEqual([
         {
           name: ".bun.pointer",
           type: SHT_PROGBITS,
           flags: expect.any(BigInt),
-          vaddr: word.vaddr,
-          fileOffset: word.fileOffset,
+          vaddr: word,
+          fileOffset: expect.any(Number),
           size: 8,
         },
       ]);
+      expect(readAt(fd, coveringSections[0].fileOffset, 8).readBigUInt64LE()).toBe(payload.vaddr);
     } finally {
       closeSync(fd);
       closeSync(bun);

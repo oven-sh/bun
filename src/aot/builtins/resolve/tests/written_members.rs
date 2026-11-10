@@ -753,6 +753,22 @@ fn matchers_are_written_on_the_holders_of_matchers() {
 }
 
 #[test]
+fn the_expect_of_vitest_handed_on_opens_the_holders_of_matchers() {
+    let sources = [
+        "import { expect } from 'vitest'; helper(expect);",
+        "import { expect } from 'vitest'; export { expect };",
+    ];
+    for source in sources {
+        with_case(TEST_RUN, source, |case| {
+            let opened = case.resolved.opened_holders();
+            for holder in table::HOLDERS_OF_MATCHERS {
+                assert!(opened.contains(&holder), "{source}: {opened:?}");
+            }
+        });
+    }
+}
+
+#[test]
 fn mock_of_a_native_module_replaces_its_namespace() {
     let source = with_runner!("mock.module('bun:jsc', () => ({}));");
     assert_replaces_only(TEST_RUN, source, &[jsc_namespace()]);

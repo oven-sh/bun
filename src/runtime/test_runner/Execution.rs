@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry, Flavor,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
@@ -235,7 +235,10 @@ impl ExecutionSequence {
         if let Some(context) = &self.context {
             return context.get();
         }
-        let context = TestContext::create(global, buntest, group_index, sequence_index);
+        // SAFETY: arena-owned entry
+        let of_vitest = self.test_entry.is_some_and(|test| unsafe { test.as_ref() }.calling.is_vitest());
+        let flavor = if of_vitest { Flavor::Vitest } else { Flavor::Jest };
+        let context = TestContext::create(global, buntest, group_index, sequence_index, flavor);
         self.context = Some(Strong::create(context, global));
         // SAFETY: arena-owned entry
         if let Some(fixtures) = self.test_entry.and_then(|test| unsafe { test.as_ref() }.fixtures.as_ref()) {

@@ -255,7 +255,7 @@ export const ExpectMatcherContext = b.class({
 /** `this.utils` in a matcher of `expect.extend()`. Its functions are own properties, which ignore `this`. */
 export const ExpectMatcherUtils = b.class({
   rustPath: "crate::test_runner::ExpectMatcherUtils",
-  internalFields: ["equalityTesters", "equals", "state", "snapshotSerializers", "toSatisfy"],
+  internalFields: ["equalityTesters", "equals", "equalsOfVitest", "state", "snapshotSerializers", "toSatisfy"],
 });
 
 /** Ignores `this`, so a matcher can destructure it or pass it around like in Jest. */
@@ -273,10 +273,29 @@ export const matcherContextEquals = b.fn({
   args: { a: b.any, b: b.any, customTesters: b.any, strictCheck: b.bool.loose },
   returns: b.bool,
 });
+/** `this.equals` in a matcher that was called on an `expect()` of `"vitest"`. */
+export const matcherContextEqualsOfVitest = b.fn({
+  ...plain("ExpectMatcherContext", "equalsOfVitest", "equals_of_vitest"),
+  args: { a: b.any, b: b.any, customTesters: b.any, strictCheck: b.bool.loose },
+  returns: b.bool,
+});
 /** What `expect.toSatisfy(predicate)` is a custom asymmetric matcher of. */
 export const toSatisfyAsCustomMatcher = b.fn({
   ...plain("Expect", "toSatisfyAsCustomMatcher", "to_satisfy_as_custom_matcher"),
   args: { received: b.any, predicate: b.any },
+});
+/** `expect`, `expect.soft` and `expect.poll` of `"vitest"`. `Expect::create_of_vitest()` makes the object. */
+export const callOfVitest = b.fn({
+  ...plain("Expect", "callOfVitest", "call_of_vitest"),
+  args: { value: b.any, message: b.any },
+});
+export const softOfVitest = b.fn({
+  ...plain("Expect", "softOfVitest", "soft_of_vitest"),
+  args: { value: b.any, message: b.any },
+});
+export const pollOfVitest = b.fn({
+  ...plain("Expect", "pollOfVitest", "poll_of_vitest"),
+  args: { fn: b.any, options: b.any },
 });
 export const stringify = b.fn({ ...utility("stringify", "stringify"), args: { value: b.any } });
 export const printExpected = b.fn({ ...utility("printExpected", "print_expected"), args: { value: b.any } });

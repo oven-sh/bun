@@ -183,10 +183,12 @@ pub fn stubs_global(id: BuiltinId) -> bool {
     )
 }
 
-pub const HOLDERS_OF_MATCHERS: [BuiltinId; 3] = [
+/// What `expect.extend()` writes to, and the `expect` of "vitest", which reads the first of them as its prototype.
+pub const HOLDERS_OF_MATCHERS: [BuiltinId; 4] = [
     BuiltinId::Expect,
     BuiltinId::ExpectPrototype,
     BuiltinId::ExpectStaticPrototype,
+    BuiltinId::BunTestVitestExpect,
 ];
 
 pub fn is_locked(id: BuiltinId) -> bool {

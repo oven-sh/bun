@@ -25,6 +25,14 @@ fn test_runner_and_plugin_are_found_under_their_names() {
         assert_eq!(is_of_test_runner(id), is_below_runner, "{}", text_of(id));
     }
     assert!(is_of_expect(BuiltinId::Expect) && is_of_expect(BuiltinId::ExpectAny));
+    assert_ne!(
+        canonical_id(BuiltinId::BunTestVitestExpect),
+        BuiltinId::Expect
+    );
+    assert!(
+        is_of_expect(BuiltinId::BunTestVitestExpect)
+            && is_of_expect(BuiltinId::BunTestVitestExpectSoft)
+    );
     assert!(!is_of_expect(BuiltinId::BunTestSpyOn) && !is_of_expect(BuiltinId::Bun));
     assert!(is_of_test_runner(BuiltinId::BunTestSpyOn));
     assert!(!is_of_test_runner(BuiltinId::Bun));

@@ -513,8 +513,16 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |
+| `toEqual()` on arrays of different lengths                | a missing item is `undefined`        | never equal                                                          |
+| `toEqual()` on two errors                                 | compares `cause`, but not `errors`   | compares `cause` if the expected error has one, and `errors`         |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 | `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
+
+For the rows about a matcher, `expect` follows the module it's imported from, wherever it's called.
+
+- The `expect` of the [test context](#test-context) follows Vitest in every test that receives the context: a `"vitest"` test, and a `test.extend()` or `test.for()` test of any module.
+- An asymmetric matcher such as `expect.arrayContaining()` follows the `expect()` whose matcher compares it, not the `expect` it comes from.
+- An `expect` that a file uses without an import follows the module that the file's [globals](/test/configuration#globals) come from.
 
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context). It exports `inject` too, which always returns `undefined`, because `bun test` has no `provide` option or global setup file to provide a value.
 
@@ -566,7 +574,9 @@ test("promises", async () => {
 
 If you don't `await` a matcher, the test still waits for it before ending, and a failure still fails that test. Outside a test, the file waits for the matcher, and a failure is reported as an error between tests. Code after the matcher doesn't wait for it, so `await` the matcher if that code closes something the promise needs.
 
-In a `"bun:test"` test, a promise that has already settled is checked right away, and a failed matcher throws instead of returning a rejected promise. In a `"vitest"` test, the matcher always returns a promise.
+With `expect` from `"bun:test"`, a promise that has already settled is checked right away, and a failed matcher throws instead of returning a rejected promise. With `expect` from `"vitest"`, the matcher always returns a promise.
+
+In a [concurrent](/test#concurrent-test-execution) test after its first `await`, Bun can't tell which test called an `expect` that the file imports. If a matcher returns a promise there and you don't `await` it, a failure is reported as an error between tests, and the test passes. `await` the matcher, or use the `expect` of the [test context](#test-context).
 
 These matchers also return a promise:
 

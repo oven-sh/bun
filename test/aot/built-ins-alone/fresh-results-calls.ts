@@ -91,6 +91,10 @@ export const calls: Record<string, string[]> = {
     ]),
   ),
   "%Dirent%": ['import { Dirent } from "node:fs";\nnew Dirent("name", 1, "/path")'],
+  // The expect of "vitest" and its soft() and poll() answer outside of a test run too.
+  "bun:test/vitest.expect": ['import { expect } from "bun:test/vitest";\nexpect(1)'],
+  "bun:test/vitest.expect.soft": ['import { expect } from "bun:test/vitest";\nexpect.soft(1)'],
+  "bun:test/vitest.expect.poll": ['import { expect } from "bun:test/vitest";\nexpect.poll(() => 1)'],
   "PerformanceObserver > PerformanceObserverEntryList": [`${observed}\nlist`],
   "PerformanceObserverEntryList.prototype.getEntries": [`${observed}\nlist.getEntries()`],
   "PerformanceObserverEntryList.prototype.getEntriesByName": [`${observed}\nlist.getEntriesByName("fresh-results")`],

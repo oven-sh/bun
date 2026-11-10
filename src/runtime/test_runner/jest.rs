@@ -460,6 +460,7 @@ pub(crate) mod Jest {
                     create_hook(global_object, GenericHookTag::OnTestFailed, flavor, JSValue::UNDEFINED)?,
                 );
                 module.put(global_object, b"suite", describe_scope_functions);
+                module.put(global_object, b"expect", crate::test_runner::Expect::create_of_vitest(global_object));
                 module.put(global_object, b"TestRunner", crate::test_runner::test_context::create_test_runner(global_object));
                 if let Some(shared) = module.get(global_object, "vi")? {
                     let vi = JSValue::create_empty_object(global_object, 64);

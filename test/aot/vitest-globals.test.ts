@@ -49,13 +49,13 @@ describe.concurrent("the globals of vitest", () => {
   // A name that "bun:test" has too is the one of "vitest".
   const saysWhereNamesComeFrom = (title: string) => `
     const { ofBun, ofVitest } = require("./helper.cjs");
-    const names = { test, it, describe, suite, vi, vitest, beforeEach, afterAll };
+    const names = { test, it, describe, suite, vi, vitest, expect, beforeEach, afterAll };
     const from = name => (names[name] === ofVitest[name] ? "vitest" : names[name] === ofBun[name] ? "bun:test" : "neither");
     console.log(">", "${title}", Object.keys(names).map(name => name + " " + from(name)).join(", "));
     test("${title}", () => {});
   `;
   const all =
-    "test vitest, it vitest, describe vitest, suite vitest, vi vitest, vitest vitest, beforeEach vitest, afterAll vitest";
+    "test vitest, it vitest, describe vitest, suite vitest, vi vitest, vitest vitest, expect vitest, beforeEach vitest, afterAll vitest";
   const builtInParts = {
     "helper.cjs": `module.exports = { ofBun: require("bun:test"), ofVitest: require("vitest") };`,
     "a.test.cjs": saysWhereNamesComeFrom("a"),

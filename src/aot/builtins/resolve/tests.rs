@@ -53,6 +53,7 @@ const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
 const MODULES: &[(&str, RuntimeModule)] = &[
     ("bun:jsc", RuntimeModule::BunJsc),
     ("bun:test", RuntimeModule::BunTest),
+    ("vitest", RuntimeModule::BunTestVitest),
     ("bun", RuntimeModule::Bun),
     ("node:fs", RuntimeModule::NodeFs),
     ("node:module", RuntimeModule::NodeModule),

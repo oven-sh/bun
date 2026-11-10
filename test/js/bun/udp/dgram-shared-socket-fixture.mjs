@@ -49,7 +49,7 @@ if (role) {
       }
     }
   };
-  const reading = closeSocket => {
+  const ready = closeSocket => {
     close = closeSocket;
     process.send("ready", waitForParent);
   };
@@ -57,15 +57,15 @@ if (role) {
   if (overIpc) {
     process.once("message", (_, socket) => {
       socket.on("message", data => onDatagram(String(data)));
-      reading(() => socket.close());
+      ready(() => socket.close());
     });
   } else if (variant === "fd") {
     const socket = dgram.createSocket("udp4");
     socket.on("message", data => onDatagram(String(data)));
-    socket.bind({ fd: 4 }, () => reading(() => socket.close()));
+    socket.bind({ fd: 4 }, () => ready(() => socket.close()));
   } else {
     const socket = await Bun.udpSocket({ fd: 4, socket: { data: (_, data) => onDatagram(String(data)) } });
-    reading(() => socket.close());
+    ready(() => socket.close());
   }
 } else {
   const socket = dgram.createSocket("udp4");

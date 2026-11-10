@@ -263,7 +263,8 @@ describe.skipIf(isWindows)("cluster", () => {
   }, 40_000);
 });
 
-// A second process cannot hold a dgram socket on Windows: adopting a descriptor reports ENOTSUP.
+// On Windows bind({ fd }) refuses every descriptor, also the one that child.send(message, socket)
+// delivers, so no second process can read a dgram socket there.
 describe.skipIf(isWindows)("a socket that two processes read", () => {
   // Node reads one datagram per recvmsg(). A reader that stops inside a 'message' listener has
   // taken that one datagram, and the other process gets every datagram that was queued behind it.

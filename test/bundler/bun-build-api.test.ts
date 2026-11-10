@@ -940,6 +940,109 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/37184
+  describe("BuildArtifact.sourcemap is the source map of that output", () => {
+    const files = {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [] },
+      }),
+      "shared.ts": `export const shared = { n: 1 };\n`,
+      "a.ts": `import { shared } from "./shared";\nexport const a: number = shared.n + 1;\n`,
+      "b.ts": `import { shared } from "./shared";\nexport const b: number = shared.n + 2;\n`,
+      "styled.ts": `import "./style.css";\nconsole.log("styled");\n`,
+      "style.css": `body { margin: 0; }\n`,
+      "page.ts": `console.log("page");\n`,
+      "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./page.ts"></script></body></html>\n`,
+    };
+    // No shape puts a map right after its file. With bytecode, a `.jsc` file also sits between the two maps.
+    const shapes: [
+      name: string,
+      entrypoints: string[],
+      options: Partial<Bun.BuildConfig>,
+      maps: Record<string, string>,
+    ][] = [
+      ["two entry points", ["a.ts", "b.ts"], {}, { "a.js": "a.js.map", "b.js": "b.js.map" }],
+      [
+        "two entry points and a shared chunk",
+        ["a.ts", "b.ts"],
+        { splitting: true, naming: { chunk: "shared.[ext]" } },
+        { "a.js": "a.js.map", "b.js": "b.js.map", "shared.js": "shared.js.map" },
+      ],
+      ["an entry point that imports CSS", ["styled.ts"], {}, { "styled.js": "styled.js.map" }],
+      ["an HTML entry point", ["index.html"], { naming: { chunk: "page.[ext]" } }, { "page.js": "page.js.map" }],
+      [
+        "two entry points with bytecode",
+        ["a.ts", "b.ts"],
+        { bytecode: true, target: "bun", format: "cjs" },
+        { "a.js": "a.js.map", "b.js": "b.js.map" },
+      ],
+      [
+        "two entry points with declaration files",
+        ["a.ts", "b.ts"],
+        { dts: true },
+        { "a.js": "a.js.map", "b.js": "b.js.map" },
+      ],
+    ];
+    const cases = shapes
+      .flatMap(shape =>
+        (["linked", "external"] as const).flatMap(sourcemap =>
+          [false, true].map(
+            outdir =>
+              [`${shape[0]}, ${sourcemap}, ${outdir ? "outdir" : "no outdir"}`, shape, sourcemap, outdir] as const,
+          ),
+        ),
+      )
+      // One case with declaration files: the type checker takes about 2 s in a debug build.
+      .filter(([, [, , options], sourcemap, outdir]) => !options.dts || (sourcemap === "external" && outdir));
+
+    test.concurrent.each(cases)("%s", async (_, [, entrypoints, options, maps], sourcemap, outdir) => {
+      using dir = tempDir("build-artifact-sourcemap-pairs", files);
+      const root = String(dir);
+      const { outputs } = await Bun.build({
+        ...options,
+        entrypoints: entrypoints.map(entry => join(root, entry)),
+        tsconfig: join(root, "tsconfig.json"),
+        sourcemap,
+        ...(outdir ? { outdir: join(root, "out") } : {}),
+      });
+      const owners = outputs.filter(output => output.sourcemap !== null);
+      expect(Object.fromEntries(owners.map(o => [path.basename(o.path), path.basename(o.sourcemap!.path)]))).toEqual(
+        maps,
+      );
+      // `.sourcemap` is the element of `outputs` itself, and that element is a source map.
+      expect(owners.map(o => outputs.indexOf(o.sourcemap!))).toEqual(
+        owners.map(o => outputs.findIndex(map => map.kind === "sourcemap" && map.path === o.path + ".map")),
+      );
+    });
+
+    test("in an onEnd callback and in Bun.inspect", async () => {
+      using dir = tempDir("build-artifact-sourcemap-on-end", files);
+      const root = String(dir);
+      const pairs = (outputs: Bun.BuildArtifact[]) =>
+        Object.fromEntries(outputs.map(o => [path.basename(o.path), o.sourcemap && path.basename(o.sourcemap.path)]));
+      let inOnEnd: ReturnType<typeof pairs> | undefined;
+      const build = await Bun.build({
+        entrypoints: [join(root, "a.ts"), join(root, "b.ts")],
+        sourcemap: "external",
+        plugins: [
+          {
+            name: "read-sourcemaps",
+            setup(builder) {
+              builder.onEnd(result => {
+                inOnEnd = pairs(result.outputs);
+              });
+            },
+          },
+        ],
+      });
+      const expected = { "a.js": "a.js.map", "b.js": "b.js.map", "a.js.map": null, "b.js.map": null };
+      expect({ inOnEnd, resolved: pairs(build.outputs) }).toEqual({ inOnEnd: expected, resolved: expected });
+      expect(Bun.inspect(build.outputs.find(o => path.basename(o.path) === "a.js"))).toMatch(
+        /\n  sourcemap: BuildArtifact \(sourcemap\) \{\n    path: "[^"]*a\.js\.map",/,
+      );
+    });
+  });
+
   // test("BuildArtifact properties splitting", async () => {
   //   Bun.gc(true);
   //   const x = await Bun.build({

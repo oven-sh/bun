@@ -633,6 +633,10 @@ impl JSBundleCompletionTask {
         // keep them in the output array. Destroy all other non-entry-point files.
         // With --splitting, there can be multiple sourcemap files (one per chunk).
         let mut kept: usize = 0;
+        // Of the files kept, only the entry point names other files by their position.
+        let entry_source_map_index = output_files[entry_point_index].source_map_index as usize;
+        let mut entry_at: usize = 0;
+        let mut entry_source_map_at: u32 = u32::MAX;
         // Swap-compact in place via index iteration so each loop body holds
         // at most one `&mut` into `output_files`.
         for i in 0..output_files.len() {
@@ -708,12 +712,21 @@ impl JSBundleCompletionTask {
             };
 
             if keep_this {
+                if i == entry_point_index {
+                    entry_at = kept;
+                } else if i == entry_source_map_index {
+                    entry_source_map_at = kept as u32;
+                }
                 output_files.swap(kept, i);
                 kept += 1;
             }
             // Trailing (dropped) entries are freed by `truncate` below.
         }
         output_files.truncate(kept);
+        let entry = &mut output_files[entry_at];
+        entry.source_map_index = entry_source_map_at;
+        entry.bytecode_index = u32::MAX;
+        entry.module_info_index = u32::MAX;
 
         result
     }
@@ -879,8 +892,9 @@ impl JSBundleCompletionTask {
                 let dir = this.config.dir.list.clone();
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-                let mut to_assign_on_sourcemap = JSValue::ZERO;
-                for (i, output_file) in output_files.iter_mut().enumerate() {
+                // Last to first: a source map comes after its file, so its wrapper is made first.
+                for i in (0..output_files.len()).rev() {
+                    let output_file = &mut output_files[i];
                     let path: Box<[u8]> = if !outdir.is_empty() {
                         if outdir_is_abs {
                             Box::from(join_abs_string::<platform::Auto>(
@@ -897,17 +911,27 @@ impl JSBundleCompletionTask {
                         output_file.dest_path.clone()
                     };
                     let result = output_file.to_js(Some(&path), global_this);
-                    if to_assign_on_sourcemap != JSValue::ZERO {
-                        crate::generated_bindgen::js_bundler::js_BuildArtifact::sourcemap_set_cached(
-                            to_assign_on_sourcemap,
-                            global_this,
-                            result,
-                        );
-                        to_assign_on_sourcemap = JSValue::ZERO;
-                    }
-
-                    if output_file.source_map_index != u32::MAX {
-                        to_assign_on_sourcemap = result;
+                    let source_map_index = output_file.source_map_index;
+                    let has_source_map = output_files
+                        .get(source_map_index as usize)
+                        .is_some_and(|file| file.output_kind == OutputKind::Sourcemap);
+                    debug_assert!(
+                        source_map_index == u32::MAX
+                            || (has_source_map && source_map_index as usize > i),
+                        "output file {i} names {source_map_index}, which is not a later Sourcemap file (see OutputFileListBuilder)",
+                    );
+                    if has_source_map {
+                        match output_files_js.get_direct_index(global_this, source_map_index) {
+                            Ok(source_map) if source_map.is_cell() => {
+                                crate::generated_bindgen::js_bundler::js_BuildArtifact::sourcemap_set_cached(
+                                    result,
+                                    global_this,
+                                    source_map,
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => return promise.reject(global_this, Err(e)),
+                        }
                     }
 
                     if let Err(e) = output_files_js.put_index(global_this, i as u32, result) {

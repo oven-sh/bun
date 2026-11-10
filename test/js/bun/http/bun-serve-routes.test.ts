@@ -1124,3 +1124,14 @@ it("request.clone() copies a param whose name is an array index", async () => {
   const res = await fetch(`${server.url}users/42`);
   expect(await res.json()).toEqual({ keys: ["0", "id"], byIndex: "zero" });
 });
+
+it("request.clone, which is not Request.prototype.clone, has the length of the IDL", async () => {
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/users/:id": req => Response.json({ own: req.clone !== Request.prototype.clone, length: req.clone.length }),
+    },
+  });
+  const res = await fetch(`${server.url}users/42`);
+  expect(await res.json()).toEqual({ own: true, length: 0 });
+});

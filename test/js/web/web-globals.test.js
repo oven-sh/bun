@@ -355,6 +355,15 @@ test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
   },
 );
 
+test("alert, confirm, prompt and structuredClone have the lengths of the IDL", () => {
+  expect({
+    alert: alert.length,
+    confirm: confirm.length,
+    prompt: prompt.length,
+    structuredClone: structuredClone.length,
+  }).toEqual({ alert: 0, confirm: 0, prompt: 0, structuredClone: 1 });
+});
+
 test("confirm (yes) unix newline", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],

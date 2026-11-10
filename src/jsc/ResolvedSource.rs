@@ -8,6 +8,21 @@ use crate::JSValue;
 // half of the table is code-generated (see `generated_resolved_source_tag.rs`).
 pub use crate::resolved_source_tag::ResolvedSourceTag as Tag;
 
+/// C++ `ResolvedSourceValidatorKind` (headers-handwritten.h): what `ResolvedSource.validator` is.
+#[repr(u8)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum ValidatorKind {
+    /// No validator was taken: after a `resetModules()` the source is not served from `IsolatedModuleCache` again.
+    #[default]
+    None = 0,
+    /// A number made from the file's `stat`.
+    Stamp = 1,
+    /// A hash of the file's text, for a file that changed too recently for its `stat` to prove equal bytes.
+    Content = 2,
+    /// No file was read for the source, so there is nothing to check.
+    NotAFile = 3,
+}
+
 /// C++ `ResolvedSource` (headers-handwritten.h). Every string field is owned
 /// by whichever frame holds the struct: dropped here on the Rust side, or by
 /// `~ErrorableResolvedSource` once written into a C++ out-param. Consumers
@@ -21,6 +36,8 @@ pub struct ResolvedSource {
     pub is_commonjs_module: bool,
     /// Dispatched before a `resetModules()` that ran since, or for a test file that is over: not for `IsolatedModuleCache`.
     pub from_earlier_generation: bool,
+    /// How `IsolatedModuleCache` checks the source against its file before it serves it again after a `resetModules()`.
+    pub validator_kind: ValidatorKind,
     /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
     pub source_code_hash: u32,
 
@@ -50,6 +67,8 @@ pub struct ResolvedSource {
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
     pub origin_path: BunString,
+    /// The stamp or content hash that `validator_kind` names (`module_loader::SourceValidator`).
+    pub validator: u64,
 }
 
 /// The AST fields a `ResolvedSource` needs, copied out before the printer consumes the AST.
@@ -162,5 +181,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; from_earlier_generation @ 49, is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 144, 8; from_earlier_generation @ 49, validator_kind @ 50, is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104, validator @ 136);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

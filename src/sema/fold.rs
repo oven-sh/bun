@@ -347,6 +347,12 @@ impl<'s> Decisions<'s> {
         self.paths_written_from_own_directory
     }
 
+    pub fn find_path_written_from_own_directory(&self, written: ExprId) -> Option<Atom> {
+        let paths = self.paths_written_from_own_directory;
+        let index = paths.binary_search_by_key(&written, |entry| entry.0).ok()?;
+        Some(paths[index].1)
+    }
+
     pub fn is_path_made_by_call(&self, argument: ExprId) -> bool {
         self.paths_made_by_calls.binary_search(&argument).is_ok()
     }

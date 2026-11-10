@@ -49,6 +49,14 @@ import { Worker as NodeWorker } from "node:worker_threads";
 const worker = new NodeWorker("require('node:worker_threads').parentPort.postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)", { eval: true });
 worker.on("message", message => { console.log(message); worker.terminate(); });
 worker.on("error", error => console.log("error", error.message.replace(/blob:[-0-9a-f]+/, "blob:")));
+//// worker-threads-eval-off-an-awaited-module
+//@ alone
+{
+  const { Worker: LateWorker } = await import("node:worker_threads");
+  const worker = new LateWorker("require('node:worker_threads').parentPort.postMessage(require('node:crypto').createHash('sha1').update('a').digest('hex'))", { eval: true });
+  worker.on("message", message => { console.log(message); worker.terminate(); });
+  worker.on("error", error => console.log("error", error.message.replace(/blob:[-0-9a-f]+/, "blob:")));
+}
 //// globalThis-Worker
 //@ alone
 listen(new globalThis.Worker("data:application/javascript," + encodeURIComponent(text)));

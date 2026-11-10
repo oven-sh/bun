@@ -802,6 +802,30 @@ mod texts {
             ),
             ("", "(globalThis as any).run(config);", CONFIG, open),
             ("", "new Worker(WHERE);", CONFIG, open),
+            (
+                "import { Worker as Thread } from \"node:worker_threads\";",
+                "new Thread(WHERE);",
+                CONFIG,
+                open,
+            ),
+            (
+                "",
+                "const { Worker: Thread } = await import(\"node:worker_threads\"); new Thread(WHERE);",
+                CONFIG,
+                open,
+            ),
+            (
+                "",
+                "const { isMainThread } = await import(\"node:worker_threads\"); console.log(isMainThread);",
+                CONFIG,
+                closed,
+            ),
+            (
+                "",
+                "await import(\"node:worker_threads\").then(({ Worker: Thread }) => new Thread(WHERE));",
+                CONFIG,
+                closed,
+            ),
             ("", "(0, eval)(WHERE);", CONFIG, open),
             ("", "new Function(WHERE)();", CONFIG, open),
         ];

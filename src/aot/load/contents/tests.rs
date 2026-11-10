@@ -25,8 +25,11 @@ use crate::builtins::RuntimeModule::{
     self, BunWrap, NodeDgram, NodeOs, NodeTty, NodeV8, NodeVm, NodeZlib,
 };
 use crate::builtins::{BuiltinId, Mutability, Resolved};
-use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, run_build};
+use crate::compile::testing::{
+    BUNDLED_LIBS, TestProject, default_settings, run_build, with_loaded_test_run_of_vitest,
+};
 use crate::compile::{Build, LoadedBuild};
+use crate::diagnostics::range_of_node;
 use crate::load::ProjectId;
 use crate::load::source_provider::{
     DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
@@ -841,6 +844,1213 @@ fn place_where_the_load_loses_sight_of_a_worker_of_node_is_noted() {
             assert_eq!(noted, expected, "{text}");
         });
     }
+}
+
+fn describe_places_out_of_sight(files: &Files<'_>, name: &str) -> Vec<String> {
+    let hir = files.hir(file_named(files, name));
+    let places = contents_of(files, name).node_workers_out_of_sight.iter();
+    places
+        .map(|place| {
+            let (start, end) = range_of_node(hir, place.at);
+            BStr::new(&hir.text[start as usize..end as usize]).to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn module_of_workers_that_is_awaited_or_aliased_is_judged_by_its_uses() {
+    let rows: [(&str, &str, &[&str], [bool; 3], &[&str]); 46] = [
+        (
+            "main.ts",
+            r#"const { isMainThread } = await import("node:worker_threads"); console.log(isMainThread);"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"console.log((await import("node:worker_threads")).threadId);"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const threads = await import("worker_threads"); console.log(threads.parentPort);"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"await import("node:worker_threads");"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"import("node:worker_threads");"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"async function ask() { const { parentPort } = await import("node:worker_threads"); return parentPort; } ask();"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"console.log((await (import("node:worker_threads") as Promise<{ threadId: number }>)).threadId);"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); console.log(threads.isMainThread);"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker } = await import("node:worker_threads"); console.log(typeof Worker);"#,
+            &[],
+            [true, false, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker } = await import("node:worker_threads"); new Worker("./w.ts");"#,
+            &[],
+            [true, false, false],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"new (await import("node:worker_threads")).Worker("./w.ts");"#,
+            &[],
+            [true, false, false],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const threads = await import("node:worker_threads"); new threads.Worker("./w.ts");"#,
+            &[],
+            [true, false, false],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); new threads.Worker("./w.ts");"#,
+            &[],
+            [true, false, false],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"new (await import("node:worker_threads")).Worker(process.argv[2]);"#,
+            &[r#"new (await import("node:worker_threads")).Worker(process.argv[2])"#],
+            [true, false, true],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const threads = await import("node:worker_threads"); console.log(threads);"#,
+            &["threads"],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"console.log(await import("node:worker_threads"));"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"export const threads = await import("node:worker_threads");"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"export default await import("node:worker_threads");"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"console.log((await import("node:worker_threads")).default);"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { default: threads } = await import("node:worker_threads"); console.log(threads.threadId);"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { ...rest } = await import("node:worker_threads"); console.log(rest.threadId);"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"console.log((await import("node:worker_threads"))[process.argv[2]]);"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker } = await import("node:worker_threads"); console.log(Worker);"#,
+            &["Worker"],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"export const { Worker } = await import("node:worker_threads");"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"import("node:worker_threads").then(threads => console.log(threads.threadId));"#,
+            &[r#"import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const promise = import("node:worker_threads"); console.log((await promise).threadId);"#,
+            &[r#"import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const [threads] = await Promise.all([import("node:worker_threads")]); console.log(threads.threadId);"#,
+            &[r#"import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const load = () => import("node:worker_threads"); console.log((await load()).threadId);"#,
+            &[r#"import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"eval("1"); const { threadId } = await import("node:worker_threads"); console.log(threadId);"#,
+            &[r#"import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); console.log(threads);"#,
+            &["threads"],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); export = threads;"#,
+            &["threads"],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"export import threads = require("node:worker_threads");"#,
+            &[r#"export import threads = require("node:worker_threads");"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"export * from "node:worker_threads";"#,
+            &[r#"export * from "node:worker_threads";"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); console.log(threads.isMainThread); export { threads };"#,
+            &[r#"import threads = require("node:worker_threads");"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); import W = threads.Worker; console.log(threads.isMainThread);"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); import W = threads.Worker; let held: W | undefined; console.log(threads.isMainThread, held);"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import wt = require("node:worker_threads"); import MessagePort = wt.MessagePort; let port: MessagePort | undefined; console.log(wt.threadId, port);"#,
+            &[],
+            [false, false, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); import W = threads.Worker; new W("./w.ts");"#,
+            &[r#"import threads = require("node:worker_threads");"#],
+            [true, true, false],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); export import W = threads.Worker;"#,
+            &[r#"import threads = require("node:worker_threads");"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); import mc = threads.MessageChannel; console.log(new mc());"#,
+            &[r#"import threads = require("node:worker_threads");"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); interface threads { more: number } console.log(threads);"#,
+            &[r#"import threads = require("node:worker_threads");"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); interface threads { more: number } new threads.Worker(process.argv[2]);"#,
+            &[
+                r#"import threads = require("node:worker_threads");"#,
+                "new threads.Worker(process.argv[2])",
+            ],
+            [true, true, true],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); interface threads { more: number } export { threads };"#,
+            &[r#"import threads = require("node:worker_threads");"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.cts",
+            r#"import threads = require("node:worker_threads"); type threads = number; console.log(threads.isMainThread);"#,
+            &[r#"import threads = require("node:worker_threads");"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"let threads; try { threads = await import("node:worker_threads"); } catch {} console.log(threads?.isMainThread);"#,
+            &[r#"await import("node:worker_threads")"#],
+            [true, true, false],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker } = await import(globalThis.x ? "worker_threads" : "node:worker_threads"); new Worker(new URL("./w.ts", import.meta.url));"#,
+            &[],
+            [true, true, false],
+            &["w.ts MayStartWorker"],
+        ),
+    ];
+    for (name, text, places, flags, found) in rows {
+        let project = executable(&[(name, text), ("w.ts", WORKER)]);
+        load(&project, |loaded| {
+            let files = files_of(loaded);
+            assert_eq!(describe_places_out_of_sight(files, name), places, "{text}");
+            let contents = contents_of(files, name);
+            let named = [
+                contents.names_worker_constructor,
+                contents.hands_worker_constructor_on,
+                contents.starts_worker_out_of_sight,
+            ];
+            assert_eq!(named, flags, "{text}");
+            let found_by_load = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(found_by_load, found, "{text}");
+        });
+    }
+}
+
+#[test]
+fn file_whose_path_is_written_elsewhere_counts_only_where_an_awaited_module_of_workers_is_handed_on()
+ {
+    let rows: [(&str, &[&str]); 2] = [
+        (
+            r#"const { isMainThread } = await import("node:worker_threads"); show(isMainThread);"#,
+            &[],
+        ),
+        (
+            r#"const threads = await import("node:worker_threads"); show(threads);"#,
+            &["lib/w.ts MayStartWorker"],
+        ),
+    ];
+    for (text, found) in rows {
+        let main = format!(
+            "import {{ join }} from \"node:path\";\nimport {{ show }} from \"./pool.ts\";\n{text}\nshow(join(import.meta.dir, \"lib\", \"w.ts\"));\n"
+        );
+        let pool = "export const show = (given: unknown) => console.log(given);\n";
+        let project = executable(&[("main.ts", &main), ("pool.ts", pool), ("lib/w.ts", WORKER)]);
+        load(&project, |loaded| {
+            let found_by_load = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(found_by_load, found, "{text}");
+        });
+    }
+}
+
+#[test]
+fn start_of_a_worker_of_node_has_a_file_or_a_place_where_the_load_loses_sight_of_it() {
+    let rows: [(&str, &str, &[&str], &[&str], &[&str]); 10] = [
+        (
+            "main.ts",
+            r#"import { join } from "node:path"; const { Worker } = await import("node:worker_threads"); new Worker(join(import.meta.dir, "w.ts"));"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cts",
+            r#"import path = require("node:path"); import threads = require("node:worker_threads"); new threads.Worker(path.join(__dirname, "w.ts"));"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { join } from "node:path"; const { Worker: Thread } = await import("node:worker_threads"); new Thread(join(import.meta.dir, "w.ts"));"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { join } from "node:path"; async function start() { return new Thread(join(import.meta.dir, "w.ts")); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { join } from "node:path"; const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(join(import.meta.dir, "w.ts"));"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"const name = "node:worker_threads"; const { Worker: Thread } = require(name); new Thread(__dirname + "/w.ts");"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"const { join } = require("node:path"); function start() { return new Thread(join(__dirname, "w.ts")); } const { Worker: Thread } = require("node:worker_threads"); start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"function start() { return new Worker(join(__dirname, "w.ts")); } const { Worker } = require("node:worker_threads"); const { join } = require("node:path"); start();"#,
+            &[r#"new Worker(join(__dirname, "w.ts"))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"import { Worker } from "node:worker_threads"; import { join } from "node:path"; new Worker(join("/elsewhere", "w.ts"));"#,
+            &[r#"new Worker(join("/elsewhere", "w.ts"))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker } = await import("node:worker_threads"); new Worker("./missing.ts");"#,
+            &[],
+            &["AsWritten ./missing.ts"],
+            &[],
+        ),
+    ];
+    for (name, text, places, starts, found) in rows {
+        let project = executable(&[(name, text), ("w.ts", WORKER)]);
+        load(&project, |loaded| {
+            let files = files_of(loaded);
+            assert_eq!(describe_places_out_of_sight(files, name), places, "{text}");
+            assert_eq!(describe_starts(files, name, true), starts, "{text}");
+            let found_by_load = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(found_by_load, found, "{text}");
+        });
+    }
+}
+
+#[test]
+fn file_of_a_worker_that_a_package_starts_off_an_awaited_module_is_an_entry_point() {
+    let package = r#"const { Worker } = await import("node:worker_threads"); new Worker(new URL("./w.js", import.meta.url));"#;
+    let project = executable(&[
+        ("main.ts", r#"import "./node_modules/pool/index.js";"#),
+        ("node_modules/pool/index.js", package),
+        ("node_modules/pool/w.js", WORKER),
+    ]);
+    load(&project, |loaded| {
+        let files = files_of(loaded);
+        let places = describe_places_out_of_sight(files, "node_modules/pool/index.js");
+        assert_eq!(places, [] as [&str; 0]);
+        let found = describe_found(&loaded.contents.found_entry_points);
+        assert_eq!(found, ["node_modules/pool/w.js StartsWorker"]);
+    });
+}
+
+#[test]
+fn start_that_bun_sema_gives_no_name_takes_the_name_of_each_value_that_it_may_be_given() {
+    let rows: [(&str, &str, &[&str], &[&str], &[&str]); 36] = [
+        (
+            "main.cjs",
+            r#"const { join } = require("node:path"); const FILE = join(__dirname, "w.ts"); function start() { return new Thread(FILE); } const { Worker: Thread } = require("node:worker_threads"); start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"const { join } = require("node:path"); function start(file) { return new Thread(file); } const { Worker: Thread } = require("node:worker_threads"); start(join(__dirname, "w.ts"));"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"const { pathToFileURL } = require("node:url"); const FILE = pathToFileURL(__dirname + "/w.ts"); function start() { return new Thread(FILE); } const { Worker: Thread } = require("node:worker_threads"); start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"function start() { return new Thread(`${__dirname}/w.ts`); } const Thread = require("node:worker_threads").Worker; start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { join } from "node:path"; const file = join(import.meta.dir, "w.ts"); async function start() { return new Thread(file); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { fileURLToPath } from "node:url"; const name = "node:worker_threads"; const { Worker: Thread } = await import(name); const url = new URL("./w.ts", import.meta.url); new Thread(fileURLToPath(url));"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(new URL("./w.ts", import.meta.url).href);"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); const url = new URL("./w.ts", import.meta.url); new Thread(url.pathname);"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { fileURLToPath } from "node:url"; async function start() { return new Thread(fileURLToPath(new URL("./w.ts", import.meta.url))); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { fileURLToPath } from "node:url"; function start() { return new Thread(fileURLToPath(new URL("./w.ts", import.meta.url))); } const { Worker: Thread } = require("node:worker_threads"); start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { fileURLToPath } from "node:url"; function start() { return new Thread(fileURLToPath(new URL("./w.ts", import.meta.url))); } const { Worker: Thread } = process.getBuiltinModule("node:worker_threads"); start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { fileURLToPath } from "node:url"; function start() { return new Thread(fileURLToPath(new URL("./w.ts", import.meta.url))); } const { Worker: Thread } = import.meta.require("node:worker_threads"); start();"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"async function start() { return new Thread(require.resolve("./w.ts")); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+            &[],
+            &["Resolved(Path) ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"async function start() { return new Thread(import.meta.resolve("./w.ts")); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+            &[],
+            &["Resolved(Url) ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"function start() { return new Thread(require.resolve("./w.ts")); } const { Worker: Thread } = require("node:worker_threads"); start();"#,
+            &[],
+            &["Resolved(Path) ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(process.argv[2] ? new URL("data:text/javascript,postMessage(1)") : new URL("./w.ts", import.meta.url));"#,
+            &[],
+            &["FromOwnFolder ./w.ts", "AsWritten ?"],
+            &[
+                "data:text/javascript,postMessage(1) StartsWorker",
+                "w.ts StartsWorker",
+            ],
+        ),
+        (
+            "main.ts",
+            r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); function start(file: URL) { return new Thread(file); } start(new URL("./w.ts", import.meta.url)); start(new URL("data:text/javascript,postMessage(1)"));"#,
+            &[],
+            &["AsWritten ?", "FromOwnFolder ./w.ts"],
+            &[
+                "data:text/javascript,postMessage(1) StartsWorker",
+                "w.ts StartsWorker",
+            ],
+        ),
+        (
+            "main.ts",
+            r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(process.argv[2] ? "./w.ts" : new URL("data:text/javascript,postMessage(1)"));"#,
+            &[],
+            &["AsWritten ./w.ts", "AsWritten ?"],
+            &[
+                "data:text/javascript,postMessage(1) StartsWorker",
+                "w.ts StartsWorker",
+            ],
+        ),
+        (
+            "main.ts",
+            r#"import file from "./w.ts" with { type: "file" }; const name = "node:worker_threads"; const { Worker: Thread } = await import(name); const held = process.argv[2] ? file : new URL("data:text/javascript,postMessage(1)"); new Thread(held);"#,
+            &[],
+            &["EmbeddedFile(0) ./w.ts", "AsWritten ?"],
+            &[
+                "data:text/javascript,postMessage(1) StartsWorker",
+                "w-0a1b2c3d.ts StartsWorker",
+            ],
+        ),
+        (
+            "main.ts",
+            r#"import { join } from "node:path"; const { Worker: W } = globalThis; new W(join(import.meta.dir, "w.ts"));"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker: W } = globalThis; const url = new URL("./w.ts", import.meta.url); new W(url);"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { join } from "node:path"; const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(process.argv[2] ? join("/elsewhere", "w.ts") : new URL("data:text/javascript,postMessage(1)"));"#,
+            &[
+                r#"new Thread(process.argv[2] ? join("/elsewhere", "w.ts") : new URL("data:text/javascript,postMessage(1)"))"#,
+            ],
+            &["AsWritten ?"],
+            &["data:text/javascript,postMessage(1) StartsWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"const { join } = require("node:path"); const name = "node:worker_threads"; const { Worker: Thread } = require(name); new Thread(process.argv[2] ? join(__dirname, "w.ts") : process.argv[3]);"#,
+            &[r#"new Thread(process.argv[2] ? join(__dirname, "w.ts") : process.argv[3])"#],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"const { join } = require("node:path"); const NAME = "w.ts"; const name = "node:worker_threads"; const { Worker: Thread } = require(name); new Thread(join(__dirname, NAME));"#,
+            &["new Thread(join(__dirname, NAME))"],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.cjs",
+            r#"const { join } = require("node:path"); let file = join(__dirname, "w.ts"); file = process.argv[2]; const name = "node:worker_threads"; const { Worker: Thread } = require(name); new Thread(file);"#,
+            &["new Thread(file)"],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.cjs",
+            r#"const { join } = require("node:path"); const name = "node:worker_threads"; const { Worker: Thread } = require(name); exports.start = file => new Thread(file); exports.start(join(__dirname, "w.ts"));"#,
+            &["new Thread(file)"],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { join } from "node:path"; async function start() { return new Thread(join(import.meta.dir, process.argv[2] + ".ts")); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+            &[r#"new Thread(join(import.meta.dir, process.argv[2] + ".ts"))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"async function start() { return new Thread(require.resolve("./w.ts", { paths: [process.argv[2]] })); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+            &[r#"new Thread(require.resolve("./w.ts", { paths: [process.argv[2]] }))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(import.meta.dir);"#,
+            &["new Thread(import.meta.dir)"],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"class Pool { file = require.resolve("./w.ts"); start() { return new Thread(this.file); } } const { Worker: Thread } = await import("node:worker_threads"); new Pool().start();"#,
+            &["new Thread(this.file)"],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { pathToFileURL } from "node:url"; import { Worker } from "node:worker_threads"; new Worker(pathToFileURL("./w.ts"));"#,
+            &[r#"new Worker(pathToFileURL("./w.ts"))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"import { pathToFileURL } from "node:url"; const { Worker: Thread } = await import("node:worker_threads"); const file = "./w.ts"; new Thread(pathToFileURL(file));"#,
+            &[r#"new Thread(pathToFileURL(file))"#],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { pathToFileURL } from "node:url"; const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(pathToFileURL("/project/w.ts"));"#,
+            &[],
+            &["AsWritten /project/w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { Worker } from "node:worker_threads"; new Worker(new URL("./w.ts", import.meta.url).toString());"#,
+            &[],
+            &["Resolved(Url) ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker: W } = globalThis; new W(new URL("./w.ts", import.meta.url).toString());"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker: W } = globalThis; const url = new URL("./w.ts", import.meta.url); new W(url.toJSON());"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+    ];
+    for (name, text, places, starts, found) in rows {
+        let project = executable(&[(name, text), ("w.ts", WORKER)]);
+        load(&project, |loaded| {
+            let files = files_of(loaded);
+            assert_eq!(describe_places_out_of_sight(files, name), places, "{text}");
+            assert_eq!(describe_starts(files, name, true), starts, "{text}");
+            let found_by_load = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(found_by_load, found, "{text}");
+        });
+    }
+}
+
+#[test]
+fn own_file_and_file_of_a_package_are_named_by_the_values_that_a_start_may_be_given() {
+    let rows: [(&[(&str, &str)], &str, &[&str], &[&str], &[&str]); 15] = [
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"async function start() { return new Thread(import.meta.filename); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?"],
+            &["lib/pool.ts StartsWorker"],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"async function start() { return new Thread(new URL(import.meta.url)); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?"],
+            &["lib/pool.ts StartsWorker"],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(import.meta.path);"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?"],
+            &["lib/pool.ts StartsWorker"],
+        ),
+        (
+            &[
+                ("main.cjs", r#"require("./lib/pool.cjs");"#),
+                (
+                    "lib/pool.cjs",
+                    r#"function start() { return new Thread(__filename); } const { Worker: Thread } = require("node:worker_threads"); start();"#,
+                ),
+            ],
+            "lib/pool.cjs",
+            &[],
+            &["OwnFile ?"],
+            &["lib/pool.cjs StartsWorker"],
+        ),
+        (
+            &[
+                ("main.cjs", r#"require("./lib/pool.cjs");"#),
+                (
+                    "lib/pool.cjs",
+                    r#"const { pathToFileURL } = require("node:url"); const name = "node:worker_threads"; const { Worker: Thread } = require(name); new Thread(pathToFileURL(__filename));"#,
+                ),
+            ],
+            "lib/pool.cjs",
+            &[],
+            &["OwnFile ?"],
+            &["lib/pool.cjs StartsWorker"],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(process.argv[2] ? new URL("data:text/javascript,postMessage(1)") : new URL(import.meta.url));"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?", "AsWritten ?"],
+            &[
+                "data:text/javascript,postMessage(1) StartsWorker",
+                "lib/pool.ts StartsWorker",
+            ],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"async function start() { return new Thread(import.meta.filename as string); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?"],
+            &["lib/pool.ts StartsWorker"],
+        ),
+        (
+            &[(
+                "main.cjs",
+                r#"const name = "node:worker_threads"; const { Worker: Thread } = require(name); new Thread(__filename);"#,
+            )],
+            "main.cjs",
+            &[],
+            &["OwnFile ?"],
+            &[],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./node_modules/pool/index.js";"#),
+                (
+                    "node_modules/pool/index.js",
+                    r#"import { join } from "node:path"; async function start() { return new Thread(join(import.meta.dir, "w.js")); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+                ),
+                ("node_modules/pool/w.js", WORKER),
+            ],
+            "node_modules/pool/index.js",
+            &[],
+            &["FromOwnFolder ./w.js"],
+            &["node_modules/pool/w.js StartsWorker"],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./node_modules/pool/index.cjs";"#),
+                (
+                    "node_modules/pool/index.cjs",
+                    r#"const { join } = require("node:path"); const FILE = join(__dirname, "w.js"); function start() { return new Thread(FILE); } const { Worker: Thread } = require("node:worker_threads"); start();"#,
+                ),
+                ("node_modules/pool/w.js", WORKER),
+            ],
+            "node_modules/pool/index.cjs",
+            &[],
+            &["FromOwnFolder ./w.js"],
+            &["node_modules/pool/w.js StartsWorker"],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./node_modules/pool/index.js";"#),
+                (
+                    "node_modules/pool/index.js",
+                    r#"const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(process.argv[2] ? new URL("data:text/javascript,postMessage(1)") : new URL("./w.js", import.meta.url));"#,
+                ),
+                ("node_modules/pool/w.js", WORKER),
+            ],
+            "node_modules/pool/index.js",
+            &[],
+            &["FromOwnFolder ./w.js", "AsWritten ?"],
+            &[
+                "data:text/javascript,postMessage(1) StartsWorker",
+                "node_modules/pool/w.js StartsWorker",
+            ],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./node_modules/pool/index.js";"#),
+                (
+                    "node_modules/pool/index.js",
+                    r#"async function start() { return new Thread(process.argv[2]); } const { Worker: Thread } = await import("node:worker_threads"); await start(); console.log(new URL("./w.js", import.meta.url));"#,
+                ),
+                ("node_modules/pool/w.js", WORKER),
+            ],
+            "node_modules/pool/index.js",
+            &["new Thread(process.argv[2])"],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./node_modules/pool/index.cjs";"#),
+                (
+                    "node_modules/pool/index.cjs",
+                    r#"const { join } = require("node:path"); const name = "node:worker_threads"; const { Worker: Thread } = require(name); new Thread(globalThis.asked || join(__dirname, "w.js"));"#,
+                ),
+                ("node_modules/pool/w.js", WORKER),
+            ],
+            "node_modules/pool/index.cjs",
+            &[r#"new Thread(globalThis.asked || join(__dirname, "w.js"))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"const { url } = import.meta; async function start() { return new Thread(url); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?"],
+            &["lib/pool.ts StartsWorker"],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"const { url } = import.meta; const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(process.argv[2] ? url : new URL("data:text/javascript,postMessage(1)"));"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?", "AsWritten ?"],
+            &[
+                "data:text/javascript,postMessage(1) StartsWorker",
+                "lib/pool.ts StartsWorker",
+            ],
+        ),
+    ];
+    for (files, starter, places, starts, found) in rows {
+        let text = files
+            .iter()
+            .find(|file| file.0 == starter)
+            .map_or("", |file| file.1);
+        load(&executable(files), |loaded| {
+            let files = files_of(loaded);
+            assert_eq!(
+                describe_places_out_of_sight(files, starter),
+                places,
+                "{text}"
+            );
+            assert_eq!(describe_starts(files, starter, true), starts, "{text}");
+            let found_by_load = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(found_by_load, found, "{text}");
+        });
+    }
+}
+
+#[test]
+fn name_that_is_written_elsewhere_stays_where_the_start_that_takes_it_has_no_name() {
+    let rows: [(&[(&str, &str)], &str, &[&str], &[&str], &[&str]); 1] = [(
+        &[
+            ("main.ts", r#"import "./lib/pool.ts";"#),
+            (
+                "lib/pool.ts",
+                r#"async function start() { return new Thread(import.meta[process.argv[2]]); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+            ),
+        ],
+        "lib/pool.ts",
+        &["new Thread(import.meta[process.argv[2]])"],
+        &["AsWritten ?"],
+        &["lib/pool.ts MayStartWorker"],
+    )];
+    for (files, starter, places, starts, found) in rows {
+        let text = files
+            .iter()
+            .find(|file| file.0 == starter)
+            .map_or("", |file| file.1);
+        load(&executable(files), |loaded| {
+            let files = files_of(loaded);
+            assert_eq!(
+                describe_places_out_of_sight(files, starter),
+                places,
+                "{text}"
+            );
+            assert_eq!(describe_starts(files, starter, true), starts, "{text}");
+            let found_by_load = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(found_by_load, found, "{text}");
+        });
+    }
+}
+
+#[test]
+fn path_or_url_module_that_is_awaited_names_no_file_and_takes_no_written_name_away() {
+    let rows: [(&str, &str, &[&str], &[&str], &[&str]); 5] = [
+        (
+            "main.ts",
+            r#"import { Worker } from "node:worker_threads"; const { join } = await import("node:path"); new Worker(join(import.meta.dir, "w.ts"));"#,
+            &[r#"new Worker(join(import.meta.dir, "w.ts"))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker } = await import("node:worker_threads"); const { join } = await import("node:path"); new Worker(join(import.meta.dir, "w.ts"));"#,
+            &[r#"new Worker(join(import.meta.dir, "w.ts"))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker } = await import("node:worker_threads"); const { fileURLToPath } = await import("node:url"); new Worker(fileURLToPath(new URL("./w.ts", import.meta.url)));"#,
+            &[r#"new Worker(fileURLToPath(new URL("./w.ts", import.meta.url)))"#],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { Worker } from "node:worker_threads"; const { fileURLToPath } = await import("node:url"); new Worker(fileURLToPath(new URL("./w.ts", import.meta.url)));"#,
+            &[r#"new Worker(fileURLToPath(new URL("./w.ts", import.meta.url)))"#],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const { fileURLToPath } = await import("node:url"); new Worker(fileURLToPath(new URL("./w.ts", import.meta.url)));"#,
+            &[],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+    ];
+    for (name, text, places, starts, found) in rows {
+        let project = executable(&[(name, text), ("w.ts", WORKER)]);
+        load(&project, |loaded| {
+            let files = files_of(loaded);
+            assert_eq!(describe_places_out_of_sight(files, name), places, "{text}");
+            assert_eq!(describe_starts(files, name, true), starts, "{text}");
+            let found_by_load = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(found_by_load, found, "{text}");
+        });
+    }
+}
+
+#[test]
+fn text_that_a_start_is_told_to_evaluate_names_no_file() {
+    let main = r#"const { join } = require("node:path"); const name = "node:worker_threads"; const { Worker: Thread } = require(name); new Thread(join(__dirname, "w.ts"), { eval: true });"#;
+    let project = executable(&[("main.cjs", main), ("w.ts", WORKER)]);
+    load(&project, |loaded| {
+        let files = files_of(loaded);
+        assert_eq!(
+            describe_places_out_of_sight(files, "main.cjs"),
+            [] as [&str; 0]
+        );
+        assert_eq!(describe_starts(files, "main.cjs", true), ["AsWritten ?"]);
+        assert!(find_file(files, "w.ts").is_none());
+    });
+}
+
+fn describe_workers_of_test_file(loaded: &LoadedBuild<'_, '_>) -> ([bool; 3], Vec<String>) {
+    let contents = contents_of(files_of(loaded), "a.test.ts");
+    let flags = [
+        contents.names_worker_constructor,
+        contents.hands_worker_constructor_on,
+        contents.starts_worker_out_of_sight,
+    ];
+    (flags, describe_found(&loaded.contents.found_entry_points))
+}
+
+#[test]
+fn module_of_workers_that_a_test_run_loads_late_is_judged_by_its_uses() {
+    let mock = r#"vi.mock("./mod.ts", () => ({ keep: (given: unknown) => given }));"#;
+    let url = r#"new URL("./w.ts", import.meta.url)"#;
+    let rows: [(&str, &str, &str, [bool; 3], &[&str]); 9] = [
+        (
+            r#"import { test, vi } from "bun:test"; import { isMainThread } from "node:worker_threads";"#,
+            mock,
+            "keep(URL); console.log(isMainThread);",
+            [false, false, false],
+            &[],
+        ),
+        (
+            r#"import { test } from "bun:test"; import { isMainThread } from "node:worker_threads";"#,
+            "",
+            "keep(URL); console.log(isMainThread);",
+            [false, false, false],
+            &[],
+        ),
+        (
+            r#"import { test, vi } from "bun:test"; import { Worker } from "node:worker_threads";"#,
+            mock,
+            "keep(new Worker(URL));",
+            [true, false, false],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            r#"import { test, vi } from "bun:test"; import { Worker } from "node:worker_threads";"#,
+            r#"vi.mock("node:worker_threads", () => ({ Worker: class {} }));"#,
+            "keep(new Worker(URL));",
+            [true, false, false],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            r#"import { test, vi } from "bun:test"; import * as threads from "node:worker_threads"; export { threads };"#,
+            mock,
+            "keep(URL);",
+            [true, true, false],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            r#"import { test, vi } from "bun:test"; import threads from "node:worker_threads";"#,
+            mock,
+            "keep(URL); console.log(threads.isMainThread);",
+            [true, true, false],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            r#"import { test, vi } from "bun:test"; import * as threads from "node:worker_threads";"#,
+            mock,
+            "keep(URL); keep(threads);",
+            [true, true, false],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            r#"import { test } from "bun:test"; const start = () => new Thread(require.resolve("./w.ts")); const { Worker: Thread } = await import("node:worker_threads");"#,
+            "",
+            "keep(start());",
+            [true, false, false],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            r#"import { test } from "bun:test"; const start = () => new Thread(process.argv[2]); const { Worker: Thread } = await import("node:worker_threads");"#,
+            "",
+            "keep(URL); keep(start());",
+            [true, false, true],
+            &["w.ts MayStartWorker"],
+        ),
+    ];
+    let helper = "export const keep = (given: unknown) => given;\n";
+    for (loads, mock, uses, flags, found) in rows {
+        let uses = uses.replace("URL", url);
+        let test_file = format!(
+            "{loads}\nimport {{ keep }} from \"./mod.ts\";\n{mock}\ntest(\"t\", () => {{ {uses} }});\n"
+        );
+        let project = test_run(&[
+            ("a.test.ts", &test_file),
+            ("mod.ts", helper),
+            ("w.ts", WORKER),
+        ]);
+        let described = load(&project, describe_workers_of_test_file);
+        assert_eq!(described, (flags, describe(found)), "{test_file}");
+    }
+    let of_vitest = "import { test } from \"vitest\";\nimport { isMainThread } from \"node:worker_threads\";\nimport { keep } from \"./mod.ts\";\ntest(\"t\", () => { keep(new URL(\"./w.ts\", import.meta.url)); console.log(isMainThread); });\n";
+    let files = [
+        ("a.test.ts", of_vitest),
+        ("mod.ts", helper),
+        ("w.ts", WORKER),
+    ];
+    let described = with_loaded_test_run_of_vitest(&files, &default_settings(), |_, loaded| {
+        describe_workers_of_test_file(loaded)
+    });
+    assert_eq!(described, ([false, false, false], Vec::new()));
+}
+
+fn describe(texts: &[&str]) -> Vec<String> {
+    texts.iter().map(|&text| text.to_owned()).collect()
 }
 
 #[test]

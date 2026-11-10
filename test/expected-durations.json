@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-module-of-workers-that-is-awaited-is-judged-by-what-is-read-off-it.test.ts": {
+    "default": 6000,
+    "asan": 24000
+  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000

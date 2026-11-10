@@ -66,7 +66,6 @@ A build looks for type errors in your own files. It doesn't report the ones in `
 | `Cannot load ...: it isn't in this executable`              | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
 | `Cannot find module`, only on another machine               | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
 | `Cannot find module` for a relative path to a data file     | [Name its folder or extension](/compiler/compatibility#dynamic-imports)           |
-| `Cannot find module` or `Cannot load`, the path has a query | [Leave the query off, or write it out](/compiler/compatibility#dynamic-imports)   |
 | `... was not compiled into this executable`                 | Use that API once in your own code                                                |
 | `app: ... the build didn't see your code pass this option`  | Write `app` in the object that `Bun.serve()` is called with                       |
 | `EvalError: ... the compiler couldn't tell ...`             | Call `eval` or `new Function` directly                                            |

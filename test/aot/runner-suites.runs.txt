@@ -5,8 +5,12 @@
 # when a later file mocks it. Compiled does not.
 # In these a test of the fixture fails for it: what the body of an importer took from the mocked module stays (`export const captured = value`,
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
+test/js/bun/test/mock/mock-module.test.ts: a module imported under two types that require() has loaded too > is mocked for the next test file's imports by that file's own mock
+test/js/bun/test/mock/mock-module.test.ts: a module imported under two types that require() has loaded too > is mocked, mocked again and unmocked for the next import() and require()
+test/js/bun/test/mock/mock-module.test.ts: a module imported under two types that require() has loaded too > is unmocked after a second mock whose factory has loaded the second type
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
+test/js/bun/test/mock/mock-module.test.ts: a preload's mock is back after a test file mocked the module and loaded it under another import type
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
@@ -30,6 +34,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > a module that re-exports the mocked module, and is re-exported next to it
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a package is patched for the modules that have yet to run []
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > every file that imports the module that mocks gets the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that was mocked under one import type and unmocked under two is the original again for both
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with jest.mock(), the mock reaches modules the preload loaded and mocked
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with jest.mock(), the mock reaches modules the preload loaded and not mocked
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with mock.module(), the mock reaches modules the preload loaded and mocked

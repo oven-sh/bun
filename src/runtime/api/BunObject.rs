@@ -328,9 +328,7 @@ pub(crate) fn which<'a>(
         .transpose()
 }
 
-/// `Bun.parseEnv(content, options)`: the keys `content` defines, with the values the startup
-/// loader gives them. `options.env` replaces the environment Bun started with as the source
-/// that `$NAME` resolves against.
+/// `Bun.parseEnv(content, options)`
 pub(crate) fn parse_env<'a>(
     cx: &mut JsScope<'a>,
     content: &'a [u8],
@@ -349,8 +347,7 @@ pub(crate) fn parse_env<'a>(
     node::node_util_binding::env_map_to_js(&cx.heap, &map)
 }
 
-/// The own enumerable properties of `env` as a dotenv map. A value that is `undefined` is
-/// skipped, every other value is converted to a string, as `Bun.spawn`'s `env` does.
+/// The own properties of `env` as a dotenv map, read as `Bun.spawn` reads its `env`.
 fn env_map_from_js(global: &JSGlobalObject, env: JSValue) -> JsResult<bun_dotenv::Map> {
     let Some(env_object) = env.get_object() else {
         let received = JSGlobalObject::determine_specific_type(global, env)?;

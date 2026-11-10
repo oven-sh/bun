@@ -163,10 +163,7 @@ export const ParseEnvOptions = b.dictionary(
   { allowArray: true, reportedAs: "options" },
 );
 
-/**
- * A new object below Object.prototype with a text under each name of the content. With `expand`, `$NAME` is
- * resolved against `env` (the process environment Bun started with by default) as the startup loader does.
- */
+/** A new object below Object.prototype with a text under each name of the content. */
 export const parseEnv = b.fn({
   args: { content: b.string.utf8, options: ParseEnvOptions.nullable.default({}) },
   expected: { content: ["string"] },

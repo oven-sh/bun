@@ -624,13 +624,8 @@ impl Loader {
         Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer, &())
     }
 
-    /// Parses `content` into a new map that holds only the keys `content` defines, with the
-    /// values the startup loader gives them when `env` is the process environment.
-    ///
-    /// `$NAME` resolves against `env` first, then against the keys `content` defined before
-    /// it. A key that `env` already has keeps the value from `env`: the startup loader skips
-    /// such a key, so a later `$NAME` in the file reads the environment's value, and this
-    /// function returns that same value for the key itself.
+    /// The keys `content` defines, with the values the startup loader gives them over `env`:
+    /// `$NAME` reads `env` before the earlier keys, and a key `env` already has keeps its value.
     pub fn parse_expanded(content: &[u8], env: &Map) -> Result<Map, AllocError> {
         let mut map = Map::init();
         let mut value_buffer: Vec<u8> = Vec::new();
@@ -978,10 +973,8 @@ fn read_env_file_contents(
     }
 }
 
-/// A read-only environment that `$NAME` resolves against before the map the parser fills.
-///
-/// The startup loaders pass `()`: their map already holds the process environment, so the
-/// lookup folds away. `Loader::parse_expanded` passes the caller's environment.
+/// What `$NAME` reads before the map the parser fills. `()` for the startup loaders, whose
+/// map already holds the process environment.
 trait EnvFallback {
     fn get(&self, key: &[u8]) -> Option<&[u8]>;
 }
@@ -1187,8 +1180,6 @@ impl<'a, F: EnvFallback> Parser<'a, F> {
         Ok(Some(self.value_buffer.as_slice()))
     }
 
-    /// `fallback` wins over `map`: a file that repeats a variable the process already has
-    /// resolves to the process value, the same precedence the startup loader applies.
     #[inline]
     fn lookup<'m>(fallback: &'m F, map: &'m Map, key: &[u8]) -> Option<&'m [u8]> {
         fallback.get(key).or_else(|| map.get(key))

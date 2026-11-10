@@ -436,71 +436,92 @@ test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket
 // POSIX-only, like the bind({ fd }) cases above: Windows has no raw-descriptor helpers.
 describe.skipIf(isWindows)("an adopted descriptor", () => {
   type Listener = (datagram: Buffer, close: () => void) => void;
-  async function bind(options: { fd: number; exclusive?: boolean }, listener: Listener) {
-    const socket = createSocket("udp4");
-    socket.on("message", datagram => listener(datagram, () => socket.close()));
-    const { promise: listening, resolve, reject } = Promise.withResolvers<void>();
-    socket.on("error", reject);
-    socket.bind(options, resolve);
-    await listening;
-  }
+  // Adopts `fd`. Every failure goes to `onError`. The result closes the socket.
+  type Adopt = (fd: number, listener: Listener, onError: (error: unknown) => void) => Promise<() => void>;
 
-  test.each<[string, (fd: number, listener: Listener) => Promise<unknown>]>([
-    ["bind({ fd })", (fd, listener) => bind({ fd }, listener)],
-    ["bind({ fd, exclusive: true })", (fd, listener) => bind({ fd, exclusive: true }, listener)],
+  const bind =
+    (options: { exclusive?: boolean }): Adopt =>
+    async (fd, listener, onError) => {
+      const socket = createSocket("udp4");
+      // A second close() of a dgram socket throws.
+      let open = true;
+      const close = () => {
+        if (!open) return;
+        open = false;
+        socket.close();
+      };
+      socket.on("message", datagram => listener(datagram, close));
+      socket.on("error", onError);
+      socket.bind({ ...options, fd });
+      return close;
+    };
+
+  test.each<[string, Adopt]>([
+    ["bind({ fd })", bind({})],
+    ["bind({ fd, exclusive: true })", bind({ exclusive: true })],
     [
       "Bun.udpSocket({ fd })",
-      (fd, listener) =>
-        Bun.udpSocket({
+      async (fd, listener, onError) => {
+        const socket = await Bun.udpSocket({
           fd,
-          socket: { data: (socket, datagram) => listener(datagram, () => socket.close()) },
-        } as any),
+          socket: {
+            data: (adopted, datagram) => listener(datagram, () => adopted.close()),
+            // Bun passes (error). The types declare (socket, error): #44277.
+            error: (...args: unknown[]) => onError(args.at(-1)),
+          },
+        } as any);
+        return () => socket.close();
+      },
     ],
   ])("%s takes one datagram per receive call", async (_, adopt) => {
     const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+    using cleanup = new DisposableStack();
     const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
+    cleanup.defer(() => wrap.close());
     const bound = {} as any;
     wrap.getsockname(bound);
+    const sender = await Bun.udpSocket({ connect: { hostname: "127.0.0.1", port: bound.port } });
+    cleanup.defer(() => sender.close());
+    // The descriptor is bound, so the datagrams wait in its queue until a socket adopts it.
+    for (let i = 0; i < 32; i++) sender.send(String(i));
+    sender.send("end");
 
     const queued: string[] = [];
-    const { promise: first, resolve: onFirst, reject } = Promise.withResolvers<string>();
-    await adopt(wrap.fd, (datagram, close) => {
-      try {
-        // "end" is sent last: every datagram that the socket has not taken comes before it.
-        const next = Buffer.alloc(8);
-        const deadline = Date.now() + 1_000;
-        for (;;) {
-          let length: number;
-          try {
-            length = readSync(wrap.fd, next);
-          } catch (error: any) {
-            if (error.code !== "EAGAIN" || Date.now() > deadline) throw error;
-            continue;
+    const { promise: first, resolve, reject } = Promise.withResolvers<string>();
+    const closeAdopted = await adopt(
+      wrap.fd,
+      (datagram, close) => {
+        try {
+          // "end" is sent last: every datagram that the socket has not taken comes before it.
+          const next = Buffer.alloc(8);
+          const deadline = Date.now() + 1_000;
+          for (;;) {
+            let length: number;
+            try {
+              length = readSync(wrap.fd, next);
+            } catch (error: any) {
+              if (error.code !== "EAGAIN" || Date.now() > deadline) throw error;
+              continue;
+            }
+            const text = next.toString("latin1", 0, length);
+            if (text === "end") break;
+            queued.push(text);
           }
-          const text = next.toString("latin1", 0, length);
-          if (text === "end") break;
-          queued.push(text);
+          resolve(String(datagram));
+        } catch (error) {
+          reject(error);
+        } finally {
+          close();
         }
-        onFirst(String(datagram));
-      } catch (error) {
-        reject(error);
-      } finally {
-        close();
-      }
-    });
+      },
+      reject,
+    );
+    cleanup.defer(closeAdopted);
 
-    const sender = await Bun.udpSocket({ connect: { hostname: "127.0.0.1", port: bound.port } });
-    try {
-      for (let i = 0; i < 32; i++) sender.send(String(i));
-      sender.send("end");
-      expect({ first: await first, queued }).toEqual({
-        first: "0",
-        queued: Array.from({ length: 31 }, (_, i) => String(i + 1)),
-      });
-    } finally {
-      sender.close();
-      wrap.close();
-    }
+    expect({ first: await first, queued }).toEqual({
+      first: "0",
+      queued: Array.from({ length: 31 }, (_, i) => String(i + 1)),
+    });
   });
 });
 

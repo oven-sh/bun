@@ -1065,21 +1065,17 @@ impl<'a> Checks<'a, '_> {
                 continue;
             }
             let token = it.span().start;
-            // Babel reads a `/` at the start of an expression as a regular expression whatever comes before it.
-            if !self.is_babel && Self::is_division_for_acorn(it) {
-                continue;
-            }
             let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
-            if !flags.iter().all(is_valid) {
-                self.tokenizer_error(token, at, "Invalid regular expression flag");
+            let message: Vec<u8> = if !flags.iter().all(is_valid) {
+                b"Invalid regular expression flag".to_vec()
             } else if flags
                 .iter()
                 .enumerate()
                 .any(|(i, flag)| flags[i + 1..].iter().any(|it| it == flag))
             {
-                self.tokenizer_error(token, at, "Duplicate regular expression flag");
+                b"Duplicate regular expression flag".to_vec()
             } else if strings::contains_char(flags, b'u') && strings::contains_char(flags, b'v') {
-                self.tokenizer_error(token, at, "Invalid regular expression flag");
+                b"Invalid regular expression flag".to_vec()
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
                 regex::Mode::from_flags(flags),
@@ -1094,15 +1090,21 @@ impl<'a> Checks<'a, '_> {
                     "Invalid empty flags" => "Invalid regular expression modifiers",
                     reason => reason,
                 };
-                let message = [
+                [
                     b"Invalid regular expression: /",
                     pattern,
                     b"/: ",
                     reason.as_bytes(),
                 ]
-                .concat();
-                self.tokenizer_error(token, at, message);
+                .concat()
+            } else {
+                continue;
+            };
+            // Babel reads a `/` at the start of an expression as a regular expression whatever comes before it.
+            if !self.is_babel && Self::is_division_for_acorn(it) {
+                continue;
             }
+            self.tokenizer_error(token, at, message);
         }
     }
 

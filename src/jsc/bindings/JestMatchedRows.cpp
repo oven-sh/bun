@@ -115,6 +115,9 @@ public:
         return row ? MatchedRow { row->value.get(), row->childPlace } : MatchedRow {};
     }
 
+    // The bytes of the places and the rows, which are not in the GC heap. The collector counts them for this cell.
+    size_t extraMemory() const { return m_places.byteSize() + m_rows.byteSize(); }
+
     // What snapshot serializers are offered for the object of `place`, which is a place of this cell. Empty only with an exception pending.
     JSC::JSValue forSerializers(JSC::JSGlobalObject*, uint32_t place);
 
@@ -151,6 +154,7 @@ void JestMatchedRows::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
     }
     for (auto& row : thisObject->m_rows)
         visitor.append(row.value);
+    visitor.reportExtraMemoryVisited(thisObject->extraMemory());
 }
 
 DEFINE_VISIT_CHILDREN(JestMatchedRows);
@@ -270,6 +274,7 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
         if (!place.rowCount++)
             place.firstRow = i;
     }
+    vm.heap.reportExtraMemoryAllocated(cell, cell->extraMemory());
     return cell;
 }
 

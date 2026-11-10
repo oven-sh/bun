@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("it will create a snapshot file if it doesn't exist", () => {
   expect({ a: { b: { c: false } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Boolean) } } });
@@ -232,5 +233,47 @@ describe("property matchers", () => {
     expect(event()).toMatchSnapshot({ error: expect.any(Error) });
     // `message` has a line only when it is a string, and here the matcher is in its place.
     expect(event()).toMatchSnapshot({ message: expect.any(String), error: expect.any(Error) });
+  });
+
+  test("the rows that a call leaves are memory that the collector counts", async () => {
+    using dir = tempDir("snapshot-matched-rows-memory", {
+      "rows.test.ts": `
+        import { heapStats } from "bun:jsc";
+        import { expect, test } from "bun:test";
+
+        test("rows", () => {
+          // A Date prints as one line, so a call is little more than the 1,000 rows that it leaves: 32 KB.
+          const names = Array.from({ length: 1000 }, (_, i) => "k" + i);
+          const received = Object.assign(new Date(0), Object.fromEntries(names.map((name, i) => [name, i])));
+          const matchers = Object.fromEntries(names.map(name => [name, expect.any(Number)]));
+          const live = [];
+          for (let call = 1; call <= 40; call++) {
+            expect(received).toMatchInlineSnapshot(matchers, \`1970-01-01T00:00:00.000Z\`);
+            if (call % 8 === 0) live.push(heapStats().objectTypeCounts.JestMatchedRows ?? 0);
+          }
+          console.log(JSON.stringify(live));
+        });
+      `,
+    });
+    // The collector runs after every 128 KB that it counts, which is four calls. Each run is a full one that ends before the next call.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "rows.test.ts"],
+      env: {
+        ...bunEnv,
+        BUN_JSC_gcMaxHeapSize: String(128 * 1024),
+        BUN_JSC_useGenerationalGC: "0",
+        BUN_JSC_useConcurrentGC: "0",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = stdout.trim().split("\n").at(-1) ?? "";
+    const live: number[] = printed.startsWith("[") ? JSON.parse(printed) : [];
+    expect({ samples: live.length, stderr: live.length === 5 ? "" : stderr }).toEqual({ samples: 5, stderr: "" });
+    // Rows that the collector does not count leave 8, 16, 24, 32 and 40 cells, less what one collection frees.
+    expect(live.filter(cells => cells >= 10)).toEqual([]);
+    expect(exitCode).toBe(0);
   });
 });

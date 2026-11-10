@@ -1432,7 +1432,7 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       }
       expect({ name: thrown?.name, message: thrown?.message }).toEqual({
         name: "TypeError",
-        message: "The underlying source's 'pull' property must be a function",
+        message: `The underlying source's 'pull' property is required when 'type' is "direct": a direct stream does not call start()`,
       });
     });
   });

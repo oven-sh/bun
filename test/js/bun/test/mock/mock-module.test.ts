@@ -2731,38 +2731,38 @@ describe.concurrent("resetModules", () => {
           import { join } from "node:path";
 
           const path = name => join(import.meta.dir, name);
-          const cached = (...names) => names.map(name => isolatedModuleCacheSourceType(path(name)));
-          // Without a source cache, nothing is ever in it.
-          const inCache = (...types) => types.map(type => (${args.length > 0} ? type : null));
+          const write = text => {
+            writeFileSync(path("b.ts"), 'export const text = "' + text + '";');
+            writeFileSync(path("b.cjs"), 'exports.text = "' + text + '";');
+          };
           let whileLoading;
-          let atReset;
           // The imports of a.ts are requested in turn, so the transpiles of b.ts and b.cjs are out when c.ts is resolved.
           Bun.plugin({ setup(build) { build.onResolve({ filter: /c\\.ts$/ }, () => void whileLoading?.()); } });
 
-          test.each([["v2", jest], ["v3", vi]])("a dependency, %s", async (text, api) => {
+          // With a source cache, a file that is as it was last loaded is not transpiled again after a reset, so each round writes both files first.
+          test.each([["v2", "v3", jest], ["v4", "v5", vi]])("a dependency, %s and then %s", async (before, after, api) => {
+            write(before);
             api.resetModules();
-            whileLoading = () => {
+            const resetWhileLoading = jest.fn(() => {
               whileLoading = undefined;
-              atReset = cached("a.ts", "b.ts", "b.cjs");
               api.resetModules();
-            };
-            await import("./a.ts");
-            expect(atReset).toEqual(inCache("BunTranspiledModule", null, null));
-            // c.ts was asked for after the reset.
-            expect(cached("b.ts", "b.cjs", "c.ts")).toEqual(inCache(null, null, "BunTranspiledModule"));
-            writeFileSync(path("b.ts"), 'export const text = "' + text + '";');
-            writeFileSync(path("b.cjs"), 'exports.text = "' + text + '";');
+            });
+            whileLoading = resetWhileLoading;
+            const first = await import("./a.ts");
+            expect(resetWhileLoading).toHaveBeenCalledTimes(1);
+            expect([first.text, first.cjs]).toEqual([before, before]);
+            write(after);
+            // The two transpiles came back after the reset. The next load reads both files, and does not get what they read.
             const again = await import("./a.ts");
-            expect([again.text, again.cjs]).toEqual([text, text]);
-            expect(cached("a.ts", "b.ts", "b.cjs")).toEqual(inCache("BunTranspiledModule", "BunTranspiledModule", "Program"));
+            expect([again.text, again.cjs]).toEqual([after, after]);
           });
 
           test("the import() itself", async () => {
             const loading = import("./alone.ts");
-            expect(cached("alone.ts")).toEqual([null]);
+            // Its transpile is out. Had it run on this thread, a source cache would hold its source by now.
+            expect(isolatedModuleCacheSourceType(path("alone.ts"))).toBeNull();
             jest.resetModules();
             const alone = await loading;
-            expect(cached("alone.ts")).toEqual([null]);
             // The reset doesn't start that import again, so its module is the one that is loaded now.
             expect(await import("./alone.ts")).toBe(alone);
           });

@@ -2687,6 +2687,51 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  // Vitest 5.0 has no rule for these paths, so this output is not Vitest's. For the first two rows it ends in
+  // a TypeError from the code that reads the path. For the String row it prints "passes | fails | passes | TypeError".
+  // Both modules refuse all three the way Jest does.
+  test("toHaveProperty() with a path that is not a string or an array with items", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => {
+          try { fn(); return "passes"; } catch (error) {
+            return error instanceof TypeError ? "TypeError" : /Matcher error: .*/.exec(Bun.stripANSI(error.message))?.[0] ?? "fails";
+          }
+        };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            for (const [label, path] of [["[]", []], ["Set", new Set(["a"])], ["String", new String("a")]]) {
+              console.log(name, label, "|", [
+                outcome(() => expect({ a: 1 }).toHaveProperty(path)),
+                outcome(() => expect({ a: 1 }).not.toHaveProperty(path)),
+                outcome(() => expect({ a: 1 }).toHaveProperty(path, 1)),
+                outcome(() => expect(null).not.toHaveProperty(path)),
+              ].join(" | "));
+            }
+            console.log(name, outcome(() => expect({ a: 1 }).toHaveProperty(["a"], 1)), outcome(() => expect({ a: 1 }).not.toHaveProperty(["b"])));
+          });
+        }
+      `,
+    });
+    const noItems = "Matcher error: expected path must not be an empty array";
+    const notAPath = "Matcher error: expected path must be a string or array";
+    expect({ log, exitCode }).toEqual({
+      log: [
+        `bun [] | ${noItems} | ${noItems} | ${noItems} | ${noItems}`,
+        `bun Set | ${notAPath} | ${notAPath} | ${notAPath} | ${notAPath}`,
+        `bun String | ${notAPath} | ${notAPath} | ${notAPath} | ${notAPath}`,
+        "bun passes passes",
+        `vitest [] | ${noItems} | ${noItems} | ${noItems} | TypeError`,
+        `vitest Set | ${notAPath} | ${notAPath} | ${notAPath} | TypeError`,
+        `vitest String | ${notAPath} | ${notAPath} | ${notAPath} | TypeError`,
+        "vitest passes passes",
+      ],
+      exitCode: 0,
+    });
+  });
+
   test("toContain() on a string with something that isn't a string", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

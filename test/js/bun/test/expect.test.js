@@ -939,8 +939,12 @@ describe("expect()", () => {
         try { expect(new Proxy([], {})).toMatchObject(new Proxy([], {})); } catch {}
         try { expect({ a: 1 }).toHaveProperty(new Proxy(["a"], {})); } catch {}
         try { expect({ a: 1 }).toHaveProperty(new Proxy(new Set(["a"]), {})); } catch {}
+        try { expect({ a: 1 }).toHaveProperty(new Proxy([], {})); } catch {}
+        try { expect({ a: 1 }).toHaveProperty(new Proxy(["a"], { get(target, key) { if (key === "length") throw new Error("length"); return target[key]; } })); } catch {}
         const rp = Proxy.revocable({}, {}); rp.revoke();
         try { expect(rp.proxy).toEqual(expect.any(Array)); } catch {}
+        const revokedPath = Proxy.revocable([], {}); revokedPath.revoke();
+        try { expect({ a: 1 }).toHaveProperty(revokedPath.proxy); } catch {}
         console.log("ok");
       `;
       await using proc = Bun.spawn({
@@ -2749,6 +2753,115 @@ describe("expect()", () => {
     expect({ a: "a" }).toHaveProperty("a", "a");
     expect({ a: new String("a") }).toHaveProperty("a", new String("a"));
     expect({ a: new String("a") }).not.toHaveProperty("a", "a");
+  });
+
+  // Vitest has no rule for these paths. Most of them end in a TypeError from the code that reads the path.
+  test_skipIf(isVitest)("toHaveProperty() - a path that is not a string or an array with items", async () => {
+    class Path extends Array {}
+    class Text extends String {}
+    const args = (function () {
+      return arguments;
+    })("a");
+    const noItems = "path must not be an empty array";
+    const notAPath = "path must be a string or array";
+    const refused = [
+      [[], noItems],
+      [new Path(), noItems],
+      [new Proxy([], {}), noItems],
+      [new Set(["a"]), notAPath],
+      [new Map([["a", 1]]), notAPath],
+      [new Uint8Array([0]), notAPath],
+      [args, notAPath],
+      [["a"].values(), notAPath],
+      [{ [Symbol.iterator]: () => ["a"].values() }, notAPath],
+      [new String("a"), notAPath],
+      [new Text("a"), notAPath],
+      [{ length: 1, 0: "a" }, notAPath],
+      [0, notAPath],
+      [null, notAPath],
+      [undefined, notAPath],
+      [Symbol.iterator, notAPath],
+      [{}, notAPath],
+      [() => {}, notAPath],
+    ];
+    // Jest's printer throws a TypeError of its own on this one.
+    if (isBun) refused.push([new Proxy(new Set(["a"]), {}), notAPath]);
+    // Jest refuses a null or undefined receiver before it looks at the path.
+    const receivers = [{ a: 1, 0: 1 }, "a", ...(isBun ? [null, undefined] : [])];
+    let valueWasAsked = false;
+    const value = {
+      asymmetricMatch() {
+        valueWasAsked = true;
+        return true;
+      },
+    };
+    for (const [path, message] of refused) {
+      for (const received of receivers) {
+        expect(() => expect(received).toHaveProperty(ANY(path))).toThrow(message);
+        expect(() => expect(received).not.toHaveProperty(ANY(path))).toThrow(message);
+        expect(() => expect(received).toHaveProperty(ANY(path), value)).toThrow(message);
+        expect(() => expect(received).not.toHaveProperty(ANY(path), value)).toThrow(message);
+      }
+    }
+    expect(valueWasAsked).toBe(false);
+    await expect((async () => expect(Promise.resolve({})).resolves.toHaveProperty([]))()).rejects.toThrow(noItems);
+    await expect((async () => expect(Promise.reject({})).rejects.not.toHaveProperty(ANY(args)))()).rejects.toThrow(
+      notAPath,
+    );
+    if (isBun) {
+      expect(() => expect({}, "the label").toHaveProperty([])).toThrow("the label");
+      expect(() => expect({}, "the label").toHaveProperty([])).toThrow(noItems);
+    }
+
+    // These are arrays with items.
+    expect({ a: { b: 1 } }).toHaveProperty(new Proxy(["a", "b"], {}), 1);
+    expect({ a: { b: 1 } }).toHaveProperty(Path.of("a", "b"), 1);
+    expect({ a: 1 }).toHaveProperty(Object.assign(["a"], { [Symbol.iterator]: undefined }), 1);
+    expect({ "": 1 }).toHaveProperty([""], 1);
+    expect({ a: 1 }).not.toHaveProperty(["b"]);
+    // And "" is a string.
+    expect({ "": 1 }).toHaveProperty("", 1);
+    expect({ a: 1 }).not.toHaveProperty("");
+  });
+
+  // The first four are the rows of Jest's own tests for a path it refuses.
+  test_skipIf(isVitest)("toHaveProperty() - the message for a path that is not a string or an array with items", () => {
+    const messageOf = (/** @type {() => unknown} */ fn) => {
+      try {
+        fn();
+      } catch (e) {
+        return stripVTControlCharacters(ANY(e).message).trimEnd();
+      }
+    };
+    const notAPath = "Matcher error: expected path must be a string or array";
+    const noItems = "Matcher error: expected path must not be an empty array";
+    expect(messageOf(() => expect({ a: { b: {} } }).toHaveProperty(ANY(undefined)))).toBe(
+      `expect(received).toHaveProperty(path)\n\n${notAPath}\n\nExpected has value: undefined`,
+    );
+    expect(messageOf(() => expect({ a: { b: {} } }).toHaveProperty(ANY(null)))).toBe(
+      `expect(received).toHaveProperty(path)\n\n${notAPath}\n\nExpected has value: null`,
+    );
+    expect(messageOf(() => expect({ a: { b: {} } }).toHaveProperty(1))).toBe(
+      `expect(received).toHaveProperty(path)\n\n${notAPath}\n\nExpected has type:  number\nExpected has value: 1`,
+    );
+    expect(messageOf(() => expect({}).toHaveProperty([]))).toBe(
+      `expect(received).toHaveProperty(path)\n\n${noItems}\n\nExpected has type:  array\nExpected has value: []`,
+    );
+    expect(messageOf(() => expect({}).not.toHaveProperty(0))).toBe(
+      `expect(received).not.toHaveProperty(path)\n\n${notAPath}\n\nExpected has type:  number\nExpected has value: 0`,
+    );
+    expect(messageOf(() => expect({}).toHaveProperty(new Proxy([], {}), 1))).toBe(
+      `expect(received).toHaveProperty(path, value)\n\n${noItems}\n\nExpected has type:  array\nExpected has value: []`,
+    );
+    expect(messageOf(() => expect({}).not.toHaveProperty(ANY(null), 1))).toBe(
+      `expect(received).not.toHaveProperty(path, value)\n\n${notAPath}\n\nExpected has value: null`,
+    );
+    // Jest prints a String object as {"0": "a"}. Either way, only the type line says why "a" is refused.
+    if (isBun) {
+      expect(messageOf(() => expect({ a: 1 }).toHaveProperty(ANY(new String("a"))))).toBe(
+        `expect(received).toHaveProperty(path)\n\n${notAPath}\n\nExpected has type:  object\nExpected has value: "a"`,
+      );
+    }
   });
 
   test.todo("toHaveProperty() - null or undefined", () => {

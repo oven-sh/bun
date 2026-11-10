@@ -3172,6 +3172,11 @@ if (isBun) {
             return K;
           },
           "behind a Proxy": () => new Proxy(withMethod(tagged("Tagged")), {}),
+          "with a constructor property that is no function": () => {
+            const K = withMethod(tagged("Tagged"));
+            K.prototype.constructor = undefined;
+            return K;
+          },
           "that says Function": () => withMethod(tagged("Function")),
           "that says Module": () => withMethod(tagged("Module")),
           "from Map": () => withMethod(class extends Map {}),
@@ -3231,16 +3236,19 @@ if (isBun) {
           },
         );
 
-        test("{ spy: true } a second time keeps the spies of the first", () => {
+        test("{ spy: true } a second time keeps the spies of the first, and spies what is new", () => {
           const Base = withMethod(tagged("Tagged"));
           class K extends Base {}
           const first = vi.mockObject({ Base, K }, { spy: true });
+          K.prototype.added = () => "added";
           const second = vi.mockObject({ Base, K }, { spy: true });
           expect(second.K.prototype).toBe(K.prototype);
           const instance = new second.K();
           expect(instance).toBeInstanceOf(second.Base);
           expect(instance.method(1)).toBe("real");
           expect(first.Base.prototype.method).toHaveBeenCalledWith(1);
+          expect(instance.added()).toBe("added");
+          expect(second.K.prototype.added).toHaveBeenCalledTimes(1);
         });
 
         test("{ spy: true } writes nothing to a prototype that the tested code does not own", () => {
@@ -3310,6 +3318,16 @@ if (isBun) {
         expect(new mocked.URL("http://localhost").toString()).toBeUndefined();
         expect(new mocked.Array().push(1)).toBeUndefined();
         expect(vi.isMockFunction(Map.prototype.get)).toBe(false);
+      });
+
+      test.each(modes)("%s: `await` of an instance of a class that extends Promise settles", async (_, options) => {
+        class Deferred extends Promise {
+          method() {}
+        }
+        const Mocked = vi.mockObject(Deferred, options);
+        const instance = new Mocked(resolve => resolve("resolved"));
+        expect(vi.isMockFunction(instance.method)).toBe(true);
+        expect(await instance).toBe(options ? "resolved" : instance);
       });
 
       test("a bound class with a built-in base class", () => {

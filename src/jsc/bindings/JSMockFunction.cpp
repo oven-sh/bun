@@ -15,6 +15,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
+#include <JavaScriptCore/JSPromisePrototype.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -724,6 +725,12 @@ public:
     {
         this->clear();
         this->resetConfiguration(globalObject);
+    }
+
+    JSObject* initialImplementation() const
+    {
+        JSValue initial = m_initialImplementation.get();
+        return initial ? initial.getObject() : nullptr;
     }
 
     // What mockReset() goes back to in Vitest: the function given to vi.fn(), or a spy's original. Only call it on a new mock.
@@ -2728,8 +2735,11 @@ static bool ownsPrototype(JSC::VM& vm, JSObject* constructor, JSValue prototype)
         return false;
     // A prototype belongs to the class that it names: after `factory.prototype = Class.prototype`, to Class.
     JSValue named = object->getDirect(vm, vm.propertyNames->constructor);
-    auto* owner = named ? named.getObject() : constructor;
-    return owner && isUserFunction(owner);
+    auto* owner = named ? named.getObject() : nullptr;
+    // An earlier spy in place has left its mock of the class there.
+    if (auto* mock = owner ? dynamicDowncast<JSMockFunction>(owner) : nullptr)
+        owner = mock->initialImplementation();
+    return isUserFunction(owner ? owner : constructor);
 }
 
 __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObject* replacement, AutomockKind kind)
@@ -2760,6 +2770,9 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
             if (isFunction && (key == vm.propertyNames->length || key == vm.propertyNames->name || key == vm.propertyNames->arguments || key == vm.propertyNames->caller))
                 continue;
             if (kind == AutomockKind::Module && key == vm.propertyNames->toStringTagSymbol)
+                continue;
+            // With a mock of Promise.prototype.then, an `await` of an instance of the mocked class never settles.
+            if (key == vm.propertyNames->then && holder == globalObject->promisePrototype())
                 continue;
 
             JSC::PropertyDescriptor descriptor;
@@ -2792,8 +2805,8 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
             AutomockRole role = AutomockRole::Member;
             if (isFunction && key == vm.propertyNames->prototype) {
                 // Instances come from the `prototype` of a constructor, not from that of a generator function.
-                // With `spy`, a prototype that the tested code does not own goes by its tag like any other value:
-                // a spy written to it would reach every instance in the process.
+                // With `spy`, only a prototype of the tested code stops going by its tag: the tag is what keeps
+                // a spy off a prototype that the whole process shares, such as Map.prototype.
                 bool isOfClass = original->isConstructor() && (!spy || ownsPrototype(vm, original, value));
                 role = isOfClass ? AutomockRole::ClassPrototype : AutomockRole::Prototype;
             }

@@ -6,13 +6,11 @@ use bun_sema::program::FileId;
 
 use super::runtime_value::{emit_module_value, find_module_value};
 use super::{ModuleRoots, file_scope};
-use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Function, FunctionFlags, FunctionKind};
 use crate::ir::{FunctionId, FunctionKey, TypeTable, VariableKey};
-use crate::load::sources::parsed_source;
 use crate::lower::fragment::ModuleFragment;
 use crate::lower::member::PropertyName;
-use crate::lower::{FileLowering, FunctionLowering, call, commonjs, function, scope};
+use crate::lower::{FileLowering, FunctionLowering, commonjs, function, scope};
 use crate::modules::{ExportBinding, ModuleKind, ModuleRef};
 
 pub(super) fn declare_module_body(file: &mut FileLowering<'_, '_, '_, '_>) -> ModuleRoots {
@@ -37,7 +35,7 @@ pub(super) fn declare_module_body(file: &mut FileLowering<'_, '_, '_, '_>) -> Mo
             file.declare_inner_module_body(callback);
         }
     }
-    file.declare_face_body();
+    file.declare_facade_body();
     file.declare_check_body();
     file.declare_instantiation();
     let data = match kind {
@@ -180,7 +178,6 @@ impl FileLowering<'_, '_, '_, '_> {
             },
         );
         if let Some(failure) = load_failure {
-            lowering.emit_parse_of_refused_json();
             lowering.emit_module_failure(failure, false);
         }
         lowering.initialize_path_variables();
@@ -207,32 +204,21 @@ impl FileLowering<'_, '_, '_, '_> {
             true => &[],
             false => &self.hir.text,
         };
-        let embeds_function_text = self.inputs.options.embeds_function_text && !is_placeholder;
-        let types_in_function_text = embeds_function_text.then(|| self.finish_function_texts());
+        let embeds_function_source = self.inputs.options.embeds_function_source && !is_placeholder;
+        let erased_type_ranges = embeds_function_source.then(|| self.finish_function_sources());
         let mut positions = crate::emit::source_positions(text, compute_ecma_line_starts(text));
-        (positions.quoted_texts, positions.text_of_quotes) = self.take_quoted_texts();
+        (positions.quoted_sources, positions.quoted_source_text) = self.take_quoted_sources();
         ModuleFragment {
             body: roots.body,
             data: roots.data,
             positions,
-            types_in_function_text,
+            erased_type_ranges,
             throws_at_load: false,
         }
     }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn emit_parse_of_refused_json(&mut self) {
-        let source = parsed_source(self.file.queries.files(), self.file.file);
-        let Some(text) = source.and_then(|source| source.refused_json.as_deref()) else {
-            return;
-        };
-        let text = self.file.intern_bytes(text);
-        let text = self.builder.string(text);
-        let parse = self.emit_builtin_itself(BuiltinId::JSONParse);
-        call::emit_call(self, parse, None, &[text]);
-    }
-
     fn emit_instantiation_of_own_file(&mut self) {
         let own_file = self.file.file;
         let state = self

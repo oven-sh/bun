@@ -15,7 +15,6 @@ use crate::lower::{FileLowering, FunctionLowering, convert, function};
 enum BindingStore {
     Initialize,
     Assign,
-    Release,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -44,6 +43,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             None => self
                 .find_captured_value(Capture::Environment(scope))
                 .expect("a function captures every environment it reaches"),
+        }
+    }
+
+    pub(in crate::lower) fn reaches_stored(&self, binding: BindingRef) -> bool {
+        if self.scopes.find_local(binding).is_some()
+            || self.find_captured_value(Capture::Value(binding)).is_some()
+        {
+            return true;
+        }
+        match self.file.scopes.placement(binding).map(|it| it.storage) {
+            Some(Storage::Field { scope, .. }) => {
+                self.scopes.find_environment(scope).is_some()
+                    || self
+                        .find_captured_value(Capture::Environment(scope))
+                        .is_some()
+            }
+            Some(Storage::Variable(_)) => true,
+            Some(Storage::Local) | None => false,
         }
     }
 
@@ -111,20 +128,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(super) fn set_stored(&mut self, binding: BindingRef, value: ValueId) {
-        self.set_stored_as(binding, value, BindingStore::Initialize);
-    }
-
-    fn set_stored_as(&mut self, binding: BindingRef, value: ValueId, store: BindingStore) {
         let Some(placement) = self.file.scopes.placement(binding) else {
             return;
         };
         let local = self.scopes.find_local(binding);
         if let Some(local) = local {
-            match (store, &placement.storage) {
-                (BindingStore::Release, Storage::Local) => {
-                    self.builder.write_released_variable(local.variable, value);
-                }
-                (_, Storage::Field { .. }) => {
+            match &placement.storage {
+                Storage::Field { .. } => {
                     self.builder
                         .write_variable_kept_in_field(local.variable, value);
                 }
@@ -281,16 +291,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.emit_binding_error(error, Binding::Symbol(symbol), name);
         }
         let position = self.file.binding_position(symbol);
-        let store = match self.builder.is_undefined_or_null(value) {
-            true => BindingStore::Release,
-            false => BindingStore::Assign,
-        };
         self.describe_int32_flow_into_binding(position, symbol, source);
         let value = convert::convert(self, value, position, source);
         if tests_dead_zone && self.file.scopes.form(symbol) == BindingForm::Stored {
             self.check_before_store(symbol, name);
         }
-        self.write_symbol(symbol, name, value, store, container);
+        self.write_symbol(symbol, name, value, BindingStore::Assign, container);
     }
 
     fn get_symbol(&mut self, symbol: SymbolId, name: Atom) -> ValueId {
@@ -359,10 +365,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match self.file.scopes.form(symbol) {
             BindingForm::Stored => {
                 let binding = BindingRef::Symbol(symbol);
-                self.set_stored_as(binding, value, store);
+                self.set_stored(binding, value);
                 match store {
                     BindingStore::Initialize => self.scopes.end_dead_zone(binding),
-                    BindingStore::Assign | BindingStore::Release => {}
+                    BindingStore::Assign => {}
                 }
             }
             BindingForm::MappedArgument { unit, index } => {
@@ -380,7 +386,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 BindingStore::Initialize => {
                     debug_assert!(false, "a symbol without a value is never initialized");
                 }
-                BindingStore::Assign | BindingStore::Release => {
+                BindingStore::Assign => {
                     let error = RuntimeErrorKind::UnresolvableReference;
                     self.emit_binding_error(error, Binding::Free, name);
                 }

@@ -425,7 +425,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
 
     JSValue returnValue = jsNull();
     // See requireCompiledModule().
-    if (referrer && moduleObject->compiledModule == JSCommonJSModule::noCompiledModule && referrer->listsAsChild(moduleObject)) [[likely]] {
+    bool isListedByHost = moduleObject->compiledModule == JSCommonJSModule::noCompiledModule || moduleObject->compiledModuleLoadedInto != JSCommonJSModule::noCompiledModule;
+    if (referrer && isListedByHost && referrer->listsAsChild(moduleObject)) [[likely]] {
         if (referrer->m_childrenValue) [[unlikely]] {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
@@ -510,7 +511,7 @@ JSValue requireCacheOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JS
 JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* requireMap, JSCommonJSModule* owner)
 {
     auto& vm = globalObject->vm();
-    auto code = Bun::hasCompiledModules() ? commonJSCreateRequireCacheOverCompiledProgramCodeGenerator(vm) : commonJSCreateRequireCacheCodeGenerator(vm);
+    auto code = Bun::hasCompiledModules() ? compiledCommonJSCreateRequireCacheOverCompiledProgramCodeGenerator(vm) : commonJSCreateRequireCacheCodeGenerator(vm);
     auto* createRequireCache = JSFunction::create(vm, globalObject, code, globalObject);
     MarkedArgumentBuffer args;
     args.append(requireMap);
@@ -684,7 +685,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     auto* parentOfCompiledModule = thisObject->m_isParentStored ? nullptr : Bun::parentOfCompiledModule(thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (parentOfCompiledModule) {
-        thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
+        if (auto* parent = dynamicDowncast<JSCommonJSModule>(parentOfCompiledModule))
+            thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parent);
         return JSValue::encode(parentOfCompiledModule);
     }
 
@@ -1582,8 +1584,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     // An ES module of an executable runs here. A stack that is taken meanwhile lists the function that loads an ES module from disk.
     if (Bun::hasCompiledModules() && !child->moduleGraph()) [[unlikely]] {
-        String pathOfAsker = Bun::pathOfRequirer(child, referrer);
-        JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
+        String requesterPath = Bun::requesterForRequire(child, referrer);
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, requesterPath);
         JSObject* loader = Bun::loaderOfCompiledESModule(globalObject, specifier, !typeAttribute.isEmpty());
         REQUIRE_CJS_RETURN_IF_EXCEPTION;
         if (loader)

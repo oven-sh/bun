@@ -1,0 +1,45 @@
+# f4 = add, f5 = put
+# -- source: a-store-into-a-list-written-to-hold-numbers-guesses-no-storage-of-any-value.ts
+# // A store into a list written as number[] of a value that may be more than a number: the list's storage is of integers, of doubles, of any value, has holes, is frozen, is grown, changes its kind on the way.
+# class Shelf {
+#   at = 0;
+#   cells: number[];
+#   constructor(cells: number[]) { this.cells = cells; }
+#   add(by: number | number[]): void { this.cells[this.at] += by as number; }
+#   put(value: unknown): void { this.cells[this.at] = value as number; }
+# }
+# const values: unknown[] = [1, -1, 0.5, NaN, -0, 2147483647, 2147483648, "text", null, undefined, true, 10n, [4], { valueOf() { return 6; } }, Symbol.iterator];
+# const said: string[] = [];
+# function show(list: number[]): string {
+#   return list.map(value => typeof value === "symbol" ? "symbol" : typeof value === "bigint" ? String(value) + "n" : Object.is(value, -0) ? "-0" : typeof value === "object" && value ? "object" : String(value)).join(",") + " length " + list.length;
+# }
+# for (const make of [() => [1, 2, 3], () => [1.5, 2.5, 3.5], () => [1, "two", 3] as number[], () => [1, , 3] as number[], () => Object.freeze([1, 2, 3]) as number[], () => Object.seal([1, 2, 3]) as number[]]) {
+#   for (const value of values) {
+#     for (const at of [0, 1, 2, 3, 5]) {
+#       const shelf = new Shelf(make());
+#       shelf.at = at;
+#       let line = "";
+#       for (let turn = 0; turn < 3; turn++) {
+#         try { shelf.put(value); line += "p"; } catch (error) { line += "P:" + (error as Error).constructor.name; }
+#         try { shelf.add(value as number); line += "a"; } catch (error) { line += "A:" + (error as Error).constructor.name; }
+#         try { shelf.add(1); line += "i"; } catch (error) { line += "I:" + (error as Error).constructor.name; }
+#       }
+#       said.push(String(at) + " " + line + " " + show(shelf.cells));
+#     }
+#   }
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# The stored value may be more than a number (a sum with a generic arm; a cast). The list is written as number[]: its storage is of integers or of doubles far more often than of any value, so no storage is guessed.
+# In a loop the code then has an arm for each kind that may hold the value (of any value, of doubles, of integers, in that order), and each arm tests that the value fits. Outside loops the arm for any value stands alone, as it did under the guess.
+# RUN(SUM): walk f4 mechanisms=all
+# SUM: = PutArrayElement
+# SUM-NOT: arrayStorage=Contiguous
+# RUN(CAST): walk f5 mechanisms=all
+# CAST: = PutArrayElement
+# CAST-NOT: arrayStorage=Contiguous
+# Fifteen values (numbers, a text, null, undefined, a bigint, a list, an object, a symbol) into six kinds of list at five positions, three turns each.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 450 lines 639885569

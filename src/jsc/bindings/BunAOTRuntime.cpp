@@ -7,13 +7,16 @@
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AOTImageLoading.h>
 #include <JavaScriptCore/AOTModuleHost.h>
+#include <JavaScriptCore/AOTRealmStartup.h>
 #include <JavaScriptCore/AOTRuntimeDescription.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/MarkedBlockCage.h>
 #include <JavaScriptCore/Options.h>
+#include <JavaScriptCore/WasmStreamingParser.h>
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <openssl/sha.h>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -168,12 +171,32 @@ extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
         mi_on_thread_idle_end();
 }
 
+static_assert(sizeof(SHA_CTX) <= JSC::Wasm::SourceHasher::contextSize && alignof(SHA_CTX) <= 8);
+
+extern "C" void Bun__initializeSHA1(void* context)
+{
+    SHA1_Init(static_cast<SHA_CTX*>(context));
+}
+
+extern "C" void Bun__updateSHA1(void* context, std::span<const uint8_t> bytes)
+{
+    SHA1_Update(static_cast<SHA_CTX*>(context), bytes.data(), bytes.size());
+}
+
+extern "C" void Bun__finishSHA1(void* context, std::array<uint8_t, 20>& digest)
+{
+    SHA1_Final(digest.data(), static_cast<SHA_CTX*>(context));
+}
+
 extern "C" void Bun__ThreadPool__exitWithoutAnyThread();
 
 extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])
 {
     if (!JSC::AOT::BuiltinBindings::hasHost())
         Bun__AOT__registerHostBindings();
+    JSC::AOT::setBufferStructureProvider([](JSC::JSGlobalObject* realm) {
+        return defaultGlobalObject(realm)->JSBufferSubclassStructure();
+    });
     std::array<uint8_t, 16> id;
     memcpy(id.data(), identity, id.size());
     auto file = fileOrNull ? std::optional(JSC::AOT::ImageFile { fileOrNull->descriptor, fileOrNull->offset }) : std::nullopt;
@@ -190,14 +213,14 @@ extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, co
 
 extern "C" bool Bun__AOT__useNoImageOnThisThread(BunAOTBytes specifier)
 {
-    if (JSC::AOT::runsOnlyCodeOfImage)
+    if (JSC::AOT::isHardenedBuild)
         return false;
     // All that the thread runs from here on is bytecode.
     if (JSC::Options::crashIfInterpreterIsUsed()) [[unlikely]] {
         dataLogLn("crashIfInterpreterIsUsed: Worker ", WTF::String::fromUTF8ReplacingInvalidSequences(std::span { specifier.ptr, specifier.len }));
         CRASH();
     }
-    JSC::AOT::Image::useNoneOnThisThread();
+    JSC::AOT::Image::disableOnThisThread();
     return true;
 }
 
@@ -219,7 +242,7 @@ extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes image)
 extern "C" bool Bun__AOT__loadsCodeOutsideImage(BunAOTBytes image)
 {
     auto flags = JSC::AOT::Image::flags({ image.ptr, image.len });
-    return !JSC::AOT::runsOnlyCodeOfImage && flags && flags->contains(JSC::AOT::ImageFlag::LoadsCodeOutsideImage);
+    return !JSC::AOT::isHardenedBuild && flags && flags->contains(JSC::AOT::ImageFlag::LoadsCodeOutsideImage);
 }
 
 extern "C" BunAOTBytes Bun__AOT__imageCode()
@@ -238,7 +261,7 @@ static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String&
 {
     JSC::CallFrame* callFrame = globalObject->vm().topCallFrame;
     // The loader starts a module from no frame, and what is said of a file that runs names no place.
-    bool namesPlace = !refusal.startsWith("Ran from source "_s);
+    bool namesPlace = !refusal.startsWith("Ran from source "_s) && !refusal.startsWith("Kept the run of "_s);
     if (!callFrame && namesPlace)
         return;
     BunString sourceURL = Bun::BunStringEmpty;
@@ -267,13 +290,13 @@ static bool listsRefusedChanges;
 extern "C" void Bun__AOT__listRefusedChanges()
 {
     listsRefusedChanges = true;
-    JSC::AOT::setRefusedChangeListener(recordRefusedChange);
+    JSC::AOT::setRejectedChangeListener(recordRefusedChange);
     JSC::AOT::setMissingExportListener(recordMissingExport);
 }
 
 extern "C" void Bun__AOT__openNameWithoutImage(uint32_t holder, const uint8_t* name, size_t length)
 {
-    JSC::AOT::openNameWithoutImage(holder, std::span { name, length });
+    JSC::AOT::unlockNameWithoutImage(holder, std::span { name, length });
 }
 
 namespace Bun {
@@ -320,7 +343,7 @@ extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void* returnAddress)
     result |= frame->hasFrameRecord() ? 1 : 0;
     result |= frame->isEmpty() ? 2 : 0;
     result |= frame->liesBelowSpilledArguments() ? 4 : 0;
-    result |= JSC::AOT::isInStubOfImage(returnAddress) ? 8 : 0;
+    result |= JSC::AOT::isInImageStub(returnAddress) ? 8 : 0;
     return result;
 }
 

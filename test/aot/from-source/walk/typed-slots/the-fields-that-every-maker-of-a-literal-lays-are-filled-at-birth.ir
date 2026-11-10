@@ -12,16 +12,17 @@
 # function makeLoose(seed: number): Loose { return { left: seed, right: seed + 1, name: "l" + seed }; }
 # function sumLoose(row: Loose): string { const left = row.left, right = row.right, name = row.name; return String(left) + "," + String(right) + "," + String(name); }
 # const shelf: any[] = [make, sum, lone, makeLoose, sumLoose];
+# const at: number[] = JSON.parse("[0, 1, 2, 3, 4]");
 # const strip: (o: object, k: string) => boolean = (Reflect as any)[JSON.parse('"deleteProperty"')];
 # const define: typeof Object.defineProperty = (Object as any)[JSON.parse('"defineProperty"')];
 # let text = "";
-# for (let turn = 0; turn < 40; turn++) text = shelf[1](shelf[0](turn)) + " " + shelf[4](shelf[3](turn));
+# for (let turn = 0; turn < 40; turn++) text = shelf[at[1]](shelf[at[0]](turn)) + " " + shelf[at[4]](shelf[at[3]](turn));
 # print(text);
-# const hurt: any = make(7); strip(hurt, "second"); print(shelf[1](hurt));
-# const hidden = make(8); define(hidden, "first", { get() { return "by a getter"; } }); print(shelf[1](hidden));
-# const again: any = make(9); strip(again, "third"); again.third = "laid again"; print(shelf[1](again), Object.keys(again).join());
-# print(shelf[1](make(10)), shelf[2](make(11)), shelf[2](hurt));
-# const loose: any = makeLoose(12); delete loose.right; print(shelf[4](loose), shelf[4](makeLoose(13)));
+# const hurt: any = make(7); strip(hurt, "second"); print(shelf[at[1]](hurt));
+# const hidden = make(8); define(hidden, "first", { get() { return "by a getter"; } }); print(shelf[at[1]](hidden));
+# const again: any = make(9); strip(again, "third"); again.third = "laid again"; print(shelf[at[1]](again), Object.keys(again).join());
+# print(shelf[at[1]](make(10)), shelf[at[2]](make(11)), shelf[at[2]](hurt));
+# const loose: any = makeLoose(12); delete loose.right; print(shelf[at[4]](loose), shelf[at[4]](makeLoose(13)));
 # -- end of source
 # RUN(PLAN): plan layouts mechanisms=all
 # PLAN: "first" {{*}}filled-at-birth
@@ -32,7 +33,7 @@
 # LOOSE-NOT: "right" {{*}}filled-at-birth
 # RUN: walk f2 mechanisms=all-Inlining-ParameterGuards
 # CHECK-LABEL: code f2:Body
-# CHECK: ShapeTest {{*}}[refusesMarkedObjects]
+# CHECK: ShapeTest {{*}}[rejectsMarkedObjects]
 # CHECK: GetSlot {{*}}key="first"
 # CHECK: GetSlot {{*}}key="second"
 # CHECK: GetSlot {{*}}key="third"

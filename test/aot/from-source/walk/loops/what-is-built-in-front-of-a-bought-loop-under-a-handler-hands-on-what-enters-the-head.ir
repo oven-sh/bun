@@ -29,6 +29,6 @@
 # loop's head. Behind the undone plain walk, and again behind the first making of the builds, nothing was bound to them: the loop was not bought, the try was undone in silence, and a verifying build stopped.
 # f1 = run
 # OPTIONS: check=Validate
-# RUN(COUNT): compile PurchasesOfLoopsThatFailed LoopsBuiltTwice
-# COUNT: statistic PurchasesOfLoopsThatFailed 0
-# COUNT: statistic LoopsBuiltTwice 2
+# RUN(COUNT): compile LoopVersioningAttemptsFailed WalkLoopsVersioned
+# COUNT: statistic LoopVersioningAttemptsFailed 0
+# COUNT: statistic WalkLoopsVersioned 2

@@ -1,0 +1,97 @@
+# -- source: main.cjs
+# "use strict";
+# class Knob { constructor(step) { this.step = step; this.turn = this.turn.bind(this); } turn(by) { return (by + this.step) & 255; } spin(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + this.turn(i)) | 0; return s; } }
+# class Latch { constructor(step, isBound) { this.step = step; if (isBound) this.turn = this.turn.bind({ step: 100 }); } turn(by) { return (by + this.step) & 255; } }
+# function byName(knob, t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + knob.turn(i)) | 0; return s; }
+# function byValue(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + loose(i)) | 0; return s; }
+# function attempt(run, first, second) { try { return run(first, second); } catch (error) { return error.constructor.name; } }
+# const knob = new Knob(3), loose = knob.turn, other = new Knob(5);
+# print(byName(knob, 1), byValue(1), knob.spin(1), byName(new Latch(3, true), 1), byName(new Latch(3, false), 1));
+# print(Object.keys(knob).join(), Object.hasOwn(knob, "turn"), knob.turn === Knob.prototype.turn);
+# other.turn = by => -by;
+# print(byName(other, 1), other.spin(1), delete other.turn, byName(other, 1), other.spin(1), Object.keys(other).join());
+# change(knob, Knob);
+# print(attempt(byName, knob, 2), attempt(byValue, 2), attempt(t => knob.spin(t), 2), attempt(t => byName(new Knob(7), t), 2), Object.keys(knob).join());
+# -- end of source
+# f1 = byName, f2 = byValue, f3 = attempt, f4 = Knob, f6 = spin, f7 = Latch
+# `this.turn = this.turn.bind(this)` in the constructor of a class: a name that the prototype answers by a method and that every object holds itself.
+# No name that something above answers could be a field: the bound function lay beside the fields, every look at the object failed (HasNoExtraProperties), the read and the call went by stubs.
+# Where the store stands on every way through the constructor of the class itself, the name is an appended field. A store under a condition (Latch) appends nothing: a slot left empty would send every call of the method to the closed arm.
+# Who finds a method by the class alone asks the appended fields as it asks the listed ones: the method table has no row for such a layout, the search for a member above gives up.
+# What is held in the field, or in a variable that was read out of it, is a bound function of the method: the call asks the cell and enters the method.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: field L0.1 "turn" appended
+# FIELDS-NOT: field L1.1 "turn"
+# The program itself stores another function over the name and deletes it; the shell does what it likes to the object and to the prototype between the runs.
+# RUN(NOTHING): run-in-shell change = function () { };
+# NOTHING: 18 18 18 406 18
+# NOTHING-NEXT: step,turn true false
+# NOTHING-NEXT: -6 -6 true 26 26 step
+# NOTHING-NEXT: 25 25 25 45 step,turn
+# NOTHING-NEXT: exited with 0
+# RUN(CLOSURE): run-in-shell change = function (knob) { knob.turn = function (by) { return by * this.step; }; };
+# CLOSURE: 18 18 18 406 18
+# CLOSURE-NEXT: step,turn true false
+# CLOSURE-NEXT: -6 -6 true 26 26 step
+# CLOSURE-NEXT: 30 25 30 45 step,turn
+# CLOSURE-NEXT: exited with 0
+# RUN(DELETED): run-in-shell change = function (knob) { delete knob.turn; };
+# DELETED: 18 18 18 406 18
+# DELETED-NEXT: step,turn true false
+# DELETED-NEXT: -6 -6 true 26 26 step
+# DELETED-NEXT: 25 25 25 45 step
+# DELETED-NEXT: exited with 0
+# RUN(NUMBER): run-in-shell change = function (knob) { knob.turn = 5; };
+# NUMBER: 18 18 18 406 18
+# NUMBER-NEXT: step,turn true false
+# NUMBER-NEXT: -6 -6 true 26 26 step
+# NUMBER-NEXT: TypeError 25 TypeError 45 step,turn
+# NUMBER-NEXT: exited with 0
+# RUN(ACCESSOR): run-in-shell change = function (knob) { Object.defineProperty(knob, "turn", { get() { return by => 1000 + by; }, configurable: true }); };
+# ACCESSOR: 18 18 18 406 18
+# ACCESSOR-NEXT: step,turn true false
+# ACCESSOR-NEXT: -6 -6 true 26 26 step
+# ACCESSOR-NEXT: 5010 25 5010 45 step,turn
+# ACCESSOR-NEXT: exited with 0
+# RUN(METHOD): run-in-shell change = function (knob, Knob) { Knob.prototype.turn = function (by) { return by * 2; }; };
+# METHOD: 18 18 18 406 18
+# METHOD-NEXT: step,turn true false
+# METHOD-NEXT: -6 -6 true 26 26 step
+# METHOD-NEXT: 25 25 25 20 step,turn
+# METHOD-NEXT: exited with 0
+# RUN(SETTER): run-in-shell change = function (knob, Knob) { Object.defineProperty(Knob.prototype, "turn", { get() { return function (by) { return -by; }; }, set(value) { }, configurable: true }); };
+# SETTER: 18 18 18 406 18
+# SETTER-NEXT: step,turn true false
+# SETTER-NEXT: -6 -6 true 26 26 step
+# SETTER-NEXT: 25 25 25 -10 step,turn
+# SETTER-NEXT: exited with 0
+# RUN(FIXED): run-in-shell change = function (knob, Knob) { Object.defineProperty(Knob.prototype, "turn", { value(by) { return by + 7; }, writable: false, configurable: true }); };
+# FIXED: 18 18 18 406 18
+# FIXED-NEXT: step,turn true false
+# FIXED-NEXT: -6 -6 true 26 26 step
+# FIXED-NEXT: 25 25 25 TypeError step,turn
+# FIXED-NEXT: exited with 0
+# RUN(FROZEN): run-in-shell change = function (knob) { Object.freeze(knob); };
+# FROZEN: 18 18 18 406 18
+# FROZEN-NEXT: step,turn true false
+# FROZEN-NEXT: -6 -6 true 26 26 step
+# FROZEN-NEXT: 25 25 25 45 step,turn
+# FROZEN-NEXT: exited with 0
+# RUN(PROTOTYPE): run-in-shell change = function (knob) { delete knob.turn; Object.setPrototypeOf(knob, { turn(by) { return 9; }, spin() { return 8; } }); };
+# PROTOTYPE: 18 18 18 406 18
+# PROTOTYPE-NEXT: step,turn true false
+# PROTOTYPE-NEXT: -6 -6 true 26 26 step
+# PROTOTYPE-NEXT: 45 25 8 45 step
+# PROTOTYPE-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime change = function (knob) { knob.turn = function (by) { return by * this.step; }; };
+# CHECKED: 18 18 18 406 18
+# CHECKED-NEXT: step,turn true false
+# CHECKED-NEXT: -6 -6 true 26 26 step
+# CHECKED-NEXT: 30 25 30 45 step,turn
+# CHECKED-NEXT: exited with 0
+# RUN(CHECKEDTOO): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime change = function (knob) { delete knob.turn; };
+# CHECKEDTOO: 18 18 18 406 18
+# CHECKEDTOO-NEXT: step,turn true false
+# CHECKEDTOO-NEXT: -6 -6 true 26 26 step
+# CHECKEDTOO-NEXT: 25 25 25 45 step
+# CHECKEDTOO-NEXT: exited with 0

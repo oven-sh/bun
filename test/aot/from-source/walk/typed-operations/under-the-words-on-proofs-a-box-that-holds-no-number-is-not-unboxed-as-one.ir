@@ -1,0 +1,34 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function sum(n: number): number { let s = 0; for (let i = 0; i < 4; i++) s += n * i + n; return s; }
+# function other(n: unknown): number { return n === 1 ? -1 : -2; }
+# const table = [sum, other];
+# function byValue(which: number, x: unknown): unknown { return (table[which] as any)(x); }
+# print(byValue(JSON.parse("0"), JSON.parse("4")), byValue(JSON.parse("1"), 1));
+# print(byValue(JSON.parse("0"), JSON.parse('"ab"')));
+# print("went on");
+# -- end of source
+# An unboxing conversion goes by the type of the boxed value.
+# A value that is not an int32 is read as a double, and a value that is not a number is taken for the first marker of the type, both without a check.
+# With a false proof that goes wrong silently. With the proof-checking switches those two branches check.
+# Here the guard of f1 unboxes its operand for a Body that takes a Double, one operation after its own test, so no check in the Body can see what arrived.
+# Fault injection, testing=UnderstateEffects:Callee/f1/TestsOfGuard: the emitter lets every test of the guard of f1 pass.
+# f1 = sum
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:Body (Double)
+# CHECK: unit f1:ParameterGuard (JSValue) -> (JSValue) tests (number)
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 40 -1
+# RIGHT-NEXT: 0NaNabNaNabNaNabNaNab
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# RUN(ENTRIES): run-in-shell mechanisms=all testing=CheckProofsAtEntries,UnderstateEffects:Callee/f1/TestsOfGuard
+# ENTRIES: 40 -1
+# ENTRIES: found string in the result of an operation
+# ENTRIES-NOT: went on
+# ENTRIES: crashed
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Callee/f1/TestsOfGuard
+# PROOFS: 40 -1
+# PROOFS: found string in the result of an operation
+# PROOFS-NOT: went on
+# PROOFS: crashed

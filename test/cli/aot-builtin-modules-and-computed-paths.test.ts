@@ -60,8 +60,9 @@ test.skipIf(!startsAtAnyEntryPoint)(
       "paths/all.mjs": [Object.keys(withoutADoor).fill("run").join("\n"), 0],
       ...Object.fromEntries(names.map(entry => [entry, ["run", 0]])),
     });
-    // The functions of the loader come with a computed path: about as much code again as a plain program. A built-in module such as node:zlib is four times that.
-    expect(ran["paths/all.mjs"].bytes).toBeLessThan(3 * ran[`paths/${plain}`].bytes);
+    // The functions of the loader come with a computed path, and the fast paths of the stubs that a plain program leaves out: 0.9 MB over a plain program on x64, 1.2 MB on arm64 under Linux.
+    // A built-in module such as node:zlib is 1.7 MB over a plain program, and more. In bytes and not in times: a plain program that gets smaller is no fault of this one.
+    expect(ran["paths/all.mjs"].bytes - ran[`paths/${plain}`].bytes).toBeLessThan(1.5 * 1024 * 1024);
   },
   280_000,
 );

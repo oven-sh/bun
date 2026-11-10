@@ -350,7 +350,8 @@ mod tests {
     fn count_int32_promises_in(files: &[(&str, &str)], function_name: &str) -> usize {
         let options = LoweringOptions {
             platform: host_platform(),
-            embeds_function_text: false,
+            embeds_function_source: false,
+            reparses_function_sources: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,

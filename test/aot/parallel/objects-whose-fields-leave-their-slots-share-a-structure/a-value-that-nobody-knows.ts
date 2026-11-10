@@ -1,4 +1,4 @@
-// COUNTER: CompiledStructuresMade <= 8
+// COUNTER: CompiledStructuresCreated <= 8
 // COUNTER: operationAOTGetByIdAndCache <= 8
 // What is stored comes out of a text that is parsed when the program runs: nobody sees at the build that every second value is a number.
 class Holder { text: string; turn: number; constructor(value: any, turn: number) { this.text = value; this.turn = turn; } }

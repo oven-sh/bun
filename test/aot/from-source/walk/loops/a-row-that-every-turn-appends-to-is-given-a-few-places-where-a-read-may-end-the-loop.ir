@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# 'use strict';
+# function row(first, text, above) { const cur = [first]; for (let j = 1; j <= text.length; j++) cur[j] = Math.min(above[j] + 1, cur[j - 1] + 1); return cur; }
+# const above = [0, 5, 1, 7, 2, 9, 3];
+# let said = 0;
+# for (let t = 0; t < 9; t++) { const made = row(t, 'harbor'.slice(0, t % 7), above); said = said * 3 + made.length + made[made.length - 1]; }
+# print(said % 1000003);
+# -- end of source
+# Every turn stores at the end of `cur`, which is born with room for what is written in its literal, so a row of seven grew twice. The count alone does not end this loop by the look's rule: it starts
+# at 1, its turns read lists and call Math.min. A reservation by the bound could then stay unfilled, however large the bound. So no more is asked than the profile of a site may ask for a list that is
+# born there: the lesser of the bound and that.
+# Nothing but the loop names `cur`, so it is born behind what reckons that room, right in front of the asking, and the birth takes the room.
+# f1 = row
+# RUN(COUNT): compile ClampedCapacitiesReserved mechanisms=all
+# COUNT-NOT: statistic ClampedCapacitiesReserved 0
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = Less {{*}}
+# FORM: = NewArray
+# FORM: = ReserveArrayCapacity
+# FORM: isLoopHead=true
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 21704

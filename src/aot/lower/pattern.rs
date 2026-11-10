@@ -46,6 +46,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.set_position(position);
                 match node {
                     PatternNode::Binding(pattern) => {
+                        let value = self.state_int32_of_binding(pattern, value);
                         self.initialize_pattern_name(pattern, value, source);
                     }
                     PatternNode::Assignment(target) => {
@@ -185,7 +186,8 @@ mod tests {
     fn lower(source: &str) -> Fragment {
         let options = LoweringOptions {
             platform: host_platform(),
-            embeds_function_text: false,
+            embeds_function_source: false,
+            reparses_function_sources: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,

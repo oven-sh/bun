@@ -1,6 +1,6 @@
 // The program makes every list itself, so the analysis knows what each holds, in which storage, and that nothing else writes it: tests are answered ahead of time, arms are cut and loops are copied on that knowledge.
 // Among the lists are some with an undefined element, with a hole, of another storage, or read outside. At the end the shell runs the same text itself: every answer is the same.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function countDefined(list) { let n = 0; for (let i = 0; i < list.length; i++) if (list[i] !== undefined) n++; return n; }
 report(countDefined([1.5, undefined, 2.5]));

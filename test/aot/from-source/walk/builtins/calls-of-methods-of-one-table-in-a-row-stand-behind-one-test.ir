@@ -1,0 +1,36 @@
+# `table.set(base.name, base); table.set(base.name, base);` in a turn of a loop. Each statement had a test of its own that the Map is as made, both arms walked [the read of the method .. its call] and met; and
+# `base.name` was a read that asks for itself whether the shape fits and the slot is filled: an empty slot goes up the prototypes and may run code. So at the second statement nothing was known, and the Map's set was
+# called twice. TypeScript 6 has the two statements in addInheritedMembers(): 0.86 million turns, about 60 M instructions.
+# In a loop, calls of methods of one Map or Set that stand in a row in one block are walked behind ONE test, where nothing in the row runs code on the typed arm: between a read of a method and its call stand only
+# conversions and reads by name off holders from in front of which one layout is expected. In front of the row: the holder's shape; is the slot filled; who fails goes the closed arm, where the row stands as
+# written. The slot is read once. A set, or an add, straight behind the same one (the same table, key and value) is dropped: it finds the key and stores what is there.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function hand(value: unknown): void;
+# class Sym { name: unknown; flags: number; constructor(name: unknown, flags: number) { this.flags = flags; this.name = name; } }
+# function add(table: Map<unknown, Sym>, bases: Sym[]): void {
+#   for (const base of bases) {
+#     if (!table.has(base.name)) {
+#       table.set(base.name, base);
+#       table.set(base.name, base);
+#     }
+#   }
+# }
+# hand(add);
+# let reads = 0;
+# const loud = new Sym("x", 5);
+# Object.defineProperty(loud, "name", { get() { reads++; return "n" + reads; } });
+# const table = new Map<unknown, Sym>();
+# add(table, [new Sym("a", 1), new Sym(-0, 2), new Sym(0, 3), new Sym(NaN, 4), new Sym(NaN, 5), new Sym("a", 6), loud]);
+# let said = "";
+# for (const [key, value] of table) said += (Object.is(key, -0) ? "-0" : String(key)) + "=" + value.flags + " ";
+# print(table.size, said, reads);
+# -- end of source
+# RUN(ADD): walk f1 mechanisms=all
+# ADD: = IsSlotFilled {{*}}key="name"
+# ADD: inlineBuiltin=MapSet
+# RUN(COUNT): compile CollectionCallRunsGuardedOnce DuplicateCollectionStoresRemoved mechanisms=all
+# COUNT: statistic CollectionCallRunsGuardedOnce 1
+# COUNT: statistic DuplicateCollectionStoresRemoved 2
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 5 a=1 0=2 NaN=4 n2=5 n3=5  3

@@ -35,12 +35,12 @@
 // RUN(BRAND): lower
 // BRAND-LABEL: function {{*}}name="hasStaticMethod"
 // BRAND-NOT: TypeTest
-// BRAND: [[method]] = RequireObject {{*}}runtimeError=PrivateStaticTestOfNonObject
+// BRAND: [[method]] = RequireObject {{*}}runtimeError=StaticPrivateInNotObject
 // BRAND: = StrictEq [[method]],
 // BRAND-NOT: TypeTest
 // BRAND-LABEL: function {{*}}name="hasStaticGetter"
 // BRAND-NOT: TypeTest
-// BRAND: [[getter]] = RequireObject {{*}}runtimeError=PrivateStaticTestOfNonObject
+// BRAND: [[getter]] = RequireObject {{*}}runtimeError=StaticPrivateInNotObject
 // BRAND: = StrictEq [[getter]],
 // BRAND-NOT: TypeTest
 

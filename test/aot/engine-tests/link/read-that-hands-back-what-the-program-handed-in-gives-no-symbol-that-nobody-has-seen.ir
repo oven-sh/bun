@@ -1,0 +1,27 @@
+# <the prototype of listeners>.data; console.log(<a list that the program has just made>)
+# A row of the host that answers `any` may answer a symbol under which the printer of objects looks for a method, so what the host loads to call such a method is in the program. This row hands back
+# what the program handed in: a symbol that comes out of it was in the hands of the program before.
+# The control: read-of-the-host-that-may-answer-anything-may-give-a-symbol-that-the-printer-looks-under.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ListenerPrototype
+    v1 = PropGet v0 key="data"
+    v2 = NewArray contents=anything
+    v3 = Builtin builtin=Console
+    v4 = PropGet v3 key="log"
+    v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v6 = Call v5, v3, v2 calleeKey="log" calleeName="console.log"
+    Return v6
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

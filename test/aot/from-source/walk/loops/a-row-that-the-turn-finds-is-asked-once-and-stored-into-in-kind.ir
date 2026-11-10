@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# "use strict";
+# function turned(count, grid, sine, cosine, from, to) { let held; for (let i = from - 1; i >= to; i--) { for (let k = 0; k < count; k++) { held = grid[k][i + 1]; grid[k][i + 1] = sine * grid[k][i] + cosine * held; grid[k][i] = cosine * grid[k][i] - sine * held; } } return grid[0][to]; }
+# function made(count) { const grid = []; for (let k = 0; k < count; k++) { const row = []; for (let i = 0; i < count; i++) row.push(k * 0.5 + i * 0.25 + 0.125); grid.push(row); } return grid; }
+# sink(turned(8, made(8), 0.6, 0.8, 7, 1));
+# -- end of source
+# The turns of the inner loop find their row, read it three times and store into it twice. Each access asked the row anew and the stores went the general way: 204 instructions a turn.
+# The row is asked once, at its first access: a list, as made, of raw numbers that may be written; the list that holds it is asked once too, so that the row is fetched once.
+# A stretch reaches from the row's first read to the second store into it. Whatever fails in front of the first store runs the stretch as written; whatever fails behind it runs the rest as written: one rest a stretch.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double [isWritable]
+# CHECK: = PutDoubleIndex
+# CHECK: = PutDoubleIndex

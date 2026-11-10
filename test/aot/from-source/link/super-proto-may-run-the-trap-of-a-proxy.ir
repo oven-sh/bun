@@ -8,5 +8,4 @@
 # ask(new Proxy({}, { getPrototypeOf() { return null; } }));
 # -- end of source
 # RUN(LINK): link functions mechanisms=all
-# REQUIRES(LINK): entries-of-bun
 # LINK: function f5 {{*}} returns=[{{*}}mayCallUnknownCode

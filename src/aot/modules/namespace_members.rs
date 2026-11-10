@@ -1,7 +1,7 @@
 use super::bindings::{
     AccessedModule, AnswerMember, CopiedExports, Holder, ImportBinding, ShownNames,
 };
-use super::imports::{FileBinder, NamedMember, PendingBinding};
+use super::imports::{FileBinder, NamedMember, PendingBinding, find_names_spied_on};
 use super::interop::{ImportPhase, ModuleKind};
 use super::order::{PlannedSite, SiteKey, SitePosition};
 use super::plan::{Member, ModuleRef, View};
@@ -11,12 +11,15 @@ use crate::known_helpers::{Helper, KnownFunction, KnownReference, Shape as Helpe
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, Decl, InitialState, Parent, SymbolId};
-use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, StmtKind,
     UnOp, VarDeclId, VarKind,
 };
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::program::Sym;
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
+
+type GettersOfHelpers = FxHashMap<(SymbolId, Atom), (u32, Option<SymbolId>)>;
 
 #[derive(Copy, Clone)]
 struct Root {
@@ -59,6 +62,7 @@ impl FileBinder<'_, '_> {
             roots.shared_sort_by_key(|root| root.symbol);
             self.bind_references(&roots, &mut holders);
         }
+        self.bind_members_of_export_helpers();
         self.settle_copies(&mut holders);
         holders.shared_sort_unstable_by_key(|holder| holder.symbol);
         let imports = &mut self.imports;
@@ -72,6 +76,171 @@ impl FileBinder<'_, '_> {
         imports
             .fixed_members
             .shared_sort_unstable_by_key(|&(member, _)| member);
+    }
+
+    fn bind_members_of_export_helpers(&mut self) {
+        let (hir, bound, context) = (self.hir, self.bound, self.context);
+        if !hir.enums.is_empty()
+            || !context.known_helpers.has_functions(self.file)
+            || context.modules.may_be_reevaluated(self.file)
+        {
+            return;
+        }
+        let statements: Vec<hir::StmtId> = hir.ids(hir.body).collect();
+        let mut getters = GettersOfHelpers::default();
+        for (&first, &second) in statements.iter().zip(statements.iter().skip(1)) {
+            self.find_getters_of_export_helper(first, second, &mut getters);
+        }
+        if getters.is_empty() {
+            return;
+        }
+        let (is_any_name_spied_on, names_spied_on) =
+            (context.names_spied_on).get_or_init(|| find_names_spied_on(context));
+        if *is_any_name_spied_on {
+            return;
+        }
+        let names = self.imports.bindings.iter();
+        let imported: FxHashSet<SymbolId> = names.map(|&(symbol, _)| symbol).collect();
+        for reference in (0..hir.exprs.len() as u32).map(ExprId) {
+            if !bound.is_evaluated_ident(reference)
+                || self.analysis.decisions.is_dead_expr(reference)
+                || bound.is_in_type_query(reference)
+                || bound
+                    .dynamic_lookup_scope(NodeData::Expr(reference))
+                    .is_some()
+            {
+                continue;
+            }
+            let Binding::Symbol(target) = bound.binding(reference) else {
+                continue;
+            };
+            let Some((member, name)) = enclosing_member(hir, bound, reference) else {
+                continue;
+            };
+            let Some(&(end, Some(returned))) = getters.get(&(target, name)) else {
+                continue;
+            };
+            let is_read = end <= hir[reference].pos
+                && is_outside_optional_chain(hir, member)
+                && !is_assignment_target(hir, bound, member)
+                && !is_deleted(hir, bound, member);
+            if is_read && !names_spied_on.contains(&name) && !imported.contains(&returned) {
+                let binding = Member::Binding(Sym {
+                    file: self.file,
+                    id: returned,
+                });
+                let fixed = (ModuleRef::File(self.file), binding);
+                self.imports.fixed_members.push((member, fixed));
+            }
+        }
+    }
+
+    fn find_getters_of_export_helper(
+        &self,
+        declared: hir::StmtId,
+        called: hir::StmtId,
+        getters: &mut GettersOfHelpers,
+    ) -> Option<()> {
+        let (hir, bound, context) = (self.hir, self.bound, self.context);
+        let decisions = &self.analysis.decisions;
+        let (StmtKind::Var(declarations), StmtKind::Expr(call)) =
+            (hir[declared].kind, hir[called].kind)
+        else {
+            return None;
+        };
+        if decisions.is_dead_stmt(declared) || decisions.is_dead_stmt(called) {
+            return None;
+        }
+        let declaration = hir[declarations
+            .iter()
+            .next()
+            .filter(|_| declarations.len() == 1)?];
+        let is_plain = matches!(hir[declaration.pat].kind, PatKind::Ident(_))
+            && matches!(
+                declaration.kind,
+                VarKind::Var | VarKind::Let | VarKind::Const
+            );
+        let is_empty_literal = match hir[hir.skip_type_assertions(declaration.init.some()?)].kind {
+            ExprKind::Object(properties) => properties.is_empty(),
+            _ => false,
+        };
+        let target = bound.declared_symbol(Decl::Var(declaration.pat)).some()?;
+        if !is_plain
+            || !is_empty_literal
+            || !bound.is_stable_binding(target)
+            || bound.is_visible_to_eval(target)
+        {
+            return None;
+        }
+        let end = hir[call].end;
+        let ExprKind::Call(call) = hir[hir.skip_type_assertions(call)].kind else {
+            return None;
+        };
+        let call = hir[call];
+        if call.chain != Chain::No || call.args.len() != 2 {
+            return None;
+        }
+        let known =
+            (context.known_helpers).certain_callee(context.files, self.file, call.callee)?;
+        let object = hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, 0));
+        let fills_target = matches!(hir[object].kind, ExprKind::Ident(_))
+            && bound.binding(object) == Binding::Symbol(target);
+        if known.shape != HelperShape::ExportDefinesGetters || !fills_target {
+            return None;
+        }
+        let literal = hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, 1));
+        let ExprKind::Object(properties) = hir[literal].kind else {
+            return None;
+        };
+        let mut found = Vec::new();
+        for id in properties.iter() {
+            let property = hir[id];
+            let is_value = matches!(property.kind, hir::PropKind::Init | hir::PropKind::Method);
+            let PropKey::Name(name) = hir.runtime_property_key(id) else {
+                return None;
+            };
+            let value = hir[hir.skip_type_assertions(property.value)].kind;
+            if !is_value || !matches!(value, ExprKind::Fn(_)) || hir::is_proto_setter(&property) {
+                return None;
+            }
+            found.push((name, self.find_binding_returned_by_arrow(property.value)));
+        }
+        for (name, returned) in found {
+            if getters.insert((target, name), (end, returned)).is_some() {
+                getters.insert((target, name), (end, None));
+            }
+        }
+        Some(())
+    }
+
+    fn find_binding_returned_by_arrow(&self, getter: ExprId) -> Option<SymbolId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let ExprKind::Fn(function) = hir[hir.skip_type_assertions(getter)].kind else {
+            return None;
+        };
+        let record = hir[function];
+        let hir::FnBody::Expr(returned) = record.body else {
+            return None;
+        };
+        let runs_at_once = record.kind == hir::FnKind::Arrow
+            && record.params.is_empty()
+            && !record
+                .flags
+                .intersects(hir::Flags::ASYNC | hir::Flags::GENERATOR);
+        let returned = hir.skip_type_assertions(returned);
+        let is_name = matches!(hir[returned].kind, ExprKind::Ident(_))
+            && self.analysis.decisions.decision(returned) == Decision::Unknown
+            && bound
+                .dynamic_lookup_scope(NodeData::Expr(returned))
+                .is_none();
+        match bound.binding(returned) {
+            Binding::Symbol(symbol)
+                if runs_at_once && is_name && bound.has_runtime_value(symbol) =>
+            {
+                Some(symbol)
+            }
+            _ => None,
+        }
     }
 
     fn settle_copies(&mut self, holders: &mut [Holder]) {
@@ -145,6 +314,9 @@ impl FileBinder<'_, '_> {
                 continue;
             };
             if analysis.decisions.is_dead_expr(reference) || bound.is_in_type_query(reference) {
+                continue;
+            }
+            if (self.context.is_holder_in_erased_getter)(self.file, reference) {
                 continue;
             }
             let root = roots[position];
@@ -267,6 +439,9 @@ impl FileBinder<'_, '_> {
                 };
             }
         };
+        if (self.context.is_required_by_star)(self.file, call) {
+            return self.imports.unread_sites.push((call, false));
+        }
         if let Some(symbol) = self.find_holder_of_marked_module(call, answer) {
             self.imports.unread_sites.push((call, false));
             return add_holder(roots, holders, symbol, call, view, answer, None);
@@ -461,7 +636,10 @@ impl FileBinder<'_, '_> {
             && (asks_for_marker_alone || self.has_name_once_run(target, known::default));
         Some(CopiedExports {
             has_marker,
-            may_hold_answer: is_ordinary_object && (asks_for_marker_alone || passes_over_marker),
+            may_hold_answer: is_ordinary_object
+                && (asks_for_marker_alone
+                    || passes_over_marker
+                    || (context.marker)(target) == Some(false)),
             ..copy
         })
     }
@@ -479,7 +657,7 @@ impl FileBinder<'_, '_> {
                 })
             }
             KnownReference::Global { .. } => true,
-            KnownReference::Loaded { .. } => false,
+            KnownReference::Loaded { .. } | KnownReference::Holder { .. } => false,
         })
     }
 

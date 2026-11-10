@@ -1,5 +1,5 @@
 // The constructor of the parent calls a method of the class below, which touches a private name whose initializer has not run: the slot is empty, and the access throws.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Base { seen; constructor() { this.seen = this.look(); } look() { return "base"; } }
 class Reading extends Base { #x = 7; look() { try { return "read " + this.#x; } catch (e) { return "read throws " + (e instanceof TypeError); } } later() { return this.#x; } }

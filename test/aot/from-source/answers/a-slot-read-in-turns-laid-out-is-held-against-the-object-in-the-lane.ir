@@ -1,0 +1,31 @@
+# -- source: main.cjs
+# function total(rows) { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i].price; return s; }
+# globalThis.kept = total;
+# const row = (i) => ({ id: i, price: i * 2 }), turned = (i) => ({ cost: i, tax: 8, extra: 9, price: 1000 });
+# const good = []; for (let i = 0; i < 17; i++) good.push(row(i));
+# const unseen = globalThis[JSON.parse('"kept"')], mixed = JSON.parse("[]");
+# for (let i = 0; i < 17; i++) mixed.push(globalThis.fails && i === 9 ? turned(5) : row(i));
+# print(total(good), unseen(mixed));
+# -- end of source
+# The loop is unrolled: eight iterations of `s += rows[i].price` follow one another. Each checks the shape of its row and reads the slot.
+# Nothing used to check the result of such a read.
+# The run-time query after a slot read, "what does the object hold under this name", was enabled by testing=CheckWalkAtRunTime alone, under which no iteration is unrolled.
+# Now testing=CheckBoundsInEmittersOnly enables it too, inside unrolled iterations.
+# Fault injection, testing=SkipUnrolledShapeChecks: the shape check is omitted.
+# In a default build, a row of another shape then silently yields whatever is at the offset where the expected shape has `price`.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
+# RIGHT: 272 1254
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly globalThis.fails = true;
+# HELD: 272 1254
+# HELD-NEXT: exited with 0
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrolledShapeChecks
+# PASSES: 272 272
+# PASSES-NEXT: exited with 0
+# RUN(SILENT): run-in-shell mechanisms=all testing=SkipUnrolledShapeChecks globalThis.fails = true;
+# SILENT-NOT: 1254
+# SILENT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrolledShapeChecks globalThis.fails = true;
+# LIE: bun: internal AOT error: property lookup check failed
+# LIE-NEXT: a typed property read found a value for 'price', but a full lookup finds another one
+# LIE: crashed with

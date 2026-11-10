@@ -1,5 +1,6 @@
 mod engine_records;
 mod front_end;
+mod ignore_comments;
 mod int32_flows;
 #[cfg(test)]
 mod shared;
@@ -20,7 +21,10 @@ use bun_sema_driver::{self as driver, LoadedProgram, Locator};
 use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+pub(crate) use self::engine_records::package_with_slow_code;
 pub(crate) use self::front_end::{describe_first_fold_error, syntax_errors_of};
+use self::ignore_comments::IgnoreComment;
+pub(crate) use self::ignore_comments::IgnoreCommentOptions;
 pub use self::shared::{InternalError, Severity};
 pub use self::sink::log_diagnostic;
 pub(crate) use self::spans::range_of_node;
@@ -198,6 +202,18 @@ impl LoadMessages {
         self.lists.lock().internal_errors.push(error);
     }
 
+    pub(crate) fn hand_on_to(&self, heard: &LoadMessages) {
+        let LoadMessageLists {
+            mut log,
+            mut internal_errors,
+        } = std::mem::take(&mut *self.lists.lock());
+        let mut heard = heard.lists.lock();
+        if !log.msgs.is_empty() || log.warnings != 0 || log.errors != 0 {
+            log.append_to(&mut heard.log);
+        }
+        heard.internal_errors.append(&mut internal_errors);
+    }
+
     pub(crate) fn with_log<R>(&self, call: impl FnOnce(&mut Log) -> R) -> R {
         let mut log = Log::init();
         let result = call(&mut log);
@@ -297,4 +313,8 @@ pub(crate) struct Diagnostics {
     error_count: u32,
     missing_at_load: FxHashSet<(Vec<u8>, Vec<u8>)>,
     int32_flows: FxHashMap<(Vec<u8>, u32), Int32Flow>,
+    ignore_comments: Vec<IgnoreComment>,
+    withheld: Vec<Entry>,
+    pub(crate) has_run_to_end: bool,
+    should_list_silenced: bool,
 }

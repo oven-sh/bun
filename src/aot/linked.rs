@@ -1,7 +1,7 @@
 use bun_aot_interface as interface;
 use bun_aot_interface::Opaque;
 use bun_ast::Log;
-use bun_options_types::aot_options::ExplainSet;
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
@@ -126,12 +126,12 @@ interface::define_linked_functions! {
         wrap_entry(ReportEntry::line(kind, text))
     }
 
-    fn bun_aot_write_summary(input: &interface::report::ReportInput<'_>, out: &mut Vec<u8>) {
-        report::write_summary(&unwrap_input(input), out);
+    fn bun_aot_write_summary(input: &interface::report::ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>) {
+        report::write_summary(&unwrap_input(input), has_colors, out);
     }
 
-    fn bun_aot_write_untyped_note(statistics: &interface::statistics::Statistics, out: &mut Vec<u8>) {
-        report::write_untyped_note(statistics.0.get(), out);
+    fn bun_aot_write_developer_options(options: &AotOptions, out: &mut Vec<u8>) {
+        report::write_developer_options(options, out);
     }
 
     fn bun_aot_collect_report_entries(input: &interface::report::ReportInput<'_>, kinds: ExplainSet) -> Vec<interface::report::ReportEntry> {
@@ -157,8 +157,8 @@ interface::define_linked_functions! {
         crate::load::asked_by_test_runner::lists_laid_anew_between_test_files()
     }
 
-    fn bun_aot_find_importer_outside_run(root: &[u8], file: &[u8], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Option<Vec<u8>> {
-        crate::test_runs::files_of_run::find_importer_outside_run(root, file, is_compiled)
+    fn bun_aot_find_importers_outside_run(root: &[u8], files: &[Vec<u8>], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Vec<Option<Vec<u8>>> {
+        crate::test_runs::files_of_run::find_importers_on_disk(root, files, is_compiled)
     }
 
     fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool {

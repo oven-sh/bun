@@ -1,11 +1,14 @@
+use std::cell::OnceCell;
 use std::ops::Range;
 
+use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PropKey};
 use bun_sema::hir_from_data::DataValue;
+use bun_sema::import_sites::ExportedNames;
 use bun_sema::resolve::FinishedFile;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashMap, SharedSort};
 
 use super::FileContents;
 use super::load_names::{find_modules_spelled_as_keys_in_data, find_modules_spelled_in_data};
@@ -31,6 +34,8 @@ pub(super) struct ContentsScan<'a, 's> {
     pub(super) found: FileContents,
     pub(super) holders_of_own_file: Vec<SymbolId>,
     pub(super) levels_above_root: Option<usize>,
+    pub(super) exported_names: OnceCell<ExportedNames>,
+    pub(super) written_names: OnceCell<FxHashMap<Atom, Vec<ExprId>>>,
 }
 
 #[derive(Copy, Clone)]
@@ -194,6 +199,8 @@ pub(crate) fn scan_file(
         found: FileContents::default(),
         holders_of_own_file: Vec::new(),
         levels_above_root: None,
+        exported_names: OnceCell::new(),
+        written_names: OnceCell::new(),
     };
     for index in 0..analysis.import_sites.len() {
         scan.look_at_site(index);

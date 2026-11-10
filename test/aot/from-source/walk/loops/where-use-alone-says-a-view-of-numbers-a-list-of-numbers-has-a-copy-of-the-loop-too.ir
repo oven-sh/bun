@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# "use strict";
+# let held = new Float64Array(300);
+# function load(rows) { held = rows; }
+# function summed() { let s = 0; for (let i = 0; i < held.length; i++) s = s + held[i] * 2; return s; }
+# sink(load, summed);
+# -- end of source
+# A variable that nobody wrote a type for begins as a Float64Array, so use alone says that it holds one, and rows out of a parse are stored into it later: a list of numbers.
+# The front of the loop asked for the view alone, and the list ran the closed copy, twenty-two times as slow. The other of the two is a member of the front.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = TypeTest {{*}}testedType=Float64Array
+# CHECK: = TypeTest {{*}}testedType=Array<number>

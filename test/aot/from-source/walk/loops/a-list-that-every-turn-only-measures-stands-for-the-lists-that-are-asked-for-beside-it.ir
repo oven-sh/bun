@@ -1,0 +1,13 @@
+# `for (..; there < easts.length; ..) { if (here === there) continue; .. easts[here] - easts[there] .. norths[here] - norths[there] .. }`, both constants of the file of which nothing is known: EVERY read by key stands behind the `continue`: all that every turn does with a list is to measure it.
+# A list that some turns alone read is asked for beside one that every turn READS and that is proven. Here there was none: nothing was asked of `norths`, and the first turn that came to it left the typed copy without a test: 79,666 instructions a call for 16 x 16 turns, where the same loops without the `continue` take 9,527.
+# Now a holder that every turn measures, proven an object where it enters the loop, stands among the proven holders too.
+# -- source: main.cjs
+# const easts = JSON.parse("[0.25, 137.25, 24.25]"), norths = JSON.parse("[0.5, 53.5, 106.5]"), record = Object.assign({}, norths);
+# function spread(start) { let total = start; for (let here = 0; here < easts.length; here++) { for (let there = 0; there < easts.length; there++) { if (here === there) continue; total = total + (easts[here] - easts[there]) * (norths[here] - norths[there]); } } return total; }
+# function overRecord(start) { let total = start; for (let here = 0; here < easts.length; here++) { for (let there = 0; there < easts.length; there++) { if (here === there) continue; total = total + (easts[here] - easts[there]) * (record[here] - record[there]); } } return total; }
+# print(spread([].length + 1), overRecord([].length + 1));
+# -- end of source
+# RUN(COUNT): compile ArraysGuardedBesideArrays mechanisms=all
+# COUNT: statistic ArraysGuardedBesideArrays 2
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 7633 7633

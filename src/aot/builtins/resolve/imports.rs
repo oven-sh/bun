@@ -200,7 +200,9 @@ impl Resolver<'_, '_> {
                 table::canonical_id(function)
                 && let ExprKind::Call(call) = input.hir[expr].kind
                 && let Some(operand) = input.hir.ids(input.hir[call].args).next()
-                && let Some(holder) = self.find_holder_above_function_written_here(operand)
+                && let Some(holder) = self
+                    .find_holder_that_proto_of_value_written_here_names(operand)
+                    .or_else(|| self.find_holder_above_function_written_here(operand))
             {
                 return ExprState::Held(holder);
             }

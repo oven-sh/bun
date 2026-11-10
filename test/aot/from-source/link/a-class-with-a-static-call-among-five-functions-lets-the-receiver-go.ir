@@ -1,0 +1,17 @@
+# -- source: a-class-with-a-static-call-among-five-functions-lets-the-receiver-go.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a() { return this.count + 1; }
+# function b() { return this.count + 2; }
+# function c() { return this.count + 3; }
+# function d() { return this.count + 4; }
+# class e { static call(box) { box.count = "text"; return "static"; } }
+# function through(handed, box) { return handed.call(box); }
+# function pick(i) { return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function all(box) { let sum = ""; for (let i = 0; i < 5; i++) sum += through(pick(i), box) + ","; return sum + box.count + "," + box.note + "," + typeof box.count; }
+# print(all(new Box(20)));
+# -- end of source
+# L0 = Box. A class object answers names by its static members: a pool that holds one says nothing of what a name finds.
+# RUN(BOX): link why-gone L0
+# BOX: why-gone L0: it has gone
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 21,22,23,24,static,text,0,string

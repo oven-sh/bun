@@ -34,6 +34,9 @@ fn collect_members(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -
                 None
             }
             ShapeKind::Class(class) => Some(file.class_layout(class)),
+            ShapeKind::ConstructorFunctionInstance(function) => {
+                file.declare_constructor_function_layout(function)
+            }
             ShapeKind::Object => file.object_type_layout(ty),
             ShapeKind::AnyObject => file.module_type_layout(ty),
             ShapeKind::Anything(_)

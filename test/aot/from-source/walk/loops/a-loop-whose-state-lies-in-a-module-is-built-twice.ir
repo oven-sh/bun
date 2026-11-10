@@ -12,7 +12,6 @@
 # As a-loop-whose-state-lies-in-an-environment-is-built-twice.ir, with the three in variables of a module. Each variable is asked by itself whether the typed turns write it: they write `at` alone.
 # The dead zones of the three are asked in front of the loop, so no turn of the typed copy checks one. `at` is asked for an int32 there too and comes round as a parameter of the typed head; its store stays in the turn.
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[at]]: {{*}} = GetModuleVariable variable=g1
 # CHECK: TypeTest {{*}}testedType=i32

@@ -1,44 +1,55 @@
 // answers: without-library
-// # testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h): what the rows of effects say that a call does NOT do is held against what it did, and the process stops by name.
-// # The lie, testing=RowSaysLess:<kind>/<row>/<part>: one row is taken to say less than it does, by the walk, the sweep and the back end alike. Each kind of row and each part is laid false once.
+// # testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h): what the entries of the effects tables say that a call does not do is checked against what the call did.
+// # Where the two differ, the process crashes with a named error.
+// # Fault injection, testing=UnderstateEffects:<kind>/<row>/<part>: the walk, the sweep and the back end alike read one entry as claiming fewer effects than it does.
+// # Each kind of entry and each part is understated once.
 // # f2 = bump
 // # RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.report = value => print(String(value));
 // # NET: 491
 // # NET-NEXT: end
 // # NET-NEXT: exited with 0
-// # "Runs no other code": a getter behind a read by name, by the row of the operation and by that of the stub; a reviver behind JSON.parse, by the row of the built-in.
-// # RUN(OPERATION): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Operation/PropGet/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
-// # OPERATION: AOT: f{{*}} at {{*}}: the rows of effects of operation:PropGet and of stub:ReadSizeOfTableAtSite say that the call will run no other code, and compiled code was entered. This is a bug in Bun.
+// # "Runs no other code": a read by name runs a getter, once with the operation's entry understated and once with the stub's. JSON.parse runs a reviver, with the built-in's entry understated.
+// # RUN(OPERATION): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Operation/PropGet/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
+// # OPERATION: bun: internal AOT error: effects check failed
+// # OPERATION-NEXT: the declared effects of operation:PropGet and of stub:GetSizeOfTable say that the call runs no other code, but compiled code was entered
 // # OPERATION-NOT: end
-// # RUN(STUB): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Stub/ReadSizeOfTableAtSite/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
-// # STUB: AOT: f{{*}} at {{*}}: the rows of effects of operation:PropGet and of stub:ReadSizeOfTableAtSite say that the call will run no other code, and compiled code was entered. This is a bug in Bun.
+// # RUN(STUB): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Stub/GetSizeOfTable/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
+// # STUB: bun: internal AOT error: effects check failed
+// # STUB-NEXT: the declared effects of operation:PropGet and of stub:GetSizeOfTable say that the call runs no other code, but compiled code was entered
 // # STUB-NOT: end
-// # RUN(REVIVER): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/JSON.parse/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
-// # REVIVER: AOT: f{{*}} at {{*}}: the rows of effects of operation:CallBuiltin and of built-in:JSON.parse say that the call will run no other code, and compiled code was entered. This is a bug in Bun.
+// # RUN(REVIVER): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/JSON.parse/RunsOtherCode mechanisms=all globalThis.report = value => print(String(value));
+// # REVIVER: bun: internal AOT error: effects check failed
+// # REVIVER-NEXT: the declared effects of operation:CallBuiltin and of built-in:JSON.parse say that the call runs no other code, but compiled code was entered
 // # REVIVER-NOT: end
-// # "Does not write X": a store behind the end of a list, a method that turns its receiver round, a callee that writes a field of its argument.
-// # RUN(STORE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Stub/PutByValCached/ArrayStorage mechanisms=all globalThis.report = value => print(String(value));
-// # STORE: AOT: f{{*}} at {{*}}: the rows of effects of operation:ElemSet and of stub:PutByValCached say that the call will not write ArrayStorage, and those words of operand 0 are others behind it. This is a bug in Bun.
+// # "Does not write X": a store past the end of an array, a method that reverses its receiver, and a callee that writes a field of its argument.
+// # RUN(STORE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Stub/PutByValCached/ArrayStorage mechanisms=all globalThis.report = value => print(String(value));
+// # STORE: bun: internal AOT error: effects check failed
+// # STORE-NEXT: the declared effects of operation:ElemSet and of stub:PutByValCached say that the call does not write ArrayStorage, but operand 0 changed there
 // # STORE-NOT: end
-// # RUN(METHOD): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/Array.prototype.reverse/Elements mechanisms=all globalThis.report = value => print(String(value));
-// # METHOD: AOT: f{{*}} at {{*}}: the rows of effects of operation:CallBuiltin and of built-in:Array.prototype.reverse say that the call will not write Elements, and those words of operand 0 are others behind it. This is a bug in Bun.
+// # RUN(METHOD): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/Array.prototype.reverse/Elements mechanisms=all globalThis.report = value => print(String(value));
+// # METHOD: bun: internal AOT error: effects check failed
+// # METHOD-NEXT: the declared effects of operation:CallBuiltin and of built-in:Array.prototype.reverse say that the call does not write Elements, but operand 0 changed there
 // # METHOD-NOT: end
-// # RUN(CALLEE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Callee/f2/ObjectFields mechanisms=all globalThis.report = value => print(String(value));
-// # CALLEE: AOT: f{{*}} at {{*}}: the rows of effects of operation:CallDirect and of what Link says of the callee say that the call will not write ObjectFields, and those words of operand 0 are others behind it. This is a bug in Bun.
+// # RUN(CALLEE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Callee/f2/ObjectFields mechanisms=all globalThis.report = value => print(String(value));
+// # CALLEE: bun: internal AOT error: effects check failed
+// # CALLEE-NEXT: the declared effects of operation:CallDirect and of the callee's effect summary say that the call does not write ObjectFields, but operand 0 changed there
 // # CALLEE-NOT: end
-// # "Throws nothing": whoever looks for a handler asks whether a call is under way that is said so.
-// # RUN(THROWS): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/JSON.parse/Throws mechanisms=all globalThis.report = value => print(String(value));
-// # THROWS: AOT: f{{*}} at {{*}}: the rows of effects of operation:CallBuiltin and of built-in:JSON.parse say that the call will throw nothing by a rule of the language, and it threw. This is a bug in Bun.
+// # "Throws nothing": the code that looks for a handler checks whether a call is in progress that is said to throw nothing.
+// # RUN(THROWS): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/JSON.parse/Throws mechanisms=all globalThis.report = value => print(String(value));
+// # THROWS: bun: internal AOT error: effects check failed
+// # THROWS-NEXT: the declared effects of operation:CallBuiltin and of built-in:JSON.parse say that the call throws no language exception, but it threw one
 // # THROWS-NOT: end
-// # A row that says "for lack of memory alone" is held to the same.
-// # RUN(BYRULE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/JSON.parse/ThrowsByRule mechanisms=all globalThis.report = value => print(String(value));
-// # BYRULE: AOT: f{{*}} at {{*}}: the rows of effects of operation:CallBuiltin and of built-in:JSON.parse say that the call will throw nothing by a rule of the language, and it threw. This is a bug in Bun.
+// # An entry that says "for lack of memory alone" gets the same check.
+// # RUN(BYRULE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/JSON.parse/ThrowsByRule mechanisms=all globalThis.report = value => print(String(value));
+// # BYRULE: bun: internal AOT error: effects check failed
+// # BYRULE-NEXT: the declared effects of operation:CallBuiltin and of built-in:JSON.parse say that the call throws no language exception, but it threw one
 // # BYRULE-NOT: end
-// # "Does not collect": with a collection at every allocation that leaves the free lists.
-// # RUN(COLLECTS): run-in-shell --slowPathAllocsBetweenGCs=1 testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/JSON.parse/Collects mechanisms=all globalThis.report = value => print(String(value));
-// # COLLECTS: AOT: f{{*}} at {{*}}: the rows of effects of operation:CallBuiltin and of built-in:JSON.parse say that the call will not collect, and the heap was collected. This is a bug in Bun.
+// # "Does not collect": the run collects at every allocation that the free lists cannot serve.
+// # RUN(COLLECTS): run-in-shell --slowPathAllocsBetweenGCs=1 testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/JSON.parse/Collects mechanisms=all globalThis.report = value => print(String(value));
+// # COLLECTS: bun: internal AOT error: effects check failed
+// # COLLECTS-NEXT: the declared effects of operation:CallBuiltin and of built-in:JSON.parse say that the call does not collect, but the heap was collected
 // # COLLECTS-NOT: end
-// # At the end the shell runs the same text itself: every answer is the same.
+// # At the end, the shell runs the same source itself, and every result is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 8 of 8 of 8
 // # CHECK-NEXT: exited with 0

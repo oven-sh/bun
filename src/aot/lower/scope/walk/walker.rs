@@ -260,39 +260,47 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
             functions[walked.index()].created_at = u32::MAX;
         }
     }
-    let mut has_changed = true;
-    while has_changed {
-        has_changed = false;
-        for &(function, user, time) in &sites {
-            let Some(function) = function_of_fn[function.idx()] else {
-                continue;
+    let mut read_by: Vec<(u32, u32)> = Vec::new();
+    let mut found: Vec<(u32, u32)> = Vec::new();
+    for &(function, user, time) in &sites {
+        let Some(function) = function_of_fn[function.idx()] else {
+            continue;
+        };
+        let started = functions[function.index()];
+        if !started.is_made_late {
+            continue;
+        }
+        let mut read: Option<WalkedFunctionId> = None;
+        let (mut start, mut below_owner) = (time, user);
+        while Some(below_owner) != started.creator {
+            let around = functions[below_owner.index()];
+            let is_made_with_hoisted_functions =
+                around.hoisted_to.is_some() && !around.is_made_late;
+            (start, read) = match is_made_with_hoisted_functions {
+                true => (0, None),
+                false => (around.created_at, Some(below_owner)),
             };
-            let started = functions[function.0 as usize];
-            if !started.is_made_late {
-                continue;
-            }
-            let mut start = time;
-            let mut below_owner = user;
-            while Some(below_owner) != started.creator {
-                let around = functions[below_owner.0 as usize];
-                let is_made_with_hoisted_functions =
-                    around.hoisted_to.is_some() && !around.is_made_late;
-                start = if is_made_with_hoisted_functions {
-                    0
-                } else {
-                    around.created_at
-                };
-                match around.creator {
-                    Some(creator) => below_owner = creator,
-                    None => {
-                        start = 0;
-                        break;
-                    }
-                }
-            }
-            if start < started.created_at {
-                functions[function.index()].created_at = start;
-                has_changed = true;
+            let Some(creator) = around.creator else {
+                (start, read) = (0, None);
+                break;
+            };
+            below_owner = creator;
+        }
+        match read.filter(|read| functions[read.index()].is_made_late) {
+            Some(read) => read_by.push((read.0, function.0)),
+            None => found.push((start, function.0)),
+        }
+    }
+    read_by.sort_unstable();
+    found.sort_unstable();
+    let mut pending: Vec<u32> = Vec::new();
+    for (start, function) in found {
+        pending.push(function);
+        while let Some(function) = pending.pop() {
+            if start < functions[function as usize].created_at {
+                functions[function as usize].created_at = start;
+                let readers = entries_of(&read_by, function).iter();
+                pending.extend(readers.map(|entry| entry.1));
             }
         }
     }
@@ -331,6 +339,13 @@ impl<'x, 's> Walker<'x, 's> {
         let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
         let keeps_wrapper =
             is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
+        let wrapper_slots = match keeps_wrapper {
+            true => {
+                let may_be_reevaluated = input.modules.may_be_reevaluated(input.file);
+                commonjs::WrapperSlots::of(bound, decisions, may_be_reevaluated)
+            }
+            false => commonjs::WrapperSlots::default(),
+        };
         let (jsx_uses, metadata_uses) = collect_implicit_uses(bound);
         let (eval_variable_scopes, parameter_eval_variable_scopes) =
             collect_eval_variable_scopes(hir, bound, decisions);
@@ -352,7 +367,8 @@ impl<'x, 's> Walker<'x, 's> {
             class_decorators: collect_class_decorators(hir, bound),
             last_users: vec![None; bound.symbols.len()],
             pending_stores: Vec::new(),
-            unconditional_statements: Vec::new(),
+            unconditional_calls_of_super: Default::default(),
+            fields_evaluated_in_constructors: Default::default(),
             clock: 0,
             number_walked: 0,
             is_only_called_or_tested: vec![false; hir.exprs.len()],
@@ -368,9 +384,20 @@ impl<'x, 's> Walker<'x, 's> {
                 eval_variable_scopes,
                 parameter_eval_variable_scopes,
                 has_wrapper_parameters: keeps_wrapper,
+                wrapper_slots,
                 has_values_of_each_run: is_commonjs
                     && !keeps_wrapper
-                    && input.modules.runs_again(input.file),
+                    && input.modules.may_be_reevaluated(input.file),
+                keeps_first_exports: is_commonjs
+                    && !keeps_wrapper
+                    && commonjs::keeps_first_exports(
+                        input.file,
+                        hir,
+                        bound,
+                        input.compiled,
+                        input.modules,
+                        input.builtins,
+                    ),
                 ..ScopeWalk::default()
             },
             stack: Vec::new(),

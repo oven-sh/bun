@@ -1,0 +1,17 @@
+# `import { shelf } from "./shelf.mjs"`, then `for (..; place < shelf.rows.length; ..) total = total + shelf.rows[place]`: the variable of another file may stand in its dead zone in this walk, so it was read in front of no loop and the slot that finds the list had no holder there.
+# The word of the variable is read in front of the loop AS IT LIES: no claim on the reads where they stand travels with it. Whoever buys the loop asks there, at the run, whether it holds an object of its layout, and leaves for the loop as written where it does not.
+# -- source: main.mjs
+# import { shelf } from "./shelf.mjs";
+# function sum(start) { let total = start; for (let place = 0; place < shelf.rows.length; place++) total = total + shelf.rows[place]; return total; }
+# print(sum([].length + 1));
+# -- source: shelf.mjs
+# class Shelf { constructor(rows) { this.rows = rows; } }
+# export const shelf = new Shelf(JSON.parse("[1, 2, 3, 4.5]"));
+# -- end of source
+# RUN(COUNT): compile ModuleConstantReadsHoisted ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# COUNT: statistic ModuleConstantReadsHoisted 2
+# COUNT: statistic ArrayOrUint8ArrayLoopsVersioned 1
+# RUN(WALK): walk f3 mechanisms=all
+# WALK: = GetModuleVariable variable=g{{*}} [returnsRawSlot]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 11.5

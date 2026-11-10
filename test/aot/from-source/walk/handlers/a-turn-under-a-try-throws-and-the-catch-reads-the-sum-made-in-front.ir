@@ -1,0 +1,40 @@
+# -- source: a-turn-under-a-try-throws-and-the-catch-reads-the-sum-made-in-front.js
+# function k(x, z, bad) {
+#   let d = 0, e = 0;
+#   for (let h = 0; h < x; h++) d = true;
+#   for (let i = 0; i < x; i++) {
+#     d = 1;
+#     e += z;
+#   }
+#   try {
+#     for (let i = 0; i < x; i++) {
+#       if (i === bad) throw new Error("turn " + i);
+#       d = (e + z) & 7;
+#     }
+#   } catch (error) {
+#     e += 100;
+#     d = error.message;
+#   }
+#   return [d, e].join();
+# }
+# print(k(3, 2, 2));
+# print(k(3, 2, 0));
+# print(k(3, 2, 9));
+# -- end of source
+# The way into the handler is taken at run time, out of the first turn and out of a later one: the catch reads the sum out of the parameter that holds a raw number.
+# RUN: run-in-shell mechanisms=all
+# CHECK: turn 2,106
+# CHECK-NEXT: turn 0,106
+# CHECK-NEXT: 0,6
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
+# FAILING: turn 2,106
+# FAILING-NEXT: turn 0,106
+# FAILING-NEXT: 0,6
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: turn 2,106
+# HELD-NEXT: turn 0,106
+# HELD-NEXT: 0,6
+# HELD-NEXT: exited with 0

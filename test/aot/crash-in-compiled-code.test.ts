@@ -5,8 +5,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { locksEnvironment } from "./hardened";
+import { without } from "./harness/capabilities";
 import { withoutCoreDump } from "./harness/commands";
-import { raiseDefaultTimeout } from "./harness/default-timeout";
+import { afterAll, raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
 import { beforeAll, describe, eachRow, gap, test } from "./supported";
 
@@ -66,7 +68,11 @@ export function priceOf(name: string): number {
 `,
 };
 
-const quiet = { BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0", NO_COLOR: "1" };
+const quiet = {
+  ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
+  BUN_ENABLE_CRASH_REPORTING: "0",
+  NO_COLOR: "1",
+};
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
   const { stdout, stderr, exitCode } = await runCommand(withoutCoreDump(cmd), cwd, { ...bunEnv, ...quiet, ...env });
   return { stdout, stderr, exitCode };
@@ -259,8 +265,11 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
   });
 });
 
-describe.skipIf(isWindows || isASAN)("a crash in what a compiled function calls", () => {
-  const program = `import { read } from "bun:ffi";
+// Its program crashes by bun:internal-for-testing, which a locked environment opens to no compiled code.
+describe.skipIf(isWindows || isASAN || !without("a locked environment"))(
+  "a crash in what a compiled function calls",
+  () => {
+    const program = `import { read } from "bun:ffi";
 import { crash_handler } from "bun:internal-for-testing";
 
 function lowest(how: string): number {
@@ -280,91 +289,93 @@ if (listens) for (const signal of ["SIGTRAP", "SIGABRT"] as const) process.on(si
 if (how.endsWith(" in a Worker")) new Worker("./app.ts", { argv: [how.replace(" in a Worker", "")] });
 else console.log("went on", lowest(how));
 `;
-  const forTesting = { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
-  let dir: ReturnType<typeof tempDir>;
-  let cwd: string;
+    const forTesting = { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
+    let dir: ReturnType<typeof tempDir>;
+    let cwd: string;
 
-  beforeAll(async () => {
-    dir = tempDir("aot-crash-below-compiled-code", { "app.ts": program });
-    cwd = String(dir);
-    const built = await run([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], cwd, forTesting);
-    expect(built.stderr).not.toMatch(/^error\b/m);
-    expect(built.exitCode).toBe(0);
-  });
-
-  const inLowest = /^lowest app\.ts:\d+:\d+$/;
-
-  test.each(["fault", "panic", "panic of Rust", "out of memory", "trap", "abort"])(
-    "names the function first: %s",
-    async how => {
-      const { stdout, stderr } = await run([join(cwd, "app"), how], cwd, forTesting);
-      expect(stdout).toBe("");
-      expect(framesOf(stderr)[0]).toMatch(inLowest);
-    },
-  );
-
-  // glibc's raise() keeps no frame record and has the id of the thread where the frame pointer would be, and every eighth id is aligned.
-  // From there the stack is searched, and what earlier calls have left on it differs from run to run.
-  test("names the function first, run after run: abort", async () => {
-    for (let time = 0; time < 16; time++) {
-      const { stderr } = await run([join(cwd, "app"), "abort"], cwd, forTesting);
-      expect(framesOf(stderr)[0]).toMatch(inLowest);
-    }
-  });
-
-  test.each([
-    "fault",
-    "panic",
-    "panic of Rust",
-    "out of memory",
-    "trap",
-    "abort",
-    "no stack left",
-    "no stack left in a Worker",
-  ])("the terminal is out of raw mode again: %s", async how => {
-    let shown = "";
-    const child = Bun.spawn({
-      // A stack without a limit never runs out: it grows until the kernel ends the process, and no handler sees that. CI's machines set no limit.
-      cmd: ["sh", "-c", 'ulimit -c 0; ulimit -s 8192; "$0" "$@"; stty -a', join(cwd, "app"), how, "", "raw"],
-      cwd,
-      env: { ...bunEnv, ...quiet, ...forTesting },
-      terminal: {
-        cols: 200,
-        rows: 24,
-        data: (_: unknown, data: Uint8Array) => void (shown += new TextDecoder().decode(data)),
-      },
-    } as never);
-    await child.exited;
-    expect(shown).toContain("Bun has ");
-    expect(shown.match(/-?\b(?:icanon|echo|isig|icrnl)\b/g)?.sort()).toEqual(["echo", "icanon", "icrnl", "isig"]);
-  });
-
-  // The npm package signal-exit listens for both signals, and half the command line tools on npm load it.
-  const forwarded = "Bun's handler for a signal that JavaScript listens for takes the place of the crash handler's";
-  eachRow([
-    ["trap", "SIGTRAP", "nothing"],
-    ["abort", "SIGABRT", "nothing"],
-    gap(`${forwarded} and returns: on x64 the program goes on behind the trap, on arm64 it traps for ever`, [
-      "trap",
-      "SIGTRAP",
-      "the signal",
-    ]),
-    gap(`${forwarded}: abort() ends the process without a word`, ["abort", "SIGABRT", "the signal"]),
-  ] as const)("%s ends a program with %s and a report where it listens for %s", async (how, signal, heard) => {
-    await using child = Bun.spawn({
-      cmd: withoutCoreDump([join(cwd, "app"), how, heard === "nothing" ? "" : "listens"]),
-      env: { ...bunEnv, ...quiet, ...forTesting },
-      stdout: "pipe",
-      stderr: "pipe",
-      // Where cores are piped to a program, a loaded machine takes seconds to let a process die. The rows not met yet never end.
-      timeout: heard === "nothing" ? 90_000 : 5000,
-      killSignal: "SIGKILL",
+    beforeAll(async () => {
+      dir = tempDir("aot-crash-below-compiled-code", { "app.ts": program });
+      cwd = String(dir);
+      const built = await run([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], cwd, forTesting);
+      expect(built.stderr).not.toMatch(/^error\b/m);
+      expect(built.exitCode).toBe(0);
     });
-    const [stdout, stderr] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-    expect({ stdout, signal: child.signalCode }).toEqual({ stdout: "", signal });
-    expect(framesOf(stderr)[0]).toMatch(inLowest);
-  });
-});
+    afterAll(() => dir?.[Symbol.dispose]());
+
+    const inLowest = /^lowest app\.ts:\d+:\d+$/;
+
+    test.each(["fault", "panic", "panic of Rust", "out of memory", "trap", "abort"])(
+      "names the function first: %s",
+      async how => {
+        const { stdout, stderr } = await run([join(cwd, "app"), how], cwd, forTesting);
+        expect(stdout).toBe("");
+        expect(framesOf(stderr)[0]).toMatch(inLowest);
+      },
+    );
+
+    // glibc's raise() keeps no frame record and has the id of the thread where the frame pointer would be, and every eighth id is aligned.
+    // From there the stack is searched, and what earlier calls have left on it differs from run to run.
+    test("names the function first, run after run: abort", async () => {
+      for (let time = 0; time < 16; time++) {
+        const { stderr } = await run([join(cwd, "app"), "abort"], cwd, forTesting);
+        expect(framesOf(stderr)[0]).toMatch(inLowest);
+      }
+    });
+
+    test.each([
+      "fault",
+      "panic",
+      "panic of Rust",
+      "out of memory",
+      "trap",
+      "abort",
+      "no stack left",
+      "no stack left in a Worker",
+    ])("the terminal is out of raw mode again: %s", async how => {
+      let shown = "";
+      const child = Bun.spawn({
+        // A stack without a limit never runs out: it grows until the kernel ends the process, and no handler sees that. CI's machines set no limit.
+        cmd: ["sh", "-c", 'ulimit -c 0; ulimit -s 8192; "$0" "$@"; stty -a', join(cwd, "app"), how, "", "raw"],
+        cwd,
+        env: { ...bunEnv, ...quiet, ...forTesting },
+        terminal: {
+          cols: 200,
+          rows: 24,
+          data: (_: unknown, data: Uint8Array) => void (shown += new TextDecoder().decode(data)),
+        },
+      } as never);
+      await child.exited;
+      expect(shown).toContain("Bun has ");
+      expect(shown.match(/-?\b(?:icanon|echo|isig|icrnl)\b/g)?.sort()).toEqual(["echo", "icanon", "icrnl", "isig"]);
+    });
+
+    // The npm package signal-exit listens for both signals, and half the command line tools on npm load it.
+    const forwarded = "Bun's handler for a signal that JavaScript listens for takes the place of the crash handler's";
+    eachRow([
+      ["trap", "SIGTRAP", "nothing"],
+      ["abort", "SIGABRT", "nothing"],
+      gap(`${forwarded} and returns: on x64 the program goes on behind the trap, on arm64 it traps for ever`, [
+        "trap",
+        "SIGTRAP",
+        "the signal",
+      ]),
+      gap(`${forwarded}: abort() ends the process without a word`, ["abort", "SIGABRT", "the signal"]),
+    ] as const)("%s ends a program with %s and a report where it listens for %s", async (how, signal, heard) => {
+      await using child = Bun.spawn({
+        cmd: withoutCoreDump([join(cwd, "app"), how, heard === "nothing" ? "" : "listens"]),
+        env: { ...bunEnv, ...quiet, ...forTesting },
+        stdout: "pipe",
+        stderr: "pipe",
+        // Where cores are piped to a program, a loaded machine takes seconds to let a process die. The rows not met yet never end.
+        timeout: heard === "nothing" ? 90_000 : 5000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout, signal: child.signalCode }).toEqual({ stdout: "", signal });
+      expect(framesOf(stderr)[0]).toMatch(inLowest);
+    });
+  },
+);
 
 // In a test run a stack goes from a test file to what it imports and back.
 // Every function has something left to do behind its call, so that its frame is still there.
@@ -406,7 +417,47 @@ test("a crash in what the test file imports", () => {
   "tsconfig.json": "{}",
 };
 
+// It needs nothing that a hardened build refuses.
 test.skipIf(!isLinux || isASAN)(
+  "in an executable: the function that faults and all its callers, in their order",
+  async () => {
+    using dir = tempDir("aot-crash-in-an-executable", {
+      "helpers/lib.ts": filesOfTestRun["helpers/lib.ts"],
+      "app.ts": `import { read } from "bun:ffi";
+import { theirs } from "./helpers/lib";
+function onTop(): number {
+  return read.u8(8 as any, 0) + 1;
+}
+function below() {
+  return theirs(function inTheMiddle() {
+    return theirs(onTop) + 1;
+  }) + 1;
+}
+console.log(below());
+`,
+    });
+    const cwd = String(dir);
+    const built = await run([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], cwd);
+    expect(built.stderr).not.toMatch(/^error\b/m);
+    expect(built.exitCode).toBe(0);
+    const { stderr } = await run([join(cwd, "app")], cwd);
+    const report = stderr.split("Compiled JavaScript on the stack:\n")[1] ?? "";
+    expect(
+      [...report.slice(0, report.indexOf("\n\n")).matchAll(/^ +at (\S+) \(.*[\\/]([\w.]+:\d+:\d+)\)$/gm)].map(
+        ([, name, place]) => `${name} ${place}`,
+      ),
+    ).toEqual([
+      "onTop app.ts:4:15",
+      "theirs lib.ts:3:10",
+      "inTheMiddle app.ts:8:12",
+      "theirs lib.ts:3:10",
+      "below app.ts:7:10",
+    ]);
+  },
+);
+
+// A hardened build runs no compiled code but an executable's own, so it has no such test run.
+test.skipIf(!isLinux || isASAN || !without("a hardened build"))(
   "in a test run: the frames of the test file and of what it imports, in their order",
   async () => {
     using dir = tempDir("aot-crash-in-a-test-run", filesOfTestRun);

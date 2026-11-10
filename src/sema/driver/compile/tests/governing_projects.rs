@@ -691,21 +691,31 @@ fn class_fields_stay_where_they_are_written_whatever_the_target() {
     let old_target = options_of(r#"{ "compilerOptions": { "target": "es2017" } }"#);
     assert!(old_target.use_define_for_class_fields);
     assert!(old_target.emit_standard_class_fields);
-    assert!(old_target.defines_class_fields_for_build_alone);
+    assert!(!old_target.reports_define_for_class_fields);
+    assert!(!old_target.reports_standard_class_fields);
     let assigned =
         r#"{ "compilerOptions": { "target": "esnext", "useDefineForClassFields": false } }"#;
     let assigned = options_of(assigned);
     assert!(!assigned.use_define_for_class_fields);
     assert!(!assigned.emit_standard_class_fields);
-    assert!(!assigned.defines_class_fields_for_build_alone);
-    for as_in_tsc in [
-        r#"{ "compilerOptions": { "target": "es2022" } }"#,
-        r#"{ "compilerOptions": { "target": "es2017", "useDefineForClassFields": true } }"#,
-        "{}",
+    assert!(!assigned.reports_define_for_class_fields);
+    assert!(!assigned.reports_standard_class_fields);
+    for (written, reports_standard_class_fields) in [
+        (r#"{ "compilerOptions": { "target": "es2022" } }"#, true),
+        (
+            r#"{ "compilerOptions": { "target": "es2017", "useDefineForClassFields": true } }"#,
+            false,
+        ),
+        ("{}", true),
     ] {
-        let options = options_of(as_in_tsc);
-        assert!(options.use_define_for_class_fields, "{as_in_tsc}");
-        assert!(!options.defines_class_fields_for_build_alone, "{as_in_tsc}");
+        let options = options_of(written);
+        assert!(options.use_define_for_class_fields, "{written}");
+        assert!(options.emit_standard_class_fields, "{written}");
+        assert!(options.reports_define_for_class_fields, "{written}");
+        assert_eq!(
+            options.reports_standard_class_fields, reports_standard_class_fields,
+            "{written}"
+        );
     }
 }
 

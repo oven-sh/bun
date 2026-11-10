@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# const inner = { run(a) { return a + 1; } };
+# const lib = { base: 1 };
+# Object.defineProperty(lib, "tool", { enumerable: true, get: function () { return arguments[0] === undefined ? inner : null; } });
+# function called(t) { let s = 0; for (let i = 0; i < t; i++) s = lib.tool.run(s); return s; }
+# print(called(5));
+# -- end of source
+# The other side of a-getter-that-a-written-descriptor-lays-for-good-is-proven-once-it-is-laid.ir: the descriptor is in sight, but the getter reads its arguments: Link does not enter it for a read.
+# The access of such a definition brings nothing to the field any more: the change's road decides: so the road must let ANYTHING arrive there. Without that the cell said `proven=never`: a field that holds nothing, of a name that is read.
+# No answer showed it (the walk believes no cell under an accessor, and what the getter returns leaves with it): this print is the only witness.
+# RUN(FIELD): link fields mechanisms=all
+# FIELD: "tool" appended {{*}}form=not-configurable.accessor.
+# RUN(NEVER): link fields mechanisms=all
+# NEVER-NOT: "tool" appended proven=
+# RUN(ACCESSORS): link accesses mechanisms=all
+# ACCESSORS-NOT: once-laid
+# RUN(ANSWER): run-in-shell
+# ANSWER: 5
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 5
+# CHECKED-NEXT: exited with 0

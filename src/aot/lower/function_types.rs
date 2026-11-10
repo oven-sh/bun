@@ -110,7 +110,7 @@ impl FileLowering<'_, '_, '_, '_> {
             name: None,
             module: self.module_id(),
             position: 0,
-            text: SourceRange::default(),
+            source_range: SourceRange::default(),
             kind: FunctionKind::Plain,
             role: FunctionRole::Signature,
             flags: FunctionFlags::default(),
@@ -124,6 +124,7 @@ impl FileLowering<'_, '_, '_, '_> {
             body: Body::default(),
             function_types: Vec::new(),
             builtin_members: Vec::new(),
+            requested_originals: Vec::new(),
         });
         for function_type in declared {
             self.fragment

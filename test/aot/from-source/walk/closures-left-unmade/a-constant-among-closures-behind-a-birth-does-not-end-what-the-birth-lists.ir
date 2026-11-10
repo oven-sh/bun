@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# interface Dial { first(): number; second(): number; third(): number; fourth(): number; fifth(): number; sixth(): number; seventh(): number; eighth(): number; ninth(): number; tenth(): number; eleventh(): number; twelfth(): number; step: number }
+# function makeDial(start: number): Dial { let at = start; return { first: () => ++at, second: () => at + 1, third: () => at + 2, fourth: () => at + 3, fifth: () => at + 4, sixth: () => at + 5, seventh: () => at + 6, eighth: () => at + 7, ninth: () => at + 8, tenth: () => at + 9, step: 1, eleventh: () => at + 10, twelfth: () => at + 11 }; }
+# const dial = makeDial(10); sink(dial.first(), dial.eleventh(), dial.step, Object.keys(dial).join());
+# const other = makeDial(100); sink(other.first(), other.twelfth(), dial.tenth());
+# -- end of source
+# `step: 1` stands behind the tenth of twelve functions. A written constant is as free of effects as a closure: the run behind the birth passes over it and the birth lists it in its place.
+# It used to end the run: the functions behind it were made and went through the general define: 66 instructions a call became 506.
+# f1 = makeDial
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-12: isMadeOnDemand
+# CHECK: = NewObject
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = PutSlot
+# NEVER-NOT: = PropDefine

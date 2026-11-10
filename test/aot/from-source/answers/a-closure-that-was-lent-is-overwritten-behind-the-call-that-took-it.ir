@@ -8,12 +8,15 @@
 # print(kept!());
 # print("went on");
 # -- end of source
-# testing=CheckProofsAtRunTime: a closure that is lent to a function entered lies in the heap, not in the frame, and is overwritten right behind the lending call: a frame that has ended can hold no mark, a cell that somebody holds can.
-# This closure holds a value and no scope, so nothing but its own cell can tell. The lie, testing=NoCalleeKeepsWhatItIsHanded: Link says of keep() that it only calls what arrives.
-# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# testing=CheckProofsAtRunTime: a closure that a directly called function borrows is allocated in the heap, not in the frame, and is overwritten right after the call that lends it.
+# A frame that has ended cannot hold a mark, but a cell that something still holds can.
+# This closure captures a value and no scope, so nothing but its own cell can reveal the fault.
+# Fault injection, testing=AssumeCalleesRetainNothing: Link says that keep() does nothing with its argument but call it.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
 # RUN(CALL): run-in-shell mechanisms=-Inlining
 # CALL: 2
 # CALL: 3
-# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
 # CALL-NOT: went on
 # CALL: crashed with

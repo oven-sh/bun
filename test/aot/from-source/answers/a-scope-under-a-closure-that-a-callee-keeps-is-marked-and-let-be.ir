@@ -12,7 +12,8 @@
 # print(lend(5));
 # print("went on");
 # -- end of source
-# The green control of a-scope-that-is-handed-back-under-a-closure-that-a-callee-keeps-is-overwritten.ir: without the lie the closure that keep() keeps marks its scope, and the closure that twice() only calls is overwritten behind the call with nobody the wiser.
+# This is the passing control of a-scope-that-is-handed-back-under-a-closure-that-a-callee-keeps-is-overwritten.ir.
+# Without the fault, the closure that keep() retains marks its scope as escaped. The closure that twice() only calls is overwritten after the call, and nothing notices.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(CALL): run-in-shell mechanisms=-Inlining
 # CALL: 8

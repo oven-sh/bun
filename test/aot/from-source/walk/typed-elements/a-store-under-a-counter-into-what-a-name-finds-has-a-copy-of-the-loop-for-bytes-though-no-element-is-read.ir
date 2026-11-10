@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# "use strict";
+# function fill(t) { const b = globalThis.held; for (let i = 0; i < 14; i++) b[i] = i + t; return t; }
+# const whole = new Uint8Array(32).fill(200);
+# globalThis.held = new Uint8Array(whole.buffer, 8, 12);
+# print(fill(3));
+# print(whole.join());
+# -- end of source
+# No element of what the name finds is read anywhere: that it is stored into under a counter makes the front end write "a list" over it, without contents. The loop asked for nothing in front and every store went as it is written.
+# A list is told from the views in front of the loop here too. Fourteen stores go into twelve places in the middle of a larger buffer, and what lies on both sides stays.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: TypeTest {{*}} testedType=Buffer|Uint8Array
+# WALK: PutTypedArrayElement {{*}} level=Proven [keyIsIntegral, isInsideView]
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 3
+# RIGHT-NEXT: 200,200,200,200,200,200,200,200,3,4,5,6,7,8,9,10,11,12,13,14,200,200,200,200,200,200,200,200,200,200,200,200
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly
+# HELD: 3
+# HELD-NEXT: 200,200,200,200,200,200,200,200,3,4,5,6,7,8,9,10,11,12,13,14,200,200,200,200,200,200,200,200,200,200,200,200
+# HELD-NEXT: exited with 0

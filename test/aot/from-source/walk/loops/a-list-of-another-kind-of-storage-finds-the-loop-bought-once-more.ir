@@ -1,0 +1,43 @@
+# `LIST.forEach(x => { s += x; })` where two lists reach one variable and one of them holds a null. The row for whole numbers in front of the loop of a list method was asked only where Link proves whole numbers
+# and nothing else of the list: a list that failed it ran the closed copy, 1,915 > 2,685 instructions a call over 96 elements. So here it was not asked, and the list that holds whole numbers alone went by the row
+# for any values: 1,895 where it had taken 920.
+# A guess that fails costs the plain walk and no more: the list is asked for storage of int32s, and where the answer is no the loop is bought once more as it would have been walked without the question; the
+# closed copy, or the plain walk that is kept, is shared. All . half . none of the calls see whole numbers alone: 1,895 . 1,918 . 1,915 > 689 . 1,318 . 1,918.
+# Lists of which Link proves whole numbers that may pass int32 are asked for int32s first too, and find the row for both kinds of numbers behind: the kind was asked twice in every turn that is left over
+# behind the eights: a list of six 201 > 132.
+# f1 = total . f2 = folded . f3 = far . f4 = often . f5 = oftenFolded . f6 = oftenFar
+# -- source: main.cjs
+# "use strict";
+# const XS = Array.from({ length: 9 }, (_, i) => i * 3 % 7);
+# const YS = Array.from({ length: 9 }, (_, i) => (i === 8 ? null : i * 3 % 7));
+# let LIST = XS;
+# function total(t) { let s = t; LIST.forEach(x => { s += x; }); return s; }
+# function often() { let sum = 0; for (let t = 0; t < XS.length; t++) { LIST = t & 1 ? YS : XS; sum += total(t); } return sum; }
+# function folded(t) { return LIST.reduce((a, x) => a + x, t); }
+# function oftenFolded() { let sum = 0; for (let t = 0; t < XS.length; t++) { LIST = t & 1 ? YS : XS; sum += folded(t); } return sum; }
+# const FS = [], GS = [];
+# for (let i = 0; i < 9; i++) { FS.push(i * 3 % 7); GS.push(i === 8 ? 4294967296 : i * 3 % 7); }
+# let FAR = FS;
+# function far(t) { let s = t; FAR.forEach(x => { s += x; }); return s; }
+# function oftenFar() { let sum = 0; for (let t = 0; t < FS.length; t++) { FAR = t & 1 ? GS : FS; sum += far(t); } return sum; }
+# print(often(), oftenFolded(), oftenFar());
+# XS[3] = null; YS[8] = 5; print(often(), oftenFolded());
+# -- end of source
+# RUN(OFTEN): walk f4 mechanisms=all
+# OFTEN: = HasArrayStorage {{*}}arrayStorage=Int32
+# OFTEN: = IsElementPresent {{*}}arrayStorage=Int32
+# OFTEN: = HasArrayStorage {{*}}arrayStorage=Contiguous [admitsInt32Storage]
+# RUN(FOLDED): walk f5 mechanisms=all
+# FOLDED: = HasArrayStorage {{*}}arrayStorage=Int32
+# FOLDED: = IsElementPresent {{*}}arrayStorage=Int32
+# FOLDED: = HasArrayStorage {{*}}arrayStorage=Contiguous [admitsInt32Storage]
+# RUN(FAR): walk f6 mechanisms=all
+# FAR: = HasArrayStorage {{*}}arrayStorage=Int32
+# FAR: = IsElementPresent {{*}}arrayStorage=Int32
+# FAR: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# FAR: = IsElementPresent {{*}}arrayStorage=Double
+# RUN(COUNT): compile LoopsReversionedForOtherIndexingType mechanisms=all
+# COUNT: statistic LoopsReversionedForOtherIndexingType 6
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 240 240 17179869424
+# ANSWERS: 250 250

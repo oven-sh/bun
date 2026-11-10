@@ -8,13 +8,13 @@ import { canTrim, model } from "./compile-trim-features";
 const families = model.features.filter(each => each.enteredFrom === "compiled-code").map(each => each.name as string);
 
 const programs: Record<string, string> = {
-  "OperationsOfChecks.cjs": String.raw`
+  "SelfCheckOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("a function that is only counted", 100000, function (i) { return i & 7; });
     }
   `,
-  "OperationsOnProxies.cjs": String.raw`
+  "ProxyOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const target = { a: 1, b: 2 }; Object.defineProperty(target, 'fixed', { value: 3 });
@@ -32,7 +32,7 @@ const programs: Record<string, string> = {
       hot("set with a trap", 100000, function (i) { p.a = i; p[i & 1 ? 'b' : 'n'] = i; return target.a + target.b; });
     }
   `,
-  "OperationsOfJSONParse.cjs": String.raw`
+  "JSONParseOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("an object of one shape", 100000, function (i) { const o = JSON.parse('{"id":' + (i & 15) + ',"name":"n","on":true,"list":[1,2.5,null]}'); return o.id + o.name + o.on + o.list.length; });
@@ -42,7 +42,7 @@ const programs: Record<string, string> = {
       hot("a list of objects", 60000, function (i) { return JSON.parse(text).reduce((s, e) => s + e.a + (e.b ?? 0), i & 1); });
     }
   `,
-  "OperationsOnStringBuilders.cjs": String.raw`
+  "StringBuilderOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("a text grows in a loop", 100000, function (i) { let s = ''; for (let k = 0; k < 12; k++) s += k + ','; return s + i % 3; });
@@ -52,7 +52,7 @@ const programs: Record<string, string> = {
       hot("a text grows by slices", 100000, function (i) { let s = ''; for (let k = 0; k < 8; k++) s += source.slice(k, k + 3 + (i & 1)); return s; });
     }
   `,
-  "OperationsOnTypedArrays.cjs": String.raw`
+  "TypedArrayOperations.cjs": String.raw`
     const { hot, mixedValues } = require("./hot.cjs");
     {
       hot("made from a length a list and a buffer", 100000, function (i) { const a = new Uint8Array(i & 7), b = new Float64Array([1, 2.5, i & 1]), c = new Int16Array(new ArrayBuffer(8), 2, 2); return a.length + b[1] + b[2] + c.byteOffset; });
@@ -66,7 +66,7 @@ const programs: Record<string, string> = {
       hot("set from lists and views", 100000, function (i) { u8.set([1, 2, i & 3]); u8.set(new Uint16Array([300, 4]), 3); u8.set({ length: 1, 0: '9' }, 5); try { u8.set([1], 8); } catch (e) { return e.name + u8.join(); } });
     }
   `,
-  "OperationsOnEncodedText.cjs": String.raw`
+  "TextEncodingOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const decoder = new TextDecoder(); const bytes = [new Uint8Array([104, 105]), new Uint8Array([0xe4, 0xb8, 0xad, 0x21]), new Uint8Array([0xff, 0x41]), new Uint8Array(0), new Uint8Array([0xf0, 0x9f, 0x98, 0x80]).buffer];
@@ -77,7 +77,7 @@ const programs: Record<string, string> = {
       hot("text becomes bytes", 100000, function (i) { const b = encoder.encode(texts[i % texts.length]); return b.length + ':' + b[0]; });
     }
   `,
-  "OperationsOnPrivateNames.cjs": String.raw`
+  "PrivateNameOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       class Counter { #n = 0; constructor(n) { this.#n = n; } add(k) { this.#n += k; return this; } get value() { return this.#n; } }
@@ -88,7 +88,7 @@ const programs: Record<string, string> = {
       hot("a brand is asked", 100000, function (i) { return Marked.is(all[i % all.length]); });
     }
   `,
-  "OperationsOnSuper.cjs": String.raw`
+  "SuperOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       class Parent { say(n) { return 'p' + n; } } class Child extends Parent { say(n) { return super.say(n) + 'c'; } }
@@ -103,7 +103,7 @@ const programs: Record<string, string> = {
       hot("the parent is constructed with a list", 100000, function (i) { return new Child(1, i & 3, 2).sum; });
     }
   `,
-  "OperationsOnClasses.cjs": String.raw`
+  "ClassOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const name = 'm';
@@ -114,7 +114,7 @@ const programs: Record<string, string> = {
       hot("what a class extends is computed", 60000, function (i) { try { const K = class extends all[i % all.length] {}; return typeof K + Object.getPrototypeOf(K.prototype); } catch (e) { return e.name; } });
     }
   `,
-  "OperationsOfDynamicImport.mjs": String.raw`
+  "DynamicImportOperations.mjs": String.raw`
     import { createRequire } from "node:module";
     import { hot, hotAsync } from "./hot.cjs";
 
@@ -139,7 +139,7 @@ const programs: Record<string, string> = {
         .pop(),
     );
   `,
-  "OperationsOnReExports.cjs": String.raw`
+  "ReExportOperations.cjs": String.raw`
     const handedOn = require("./modules/hands-on-all.cjs");
     console.log(handedOn.value, Object.keys(handedOn));
 
@@ -150,7 +150,7 @@ const programs: Record<string, string> = {
 
     import("./modules/imports-what-is-passed-on.mjs").then(({ seen }) => console.log(seen));
   `,
-  "OperationsOnModulesThatFail.cjs": String.raw`
+  "ModuleFailureOperations.cjs": String.raw`
     for (let turn = 0; turn < 3; turn++) {
       try {
         console.log(require("./modules/throws.cjs"));
@@ -175,7 +175,7 @@ const programs: Record<string, string> = {
       }
     })();
   `,
-  "OperationsOnGlobalBindings.cjs": String.raw`
+  "GlobalBindingOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       globalThis.counter = 0; globalThis.shared = 10;
@@ -196,7 +196,7 @@ const programs: Record<string, string> = {
       hot("names inside with", 100000, function (i) { with (scopes[i % scopes.length]) { return x + (typeof y); } });
     }
   `,
-  "OperationsOnArgumentsObjects.cjs": String.raw`
+  "ArgumentsObjectOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       function f(a, b) { arguments[0] = a + 10; b = 7; return a + ':' + arguments[1] + ':' + arguments.length; }
@@ -211,7 +211,7 @@ const programs: Record<string, string> = {
       hot("read under a computed index", 100000, function (i) { return f(i % 5, 'a', 'b', 'c'); });
     }
   `,
-  "OperationsOnAsyncIterators.mjs": String.raw`
+  "AsyncIteratorOperations.mjs": String.raw`
     import { hotAsync } from "./hot.cjs";
     {
       async function* up(n) { for (let k = 0; k < n; k++) yield k; }
@@ -221,7 +221,7 @@ const programs: Record<string, string> = {
       await hotAsync("for await over a list of promises", 20000, async function (i) { let s = ''; for await (const v of [1, Promise.resolve(2), { then(r) { r(i & 3); } }]) s += v; return s; });
     }
   `,
-  "OperationsOnGenerators.cjs": String.raw`
+  "GeneratorOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       function* gen(a) { const b = yield a; const c = yield a + b; return c; }
@@ -232,7 +232,7 @@ const programs: Record<string, string> = {
       hot("return and throw from outside", 100000, function (i) { const g = gen(); g.next(); const a = i & 1 ? g.return(7) : g.throw(new Error('t')); return [a, g.next(), log.length & 3]; });
     }
   `,
-  "OperationsOfAwait.mjs": String.raw`
+  "AwaitOperations.mjs": String.raw`
     import { hotAsync } from "./hot.cjs";
     {
       await hotAsync("values promises and thenables", 20000, async function (i) { return (await 1) + (await Promise.resolve(2)) + (await { then(r) { r(i & 3); } }); });
@@ -242,7 +242,7 @@ const programs: Record<string, string> = {
       await hotAsync("a rejection is caught", 20000, async function (i) { try { await Promise.reject(new RangeError('r' + (i & 1))); } catch (e) { return e.message; } finally { done++; } });
     }
   `,
-  "OperationsOnPromises.mjs": String.raw`
+  "PromiseOperations.mjs": String.raw`
     import { hotAsync } from "./hot.cjs";
     {
       await hotAsync("made resolved and rejected", 20000, async function (i) { const a = await new Promise(r => r(i & 3)), b = await new Promise((_, j) => j(new Error('x'))).catch(e => e.message), c = await new Promise(() => { throw new TypeError('t'); }).catch(e => e.name); return [a, b, c]; });
@@ -251,7 +251,7 @@ const programs: Record<string, string> = {
       await hotAsync("then catch finally", 20000, async function (i) { return await Promise.resolve(i & 3).then(v => v + 1).then(() => { throw new Error('e'); }).catch(e => e.message + 1).finally(() => 9); });
     }
   `,
-  "OperationsOnMapsAndSets.cjs": String.raw`
+  "MapAndSetOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("made from entries and lists", 100000, function (i) { const m = new Map([[1, 'a'], ['k', i & 3], [NaN, 0]]), s = new Set([1, 1, '1', NaN, NaN, -0]); return [m.size, m.get('k'), m.get(NaN), s.size, s.has(0)]; });
@@ -261,7 +261,7 @@ const programs: Record<string, string> = {
       hot("walked by for of and by next", 100000, function (i) { let t = ''; for (const [k, v] of m) t += k + v; for (const v of s) t += v; const it = m.keys(); return t + it.next().value + it.next().value + it.next().done + (i & 1); });
     }
   `,
-  "OperationsThatCopyObjects.cjs": String.raw`
+  "ObjectCopyOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const a = { x: 1, y: 2 }, b = { y: 3, w: 4 };
@@ -272,7 +272,7 @@ const programs: Record<string, string> = {
       hot("rest in a pattern", 100000, function (i) { const { a, [key]: skipped, ...rest } = { a: 1, b: 2, c: i & 3, [sym]: 4, 1: 5 }; return [a, skipped, Object.keys(rest), rest[sym]]; });
     }
   `,
-  "OperationsThatListProperties.cjs": String.raw`
+  "PropertyEnumerationOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const o = Object.create({ above: 1, shadowed: 2 }); o.b = 1; o.shadowed = 3; o[2] = 0; o[1] = 0; Object.defineProperty(o, 'hidden', { value: 1 }); o[Symbol('s')] = 1;
@@ -283,7 +283,7 @@ const programs: Record<string, string> = {
       hot("keys values entries", 100000, function (i) { const o = all[i % all.length]; return [Object.keys(o), Object.values(o), Object.entries(o)]; });
     }
   `,
-  "OperationsThatDescribeProperties.cjs": String.raw`
+  "PropertyDescriptorOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("a property is defined", 100000, function (i) { const o = {}; Object.defineProperty(o, 'a', { value: i & 3, enumerable: true }); Object.defineProperty(o, 'g', { get() { return this.a + 1; }, configurable: true }); try { Object.defineProperty(o, 'a', { value: 9 }); } catch (e) { return [o.a, o.g, e.name]; } return [o.a, o.g]; });
@@ -293,7 +293,7 @@ const programs: Record<string, string> = {
       hot("a descriptor is read", 100000, function (i) { return Object.getOwnPropertyDescriptor(all[i % all.length][0], all[i % all.length][1]); });
     }
   `,
-  "OperationsThatDeleteProperties.cjs": String.raw`
+  "PropertyDeletionOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("by a written name", 100000, function (i) { const o = { a: 1, b: 2 }; const r = delete o.a; return [r, delete o.none, Object.keys(o), i & 1]; });
@@ -311,7 +311,7 @@ const programs: Record<string, string> = {
       hot("a fixed property in strict code", 60000, function (i) { 'use strict'; try { return i & 1 ? delete o.fixed : delete o[key]; } catch (e) { return e.name + e.message; } });
     }
   `,
-  "OperationsThatChangeArrays.cjs": String.raw`
+  "ArrayMutationOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("splice", 100000, function (i) { const a = [1, 2, 3, 4, 5]; const r = a.splice(i % 6, i & 3, 'n', 'm'); return [r, a, a.splice(-1), a.splice(1), a.splice()]; });
@@ -320,7 +320,7 @@ const programs: Record<string, string> = {
       hot("unshift and shift", 100000, function (i) { const a = [1.5, 2]; a.unshift(i & 3, 'x'); const s = a.shift(); a.unshift(); return [a, s, a.unshift([])]; });
     }
   `,
-  "OperationsThatSearchArrays.cjs": String.raw`
+  "ArraySearchOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const ints = [5, 3, 1, 3, 0];
@@ -335,7 +335,7 @@ const programs: Record<string, string> = {
       hot("texts", 100000, function (i) { return [t.indexOf('b'), t.indexOf('b' + ''), t.includes(made[i & 1]), t.indexOf('\u4e2d'), t.indexOf(''), t.lastIndexOf('a')]; });
     }
   `,
-  "OperationsThatMakeArrays.cjs": String.raw`
+  "ArrayCreationOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("a spread of lists texts sets and maps", 100000, function (i) { return [...[1, 2], ...'a\ud83d\ude00', ...new Set([i & 3, 3]), ...new Map([[1, 2]]), ...new Map([[1, 2]]).values(), ...new Uint8Array([7]), ...(function* () { yield 8; })(), ...[, 1]]; });
@@ -348,7 +348,7 @@ const programs: Record<string, string> = {
       hot("stores past the end and under odd keys", 100000, function (i) { const a = [1]; a[3] = i & 3; a[1.5] = 'f'; a['2'] = 's'; a[-1] = 'n'; a[4294967295] = 'big'; return [a.length, a, Object.keys(a)]; });
     }
   `,
-  "OperationsThatSearchStrings.cjs": String.raw`
+  "StringSearchOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const s = 'the quick brown fox jumps over the lazy dog';
@@ -359,7 +359,7 @@ const programs: Record<string, string> = {
       hot("from the end", 100000, function (i) { return [s.lastIndexOf('o'), s.lastIndexOf('the'), s.lastIndexOf('the', 10), s.lastIndexOf('zz'), s.lastIndexOf(''), s.lastIndexOf('t', -1), s.lastIndexOf('o', NaN), i & 1]; });
     }
   `,
-  "OperationsThatMakeStrings.cjs": String.raw`
+  "StringCreationOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const r = [2, 10, 36, undefined, 1, 37, '8'];
@@ -370,7 +370,7 @@ const programs: Record<string, string> = {
       hot("pad and repeat", 100000, function (i) { try { return ['5'.padStart(3 + (i & 1), '0'), 'ab'.padEnd(5, 'xy'), 'a'.padStart(1), 'a'.padEnd(3, ''), 'ab'.repeat(i & 3), ''.repeat(1e9).length, 'x'.repeat(r[i % r.length]).length]; } catch (e) { return e.name; } });
     }
   `,
-  "OperationsThatCompareStrings.cjs": String.raw`
+  "StringComparisonOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const t = ['a', 'b', 'ab', '', 'A', '\u4e2d', 'a\u4e2d', '10', '9', 'a'.repeat(20), 'a'.repeat(20) + 'b'];
@@ -381,7 +381,7 @@ const programs: Record<string, string> = {
       hot("equal to a written text", 100000, function (i) { const x = t[i % t.length]; return [x === 'alpha', x == 'beta', x !== 'gamma', x === '', x === 'alph' + 'a', x === '\u4e2d']; });
     }
   `,
-  "OperationsOfArithmetic.cjs": String.raw`
+  "ArithmeticOperations.cjs": String.raw`
     const { hot, mixedValues, show } = require("./hot.cjs");
 
     const mixed = mixedValues();
@@ -415,7 +415,7 @@ const programs: Record<string, string> = {
       return view[0] + 123456789012345678901234567890n;
     });
   `,
-  "OperationsOfComparison.cjs": String.raw`
+  "ComparisonOperations.cjs": String.raw`
     const { hot, mixedValues } = require("./hot.cjs");
 
     const mixed = mixedValues();
@@ -430,7 +430,7 @@ const programs: Record<string, string> = {
     for (const [name, compare] of Object.entries(operators))
       hot(name, 100000, i => compare(mixed[i % mixed.length], mixed[(i * 5 + 3) % mixed.length]));
   `,
-  "OperationsOfConversion.cjs": String.raw`
+  "ConversionOperations.cjs": String.raw`
     const { hot, mixedValues } = require("./hot.cjs");
     {
       const all = [1, 'a', true, null, undefined, {}, [], () => 1, class {}, Symbol('s'), 1n, new Proxy(function () {}, {}), new Proxy({}, {}), /r/, function* () {}];
@@ -441,7 +441,7 @@ const programs: Record<string, string> = {
       hot("true or false", 100000, function (i) { const v = mixed[i % mixed.length]; return [!!v, v ? 1 : 0, v && 1, v || 2, Boolean(v), !v]; });
     }
   `,
-  "OperationsOfMembershipTests.cjs": String.raw`
+  "MembershipTestOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       const sym = Symbol('s'), keys = ['a', 0, '0', 1, 2, -1, 1.5, 'length', sym, { toString() { return 'a'; } }, '00'], o = { a: 1, 0: 1, [sym]: 1 }, a = [1, , 3], u8 = new Uint8Array(2), s = new String('xy');
@@ -452,7 +452,7 @@ const programs: Record<string, string> = {
       hot("instanceof", 100000, function (i) { const v = vals[i % vals.length], K = kinds[(i >> 2) % kinds.length]; try { return v instanceof K; } catch (e) { return e.name; } });
     }
   `,
-  "OperationsOfCalls.cjs": String.raw`
+  "CallOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       function f() { 'use strict'; return this + ':' + arguments.length + ':' + Array.prototype.join.call(arguments); } const all = [[1, 2], [], null, undefined, { length: 2, 0: 'a' }, 'ab', 5, (function () { return arguments; })(1, 2, 3), new Uint8Array([4, 5]), [, 1]];
@@ -463,7 +463,7 @@ const programs: Record<string, string> = {
       hot("bound functions", 100000, function (i) { const b = f.bind({ t: 1 }, 1), c = b.bind(null, 2); return [b(i & 3), c(3), b.name, c.length, new b(5).made, b.prototype, new c() instanceof f]; });
     }
   `,
-  "OperationsOfErrors.cjs": String.raw`
+  "ErrorOperations.cjs": String.raw`
     const { hot, mixedValues, show } = require("./hot.cjs");
     {
       const mixed = mixedValues();
@@ -478,7 +478,7 @@ const programs: Record<string, string> = {
       hot("the errors that the engine makes", 40000, function (i) { try { return all[i % all.length](); } catch (e) { return e.constructor.name + ': ' + e.message; } });
     }
   `,
-  "OperationsOnDates.cjs": String.raw`
+  "DateOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("now and the iso form", 100000, function (i) { const n = Date.now(); return [typeof n, n > 1.6e12, new Date(86400000 * (i & 1023)).toISOString(), new Date(-1).toISOString(), new Date(8.64e15).toISOString()]; });
@@ -487,7 +487,7 @@ const programs: Record<string, string> = {
       hot("a date that is none", 60000, function (i) { try { return [String(new Date(NaN)), new Date('nope').getTime(), new Date(8.64e15 + 1).getTime(), JSON.stringify(new Date(NaN)), new Date(NaN).toISOString()]; } catch (e) { return e.name + (i & 1); } });
     }
   `,
-  "OperationsOnData.cjs": String.raw`
+  "ImageDataOperations.cjs": String.raw`
     const { hot, show } = require("./hot.cjs");
     {
       hot("a large written object", 100000, function (i) { const o = { a: 1, b: 'two', c: [1, 2, 3], d: { e: { f: null, g: true } }, h: 1.5, i: -0, j: [{ k: 1 }, { k: 2 }], l: undefined, 1: 'n', 'with space': 0, m: 10n, n: /r/g.flags }; o.c.push(i & 3); return [o.c, o.d.e, o.j[1].k, Object.keys(o).length, show(o.m)]; });
@@ -496,7 +496,7 @@ const programs: Record<string, string> = {
       hot("maps and sets of written values", 100000, function (i) { const m = new Map([['a', 1], ['b', 2], ['c', [3]], [4, 'd']]), s = new Set(['x', 'y', 1, 2.5, null]); m.get('c').push(i & 1); return [[...m], [...s]]; });
     }
   `,
-  "OperationsOfDirectEval.cjs": String.raw`
+  "DirectEvalOperations.cjs": String.raw`
     const { hot } = require("./hot.cjs");
     {
       hot("reads and writes locals", 20000, function (i) { let local = i & 3; const r = eval('local + 1'); eval('local = 9'); return [r, local]; });

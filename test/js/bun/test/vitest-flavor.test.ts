@@ -4899,6 +4899,13 @@ describe.concurrent("retry delay and condition", () => {
               );
               during("task.result", ({ task }) => console.log(task.result.state, task.result.retryCount));
               during("an uncaught error", () => { throw new Error("during the delay"); });
+              during(
+                "an assertion that passes",
+                context => context.expect(1).toBe(1),
+                context => { context.expect.assertions(1); context.expect(2).toBe(2); },
+              );
+              during("expect.assertions()", context => context.expect.assertions(5), context => { context.expect(2).toBe(2); });
+              during("expect.hasAssertions()", context => context.expect.hasAssertions());
             });
           `,
         },
@@ -4938,6 +4945,9 @@ describe.concurrent("retry delay and condition", () => {
           "(pass) group > a matcher that waits for a promise (attempt 2)",
           "(pass) group > task.result (attempt 2)",
           "(pass) group > an uncaught error (attempt 2)",
+          "(fail) group > an assertion that passes (attempt 2)",
+          "(fail) group > expect.assertions() (attempt 2)",
+          "(fail) group > expect.hasAssertions() (attempt 2)",
         ],
         betweenTests: 1,
       },

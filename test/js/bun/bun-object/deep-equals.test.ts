@@ -1,4 +1,4 @@
-import { describe as describeValue } from "bun:jsc";
+import { jscDescribe } from "bun:jsc";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import assert from "node:assert";
 import { createSecretKey } from "node:crypto";
@@ -55,8 +55,8 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
 
   it("RegExps are equal when source and flags are equal, however the pattern was written", () => {
     const in16Bit = (text: string) => new TextDecoder("utf-16le").decode(Buffer.from(text, "utf16le"));
-    expect(describeValue(new RegExp(in16Bit("w\\/n")).source)).toContain("8Bit:(0)");
-    expect(describeValue(new RegExp("w/n").source)).toContain("8Bit:(1)");
+    expect(jscDescribe(new RegExp(in16Bit("w\\/n")).source)).toContain("8Bit:(0)");
+    expect(jscDescribe(new RegExp("w/n").source)).toContain("8Bit:(1)");
     expect({
       escapedSlash: deepEquals(new RegExp("a/b"), /a\/b/),
       escapedSlashReversed: deepEquals(/a\/b/, new RegExp("a/b")),

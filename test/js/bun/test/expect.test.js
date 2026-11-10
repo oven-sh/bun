@@ -592,13 +592,24 @@ describe("expect()", () => {
       [fromString, new RegExp(fromString.source, fromString.flags)],
       [new RegExp("a/b"), structuredClone(/a\/b/)],
     ];
+    const failureOf = (/** @type {() => void} */ assertion) => {
+      try {
+        assertion();
+      } catch (e) {
+        return stripVTControlCharacters(/** @type {any} */ (e).message);
+      }
+      return "did not fail";
+    };
     for (const [a, b] of sameSource) {
       expect(a.source).toBe(b.source);
       expect(a).toEqual(b);
       expect(b).toEqual(a);
       expect(a).toStrictEqual(b);
-      expect(() => expect(a).not.toEqual(b)).toThrow();
-      expect(() => expect(a).not.toStrictEqual(b)).toThrow();
+      // Jest and Bun name the matcher in the message. Vitest says "to not deeply equal".
+      expect(failureOf(() => expect(a).not.toEqual(b))).toMatch(/not\.toEqual\(expected\)|to not deeply equal/);
+      expect(failureOf(() => expect(a).not.toStrictEqual(b))).toMatch(
+        /not\.toStrictEqual\(expected\)|to not strictly equal/,
+      );
       expect({ nested: [a] }).toEqual({ nested: [b] });
       expect([a]).toContainEqual(b);
       expect({ key: a }).toHaveProperty("key", b);

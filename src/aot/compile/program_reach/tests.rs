@@ -1,5 +1,7 @@
 use std::fmt::Write;
 
+use bstr::ByteSlice;
+use bun_core::strings::{count_char, last_index_of_char};
 use bun_sema::hir::EnumId;
 use bun_sema_driver::{ThreadCaches, for_each_parallel_in_runs};
 
@@ -234,7 +236,7 @@ impl Outcome {
             }
         }
         let hooks = reached.replaced_loader_hooks.iter();
-        let hooks = hooks.map(|it| (it.file, it.assignment.0)).collect();
+        let hooks = hooks.map(|it| (it.file, it.store.0)).collect();
         let fingerprint = fingerprint(input, &left_out, &reached, in_parallel);
         Outcome {
             left_out,
@@ -350,10 +352,29 @@ fn assert_same_on_any_number_of_threads(
         .iter()
         .map(|(name, text)| (name.as_str(), text.as_str()))
         .collect();
-    with_bind_input(&files, &default_settings(), |bind_input| {
+    with_reach_input(&files, |input| {
+        let expected = Outcome::of(input, &run_serially);
+        look_at_one_thread(input, &expected);
+        Outcome::of(input, &run_in_reverse).assert_is(&expected, "the tasks in reverse");
+        Outcome::of(input, &run_out_of_order).assert_is(&expected, "the tasks out of order");
+        let caches = ThreadCaches::default();
+        for threads in [1, 3, 8, 64, 64] {
+            let on_threads = |count: usize, work: &(dyn Fn(usize) + Sync)| {
+                for_each_parallel_in_runs(&caches, threads, count, 1, work);
+            };
+            Outcome::of(input, &on_threads).assert_is(&expected, &format!("{threads} threads"));
+        }
+    });
+}
+
+fn with_reach_input<R>(
+    files: &[(&str, &str)],
+    then: impl FnOnce(&ProgramReachInput<'_, '_>) -> R,
+) -> R {
+    with_bind_input(files, &default_settings(), |bind_input| {
         let graph = bind_modules(bind_input).graph;
         assert!(graph.errors().is_empty(), "the program links");
-        let input = ProgramReachInput {
+        then(&ProgramReachInput {
             files: bind_input.files,
             sources: bind_input.sources,
             graph: &graph,
@@ -368,19 +389,8 @@ fn assert_same_on_any_number_of_threads(
             files_started_by_runner: &[],
             starts_of_workers: &[],
             beside: bind_input.beside,
-        };
-        let expected = Outcome::of(&input, &run_serially);
-        look_at_one_thread(&input, &expected);
-        Outcome::of(&input, &run_in_reverse).assert_is(&expected, "the tasks in reverse");
-        Outcome::of(&input, &run_out_of_order).assert_is(&expected, "the tasks out of order");
-        let caches = ThreadCaches::default();
-        for threads in [1, 3, 8, 64, 64] {
-            let on_threads = |count: usize, work: &(dyn Fn(usize) + Sync)| {
-                for_each_parallel_in_runs(&caches, threads, count, 1, work);
-            };
-            Outcome::of(&input, &on_threads).assert_is(&expected, &format!("{threads} threads"));
-        }
-    });
+        })
+    })
 }
 
 fn count_enums(input: &ProgramReachInput<'_, '_>, outcome: &Outcome) -> (usize, usize) {
@@ -458,4 +468,139 @@ fn one_caller_adds_a_key_to_a_shared_set() {
     });
     assert_eq!(added.load(Ordering::Relaxed), 1000);
     assert!(set.contains(&(999, 7)) && !set.contains(&(1000, 7)));
+}
+
+const HOOK: &str = "function (request) { return request; }";
+
+fn find_stores_of_loader_hooks(name: &str, text: &str) -> (Vec<String>, bool) {
+    with_reach_input(&[(name, text)], |input| {
+        let (_, reached) = find_left_out_code(input, &run_serially);
+        let describe = |replaced: &ReplacedLoaderHook| {
+            let hir = input.files.hir(replaced.file);
+            let before = &hir.text[..hir[replaced.store].pos as usize];
+            let line = 1 + count_char(before, b'\n');
+            let column = before.len() - last_index_of_char(before, b'\n').map_or(0, |at| at + 1);
+            let hook = replaced.hook.name().as_bstr();
+            format!("{line}:{} {hook}", column + 1)
+        };
+        let hooks = reached.replaced_loader_hooks.iter();
+        (
+            hooks.map(describe).collect(),
+            reached.stores_loader_function,
+        )
+    })
+}
+
+fn find_stores_after_require(stores: &str) -> (Vec<String>, bool) {
+    let main = format!("const Module = require('node:module');\n{stores}");
+    find_stores_of_loader_hooks("main.cjs", &main.replace("HOOK", HOOK))
+}
+
+#[test]
+fn store_of_a_loader_hook_is_found_wherever_the_member_is_stored_to() {
+    for (store, place) in [
+        (
+            "Module._resolveFilename = HOOK;",
+            "2:1 Module._resolveFilename",
+        ),
+        (
+            "[Module._resolveFilename] = [HOOK];",
+            "2:2 Module._resolveFilename",
+        ),
+        (
+            "[, ...Module._resolveFilename] = [1, HOOK];",
+            "2:7 Module._resolveFilename",
+        ),
+        (
+            "({ hook: Module.prototype.require } = { hook: HOOK });",
+            "2:10 Module.prototype.require",
+        ),
+        (
+            "({ ...Module.prototype.require } = { hook: HOOK });",
+            "2:7 Module.prototype.require",
+        ),
+        (
+            "for (Module._resolveFilename of [HOOK]);",
+            "2:6 Module._resolveFilename",
+        ),
+        (
+            "for (Module.prototype.require in { hook: HOOK });",
+            "2:6 Module.prototype.require",
+        ),
+        (
+            "for ([Module._resolveFilename] of [[HOOK]]);",
+            "2:7 Module._resolveFilename",
+        ),
+        ("Module._resolveFilename++;", "2:1 Module._resolveFilename"),
+        (
+            "--Module.prototype.require;",
+            "2:3 Module.prototype.require",
+        ),
+        (
+            "Module[('_resolveFilename')] = HOOK;",
+            "2:1 Module._resolveFilename",
+        ),
+        (
+            "[Module[('_resolveFilename')]] = [HOOK];",
+            "2:2 Module._resolveFilename",
+        ),
+    ] {
+        let found = find_stores_after_require(store);
+        assert_eq!(found, (vec![place.to_owned()], true), "{store}");
+    }
+}
+
+#[test]
+fn store_through_a_type_assertion_is_found() {
+    let main = format!(
+        "import Module from 'node:module';\n\
+         const holder = Module as any;\n\
+         (holder as any)._resolveFilename = {HOOK};\n\
+         ((<any>holder).prototype.require as unknown) = {HOOK};\n\
+         [holder._resolveFilename!] = [{HOOK}];"
+    );
+    let found = find_stores_of_loader_hooks("main.ts", &main);
+    let stores = [
+        "3:1 Module._resolveFilename",
+        "4:1 Module.prototype.require",
+        "5:2 Module._resolveFilename",
+    ];
+    assert_eq!(found, (stores.map(str::to_owned).to_vec(), true));
+}
+
+#[test]
+fn store_to_a_variable_that_held_a_loader_hook_names_no_hook() {
+    for store in [
+        "let hook = Module._resolveFilename;\nhook = HOOK;",
+        "let hook = Module.prototype.require;\n(hook as unknown) = HOOK;",
+    ] {
+        let main = format!("import Module from 'node:module';\n{store}");
+        let found = find_stores_of_loader_hooks("main.ts", &main.replace("HOOK", HOOK));
+        assert_eq!(found, (vec![], true), "{store}");
+    }
+}
+
+#[test]
+fn store_in_code_that_the_folder_removed_is_no_store() {
+    for store in [
+        "if (false) { Module._resolveFilename = HOOK; }",
+        "if (false) { [Module._resolveFilename] = [HOOK]; }",
+        "if (false) { for (Module._resolveFilename of [HOOK]); }",
+        "console.log(false && (Module._resolveFilename = HOOK));",
+        "if (false) { Module._load = HOOK; }",
+        "let hook = Module._resolveFilename;\nif (false) { hook = HOOK; }",
+    ] {
+        assert_eq!(find_stores_after_require(store), (vec![], false), "{store}");
+    }
+}
+
+#[test]
+fn store_to_an_object_of_the_program_is_no_store_of_a_loader_hook() {
+    for store in [
+        "const own = { held: Module.builtinModules };\nown._resolveFilename = HOOK;",
+        "const own = { prototype: {} };\n[own.prototype.require] = [HOOK];",
+        "const hook = Module._resolveFilename;\nconsole.log(hook, Module.prototype.require);",
+    ] {
+        assert_eq!(find_stores_after_require(store), (vec![], false), "{store}");
+    }
 }

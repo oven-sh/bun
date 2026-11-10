@@ -152,7 +152,7 @@ impl LoaderHook {
 #[derive(Copy, Clone)]
 pub(crate) struct ReplacedLoaderHook {
     pub file: FileId,
-    pub assignment: ExprId,
+    pub store: ExprId,
     pub hook: LoaderHook,
 }
 
@@ -1992,7 +1992,7 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     fn add_stores_of_loader_functions(&mut self) {
-        let (files, hir) = (self.input.files, self.hir);
+        let (files, hir, bound) = (self.input.files, self.hir, self.bound);
         let Some(source) = parsed_source(files, self.file) else {
             return;
         };
@@ -2007,19 +2007,40 @@ impl<'a, 's> FileScan<'a, 's> {
             return;
         }
         for expression in self.expressions() {
-            let ExprKind::Assign { target, .. } = hir[expression].kind else {
-                continue;
+            let (target, store, names_hook) = match hir[expression].kind {
+                ExprKind::Dot { .. } | ExprKind::Index { .. }
+                    if bound.is_stored_to(hir, expression) =>
+                {
+                    let outermost = bound.outermost_type_assertion(hir, expression);
+                    match bound.parent_of_expr(outermost) {
+                        Parent::Expr(parent)
+                            if matches!(hir[parent].kind, ExprKind::Assign { .. }) =>
+                        {
+                            (expression, parent, true)
+                        }
+                        _ => (expression, expression, true),
+                    }
+                }
+                ExprKind::Assign { target, .. }
+                    if matches!(
+                        hir[hir.skip_type_assertions(target)].kind,
+                        ExprKind::Ident(_)
+                    ) =>
+                {
+                    (target, expression, false)
+                }
+                _ => continue,
             };
-            if decisions.is_dead_expr(expression) {
+            if decisions.is_dead_expr(store) {
                 continue;
             }
             let stored = self.find_builtin_behind(source, target, &mut SmallVec::new());
             if let Some(stored) = stored.filter(|&stored| is_loader_function(stored))
-                && !self.is_folded_away(expression)
+                && !self.is_folded_away(store)
             {
-                let replaced = LoaderHook::find(stored).map(|hook| (expression, hook));
-                let interest = Interest::StoreOfLoaderFunction(replaced);
-                self.add_interest(hir[expression].pos, interest);
+                let hook = LoaderHook::find(stored).filter(|_| names_hook);
+                let interest = Interest::StoreOfLoaderFunction(hook.map(|hook| (store, hook)));
+                self.add_interest(hir[store].pos, interest);
             }
         }
     }
@@ -3587,12 +3608,8 @@ impl Reacher<'_, '_, '_> {
             Interest::StoreOfLoaderFunction(replaced) => {
                 self.keep_every_module_object(file);
                 self.found.stores_loader_function = true;
-                if let Some((assignment, hook)) = replaced {
-                    let replaced = ReplacedLoaderHook {
-                        file,
-                        assignment,
-                        hook,
-                    };
+                if let Some((store, hook)) = replaced {
+                    let replaced = ReplacedLoaderHook { file, store, hook };
                     self.found.replaced_loader_hooks.push(replaced);
                 }
             }
@@ -4060,7 +4077,7 @@ fn fingerprint(
         }
     }
     for replaced in &reached.replaced_loader_hooks {
-        add(9, replaced.file, u64::from(replaced.assignment.0));
+        add(9, replaced.file, u64::from(replaced.store.0));
     }
     for &(file, entry) in &reached.deletions_from_module_cache {
         add(10, file, u64::from(entry.0));
@@ -4238,7 +4255,7 @@ pub(crate) fn find_left_out_code_seeding_last(
     reached_modules.places_that_hand_module_cache_on.dedup();
     reached_modules
         .replaced_loader_hooks
-        .sort_unstable_by_key(|replaced| (replaced.file, replaced.assignment.0));
+        .sort_unstable_by_key(|replaced| (replaced.file, replaced.store.0));
     if !loads.packages.is_empty() {
         let is_data = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Data;
         let data_files = input.files.compiled_files().iter().filter(is_data);

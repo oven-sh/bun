@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import { EventEmitter } from "node:events";
 import util from "node:util";
 import vm from "node:vm";
 import test_interop from "./test-interop.js";
@@ -3142,6 +3143,207 @@ if (isBun) {
         expect(instance).toBeInstanceOf(Mocked);
         expect(vi.isMockFunction(instance.method)).toBe(true);
       });
+
+      // Object.prototype.toString() of a class's `prototype` gives the tag of the instances, not "[object Object]".
+      describe("a class whose prototype has a Symbol.toStringTag", () => {
+        const withMethod = K => {
+          K.prototype.method = function method() {
+            return "real";
+          };
+          return K;
+        };
+        const tagged = tag =>
+          class {
+            get [Symbol.toStringTag]() {
+              return tag;
+            }
+          };
+        const shapes = {
+          "from a getter": () => withMethod(tagged("Tagged")),
+          "from a data property": () => {
+            class K {}
+            Object.defineProperty(K.prototype, Symbol.toStringTag, { value: "Tagged" });
+            return withMethod(K);
+          },
+          "from a base class of its own, with the method": () => class extends withMethod(tagged("Tagged")) {},
+          "from a base class of its own, through Object.create()": () => {
+            function K() {}
+            K.prototype = Object.create(withMethod(tagged("Tagged")).prototype);
+            return K;
+          },
+          "behind a Proxy": () => new Proxy(withMethod(tagged("Tagged")), {}),
+          "that says Function": () => withMethod(tagged("Function")),
+          "that says Module": () => withMethod(tagged("Module")),
+          "from Map": () => withMethod(class extends Map {}),
+          "from Set": () => withMethod(class extends Set {}),
+          "from WeakMap": () => withMethod(class extends WeakMap {}),
+          "from EventTarget": () => withMethod(class extends EventTarget {}),
+          "from URLSearchParams": () => withMethod(class extends URLSearchParams {}),
+          "from Promise": () =>
+            withMethod(
+              class extends Promise {
+                constructor() {
+                  super(() => {});
+                }
+              },
+            ),
+        };
+
+        describe.each(modes)("%s", (_, options) => {
+          test.each(Object.keys(shapes))("%s", shape => {
+            const K = shapes[shape]();
+            const { prototype } = K;
+            const Mocked = vi.mockObject(K, options);
+            // As for a class without a tag: a new prototype, or with `spy` the same one.
+            expect(Mocked.prototype === prototype).toBe(!!options);
+            expect(vi.isMockFunction(Mocked.prototype.method)).toBe(true);
+
+            const instance = new Mocked();
+            expect(instance.method(1)).toBe(options ? "real" : undefined);
+            expect(instance.method).toHaveBeenCalledWith(1);
+            expect(Mocked.prototype.method.mock.contexts[0]).toBe(instance);
+
+            class Sub extends Mocked {
+              method() {
+                return super.method(2);
+              }
+            }
+            expect(new Sub().method()).toBe(options ? "real" : undefined);
+            expect(Mocked.prototype.method).toHaveBeenLastCalledWith(2);
+          });
+        });
+
+        test.each([[["factory"]], [["Tagged", "factory"]], [["factory", "Tagged"]]])(
+          "{ spy: true } spies a prototype that a factory function shares with its class: %j",
+          keys => {
+            const Tagged = withMethod(tagged("Tagged"));
+            function factory() {
+              return new Tagged();
+            }
+            factory.prototype = Tagged.prototype;
+            const all = { Tagged, factory };
+            const spied = vi.mockObject(Object.fromEntries(keys.map(key => [key, all[key]])), { spy: true });
+            expect(spied.factory.prototype).toBe(Tagged.prototype);
+            const made = spied.factory();
+            expect(made).toBeInstanceOf(spied.factory);
+            expect(made.method(1)).toBe("real");
+            expect(spied.factory.prototype.method).toHaveBeenCalledWith(1);
+          },
+        );
+
+        test("{ spy: true } a second time keeps the spies of the first", () => {
+          const Base = withMethod(tagged("Tagged"));
+          class K extends Base {}
+          const first = vi.mockObject({ Base, K }, { spy: true });
+          const second = vi.mockObject({ Base, K }, { spy: true });
+          expect(second.K.prototype).toBe(K.prototype);
+          const instance = new second.K();
+          expect(instance).toBeInstanceOf(second.Base);
+          expect(instance.method(1)).toBe("real");
+          expect(first.Base.prototype.method).toHaveBeenCalledWith(1);
+        });
+
+        test("{ spy: true } writes nothing to a prototype that the tested code does not own", () => {
+          // The last one is a plain object that names a class of the runtime as its constructor.
+          const named = withMethod(tagged("Tagged")).prototype;
+          Object.defineProperty(named, "constructor", { value: EventEmitter });
+          const shared = [Map.prototype, URL.prototype, Math, named];
+          const descriptors = () => shared.map(object => Object.getOwnPropertyDescriptors(object));
+          const before = descriptors();
+          for (const prototype of shared) {
+            function Borrows() {}
+            Borrows.prototype = prototype;
+            vi.mockObject({ Borrows, Map, URL }, { spy: true });
+          }
+          expect(descriptors()).toEqual(before);
+        });
+      });
+
+      test("a class whose prototype is an array, a built-in object or Math", () => {
+        const prototypes = {
+          push: [],
+          get: new Map(),
+          getTime: new Date(0),
+          toFixed: Object(1),
+          toString: new Error(),
+          max: Math,
+        };
+        for (const [key, prototype] of Object.entries(prototypes)) {
+          function K() {}
+          K.prototype = prototype;
+          const Mocked = vi.mockObject(K);
+          expect([key, vi.isMockFunction(Mocked.prototype[key]), vi.isMockFunction(new Mocked()[key])]).toEqual([
+            key,
+            true,
+            true,
+          ]);
+        }
+        expect([Array.prototype.push, Math.max].map(vi.isMockFunction)).toEqual([false, false]);
+      });
+
+      test.each(modes)("%s: a class whose prototype is a function", (_, options) => {
+        function K() {}
+        K.prototype = Object.assign(function prototype() {}, {
+          method() {
+            return "real";
+          },
+        });
+        const { method } = K.prototype;
+        const Mocked = vi.mockObject(K, options);
+        expect(vi.isMockFunction(Mocked.prototype)).toBe(true);
+        expect(Mocked.prototype).not.toBe(K.prototype);
+        expect(vi.isMockFunction(Mocked.prototype.method)).toBe(true);
+        expect(K.prototype.method).toBe(method);
+      });
+
+      test("a built-in class gets a prototype of mocks", () => {
+        const classes = { Map, Promise, URL, Response, EventTarget, Array, Error };
+        const mocked = vi.mockObject({ ...classes });
+        for (const [name, K] of Object.entries(classes)) {
+          expect([name, mocked[name].prototype === K.prototype]).toEqual([name, false]);
+          expect([name, Object.getPrototypeOf(mocked[name].prototype)]).toEqual([name, Object.prototype]);
+        }
+        const map = new mocked.Map();
+        expect(map.get("key")).toBeUndefined();
+        expect(mocked.Map.prototype.get).toHaveBeenCalledWith("key");
+        expect(map.size).toBeUndefined();
+        expect(new mocked.URL("http://localhost").toString()).toBeUndefined();
+        expect(new mocked.Array().push(1)).toBeUndefined();
+        expect(vi.isMockFunction(Map.prototype.get)).toBe(false);
+      });
+
+      test("a bound class with a built-in base class", () => {
+        class Store extends Map {}
+        const Mocked = vi.mockObject(Store.bind(null));
+        expect(new Mocked().get("key")).toBeUndefined();
+        expect(vi.isMockFunction(Map.prototype.get)).toBe(false);
+      });
+
+      test.each(modes)("%s: a generator function keeps its prototype", (_, options) => {
+        function* generator() {
+          yield 1;
+        }
+        async function* asyncGenerator() {}
+        const mocked = vi.mockObject({ generator, asyncGenerator }, options);
+        expect(mocked.generator.prototype).toBe(generator.prototype);
+        expect(mocked.asyncGenerator.prototype).toBe(asyncGenerator.prototype);
+        expect(Reflect.ownKeys(generator.prototype)).toEqual([]);
+        expect(vi.isMockFunction(Object.getPrototypeOf(generator.prototype).next)).toBe(false);
+        expect([...generator()]).toEqual([1]);
+      });
+
+      test("a prototype given as a value, whose Symbol.toStringTag getter needs an instance", () => {
+        class NeedsInstance {
+          #tag = "Tagged";
+          get [Symbol.toStringTag]() {
+            return this.#tag;
+          }
+          method() {}
+        }
+        const mocked = vi.mockObject(NeedsInstance.prototype);
+        expect(mocked).not.toBe(NeedsInstance.prototype);
+        expect(vi.isMockFunction(mocked.method)).toBe(true);
+      });
     });
 
     describe("modules", () => {
@@ -3234,6 +3436,110 @@ if (isBun) {
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toContain(" 2 pass\n 0 fail\n");
+        expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      test("a module with a class whose prototype has a Symbol.toStringTag", async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        const classes = `
+          export class Tagged {
+            get [Symbol.toStringTag]() { return "Tagged"; }
+            hello() { return "real"; }
+          }
+          export class Store extends Map {
+            hello() { return "real"; }
+          }
+          export const make = () => ({ tagged: new Tagged(), store: new Store([["key", 1]]) });
+        `;
+        using dir = tempDir("mock-object-tagged", {
+          "mocked.ts": classes,
+          "spied.ts": classes,
+          "loaded.ts": classes,
+          "unmocked.ts": classes,
+          "tagged.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            import * as perfHooks from "node:perf_hooks";
+            import * as mocked from "./mocked";
+            import * as spied from "./spied";
+
+            vi.mock("./mocked");
+            vi.mock("./spied", { spy: true });
+
+            const calls = ({ Tagged, Store }) => [new Tagged().hello(), new Store().hello()];
+
+            test("vi.mock() and vi.importMock()", async () => {
+              expect(calls(mocked)).toEqual([undefined, undefined]);
+              expect(mocked.Tagged.prototype.hello).toHaveBeenCalledTimes(1);
+              expect(mocked.Store.prototype.hello).toHaveBeenCalledTimes(1);
+              expect(calls(await vi.importMock("./unmocked"))).toEqual([undefined, undefined]);
+            });
+
+            test("{ spy: true }, also for the instances that the module makes", () => {
+              const { tagged, store } = spied.make();
+              expect([tagged.hello(), store.hello(), store.get("key")]).toEqual(["real", "real", 1]);
+              expect(spied.Tagged.prototype.hello).toHaveBeenCalledTimes(1);
+              expect(spied.Store.prototype.hello).toHaveBeenCalledTimes(1);
+              expect(spied.Store.prototype.get).toHaveBeenCalledWith("key");
+              expect(tagged).toBeInstanceOf(spied.Tagged);
+              expect(store).toBeInstanceOf(spied.Store);
+              expect([String(tagged), String(store)]).toEqual(["[object Tagged]", "[object Map]"]);
+            });
+
+            test("{ spy: true } over a module that is loaded: the spies are on a prototype that inherits from the real one", async () => {
+              const loaded = await import("./loaded");
+              const { Tagged, Store } = loaded;
+              const originals = [Tagged.prototype.hello, Store.prototype.hello];
+              vi.mock("./loaded", { spy: true });
+              expect(Object.getPrototypeOf(loaded.Tagged.prototype)).toBe(Tagged.prototype);
+              expect(Object.getPrototypeOf(loaded.Store.prototype)).toBe(Store.prototype);
+              expect(calls(loaded)).toEqual(["real", "real"]);
+              expect(loaded.Tagged.prototype.hello).toHaveBeenCalledTimes(1);
+              expect(loaded.Store.prototype.hello).toHaveBeenCalledTimes(1);
+              expect([Tagged.prototype.hello, Store.prototype.hello]).toEqual(originals);
+            });
+
+            // The whole process shares the prototype of a class of the runtime, so a spy leaves it as its tag says.
+            test("{ spy: true } writes nothing to a built-in prototype that has a Symbol.toStringTag", () => {
+              const classes = new Map();
+              const add = K => {
+                if (typeof K !== "function") return;
+                let prototype, tag;
+                try {
+                  prototype = K.prototype;
+                  tag = Object.prototype.toString.call(prototype);
+                } catch {
+                  return;
+                }
+                if (prototype !== null && typeof prototype === "object" && tag !== "[object Object]") classes.set(prototype, K);
+              };
+              // Every global class, and those of node:perf_hooks, which are written in JavaScript.
+              for (const object of [globalThis, perfHooks]) {
+                for (const key of Reflect.ownKeys(object)) {
+                  try {
+                    add(object[key]);
+                  } catch {}
+                }
+              }
+              // A class that declares no constructor.
+              add(Object.getPrototypeOf(performance.nodeTiming).constructor);
+
+              const descriptors = () => [...classes.keys()].map(prototype => Object.getOwnPropertyDescriptors(prototype));
+              const before = descriptors();
+              vi.mockObject(Object.fromEntries([...classes.values()].entries()), { spy: true });
+              expect(classes.size).toBeGreaterThan(50);
+              expect(descriptors()).toEqual(before);
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "tagged.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(" 4 pass\n 0 fail\n");
         expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
       });
 

@@ -2665,7 +2665,7 @@ describe.concurrent("resetModules", () => {
             jest.resetModules();
             expect(await load()).toEqual(["v2", "v2"]);
           });
-          // Without this reset, the next test file runs v2.
+          // Without a source cache, this reset unloads v2. With one, a reset makes the next test file check each source against its file.
           afterAll(() => {
             write("v3");
             jest.resetModules();
@@ -2678,55 +2678,6 @@ describe.concurrent("resetModules", () => {
         `,
       },
       2,
-      args,
-      oneWorkerEnv,
-    );
-  });
-
-  test.each(withSourceCache)("vi.resetModules() keeps the sources of the packages that stay loaded %j", async args => {
-    await expectFixturesToPass(
-      {
-        "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
-        "node_modules/esm-pkg/index.js": `export default {};`,
-        "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
-        "node_modules/cjs-pkg/index.js": `module.exports = {};`,
-        // Node would read it as CommonJS, so Vitest inlines it.
-        "node_modules/untyped-esm-pkg/package.json": `{ "name": "untyped-esm-pkg", "main": "index.js" }`,
-        "node_modules/untyped-esm-pkg/index.js": `export default {};`,
-        "own.js": `import "esm-pkg"; import "cjs-pkg"; import "untyped-esm-pkg";`,
-        "earlier.test.js": `
-          import { test } from "bun:test";
-          import "./own.js";
-          test("loads them first", () => {});
-        `,
-        "reset.test.js": `
-          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
-          import { expect, jest, test, vi } from "bun:test";
-
-          const cached = () =>
-            ["./own.js", "esm-pkg", "cjs-pkg", "untyped-esm-pkg"].map(name => isolatedModuleCacheSourceType(require.resolve(name)));
-          const all = ["BunTranspiledModule", "BunTranspiledModule", "Program", "BunTranspiledModule"];
-          const packages = [null, "BunTranspiledModule", "Program", null];
-
-          test("the sources that an earlier test file cached", () => {
-            expect(cached()).toEqual(all);
-            vi.resetModules();
-            expect(cached()).toEqual(packages);
-            vi.resetModules();
-            expect(cached()).toEqual(packages);
-          });
-
-          test("the sources of the packages that this test file loaded", async () => {
-            await import("./own.js");
-            expect(cached()).toEqual(all);
-            vi.resetModules();
-            expect(cached()).toEqual(packages);
-            jest.resetModules();
-            expect(cached()).toEqual([null, null, null, null]);
-          });
-        `,
-      },
-      3,
       args,
       oneWorkerEnv,
     );

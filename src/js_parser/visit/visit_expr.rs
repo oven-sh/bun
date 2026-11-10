@@ -27,19 +27,6 @@ use js_ast::OpCode as Op;
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
-/// On a case-insensitive volume, the real path can be spelled differently.
-fn is_dependency_realpath(path: &bun_paths::fs::Path<'_>) -> bool {
-    let dir = path.name().dir;
-    if !path.is_file() || !bun_paths::is_absolute(dir) {
-        return false;
-    }
-    let mut buf = bun_paths::path_buffer_pool::get();
-    bun_sys::realpath(&bun_core::ZBox::from_bytes(dir), &mut buf).is_ok_and(|real_dir| {
-        let real_path = [real_dir, &[bun_paths::SEP][..], path.name().filename].concat();
-        bun_paths::fs::Path::init(&real_path).is_dependency()
-    })
-}
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
@@ -814,7 +801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn macro_denied_reason(&self) -> Option<&'static [u8]> {
         let path = &self.source.path;
-        if path.is_dependency() || is_dependency_realpath(path) {
+        if path.is_dependency() {
             Some(b"For security reasons, macros cannot be run from node_modules.")
         } else if path.text.starts_with(b"data:") {
             Some(b"Macros cannot be run from a \"data:\" URL module.")

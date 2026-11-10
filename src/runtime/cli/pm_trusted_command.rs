@@ -532,7 +532,16 @@ impl TrustCommand {
 
                 let output_in_foreground = false;
                 let optional = false;
-                bun_install::bin::link_dependency_bins(pm, info.package_id, &info.scripts_list)?;
+                if let Err(err) =
+                    bun_install::bin::link_dependency_bins(pm, info.package_id, &info.scripts_list)
+                {
+                    Output::err(
+                        err,
+                        "failed to link dependency bins before running scripts for {}",
+                        (bstr::BStr::new(info.names(&pm.lockfile).0),),
+                    );
+                    Global::crash();
+                }
                 pm.spawn_package_lifecycle_scripts(
                     &mut *ctx,
                     info.scripts_list.clone(),

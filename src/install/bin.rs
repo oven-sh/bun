@@ -592,16 +592,18 @@ impl<'a> NamesIterator<'a> {
         }
 
         let iter = self.dir_iterator.as_mut().unwrap();
-        if let Some(entry) = iter.next().unwrap_or(None) {
+        while let Some(entry) = iter.next().unwrap_or(None) {
+            if !matches!(entry.kind, sys::EntryKind::SymLink | sys::EntryKind::File) {
+                continue;
+            }
             self.i += 1;
             let name = entry.name.slice_u8();
-            Ok(Some(strings::copy(&mut self.buf[..], name)))
-        } else {
-            self.done = true;
-            let dir = self.dir_iterator.take().unwrap().dir();
-            dir.close();
-            Ok(None)
+            return Ok(Some(strings::copy(&mut self.buf[..], name)));
         }
+        self.done = true;
+        let dir = self.dir_iterator.take().unwrap().dir();
+        dir.close();
+        Ok(None)
     }
 
     /// next filename, e.g. "babel" instead of "cli.js"
@@ -2036,11 +2038,11 @@ pub fn link_dependency_bins(
             string_buffer: string_buf,
             extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         };
-        let mut conflicts: Vec<Vec<u8>> = Vec::new();
+        let mut has_conflict = false;
         while let Ok(Some(name)) = names.next() {
             let name = normalized_bin_name(name);
             let dest = [&own_bin_dir[..], &[SEP][..], name].concat();
-            if seen.contains_key(&dest[..]) {
+            if name.is_empty() || seen.contains_key(&dest[..]) {
                 continue;
             }
             let is_conflict = bun_which::which(&mut which_buf, &env_path, cwd, name).is_none()
@@ -2048,13 +2050,13 @@ pub fn link_dependency_bins(
                     .find_map(|(i, dir)| Some((bin_owner(dir, name)?, i)))
                     .is_some_and(|(owner, owner_depth)| !is_dependency(&owner, owner_depth));
             if is_conflict {
-                conflicts.push(name.to_vec());
+                has_conflict = true;
             } else {
                 let _ = seen.put(&dest, ());
             }
         }
         target_dir.close();
-        if conflicts.is_empty() {
+        if !has_conflict {
             continue;
         }
 
@@ -2082,10 +2084,6 @@ pub fn link_dependency_bins(
         linker.link(false);
         if let Some(err) = linker.err {
             return Err(err);
-        }
-        // The target of a bin may not exist yet.
-        if (conflicts.iter()).any(|name| bin_owner(own_dir, name).is_none()) {
-            return Err(Error::Sys(bun_errno::SystemErrno::ENOENT));
         }
     }
     Ok(())

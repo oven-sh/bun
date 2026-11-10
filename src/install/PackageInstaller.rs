@@ -1038,7 +1038,9 @@ impl<'a> PackageInstaller<'a> {
         if let Err(err) = bin::link_dependency_bins(self.manager(), entry.package_id, &entry.list) {
             // The next install runs the scripts.
             remove_placed_package(self.lockfile(), entry.tree_id, &name);
-            self.on_scripts_error(log_level, "link dependency bins before running", &name, err);
+            if !entry.optional {
+                self.on_scripts_error(log_level, "link dependency bins before running", &name, err);
+            }
             return;
         }
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(

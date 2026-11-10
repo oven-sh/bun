@@ -3436,6 +3436,162 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
     });
   });
 
+  // The files of a run share the module object of "vitest". Before each file, the names that globalThis lacks are read from it again.
+  describe("an export that throws while the globals are defined fails that file, and the next file runs", () => {
+    // Split in two because `bun test` scans a test file's whole text for this name, this file's included.
+    const pragma = "@vitest" + "-environment";
+    const getter = `{ configurable: true, enumerable: true, get() { throw new Error("thrown by the getter"); } }`;
+    const arm = `Object.defineProperty(require("vitest"), "describe", ${getter});`;
+    const passes = `test("passes", () => {});`;
+    const files = {
+      "a.test.js": `test("arms the getter", () => { delete globalThis.describe; ${arm} });`,
+      "b.test.js": passes,
+      // The globals are defined for every file, whatever it imports.
+      "c.test.js": `import { test } from "bun:test";\n${passes}`,
+    };
+    const armed = ["a.test.js:", "(pass) arms the getter"];
+    const thrown = "error: thrown by the getter";
+    const bothFail = [
+      ...armed,
+      "b.test.js:",
+      thrown,
+      "c.test.js:",
+      thrown,
+      " 1 pass",
+      " 2 fail",
+      " 2 errors",
+      "Ran 3 tests across 3 files.",
+    ];
+    const oneFails = [...armed, "b.test.js:", thrown, " 1 pass", " 1 fail", " 1 error", "Ran 2 tests across 2 files."];
+    // Which files ran, how each ended, and how the run ended.
+    const report = (stderr: string) =>
+      stderr
+        .split("\n")
+        .filter(line =>
+          /^\S+\.test\.js:|^\((pass|fail)\) |^error: |^ \d+ (pass|fail|errors?)$|^Ran |^Bailed /.test(line),
+        )
+        .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""));
+
+    test.each([
+      ["--globals=vitest", files, ["--globals=vitest"], bothFail],
+      [`globals = "vitest"`, { ...files, "bunfig.toml": bunfig("vitest") }, [], bothFail],
+      [
+        "--rerun-each=2",
+        { "a.test.js": files["a.test.js"] },
+        ["--globals=vitest", "--rerun-each=2"],
+        [
+          "a.test.js: (run #1)",
+          "(pass) arms the getter",
+          "a.test.js: (run #2)",
+          thrown,
+          " 1 pass",
+          " 1 fail",
+          " 1 error",
+          "Ran 2 tests across 1 file.",
+        ],
+      ],
+      [
+        "--bail=1",
+        files,
+        ["--globals=vitest", "--bail=1"],
+        [...armed, "b.test.js:", thrown, "Ran 2 tests across 2 files.", "Bailed out after 1 failure"],
+      ],
+      [
+        "in a worker of --parallel",
+        { "a.test.js": files["a.test.js"], "b.test.js": passes },
+        ["--globals=vitest", "--parallel=2", "--parallel-delay=600000", "--no-isolate"],
+        oneFails,
+      ],
+      [
+        "a getter that throws once: the file after the failed one has the name again",
+        {
+          "a.test.js": `
+            const vitest = require("vitest");
+            test("arms the getter", () => {
+              const { describe } = vitest;
+              let reads = 0;
+              delete globalThis.describe;
+              Object.defineProperty(vitest, "describe", {
+                configurable: true,
+                enumerable: true,
+                get() {
+                  if (reads++ === 0) throw new Error("thrown by the getter");
+                  return describe;
+                },
+              });
+            });
+          `,
+          "b.test.js": passes,
+          "c.test.js": `test("has the name again", () => { expect(typeof globalThis.describe).toBe("function"); });`,
+        },
+        ["--globals=vitest"],
+        [
+          ...armed,
+          "b.test.js:",
+          thrown,
+          "c.test.js:",
+          "(pass) has the name again",
+          " 2 pass",
+          " 1 fail",
+          " 1 error",
+          "Ran 3 tests across 3 files.",
+        ],
+      ],
+      [
+        // A preload that failed is loaded again for the next file. A file with environment options loads it in the project's environment first.
+        "a file with environment options, which loads the preloads in the project's environment",
+        {
+          "setup.js": `delete globalThis.describe; ${arm} throw new Error("thrown by the preload");`,
+          "a.test.js": passes,
+          "b.test.js": `// ${pragma}-options {}\n${passes}`,
+        },
+        ["--globals=vitest", "--preload=./setup.js"],
+        [
+          "a.test.js:",
+          "error: thrown by the preload",
+          "b.test.js:",
+          thrown,
+          " 0 pass",
+          " 2 fail",
+          " 2 errors",
+          "Ran 2 tests across 2 files.",
+        ],
+      ],
+      [
+        // The module object starts as a copy of the exports of "bun:test", made when the globals are first defined. Only a DOM package runs before that.
+        `an export of "bun:test", read when the module object is created`,
+        {
+          "node_modules/happy-dom/package.json": `{ "name": "happy-dom", "version": "0.0.0", "main": "index.js" }`,
+          "node_modules/happy-dom/index.js": `Object.defineProperty(require("bun:test"), "describe", ${getter}); throw new Error("thrown by the package");`,
+          "a.test.js": `// ${pragma} happy-dom\n${passes}`,
+          "b.test.js": passes,
+        },
+        ["--globals=vitest"],
+        ["a.test.js:", thrown, "b.test.js:", thrown, " 0 pass", " 2 fail", " 2 errors", "Ran 2 tests across 2 files."],
+      ],
+    ] as [string, Record<string, string>, string[], string[]][])("%s", async (_, files, args, expected) => {
+      const { stderr, exitCode } = await runTests(files, args);
+      expect({ report: report(stderr), exitCode }).toEqual({ report: expected, exitCode: 1 });
+    });
+
+    // --isolate=modules takes the names off globalThis before each file, so no file has to delete one. It loads the preloads for each file, after the globals are defined.
+    test("--isolate=modules, which loads no preload for the file that fails", async () => {
+      const { log, stderr, exitCode } = await runTests(
+        {
+          "setup.js": `console.log("preload"); beforeAll(() => console.log("beforeAll")); afterAll(() => console.log("afterAll"));`,
+          "a.test.js": `test("arms the getter", () => { ${arm} });`,
+          "b.test.js": passes,
+        },
+        ["--globals=vitest", "--isolate=modules", "--preload=./setup.js"],
+      );
+      expect({ log, report: report(stderr), exitCode }).toEqual({
+        log: ["preload", "beforeAll", "afterAll"],
+        report: oneFails,
+        exitCode: 1,
+      });
+    });
+  });
+
   test.each([
     ["--globals=vitest", undefined, ["--globals=vitest"]],
     [`globals = "vitest"`, "vitest", []],

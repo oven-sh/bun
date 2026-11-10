@@ -731,11 +731,6 @@ static JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* 
     stream->m_bunMode = BunStreamMode::Default;
 
     JSObject* pull = source->pullFunction();
-    if (!pull) {
-        sinkController->end(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        return jsUndefined();
-    }
 
     stream->m_controller.set(vm, stream, sinkController);
     stream->m_controllerKind = ControllerKind::NativeSink;

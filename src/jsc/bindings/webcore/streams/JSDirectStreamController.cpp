@@ -51,9 +51,10 @@ void JSDirectStreamSource::finishCreation(VM& vm, JSValue underlyingSource, JSOb
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    ASSERT(pull);
     auto valueOrNull = [](JSObject* object) { return object ? JSValue(object) : jsNull(); };
     Base::internalField(static_cast<uint32_t>(Field::UnderlyingSource)).set(vm, this, underlyingSource);
-    Base::internalField(static_cast<uint32_t>(Field::Pull)).set(vm, this, valueOrNull(pull));
+    Base::internalField(static_cast<uint32_t>(Field::Pull)).set(vm, this, pull);
     Base::internalField(static_cast<uint32_t>(Field::Cancel)).set(vm, this, valueOrNull(cancel));
     Base::internalField(static_cast<uint32_t>(Field::Close)).set(vm, this, valueOrNull(close));
 }

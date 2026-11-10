@@ -1075,10 +1075,6 @@ static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDire
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* pullFunction = source->pullFunction();
-    if (!pullFunction) [[unlikely]] {
-        throwTypeError(globalObject, scope, "The 'pull' method of a direct ReadableStream's underlying source is not a function"_s);
-        return {};
-    }
     MarkedArgumentBuffer arguments;
     arguments.append(sink);
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, JSC::getCallData(pullFunction), source->thisValue(), arguments));

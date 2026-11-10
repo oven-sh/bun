@@ -335,13 +335,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamConstruc
 
     switch (source.type) {
     case BunUnderlyingSourceType::Direct: {
+        // A direct stream does not run start(), so pull() is the only way for its source to write or close.
+        if (!source.dict.pull)
+            return throwVMTypeError(lexicalGlobalObject, scope, "The underlying source's 'pull' property must be a function"_s);
         // Bun's close(reason) hook is not a dictionary member; it is converted like one.
         JSValue close = asObject(underlyingSource)->get(lexicalGlobalObject, builtinNames(vm).closePublicName());
         RETURN_IF_EXCEPTION(scope, {});
         if (!close.isUndefined() && !close.isCallable())
             return throwVMTypeError(lexicalGlobalObject, scope, "The underlying source's 'close' property must be a function"_s);
         auto* directSource = JSDirectStreamSource::create(vm, JSStreamsRuntime::from(lexicalGlobalObject)->directStreamSourceStructure(defaultGlobalObject(lexicalGlobalObject)), underlyingSource,
-            source.dict.pull ? source.dict.pull.getObject() : nullptr, source.dict.cancel ? source.dict.cancel.getObject() : nullptr, close.isUndefined() ? nullptr : close.getObject());
+            source.dict.pull.getObject(), source.dict.cancel ? source.dict.cancel.getObject() : nullptr, close.isUndefined() ? nullptr : close.getObject());
         // A direct stream has no controller yet; materializeIfNeeded() builds it on first use.
         stream->m_bunMode = BunStreamMode::DirectPending;
         stream->m_directSource.set(vm, stream, directSource);

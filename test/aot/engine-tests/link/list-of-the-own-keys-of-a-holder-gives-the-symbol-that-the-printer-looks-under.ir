@@ -1,0 +1,57 @@
+# console.log({ [Object.getOwnPropertySymbols(Buffer.prototype)[0]]() { return "mine"; } });
+# The host prints an object by the method that it finds under Symbol.for("nodejs.util.inspect.custom"), and calls it with what it loads at its start. It loads that only where an object may have such a method:
+# where code may have the symbol. A row that gives a list of symbols gives those that its operand bears. An object of the program bears what the program had already; a holder of the table bears its own, and
+# Buffer.prototype has its `inspect` under that very symbol. The method itself is called without those loads, so the class is not marked: it is the key that goes out.
+# The text holds `toJSON` of Buffer.prototype, which the printer finds by its name: a row whose code the program does not hold may give any symbol, and would hide the list.
+# Out of sight: list-of-the-own-keys-of-what-stands-above-an-object-gives-the-symbol-that-the-printer-looks-under.ir. The controls: list-of-own-symbols-gives-no-symbol-of-a-holder-that-is-not-at-hand.ir,
+# holder-of-the-symbol-that-the-printer-looks-under-gives-it-to-nobody-who-lists-no-symbols.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+# RUN(NONE): link functions mechanisms=none
+# NONE-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f2
+module m2 path="/$bun/js/builtins/JSBufferPrototype.ts" displayPath="/$bun/js/builtins/JSBufferPrototype.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=JSBufferPrototypeToJSON function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectGetOwnPropertySymbols
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Buffer" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Buffer) flags=[IsExpected]}
+    v5 = PropGet v4 key="prototype"
+    v6 = Convert v5 declared={type=builtin(BufferPrototype) flags=[IsExpected]}
+    v7 = Call v1, v0, v6 calleeName="Object.getOwnPropertySymbols"
+    v8 = Integer integer=0
+    v9 = ElemGet v7, v8
+    v10 = ToPropertyKey v9
+    v11 = NewClosure function=f1
+    v12 = NewObject layout=L0
+    ElemDefine v12, v10, v11
+    v14 = FinishObject v12
+    v15 = Builtin builtin=Console
+    v16 = PropGet v15 key="log"
+    v17 = Convert v16 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v18 = Call v17, v15, v14 calleeKey="log" calleeName="console.log"
+    Return v18
+}
+function f1 module=m0 kind=Method thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="mine"
+    Return v0
+}
+function f2 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m2 kind=Method role=Library enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

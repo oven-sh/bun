@@ -1,0 +1,1 @@
+exports.number = ++globalThis.loads;

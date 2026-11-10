@@ -23,10 +23,8 @@
 # -- end of source
 # OPTIONS: mechanisms=all
 # RUN(FORM): facts enforced
-# REQUIRES(FORM): entries-of-bun
 # FORM-COUNT-3: "count" source=written type=i32 markers spares-test
 # RUN: run-in-shell globalThis.register = (make, makeOld, makeRecord, read) => { const h = make(); h.label = 5; print(aotPlaceOfProperty(h, "label"), read(h)); h.label = "back"; print(aotPlaceOfProperty(h, "label"), read(h)); h.count = 1.5; print(aotPlaceOfProperty(h, "count"), read(h)); h.count = 2147483648; print(aotPlaceOfProperty(h, "count"), read(h)); h.count = -4; print(aotPlaceOfProperty(h, "count"), read(h)); h.point = { x: 1, y: 2 }; print(aotPlaceOfProperty(h, "point")); h.point = make().point; print(aotPlaceOfProperty(h, "point")); };
-# REQUIRES: entries-of-bun
 # CHECK: beside its slot NaN
 # CHECK-NEXT: slot 6
 # CHECK-NEXT: beside its slot 5.5
@@ -36,19 +34,15 @@
 # CHECK-NEXT: slot
 # CHECK-NEXT: exited with 0
 # RUN(MARKERS): run-in-shell globalThis.register = (make, makeOld, makeRecord, read) => { const makers = [make, makeOld, makeRecord]; for (let i = 0; i < makers.length; i++) { const h = makers[i](); h.count = undefined; print(aotPlaceOfProperty(h, "count"), h.count); h.count = null; print(aotPlaceOfProperty(h, "count"), h.count); } const h = make(); h.label = undefined; h.point = null; print(aotPlaceOfProperty(h, "label"), aotPlaceOfProperty(h, "point")); };
-# REQUIRES(MARKERS): entries-of-bun
 # MARKERS-COUNT-3: slot undefined
 # MARKERS: slot slot
 # MARKERS-NEXT: exited with 0
 # RUN(NULLS): run-in-shell globalThis.register = (make, makeOld, makeRecord, read) => { const makers = [make, makeOld, makeRecord]; for (let i = 0; i < makers.length; i++) { const h = makers[i](); h.count = null; print(aotPlaceOfProperty(h, "count"), h.count); } };
-# REQUIRES(NULLS): entries-of-bun
 # NULLS-COUNT-3: slot null
 # NULLS-NEXT: exited with 0
 # RUN(ROADS): run-in-shell globalThis.register = (make, makeOld, makeRecord, read, between, betweenOld, betweenRecord, again) => { const roads = [h => { h["co" + "unt"] = "t"; }, h => { Reflect.set(h, "count", "t"); }, h => { Reflect.set({ }, "count", "t", h); }, h => { Object.defineProperty(h, "count", { value: "t" }); }, h => { Object.assign(h, { count: "t" }); }, h => { new Proxy(h, { }).count = "t"; }, h => { delete h.count; h.count = "t"; }, h => { for (let i = 0; i < 40; i++) h.count = "t"; }]; const kinds = [[make, between], [makeOld, betweenOld], [makeRecord, betweenRecord]]; for (let k = 0; k < kinds.length; k++) { for (let i = 0; i < roads.length; i++) { const h = kinds[k][0](); print(kinds[k][1](h, roads[i]), aotPlaceOfProperty(h, "count"), typeof h.count, again(h), typeof h.count); } } };
-# REQUIRES(ROADS): entries-of-bun
 # ROADS-COUNT-24: 2t1 beside its slot string 8 number
 # ROADS-NEXT: exited with 0
 # RUN(UNTESTED): run-in-shell globalThis.register = make => { const h = make(); print(aotStoreIntoSlotUntested(h, "label", 5), aotPlaceOfProperty(h, "label"), typeof h.label); };
-# REQUIRES(UNTESTED): entries-of-bun
 # UNTESTED: true slot number
 # UNTESTED-NEXT: exited with 0

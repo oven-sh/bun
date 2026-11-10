@@ -110,6 +110,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    pub fn member_of_symbol_constructor(&mut self, name: Atom) -> Option<Atom> {
+        let key = self.c.key_type_of_name(name)?;
+        match *self.c.data(key) {
+            TypeData::UniqueSymbol {
+                symbol: UniqueSymbolDeclaration::SymbolConstructor,
+                name,
+            } => Some(name),
+            _ => None,
+        }
+    }
+
     pub fn symbol_creation(&mut self, name: Atom) -> Option<SymbolCreation> {
         let key = self.c.key_type_of_name(name)?;
         let &TypeData::UniqueSymbol {

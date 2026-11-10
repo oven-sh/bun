@@ -39,6 +39,22 @@ export class Counter {
 }
 _Counter_instances = new WeakSet(), _Counter_step = function _Counter_step() { return ++this.count; };
 `;
+const withSymbolKey = `
+const kCount = Symbol("count");
+export class Counter {
+    constructor() { this[kCount] = 0; }
+    bump() { return ++this[kCount]; }
+}
+`;
+const withAccessorOnPrototype = `
+export function Counter() { this.count = 0; }
+Object.defineProperty(Counter.prototype, "next", { get() { return ++this.count; }, configurable: true });
+Object.defineProperties(Counter.prototype, { bump: { value() { return mark(this).next; }, configurable: true, writable: true } });
+function mark(counter) {
+  Object.defineProperty(counter, "seen", { value: true, configurable: true });
+  return Object.defineProperties(counter, { more: { value: true, configurable: true } });
+}
+`;
 const withCollectionOfItsOwn = `
 const counts = new WeakMap();
 export class Counter {
@@ -103,6 +119,44 @@ const cases: Record<string, Case> = {
     holder: unspelled("WeakMap"),
     name: "get",
     plain: "1 2 4",
+  },
+  // `const kCount = Symbol("count")` at the top of a module is a key that is made once, and `this[kCount]` is a field of the object: in the library's files and in the program's.
+  "Symbol, by a road that the build cannot read": {
+    product: withSymbolKey,
+    holder: `globalThis[JSON.parse('"globalThis"')]`,
+    name: "Symbol",
+    plain: "1 2 0",
+    compiled:
+      /Cannot assign to Symbol because built-in objects are read-only in compiled code, and the build didn't see a test replace this one\. Spell out the object and the name where the test does it, as in globalThis\.Symbol = f or spyOn\(globalThis, "Symbol"\)/,
+  },
+  "Symbol, spelled": { product: withSymbolKey, holder: "globalThis", name: "Symbol", plain: "1 2 0" },
+  "for of Symbol, by a name that the build cannot read": {
+    product: withSymbolKey,
+    holder: `globalThis[JSON.parse('"Symbol"')]`,
+    name: "for",
+    plain: "1 2 0",
+    compiled: refusal("Symbol.for", "Symbol", "for"),
+  },
+  // The build sees an accessor that a file lays on a prototype where the callee is the built-in itself: in the library's files and in the program's.
+  "defineProperty of Object, by a name that the build cannot read": {
+    product: withAccessorOnPrototype,
+    holder: `globalThis[JSON.parse('"Object"')]`,
+    name: "defineProperty",
+    plain: "1 2 2",
+    compiled: refusal("Object.defineProperty", "Object", "defineProperty"),
+  },
+  "defineProperties of Object, by a name that the build cannot read": {
+    product: withAccessorOnPrototype,
+    holder: `globalThis[JSON.parse('"Object"')]`,
+    name: "defineProperties",
+    plain: "1 2 2",
+    compiled: refusal("Object.defineProperties", "Object", "defineProperties"),
+  },
+  "defineProperty of Object, spelled": {
+    product: withAccessorOnPrototype,
+    holder: "Object",
+    name: "defineProperty",
+    plain: "1 2 2",
   },
   "a method that nothing is folded by, beside a state that has moved": {
     product: withPrivateState,

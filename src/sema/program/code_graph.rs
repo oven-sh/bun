@@ -38,9 +38,11 @@ pub enum CodeAnswer<'s> {
     HostModule(HostModuleId),
     External { specifier: Atom, kind: ExternalKind },
     Erased,
-    Computed(ComputedTargets<'s>),
+    Computed(&'s ComputedTargets<'s>),
     NotFound(CodeFailure),
 }
+
+const _: () = assert!(size_of::<CodeAnswer<'static>>() == 16);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ComputedTarget {
@@ -88,6 +90,12 @@ pub trait CodeView<'s>: Sync {
     fn file_name(&self, file: FileId) -> &[u8];
     fn entry_points(&self) -> &[FileId];
     fn compiled_files(&self) -> &[FileId];
+    fn is_only_asked_whether_more_is_named(&self) -> bool {
+        false
+    }
+    fn files_that_guesses_alone_bring(&self) -> &[FileId] {
+        &[]
+    }
     fn host_payload(&self, file: FileId) -> Option<&(dyn Any + Send + Sync)>;
 }
 
@@ -133,7 +141,10 @@ impl<'s> CodeView<'s> for Files<'s> {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct NamingLoad {
     pub file: FileId,
+    pub written_in: FileId,
     pub requires: bool,
+    pub is_guess: bool,
+    pub may_be_left_out: bool,
 }
 
 #[derive(Default)]
@@ -141,6 +152,7 @@ pub struct EntryPointsFound {
     pub paths: Vec<Vec<u8>>,
     pub dropped: Vec<Vec<u8>>,
     pub named_by: Vec<(Vec<u8>, Option<NamingLoad>)>,
+    pub is_more_named: bool,
 }
 
 pub type FindsEntryPoints<'a> = dyn Fn(&dyn CodeView<'_>) -> EntryPointsFound + Sync + 'a;

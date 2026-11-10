@@ -1,0 +1,35 @@
+# `const n = data.length; for (let i = 0; i < n; i++) .. data[i]`: the commonest spelling of a loop. In the copy of the loop for a list n was some int32 and not the length: each read kept its test of the bound and of the hole:
+# 1,792 instructions a call of 96 elements where `i < data.length` takes 905.
+# Behind the test that tells a list, the written read of the length is walked anew off the proof; what was read before is asked for an int32 equal to it; in that copy its names stand for the typed length, and the reads lie inside the list.
+# A test, not a proof: a list that grew, shrank or was emptied between the read and the loop takes another copy; one that changes inside the loop leaves the copy as any other does; n itself stays what was read.
+# A holder whose length is a getter is asked once, as written.
+# f1 = bound, f2 = touched, f3 = touchedInside
+# LIBRARY: own
+# -- source: main.js
+# function bound(data) { const n = data.length; let s = 0; for (let i = 0; i < n; i++) s = ((s << 5) - s) ^ data[i]; return s; }
+# function touched(data, touch) { const n = data.length; touch(data); let s = 0; for (let i = 0; i < n; i++) s = ((s << 5) - s) ^ data[i]; return s + ":" + n; }
+# function touchedInside(data, touch) { const n = data.length; let s = 0; for (let i = 0; i < n; i++) { s = ((s << 5) - s) ^ data[i]; if (i === 1) touch(data); } return s + ":" + n; }
+# publish(bound, touched, touchedInside);
+# -- end of source
+# RUN: compile LengthsReadInFrontOfLoopsAskedWhetherTheyStillHold mechanisms=all
+# CHECK: statistic LengthsReadInFrontOfLoopsAskedWhetherTheyStillHold 3
+# RUN(FRONT): walk f1 mechanisms=all
+# FRONT: = PropGet v0 key="length"
+# FRONT: = GetArrayLength
+# FRONT: = StrictEq {{*}}form=Integers
+# FRONT: isInLoop=true isLoopHead=true
+# FRONT: = GetArrayElement {{*}}isInBounds
+# RUN(SHELL): run-in-shell globalThis.publish = (bound, touched, touchedInside) => { const list = [1, 2, 3, 250, 77, 9]; let asked = 0; const counts = () => ({ get length() { asked++; return 3; }, 0: 4, 1: 5, 2: 6 }); const holes = list.slice(); delete holes[2]; const kinds = () => [list.slice(), list.map(x => x + 0.5), [1, "4", 3], holes.slice(), [], new Uint8Array(list), new Float64Array(list), new Int8Array(list), counts(), "0123", { length: -0, 0: 1 }, { length: 2.5, 0: 1, 1: 2, 2: 3 }, { length: "2", 0: 7, 1: 8 }]; const touches = [data => { }, data => { if (Array.isArray(data)) data.push(5, 6); }, data => { if (Array.isArray(data)) data.length = 2; }, data => { if (Array.isArray(data)) data.length = 0; }, data => { if (Array.isArray(data)) data[1] = 0.5; }, data => { if (Array.isArray(data)) data[1] = "x"; }]; let told = ""; for (let turn = 0; turn < 2; turn++) for (const data of kinds()) told += " " + bound(data); print(told + " | " + asked); for (const f of [touched, touchedInside]) for (const touch of touches) { told = ""; for (const data of kinds()) told += " " + f(data, touch); print(told + " | " + asked); } };
+# SHELL: 26685148 26685148 838 26609029 0 26685148 26685148 -26700324 3745 896 0 896 209 26685148 26685148 838 26609029 0 26685148 26685148 -26700324 3745 896 0 896 209 | 2
+# SHELL-NEXT: 26685148:6 26685148:6 838:3 26609029:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 3
+# SHELL-NEXT: 26685148:6 26685148:6 838:3 26609029:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 4
+# SHELL-NEXT: 26782109:6 26782109:6 837:3 26782109:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 5
+# SHELL-NEXT: 0:6 0:6 0:3 0:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 6
+# SHELL-NEXT: 28662374:6 28662374:6 962:3 28694275:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 7
+# SHELL-NEXT: 28662374:6 28662374:6 962:3 28694275:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 8
+# SHELL-NEXT: 26685148:6 26685148:6 838:3 26609029:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 9
+# SHELL-NEXT: 26685148:6 26685148:6 838:3 26609029:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 10
+# SHELL-NEXT: 26782109:6 26782109:6 837:3 26782109:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 11
+# SHELL-NEXT: 26782109:6 26782109:6 837:3 26782109:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 12
+# SHELL-NEXT: 26685148:6 26685148:6 838:3 26609029:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 13
+# SHELL-NEXT: 26685148:6 26685148:6 838:3 26609029:6 0:0 26685148:6 26685148:6 -26700324:6 3745:3 896:4 0:0 896:2.5 209:2 | 14

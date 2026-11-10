@@ -1,0 +1,32 @@
+# -- source: what-from-and-of-make-on-a-known-constructor-of-views-is-a-view-of-its-class.ts
+# declare function sink(value: unknown): void;
+# const bytes = new Uint8Array(8); for (let i = 0; i < 8; i++) bytes[i] = i * 30;
+# const list = [1.5, 2.5, 300];
+# class Wide extends Float64Array {}
+# function fromView(): number { const made = Int16Array.from(bytes); let sum = 0; for (let i = 0; i < made.length; i++) sum += made[i]!; return sum; }
+# function fromList(): number { const made = Uint8Array.from(list); let sum = 0; for (let i = 0; i < made.length; i++) sum += made[i]!; return sum; }
+# function ofNumbers(first: number): number { const made = Uint32Array.of(first, -1, 7); return made[0]! + made[1]! + made.length; }
+# function fromOnAnother(constructor: any): string { const made: any = Uint8Array.from.call(constructor, list); return made.constructor.name + " " + made.join(); }
+# function fromBelow(): string { const made = Wide.from(list); return made.constructor.name + " " + made.join(); }
+# sink([fromView(), fromList(), ofNumbers(2), fromOnAnother(Wide), fromOnAnother(Int8Array), fromBelow()].join(" | "));
+# -- end of source
+# `Int16Array.from(bytes)` was found (the library's from, TypedArrayOf/0) and gave anything: the rows say "what constructing `this` gives", and that was never asked of `this`, though it is the built-in
+# constructor itself. The loop behind went by closed reads: 504,211 instructions for 4,096 elements where `new Int16Array(bytes)` took 29,180. What a known built-in gives when a row calls it is what
+# its own rows say. from is the library's own code, so there the row's word is what is EXPECTED and the loop asks it in front; of is native, and its row is believed.
+# fromOnAnother: `this` is a parameter: a class below and another kind of view come: nothing is said. fromBelow: `this` is a class of the program: nothing is said.
+# f1 = fromView, f2 = fromList, f3 = ofNumbers, f4 = fromOnAnother, f5 = fromBelow
+# RUN: walk f1:Body f2:Body f3:Body f4:Body f5:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: TypeTest {{*}} testedType=Int16Array
+# CHECK: GetTypedArrayLength {{*}} typedArrayType=
+# CHECK-LABEL: code f2:Body
+# CHECK: TypeTest {{*}} testedType=Uint8Array
+# CHECK: GetTypedArrayLength {{*}} typedArrayType=
+# CHECK-LABEL: code f3:Body
+# CHECK: : Uint32Array @JSValue = CallBuiltin {{*}} overload=TypedArrayOf/0
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: : Uint8Array @JSValue = Call
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: : Float64Array @JSValue = Call
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 840 | 47 | 4294967300 | Wide 1.5,2.5,300 | Int8Array 1,2,44 | Wide 1.5,2.5,300

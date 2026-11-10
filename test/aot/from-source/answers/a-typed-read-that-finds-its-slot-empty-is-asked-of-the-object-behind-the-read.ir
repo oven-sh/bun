@@ -1,0 +1,34 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { declare fragile?: boolean; weight: number; constructor(weight: number) { this.weight = weight; } }
+# function look(parcel: Parcel) { return parcel.fragile; }
+# function lookAtFresh(weight: number) { const parcel = new Parcel(weight); (globalThis as any).last = parcel; return parcel.fragile; }
+# const parcels: Parcel[] = [];
+# for (let i = 0; i < 4; i++) { const parcel = new Parcel(i); if (i === 3) parcel.fragile = true; parcels.push(parcel); }
+# (globalThis as any).parcels = parcels;
+# const looks = id(look), looksAtFresh = id(lookAtFresh);
+# print(looks(parcels[0]), looksAtFresh(1));
+# (Parcel.prototype as any).fragile = "above";
+# print(looks(parcels[1]), looksAtFresh(2));
+# -- end of source
+# LIBRARY: own
+# A read of a field that the object does not hold yet finds its slot empty and answers undefined while the guard of the class under the name holds. A value laid on the prototype must be found.
+# The load itself is not asked where the slot is empty: it may stand ahead of the guards that give the empty slot a meaning. Under testing=CheckWalkAtRunTime the question stands behind the read, where the program has it.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: undefined undefined
+# RIGHT-NEXT: above above
+# RIGHT-NEXT: exited with 0
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime
+# ASKED: undefined undefined
+# ASKED-NEXT: above above
+# ASKED-NEXT: exited with 0
+# The lie, testing=GuardsAndFactsAreTakenToHold, bites: by itself both reads answer undefined in silence.
+# RUN(BITES): run-in-shell mechanisms=all testing=GuardsAndFactsAreTakenToHold
+# BITES: undefined undefined
+# BITES-NEXT: undefined undefined
+# BITES-NEXT: exited with 0
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold
+# ASKEDLIE: undefined undefined
+# ASKEDLIE-NEXT: AOT: what the compiler remembers in place of a read by name answered a value under the name fragile, and the object, asked again, answers another.{{*}}
+# ASKEDLIE: crashed with

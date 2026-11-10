@@ -1,0 +1,16 @@
+# `for (let i = n - 1; i >= 0; --i) { const x = a[i]; if (x > 1) s += x; }`, where `n` is the length of a value of which nothing is known: the counter is asked for an int32 in front of the loop and the list under it is asked there too.
+# The typed copy had ONE other copy: the closed one, walked from an entry whose parameters are as wide as the look says: there the counter is no integer. Every way out of the typed copy led there, in front and in a turn:
+# an element that is no number, met at the second of 64 turns, cost 21% more than the loop had cost when the counter alone was asked.
+# Now the other copy of such a purchase is walked as a loop like any other from that same entry, without the list's question, and is bought by itself: it asks the counter in front and has the closed copy behind it.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function hand(...values: unknown[]): void;
+# function sum(a: any): any { const n = a.length; let s = 0, c = 0; for (let i = n - 1; i >= 0; --i) { const x = a[i]; if (x > 1) { s += x; c++; } } return s + c; }
+# hand(sum);
+# print(sum([0.5, 1.5, 2.5]), sum([0.5, undefined, 2.5, 3.5]), sum([2, "x", 4]), sum([]), sum({ length: 2, 0: 4, 1: 5 }), sum("29"), sum({ length: 1.5, 0: 3 }), sum([, 5, , 7]));
+# -- end of source
+# f1 = sum
+# RUN(EVENT): compile LoopsWhoseOtherCopyAsksCountersAlone mechanisms=all
+# EVENT: statistic LoopsWhoseOtherCopyAsksCountersAlone 1
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 6 8 8 0 11 0922 0 14

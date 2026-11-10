@@ -1,5 +1,4 @@
 use bun_sema::bind::{Bound, ClassOwner, PrivateMembers, PrivateName};
-use bun_sema::fold::Decisions;
 use bun_sema::hir::{
     self, ClassId, ExprId, Flags, FnId, Member, MemberId, MemberKind, ModifierId, PropKey, Span,
 };
@@ -181,13 +180,17 @@ pub(in crate::lower) fn find_fields_under_signed_members(
 
 fn has_key_folded_by_bun_run(
     hir: &hir::File<'_>,
-    decisions: &Decisions<'_>,
+    compiled: &CompiledModule<'_>,
     member: MemberId,
 ) -> bool {
     let PropKey::Computed(key) = hir.runtime_member_key(member) else {
         return false;
     };
-    decisions.is_string_or_number_in_bun_run(hir, hir.skip_type_assertions(key))
+    let (decisions, key) = (&compiled.analysis.decisions, hir.skip_type_assertions(key));
+    match compiled.settings.bun_run_assigns_class_fields {
+        true => decisions.is_string_or_number_under_minify_syntax(hir, key),
+        false => decisions.is_string_or_number_in_bun_run(hir, key),
+    }
 }
 
 fn find_injection_point(hir: &hir::File<'_>, class: ClassId, constructor: FnId) -> InjectionPoint {
@@ -343,11 +346,10 @@ pub(super) fn plan_class(
     let is_asked_to_assign = hir.has_typescript_semantics()
         && compiled.settings.use_define_for_class_fields == Some(false)
         && transform != ClassTransform::Standard;
-    let decisions = &compiled.analysis.decisions;
     let keeps_fields = runtime_members(hir, class).any(|member| {
         has_computed_field_key(hir, member)
             && !hir[member].flags.contains(Flags::STATIC)
-            && !has_key_folded_by_bun_run(hir, decisions, member)
+            && !has_key_folded_by_bun_run(hir, compiled, member)
             && !fields_under_signed_members.contains(&member)
     });
     let field_semantics = if is_asked_to_assign && !keeps_fields {
@@ -577,21 +579,6 @@ pub(in crate::lower) fn find_what_is_printed_for_each_object(
         makes_constructor: printed.makes_constructor && plan.constructor.is_none(),
         ..printed
     }
-}
-
-pub(in crate::lower) fn is_evaluated_in_constructor(
-    hir: &hir::File<'_>,
-    bound: &Bound<'_>,
-    compiled: &CompiledModule<'_>,
-    fields_under_signed_members: &[MemberId],
-    member: MemberId,
-) -> bool {
-    let Some(class) = bound.member_class(member) else {
-        return false;
-    };
-    let plan = plan_class(hir, bound, compiled, fields_under_signed_members, class);
-    let field = ClassElement::AssignedField { member };
-    plan.injected_elements.contains(&field)
 }
 
 pub(in crate::lower) fn class_slots(

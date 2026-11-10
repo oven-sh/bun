@@ -99,12 +99,14 @@ One error is different. TypeScript gives up on a type after 100 nested steps and
 
 [`bun check --aot`](/runtime/check) reports every error that stops the build, and also the type errors in code that the build leaves out. It builds nothing. Bun checks each file with the nearest `tsconfig.json`, and reads that config's `files` and `include` for the globals they declare, even if nothing imports them. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
 
-The build only stops where `tsc` reports an error under your own `tsconfig.json`:
+The build only stops where `tsc` reports an error under your own `tsconfig.json`. The compiler reads Bun's type declarations even if you haven't installed them, and it overrides a few options. So when it finds a type error, it runs [`bun check`](/runtime/check) on that file with your own settings, and only reports the error if `bun check` finds it at the same place. A build without type errors skips that step.
+
+For example:
 
 - `"noCheck": true` turns type errors off for the build too. Syntax errors still stop it.
 - An entry point that `exclude` rules out isn't type checked, and neither are the files that only it imports. An example is a worker that has a `tsconfig.json` of its own.
 - If `@types/bun` is installed but `types` doesn't name it, the build still reads it, and an error that only comes from its declarations doesn't stop the build.
-- Without a `tsconfig.json`, the build uses [the options of `bun check`](/runtime/check#without-a-tsconfigjson) with TypeScript's default `lib`, which declares the DOM. `typeof window` and `HTMLElement` are not errors.
+- Without a `tsconfig.json`, the build uses [the options of `bun check`](/runtime/check#without-a-tsconfigjson). `lib` is `ESNext`, as in the `tsconfig.json` that `bun init` writes, and Bun's own declarations cover `fetch`, `Response`, streams and the like. A name that only the DOM declares isn't an error, because `tsc`'s default `lib` declares it: `typeof window` and `HTMLElement` build. The compiler doesn't know the type of such a name, though, so it misses a wrong use of one: `const title: number = document.title` builds too.
 
 A few options can't change from one file to the next, because a build has one type checker and the entry point's `tsconfig.json` sets it up: `strictNullChecks`, `strictFunctionTypes`, `strictBindCallApply`, `strictBuiltinIteratorReturn`, `exactOptionalPropertyTypes`, `lib` (or the `target` it defaults from), `allowJs`, `maxNodeModuleJsDepth`, `resolveJsonModule` and `allowArbitraryExtensions`. If a folder's `tsconfig.json` sets one of them differently, the build doesn't type check the files in that folder, and its last line counts them as compiled without types. It still reads their types, but takes each one as a [guess](/compiler/internals#what-types-are-used-for) that the compiled code checks. They behave the same. Run `bun check` in that folder to see their type errors. A package that [publishes its types](/compiler/libraries#publish-a-package-with-its-types) is the exception: it keeps them whatever your `tsconfig.json` says.
 

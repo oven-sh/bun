@@ -16,6 +16,5 @@
 # sink(toLimit, overText, toTen, down, downToZero, whileLess, counted, twoVariables, loopInLoop);
 # -- end of source
 # RUN: walk f1 f2 f3 f4 f5 f6 f7 f8 f9 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-LABEL: code f9:Body

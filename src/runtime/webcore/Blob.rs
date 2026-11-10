@@ -5816,10 +5816,8 @@ impl Any {
         }
     }
 
-    /// `take_string` for `text()` and `json()`. Those two run UTF-8 decode on a
-    /// byte body, which drops a leading BOM (`to_string_with_bytes`,
-    /// `to_json_with_bytes`). A string body decodes the same way, so a leading
-    /// U+FEFF goes here too. `arrayBuffer()` and `bytes()` keep it.
+    /// `take_string` for `text()` and `json()`: drops one leading U+FEFF, as the
+    /// UTF-8 decode of a byte body does. `arrayBuffer()` and `bytes()` keep it.
     fn take_string_without_bom(&mut self) -> BunString {
         let string = self.take_string();
         // A Latin-1 string cannot hold U+FEFF.

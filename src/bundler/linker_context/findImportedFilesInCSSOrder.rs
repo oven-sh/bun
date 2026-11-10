@@ -76,11 +76,6 @@ fn memcpy_and_reset<'a>(order: &mut Vec<CssImportOrder<'a>>, wip: &mut Vec<CssIm
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
 ///
-/// For that, a list of the layer names of the file stands for the earlier copy.
-/// esbuild prints such a list for every file. A file that declares a layer under
-/// "@media" or "@supports" gets `CssImportOrderKind::LayersOf` here, which keeps
-/// the condition.
-///
 /// The traversal recurses once per `@import`. Returns `Err` if the import chain
 /// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
@@ -232,8 +227,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 }
             }
 
-            // A file that did not load as a style sheet. `scan_css_imports` has the error for
-            // it, and only the dev server goes on.
+            // Not a style sheet. `scan_css_imports` has the error, and only the dev server goes on.
             let Some(repr): Option<&BundlerStyleSheet> =
                 self.css_asts[source_index.get() as usize].as_deref()
             else {
@@ -436,8 +430,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             }
             _ => false,
         };
-        // An import with a layer must not declare that layer ahead of a layer that an entry
-        // behind the imports declares first. So that layer gets a declaration ahead of it.
         let mut stand_ins = has_layered_external_import.then(LayerStandIns::default);
         let mut is_at_layer_prefix = true;
         for (i, entry) in order.slice().iter().enumerate() {
@@ -810,8 +802,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 }
             }
 
-            // The entry that a stand-in stands for stays: a style sheet that is applied with no
-            // "@import" rules, as a hot update of the dev server is, has only that entry.
+            // A stand-in makes no later entry redundant: a hot update applies no "@import" rule.
             if !is_layer_stand_in(entry) {
                 layer_duplicates
                     .mut_(index)
@@ -973,19 +964,15 @@ pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOr
         })
 }
 
-/// What a walk of the rules of a style sheet found out about its layers. One per build, so
-/// that a style sheet with many importers is walked once.
+/// What a walk of the rules of a style sheet says about its layers, kept for the whole build.
 #[derive(Default)]
 pub(crate) struct LayerLists {
-    /// Whether one "@layer" statement of the layer names declares what the rules declare.
     is_flat: Vec<(u32, bool)>,
-    /// Whether a rule is an "@layer" block with no name.
     has_anonymous_layer: Vec<(u32, bool)>,
 }
 
 impl LayerLists {
-    /// Whether one "@layer" statement of the layer names of `sheet` declares what its rules
-    /// declare: they declare no layer first under a condition, and none in another order.
+    /// Whether one "@layer" statement of `sheet.layer_names` declares what the rules declare.
     fn is_flat(&mut self, file: AstIndex, sheet: &BundlerStyleSheet) -> bool {
         let names = sheet.layer_names.slice_const();
         if names.is_empty()
@@ -1018,9 +1005,7 @@ impl LayerLists {
     }
 }
 
-/// What stands for a copy of a file that a later copy makes redundant: the layers that the
-/// copy would declare. A flat list of the names is right unless the file declares a layer only
-/// under a condition, or in another order than the list.
+/// What stands for a copy of `file` that a later copy makes redundant: the layers it declares.
 fn layers_of_redundant_copy<'a>(
     file: AstIndex,
     css_asts: &[crate::bundled_ast::CssCol],
@@ -1034,8 +1019,7 @@ fn layers_of_redundant_copy<'a>(
     CssImportOrderKind::LayersOf(file)
 }
 
-/// Whether the next rule that is not an "@layer" statement is the "@namespace" of a file. A
-/// block ahead of "@namespace" makes that rule invalid, and a statement does not.
+/// Whether only "@layer" statements come before an "@namespace", which a block would make invalid.
 fn is_ahead_of_namespace(
     later: &[CssImportOrder],
     css_asts: &[crate::bundled_ast::CssCol],
@@ -1065,8 +1049,7 @@ fn is_ahead_of_namespace(
     false
 }
 
-/// The style sheet that an import stand-in loads. It has no rules: the "@import" rule itself
-/// declares the layer, also where a content security policy blocks the URL.
+/// The URL of a stand-in. Its "@import" rule declares the layer, also when a CSP blocks the URL.
 const EMPTY_STYLE_SHEET: &[u8] = b"data:text/css,";
 
 /// Whether the entry is an "@import" that `LayerStandIns` made to declare a layer.
@@ -1112,11 +1095,7 @@ impl LayerDeclaration<'_> {
     }
 }
 
-/// Adds the layers that `entry` declares to `out`, in the order of the source. Returns false
-/// at the first layer that neither an "@layer" statement nor one "@import" can declare: an
-/// anonymous layer, a layer under two media query lists or two "supports()" conditions, or
-/// a layer of a file whose list of layer names does not say what its rules declare
-/// (`file_layers` is `None`).
+/// Adds the layers of `entry` to `out`. Returns false at the first one that no stand-in can declare.
 fn visible_layers<'o, 'n>(
     index: u32,
     entry: &'o CssImportOrder,
@@ -1185,19 +1164,12 @@ fn visible_layers<'o, 'n>(
     true
 }
 
-/// The hoist moves an external "@import" ahead of the entries that came before it. If the
-/// import has a layer, that layer would come first in the layer order. So each layer that
-/// those entries declare gets a stand-in ahead of the import: an "@layer" statement while no
-/// "@import" is out, and after that an "@import" of an empty style sheet with the layer and
-/// its conditions, because only an "@import" is valid between two "@import" rules.
-///
-/// The entries stay where they are. The stand-ins only add to the import order.
+/// Declares each layer that a hoisted external "@import" with a layer would pass, ahead of it.
 #[derive(Default)]
 struct LayerStandIns<'o> {
     /// The entries behind the imports that have no stand-in yet, as indexes into the order.
     pending: Vec<u32>,
-    /// A pending entry declares a layer that nothing ahead of an import can declare. A
-    /// stand-in for a later layer would move that layer ahead of it, so there is none.
+    /// A pending entry has a layer that no stand-in can declare, so later layers get none either.
     is_closed: bool,
     has_import: bool,
     declared: Vec<LayerDeclaration<'o>>,
@@ -1229,8 +1201,7 @@ impl<'o> LayerStandIns<'o> {
         if self.pending.is_empty() {
             return;
         }
-        // The layer of the import, as far as it has a name. An import with no layer declares
-        // none, so it passes none.
+        // The named part of the layer of the import. An import with no layer passes no layer.
         let mut import_path: Vec<&'static [u8]> = Vec::new();
         let mut has_layer = false;
         for layer in import.conditions.iter().filter_map(|c| c.layer.as_ref()) {
@@ -1250,8 +1221,6 @@ impl<'o> LayerStandIns<'o> {
                 &mut |file| {
                     let sheet: &BundlerStyleSheet =
                         css_asts[file.get() as usize].as_deref().unwrap();
-                    // No statement can stand for an anonymous layer, or for a layer that the
-                    // file declares under a condition.
                     let is_flat = layer_lists.is_flat(file, sheet)
                         && !layer_lists.has_anonymous_layer(file, sheet);
                     is_flat.then_some(sheet.layer_names.slice_const())
@@ -1264,8 +1233,7 @@ impl<'o> LayerStandIns<'o> {
                 break;
             }
         }
-        // The import declares its own layer and the layers around it where it is now, which
-        // is where the entries declared them.
+        // The import itself declares these layers, at the place where the entries did.
         if declarations
             .iter()
             .all(|declaration| import_path.starts_with(&declaration.path))
@@ -1293,8 +1261,7 @@ impl<'o> LayerStandIns<'o> {
                 condition_import_records: Vec::new(),
             });
         };
-        // One statement for each entry. The list of names that stands for the entry later on is
-        // then redundant, where it has the same names.
+        // One statement per entry, so that the later list of the same entry is redundant.
         let mut statement_entry = u32::MAX;
         for declaration in declarations {
             if self
@@ -1314,6 +1281,7 @@ impl<'o> LayerStandIns<'o> {
                 }
                 statement.push(name);
             } else {
+                // Only an "@import" is valid between two "@import" rules, and it takes conditions.
                 end_statement(&mut statement, hoisted);
                 has_import = true;
                 let conditions = arena.alloc_uninit_slice::<ImportConditions>(1);

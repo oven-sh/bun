@@ -5775,8 +5775,7 @@ pub mod bv2_impl {
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();
                 let sources = input_files.items_source();
-                // A later importer, or the entry point list, would put a style sheet with an
-                // invalid import back among the CSS roots. So they are removed at the end.
+                // Removed from the CSS roots after the loop, because a later importer adds them again.
                 let mut css_files_with_invalid_imports: Vec<Index> = Vec::new();
                 for index in 1..self.graph.ast.len() {
                     // SAFETY: `index < ast.len()`; see note above for column aliasing.

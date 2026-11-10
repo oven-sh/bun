@@ -187,18 +187,10 @@ impl LayerStatementRule {
     }
 }
 
-// ─── The layers that a rule list declares ──────────────────────────────────
-//
-// A layer gets its place in the layer order where its name first appears. Inside `@media`,
-// `@supports` or `@-moz-document` the name counts only while the condition holds. Inside
-// `@container`, `@scope`, `@starting-style` or a style rule it counts in every case.
-
 /// The names of the `@layer` blocks around a rule.
 type LayerPath = SmallList<&'static [u8], 8>;
 
-/// The top-level rules that the bundler prints for a copy of a style sheet, as
-/// `prepare_css_asts_for_chunk` does: no `@import`, and not the `@layer` statements ahead of the
-/// first `@import` when they have an entry of their own in the import order.
+/// The top-level rules that `prepare_css_asts_for_chunk` prints for a copy of a style sheet.
 fn printed_rules<R>(
     rules: &[CssRule<R>],
     has_layers_pre_import: bool,
@@ -229,8 +221,7 @@ fn is_name_in_path(expected: &LayerName, path: &LayerPath, name: &LayerName) -> 
         && expected[path.len()..] == *name
 }
 
-/// Calls `visit` for each `@layer` name in source order, with the layers around it and whether
-/// a rule around it is a condition. The name is `None` for an `@layer` block with no name.
+/// Calls `visit(layers around it, name, is under a condition)` for each `@layer` name, in order.
 struct LayerNameWalk<'f> {
     path: LayerPath,
     conditions: u32,
@@ -279,6 +270,7 @@ impl LayerNameWalk<'_> {
             CssRule::Media(media) => self.conditional(&media.rules),
             CssRule::Supports(supports) => self.conditional(&supports.rules),
             CssRule::MozDocument(document) => self.conditional(&document.rules),
+            // A layer inside one of these rules is declared also where the rule does not apply.
             CssRule::Style(style) => self.rules(&style.rules.v),
             CssRule::Nesting(nesting) => self.rules(&nesting.style.rules.v),
             CssRule::Container(container) => self.rules(&container.rules.v),
@@ -316,9 +308,7 @@ impl<R> CssRuleList<R> {
         }
     }
 
-    /// Whether the top-level `@layer` rules name exactly `names`, in order. `names` are all the
-    /// names of the style sheet, so no rule inside another one names a layer then, and one
-    /// `@layer` statement of `names` declares what the rules declare.
+    /// Whether the top-level `@layer` rules name exactly `names`, all names of the sheet, in order.
     pub fn top_level_layers_are(&self, names: &[LayerName], has_layers_pre_import: bool) -> bool {
         let mut expected = names.iter();
         let mut is_next = |name: &LayerName| expected.next().is_some_and(|next| next.eql(name));
@@ -342,8 +332,7 @@ impl<R> CssRuleList<R> {
         expected.next().is_none()
     }
 
-    /// Whether a rule, at any depth, is an `@layer` block with no name. No statement can declare
-    /// the layer of its rules.
+    /// Whether a rule, at any depth, is an `@layer` block with no name.
     #[cold]
     pub fn has_anonymous_layer(&self) -> bool {
         let mut walk = LayerNameWalk {
@@ -357,9 +346,7 @@ impl<R> CssRuleList<R> {
         walk.rules(&self.v).is_break()
     }
 
-    /// Whether one `@layer` statement of `names` orders the layers as these rules do, whatever
-    /// conditions hold. `names` are the names that the parser found in these rules, before
-    /// the minifier ran. `layers_pre_import` are in the layer order ahead of these rules.
+    /// Whether one `@layer` statement of `names` orders the layers as these rules do in every case.
     #[cold]
     pub fn layers_are_in_order_of(
         &self,
@@ -393,13 +380,11 @@ impl<R> CssRuleList<R> {
             return true;
         }
 
-        // A trie of the layers. A name also declares the layers that its segments before the
-        // last one name. Node 0 is no layer.
+        // A trie of the layers, because the name `a.b` also declares `a`. Node 0 is no layer.
         const DECLARED: u32 = u32::MAX;
         let mut children: bun_collections::HashMap<(u32, &[u8]), u32> =
             bun_collections::HashMap::new();
-        // For the layer of each node: its place among the layers that `names` declare first, or
-        // `DECLARED` once it is in the layer order.
+        // The place of each node among the layers that `names` declare first, or `DECLARED`.
         let mut place: Vec<u32> = vec![DECLARED];
         let mut count = 0;
         for (list, is_declared) in [(layers_pre_import, true), (names, false)] {
@@ -454,14 +439,7 @@ impl<R> CssRuleList<R> {
             && reached == count
     }
 
-    /// These rules with everything but their `@layer` names removed: `@layer` statements, inside
-    /// copies of the `@media`, `@supports` and `@-moz-document` rules around them. It declares
-    /// the layers that the rules declare, under the same conditions.
-    ///
-    /// # Safety
-    ///
-    /// The conditions of the returned rules alias those of `self`, and every list is in `bump`.
-    /// The caller must not drop the returned list, and must not use it after `self` or `bump`.
+    /// The `@layer` names of these rules, inside copies of the conditions around them. The caller never drops the result, which aliases `self` and lives in `bump`.
     pub unsafe fn layer_skeleton(&self, has_layers_pre_import: bool, bump: &Arena) -> Self {
         let mut builder = LayerSkeleton {
             bump,

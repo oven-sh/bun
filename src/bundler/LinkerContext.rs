@@ -3199,9 +3199,7 @@ impl<'a> LinkerContext<'a> {
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
     /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
     /// initialized `self.log`, passing a stack-local `Log` instead.
-    ///
-    /// `failed_to_load` says whether a file has no AST because it did not load.
-    /// Only the dev server goes on with such a file, and that file has the error.
+    /// `failed_to_load(i)`: the load of file `i` failed (dev server only), so `i` has the error itself.
     pub(crate) fn scan_css_imports(
         file_source_index: u32,
         file_import_records: &[ImportRecord],
@@ -3219,8 +3217,7 @@ impl<'a> LinkerContext<'a> {
                     let loader = loaders[record.source_index.get() as usize];
 
                     match record.kind {
-                        // An "@import" takes a style sheet only. The loaders below are the ones
-                        // that a "url()" can point at.
+                        // An "@import" takes a style sheet only. The loader table below is for "url()".
                         ImportKind::At | ImportKind::AtConditional => {
                             if loader != Loader::Css && !failed_to_load(record.source_index.get()) {
                                 let imported = bun_core::fmt::quote(

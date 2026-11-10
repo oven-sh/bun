@@ -1389,9 +1389,7 @@ pub enum CssImportOrderKind<'a> {
     /// We'll just print layer name declarations so that the original ordering is preserved.
     #[strum(serialize = "layers")]
     Layers(Layers),
-    /// A redundant earlier import of a file whose list of layer names does not say what its rules
-    /// declare, because the rules declare a layer under `@media` or `@supports`. It prints the
-    /// `@layer` names of the file inside copies of those rules.
+    /// Like `Layers`, for a file that declares a layer under a condition. Prints `layer_skeleton`.
     #[strum(serialize = "layers_of")]
     LayersOf(Index),
     #[strum(serialize = "external_path")]

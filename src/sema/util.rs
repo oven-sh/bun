@@ -976,7 +976,7 @@ mod tests {
             }
         }
         assert_eq!(keys.index_of(39 * 7), Some(39));
-        assert!(!keys.contains(1) && keys.insert(1) && !keys.insert(1));
+        assert!(keys.index_of(1).is_none() && keys.insert(1) && !keys.insert(1));
         assert!(
             keys.into_keys()
                 .into_iter()

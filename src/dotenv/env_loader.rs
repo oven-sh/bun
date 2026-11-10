@@ -213,8 +213,7 @@ impl Loader {
         !Self::is_emptyish(value) && value != b"0" && value != b"false"
     }
 
-    /// The mode: `BUN_ENV`, else `NODE_ENV`. An empty value names no mode, so
-    /// it is skipped and never returned.
+    /// The mode: the first of `BUN_ENV`, `NODE_ENV` that is not empty.
     pub fn get_node_env(&self) -> Option<&[u8]> {
         let read = |name: &[u8]| self.get(name).filter(|v| !v.is_empty());
         read(b"BUN_ENV").or_else(|| read(b"NODE_ENV"))

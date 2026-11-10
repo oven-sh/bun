@@ -531,10 +531,37 @@ ZIG_DECL JSC::EncodedJSValue Bun__Timer__setImmediate(JSC::JSGlobalObject* globa
 
 #ifdef __cplusplus
 
+BUN_DECLARE_HOST_FUNCTION(BunServe__onResolvePlugins);
+BUN_DECLARE_HOST_FUNCTION(BunServe__onRejectPlugins);
+
+#endif
+
+#ifdef __cplusplus
+
 CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC::GetterSetter *arg);
 CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC::GetterSetter *arg);
 
 CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC::CustomGetterSetter *arg);
 CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC::CustomGetterSetter *arg);
+
+#endif
+
+// handwritten
+
+#ifdef __cplusplus
+
+BUN_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
+BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
+
+
+BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onResolveInputStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onRejectInputStream);
+
 
 #endif

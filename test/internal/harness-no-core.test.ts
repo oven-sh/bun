@@ -27,7 +27,7 @@ test.skipIf(!isLinux)("noCoreCmd executes its child with unchanged arguments eve
     stderr: "pipe",
   });
   expect(result.exitCode).toBe(0);
-  expect(result.signalCode).toBeNull();
+  expect(result.signalCode).toBeUndefined();
   expect(result.stderr.toString()).toBe("");
   expect(JSON.parse(result.stdout.toString())).toEqual({ args, filter: expectedFilter });
 });

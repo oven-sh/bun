@@ -111,10 +111,10 @@ describe("tsconfig compilerOptions.jsx", () => {
 });
 
 // A bunfig.toml can have no `jsx` key, or `jsx = "react"`. `Bun.build()` can have no `jsx.development`. Neither says
-// development or production. In a build, what says it is NODE_ENV, `define`, --production, a --jsx-* flag
-// (production), "jsx": "react-jsx" or "react-jsxdev" in the tsconfig.json of the working directory,
-// `jsx = "react-jsx"` or "react-jsxDEV" in bunfig.toml, and `jsx.development` or the runtime "react-jsx" or
-// "react-jsxdev" of `Bun.build()`.
+// development or production. In a build, what says it is NODE_ENV, `define`, --production, one of --jsx-runtime,
+// --jsx-import-source, --jsx-factory and --jsx-fragment (production), "jsx": "react-jsx" or "react-jsxdev" in the
+// tsconfig.json of the working directory, `jsx = "react-jsx"` or "react-jsxDEV" in bunfig.toml, and
+// `jsx.development` or the runtime "react-jsx" or "react-jsxdev" of `Bun.build()`.
 describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.development leave dev or prod open", () => {
   type Files = Record<string, string>;
   type Env = Record<string, string>;
@@ -123,6 +123,8 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
   const tsconfig = (jsx: string, name = "tsconfig.json") => ({ [name]: JSON.stringify({ compilerOptions: { jsx } }) });
   const bunfig = (jsx: string) => ({ "bunfig.toml": `jsx = "${jsx}"\n` });
   const bunfigWithoutJsx = { "bunfig.toml": `telemetry = false\n` };
+  const bunfigBesideReactJsx = { ...bunfigWithoutJsx, ...tsconfig("react-jsx") };
+  const nodeEnv = (value: string) => `{ define: { "process.env.NODE_ENV": '"${value}"' } }`;
   const production = { NODE_ENV: "production" };
   const development = { NODE_ENV: "development" };
   const dev = "react/jsx-dev-runtime";
@@ -174,7 +176,41 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
     ['NODE_ENV=development, tsconfig.json "react-jsx"', dev, tsconfig("react-jsx"), development],
     ['NODE_ENV=production, tsconfig.json "react-jsx"', prod, tsconfig("react-jsx"), production],
     ["bunfig.toml without jsx", dev, bunfigWithoutJsx],
-    ['bunfig.toml without jsx, tsconfig.json "react-jsx"', prod, { ...bunfigWithoutJsx, ...tsconfig("react-jsx") }],
+    ['bunfig.toml without jsx, tsconfig.json "react-jsx"', prod, bunfigBesideReactJsx],
+    [
+      'NODE_ENV=test, bunfig.toml without jsx, tsconfig.json "react-jsx"',
+      prod,
+      bunfigBesideReactJsx,
+      { NODE_ENV: "test" },
+    ],
+    [
+      'NODE_ENV=development, bunfig.toml without jsx, tsconfig.json "react-jsx"',
+      dev,
+      bunfigBesideReactJsx,
+      development,
+    ],
+    [
+      'NODE_ENV=development and a `define` of "test", bunfig.toml without jsx, tsconfig.json "react-jsx"',
+      prod,
+      bunfigBesideReactJsx,
+      development,
+      { flags: ["--define", 'process.env.NODE_ENV="test"'], options: nodeEnv("test") },
+    ],
+    // --jsx-side-effects is not one of the flags that say production.
+    [
+      'bunfig.toml without jsx, tsconfig.json "react-jsx", --jsx-side-effects and `sideEffects` with no other JSX setting',
+      prod,
+      bunfigBesideReactJsx,
+      {},
+      { flags: ["--jsx-side-effects"], options: "{ jsx: { sideEffects: true } }" },
+    ],
+    [
+      'bunfig.toml without jsx, tsconfig.json "react-jsxdev", --jsx-side-effects and `sideEffects` with no other JSX setting',
+      dev,
+      { ...bunfigWithoutJsx, ...tsconfig("react-jsxdev") },
+      {},
+      { flags: ["--jsx-side-effects"], options: "{ jsx: { sideEffects: true } }" },
+    ],
     [
       'bunfig.toml without jsx, tsconfig.json "react-jsxdev"',
       dev,
@@ -201,9 +237,23 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
       { entry: "sub/m.jsx" },
     ],
     [
+      'bunfig.toml without jsx, tsconfig.json "react-jsx", the entry point under sub/tsconfig.json "react-jsxdev"',
+      prod,
+      { ...bunfigBesideReactJsx, ...tsconfig("react-jsxdev", "sub/tsconfig.json"), ...inSub },
+      {},
+      { entry: "sub/m.jsx" },
+    ],
+    [
       'tsconfig.json "react-jsx" in the directory above',
       dev,
       { ...tsconfig("react-jsx"), ...inSub },
+      {},
+      { cwd: "sub" },
+    ],
+    [
+      'tsconfig.json "react-jsx" in the directory above a bunfig.toml without jsx',
+      dev,
+      { ...tsconfig("react-jsx"), ...inSub, "sub/bunfig.toml": bunfigWithoutJsx["bunfig.toml"] },
       {},
       { cwd: "sub" },
     ],
@@ -221,9 +271,30 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
       {},
       { flags: ["--tsconfig-override=build.json"], options: `{ tsconfig: "./build.json" }` },
     ],
+    [
+      'bunfig.toml without jsx, tsconfig.json "react-jsxdev", and --tsconfig-override and `tsconfig` name a file with "react-jsx"',
+      prod,
+      { ...bunfigWithoutJsx, ...tsconfig("react-jsxdev"), ...tsconfig("react-jsx", "build.json") },
+      {},
+      { flags: ["--tsconfig-override=build.json"], options: `{ tsconfig: "./build.json" }` },
+    ],
   ])("%s: bun build and Bun.build() import %s", async (_, expected, files = {}, env = {}, build = {}) => {
     expect(await bothIn(files, env, build)).toEqual({ cli: imports(expected), api: imports(expected) });
   });
+
+  // --no-bundle takes the value of each file from the tsconfig.json above that file. When that tsconfig.json does not
+  // say, the working directory says.
+  test.each<[string, string, Files]>([
+    ["sub/tsconfig.json without jsx", prod, { "sub/tsconfig.json": "{}" }],
+    ['sub/tsconfig.json "react-jsxdev"', dev, tsconfig("react-jsxdev", "sub/tsconfig.json")],
+  ])(
+    'bunfig.toml without jsx, tsconfig.json "react-jsx", %s: bun build --no-bundle sub/m.jsx imports %s',
+    async (_, expected, files) => {
+      const cmd = ["build", "--no-bundle", "sub/m.jsx"];
+      const { stdout, stderr, exitCode } = await spawned(cmd, { ...bunfigBesideReactJsx, ...inSub, ...files }, {});
+      expect({ imported: runtimesImportedBy(stdout), stderr, exitCode }).toEqual(imports(expected));
+    },
+  );
 
   // Where the two do not agree. `bun build` lets a tsconfig.json that does not choose go before NODE_ENV=production
   // (#38050). `Bun.build()` does not read the `jsx` and `define` keys of bunfig.toml (#19556).
@@ -254,7 +325,6 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
     expect(await bothIn(files, env, {})).toEqual({ cli: imports(cli), api: imports(api) });
   });
 
-  const nodeEnv = (value: string) => `{ define: { "process.env.NODE_ENV": '"${value}"' } }`;
   const stated = "{ jsx: { development: true } }";
   const statedAndEnv = `{ env: "inline", jsx: { development: true } }`;
   test.each<[string, string, string, Files?, Env?]>([
@@ -286,6 +356,8 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
       tsconfig("react-jsxdev"),
     ],
     ['NODE_ENV=production, tsconfig.json "react-jsx"', statedAndEnv, prod, tsconfig("react-jsx"), production],
+    ['tsconfig.json "react-jsx"', `{ env: "disable" }`, prod, tsconfig("react-jsx")],
+    ['tsconfig.json "react-jsx"', `{ env: "disable", jsx: { development: true } }`, dev, tsconfig("react-jsx")],
   ])("%s: Bun.build(%s) imports %s", async (_, options, expected, files = {}, env = {}) => {
     const { stdout, stderr, exitCode } = await spawned(["-e", apiBuild(options)], files, env);
     expect({ imported: runtimesImportedBy(stdout), stderr, exitCode }).toEqual(imports(expected));
@@ -392,6 +464,20 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
   });
 
+  // The same two import sources in `bun build` beside a bunfig.toml. NODE_ENV=development and `jsx = "react-jsxDEV"`
+  // are the ways back for the one that has only ./jsx-dev-runtime.
+  test.each<["jsx-runtime" | "jsx-dev-runtime", string, string, Files, Env?]>([
+    ["jsx-runtime", "a bunfig.toml without jsx", "prod jsx", bunfigWithoutJsx],
+    ["jsx-dev-runtime", "a bunfig.toml without jsx", `Could not resolve: "only/jsx-runtime"`, bunfigWithoutJsx],
+    ["jsx-dev-runtime", "a bunfig.toml without jsx, NODE_ENV=development", "dev jsxDEV", bunfigWithoutJsx, development],
+    ["jsx-dev-runtime", 'bunfig.toml jsx = "react-jsxDEV"', "dev jsxDEV", bunfig("react-jsxDEV")],
+  ])('tsconfig.json "react-jsx", only ./%s, %s: bun build says %j', async (has, _, expected, files, env = {}) => {
+    const source = only(has === "jsx-runtime" ? "rt" : "dev");
+    const { stdout, stderr, exitCode } = await spawned(["build", "m.jsx"], { ...source, ...files }, env);
+    const said = (stdout + stderr).match(/prod jsx|dev jsxDEV|Could not resolve: "[^"]+"/)?.[0];
+    expect({ said, exitCode }).toEqual({ said: expected, exitCode: expected.startsWith("Could not resolve") ? 1 : 0 });
+  });
+
   // A plugin that answers for react/jsx-dev-runtime only does not see the import of the production runtime.
   test.each<[string, string[]]>([
     ["{}", [prod]],
@@ -421,8 +507,8 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
   );
 
   const testFile = `import { test } from "bun:test";\ntest("jsx", () => {\n  globalThis.s = <div p="1">x</div>;\n});\n`;
-  // A --jsx-* flag selects the production runtime, as it has since 1.2.3. `bun run <file>` reads bunfig.toml after the
-  // flags, and the bunfig.toml then decides.
+  // --jsx-import-source selects the production runtime, as it has since 1.2.3. So do --jsx-runtime, --jsx-factory and
+  // --jsx-fragment. `bun run <file>` reads bunfig.toml after the flags, and the bunfig.toml then decides.
   test.each<[string, string[], string, Files?]>([
     ["no bunfig.toml", [importSource, "m.jsx"], "prod jsx\n"],
     ["no bunfig.toml", ["run", importSource, "m.jsx"], "prod jsx\n"],

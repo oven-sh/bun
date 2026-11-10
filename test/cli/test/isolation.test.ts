@@ -3189,6 +3189,48 @@ describe.concurrent("the SourceProvider cache checks a source against its file a
       env,
     );
   });
+
+  // vi.resetModules() leaves a package loaded. One that threw is not loaded, in this test file or in the one before it.
+  test.each(modes)("%s: vi.resetModules() reads a package again that threw while it loaded", async (_, args, env) => {
+    await passes(
+      {
+        "node_modules/throws-cjs/package.json": `{ "name": "throws-cjs", "main": "index.js" }`,
+        "node_modules/throws-cjs/index.js": `exports.text = "v1"; throw new Error("v1");`,
+        "node_modules/threw-earlier/package.json": `{ "name": "threw-earlier", "type": "module", "main": "index.js" }`,
+        "node_modules/threw-earlier/index.js": `export const text = "v1"; throw new Error("v1");`,
+        "a-fails.test.ts": `
+          import { expect, test } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("a package throws while it loads, and is written again", async () => {
+            expect(await import("threw-earlier").then(() => "loaded", error => error.message)).toBe("v1");
+            writeFileSync(join(import.meta.dir, "node_modules/threw-earlier/index.js"), 'export const text = "v2";');
+          });
+        `,
+        "b-resets.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("an ES module package that threw in the test file before this one", async () => {
+            vi.resetModules();
+            expect((await import("threw-earlier")).text).toBe("v2");
+          });
+
+          test("a CommonJS package that threw in this one", () => {
+            expect(() => require("throws-cjs")).toThrow("v1");
+            writeFileSync(join(import.meta.dir, "node_modules/throws-cjs/index.js"), 'exports.text = "v2";');
+            vi.resetModules();
+            expect(require("throws-cjs").text).toBe("v2");
+          });
+        `,
+      },
+      3,
+      args,
+      env,
+    );
+  });
 });
 
 describe.concurrent("mocks and spies do not outlive their test file", () => {

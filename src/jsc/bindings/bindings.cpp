@@ -139,6 +139,7 @@
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "BunCompiledObjectEquality.h"
+#include "NodeObjEquiv.h"
 #include "JavaScriptCore/AOTHost.h"
 #include "JavaScriptCore/AOTMembersLeftOut.h"
 #include "DOMURL.h"
@@ -948,35 +949,47 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     if (a1.size() != a2.size()) {
         return false;
     }
-    // Own-property-scoped reads: a plain get() would walk the prototype chain and let an inherited
-    // key satisfy an own one. GetOwnProperty enforces name-for-name ownership in one lookup;
-    // DontEnum is rejected since the name lists exclude non-enumerable properties.
-    for (size_t i = 0; i < a1.size(); i++) {
-        JSC::PropertyName propertyName(a1[i]);
-        PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
-        bool o2Owns = o2->methodTable()->getOwnPropertySlot(o2, globalObject, propertyName, slot2);
+    return Bun::NodeObjEquiv::ownPropertiesEqual(globalObject, scope, o1, o2, nullptr, a2, true, [&](JSValue left, JSValue right) {
+        return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+    });
+}
+
+// What node's keyCheck and objEquiv do with two arrays of one length before their elements: nullopt where the elements decide.
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
+static NEVER_INLINE std::optional<bool> nodeArrayOtherKeysEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSArray* array1, JSC::JSArray* array2)
+{
+    VM& vm = globalObject->vm();
+    bool hasOtherKeys = false;
+    if (Bun::NodeObjEquiv::hasNamedProperties(array1->structure()) || Bun::NodeObjEquiv::hasNamedProperties(array2->structure())) {
+        JSC::PropertyNameArrayBuilder keys1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        JSC::PropertyNameArrayBuilder keys2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        array2->getOwnNonIndexPropertyNames(globalObject, keys2, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!o2Owns || (slot2.attributes() & PropertyAttribute::DontEnum)) {
+        array1->getOwnNonIndexPropertyNames(globalObject, keys1, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (keys1.size() != keys2.size()) {
             return false;
         }
-        JSValue v2 = slot2.getValue(globalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, false);
-        PropertySlot slot1(o1, PropertySlot::InternalMethodType::GetOwnProperty);
-        bool o1Owns = o1->methodTable()->getOwnPropertySlot(o1, globalObject, propertyName, slot1);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!o1Owns || (slot1.attributes() & PropertyAttribute::DontEnum)) {
-            // A getter above removed or redefined the property mid-iteration.
-            return false;
-        }
-        JSValue v1 = slot1.getValue(globalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool eq = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, v1, v2, gcBuffer, stack, scope, true);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!eq) {
-            return false;
+        hasOtherKeys = keys2.size();
+        if (hasOtherKeys) {
+            bool otherKeysEqual = Bun::NodeObjEquiv::ownPropertiesEqual(globalObject, scope, array1, array2, nullptr, keys2, true, [&](JSValue left, JSValue right) {
+                return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+            });
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!otherKeysEqual) {
+                return false;
+            }
         }
     }
-    return true;
+    // `keys2.length === 0 && (val2.length === 0 || val2.size === 0)` (#L523-L528): with no other key, a second array that answers 0 for `size` is equal.
+    if (!hasOtherKeys && array2->length()) {
+        JSValue size2 = array2->get(globalObject, vm.propertyNames->size);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (size2.isNumber() && !size2.asNumber()) {
+            return true;
+        }
+    }
+    return std::nullopt;
 }
 
 // node's wellKnownConstructors set (lib/internal/util/comparisons.js), matched for any realm.
@@ -1123,6 +1136,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
+            // What can be called has this flag, and so has a Proxy.
+            bool answersForTagWithCode = false;
+            if ((c1->inlineTypeFlags() | c2->inlineTypeFlags()) & JSC::OverridesGetCallData) [[unlikely]] {
+                // node reads nothing of what `typeof` does not call an object (#L250-L255): two functions are equal when they are one.
+                if (c1->isCallable() || c2->isCallable()) {
+                    return false;
+                }
+                answersForTagWithCode = c1->isProxy() || c2->isProxy();
+            }
             if constexpr (!skipPrototypeIdentity) {
                 const auto& constructorName = vm.propertyNames->constructor;
                 PropertySlot slot1(protoCheck1, PropertySlot::InternalMethodType::Get);
@@ -1169,15 +1191,24 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     }
                 }
             }
-            JSString* tag1 = objectPrototypeToString(globalObject, protoCheck1);
-            RETURN_IF_EXCEPTION(scope, false);
-            JSString* tag2 = objectPrototypeToString(globalObject, protoCheck2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (tag1 != tag2) {
-                bool sameTag = tag1->equal(globalObject, tag2);
+            if (answersForTagWithCode) [[unlikely]] {
+                // A Proxy answers for Symbol.toStringTag with a trap, and node compares the two answers.
+                bool hasUnequalTag = Bun::NodeObjEquiv::hasUnequalTagSlow(globalObject, scope, protoCheck1, protoCheck2);
                 RETURN_IF_EXCEPTION(scope, false);
-                if (!sameTag) {
+                if (hasUnequalTag) {
                     return false;
+                }
+            } else {
+                JSString* tag1 = objectPrototypeToString(globalObject, protoCheck1);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSString* tag2 = objectPrototypeToString(globalObject, protoCheck2);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (tag1 != tag2) {
+                    bool sameTag = tag1->equal(globalObject, tag2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!sameTag) {
+                        return false;
+                    }
                 }
             }
         }
@@ -1200,6 +1231,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1Array != v2Array)
         return false;
 
+    if constexpr (checkPrototypes) {
+        if (v1Array && (o1->isProxy() || o2->isProxy())) {
+            return Bun::NodeObjEquiv::proxiedArraysEqual(globalObject, scope, o1, o2, [&](JSValue left, JSValue right) {
+                return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+            });
+        }
+    }
+
     if (v1Array && v2Array && !(o1->isProxy() || o2->isProxy())) {
         JSC::JSArray* array1 = uncheckedDowncast<JSC::JSArray>(v1);
         JSC::JSArray* array2 = uncheckedDowncast<JSC::JSArray>(v2);
@@ -1215,6 +1254,26 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (array1Length != array2Length && Bun__VM__isRunningVitestEntry(bunVM(globalObject))) {
                 return false;
             }
+        }
+
+        if constexpr (checkPrototypes) {
+            // Other keys and `size` take an own property or another prototype than the realm's Array.prototype. A `size` put on that prototype is not read.
+            if (Bun::NodeObjEquiv::hasNamedProperties(array1->structure()) || Bun::NodeObjEquiv::hasNamedProperties(array2->structure())
+                || array2->getPrototypeDirect() != JSValue(globalObject->arrayPrototype())) [[unlikely]] {
+                std::optional<bool> areEqual = nodeArrayOtherKeysEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, array1, array2);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (areEqual) {
+                    return *areEqual;
+                }
+            }
+            return Bun::NodeObjEquiv::arrayElementsEqual(
+                globalObject, scope, array1, array2,
+                [&](uint64_t index) { return index < array1->length(); },
+                [&](JSObject* array, uint64_t index, bool& ranCode) { return Bun::NodeObjEquiv::getIndex(globalObject, array, static_cast<unsigned>(index), ranCode); },
+                [&](JSObject* array, uint64_t index) { return Bun::NodeObjEquiv::ownsIndex(globalObject, array, static_cast<unsigned>(index)); },
+                [&](JSValue left, JSValue right) {
+                    return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+                });
         }
 
         uint64_t i = 0;
@@ -1264,12 +1323,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             return false;
-        }
-
-        if constexpr (checkPrototypes) {
-            // node compares own enumerable non-index string+symbol props via getOwnNonIndexProperties;
-            // the Bun.deepEquals symbol-only block below walks the prototype chain, so diverge here.
-            return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
         }
 
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
@@ -1353,7 +1406,41 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             bool sameStructure = o2Structure->id() == o1Structure->id();
             // Comparing values runs user getters that can rehash this PropertyTable mid-walk (use-after-free), so collect the pairs first and compare after.
             MarkedArgumentBuffer pairs;
-            if (sameStructure) {
+            [[maybe_unused]] bool stringKeysFirst = false;
+            if constexpr (checkPrototypes) {
+                // node compares string keys before symbol keys (keyCheck). Only a structure that is not quick to enumerate can hold a symbol key.
+                stringKeysFirst = !o1Structure->isQuickPropertyAccessAllowedForEnumeration();
+            }
+            if (stringKeysFirst) [[unlikely]] {
+                Vector<PropertyOffset, 8> symbolKeyed;
+                auto appendPair = [&](PropertyOffset offset) {
+                    JSValue right = o2->getDirect(offset);
+                    if (!right) {
+                        result = false;
+                        return false;
+                    }
+                    pairs.appendWithCrashOnOverflow(o1->getDirect(offset));
+                    pairs.appendWithCrashOnOverflow(right);
+                    return true;
+                };
+                o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                    if (entry.attributes() & PropertyAttribute::DontEnum) {
+                        return true;
+                    }
+                    if (entry.key()->isSymbol()) {
+                        if (!PropertyName(entry.key()).isPrivateName()) {
+                            symbolKeyed.append(entry.offset());
+                        }
+                        return true;
+                    }
+                    return appendPair(entry.offset());
+                });
+                for (PropertyOffset offset : symbolKeyed) {
+                    if (!appendPair(offset)) {
+                        break;
+                    }
+                }
+            } else if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
@@ -1484,7 +1571,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         bool sameIsEqual = true;
         if constexpr (enableAsymmetricMatchers)
             sameIsEqual = !hasEqualityTesters(globalObject);
-        auto areEqual = Bun::compareCompiledObjectProperties<isStrict>(globalObject, scope, o1, o2, sameIsEqual, [&](JSValue left, JSValue right) {
+        auto areEqual = Bun::compareCompiledObjectProperties<isStrict, checkPrototypes>(globalObject, scope, o1, o2, sameIsEqual, [&](JSValue left, JSValue right) {
             return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
         });
         RETURN_IF_EXCEPTION(scope, false);
@@ -1498,10 +1585,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if constexpr (checkPrototypes) {
         // node compares own enumerable properties only; getPropertyNames also
         // collects enumerable properties from the prototype chain.
-        o1->methodTable()->getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
+        bool sameKeyCounts = Bun::NodeObjEquiv::listOwnKeys(globalObject, scope, o1, o2, a1, a2);
         RETURN_IF_EXCEPTION(scope, false);
-        o2->methodTable()->getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, false);
+        if (!sameKeyCounts) {
+            return false;
+        }
+        return Bun::NodeObjEquiv::ownPropertiesEqual(globalObject, scope, o1, o2, &a1, a2, false, [&](JSValue left, JSValue right) {
+            return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+        });
     } else {
         o1->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1530,22 +1621,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        JSValue prop2;
-        if constexpr (checkPrototypes) {
-            // node only matches own enumerable properties; getIfPropertyExists
-            // would also find non-enumerable or inherited ones.
-            PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
-            bool has = o2->methodTable()->getOwnPropertySlot(o2, globalObject, propertyName1, slot2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!has || (slot2.attributes() & PropertyAttribute::DontEnum)) {
-                return false;
-            }
-            prop2 = slot2.getValue(globalObject, propertyName1);
-            RETURN_IF_EXCEPTION(scope, false);
-        } else {
-            prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
-            RETURN_IF_EXCEPTION(scope, false);
-        }
+        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
+        RETURN_IF_EXCEPTION(scope, false);
 
         if constexpr (!isStrict) {
             if (prop1.isUndefined() && prop2.isEmpty()) {
@@ -1953,6 +2030,29 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
             }
 
+            if (mode.checkPrototypes) {
+                // node answers false for a key of the right Error that is no own enumerable key of the left one (#L1022-L1024). The walk above takes its names from the left Error, and finds a name on the right one also where that one does not enumerate it. The lists are equally long, so such a pair has an own name that only the right Error enumerates.
+                const auto& list1 = a1.data()->propertyNameVector();
+                const auto& list2 = a2.data()->propertyNameVector();
+                UncheckedKeyHashSet<UniquedStringImpl*> names1;
+                for (size_t j = 0; j < propertyArrayLength2; j++) {
+                    const Identifier& i2 = list2[j];
+                    if (j < propertyArrayLength1 && list1[j] == i2) continue;
+                    if (names1.isEmpty()) {
+                        for (const Identifier& i1 : list1) {
+                            names1.add(i1.impl());
+                        }
+                    }
+                    if (names1.contains(i2.impl())) continue;
+
+                    bool isOwnName = right->hasOwnProperty(globalObject, PropertyName(i2));
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (isOwnName) {
+                        return false;
+                    }
+                }
+            }
+
             return true;
         }
         break;
@@ -2321,6 +2421,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        if constexpr (checkPrototypes) {
+            // node compares the own keys of a Set, then each pair of its members once, as (member of the first, member of the second). This answers for all of it: an answer of std::nullopt would have the arm asked again with the operands exchanged.
+            return Bun::NodeObjEquiv::setsEqual(globalObject, scope, set1, set2, [&](JSValue left, JSValue right) {
+                return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+            });
+        }
+
         auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
@@ -2349,10 +2456,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Sets.
-            break;
-        }
         return true;
     }
     case JSMapType: {
@@ -2366,6 +2469,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         if (leftSize != map2->size()) {
             return false;
+        }
+
+        if constexpr (checkPrototypes) {
+            // As for a Set: the own keys, then each pair of entries once, as (entry of the first, entry of the second).
+            return Bun::NodeObjEquiv::mapsEqual(globalObject, scope, map1, map2, [&](JSValue left, JSValue right) {
+                return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+            });
         }
 
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
@@ -2403,10 +2513,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Maps.
-            break;
-        }
         return true;
     }
     case ArrayBufferType:

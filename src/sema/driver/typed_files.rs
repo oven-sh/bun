@@ -4276,7 +4276,7 @@ fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> O
         // The printer names an alias of `true | false`.
         b"boolean"[..].into()
     } else if matches!(value, Some(LiteralValue::Number(value)) if !value.is_finite()) {
-        // The printer says `Infinity`, which is a value and no type.
+        // `number` and not `1e999`: the printer says `Infinity`, and the bundle has that value, which is a `number`.
         b"number"[..].into()
     } else {
         let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;

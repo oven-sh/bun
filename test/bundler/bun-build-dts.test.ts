@@ -231,19 +231,15 @@ export function size(text: string = ns.value as string): number {
     [
       "another expression is an error",
       {
-        "src/mode.ts": `export const mode: "a" | "b" = "a";\n`,
+        "src/mode.ts": `export const mode: "a" | "b" = "a";
+export const limit: number | undefined = undefined;
+`,
         "src/index.ts": `import * as ns from "./mode";
-export function looped(x: number, name: string): number {
-  while (!!name as boolean) {
-    x++;
-    name = "";
-  }
-  return x;
-}
+export const least = (n: number | undefined = ns.limit as number): number => n ?? 1;
 export const isB = (): boolean => ns.mode === "b";
 `,
       },
-      `index.aot.ts:12:28: TS2367: This comparison appears to be unintentional because the types '"a"' and '"b"' have no overlap.`,
+      `index.aot.ts:7:28: TS2367: This comparison appears to be unintentional because the types '"a"' and '"b"' have no overlap.`,
     ],
   ])(
     "a cast that index.aot.ts does not allow, where %s: the warning is the one without the cast",

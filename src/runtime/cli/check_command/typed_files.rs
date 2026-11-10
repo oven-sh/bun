@@ -116,7 +116,7 @@ type Checked = (bun_sema_driver::typed_files::TypedFiles, Report);
 
 enum NotKept {
     NotWritten(TypedFilesError),
-    Rejected(Checked),
+    Rejected(Box<Checked>),
 }
 
 const STATED_AS_THE_SOURCES_STATE_THEM: [&[u8]; 7] = [
@@ -385,12 +385,13 @@ pub(crate) fn typed_files_for_build(
             );
             match first_error(&report).is_none() && report.incomplete.is_empty() {
                 true => Ok((found, report)),
-                false => Err(NotKept::Rejected((found, report))),
+                false => Err(NotKept::Rejected(Box::new((found, report)))),
             }
         },
     );
     let (mut found, report) = match kept {
-        Ok(checked) | Err(NotKept::Rejected(checked)) => checked,
+        Ok(checked) => checked,
+        Err(NotKept::Rejected(checked)) => *checked,
         Err(NotKept::NotWritten(why)) => return warn(format_args!("{why}")),
     };
     if let Some(first) = first_error(&report) {

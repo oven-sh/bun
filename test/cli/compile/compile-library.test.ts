@@ -1193,6 +1193,7 @@ export const text = ns.value as string;
     ]);
   });
 
+  // Today the cast goes on the `1` of `1 / 0`, and index.aot.ts is left out: TS2322, 'number' is not assignable to 'Ms'.
   test.todo("--minify-syntax: Infinity keeps its cast", async () => {
     using dir = tempDir(
       "library-typed-file-infinity",
@@ -1206,8 +1207,10 @@ export function wait(limit: Ms = Infinity as Ms): Ms {
     );
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-syntax");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("function wait(limit: Ms = 1 / 0 as Ms): Ms {");
   });
 
+  // Today the initializer is `this.field = void 0` in the constructor, with no cast: TS2322, and index.aot.ts is left out.
   test.todo("useDefineForClassFields: false: a field keeps its cast", async () => {
     using dir = tempDir("library-typed-file-assigned-field", {
       ...library({
@@ -1222,6 +1225,7 @@ export function wait(limit: Ms = Infinity as Ms): Ms {
     });
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-syntax");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("this.field = void 0 as any;");
   });
 
   test("--minify-whitespace: a member of a const enum keeps its type after case", async () => {

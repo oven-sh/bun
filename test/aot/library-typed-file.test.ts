@@ -54,12 +54,8 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 // app.ts, index.aot.ts and version.aot.ts are compiled with their types, and the build has nothing to say about them.
 const USED = { said: [], typedFiles: 3, exitCode: 0, signal: null, stdout: "7 1.2.3\n" };
 
-async function install(root: string) {
-  const built = await spawned(
-    [bunExe(), "compile", "--library", "src/index.ts", "src/version.ts"],
-    join(root, "library"),
-    env,
-  );
+async function install(root: string, args = ["src/index.ts", "src/version.ts"]) {
+  const built = await spawned([bunExe(), "compile", "--library", ...args], join(root, "library"), env);
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   cpSync(join(root, "library/dist"), join(root, "app/node_modules/shapes"), { recursive: true });
 }
@@ -129,11 +125,11 @@ export function area(shape: Shape): Sizes.Size {
     expect(await compile(String(dir))).toEqual(USED);
   });
 
-  test("a member of an enum under a cast is written into an .aot.ts file that compiles", async () => {
-    using dir = tempDir("aot-library-typed-file-enum-cast", {
-      ...library,
-      "library/src/area.ts": `import type { Shape } from "./index";
-enum Scale {
+  // `by` takes a number that is no member, and `most` is of the enum that the package exports.
+  const scaled = {
+    ...library,
+    "library/src/area.ts": `import type { Shape } from "./index";
+export enum Scale {
   One = 1,
   Three = 3,
 }
@@ -141,14 +137,62 @@ let scale = Scale.One as Scale | null;
 function unit() {
   return { scale: Scale.One as const };
 }
-export function area(shape: Shape): number {
-  scale = shape.kind === "circle" ? Scale.Three : null;
-  return (scale ?? unit().scale) * shape.size ** 2;
+export function area(shape: Shape, by = Scale.One as number, most: Scale = Scale.Three): number {
+  scale = shape.kind === "circle" ? most : null;
+  return (scale ?? unit().scale) * shape.size ** 2 * by;
 }
 `,
+    "library/src/index.ts": library["library/src/index.ts"] + `export { area };\nexport { Scale } from "./area";\n`,
+  };
+  const uses = (more: string) => `import { Scale, area, total } from "shapes";
+import { version } from "shapes/version";
+${more}console.log(total([{ kind: "square", size: 2 }, { kind: "circle", size: 1 }]), version, area({ kind: "circle", size: 1 }, 2, Scale.One));
+`;
+
+  test("a member of an enum under a cast is written into an .aot.ts file that compiles", async () => {
+    using dir = tempDir("aot-library-typed-file-enum-cast", { ...scaled, "app/app.ts": uses("") });
+    await install(String(dir));
+    expect(await compile(String(dir))).toEqual({ ...USED, stdout: "7 1.2.3 2\n" });
+  });
+
+  // Observed: `bun compile ./app.ts` stops with TS1355 at `Scale.Three as const`. The .aot.ts file has the enum of the
+  // package as a variable of the type of an ambient enum, which is no enum in the program. It is the same for a package
+  // without a cast, whose .aot.ts file was written before.
+  test.todo("a program uses an enum of the package as an enum", async () => {
+    using dir = tempDir("aot-library-typed-file-enum-used", {
+      ...scaled,
+      "app/app.ts": uses(`export const three = Scale.Three as const;\n`),
     });
     await install(String(dir));
-    expect(await compile(String(dir))).toEqual(USED);
+    expect(await compile(String(dir))).toEqual({ ...USED, stdout: "7 1.2.3 2\n" });
+  });
+
+  // Observed: `bun compile ./app.ts` stops with `TS2322: Type 'Unit' is not assignable to type 'Unit3'.` Each .aot.ts
+  // file of the package declares the enum again, and the program takes it from one file and passes it to another. It
+  // is the same for a package without a cast.
+  test.todo("a program passes an enum between two entry points of a package that --splitting built", async () => {
+    using dir = tempDir("aot-library-typed-file-enum-split", {
+      "library/tsconfig.json": tsconfig,
+      "library/package.json": library["library/package.json"],
+      "library/src/enums.ts": `export enum Unit {\n  Px,\n  Em,\n}\n`,
+      "library/src/index.ts": `import { Unit } from "./enums";
+let unit = Unit.Px as Unit | null;
+export function current(): Unit {
+  return unit ?? Unit.Em;
+}
+export { Unit };
+`,
+      "library/src/other.ts": `import { Unit } from "./enums";
+export function label(unit: Unit): string {
+  return unit === Unit.Px ? "px" : "em";
+}
+`,
+      "app/tsconfig.json": tsconfig,
+      "app/package.json": library["app/package.json"],
+      "app/app.ts": `import { current } from "shapes";\nimport { label } from "shapes/other";\nconsole.log(label(current()));\n`,
+    });
+    await install(String(dir), ["src/index.ts", "src/other.ts", "--splitting"]);
+    expect(await compile(String(dir))).toMatchObject({ said: [], exitCode: 0, stdout: "px\n" });
   });
 
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {

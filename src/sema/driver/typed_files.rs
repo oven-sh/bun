@@ -3454,15 +3454,23 @@ impl<'a> Transfer<'_, 'a, '_> {
                     let kinds = || chain.casts.iter().map(|&cast| &syntax.file[cast].kind);
                     let is_asserted = kinds().any(|kind| matches!(kind, ExprKind::As { .. }));
                     let is_const = kinds().any(|kind| matches!(kind, ExprKind::AsConst(_)));
-                    // Under an `as`, the place that holds the value (`unit = 0`) has the type of the `as`. Without one it has the enum, which `0 as E.M` does not widen to.
+                    // `unit = 0`, also where the value is the last of a `(first, 0)`, as behind an `accessor` field.
                     let holds_value = |declared: &&u32| {
+                        let mut value = operand;
+                        while let Some(parent) = output_context.parent[value.idx()].some()
+                            && matches!(output_file[parent].kind, ExprKind::Binary { op: BinOp::Comma, right, .. } if right == value)
+                        {
+                            value = parent;
+                        }
                         let equals = output.after_trivia(**declared);
-                        output.byte(equals) == b'=' && output.after_trivia(equals + 1) == start
+                        output.byte(equals) == b'='
+                            && output.after_trivia(equals + 1) == output.outer_span(value).0
                     };
+                    // The place that holds the value has the type of an `as`, and `0 as E.M` is what `E.M as const` is. Without a cast it has the enum, which `0 as E.M` does not widen to.
                     let declared = widened
                         .get(&chain.outermost)
                         .and_then(|&(place, key)| output_places.get(&(place, index as u32, key)))
-                        .filter(|declared| !(is_asserted && holds_value(declared)));
+                        .filter(|declared| !((is_asserted || is_const) && holds_value(declared)));
                     if let (Some(&declared), Some(name)) = (
                         declared,
                         linked.enum_names.get(&(index as u32, source_position)),

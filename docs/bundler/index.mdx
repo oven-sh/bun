@@ -1353,7 +1353,7 @@ warn: the .aot.ts files that --aot compiles a package from are left out: they do
 ```
 
 - **The bundle isn't byte for byte what you get without `dts`.** A `const` stays a `const`, dead code is removed, and `--minify-syntax` skips a few rewrites, so that `index.aot.ts` type checks like your sources.
-- **`index.aot.ts` doesn't start with `// @bun`.** With [`target: "bun"`](#target), `index.js` starts with that line, and Bun runs it as an ES module without transpiling it. `index.aot.ts` is TypeScript, so it has an empty line there. In that case, if the bundle has no `export` statement, `index.aot.ts` ends with `export {};`, and Bun still takes it for an ES module. What a file without `import` and `export` declares is global, and `export {};` makes it local to `index.aot.ts`. If `export {};` adds a type error to the `.aot.ts` files, Bun writes them without it. To declare a global in a module, use `declare global { }`.
+- **`index.aot.ts` doesn't start with `// @bun`.** With [`target: "bun"`](#target), `index.js` starts with that line, and Bun runs it as an ES module without transpiling it. `index.aot.ts` is TypeScript, so it has an empty line there. In that case, if the bundle has no `export` statement, `index.aot.ts` ends with `export {};`, and Bun still takes it for an ES module. What a file without `import` and `export` declares is global, and `export {};` makes it local to `index.aot.ts`. If `export {};` adds a type error to the `.aot.ts` files, Bun writes them without it, unless they type check only with it. To declare a global in a module, use `declare global { }`.
 
 ### features
 

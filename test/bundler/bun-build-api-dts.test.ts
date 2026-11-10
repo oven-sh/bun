@@ -345,6 +345,47 @@ export { join };
       expect((await lines(outputs, "cli.aot.ts")).slice(-2)).toEqual(["export {};", ""]);
     });
 
+    test("a file that type checks only with export {}: export {} stays, with the any that it costs", async () => {
+      using dir = tempDir("build-api-dts-only-with-export", {
+        ...project,
+        // Without export {} the .aot.ts file is a script, and a top-level await is an error there.
+        // With it `list` is no property of globalThis: `globalThis.list` is any, and then `n` is too.
+        "src/list.ts": `var list: number[] = [1, 2];\nconsole.log(list.length);\n`,
+        "src/cli.ts": `import "./list";\nconst text: string = await Promise.resolve("x");\nconsole.log(text, globalThis.list.map(n => n + 1));\n`,
+      });
+      const root = String(dir);
+      const outputs = await build(root, { entrypoints: [join(root, "src/cli.ts")] });
+      expect((await lines(outputs, "cli.aot.ts")).slice(-3)).toEqual([
+        "console.log(text, globalThis.list.map((n: any) => n + 1));",
+        "export {};",
+        "",
+      ]);
+    });
+
+    test("a file with a type error with export {} and another without it: the warning names the one without it", async () => {
+      using dir = tempDir("build-api-dts-fails-both-ways", {
+        ...project,
+        // With export {} the interface is local, and `window.greeter` is an error. Without it the top-level await is one.
+        "src/polyfill.ts": `interface Window {\n  greeter: string;\n}\nwindow.greeter = "hello";\n`,
+        "src/cli.ts": `import "./polyfill";\nconst text: string = await Promise.resolve(window.greeter);\nconsole.log(text);\n`,
+      });
+      const root = String(dir);
+      const built = await Bun.build({
+        entrypoints: [join(root, "src/cli.ts")],
+        outdir: join(root, "out"),
+        tsconfig: join(root, "tsconfig.json"),
+        target: "bun",
+        dts: true,
+      });
+      expect(built.logs.map(log => [log.level, log.message])).toEqual([
+        [
+          "warn",
+          expect.stringMatching(/ are left out: they have type errors, the first at cli\.aot\.ts:\d+:\d+: TS1375: /),
+        ],
+      ]);
+      expect(filesIn(join(root, "out")).filter(name => name.endsWith(".aot.ts"))).toEqual([]);
+    });
+
     test("a module that declares a global under declare global: ends with export {}", async () => {
       using dir = tempDir("build-api-dts-declare-global", {
         ...project,

@@ -382,6 +382,7 @@ pub(crate) fn typed_files_for_build(
     {
         let declarations = &plain.declarations_while_checked;
         let (plain_report, plain_errors) = check(&mut plain.typed, declarations, &newest_lib);
+        // `export {}` is the last line of its file, so an error that both texts have starts at the same offset in both.
         let adds_an_error = !report.incomplete.is_empty()
             || (errors.iter()).any(|error| !plain_errors.iter().any(|it| it == error));
         let passes_alone = passes(&report) && !passes(&plain_report);

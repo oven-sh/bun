@@ -1,0 +1,20 @@
+import { test, vi, afterAll } from "bun:test";
+import { createRequire } from "node:module";
+const log = [], require = createRequire(import.meta.url);
+const tried = async load => { try { return "loaded " + (await load()).member(); } catch (error) { return error.name + " " + String(error.message).slice(0, 22); } };
+const sync = ask => { try { return "answered " + ask(); } catch (error) { return error.name + " " + String(error.message).slice(0, 22); } };
+afterAll(() => console.log("SAID", log.join()));
+const mock = () => ({ round: 10 });
+test("t", async () => {
+  vi.doMock("./shapes.mjs", mock);
+  const first = await import("./user.mjs"), second = await import("./named.mjs");
+  const old = () => log.push("old " + first.member() + " " + second.member());
+  old();
+  vi.doUnmock("./shapes.mjs");
+  old();
+  log.push("asks " + await tried(() => import("./asks-for-nothing.mjs")));
+  old();
+  vi.doMock("./shapes.mjs", mock);
+  log.push("again " + await tried(() => import("./user.mjs")));
+  old();
+});

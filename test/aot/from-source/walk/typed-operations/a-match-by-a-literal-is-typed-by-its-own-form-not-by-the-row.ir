@@ -1,0 +1,38 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# let kept: boolean | null = null;
+# function holds(text: unknown): string { return /ab+c/.test(String(text)) ? "yes" : "no"; }
+# function kind(text: unknown): string { return typeof /ab+c/.test(String(text)); }
+# function all(text: unknown): string { return String(text).match(/a(b+)c/g) === null ? "null" : "found"; }
+# function at(text: unknown): string { return typeof String(text).search(/a(b+)c/); }
+# function keep(text: unknown): void { kept = /ab+c/.test(String(text)); }
+# function read(): string { return typeof kept; }
+# const word: unknown = JSON.parse('"xabbcx"');
+# print(holds(word), kind(word), all(word), at(word));
+# keep(word);
+# print("kept", read());
+# -- end of source
+# The answer of RegExpMatchLiteral is made by the run time's own code for the form of the match (runtime/AOTRegExpOperations.cpp: createMatchValue(), valueOfFailedMatch()): no native function of the row is entered.
+# So the record says what its form gives, and the row's word is not used. While the record took the row's word, with no test behind it, each of these lies was silent: no object null object.
+# What Link makes of the row goes on to the places that it types, and there a door stands: the variable.
+# RUN: run-in-shell mechanisms=all
+# CHECK: yes boolean found number
+# CHECK-NEXT: kept boolean
+# CHECK-NEXT: exited with 0
+# RUN(TEST): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/RegExp.prototype.test/KindOfResult
+# TEST: yes boolean found number
+# TEST: what a variable holds is not of the type that the compiler has proven of it. It is: boolean. This is a bug in Bun.
+# TEST-NOT: kept
+# TEST: crashed
+# RUN(MATCH): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/String.prototype.match/KindOfResult
+# MATCH: yes boolean found number
+# MATCH-NEXT: kept boolean
+# MATCH-NEXT: exited with 0
+# RUN(SEARCH): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/String.prototype.search/KindOfResult
+# SEARCH: yes boolean found number
+# SEARCH-NEXT: kept boolean
+# SEARCH-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: yes boolean found number
+# HELD-NEXT: kept boolean
+# HELD-NEXT: exited with 0

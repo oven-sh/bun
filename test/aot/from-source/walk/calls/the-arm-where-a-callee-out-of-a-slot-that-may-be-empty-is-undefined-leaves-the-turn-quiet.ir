@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function sink(value: unknown): void;
+# function add(out: Float64Array, a: Float64Array, b: Float64Array): Float64Array { out[0] = a[0]! + b[0]!; out[1] = a[1]! + b[1]!; return out; }
+# function dot(a: Float64Array, b: Float64Array): number { return a[0]! * b[0]! + a[1]! * b[1]!; }
+# const N: any = {}; N.add = add; N.dot = dot;
+# const o = new Float64Array(2), p = new Float64Array([1.5, 2.5]), q = new Float64Array([0.5, 0.25]);
+# function f(t: number): number { p[0] = t & 7; let s = 0; for (let i = 0; i < 100; i++) { N.add(o, p, q); s += N.dot(o, p); } return s; }
+# sink(f);
+# -- end of source
+# `N.add` is proven undefined|add: its slot may be empty. The arm where it is undefined builds the call as written, to throw. Heard as a call, it has the loop bought twice, and `N.add` is asked in front
+# of the typed copy. `N.dot` stands behind the stores of `add`: its turn cannot begin again, so the call that throws is built in the typed copy: a call of what is no object runs no code,
+# the turns stay quiet, and the slots, the tests of the callees and the vectors of the views stand in front of the loop. It used to bear the effects of unknown code there, and the typed copy read all of it again in every turn.
+# f3 = f
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: Call {{*}}calleeName="N.add" traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode
+# CHECK: [[add]]: undefined|f1 @JSValue = GetSlotOrUndefined {{*}}key="add"
+# CHECK: [[test]]: boolean @Boolean = TypeTest [[add]] testedType=f1
+# CHECK: Branch [[test]]
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK-NOT: calleeName="N.add"
+# CHECK: Call {{*}}calleeName="N.dot" traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# RUN(ANSWERS): run-in-shell globalThis.sink = f => { print(f(1)); print(f(2)); };
+# ANSWERS: 837.5
+# ANSWERS-NEXT: 1187.5
+# ANSWERS-NEXT: exited with 0

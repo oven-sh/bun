@@ -1,0 +1,18 @@
+# f2 = addNeighbors
+# -- source: call-with-a-spread-pair.ts
+# function add(first: number, second: number, third: number): number {
+#   return first + second + third;
+# }
+# function addNeighbors(value: number): number {
+#   const neighbors: [number, number] = [value - 1, value + 1];
+#   return add(value, ...neighbors);
+# }
+# declare const input: any;
+# (globalThis as any).answer = addNeighbors(+input);
+# -- end of source
+# The compiler before this one: 2 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 37, patches 4, moves 5, unlikely or rare 0.
+# RUN(X64): steps most:42 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 42

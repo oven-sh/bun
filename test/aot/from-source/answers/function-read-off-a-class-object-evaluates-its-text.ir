@@ -6,7 +6,6 @@
 # print(tell());
 # -- end of source
 # RUN: run-in-shell
-# REQUIRES: entries-of-bun
 # CHECK: 7
 # CHECK-NEXT: exited with 0
 # CHECK-NEXT: the source prints the same

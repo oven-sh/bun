@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function kind(c: any): string { return typeof c === "string" ? "text" : Array.isArray(c) ? "list" : "other"; }
+# function show(c: any): string { if (!Array.isArray(c)) return kind(c); return "["; }
+# function pass(c: any): string { return show(c); }
+# function refuse(t: any): any { throw new TypeError("no"); }
+# function walk(): string { const hint: any = refuse(1); const it: any = (new Set<number>([1]) as any)[Symbol.iterator](hint); return pass(it); }
+# try { print(show(walk())); } catch (e) { print("threw"); }
+# -- end of source
+# refuse() never returns, so no iterator ever reaches show(), which believes a string. The walk of walk() lays a check for a string in front of the call, which an iterator cannot pass,
+# leaves never at show()'s parameter, and boxes the iterator behind the check. The judge of arrivals (findCallThatHandsOverWhatItsUnitHasNotLeft(), walk/AOTCompileUnit.cpp) excuses the
+# call for that check, which stands in front of the box.
+# OPTIONS: check=Validate
+# RUN: compile mechanisms=all
+# RUN(RUNS): run-in-shell mechanisms=all
+# RUNS: threw
+# RUNS-NEXT: exited with 0

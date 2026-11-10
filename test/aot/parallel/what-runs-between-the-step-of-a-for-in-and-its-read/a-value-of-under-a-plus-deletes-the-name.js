@@ -1,0 +1,18 @@
+function read(source, other) {
+  let found;
+  for (const key in source) {
+    void +other;
+    found = source[key];
+  }
+  return found;
+}
+const list = JSON.parse("[1,2,3]");
+list.findLastIndex = 7;
+let turns = 0;
+const found = read(list, {
+  valueOf() {
+    if (++turns === 4) delete list.findLastIndex;
+    return 1;
+  },
+});
+console.log(typeof found === "function" ? found.call([1, 2, 3], value => value < 3) : `${found}`);

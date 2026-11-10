@@ -1,0 +1,31 @@
+# process.report.getReport().environmentVariables.MADE_UP = undefined
+# The report holds the very object that process.env answers. Nobody follows it out of the report, so the store goes through a value that nobody knows: the functions behind the warning wait for such a store on behalf of getReport() too.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f1
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="report"
+    v2 = PropGet v1 key="getReport"
+    v3 = Call v2, v1 calleeKey="getReport" calleeName="process.report.getReport"
+    v4 = PropGet v3 key="environmentVariables"
+    v5 = Undefined
+    PropSet v4, v5 key="MADE_UP"
+    Return v5
+}
+function f1 name="createOnWarning" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsCreateOnWarning thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f2 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

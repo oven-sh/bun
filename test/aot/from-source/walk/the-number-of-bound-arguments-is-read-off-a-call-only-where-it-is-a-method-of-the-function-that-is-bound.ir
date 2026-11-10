@@ -1,0 +1,24 @@
+# A bound function that is called in a loop is asked for its target and for the number of its bound arguments, and the target is entered with them. The number is a guess, tested at run time.
+# In sight of the call that made the bound function it was `arguments - 1`, whatever that call was: `Function.prototype.bind.call(join, null, "x")` counted 2 for 1, a helper with two more arguments 2 for 1.
+# It is read off the call only where the call is a method of the very function that is bound; elsewhere Link's number is taken, or no guess is made.
+# RUN(METHOD): walk f3:Body mechanisms=all
+# METHOD: = HasNumberOfBoundArguments {{*}}count=1
+# RUN(FORWARDED): walk f4:Body mechanisms=all
+# FORWARDED-NOT: HasNumberOfBoundArguments {{*}}count=2
+# RUN(HELPER): walk f5:Body mechanisms=all
+# HELPER: = HasNumberOfBoundArguments {{*}}count=1
+# HELPER-NOT: HasNumberOfBoundArguments {{*}}count=2
+# RUN(SAID): run-in-shell mechanisms=all
+# SAID: 248 248 248 0 0 0
+# SAID-NEXT: exited with 0
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function join(a: string, b: string, c: number): number { return a.length + b.length + c; }
+# function method(rows: number[], turns: number): number { const bound = join.bind(null, "x"); let sum = 0; for (let i = 0; i < turns; i++) { if (rows[i & 7]! > 3) sum += bound("ab", 1); } return sum; }
+# function forwarded(rows: number[], turns: number): number { const bound = Function.prototype.bind.call(join, null, "x") as (b: string, c: number) => number; let sum = 0; for (let i = 0; i < turns; i++) { if (rows[i & 7]! > 3) sum += bound("ab", 1); } return sum; }
+# function make(target: (a: string, b: string, c: number) => number, receiver: null, first: string): (b: string, c: number) => number { return target.bind(receiver, first); }
+# function helper(rows: number[], turns: number): number { const bound = make(join, null, "x"); let sum = 0; for (let i = 0; i < turns; i++) { if (rows[i & 7]! > 3) sum += bound("ab", 1); } return sum; }
+# const rows: number[] = JSON.parse("[1,9,2,8,3,7,4,6]");
+# print(method(rows, id(100)), forwarded(rows, id(100)), helper(rows, id(100)), method(rows, id(0)), forwarded(rows, id(0)), helper(rows, id(0)));
+# -- end of source

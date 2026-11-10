@@ -11,7 +11,9 @@ const MAX_CONSTRAINT_STEPS: usize = 8;
 impl Checker<'_, '_> {
     pub(in crate::check) fn has_costly_base_constraint(&mut self, ty: TypeId) -> bool {
         let answered_lowering = std::mem::replace(&mut self.answers_lowering, false);
+        let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
         let is_costly = self.weigh_base_constraint(ty);
+        self.resolution_start = resolution_start;
         self.answers_lowering = answered_lowering;
         is_costly
     }

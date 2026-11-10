@@ -11,21 +11,17 @@
 # It chooses how the objects are laid out and claims nothing: a property that is created in another form lies beside its slot. No typed form reads or writes such a slot: what lies there is no value.
 # `m` is a getter in one literal and a value in the other: a plain field, as ever.
 # RUN(LINK): link fields mechanisms=all
-# REQUIRES(LINK): entries-of-bun
 # LINK: field L0.0 "a" {{*}}filled-by-accessors-alone
 # LINK-NEXT: field L0.1 "b" {{*}}filled-by-accessors-alone
 # LINK-NOT: filled-by-accessors-alone
 # RUN: plan layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 CompiledObject
 # CHECK-NEXT: slot 0 "a" JSValue Inline {{*}} accessor
 # CHECK-NEXT: slot 1 "b" JSValue Inline {{*}} accessor
 # CHECK-NOT: accessor
 # RUN(WITHHELD): plan layouts mechanisms=all-TypedSlots
-# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-NOT: accessor
 # RUN(WALK): walk f2 mechanisms=all-Inlining
-# REQUIRES(WALK): entries-of-bun
 # WALK-LABEL: code f2:Body
 # WALK-NOT: Slot {{*}}key="a"
 # WALK-NOT: Slot {{*}}key="b"

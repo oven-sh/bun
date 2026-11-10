@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function grows() { const q = [1, 2, 3]; let s = 0; for (let i = 0; i < q.length; i++) { s = (s + q[i]) | 0; if (q.length < 300) q.push(q[i] + 1); } return s + " " + q.length; }
+# print(grows());
+# -- end of source
+# A push in a tried loop is heard as a writer of its receiver alone only where that receiver is a list made here that the loop's text only fills: what is known of every OTHER object then outlives the head of the loop.
+# Here the list that is pushed is the list that is read, and its length is the loop's bound. THE LIE, testing=ReceiversOfMethodsOfListsAreTakenToBeMadeHere: every receiver is heard so, and is booked among no objects that are
+# written: the length that stood in front of the loop is remembered all round it: three turns in place of three hundred, silently. Under the check of proofs at run time the remembered length is held against memory.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 15450 300
+# CHECK-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 15450 300
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=ReceiversOfMethodsOfListsAreTakenToBeMadeHere
+# LIE: 6 3
+# LIE-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=ReceiversOfMethodsOfListsAreTakenToBeMadeHere,CheckProofsAtRunTime
+# STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# STOPPED: crashed with

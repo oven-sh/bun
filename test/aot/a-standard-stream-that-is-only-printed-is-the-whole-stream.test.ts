@@ -1,5 +1,5 @@
 // A program that asks a standard stream for no more than `fd`, `isTTY`, the size of the terminal and `write` gets a small object for it, a proxy whose other
-// traps ask for the whole stream (src/js/builtins/stdio.ts). console.log asks a proxy nothing: it prints the target. So it printed `{}` for a stream that the
+// traps ask for the whole stream (src/js/ahead-of-time/builtins/stdio.ts). console.log asks a proxy nothing: it prints the target. So it printed `{}` for a stream that the
 // program does nothing else with.
 //
 // One program prints all three: the whole stream is most of what such a build compiles. The small object of the input is another than that of the outputs.

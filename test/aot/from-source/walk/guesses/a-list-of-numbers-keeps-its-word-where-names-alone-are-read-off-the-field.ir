@@ -1,0 +1,7 @@
+# -- source: main.js
+# class Store { constructor(rows) { this.rows = rows; } more() { return this.rows.map(x => x + 1); } }
+# globalThis.kept = Store;
+# -- end of source
+# `this.rows.map(x => x + 1)` says of the field: a list of numbers. Nothing but names is read off the field in the class's methods: no element under a key, nothing handed on, no iteration. There the word stays: the call is taken for the lists' own method; where a view comes after all, one test a call fails. A field whose elements are read under keys gets no such word: those uses fit a list and a view alike.
+# RUN(WORD): print
+# WORD: layout {{*}}name="Store"{{*}}key="rows" declared={type=undefined|null|Array<number> flags=[IsExpected]}

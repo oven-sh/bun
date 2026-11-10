@@ -143,6 +143,11 @@ impl Options<'_> {
         self.aot.admits_inspector || !self.load.externals.is_empty()
     }
 
+    pub fn reads_back_what_it_writes(&self) -> bool {
+        let mut words = self.aot.option_words.iter();
+        cfg!(test) || words.any(|word| &**word == b"check=Validate")
+    }
+
     pub fn code_from_disk_names_files(&self) -> bool {
         self.aot.loads_code_from_disk && !self.aot.isolates_code_from_disk
     }

@@ -30,15 +30,12 @@
 # console.log(once({ nodes }), everyTurn({ nodes }), loose({ things: nodes }));
 # -- end of source
 # RUN(ONCE): walk f1 mechanisms=all-Inlining
-# REQUIRES(ONCE): entries-of-bun
 # ONCE-LABEL: code f1:Body
 # ONCE: = GetSlot {{*}} key="kind"
 # RUN(TURN): walk f2 mechanisms=all-Inlining
-# REQUIRES(TURN): entries-of-bun
 # TURN-LABEL: code f2:Body
 # TURN: = GetSlot {{*}} key="kind"
 # RUN(LOOSE): walk f3 mechanisms=all-Inlining
-# REQUIRES(LOOSE): entries-of-bun
 # LOOSE-LABEL: code f3:Body
 # LOOSE: : anything{{*}} = GetArrayElement
 # LOOSE: = GetSlot {{*}} key="kind" {{*}}level=Expected

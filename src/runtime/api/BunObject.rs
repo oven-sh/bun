@@ -866,7 +866,7 @@ pub(crate) fn resolve_sync(
         return Err(global_this.throw_invalid_arguments(format_args!("parent must be a string")));
     };
     let mode = if esm {
-        ResolveMode::Esm
+        ResolveMode::EsmResolve
     } else {
         ResolveMode::Require
     };
@@ -918,7 +918,7 @@ pub(crate) fn bun_resolve_sync(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -982,7 +982,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -1474,7 +1474,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // We don't really do that right now, but exposing the output source
         // code here as an easily accessible Blob is even worse for them.
         // So let's omit any source code files from the list.
-        if !file.appears_in_embedded_files_array() {
+        if !file.appears_in_embedded_files_array() || graph.is_file_for_file_system_alone(file) {
             continue;
         }
         sort_indices.push(index as u32);

@@ -1120,7 +1120,7 @@ impl LayerDeclaration<'_> {
 fn visible_layers<'o, 'n>(
     index: u32,
     entry: &'o CssImportOrder,
-    file_layers: impl FnOnce(AstIndex) -> Option<&'n [LayerName]>,
+    file_layers: &mut dyn FnMut(AstIndex) -> Option<&'n [LayerName]>,
     out: &mut Vec<LayerDeclaration<'o>>,
 ) -> bool {
     let first = out.len();
@@ -1212,7 +1212,7 @@ impl<'o> LayerStandIns<'o> {
 
     /// An "@layer" statement that is ahead of every import.
     fn add_statement(&mut self, index: usize, statement: &'o CssImportOrder) {
-        visible_layers(index as u32, statement, |_| None, &mut self.declared);
+        visible_layers(index as u32, statement, &mut |_| None, &mut self.declared);
     }
 
     /// Called ahead of each external import, in the order of the source.
@@ -1247,7 +1247,7 @@ impl<'o> LayerStandIns<'o> {
             let is_visible = visible_layers(
                 index,
                 &order[index as usize],
-                |file| {
+                &mut |file| {
                     let sheet: &BundlerStyleSheet =
                         css_asts[file.get() as usize].as_deref().unwrap();
                     // No statement can stand for an anonymous layer, or for a layer that the

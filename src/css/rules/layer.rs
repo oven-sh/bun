@@ -231,13 +231,13 @@ fn is_name_in_path(expected: &LayerName, path: &LayerPath, name: &LayerName) -> 
 
 /// Calls `visit` for each `@layer` name in source order, with the layers around it and whether
 /// a rule around it is a condition. The name is `None` for an `@layer` block with no name.
-struct LayerNameWalk<F> {
+struct LayerNameWalk<'f> {
     path: LayerPath,
     conditions: u32,
-    visit: F,
+    visit: &'f mut dyn FnMut(&LayerPath, Option<&LayerName>, bool) -> ControlFlow<()>,
 }
 
-impl<F: FnMut(&LayerPath, Option<&LayerName>, bool) -> ControlFlow<()>> LayerNameWalk<F> {
+impl LayerNameWalk<'_> {
     fn rules<'r, R: 'r>(
         &mut self,
         rules: impl IntoIterator<Item = &'r CssRule<R>>,
@@ -349,7 +349,7 @@ impl<R> CssRuleList<R> {
         let mut walk = LayerNameWalk {
             path: LayerPath::default(),
             conditions: 0,
-            visit: |_: &LayerPath, name: Option<&LayerName>, _: bool| match name {
+            visit: &mut |_: &LayerPath, name: Option<&LayerName>, _: bool| match name {
                 Some(_) => ControlFlow::Continue(()),
                 None => ControlFlow::Break(()),
             },
@@ -373,7 +373,7 @@ impl<R> CssRuleList<R> {
         let mut walk = LayerNameWalk {
             path: LayerPath::default(),
             conditions: 0,
-            visit: |path: &LayerPath, name: Option<&LayerName>, conditional: bool| {
+            visit: &mut |path: &LayerPath, name: Option<&LayerName>, conditional: bool| {
                 let Some(name) = name else {
                     return ControlFlow::Continue(());
                 };
@@ -426,7 +426,7 @@ impl<R> CssRuleList<R> {
         let mut walk = LayerNameWalk {
             path: LayerPath::default(),
             conditions: 0,
-            visit: |path: &LayerPath, name: Option<&LayerName>, conditional: bool| {
+            visit: &mut |path: &LayerPath, name: Option<&LayerName>, conditional: bool| {
                 let Some(name) = name else {
                     return ControlFlow::Continue(());
                 };

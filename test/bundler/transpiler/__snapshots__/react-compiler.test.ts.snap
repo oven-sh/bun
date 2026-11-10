@@ -118,11 +118,40 @@ var __toESM = (mod, isNodeMode, target) => {
           enumerable: true
         });
   }
-  if (canCache)
+  if (canCache) {
+    for (let i = __cjsDepth;i; )
+      if (__cjsLoading[--i].exports === mod)
+        return to;
+    __cjsLoaded = __toESMLoaded;
     cache.set(mod, to);
+  }
   return to;
 };
-var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __toESMStale = (exports, ns) => {
+  for (var key of __getOwnPropNames(exports))
+    if (!__hasOwnProp.call(ns, key))
+      return 1;
+};
+var __toESMLoaded = (exports) => {
+  var ns;
+  __toESMCache_node && (ns = __toESMCache_node.get(exports)) && __toESMStale(exports, ns) && __toESMCache_node.delete(exports);
+  __toESMCache_esm && (ns = __toESMCache_esm.get(exports)) && __toESMStale(exports, ns) && __toESMCache_esm.delete(exports);
+};
+var __cjsLoading = [];
+var __cjsDepth = 0;
+var __cjsLoaded;
+var __cjsLoad = (cb, mod) => {
+  var depth = __cjsDepth++, own = mod.exports;
+  __cjsLoading[depth] = mod;
+  try {
+    cb(own, mod);
+  } finally {
+    __cjsDepth = depth;
+    if (mod.exports !== own && __cjsLoaded)
+      __cjsLoaded(mod.exports);
+  }
+};
+var __commonJS = (cb, mod) => () => (mod || __cjsLoad(cb, mod = { exports: {} }), mod.exports);
 
 // node_modules/react/index.js
 var require_react = __commonJS(function(exports) {

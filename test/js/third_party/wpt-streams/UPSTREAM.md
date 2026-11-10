@@ -11,7 +11,7 @@ To re-vendor, pin the same (or a newer, reviewed) commit before copying any file
 ```sh
 git -c advice.detachedHead=false clone --depth=1 --filter=blob:none --sparse \
     https://github.com/web-platform-tests/wpt /tmp/wpt
-git -C /tmp/wpt sparse-checkout set streams common
+git -C /tmp/wpt sparse-checkout set streams common compression interfaces resources
 git -C /tmp/wpt checkout 1cfa3004f4ac74aa007591529aba9e9246b1f1bf
 ```
 

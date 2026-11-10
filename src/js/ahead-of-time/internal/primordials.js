@@ -1,6 +1,5 @@
-// What the compiler reads in place of src/js/internal/primordials.js. A stack trace shows the places of that file: a line that both
-// files have stands for the line there, and a comment `as:` in front of a word quotes that file up to the word it stands for.
-// Written against that file with the SHA-256 1707be69cea78abd175b76624ec9b7f6845993ca22b53f3405095b7e654e113e.
+// What the compiler reads in place of src/js/internal/primordials.js, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 dc9515751b0719840243a4f428b908ab6192265e608b94f1456beb14fcfcc581.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -42,10 +41,10 @@ const sealClass = constructor => {
 const createSafeIterator = (factory, next_) => {
   class SafeIterator {
     constructor(iterable) {
-      this._iterator = factory./* as: this._iterator = factory */ $call(iterable);
+      this._iterator = factory.$call(iterable);
     }
     next() {
-      return next_./* as: return next_ */ $call(this._iterator);
+      return next_.$call(this._iterator);
     }
     [SymbolIterator]() {
       return this;
@@ -70,10 +69,41 @@ const wrapMakersOfIterators = (makers, next) => {
 };
 
 const makeSafe = (unsafePrototype, safePrototype, dummy, next) =>
-  wrapMakersOfIterators(
-    /* as: desc.value.$call */ callOwnFunctionsWithoutParameters(unsafePrototype, safePrototype, dummy),
-    next,
-  );
+  wrapMakersOfIterators(callOwnFunctionsWithoutParameters(unsafePrototype, safePrototype, dummy), next);
+
+const ownsEach =
+  CAN_REPLACE_BUILT_INS &&
+  ((holder, keys) => {
+    const own = { __proto__: null };
+    defineOwnPropertiesLeftOut(own, holder, undefined);
+    for (let i = 0; i < keys.length; i++) {
+      if (!(keys[i] in own)) return false;
+    }
+    return true;
+  });
+
+// What the other text does with any class. A test may have laid another class in the place of `Map` before this module loads: it need not own what is written out below.
+const makeSafeOfAnyClass =
+  CAN_REPLACE_BUILT_INS &&
+  ((unsafe, safe) => {
+    const unsafePrototype = unsafe.prototype;
+    const safePrototype = safe.prototype;
+    const wrapped = {};
+    if (SymbolIterator in unsafePrototype) {
+      const dummy = new unsafe();
+      const makers = callOwnFunctionsWithoutParameters(unsafePrototype, safePrototype, dummy);
+      const next = makers.length ? makers[1].$call(dummy).next : undefined;
+      for (let i = 0; i < makers.length; i += 2) {
+        const SafeIterator = createSafeIterator(makers[i + 1], next);
+        wrapped[makers[i]] = function () {
+          return new SafeIterator(this);
+        };
+      }
+    }
+    defineOwnPropertiesLeftOut(safePrototype, unsafePrototype, wrapped);
+    defineOwnPropertiesLeftOut(safe, unsafe, undefined);
+    sealClass(safe);
+  });
 
 const StringPrototypeSymbolIterator = String.prototype[SymbolIterator];
 const stringIterator = StringPrototypeSymbolIterator.$call("");
@@ -86,273 +116,315 @@ const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, Array
 const SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, StringIteratorPrototypeNext);
 
 const MapPrototype = Map.prototype;
-const MapPrototypeEntries = MapPrototype.entries;
-const MapPrototypeKeys = MapPrototype.keys;
-const MapPrototypeValues = MapPrototype.values;
-const MapIteratorPrototypeNext = MapPrototypeEntries.$call(new Map()).next;
 
 class SafeMap extends Map {
   constructor(i) {
     super(i);
   }
 }
-const SafeMapPrototype = SafeMap.prototype;
-const makersOfSafeIteratorsOfMap = /* as: SafeMap: makeSafe */ makeSafe(
-  MapPrototype,
-  SafeMapPrototype,
-  new Map(),
-  MapIteratorPrototypeNext,
-);
-if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(MapPrototype);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "clear");
-ReflectDefineProperty(SafeMapPrototype, "clear", {
-  value: MapPrototype.clear,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "delete");
-ReflectDefineProperty(SafeMapPrototype, "delete", {
-  value: MapPrototype.delete,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "entries");
-// A method that makes an iterator has a class of its own, also where two names hold one method.
-const SafeMapEntries = createSafeIterator(MapPrototypeEntries, MapIteratorPrototypeNext);
-const safeMapEntries = { value: undefined, writable: true, enumerable: false, configurable: true };
-safeMapEntries.value = function () {
-  return new /* as: return new SafeIterator */ SafeMapEntries(this);
-};
-ReflectDefineProperty(SafeMapPrototype, "entries", safeMapEntries);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "forEach");
-ReflectDefineProperty(SafeMapPrototype, "forEach", {
-  value: MapPrototype.forEach,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "get");
-ReflectDefineProperty(SafeMapPrototype, "get", {
-  value: MapPrototype.get,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "has");
-ReflectDefineProperty(SafeMapPrototype, "has", {
-  value: MapPrototype.has,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "keys");
-const SafeMapKeys = createSafeIterator(MapPrototypeKeys, MapIteratorPrototypeNext);
-const safeMapKeys = { value: undefined, writable: true, enumerable: false, configurable: true };
-safeMapKeys.value = function () {
-  return new /* as: return new SafeIterator */ SafeMapKeys(this);
-};
-ReflectDefineProperty(SafeMapPrototype, "keys", safeMapKeys);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "set");
-ReflectDefineProperty(SafeMapPrototype, "set", {
-  value: MapPrototype.set,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "getOrInsert");
-ReflectDefineProperty(SafeMapPrototype, "getOrInsert", {
-  value: MapPrototype.getOrInsert,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "getOrInsertComputed");
-ReflectDefineProperty(SafeMapPrototype, "getOrInsertComputed", {
-  value: MapPrototype.getOrInsertComputed,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-ReflectDefineProperty(SafeMapPrototype, "size", ReflectGetOwnPropertyDescriptor(MapPrototype, "size"));
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "values");
-const SafeMapValues = createSafeIterator(MapPrototypeValues, MapIteratorPrototypeNext);
-const safeMapValues = { value: undefined, writable: true, enumerable: false, configurable: true };
-safeMapValues.value = function () {
-  return new /* as: return new SafeIterator */ SafeMapValues(this);
-};
-ReflectDefineProperty(SafeMapPrototype, "values", safeMapValues);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, SymbolIterator);
-const SafeMapSymbolIterator = createSafeIterator(MapPrototypeEntries, MapIteratorPrototypeNext);
-const safeMapSymbolIterator = { value: undefined, writable: true, enumerable: false, configurable: true };
-safeMapSymbolIterator.value = function () {
-  return new /* as: return new SafeIterator */ SafeMapSymbolIterator(this);
-};
-ReflectDefineProperty(SafeMapPrototype, SymbolIterator, safeMapSymbolIterator);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, SymbolToStringTag);
-ReflectDefineProperty(SafeMapPrototype, SymbolToStringTag, {
-  value: MapPrototype[SymbolToStringTag],
-  writable: false,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(Map);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(Map, "groupBy");
-ReflectDefineProperty(SafeMap, "groupBy", {
-  value: Map.groupBy,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-ReflectDefineProperty(SafeMap, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Map, SymbolSpecies));
-defineOwnPropertiesLeftOut(SafeMapPrototype, MapPrototype, makersOfSafeIteratorsOfMap);
-defineOwnPropertiesLeftOut(SafeMap, Map, undefined);
-sealClass(SafeMap);
+if (
+  CAN_REPLACE_BUILT_INS &&
+  !(
+    ownsEach(MapPrototype, [
+      "clear",
+      "delete",
+      "entries",
+      "forEach",
+      "get",
+      "has",
+      "keys",
+      "set",
+      "getOrInsert",
+      "getOrInsertComputed",
+      "size",
+      "values",
+      SymbolIterator,
+      SymbolToStringTag,
+    ]) && ownsEach(Map, ["groupBy", SymbolSpecies])
+  )
+) {
+  makeSafeOfAnyClass(Map, SafeMap);
+} else {
+  const MapPrototypeEntries = MapPrototype.entries;
+  const MapPrototypeKeys = MapPrototype.keys;
+  const MapPrototypeValues = MapPrototype.values;
+  const MapIteratorPrototypeNext = MapPrototypeEntries.$call(new Map()).next;
+  const SafeMapPrototype = SafeMap.prototype;
+  const makersOfSafeIteratorsOfMap = makeSafe(MapPrototype, SafeMapPrototype, new Map(), MapIteratorPrototypeNext);
+  if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(MapPrototype);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "clear");
+  ReflectDefineProperty(SafeMapPrototype, "clear", {
+    value: MapPrototype.clear,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "delete");
+  ReflectDefineProperty(SafeMapPrototype, "delete", {
+    value: MapPrototype.delete,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "entries");
+  // A method that makes an iterator has a class of its own, also where two names hold one method.
+  const SafeMapEntries = createSafeIterator(MapPrototypeEntries, MapIteratorPrototypeNext);
+  const safeMapEntries = { value: undefined, writable: true, enumerable: false, configurable: true };
+  safeMapEntries.value = function () {
+    return new SafeMapEntries(this);
+  };
+  ReflectDefineProperty(SafeMapPrototype, "entries", safeMapEntries);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "forEach");
+  ReflectDefineProperty(SafeMapPrototype, "forEach", {
+    value: MapPrototype.forEach,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "get");
+  ReflectDefineProperty(SafeMapPrototype, "get", {
+    value: MapPrototype.get,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "has");
+  ReflectDefineProperty(SafeMapPrototype, "has", {
+    value: MapPrototype.has,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "keys");
+  const SafeMapKeys = createSafeIterator(MapPrototypeKeys, MapIteratorPrototypeNext);
+  const safeMapKeys = { value: undefined, writable: true, enumerable: false, configurable: true };
+  safeMapKeys.value = function () {
+    return new SafeMapKeys(this);
+  };
+  ReflectDefineProperty(SafeMapPrototype, "keys", safeMapKeys);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "set");
+  ReflectDefineProperty(SafeMapPrototype, "set", {
+    value: MapPrototype.set,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "getOrInsert");
+  ReflectDefineProperty(SafeMapPrototype, "getOrInsert", {
+    value: MapPrototype.getOrInsert,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "getOrInsertComputed");
+  ReflectDefineProperty(SafeMapPrototype, "getOrInsertComputed", {
+    value: MapPrototype.getOrInsertComputed,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  ReflectDefineProperty(SafeMapPrototype, "size", ReflectGetOwnPropertyDescriptor(MapPrototype, "size"));
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "values");
+  const SafeMapValues = createSafeIterator(MapPrototypeValues, MapIteratorPrototypeNext);
+  const safeMapValues = { value: undefined, writable: true, enumerable: false, configurable: true };
+  safeMapValues.value = function () {
+    return new SafeMapValues(this);
+  };
+  ReflectDefineProperty(SafeMapPrototype, "values", safeMapValues);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, SymbolIterator);
+  const SafeMapSymbolIterator = createSafeIterator(MapPrototype[SymbolIterator], MapIteratorPrototypeNext);
+  const safeMapSymbolIterator = { value: undefined, writable: true, enumerable: false, configurable: true };
+  safeMapSymbolIterator.value = function () {
+    return new SafeMapSymbolIterator(this);
+  };
+  ReflectDefineProperty(SafeMapPrototype, SymbolIterator, safeMapSymbolIterator);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, SymbolToStringTag);
+  ReflectDefineProperty(SafeMapPrototype, SymbolToStringTag, {
+    value: MapPrototype[SymbolToStringTag],
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(Map);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(Map, "groupBy");
+  ReflectDefineProperty(SafeMap, "groupBy", {
+    value: Map.groupBy,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  ReflectDefineProperty(SafeMap, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Map, SymbolSpecies));
+  defineOwnPropertiesLeftOut(SafeMapPrototype, MapPrototype, makersOfSafeIteratorsOfMap);
+  defineOwnPropertiesLeftOut(SafeMap, Map, undefined);
+  sealClass(SafeMap);
+}
 
 const SetPrototype = Set.prototype;
-const SetPrototypeEntries = SetPrototype.entries;
-const SetPrototypeValues = SetPrototype.values;
-const SetIteratorPrototypeNext = SetPrototypeEntries.$call(new Set()).next;
 
 class SafeSet extends Set {
   constructor(i) {
     super(i);
   }
 }
-const SafeSetPrototype = SafeSet.prototype;
-const makersOfSafeIteratorsOfSet = /* as: SafeSet: makeSafe */ makeSafe(
-  SetPrototype,
-  SafeSetPrototype,
-  new Set(),
-  SetIteratorPrototypeNext,
-);
-if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(SetPrototype);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "add");
-ReflectDefineProperty(SafeSetPrototype, "add", {
-  value: SetPrototype.add,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "clear");
-ReflectDefineProperty(SafeSetPrototype, "clear", {
-  value: SetPrototype.clear,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "delete");
-ReflectDefineProperty(SafeSetPrototype, "delete", {
-  value: SetPrototype.delete,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "entries");
-const SafeSetEntries = createSafeIterator(SetPrototypeEntries, SetIteratorPrototypeNext);
-const safeSetEntries = { value: undefined, writable: true, enumerable: false, configurable: true };
-safeSetEntries.value = function () {
-  return new /* as: return new SafeIterator */ SafeSetEntries(this);
-};
-ReflectDefineProperty(SafeSetPrototype, "entries", safeSetEntries);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "forEach");
-ReflectDefineProperty(SafeSetPrototype, "forEach", {
-  value: SetPrototype.forEach,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "has");
-ReflectDefineProperty(SafeSetPrototype, "has", {
-  value: SetPrototype.has,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "keys");
-const SafeSetKeys = createSafeIterator(SetPrototypeValues, SetIteratorPrototypeNext);
-const safeSetKeys = { value: undefined, writable: true, enumerable: false, configurable: true };
-safeSetKeys.value = function () {
-  return new /* as: return new SafeIterator */ SafeSetKeys(this);
-};
-ReflectDefineProperty(SafeSetPrototype, "keys", safeSetKeys);
-ReflectDefineProperty(SafeSetPrototype, "size", ReflectGetOwnPropertyDescriptor(SetPrototype, "size"));
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "values");
-const SafeSetValues = createSafeIterator(SetPrototypeValues, SetIteratorPrototypeNext);
-const safeSetValues = { value: undefined, writable: true, enumerable: false, configurable: true };
-safeSetValues.value = function () {
-  return new /* as: return new SafeIterator */ SafeSetValues(this);
-};
-ReflectDefineProperty(SafeSetPrototype, "values", safeSetValues);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "union");
-ReflectDefineProperty(SafeSetPrototype, "union", {
-  value: SetPrototype.union,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "intersection");
-ReflectDefineProperty(SafeSetPrototype, "intersection", {
-  value: SetPrototype.intersection,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "difference");
-ReflectDefineProperty(SafeSetPrototype, "difference", {
-  value: SetPrototype.difference,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "symmetricDifference");
-ReflectDefineProperty(SafeSetPrototype, "symmetricDifference", {
-  value: SetPrototype.symmetricDifference,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "isSubsetOf");
-ReflectDefineProperty(SafeSetPrototype, "isSubsetOf", {
-  value: SetPrototype.isSubsetOf,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "isSupersetOf");
-ReflectDefineProperty(SafeSetPrototype, "isSupersetOf", {
-  value: SetPrototype.isSupersetOf,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "isDisjointFrom");
-ReflectDefineProperty(SafeSetPrototype, "isDisjointFrom", {
-  value: SetPrototype.isDisjointFrom,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, SymbolIterator);
-const SafeSetSymbolIterator = createSafeIterator(SetPrototypeValues, SetIteratorPrototypeNext);
-const safeSetSymbolIterator = { value: undefined, writable: true, enumerable: false, configurable: true };
-safeSetSymbolIterator.value = function () {
-  return new /* as: return new SafeIterator */ SafeSetSymbolIterator(this);
-};
-ReflectDefineProperty(SafeSetPrototype, SymbolIterator, safeSetSymbolIterator);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, SymbolToStringTag);
-ReflectDefineProperty(SafeSetPrototype, SymbolToStringTag, {
-  value: SetPrototype[SymbolToStringTag],
-  writable: false,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(Set);
-ReflectDefineProperty(SafeSet, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Set, SymbolSpecies));
-defineOwnPropertiesLeftOut(SafeSetPrototype, SetPrototype, makersOfSafeIteratorsOfSet);
-defineOwnPropertiesLeftOut(SafeSet, Set, undefined);
-sealClass(SafeSet);
+if (
+  CAN_REPLACE_BUILT_INS &&
+  !(
+    ownsEach(SetPrototype, [
+      "add",
+      "clear",
+      "delete",
+      "entries",
+      "forEach",
+      "has",
+      "keys",
+      "size",
+      "values",
+      "union",
+      "intersection",
+      "difference",
+      "symmetricDifference",
+      "isSubsetOf",
+      "isSupersetOf",
+      "isDisjointFrom",
+      SymbolIterator,
+      SymbolToStringTag,
+    ]) && ownsEach(Set, [SymbolSpecies])
+  )
+) {
+  makeSafeOfAnyClass(Set, SafeSet);
+} else {
+  const SetPrototypeEntries = SetPrototype.entries;
+  const SetPrototypeValues = SetPrototype.values;
+  const SetIteratorPrototypeNext = SetPrototypeEntries.$call(new Set()).next;
+  const SafeSetPrototype = SafeSet.prototype;
+  const makersOfSafeIteratorsOfSet = makeSafe(SetPrototype, SafeSetPrototype, new Set(), SetIteratorPrototypeNext);
+  if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(SetPrototype);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "add");
+  ReflectDefineProperty(SafeSetPrototype, "add", {
+    value: SetPrototype.add,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "clear");
+  ReflectDefineProperty(SafeSetPrototype, "clear", {
+    value: SetPrototype.clear,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "delete");
+  ReflectDefineProperty(SafeSetPrototype, "delete", {
+    value: SetPrototype.delete,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "entries");
+  const SafeSetEntries = createSafeIterator(SetPrototypeEntries, SetIteratorPrototypeNext);
+  const safeSetEntries = { value: undefined, writable: true, enumerable: false, configurable: true };
+  safeSetEntries.value = function () {
+    return new SafeSetEntries(this);
+  };
+  ReflectDefineProperty(SafeSetPrototype, "entries", safeSetEntries);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "forEach");
+  ReflectDefineProperty(SafeSetPrototype, "forEach", {
+    value: SetPrototype.forEach,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "has");
+  ReflectDefineProperty(SafeSetPrototype, "has", {
+    value: SetPrototype.has,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "keys");
+  const SafeSetKeys = createSafeIterator(SetPrototype.keys, SetIteratorPrototypeNext);
+  const safeSetKeys = { value: undefined, writable: true, enumerable: false, configurable: true };
+  safeSetKeys.value = function () {
+    return new SafeSetKeys(this);
+  };
+  ReflectDefineProperty(SafeSetPrototype, "keys", safeSetKeys);
+  ReflectDefineProperty(SafeSetPrototype, "size", ReflectGetOwnPropertyDescriptor(SetPrototype, "size"));
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "values");
+  const SafeSetValues = createSafeIterator(SetPrototypeValues, SetIteratorPrototypeNext);
+  const safeSetValues = { value: undefined, writable: true, enumerable: false, configurable: true };
+  safeSetValues.value = function () {
+    return new SafeSetValues(this);
+  };
+  ReflectDefineProperty(SafeSetPrototype, "values", safeSetValues);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "union");
+  ReflectDefineProperty(SafeSetPrototype, "union", {
+    value: SetPrototype.union,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "intersection");
+  ReflectDefineProperty(SafeSetPrototype, "intersection", {
+    value: SetPrototype.intersection,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "difference");
+  ReflectDefineProperty(SafeSetPrototype, "difference", {
+    value: SetPrototype.difference,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "symmetricDifference");
+  ReflectDefineProperty(SafeSetPrototype, "symmetricDifference", {
+    value: SetPrototype.symmetricDifference,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "isSubsetOf");
+  ReflectDefineProperty(SafeSetPrototype, "isSubsetOf", {
+    value: SetPrototype.isSubsetOf,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "isSupersetOf");
+  ReflectDefineProperty(SafeSetPrototype, "isSupersetOf", {
+    value: SetPrototype.isSupersetOf,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "isDisjointFrom");
+  ReflectDefineProperty(SafeSetPrototype, "isDisjointFrom", {
+    value: SetPrototype.isDisjointFrom,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, SymbolIterator);
+  const SafeSetSymbolIterator = createSafeIterator(SetPrototype[SymbolIterator], SetIteratorPrototypeNext);
+  const safeSetSymbolIterator = { value: undefined, writable: true, enumerable: false, configurable: true };
+  safeSetSymbolIterator.value = function () {
+    return new SafeSetSymbolIterator(this);
+  };
+  ReflectDefineProperty(SafeSetPrototype, SymbolIterator, safeSetSymbolIterator);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, SymbolToStringTag);
+  ReflectDefineProperty(SafeSetPrototype, SymbolToStringTag, {
+    value: SetPrototype[SymbolToStringTag],
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(Set);
+  ReflectDefineProperty(SafeSet, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Set, SymbolSpecies));
+  defineOwnPropertiesLeftOut(SafeSetPrototype, SetPrototype, makersOfSafeIteratorsOfSet);
+  defineOwnPropertiesLeftOut(SafeSet, Set, undefined);
+  sealClass(SafeSet);
+}
 
 const WeakMapPrototype = WeakMap.prototype;
 
@@ -361,61 +433,68 @@ class SafeWeakMap extends WeakMap {
     super(i);
   }
 }
-const SafeWeakMapPrototype = SafeWeakMap.prototype;
-if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(WeakMapPrototype);
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "delete");
-ReflectDefineProperty(SafeWeakMapPrototype, "delete", {
-  value: WeakMapPrototype.delete,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "get");
-ReflectDefineProperty(SafeWeakMapPrototype, "get", {
-  value: WeakMapPrototype.get,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "has");
-ReflectDefineProperty(SafeWeakMapPrototype, "has", {
-  value: WeakMapPrototype.has,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "set");
-ReflectDefineProperty(SafeWeakMapPrototype, "set", {
-  value: WeakMapPrototype.set,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "getOrInsert");
-ReflectDefineProperty(SafeWeakMapPrototype, "getOrInsert", {
-  value: WeakMapPrototype.getOrInsert,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "getOrInsertComputed");
-ReflectDefineProperty(SafeWeakMapPrototype, "getOrInsertComputed", {
-  value: WeakMapPrototype.getOrInsertComputed,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, SymbolToStringTag);
-ReflectDefineProperty(SafeWeakMapPrototype, SymbolToStringTag, {
-  value: WeakMapPrototype[SymbolToStringTag],
-  writable: false,
-  enumerable: false,
-  configurable: true,
-});
-if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(WeakMap);
-defineOwnPropertiesLeftOut(SafeWeakMapPrototype, WeakMapPrototype, undefined);
-defineOwnPropertiesLeftOut(SafeWeakMap, WeakMap, undefined);
-sealClass(SafeWeakMap);
+if (
+  CAN_REPLACE_BUILT_INS &&
+  !ownsEach(WeakMapPrototype, ["delete", "get", "has", "set", "getOrInsert", "getOrInsertComputed", SymbolToStringTag])
+) {
+  makeSafeOfAnyClass(WeakMap, SafeWeakMap);
+} else {
+  const SafeWeakMapPrototype = SafeWeakMap.prototype;
+  if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(WeakMapPrototype);
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "delete");
+  ReflectDefineProperty(SafeWeakMapPrototype, "delete", {
+    value: WeakMapPrototype.delete,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "get");
+  ReflectDefineProperty(SafeWeakMapPrototype, "get", {
+    value: WeakMapPrototype.get,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "has");
+  ReflectDefineProperty(SafeWeakMapPrototype, "has", {
+    value: WeakMapPrototype.has,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "set");
+  ReflectDefineProperty(SafeWeakMapPrototype, "set", {
+    value: WeakMapPrototype.set,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "getOrInsert");
+  ReflectDefineProperty(SafeWeakMapPrototype, "getOrInsert", {
+    value: WeakMapPrototype.getOrInsert,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, "getOrInsertComputed");
+  ReflectDefineProperty(SafeWeakMapPrototype, "getOrInsertComputed", {
+    value: WeakMapPrototype.getOrInsertComputed,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(WeakMapPrototype, SymbolToStringTag);
+  ReflectDefineProperty(SafeWeakMapPrototype, SymbolToStringTag, {
+    value: WeakMapPrototype[SymbolToStringTag],
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+  if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(WeakMap);
+  defineOwnPropertiesLeftOut(SafeWeakMapPrototype, WeakMapPrototype, undefined);
+  defineOwnPropertiesLeftOut(SafeWeakMap, WeakMap, undefined);
+  sealClass(SafeWeakMap);
+}
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseResolve = Promise.$resolve.bind(Promise);
@@ -464,5 +543,17 @@ export default {
   TypedArrayPrototypeGetSymbolToStringTag: FunctionPrototypeCall.bind(
     Uint8Array.prototype.__lookupGetter__(SymbolToStringTag),
   ),
+  Uint8ClampedArray,
+  Uint8Array,
+  Uint16Array,
+  Uint32Array,
+  Int8Array,
+  Int16Array,
+  Int32Array,
+  Float16Array,
+  Float32Array,
+  Float64Array,
+  BigUint64Array,
+  BigInt64Array,
   uncurryThis,
 };

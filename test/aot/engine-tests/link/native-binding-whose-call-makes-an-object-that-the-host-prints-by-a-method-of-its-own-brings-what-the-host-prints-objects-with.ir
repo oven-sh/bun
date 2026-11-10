@@ -1,0 +1,41 @@
+# The same with createRecordable of histogram.bind.ts. The binding answers one function of the table, so the look through it is silent. Its CALL rows make an object whose prototype has the method that the
+# host calls to print it: the class has objects, its prototype is looked through, the member under the symbol is read, and its name raises. Whoever widens the silence of a binding to its rows turns this red.
+# main.js prints a value that nobody knows: native code looks under the symbol only where a formatter may come by an instance.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:process/tick_ring" displayPath="internal:process/tick_ring" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessTick_ring body=f1
+module m2 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m1 fields=[{key="ring" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+runtimefunction id=UtilInspectStylizeWithNoColor function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="internal/process/tick_ring"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="console" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
+    v4 = PropGet v3 key="log"
+    v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v6 = PropGet v1 key="kept"
+    v7 = Call v5, v3, v6 calleeKey="log" calleeName="console.log"
+    Return v7
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenHistogramBindTsCreateRecordable
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="hidden" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = PropGet v3 key="width"
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    Return v6
+}
+function f2 module=m2 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

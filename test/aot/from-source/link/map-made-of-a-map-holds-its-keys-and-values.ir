@@ -1,0 +1,16 @@
+# A map HOLDS keys and values and HANDS OUT pairs of them. `new Map(first)` takes each pair apart. Link took apart what the operand holds: it laid what the keys and the values hold in turn into the new map,
+# and the callback's parameters were proven `undefined|int|whole|string` where a list and an object arrive.
+# -- source: map-of-a-map.ts
+# const first = new Map<{ id: number }, [number, string]>();
+# for (let i = 0; i < 3; i++)
+#     first.set({ id: i }, [i, "t" + i]);
+# let total = 0;
+# new Map(first).forEach((value, key) => {
+#     total += key.id + value[0] + value[1].length;
+# });
+# console.log(total);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 
+# CHECK-NEXT: parameter 0 {{*}}proven=undefined|L0|Array
+# CHECK-NEXT: parameter 1 {{*}}proven=undefined|L0|Array

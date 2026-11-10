@@ -1,0 +1,29 @@
+# `Meter.prototype.tick = function tick(by) { this.total += by * this.step; return this; };`: the receivers come out of a place that nobody follows, so the method is called by name and nothing is known of `this`; the front end said nothing of it either, and its accesses went by name through stubs.
+# The text says what `this` is likely to be: the name in front of `.prototype`, followed by its binding, is a constructor function or a class of the file: its instances, and those of its heirs. It is stated as an expectation, as for a method written in a class: one test of the shape, then the slots. A receiver of another shape, which borrows the method, takes the closed arm (the last answer).
+# f5 = tick, f6 = weigh . L0 = Scale, L1 = Meter, L2 = Fine
+# -- source: this-of-a-function-laid-on-a-prototype-is-expected-to-be-an-instance.cjs
+# function Meter(step) { this.step = step; this.total = 0; }
+# Meter.prototype.tick = function tick(by) { this.total += by * this.step; return this; };
+# function Fine(step) { Meter.call(this, step); this.grain = 2; }
+# Fine.prototype = Object.create(Meter.prototype);
+# class Scale { constructor(step) { this.step = step; this.total = 0; this.unit = 'g'; } }
+# Scale.prototype.tick = function weigh(by) { this.total += by + this.step; return this; };
+# const box = {};
+# box['k' + [].length] = [new Meter(1), new Fine(2), new Scale(3), { step: 4, total: 'a', tick: Meter.prototype.tick }];
+# function turn(at, by) { return box.k0[at].tick(by).total; }
+# print(turn(0, 5), turn(1, 5), turn(2, 5), turn(3, 5));
+# -- end of source
+# RUN: walk f5 mechanisms=all
+# CHECK-LABEL: code f5:Body
+# CHECK: = ShapeTest {{*}}layouts=[L1, L2]
+# CHECK: = GetSlot {{*}}key="total" receivers=[L1, L2]
+# CHECK: = GetSlot {{*}}key="step" receivers=[L1, L2]
+# RUN(STORE): walk f5 mechanisms=all
+# STORE: = PutSlotOrAdd {{*}}key="total" receivers=[L1, L2]
+# RUN(CLASS): walk f6 mechanisms=all
+# CLASS-LABEL: code f6:Body
+# CLASS: = ShapeTest {{*}}layouts=[L0]
+# CLASS: = GetSlot {{*}}key="total" receivers=[L0]
+# CLASS: = PutSlot {{*}}key="total" receivers=[L0]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5 10 8 a20

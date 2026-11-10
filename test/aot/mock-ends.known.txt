@@ -1,0 +1,5 @@
+# What the test file behind a sequence of mock events sees otherwise than under `bun test`. See mock-ends.test.ts.
+# `rejects+module+actual.js.late.awaits names` was lost since the compiler on Bun's main branch; the other two lines are older than that.
+one-program original+actual+throws-late.cjs.required names: loud | nothing
+one-program original+actual+throws-late.cjs.required values: loud | nothing
+one-program rejects+module+actual.js.late.awaits names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top none

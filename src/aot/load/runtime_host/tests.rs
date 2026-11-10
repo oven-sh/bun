@@ -94,6 +94,7 @@ fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
         builtin_names: &builtin_names,
         platform: host_platform(),
         replaced_builtins: &[],
+        unlocked_builtins: &Arc::default(),
         messages: &messages,
         unreadable: Guarded::default(),
         manifest: Archive::embedded().manifest(),
@@ -313,8 +314,7 @@ fn payload_kind_follows_file_kind() {
             assert!(parsed.host_values.is_empty());
             let source = payload_of(&parsed);
             assert_eq!((source.kind, source.loader), (kind, Loader::Ts), "{name}");
-            assert!(!source.is_from_plugin && source.plugin_module.is_none());
-            assert!(source.web_assembly.is_none() && !source.is_page);
+            assert!(source.plugin_module.is_none() && source.web_assembly.is_none());
         }
         assert!(fixture.take_messages().is_empty());
         assert!(fixture.host.take_unreadable().is_empty());

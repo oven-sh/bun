@@ -59,49 +59,40 @@ console.log(run(700000));
 
 // GENERATED: pick omitId
 // CHECK-LABEL: function {{*}}name="pick"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: Array):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: Array):
+// CHECK-NEXT: v2 = Data data=[[d_2]]
+// CHECK-NEXT: v3 = IteratorOpen v1
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Data data=[[d_1]]
-// CHECK-NEXT: v3 = IteratorOpen v1
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v5 = IteratorResume v3
 // CHECK-NEXT: v6 = ResultAt v5
 // CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
+// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
 // CHECK-NEXT: Return v2
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b6():
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Jump -> next b4()
+// CHECK-NEXT: b4() handler=b5():
 // CHECK-NEXT: v8 = ElemGet v0, v7
 // CHECK-NEXT: ElemSet v2, v7, v8
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b6() role=IterationCleanup subject=v3:
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b5() role=IterationCleanup subject=v3:
 // CHECK-NEXT: v10 = CatchException
 // CHECK-NEXT: IteratorClose v3 completion=Throw
 // CHECK-NEXT: Rethrow v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="omitId"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}] results=[{type=undefined|null|object flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_3]]):
 // CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() frequency=Unlikely:
+// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v2):
 // CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="id"
 // CHECK-NEXT: Throw v3
-// CHECK-NEXT: b4(v4):
+// CHECK-NEXT: b2(v4):
 // CHECK-NEXT: v5 = PropGet v4 key="id"
-// CHECK-NEXT: v6 = NewObject layout=[[L_3]]
-// CHECK-NEXT: CopyDataProperties v6, v4 excludedKeys=["id"]
-// CHECK-NEXT: v8 = FinishObject v6
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: Return v9
+// CHECK-NEXT: v6 = CopyObject v4 excludedKeys=["id"]
+// CHECK-NEXT: Return v6
 // CHECK-NEXT: }

@@ -1,8 +1,8 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="typed"
-// CHECK: results=[{type=undefined|null|number|string site=[[result]] flags=[OmitsNull, OmitsUndefined]}]
+// CHECK: results=[{type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]}]
 // CHECK: [[typedCall]] = Call
-// CHECK-NEXT: ReturnCall [[typedCall]] casts=[{declared={type=number site=[[assertion]]}}, {declared={type=undefined|null|number|string site=[[result]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: ReturnCall [[typedCall]] casts=[{declared={type=number}}, {declared={type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-LABEL: function {{*}}name="untyped"
 // CHECK-NOT: casts=
 // CHECK: [[untypedCall]] = Call

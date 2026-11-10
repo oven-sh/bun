@@ -1,18 +1,16 @@
 #[cfg(test)]
 mod tests;
 
+use super::merged_keys::OrderedKey;
 use crate::builtins::RuntimeModule;
-use crate::ir::waiting_lists::AsNumbers;
 use crate::ir::{FunctionKey, LayoutKey, VariableKey};
 use crate::load::{ProgramFile, ProjectId, Sources};
-use crate::modules::{ModuleFailureId, ModuleGraph, ModuleRef};
+use crate::modules::{ModuleGraph, ModuleRef};
 use bun_ast::Loader;
 use bun_sema::atom::{Atom, Interner};
-use bun_sema::check::aot::{
-    ClassDeclaration, ClassRef, FunctionRef, ObjectOrigin, TypeParameterRef,
-};
-use bun_sema::hir::{ClassId, FnId, MemberId};
-use bun_sema::program::{FileId, Sym};
+use bun_sema::check::aot::{ClassDeclaration, FunctionRef, ObjectOrigin, TypeIdentity};
+use bun_sema::hir::FnId;
+use bun_sort_by_number::number_of_pair;
 use core::cmp::Ordering;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -24,75 +22,14 @@ pub struct InProject<K> {
 pub type ProgramFunctionKey = InProject<FunctionKey>;
 pub type ProgramLayoutKey = InProject<LayoutKey>;
 
-/// The kind of key together with the project, the file, and what the key names in the file.
-impl AsNumbers for ProgramFunctionKey {
-    type Numbers = [u32; 3];
-
-    fn to_numbers(self) -> [u32; 3] {
-        let (kind, file, named) = match self.key {
-            FunctionKey::ModuleBody(file) => (0, file, 0),
-            FunctionKey::WrappedModuleBody(file) => (1, file, 0),
-            FunctionKey::FaceBody(file) => (2, file, 0),
-            FunctionKey::CheckBody(file) => (3, file, 0),
-            FunctionKey::Source(FunctionRef { file, function }) => (4, file, function.0),
-            FunctionKey::Signature(FunctionRef { file, function }) => (5, file, function.0),
-            FunctionKey::ClassSignature(ClassRef { file, class }) => (6, file, class.0),
-            FunctionKey::ImplicitConstructor(ClassRef { file, class }) => (7, file, class.0),
-            FunctionKey::InstanceInitializer(ClassRef { file, class }) => (8, file, class.0),
-            FunctionKey::StaticInitializer(ClassRef { file, class }) => (9, file, class.0),
-            FunctionKey::AccessorGetter { file, member } => (10, file, member.0),
-            FunctionKey::AccessorSetter { file, member } => (11, file, member.0),
-            FunctionKey::PrivateNameTest { file, member } => (12, file, member.0),
-        };
-        let kind_in_project = kind * ProjectId::COUNT as u32 + self.project as u32;
-        [kind_in_project, file.0, named]
-    }
-
-    fn from_numbers([kind_in_project, file, named]: [u32; 3]) -> ProgramFunctionKey {
-        let file = FileId(file);
-        let function = FunctionRef {
-            file,
-            function: FnId(named),
-        };
-        let class = ClassRef {
-            file,
-            class: ClassId(named),
-        };
-        let member = MemberId(named);
-        let key = match kind_in_project / ProjectId::COUNT as u32 {
-            0 => FunctionKey::ModuleBody(file),
-            1 => FunctionKey::WrappedModuleBody(file),
-            2 => FunctionKey::FaceBody(file),
-            3 => FunctionKey::CheckBody(file),
-            4 => FunctionKey::Source(function),
-            5 => FunctionKey::Signature(function),
-            6 => FunctionKey::ClassSignature(class),
-            7 => FunctionKey::ImplicitConstructor(class),
-            8 => FunctionKey::InstanceInitializer(class),
-            9 => FunctionKey::StaticInitializer(class),
-            10 => FunctionKey::AccessorGetter { file, member },
-            11 => FunctionKey::AccessorSetter { file, member },
-            12 => FunctionKey::PrivateNameTest { file, member },
-            _ => unreachable!("`to_numbers` wrote it"),
-        };
-        InProject {
-            project: ProjectId::ALL[kind_in_project as usize % ProjectId::COUNT],
-            key,
-        }
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ProgramModule {
     File(ProgramFile),
-    /// The callback of `__commonJS(cb)` or `__esm(fn)` in a bundle.
     Inner {
         file: ProgramFile,
         callback: FnId,
     },
-    /// What ES modules request in place of a CommonJS file.
     Face(ProgramFile),
-    /// Throws for a name that the ES graph below a file imports and no CommonJS file of it stores.
     Check(ProgramFile),
     Runtime(RuntimeModule),
     External {
@@ -107,7 +44,6 @@ impl ProgramModule {
         order_in_file(self).map(|(file, _, _)| file)
     }
 
-    /// As the graph of its project names a module that has its text in a file.
     pub fn in_own_project(self) -> Option<(ProjectId, ModuleRef)> {
         Some(match self {
             ProgramModule::File(file) => (file.project, ModuleRef::File(file.file)),
@@ -124,7 +60,6 @@ impl ProgramModule {
         })
     }
 
-    /// The body of a record that a file has beside its own. The fragment of the file names the body of its own record.
     pub fn body_key(self) -> Option<ProgramFunctionKey> {
         let (file, key) = match self {
             ProgramModule::Inner { file, callback } => {
@@ -146,7 +81,6 @@ impl ProgramModule {
         })
     }
 
-    /// What holds `module.exports` where the exports of the module are one value.
     pub fn exports_variable_key(self) -> Option<ProgramVariableKey> {
         let (file, key) = match self {
             ProgramModule::File(file) => (file, VariableKey::ModuleExports(file.file)),
@@ -169,126 +103,9 @@ impl ProgramModule {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ProgramVariableKey {
     Declared(InProject<VariableKey>),
-    SyntheticExport {
-        module: ProgramModule,
-        name: Atom,
-    },
-    /// What ES importers hold of a name of the CommonJS file `module`.
-    Copy {
-        module: ProgramModule,
-        name: Atom,
-    },
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum ProgramKey {
-    Function(ProgramFunctionKey),
-    Layout(ProgramLayoutKey),
-    Variable(ProgramVariableKey),
-    Module(ProgramModule),
-}
-
-/// The files of a program that checks a typed package by itself, as the application numbers them.
-pub struct Rehoming<'a> {
-    /// By file of the package's program: the application's file at the same path.
-    pub files: &'a [Option<FileId>],
-    pub application_graph: &'a ModuleGraph,
-    /// A file that only the package's program has gets a number that no file of the application has.
-    pub first_fresh_file: u32,
-    /// The first declaration's symbol of a symbol of the package's program.
-    pub stable_symbol: &'a (dyn Fn(Sym) -> Sym + Sync),
-    /// The whole symbol, in the application, of a symbol that a file declares.
-    pub canonical_symbol: &'a (dyn Fn(Sym) -> Sym + Sync),
-}
-
-impl Rehoming<'_> {
-    pub fn file(&self, file: FileId) -> FileId {
-        self.files[file.idx()].unwrap_or(FileId(self.first_fresh_file + file.0))
-    }
-
-    pub fn symbol(&self, symbol: Sym) -> Sym {
-        let part = (self.stable_symbol)(symbol);
-        match self.files[part.file.idx()] {
-            Some(file) => (self.canonical_symbol)(Sym { file, id: part.id }),
-            None => Sym {
-                file: self.file(symbol.file),
-                id: symbol.id,
-            },
-        }
-    }
-
-    fn function_key(&self, mut key: FunctionKey) -> FunctionKey {
-        match &mut key {
-            FunctionKey::ModuleBody(file)
-            | FunctionKey::WrappedModuleBody(file)
-            | FunctionKey::FaceBody(file)
-            | FunctionKey::CheckBody(file)
-            | FunctionKey::Source(FunctionRef { file, .. })
-            | FunctionKey::Signature(FunctionRef { file, .. })
-            | FunctionKey::ClassSignature(ClassRef { file, .. })
-            | FunctionKey::ImplicitConstructor(ClassRef { file, .. })
-            | FunctionKey::InstanceInitializer(ClassRef { file, .. })
-            | FunctionKey::StaticInitializer(ClassRef { file, .. })
-            | FunctionKey::AccessorGetter { file, member: _ }
-            | FunctionKey::AccessorSetter { file, member: _ }
-            | FunctionKey::PrivateNameTest { file, member: _ } => *file = self.file(*file),
-        }
-        key
-    }
-
-    fn layout_key(&self, mut key: LayoutKey) -> LayoutKey {
-        match &mut key {
-            LayoutKey::Class(ClassRef { file, .. })
-            | LayoutKey::ConstructorFunction(FunctionRef { file, .. })
-            | LayoutKey::ObjectType {
-                origin:
-                    ObjectOrigin::TypeLiteral { file, node: _ }
-                    | ObjectOrigin::MappedType { file, node: _ }
-                    | ObjectOrigin::ObjectLiteral {
-                        file,
-                        expression: _,
-                    },
-                instantiation: _,
-            }
-            | LayoutKey::UntypedLiteral { file, members: _ }
-            | LayoutKey::TypeParameter(TypeParameterRef { file, .. })
-            | LayoutKey::Environment {
-                file,
-                environment: _,
-            } => *file = self.file(*file),
-            LayoutKey::ObjectType {
-                origin: ObjectOrigin::Symbol(symbol),
-                instantiation: _,
-            }
-            | LayoutKey::Container(symbol) => *symbol = self.symbol(*symbol),
-            LayoutKey::Library(_)
-            | LayoutKey::ObjectType {
-                origin: ObjectOrigin::Computed,
-                instantiation: _,
-            } => {}
-        }
-        key
-    }
-
-    fn variable_key(&self, mut key: VariableKey) -> VariableKey {
-        match &mut key {
-            VariableKey::Symbol(symbol)
-            | VariableKey::RequiredAnswer(symbol)
-            | VariableKey::PrivateState {
-                state: symbol,
-                part: _,
-            } => *symbol = self.symbol(*symbol),
-            VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => {}
-            VariableKey::ModuleExports(file)
-            | VariableKey::ClassSlot {
-                class: ClassRef { file, .. },
-                slot: _,
-            }
-            | VariableKey::InnerModuleExports(FunctionRef { file, .. })
-            | VariableKey::ModulePath { file, variable: _ } => *file = self.file(*file),
-        }
-        key
-    }
+    SyntheticExport { module: ProgramModule, name: Atom },
+    Copy { module: ProgramModule, name: Atom },
+    MockOfRuntimeModule(RuntimeModule),
 }
 
 #[derive(Copy, Clone)]
@@ -296,18 +113,11 @@ pub struct KeyContext<'a> {
     pub project: ProjectId,
     pub graph: &'a ModuleGraph,
     pub runtime_sources: &'a Sources,
-    pub rehoming: Option<&'a Rehoming<'a>>,
 }
 
 impl KeyContext<'_> {
-    pub fn file(&self, file: FileId) -> FileId {
-        self.rehoming.map_or(file, |rehoming| rehoming.file(file))
-    }
-
+    #[inline]
     pub fn function_key(&self, key: FunctionKey) -> ProgramFunctionKey {
-        let key = self
-            .rehoming
-            .map_or(key, |rehoming| rehoming.function_key(key));
         InProject {
             project: self.project,
             key,
@@ -315,9 +125,6 @@ impl KeyContext<'_> {
     }
 
     pub fn layout_key(&self, key: LayoutKey) -> ProgramLayoutKey {
-        let key = self
-            .rehoming
-            .map_or(key, |rehoming| rehoming.layout_key(key));
         let (project, key) = match key {
             LayoutKey::Library(ClassDeclaration::Class(class)) => {
                 (ProjectId::Runtime, LayoutKey::Class(class))
@@ -346,33 +153,20 @@ impl KeyContext<'_> {
                     name: export.name,
                 }
             }
+            VariableKey::MockOfRuntimeModule(module) => {
+                ProgramVariableKey::MockOfRuntimeModule(module)
+            }
             _ => ProgramVariableKey::Declared(InProject {
                 project: self.project,
-                key: self
-                    .rehoming
-                    .map_or(key, |rehoming| rehoming.variable_key(key)),
+                key,
             }),
         }
-    }
-
-    pub fn module_failure(&self, id: ModuleFailureId) -> ModuleFailureId {
-        let Some(rehoming) = self.rehoming else {
-            return id;
-        };
-        let failure = self.graph.failure(id);
-        let importer = rehoming.file(failure.importer);
-        let mut failures = rehoming.application_graph.failures().iter();
-        let position = failures.position(|other| {
-            (other.importer, other.site, other.start, other.end)
-                == (importer, failure.site, failure.start, failure.end)
-        });
-        position.map_or(id, |position| ModuleFailureId(position as u32))
     }
 
     pub fn module(&self, module: ModuleRef) -> ProgramModule {
         let in_project = |file| ProgramFile {
             project: self.project,
-            file: self.file(file),
+            file,
         };
         match module {
             ModuleRef::File(file) => ProgramModule::File(in_project(file)),
@@ -402,7 +196,6 @@ impl KeyContext<'_> {
     }
 }
 
-// The records of a file stand together: its own, its inner modules, its face, its check.
 fn order_in_file(module: ProgramModule) -> Option<(ProgramFile, u8, u32)> {
     match module {
         ProgramModule::File(file) => Some((file, 0, 0)),
@@ -445,5 +238,150 @@ pub fn compare_program_modules(
         (Runtime(_), _) => Ordering::Less,
         (_, Runtime(_)) => Ordering::Greater,
         _ => unreachable!("a module that has its text in a file is ordered by the file"),
+    }
+}
+
+fn order_of_variant(key: ProgramVariableKey) -> u8 {
+    match key {
+        ProgramVariableKey::Declared(_) => 0,
+        ProgramVariableKey::SyntheticExport { .. } => 1,
+        ProgramVariableKey::Copy { .. } => 2,
+        ProgramVariableKey::MockOfRuntimeModule(_) => 3,
+    }
+}
+
+pub(super) fn compare_program_variable_keys(
+    a: ProgramVariableKey,
+    b: ProgramVariableKey,
+    atoms: &Interner<'_>,
+) -> Ordering {
+    use ProgramVariableKey as Key;
+    let by_variant = order_of_variant(a).cmp(&order_of_variant(b));
+    by_variant.then_with(|| match (a, b) {
+        (Key::Declared(a), Key::Declared(b)) => a.cmp(&b),
+        (
+            Key::SyntheticExport {
+                module: a_module,
+                name: a_name,
+            },
+            Key::SyntheticExport {
+                module: b_module,
+                name: b_name,
+            },
+        )
+        | (
+            Key::Copy {
+                module: a_module,
+                name: a_name,
+            },
+            Key::Copy {
+                module: b_module,
+                name: b_name,
+            },
+        ) => compare_program_modules(a_module, b_module, atoms)
+            .then_with(|| atoms.bytes(a_name).cmp(atoms.bytes(b_name))),
+        (Key::MockOfRuntimeModule(a), Key::MockOfRuntimeModule(b)) => a.cmp(&b),
+        _ => unreachable!("keys of two variants are ordered by the variant"),
+    })
+}
+
+#[inline]
+fn join_rank(project: ProjectId, variant: u32, words: [u32; 3]) -> u128 {
+    let [first, second, third] = words;
+    let head = (project as u32) << 16 | variant;
+    u128::from(number_of_pair(head, first)) << 64 | u128::from(number_of_pair(second, third))
+}
+
+impl OrderedKey for ProgramFunctionKey {
+    #[inline]
+    fn rank(&self) -> u128 {
+        let (variant, file, second) = match self.key {
+            FunctionKey::ModuleBody(file) => (0, file, 0),
+            FunctionKey::WrappedModuleBody(file) => (1, file, 0),
+            FunctionKey::FaceBody(file) => (2, file, 0),
+            FunctionKey::CheckBody(file) => (3, file, 0),
+            FunctionKey::Instantiation(file) => (4, file, 0),
+            FunctionKey::Source(it) => (5, it.file, it.function.0),
+            FunctionKey::Signature(it) => (6, it.file, it.function.0),
+            FunctionKey::ClassSignature(it) => (7, it.file, it.class.0),
+            FunctionKey::ImplicitConstructor(it) => (8, it.file, it.class.0),
+            FunctionKey::InstanceInitializer(it) => (9, it.file, it.class.0),
+            FunctionKey::StaticInitializer(it) => (10, it.file, it.class.0),
+            FunctionKey::AccessorGetter { file, member } => (11, file, member.0),
+            FunctionKey::AccessorSetter { file, member } => (12, file, member.0),
+            FunctionKey::PrivateNameTest { file, member } => (13, file, member.0),
+        };
+        join_rank(self.project, variant, [file.0, second, 0])
+    }
+
+    fn compare(&self, other: &Self, _: &Interner<'_>) -> Ordering {
+        self.cmp(other)
+    }
+}
+
+impl OrderedKey for ProgramLayoutKey {
+    fn rank(&self) -> u128 {
+        let high = |number: u64| (number >> 32) as u32;
+        let (variant, words) = match self.key {
+            LayoutKey::Class(it) => (0x000, [it.file.0, it.class.0, 0]),
+            LayoutKey::ConstructorFunction(it) => (0x100, [it.file.0, it.function.0, 0]),
+            LayoutKey::Library(_) => (0x200, [0; 3]),
+            LayoutKey::ObjectType {
+                origin,
+                instantiation: TypeIdentity([first, second]),
+            } => match origin {
+                ObjectOrigin::Symbol(it) => (0x300, [it.file.0, it.id.0, high(first)]),
+                ObjectOrigin::TypeLiteral { file, node } => (0x301, [file.0, node.0, high(first)]),
+                ObjectOrigin::MappedType { file, node } => (0x302, [file.0, node.0, high(first)]),
+                ObjectOrigin::ObjectLiteral { file, expression } => {
+                    (0x303, [file.0, expression.0, high(first)])
+                }
+                ObjectOrigin::Computed => (0x304, [high(first), first as u32, high(second)]),
+            },
+            LayoutKey::UntypedLiteral {
+                file,
+                members: TypeIdentity([first, _]),
+            } => (0x400, [file.0, high(first), first as u32]),
+            LayoutKey::CreatedObject { file, call } => (0x500, [file.0, call, 0]),
+            LayoutKey::Container(it) => (0x600, [it.file.0, it.id.0, 0]),
+            LayoutKey::Environment { file, environment } => (0x700, [file.0, environment, 0]),
+        };
+        join_rank(self.project, variant, words)
+    }
+
+    fn compare(&self, other: &Self, _: &Interner<'_>) -> Ordering {
+        self.cmp(other)
+    }
+}
+
+impl OrderedKey for ProgramVariableKey {
+    #[inline]
+    fn rank(&self) -> u128 {
+        let ProgramVariableKey::Declared(declared) = *self else {
+            return u128::from(order_of_variant(*self)) << 120;
+        };
+        let (variant, first, second) = match declared.key {
+            VariableKey::Symbol(it) => (0, it.file.0, it.id.0),
+            VariableKey::SyntheticExport(id) => (1, id.0, 0),
+            VariableKey::Copy(id) => (2, id.0, 0),
+            VariableKey::ModuleExports(file) => (3, file.0, 0),
+            VariableKey::InnerModuleExports(it) => (4, it.file.0, it.function.0),
+            VariableKey::ClassSlot { class, .. } => (5, class.file.0, class.class.0),
+            VariableKey::ModulePath { file, variable } => (6, file.0, variable as u32),
+            VariableKey::PrivateState { state, .. } => (7, state.file.0, state.id.0),
+            VariableKey::RequiredAnswer(it) => (8, it.file.0, it.id.0),
+            VariableKey::MockOf(file) => (10, file.0, 0),
+            VariableKey::InstantiationState(file) => (11, file.0, 0),
+            VariableKey::EnvironmentMadeAhead(file) => (12, file.0, 0),
+            VariableKey::MockOfRuntimeModule(_) => (13, 0, 0),
+            VariableKey::RequiresMadeForOwnFile(file) => (14, file.0, 0),
+            VariableKey::RequiresMadeForOtherFolders(file) => (15, file.0, 0),
+            VariableKey::RequiresMadeForPaths(file) => (16, file.0, 0),
+        };
+        join_rank(declared.project, variant, [first, second, 0])
+    }
+
+    fn compare(&self, other: &Self, atoms: &Interner<'_>) -> Ordering {
+        compare_program_variable_keys(*self, *other, atoms)
     }
 }

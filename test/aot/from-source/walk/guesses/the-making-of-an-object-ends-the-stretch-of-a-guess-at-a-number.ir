@@ -1,0 +1,12 @@
+# `{ price: i + 1, name: String.fromCharCode(97 + i) }`: two sums lean on what is guessed of `i`, and between them the object is made. A stretch that held both would rejoin with the object half made,
+# and behind the rejoin nobody knows any more that it is being made: every later field would ask whether the object is frozen and look for its order. So the making of an object ends the stretch, whatever is guessed.
+# -- source: fresh.ts
+# export function fresh(i: number, round: number) { return { price: i + 1, name: String.fromCharCode(97 + i) + (round & 3) }; }
+# (globalThis as any).fresh = fresh;
+# console.log(fresh(1, 2).name + String(fresh(2, 3).price));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = NewObject
+# CHECK-NOT: = IsNotFrozen
+# CHECK-NOT: = FinishObject
+# CHECK: Return

@@ -70,7 +70,7 @@ async function first(generator: AsyncGenerator<number>): Promise<number> {
 }
 
 // Starts 16 loops, lets each take its first value and wait for the gate, collects garbage and counts the bodies that are still
-// alive. The collector scans the stack conservatively, so a stale word may keep one or two of them.
+// alive. One or two that still are count as none.
 async function judge(name: string, start: (i: number) => Promise<number>): Promise<void> {
   watched = [];
   gate = new Promise<void>(resolve => {

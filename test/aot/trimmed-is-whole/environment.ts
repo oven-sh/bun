@@ -210,7 +210,7 @@ export class Bench {
         .replace(/^Code at (rip|pc): .*$/gm, "Code at $1: <code>")
         .replace(/\bFaults: \d+/g, "Faults: <count>")
         // Only an executable that has the interpreter lets a Worker run a text apart from the compiled program.
-        .replace(/\b(disallowNonStaticCodeOnlyBesideCompiledCode)=(true|false)/g, "$1=<whether>")
+        .replace(/\b(disallowNonStaticCodeOnlyWithCompiledCode)=(true|false)/g, "$1=<whether>")
         .replace(/\b0x[0-9a-fA-F]+/g, "<address>")
         .replace(/(https:\/\/bun\.report\/[^\/\s]+\/|\/report\/\d+\/[^\/\s]+\/)\S+/g, "$1<trace>")
         .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|KiB|MB|MiB|GB|GiB|TB)\b/g, "<amount>")
@@ -375,7 +375,11 @@ export class Bench {
           child.kill(it.signal ?? "SIGTERM");
           // It has answered, so it has started. A server that the signal has stopped answers nothing more: it is ended ten seconds from here.
           clearTimeout(timer);
-          timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+          // Whoever reads a SIGKILL in the place of the signal's own end is told who sent it.
+          timer = setTimeout(() => {
+            answers.push("ended by this test ten seconds behind the signal");
+            child.kill("SIGKILL");
+          }, 10_000);
           if (it.signal && (await Promise.race([child.exited, Bun.sleep(3000).then(() => "runs on")])) === "runs on") {
             const answer = await fetch(base + "/text").then(
               async answer => `${answer.status} ${await answer.text()}`,

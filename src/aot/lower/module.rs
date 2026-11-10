@@ -6,17 +6,23 @@ mod library;
 mod library_functions;
 mod loads;
 mod runtime_value;
-mod text_of_body;
+#[cfg(test)]
+mod test_run_tests;
+mod test_run_ways;
+mod throwing;
 
-use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind};
+use bun_sema::atom::Atom;
+use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, StmtId};
-use bun_sema::program::Files;
+use bun_sema::program::{FileId, Files};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::{OnceCell, RefCell};
 
 use super::commonjs::CommonJsState;
 use super::context::{FileInputs, SourceKind};
 use super::data::DataState;
+use super::scope::NamesOfFileForEvals;
 use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::{BuiltinId, RuntimeFunction};
 use crate::ir::{DataId, FunctionId, StringId, ValueId};
@@ -25,15 +31,21 @@ use crate::modules::{ImportBinding, KnownMemberValues};
 
 pub(in crate::lower) use self::body::finish_body;
 pub(crate) use self::loads::lower_import_call;
+pub(crate) use self::test_run_ways::{KeptBetweenWays, find_file_that_asks_mock};
 pub use left_out::LeftOutDeclarations;
 pub use library::collect_library_functions;
 pub(in crate::lower) use library::{LibraryFunctionForm, library_function_form};
+pub use throwing::lower_file_that_throws;
 
 #[derive(Default)]
 pub(crate) struct ModuleState {
     pub(in crate::lower) data: DataState,
     pub(in crate::lower) commonjs: CommonJsState,
     pub(in crate::lower) known_member_values: KnownMemberValues,
+    pub(in crate::lower) imports_replaceable_variable: OnceCell<bool>,
+    pub(in crate::lower) names_of_file_for_evals: Option<NamesOfFileForEvals>,
+    pub(in crate::lower) names_of_file_by_text: OnceCell<FxHashMap<Atom, SymbolId>>,
+    pub(in crate::lower) kept_between_ways: RefCell<KeptBetweenWays>,
 }
 
 #[derive(Default, Clone)]
@@ -56,7 +68,6 @@ impl LibraryFunctions {
         }
     }
 
-    /// Nothing that the program can run names these functions at the top of their files.
     pub fn leave_out(&mut self, functions: FxHashSet<FunctionRef>) {
         self.left_out_functions = functions;
     }
@@ -65,7 +76,6 @@ impl LibraryFunctions {
         self.left_out_functions.contains(&function)
     }
 
-    /// Nothing that the program can run names what these declare at the top of their files, and nobody can tell whether they were evaluated.
     pub fn leave_out_declarations(&mut self, declarations: LeftOutDeclarations) {
         self.left_out_declarations = declarations;
     }
@@ -113,6 +123,24 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         }
     }
+}
+
+pub(crate) fn emit_import_binding_asked(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    binding: ImportBinding,
+    name: StringId,
+    asked: Option<(FileId, Atom)>,
+) -> ValueId {
+    imports::emit_import_binding_asked(lowering, binding, name, None, asked)
+}
+
+pub(crate) fn emit_binding_asked_by_call(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    binding: ImportBinding,
+    name: StringId,
+    asked: Option<(FileId, Atom)>,
+) -> ValueId {
+    imports::emit_binding_asked_by_call(lowering, binding, name, asked)
 }
 
 pub(crate) fn emit_import_binding(

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isWindows } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/harness/commands";
@@ -15,7 +15,7 @@ const files = {
 console.log(await (await fetch(new URL("/path", server.url))).text());
 server.stop(true);`,
   "bundles.ts": `console.log(typeof Bun.build);
-if (process.argv.length > 5) await Bun.build({ entrypoints: [process.argv[5]] });`,
+if (process.argv.length > 5) await Bun.build({ entrypoints: [process.argv[5]], check: true });`,
 };
 const sizeOf = (executable: string) => statSync(isWindows ? executable + ".exe" : executable).size;
 
@@ -43,55 +43,83 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
       ),
     );
   const larger: Record<string, number> = {};
+  const refusals: Record<string, string | undefined> = {};
   const template = join(folder, isWindows ? "template.exe" : "template");
   let templateIsBuilt: ReturnType<typeof build> | undefined;
   const buildTemplate = () => (templateIsBuilt ??= build("empty.ts", "template", "--trim-template"));
 
-  test("is smaller than Bun, and what is built on it is what the same build on Bun gives", async () => {
-    expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
-    // A Bun that carries its debug info keeps all of it, so there the measure is what left the file, not a share of the whole.
-    const whole = statSync(copyWithoutDebugInformation ?? bunExe()).size;
-    const left = whole - sizeOf(join(folder, "template"));
-    expect(Math.max(left / whole, left / 150_000_000)).toBeGreaterThan(0.3);
-
+  async function buildOnBothAndRun(programs: string[][], prefix: string, ways: string[][] = [[], ["--trim"]]) {
     const found: Record<string, unknown> = {};
     const expected: Record<string, unknown> = {};
-    const rows = [
-      ["hello.ts", "hello\n"],
-      ["text.ts", "3 true 1,2,3\n"],
-      ["server.ts", "/path\n"],
-    ].flatMap(([entry, stdout]) => [[], ["--trim"]].map(flags => ({ entry, stdout, flags })));
+    const rows = programs.flatMap(([entry, stdout]) => ways.map(flags => ({ entry, stdout, flags })));
     await Promise.all(
-      rows.map(async ({ entry, stdout, flags }, index) => {
+      rows.map(async ({ entry, stdout, flags }, number) => {
+        const index = `${prefix}-${number}`;
         const title = `${entry} ${flags}`;
         const [onBun, onTemplate] = await Promise.all([
           build(entry, `on-bun-${index}`, ...flags),
           build(entry, `on-template-${index}`, ...flags, "--compile-executable-path", template),
         ]);
+        expected[title] = { builds: [0, 0], stdout, exitCode: 0 };
+        if (onBun.exitCode !== 0 || onTemplate.exitCode !== 0) {
+          refusals[title] = /^error: .*$/m.exec(onTemplate.stderr)?.[0];
+          found[title] = { builds: [onBun.exitCode, onTemplate.exitCode], stderr: [onBun.stderr, onTemplate.stderr] };
+          return;
+        }
         const ran = await spawned([join(folder, `on-template-${index}`), "1 + 2"], folder, bunEnv);
         found[title] = {
           builds: [onBun.exitCode, onTemplate.exitCode],
           stdout: ran.stdout,
           exitCode: ran.exitCode,
         };
-        expected[title] = { builds: [0, 0], stdout, exitCode: 0 };
         larger[title] = sizeOf(join(folder, `on-template-${index}`)) - sizeOf(join(folder, `on-bun-${index}`));
       }),
     );
     expect(found).toEqual(expected);
     console.error(`on the template less on Bun, in bytes: ${JSON.stringify(larger)}`);
+  }
+
+  test("is smaller than Bun, and hello world built on it is what the same build on Bun gives", async () => {
+    expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
+    const whole = statSync(copyWithoutDebugInformation ?? bunExe()).size;
+    const left = whole - sizeOf(join(folder, "template"));
+    expect(Math.max(left / whole, left / 150_000_000)).toBeGreaterThan(0.3);
+    await buildOnBothAndRun([["hello.ts", "hello\n"]], "hello");
+  }, 900_000);
+
+  test("hello world built on it is as small as what the same build on Bun gives", () => {
+    expect(Object.keys(larger)).toHaveLength(2);
+    expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);
+  });
+
+  const more = [
+    ["text.ts", "3 true 1,2,3\n"],
+    ["server.ts", "/path\n"],
+  ];
+
+  test("a program that evaluates text and a server built on it with --trim are what the same builds on Bun give", async () => {
+    expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
+    await buildOnBothAndRun(more, "trimmed", [["--trim"]]);
+  }, 900_000);
+
+  test("a program that evaluates text and a server built on it without --trim are what the same builds on Bun give", async () => {
+    expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
+    await buildOnBothAndRun(more, "whole", [[]]);
   }, 900_000);
 
   test("what is built on it is as small as what the same build on Bun gives", () => {
+    expect(refusals).toEqual({});
     expect(Object.keys(larger)).toHaveLength(6);
-    // The template's own program takes a few of the places where the file can be cut.
-    expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);
+    // Where the two cuts meet inside a block of the cut's alignment, the block stays. A block is 4 KB here, and 16 KB or 64 KB elsewhere.
+    if (isLinux && !isArm64) expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);
   });
 
   test("refuses a program that needs what it no longer has, by name", async () => {
     expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
     const refused = await build("bundles.ts", "bundles", "--compile-executable-path", template);
-    expect(refused.stderr).toContain("the Bun executable that this build starts from doesn't have ");
+    expect(refused.stderr).toContain(
+      "error: the Bun executable that this build starts from doesn't have the JIT compilers, which this executable needs",
+    );
     expect(refused.exitCode).toBe(1);
     expect(await build("bundles.ts", "bundles", "--trim", "--compile-executable-path", template)).toMatchObject({
       exitCode: 0,

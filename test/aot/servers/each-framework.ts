@@ -12,14 +12,12 @@
 //   a few thousand       requests later each route still answers the same, and a new array still has contiguous storage
 //   other engines        the same with the RegExp JIT off, with the GC running continuously, and with a GC every few allocations
 //                        that overwrites dead cells
-//   other build options  the same with --trim and --disallow-code-generation-from-strings, for the frameworks that ask for it: it is a second build
 //
 // Each test file works in a copy of ./app, where it installs the packages of ./app/bun.lock.
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { canTrim } from "../../bundler/compile-trim-features";
 import { run } from "../harness/run";
 import { beforeAll, describe, test } from "../supported";
 import { apiRoutes, invalidOrderBody, invalidOrders, routes, type Route } from "./answers";
@@ -30,7 +28,7 @@ const dir = tempDir("aot-servers", {});
 const app = join(String(dir), "app");
 const timeout = 600_000;
 
-/** AOT_SERVERS_FLAGS="--aot-heat=everything-is-hot": more flags for every build. What a server answers does not depend on them. */
+/** AOT_SERVERS_FLAGS="--aot-erase-types": more flags for every build. What a server answers does not depend on them. */
 const moreFlags = (process.env.AOT_SERVERS_FLAGS ?? "").split(" ").filter(Boolean);
 /** AOT_SERVERS_ENVIRONMENT="A=1 B=2": more variables for every run of an executable. */
 const moreEnvironment = Object.fromEntries(
@@ -333,27 +331,40 @@ async function askAgainAndAgain(origins: string[], servers: Server[], times: num
   }
 }
 
-export function testFramework(
-  framework: string,
-  { generatesHandlersFromStrings = false, alsoWithOtherBuildOptions = false } = {},
-) {
+export function testFramework(framework: string) {
   const servers = serversOf(framework);
   const entry = `./all/${framework}.ts`;
   // The bundler inlines process.env.NODE_ENV and defaults it to "development", which would make Express put stack traces into its answers.
   const flags = ["--define", 'process.env.NODE_ENV="production"', "--target=bun"];
   afterAll(() => dir[Symbol.dispose]());
 
-  const executableNamed = (name: string) => join(String(dir), name + (isWindows ? ".exe" : ""));
-  async function build(name: string, more: string[], env = bunEnv) {
-    const executable = executableNamed(name);
+  async function build() {
+    const executable = join(String(dir), isWindows ? "compiled.exe" : "compiled");
     const built = await run(
-      [bunExe(), "build", "--compile", "--aot", ...moreFlags, ...more, ...flags, entry, "--outfile", executable],
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--explain=statistics",
+        ...moreFlags,
+        ...flags,
+        entry,
+        "--outfile",
+        executable,
+      ],
       app,
-      env,
+      bunEnv,
     );
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+    // A loop whose typed copy could not be finished keeps its plain copy and answers rightly: nothing but this count says that the copy is lost.
+    expect({
+      stderr: built.stderr,
+      exitCode: built.exitCode,
+      purchasesOfLoopsThatFailed: Number(/^PurchasesOfLoopsThatFailed (\d+)$/m.exec(built.stderr)?.[1]),
+    }).toEqual({
       stderr: expect.not.stringMatching(/^error\b/m),
       exitCode: 0,
+      purchasesOfLoopsThatFailed: 0,
     });
     return executable;
   }
@@ -368,20 +379,10 @@ export function testFramework(
   describe(framework, () => {
     let executable: string;
     let expected: Record<string, Answers>;
-    const options = [
-      ...(canTrim ? ["--trim"] : []),
-      ...(generatesHandlersFromStrings ? [] : ["--disallow-code-generation-from-strings"]),
-    ];
-    // What --trim removes is decided behind the compiler. Where it is the only other option, one build compiles the servers and writes both executables.
-    const oneBuildWritesBoth = alsoWithOtherBuildOptions && options.join() === "--trim";
 
     beforeAll(async () => {
       await copyApp(app);
-      const building = oneBuildWritesBoth
-        ? build("variant", options, { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: executableNamed("compiled") }).then(
-            () => executableNamed("compiled"),
-          )
-        : build("compiled", []);
+      const building = build();
       await using plain = await start([bunExe(), entry], servers.length, bunEnv);
       expected = await askAll(plain.origins, servers);
       executable = await building;
@@ -448,17 +449,6 @@ export function testFramework(
         await using compiled = await startCompiled(executable, env);
         expect(await askAll(compiled.origins, servers)).toEqual(expected);
         await askAgainAndAgain(compiled.origins, servers, times);
-        expect(await compiled.end()).toMatchObject({ exitCode: 0, signal: null });
-      },
-      timeout,
-    );
-
-    test.skipIf(options.length === 0 || !alsoWithOtherBuildOptions)(
-      `answers the same when built with ${options.join(" ")}`,
-      async () => {
-        const variant = oneBuildWritesBoth ? executableNamed("variant") : await build("variant", options);
-        await using compiled = await start([variant], servers.length, bunEnv);
-        expect(await askAll(compiled.origins, servers)).toEqual(expected);
         expect(await compiled.end()).toMatchObject({ exitCode: 0, signal: null });
       },
       timeout,

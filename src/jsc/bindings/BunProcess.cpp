@@ -355,8 +355,22 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
+    if (!Bun::compiledModulesRunInPlaceOfFiles())
+        lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
     return release;
+}
+
+// False: script may run no longer. What the function throws is handed back, cleared: it is reported behind the listeners of 'exit'.
+static bool runWhatRunsWhenProcessExits(JSC::JSGlobalObject* globalObject, Process* process, JSC::Exception*& thrown)
+{
+    auto* function = process->runsWhenProcessExits();
+    if (!function)
+        return true;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    MarkedArgumentBuffer noArguments;
+    JSC::call(globalObject, function, noArguments, "What runs when the process exits is not a function"_s);
+    thrown = scope.exception();
+    return !thrown || scope.tryClearException();
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -370,15 +384,21 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
+    JSC::Exception* thrown = nullptr;
+    if (!runWhatRunsWhenProcessExits(globalObject, process, thrown))
+        return;
+
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
     auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
-        return;
+    if (emitter.hasEventListeners(event)) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(exitCode));
+        emitter.emit(event, arguments);
     }
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    // A handler of 'uncaughtException' may exit: the listeners of 'exit' have run by now.
+    if (thrown && !vm.hasTerminationRequest()) [[unlikely]]
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -1892,6 +1912,7 @@ JSC_DEFINE_CUSTOM_GETTER(lazyProcessStderr, (JSGlobalObject * globalObject, Enco
 }
 
 // Appends to the file that its second operand names. Where there is none, or that fails, it calls process.stderr.write.
+// It answers true where it has written to the descriptor itself, in the place of the stream that `bun run` makes at this call.
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1925,7 +1946,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * le
         RETURN_IF_EXCEPTION(scope, {});
         auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
         writeToStandardError(byteCast<char>(bytes.span()));
-        return JSValue::encode(jsUndefined());
+        return JSValue::encode(jsBoolean(true));
     }
     JSValue stream = process->get(globalObject, stderrName);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2059,7 +2080,7 @@ static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject,
     auto* function = JSC::JSFunction::create(vm, globalObject, generator(vm), globalObject);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        if (JSC::AOT::refusesToRun(function))
+        if (JSC::AOT::isFunctionDisallowed(function))
             return {};
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -3243,7 +3264,7 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     args.append(ports);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStream, JSC::getCallData(getStream), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
-        if (JSC::AOT::refusesToRun(getStream))
+        if (JSC::AOT::isFunctionDisallowed(getStream))
             return {};
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -3258,7 +3279,7 @@ static EncodedJSValue throwThatStreamWasLeftOut(JSGlobalObject* globalObject, JS
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSC::AOT::refusesToRun(makesWholeStream)) {
+    if (JSC::AOT::isFunctionDisallowed(makesWholeStream)) {
         JSC::MarkedArgumentBuffer args;
         JSC::profiledCall(globalObject, ProfilingReason::API, makesWholeStream, JSC::getCallData(makesWholeStream), globalObject->globalThis(), args);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3552,6 +3573,7 @@ static constexpr BareStreamMethod methodsOfOutputAfterWrite[] = {
 static constexpr BareStreamMethod methodsOfInputBeforeRef[] = {
     { "on"_s, ""_s, 2 },
     { "addListener"_s, ""_s, 2, true, BareStreamMethod::Kind::SameAsPrevious },
+    { "_destroy"_s, ""_s, 2 },
 };
 // A file that is no terminal has none of them.
 static constexpr BareStreamMethod methodsOfInputThatWaits[] = {
@@ -3795,8 +3817,11 @@ static EncodedJSValue writeWithoutSink(JSC::JSGlobalObject* globalObject, CallFr
     }
     JSValue write = isOver ? JSValue() : thisValue.get(globalObject, Identifier::fromString(vm, "_write"_s));
     RETURN_IF_EXCEPTION(scope, {});
-    if (write && !write.isCallable())
-        return throwVMTypeError(globalObject, scope, makeString("this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is "_s, write.isObject() ? "an instance of "_s : ""_s, JSC::errorDescriptionForValue(globalObject, write), ')'));
+    if (write && !write.isCallable()) {
+        String description = JSC::errorDescriptionForValue(globalObject, write);
+        RETURN_IF_EXCEPTION(scope, {});
+        return throwVMTypeError(globalObject, scope, makeString("this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is "_s, write.isObject() ? "an instance of "_s : ""_s, description, ')'));
+    }
     // From here plain Bun needs Writable.prototype.write.
     RELEASE_AND_RETURN(scope, Process_functionNeedsWholeOutputStream(globalObject, callFrame));
 }
@@ -3987,7 +4012,7 @@ static JSValue constructLightStdioWriteStream(JSC::JSGlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSC::AOT::isNeededByNothingThatRuns(JSC::JSFunction::create(vm, globalObject, stdioGetLightStdioWriteStreamsCodeGenerator(vm), globalObject)))
+    if (JSC::AOT::isUnreachableLibraryFunction(JSC::JSFunction::create(vm, globalObject, stdioGetLightStdioWriteStreamsCodeGenerator(vm), globalObject)))
         RELEASE_AND_RETURN(scope, constructBareStdioWriteStream(globalObject, processObject, fd));
     JSObject* kept = lightStandardStreamsOf(globalObject, processObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -4001,8 +4026,9 @@ static JSValue constructLightStdioWriteStream(JSC::JSGlobalObject* globalObject,
     if (bun_stdio_tty[fd]) {
         JSValue listen = streams->get(globalObject, Identifier::fromString(vm, "listenForSizeOfTerminal"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        JSC::MarkedArgumentBuffer none;
-        JSC::profiledCall(globalObject, ProfilingReason::API, listen, JSC::getCallData(listen), streams, none);
+        JSC::MarkedArgumentBuffer args;
+        args.append(jsNumber(fd));
+        JSC::profiledCall(globalObject, ProfilingReason::API, listen, JSC::getCallData(listen), streams, args);
         RETURN_IF_EXCEPTION(scope, {});
     }
     RELEASE_AND_RETURN(scope, streams->get(globalObject, Identifier::fromString(vm, fd == 1 ? "stdout"_s : "stderr"_s)));
@@ -4016,9 +4042,15 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
-    if (JSC::AOT::isNeededByNothingThatRuns(getStdioWriteStream)) {
+    if (vm.hasCompiledCode() && JSC::AOT::isUnreachableLibraryFunction(getStdioWriteStream)) {
         JSValue stream = constructLightStdioWriteStream(globalObject, processObject, fd);
-        return scope.exception() ? JSValue() : stream;
+        auto* exception = scope.exception();
+        if (!exception)
+            return stream;
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
+        return jsUndefined();
     }
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
@@ -4031,7 +4063,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
-        if (JSC::AOT::refusesToRun(getStdioWriteStream))
+        if (JSC::AOT::isFunctionDisallowed(getStdioWriteStream))
             return {};
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -4165,9 +4197,9 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
-    if (JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
+    if (vm.hasCompiledCode() && JSC::AOT::isUnreachableLibraryFunction(getStdinStream)) {
         getStdinStream = JSC::JSFunction::create(vm, globalObject, stdioGetLightStdinStreamCodeGenerator(vm), globalObject);
-        if (JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
+        if (JSC::AOT::isUnreachableLibraryFunction(getStdinStream)) {
             JSValue stream = constructBareStream(globalObject, processObject, STDIN_FILENO, {});
             return scope.exception() ? JSValue() : stream;
         }
@@ -4184,7 +4216,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
     if (auto* exception = scope.exception()) {
-        if (JSC::AOT::refusesToRun(getStdinStream))
+        if (JSC::AOT::isFunctionDisallowed(getStdinStream))
             return {};
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -4834,7 +4866,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     // Node's reallyExit is the raw exit that does not run 'exit' listeners. Arm
     // m_isExiting so dispatchExitInternal (via Bun__Process__exit) skips them
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
-    zigGlobal->processObject()->m_isExiting = true;
+    auto* process = zigGlobal->processObject();
+    if (!std::exchange(process->m_isExiting, true)) {
+        JSC::Exception* thrown = nullptr;
+        if (runWhatRunsWhenProcessExits(zigGlobal, process, thrown) && thrown) [[unlikely]] {
+            Bun__setExitCode(bunVM(zigGlobal), exitCode);
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(zigGlobal, thrown);
+            exitCode = Bun__getExitCode(bunVM(zigGlobal));
+        }
+    }
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a
@@ -4853,6 +4893,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_onWarning);
+    visitor.append(thisObject->m_runsWhenProcessExits);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -5503,6 +5544,35 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRunWhenProcessExits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    defaultGlobalObject(globalObject)->processObject()->setRunsWhenProcessExits(callFrame->argument(0).getObject());
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeProcessInheritFrom, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue prototype = callFrame->argument(0);
+
+    [&] {
+        JSValue processPrototype = defaultGlobalObject(globalObject)->processObject()->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!processPrototype.isObject() || processPrototype == globalObject->objectPrototype())
+            return;
+        bool inheritsAlready = JSObject::defaultHasInstance(globalObject, processPrototype, prototype);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!inheritsAlready)
+            asObject(processPrototype)->setPrototype(vm, globalObject, prototype, true);
+    }();
+
+    // Where the prototype cannot be relinked, process keeps its native chain.
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // Node-compat: process._fatalException(err, fromPromise) runs the uncaught-exception
@@ -5649,6 +5719,8 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (Bun::hasCompiledModules())
+        RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mainModuleOfExecutable(globalObject)));
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
@@ -5709,7 +5781,7 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        if (JSC::AOT::refusesToRun(initializer))
+        if (JSC::AOT::isFunctionDisallowed(initializer))
             return {};
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -6273,8 +6345,7 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
-    // Compiled code reads the property as the table of built-ins describes it.
-    if (isBunTest && !Bun::hasCompiledModules())
+    if (isBunTest)
         putDirectCustomAccessor(vm, Identifier::fromString(vm, "mainModule"_s), CustomGetterSetter::create(vm, processMainModuleOfTestFile, setProcessMainModuleOfTestFile), PropertyAttribute::CustomAccessor | 0);
 
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.

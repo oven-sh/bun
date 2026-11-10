@@ -37,7 +37,6 @@ struct ImageFileArgument {
 unsafe extern "C" {
     fn Bun__AOT__useImage(
         image: FfiSlice<'static>,
-        all_images: FfiSlice<'static>,
         file_or_null: *const ImageFileArgument,
         identity: *const u8,
     ) -> u32;
@@ -51,8 +50,10 @@ unsafe extern "C" {
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
-    safe fn Bun__AOT__willRunEntryPointAgain(global: &JSGlobalObject, path: &bun_core::String);
-    safe fn Bun__AOT__mayHoldPathStartingWith(start: &bun_core::String) -> bool;
+    safe fn Bun__AOT__willReevaluateEntryPoint(global: &JSGlobalObject, path: &bun_core::String);
+    safe fn Bun__AOT__willRunPreloads(global: &JSGlobalObject);
+    safe fn Bun__AOT__didRunPreloads(global: &JSGlobalObject);
+    safe fn Bun__AOT__mayHoldPathStartingWith(start: FfiSlice<'_>) -> bool;
     safe fn Bun__AOT__isLeftToCodeOutsideImage(
         specifier: &bun_core::String,
         directory_of_importer: &bun_core::String,
@@ -78,12 +79,12 @@ unsafe extern "C" {
         path: FfiSlice<'_>,
         was_synchronous: bool,
     );
-    fn Bun__AOT__imagesHoldFile(
-        images: *const FfiSlice<'static>,
-        count: usize,
-        path: FfiSlice<'_>,
-    ) -> bool;
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
+        global: &JSGlobalObject,
+        code: crate::ErrCode,
+        path: &bun_core::String,
+    ) -> JSValue;
+    safe fn Bun__AOT__errorIfCompiledFileChangedOutOfSight(
         global: &JSGlobalObject,
         code: crate::ErrCode,
         path: &bun_core::String,
@@ -93,6 +94,10 @@ unsafe extern "C" {
         code: crate::ErrCode,
         path: &bun_core::String,
     ) -> JSValue;
+    safe fn Bun__AOT__letsTestRunLoadAddon(
+        global: &JSGlobalObject,
+        path: &bun_core::String,
+    ) -> bool;
 }
 
 #[cfg(bun_locked_environment)]
@@ -125,6 +130,95 @@ pub extern "C" fn Bun__compiledProgramRunsInPlace() -> bool {
     runs_in_place()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__compiledProgramNamesPlugin() -> bool {
+    compiled_program().is_some_and(|program| program.names_plugin)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__resolveWithPlugins(
+    global: &JSGlobalObject,
+    name: &bun_core::String,
+    importer: &bun_core::String,
+    found: &mut bun_core::String,
+) -> u8 {
+    use crate::virtual_machine::{ResolveMode, VirtualMachine};
+    const DECLINED: u8 = 0;
+    const ANSWERED: u8 = 1;
+    const THROWN: u8 = 2;
+    let mut query_of_answer = bun_core::String::EMPTY;
+    let answer = VirtualMachine::resolve_with_on_resolve::<true>(
+        global,
+        name,
+        importer,
+        Some(&mut query_of_answer),
+        ResolveMode::Esm,
+        false,
+    );
+    let answer = match answer {
+        Ok(None) => return DECLINED,
+        Ok(Some(Ok(answer))) => answer,
+        _ => return THROWN,
+    };
+    let mut query_of_found = bun_core::String::EMPTY;
+    let Some(found_without_plugins) =
+        find_without_plugins(global, name, importer, &mut query_of_found)
+    else {
+        return ANSWERED;
+    };
+    *found = bun_core::String::clone_utf8(found_without_plugins.to_utf8().slice());
+    if found_without_plugins.eql(&answer) && query_of_found.eql(&query_of_answer) {
+        return DECLINED;
+    }
+    ANSWERED
+}
+
+fn find_without_plugins(
+    global: &JSGlobalObject,
+    name: &bun_core::String,
+    importer: &bun_core::String,
+    query: &mut bun_core::String,
+) -> Option<bun_core::String> {
+    use crate::virtual_machine::{ResolveMode, VirtualMachine};
+    unsafe extern "C" {
+        safe fn Bun__AOT__setPluginsSilent(are_silent: bool);
+    }
+    // SAFETY: the VM of this thread is live, and nothing else holds its resolver's options here.
+    let options = unsafe { &mut (*global.bun_vm_ptr()).transpiler.resolver.opts };
+    let installs = core::mem::replace(
+        &mut options.global_cache,
+        bun_resolver::GlobalCache::disable,
+    );
+    Bun__AOT__setPluginsSilent(true);
+    let found = VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
+        global,
+        name,
+        importer,
+        Some(query),
+        ResolveMode::Esm,
+    );
+    Bun__AOT__setPluginsSilent(false);
+    // SAFETY: as above.
+    unsafe { (*global.bun_vm_ptr()).transpiler.resolver.opts.global_cache = installs };
+    match found {
+        Ok(Ok(found)) => Some(found),
+        _ => None,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__resolveWithoutPlugins(
+    global: &JSGlobalObject,
+    name: &bun_core::String,
+    importer: &bun_core::String,
+) -> bun_core::String {
+    let mut query = bun_core::String::EMPTY;
+    match find_without_plugins(global, name, importer, &mut query) {
+        Some(found) => bun_core::String::clone_utf8(found.to_utf8().slice()),
+        None => bun_core::String::DEAD,
+    }
+}
+
 /// BunCompiledModules.cpp. `Dead`: the image is not asked.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__AOT__pathOfForm(
@@ -133,7 +227,8 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     is_form_without_attributes: &mut bool,
 ) -> bun_core::String {
     let (path, type_attribute) = (path.to_utf8(), type_attribute.to_utf8());
-    match bun_aot::module_keys::places_of_form(path.slice(), type_attribute.slice()) {
+    let given = compiled_program().map_or(&b""[..], |it| it.loaders_given_to_build());
+    match bun_aot::module_keys::places_of_form(path.slice(), type_attribute.slice(), given) {
         Some(places) => {
             *is_form_without_attributes = places.is_form_without_attributes;
             bun_core::String::clone_utf8(&places.path_of_form)
@@ -142,10 +237,23 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     }
 }
 
-/// BunCompiledModules.cpp. Zero: there is no such file.
+/// BunCompiledModules.cpp. `Dead`: the default loader for the path does not parse data.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__stampOfFile(path: &bun_core::String) -> u64 {
-    let Ok(stat) = bun_sys::stat(&bun_core::ZBox::from_bytes(path.to_utf8().slice())) else {
+pub extern "C" fn Bun__AOT__pathOfDefaultForm(path: &bun_core::String) -> bun_core::String {
+    match bun_aot::module_keys::path_of_default_form(path.to_utf8().slice()) {
+        Some(path_of_form) => bun_core::String::clone_utf8(&path_of_form),
+        None => bun_core::String::DEAD,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__AOT__computeFileStamp(path: *const u8, length: usize) -> u64 {
+    // SAFETY: the caller hands `length` readable bytes at `path`. No zero byte is asked for behind them.
+    let path = unsafe { core::slice::from_raw_parts(path, length) };
+    let stat = |file: &[u8]| bun_sys::stat(&bun_core::ZBox::from_bytes(file)).ok();
+    // What an import attribute makes of a file is written when the file is. The build stamps it so: src/aot/compile/link_stage.rs.
+    let stat_file_of_form = || stat(bun_aot::module_keys::path_without_form(path)?);
+    let Some(stat) = stat(path).or_else(stat_file_of_form) else {
         return 0;
     };
     let stat = bun_sys::PosixStat::init(&stat);
@@ -187,9 +295,8 @@ pub extern "C" fn Bun__AOT__pathInExecutable(path: &bun_core::String) -> bun_cor
     }
 }
 
-/// What the options of the build say is the same in every image.
 fn image_of(program: &CompiledProgram) -> FfiSlice<'_> {
-    FfiSlice::new(program.first_image())
+    FfiSlice::new(program.image)
 }
 
 /// Answers before `use_image` has run. `None`: `use_image` refuses the image.
@@ -201,8 +308,7 @@ pub fn admitted_code_of(program: &CompiledProgram) -> Option<AdmittedCode> {
 
 /// Whether the compiler allowed for script and machine code that it did not see.
 pub fn admits_unknown_javascript(program: &CompiledProgram) -> bool {
-    let admits = |image: &[u8]| Bun__AOT__admitsUnknownJavaScript(FfiSlice::new(image));
-    program.images().any(admits)
+    Bun__AOT__admitsUnknownJavaScript(image_of(program))
 }
 
 /// Whether the program itself loads files with code that the build has not seen.
@@ -235,6 +341,15 @@ pub fn find_entry_point_by_source_path(path: &[u8]) -> Option<&'static CompiledE
 
 pub fn find_entry_point_by_module_path(path: &[u8]) -> Option<&'static CompiledEntryPoint> {
     program_of_executable()?.entry_point_by_module_path(path)
+}
+
+/// In an executable that loads code from disk: `path` names a file of the executable at which no Worker starts. Whoever holds a path could start any file otherwise.
+pub fn refuses_start_of_worker_at(path: &[u8]) -> bool {
+    program_of_executable().is_some_and(|program| {
+        program.allows_code_from_disk
+            && !program.preserves_source_paths
+            && program.entry_point_by_module_path(path).is_none()
+    }) && is_compiled_module(path)
 }
 
 pub fn module_key(entry: &'static CompiledEntryPoint) -> &'static [u8] {
@@ -272,13 +387,34 @@ fn entry_module_key_in<'a>(graph: &'static dyn StandaloneModuleGraph, path: &'a 
 /// `bun test --rerun-each`: the next load of the test file runs its body again, over what it imports as that stands.
 pub fn will_run_entry_point_again(global: &JSGlobalObject, key: &[u8]) {
     if compiled_program().is_some() {
-        Bun__AOT__willRunEntryPointAgain(global, &bun_core::StringView::from_bytes(key));
+        Bun__AOT__willReevaluateEntryPoint(global, &bun_core::StringView::from_bytes(key));
+    }
+}
+
+/// `bun test --preload`, round the preloads and round each hook that one of them has registered: what runs between the two calls comes back for the next test file
+/// where a test file resets the modules.
+pub fn will_run_preloads(global: &JSGlobalObject) {
+    if compiled_program().is_some() {
+        Bun__AOT__willRunPreloads(global);
+    }
+}
+
+pub fn did_run_preloads(global: &JSGlobalObject) {
+    if compiled_program().is_some() {
+        Bun__AOT__didRunPreloads(global);
     }
 }
 
 pub fn is_compiled_module(path: &[u8]) -> bool {
     compiled_program().is_some()
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
+}
+
+/// On a thread that runs apart from the compiled program: an entry point of that program, of which the graph holds no text.
+pub fn is_entry_point_beside_thread(path: &[u8]) -> bool {
+    bun_core::runs_no_compiled_program()
+        && (find_entry_point_by_module_path(path).is_some()
+            || find_entry_point_by_source_path(path).is_some())
 }
 
 // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
@@ -292,7 +428,8 @@ fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 
 fn may_hold_module_path_starting_with(start: &[u8]) -> bool {
     let start = with_separators_of_image(start);
-    Bun__AOT__mayHoldPathStartingWith(&bun_core::StringView::from_bytes(&start))
+    Bun__AOT__mayHoldPathStartingWith(FfiSlice::new(&start))
+        || compiled_program().is_some_and(|it| it.holds_refused_data_starting_with(&start))
 }
 
 fn is_left_to_code_outside_image(specifier: &[u8], directory_of_importer: &[u8]) -> bool {
@@ -309,7 +446,9 @@ fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
         bun_threading::Guarded::new(BTreeSet::new());
     let path = &with_separators_of_image(path)[..];
     // The attributes of the import say which form of the file is asked for, and the resolver does not see them.
-    if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path)) {
+    if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path))
+        && compiled_program().is_none_or(|it| it.find_refused_data(path).is_none())
+    {
         return None;
     }
     let mut paths = PATHS.lock();
@@ -404,13 +543,6 @@ pub fn note_first_load_in_earlier_process(
     };
 }
 
-/// For a build above `images`, the first of them first, which does not run them: whether the file with code at `path` is a module of one of them, entry point or not.
-pub fn images_hold_file(images: &[&'static [u8]], path: &[u8]) -> bool {
-    let images: Vec<FfiSlice<'static>> = images.iter().map(|image| FfiSlice::new(image)).collect();
-    // SAFETY: the images stay for as long as the process. The list and `path` outlive the call, which keeps neither.
-    unsafe { Bun__AOT__imagesHoldFile(images.as_ptr(), images.len(), FfiSlice::new(path)) }
-}
-
 /// `path` names JavaScript, TypeScript, WebAssembly or a native addon that is not compiled into the executable.
 pub fn error_if_code_outside_image_is_refused(
     global: &JSGlobalObject,
@@ -420,6 +552,38 @@ pub fn error_if_code_outside_image_is_refused(
     compiled_program()?;
     let error = Bun__AOT__errorIfCodeOutsideImageIsRefused(global, code, path);
     (!error.is_empty()).then_some(error)
+}
+
+/// `bun test --aot`: a test has written the compiled file at `path` anew before its first load, by a path that the build could not read.
+pub fn error_if_compiled_file_changed_out_of_sight(
+    global: &JSGlobalObject,
+    code: crate::ErrCode,
+    path: &bun_core::String,
+) -> Option<JSValue> {
+    compiled_program()?;
+    let error = Bun__AOT__errorIfCompiledFileChangedOutOfSight(global, code, path);
+    (!error.is_empty()).then_some(error)
+}
+
+/// `bun test --aot`: the addon at `path` was not compiled with the program. It loads, and the run lists it when it ends.
+pub fn lets_test_run_load_addon(global: &JSGlobalObject, path: &bun_core::String) -> bool {
+    compiled_program().is_some() && Bun__AOT__letsTestRunLoadAddon(global, path)
+}
+
+/// The executable holds a file at `path`: what `import path from "./addon.node" with { type: "file" }` answers, or a name of `Bun.embeddedFiles` below the root.
+pub fn is_file_in_executable(path: &bun_core::String) -> bool {
+    let path = path.to_utf8();
+    let path = path.slice();
+    let path = bun_core::strings::split(path, b"?").next().unwrap_or(path);
+    is_bun_standalone_file_path(path)
+        && standalone_module_graph()
+            .is_some_and(|graph| graph.find_assume_standalone_path(path).is_some())
+}
+
+/// BunCompiledModules.cpp. `is_file_in_executable`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isFileInExecutable(path: &bun_core::String) -> bool {
+    is_file_in_executable(path)
 }
 
 pub(crate) fn refuses_code_at(global: &JSGlobalObject, path: &[u8]) -> bool {
@@ -788,21 +952,18 @@ pub fn refuse_variables_that_are_never_read() {
 static IDENTITY: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
 
 /// A VM that this thread creates from here on runs the program of the image.
-fn use_image_on_this_thread(program: &'static CompiledProgram, image: &'static [u8]) {
+fn use_image_on_this_thread(program: &'static CompiledProgram) {
+    bun_core::debug::note_compiled_code();
     let identity = IDENTITY.get().expect("the main thread has found it");
-    let offset_in_images = image.as_ptr() as usize - program.image.as_ptr() as usize;
     let file = program.backing_file.as_ref().map(|file| ImageFileArgument {
         descriptor: file.descriptor,
-        offset: file.offset + offset_in_images as i64,
+        offset: file.offset,
     });
-    let all_images = bun_resolver::compiled_program::RANGE_OF_ALL_IMAGES.get();
-    let all_images = all_images.copied().unwrap_or(program.image);
-    // SAFETY: the images are part of the `'static` graph, which is never unmapped. `file` and
+    // SAFETY: the image is part of the `'static` graph, which is never unmapped. `file` and
     // `identity` outlive the call.
     let raw_verdict = unsafe {
         Bun__AOT__useImage(
-            FfiSlice::new(image),
-            FfiSlice::new(all_images),
+            image_of(program),
             file.as_ref().map_or(core::ptr::null(), core::ptr::from_ref),
             identity.as_ptr(),
         )
@@ -813,29 +974,27 @@ fn use_image_on_this_thread(program: &'static CompiledProgram, image: &'static [
     }
 }
 
-pub(crate) fn has_image_for_each_entry_point() -> bool {
-    program_of_executable().is_some_and(|program| program.images().nth(1).is_some())
-}
-
 /// Whether a Worker that starts from text runs it apart from the compiled program. That takes the interpreter, the transpiler and the
 /// text of Bun's own modules. Where the program itself loads code that no build has seen, such a Worker is one more realm of the program.
 pub(crate) fn runs_worker_of_text_apart() -> bool {
-    let Some(program) = program_of_executable() else {
-        return false;
-    };
+    program_of_executable()
+        .is_some_and(|program| can_run_worker_apart(program) && !loads_code_outside_image(program))
+}
+
+fn can_run_worker_apart(program: &CompiledProgram) -> bool {
     let admits_inspector = admitted_code_of(program)
         .is_some_and(|admitted| admitted.contains(AdmittedCode::INSPECTOR));
     !admits_inspector
-        && !loads_code_outside_image(program)
         && bun_removable_features::can_run_uncompiled_code()
         && bun_core::code_generation_from_strings_by_flags()
             != bun_core::CodeGenerationFromStrings::Strict
 }
 
-/// Whether a Worker that starts from a file on disk runs it apart from the compiled program, as one that starts from text does.
+/// Whether a Worker that starts from a file on disk runs it apart from the compiled program. Also where the program itself loads code that no build has seen:
+/// as a realm of the program the file is refused every file of the image that is no entry point.
 pub(crate) fn runs_worker_from_disk_apart() -> bool {
-    program_of_executable().is_some_and(|program| program.allows_code_from_disk)
-        && runs_worker_of_text_apart()
+    program_of_executable()
+        .is_some_and(|program| program.allows_code_from_disk && can_run_worker_apart(program))
 }
 
 /// BunCompiledModules.cpp. `path` is the text that the Worker of this thread starts from, and only what `--trim` removed keeps it from running: see `runs_worker_of_text_apart`.
@@ -848,16 +1007,6 @@ pub extern "C" fn Bun__AOT__isWorkerTextRefusedByTrimming(
     vm.worker_ref().is_some()
         && vm.main() == Some(path.to_utf8().slice())
         && !bun_removable_features::can_run_uncompiled_code()
-}
-
-/// BunCompiledModules.cpp
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__isStartOfWorker(
-    global: &JSGlobalObject,
-    path: &bun_core::String,
-) -> bool {
-    let vm = global.bun_vm();
-    vm.worker_ref().is_some() && vm.main() == Some(path.to_utf8().slice())
 }
 
 /// BunCompiledModules.cpp. The entry point, and in a test run the test file that the runner has started last.
@@ -878,8 +1027,7 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
     path: &bun_core::String,
 ) -> bool {
     let vm = global.bun_vm();
-    vm.main() == Some(path.to_utf8().slice())
-        || global.has_plugins()
+    vm.is_test_entry_point(path)
         || !vm.transpiler_store.enabled
         || crate::node_compile_cache::is_enabled()
 }
@@ -890,31 +1038,11 @@ pub extern "C" fn Bun__AOT__allowsCodeFromDisk() -> bool {
     program_of_executable().is_some_and(|program| program.allows_code_from_disk)
 }
 
-/// On the thread of a Worker that starts from text, before its VM is created. False where this Bun runs nothing but compiled code.
-pub(crate) fn use_no_image_on_this_thread(specifier: &[u8]) -> bool {
+/// On the thread of a Worker that starts from text, before its VM is created. Nothing where this Bun runs nothing but compiled code.
+pub(crate) fn use_no_image_on_this_thread(specifier: &[u8]) {
     // SAFETY: the only caller, `WebWorker::start_vm`, calls this before the thread has a VM.
-    let uses_none = unsafe { Bun__AOT__useNoImageOnThisThread(FfiSlice::new(specifier)) };
-    if uses_none {
+    if unsafe { Bun__AOT__useNoImageOnThisThread(FfiSlice::new(specifier)) } {
         bun_core::run_no_compiled_program_on_this_thread();
-    }
-    uses_none
-}
-
-/// The image of the program that a Worker runs whose entry point resolves to `path`.
-pub(crate) fn image_of_worker(path: Option<&[u8]>) -> &'static [u8] {
-    let graph = standalone_module_graph().expect("it has a compiled program");
-    let program = graph.compiled_program().expect("it has several images");
-    let key = path.map(|path| entry_module_key_in(graph, path));
-    key.map_or_else(
-        || program.first_image(),
-        |key| program.image_beginning_at(key),
-    )
-}
-
-/// On the thread of a Worker, before its VM is created.
-pub(crate) fn use_image_of_worker(image: &'static [u8]) {
-    if let Some(program) = program_of_executable() {
-        use_image_on_this_thread(program, image);
     }
 }
 
@@ -942,19 +1070,13 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         refuse_variables_that_are_never_read();
         bun_resolve_builtins::seal_internals();
         #[cfg(not(bun_locked_environment))]
-        settings_for_debugging::set_mismatch_log();
-        #[cfg(not(bun_locked_environment))]
         let is_verbose = settings_for_debugging::set_verbose();
         let identity = match find_process_identity() {
             Ok(identity) => identity,
             Err(error) => exit_with(identity_error_sentence(error)),
         };
         let _ = IDENTITY.set(identity);
-        use_image_on_this_thread(program, program.first_image());
-        let above = bun_resolver::compiled_program::PROGRAMS_ABOVE.get();
-        for &program in above.into_iter().flatten() {
-            use_image_on_this_thread(program, program.first_image());
-        }
+        use_image_on_this_thread(program);
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
         write_execute::deny();
@@ -973,7 +1095,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         bun_crash_handler::report_aborts();
         #[cfg(not(bun_locked_environment))]
         if is_verbose {
-            settings_for_debugging::print_image_summary(program.first_image().len());
+            settings_for_debugging::print_image_summary(program.image.len());
         }
         bun_analytics::features::aot.fetch_add(1, Ordering::Relaxed);
     });
@@ -982,16 +1104,9 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
 /// What the BUN_AOT_ variables ask for.
 #[cfg(not(bun_locked_environment))]
 mod settings_for_debugging {
-    use bun_core::{Fd, ZBox};
-    use bun_sys::O;
-
     use super::Bun__AOT__imageCode;
 
-    const NO_LOG_DESCRIPTOR: isize = -1;
-
     unsafe extern "C" {
-        safe fn Bun__AOT__setMismatchLog(descriptor: isize, is_json: bool);
-        safe fn Bun__AOT__setMismatchLogFormat(is_json: bool);
         safe fn Bun__AOT__setVerbose(is_verbose: bool);
     }
 
@@ -1009,66 +1124,10 @@ mod settings_for_debugging {
         bun_core::Output::flush();
     }
 
-    #[derive(Debug, PartialEq, Eq)]
-    pub(super) enum LogRequest<'a> {
-        Off,
-        FormatOnly { is_json: bool },
-        StandardError { is_json: bool },
-        File { path: &'a [u8], is_json: bool },
-    }
-
-    fn is_json_format(format: Option<&[u8]>) -> bool {
-        matches!(format, Some(b"json"))
-    }
-
-    pub(super) fn mismatch_log_request<'a>(
-        destination: Option<&'a [u8]>,
-        format: Option<&[u8]>,
-    ) -> Option<LogRequest<'a>> {
-        match destination {
-            None => format.map(|_| LogRequest::FormatOnly {
-                is_json: is_json_format(format),
-            }),
-            Some(b"off") => Some(LogRequest::Off),
-            Some(b"stderr") => Some(LogRequest::StandardError {
-                is_json: is_json_format(format),
-            }),
-            Some(path) => Some(LogRequest::File {
-                path,
-                is_json: format.is_none() || is_json_format(format),
-            }),
-        }
-    }
-
-    fn native_descriptor(fd: Fd) -> isize {
-        fd.native() as isize
-    }
-
     pub(super) fn set_verbose() -> bool {
         let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);
         Bun__AOT__setVerbose(is_verbose);
         is_verbose
-    }
-
-    pub(super) fn set_mismatch_log() {
-        let destination = bun_core::env_var::BUN_AOT_TYPE_MISMATCH_LOG.get_not_empty();
-        let format = bun_core::env_var::BUN_AOT_TYPE_MISMATCH_LOG_FORMAT.get_not_empty();
-        let Some(request) = mismatch_log_request(destination, format) else {
-            return;
-        };
-        let (descriptor, is_json) = match request {
-            LogRequest::FormatOnly { is_json } => return Bun__AOT__setMismatchLogFormat(is_json),
-            LogRequest::Off => (NO_LOG_DESCRIPTOR, false),
-            LogRequest::StandardError { is_json } => (native_descriptor(Fd::stderr()), is_json),
-            LogRequest::File { path, is_json } => {
-                let flags = O::WRONLY | O::CREAT | O::APPEND | O::CLOEXEC;
-                match bun_sys::open(&ZBox::from_bytes(path), flags, 0o644) {
-                    Ok(file) => (native_descriptor(file), is_json),
-                    Err(_) => (native_descriptor(Fd::stderr()), is_json_format(format)),
-                }
-            }
-        };
-        Bun__AOT__setMismatchLog(descriptor, is_json);
     }
 }
 
@@ -1125,21 +1184,8 @@ fn exit_with(sentence: &str) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::settings_for_debugging::{
-        LogRequest, image_summary, mismatch_log_request as request,
-    };
+    use super::settings_for_debugging::image_summary;
     use super::*;
-
-    const PATH: &[u8] = b"/tmp/mismatches.jsonl";
-
-    fn stderr(is_json: bool) -> Option<LogRequest<'static>> {
-        Some(LogRequest::StandardError { is_json })
-    }
-
-    fn file(is_json: bool) -> Option<LogRequest<'static>> {
-        let path = PATH;
-        Some(LogRequest::File { path, is_json })
-    }
 
     const SOURCE_PATH: &[u8] = b"/project/app.ts";
     const GRAPH_NAME: &[u8] = if cfg!(windows) {
@@ -1235,44 +1281,6 @@ mod tests {
         let graph = graph_of(None);
         assert_eq!(entry_module_key_in(graph, GRAPH_NAME), GRAPH_NAME);
         assert_eq!(entry_module_key_in(graph, SOURCE_PATH), SOURCE_PATH);
-    }
-
-    #[test]
-    fn unset_variables_request_nothing() {
-        assert_eq!(request(None, None), None);
-    }
-
-    #[test]
-    fn off_ignores_format() {
-        assert_eq!(request(Some(b"off"), None), Some(LogRequest::Off));
-        assert_eq!(request(Some(b"off"), Some(b"json")), Some(LogRequest::Off));
-    }
-
-    #[test]
-    fn standard_error_defaults_to_text() {
-        assert_eq!(request(Some(b"stderr"), None), stderr(false));
-        assert_eq!(request(Some(b"stderr"), Some(b"text")), stderr(false));
-        assert_eq!(request(Some(b"stderr"), Some(b"json")), stderr(true));
-    }
-
-    #[test]
-    fn format_alone_names_no_destination() {
-        let format_only = |is_json| Some(LogRequest::FormatOnly { is_json });
-        assert_eq!(request(None, Some(b"text")), format_only(false));
-        assert_eq!(request(None, Some(b"json")), format_only(true));
-    }
-
-    #[test]
-    fn file_defaults_to_json() {
-        assert_eq!(request(Some(PATH), None), file(true));
-        assert_eq!(request(Some(PATH), Some(b"json")), file(true));
-        assert_eq!(request(Some(PATH), Some(b"text")), file(false));
-    }
-
-    #[test]
-    fn format_is_case_sensitive() {
-        assert_eq!(request(Some(PATH), Some(b"JSON")), file(false));
-        assert_eq!(request(Some(b"stderr"), Some(b"JSON")), stderr(false));
     }
 
     #[test]

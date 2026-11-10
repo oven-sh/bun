@@ -1,0 +1,31 @@
+# `into[i] = value`, `into` the answer of a call that nobody sees: nothing is expected of it. The loop's own text says that it is stored into under a counter and that nothing is named off it:
+# it is asked in front of the loop for a list, for bytes, for doubles and for floats, and each has a copy of the loop with a store of its own. What is none of them runs the loop as it was.
+# RUN(ANYTHING): walk f1 mechanisms=all
+# ANYTHING-LABEL: code f1:Body
+# ANYTHING: = TypeTest {{*}} testedType=Array #
+# ANYTHING: = TypeTest {{*}} testedType=Buffer|Uint8Array #
+# ANYTHING: = TypeTest {{*}} testedType=Float64Array #
+# ANYTHING: = TypeTest {{*}} testedType=Float32Array #
+# ANYTHING: = PutArrayElement
+# ANYTHING: = PutTypedArrayElement {{*}} typedArrayType=2
+# ANYTHING: = PutTypedArrayElement {{*}} typedArrayType=10
+# ANYTHING: = PutTypedArrayElement {{*}} typedArrayType=9
+# ANYTHING: = ElemSet
+# A written whole number holds no fraction: doubles and floats stand among the other views, whose kind the store reads off the cell.
+# RUN(WHOLE): walk f2 mechanisms=all
+# WHOLE-LABEL: code f2:Body
+# WHOLE-NOT: testedType=Float64Array #
+# WHOLE: = TypeTest {{*}} testedType=Array #
+# WHOLE: = TypeTest {{*}} testedType=Buffer|Uint8Array #
+# WHOLE: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray #
+# WHOLE-NOT: testedType=Float64Array #
+# A key that may hold a fraction names no place in a list: nothing is asked in front.
+# RUN(FRACTION): walk f3 mechanisms=all
+# FRACTION-LABEL: code f3:Body
+# FRACTION-NOT: = TypeTest
+# -- source: main.js
+# function lay(make, value) { const into = make(); for (let i = 0; i < 100; i++) into[i] = value; return into; }
+# function seven(make) { const into = make(); for (let i = 0; i < 100; i++) into[i] = 7; return into; }
+# function halve(make, value) { const into = make(); for (let i = 0; i < 100; i++) into[i / 2] = value; return into; }
+# globalThis.kept = [lay, seven, halve];
+# -- end of source

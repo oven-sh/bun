@@ -11,7 +11,7 @@ An executable is a copy of the Bun runtime with your program attached. For a sma
 bun compile --trim ./server.ts
 ```
 
-The build prints the size of the executable and how much it removed. `bun compile` always leaves out the `bun` command line and the JIT compilers. `bun build --compile` keeps both, and `--trim` only removes the command line there. In `Bun.build`, the option is `compile: { trim: true }`.
+The build prints the size of the executable and how much it removed. `bun compile` leaves out the `bun` command line and the JIT compilers, unless your code passes `compile`, `check`, `dts`, `plugins` or a `target` that starts with `bun-` to `Bun.build`, or options that the compiler can't read: those can need the JIT compilers, the type checker and the compiler. `bun build --compile` keeps both, and `--trim` only removes the command line there. In `Bun.build`, the option is `compile: { trim: true }`.
 
 A trimmed executable doesn't read `bunfig.toml` at startup unless you pass `--compile-autoload-bunfig`. Otherwise your program behaves the same, as long as it doesn't reach [a removed feature](#using-a-removed-feature).
 
@@ -70,7 +70,7 @@ A dependency that calls `new Function` is the most common reason `--trim` is blo
 
 Bun removes code, not names. `typeof HTMLRewriter` and `typeof Bun.sql` give the same result as before. A call throws an `Error` with the code `ERR_FEATURE_REMOVED` and a message that says how to keep the feature.
 
-Your own code only runs into this through a name that isn't known until run time. Code that the compiler never sees, like a string passed to `eval` or to a `Worker`, finds the APIs that the rest of your program uses and no others. Members of `Bun`, `Intl`, `Temporal` and `WebAssembly` count as used where your code names them, as in `Bun.file(path)` or `value.toLocaleString()`. `Bun[name]()` doesn't count. Neither does a call on a copy of a `Bun` that your code found without naming it, like `const copy = { ...Object.values(globalThis)[i] }; copy.build()`. A copy of the `Bun` you name, like `{ ...Bun }`, does count. `bun test` runs your source files, so it can't find these errors. Test the executable itself.
+Your own code only runs into this through a name that isn't known until run time. Code that the compiler never sees, like a string passed to `eval` or to a `Worker`, finds the APIs that the rest of your program uses and no others. Members of `Bun`, `Intl`, `Temporal` and `WebAssembly` count as used where your code names them, as in `Bun.file(path)` or `value.toLocaleString()`. So does the test runner: it stays where your code names `"bun:test"`, `"node:test"` or `Bun.jest`. `Bun[name]()` doesn't count if the build can't work out `name`, but the parts of `Bun` that are written in JavaScript, like `Bun.$` and `Bun.sql`, are kept for it. Neither does a call on a copy of a `Bun` that your code found without naming it, like `const copy = { ...Object.values(globalThis)[i] }; copy.build()`. A copy of the `Bun` you name, like `{ ...Bun }`, does count. `bun test` runs your source files, so it can't find these errors. Test the executable itself.
 
 In `Bun.build`, `trim: { allow: ["color"] }` keeps a feature that only a string passed to `eval` or to a `Worker`, a computed name or a native addon uses. `trim: { remove: ["sqlite"] }` takes a feature out even if your code uses it. Neither has a command-line flag.
 

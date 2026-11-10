@@ -1,0 +1,68 @@
+# -- source: eight-loops-side-by-side-in-a-loop-each-holding-a-loop-cost-five-walks-each.js
+# function nest(count) {
+#   const n = count | 0;
+#   const list = [3, 1, 4, 1, 5, 9, 2, 6];
+#   let s = 0;
+#   for (let i1 = 0; i1 < n; i1++) {
+#     s = (s + list[(i1) & 7]) | 0;
+#     for (let j0 = 0; j0 < n; j0++) {
+#       s = (s + list[(i1 + j0 + 0) & 7]) | 0;
+#       for (let m0 = 0; m0 < n; m0++) {
+#         s = (s + list[(j0 + m0) & 7]) | 0;
+#       }
+#     }
+#     for (let j1 = 0; j1 < n; j1++) {
+#       s = (s + list[(i1 + j1 + 1) & 7]) | 0;
+#       for (let m1 = 0; m1 < n; m1++) {
+#         s = (s + list[(j1 + m1) & 7]) | 0;
+#       }
+#     }
+#     for (let j2 = 0; j2 < n; j2++) {
+#       s = (s + list[(i1 + j2 + 2) & 7]) | 0;
+#       for (let m2 = 0; m2 < n; m2++) {
+#         s = (s + list[(j2 + m2) & 7]) | 0;
+#       }
+#     }
+#     for (let j3 = 0; j3 < n; j3++) {
+#       s = (s + list[(i1 + j3 + 3) & 7]) | 0;
+#       for (let m3 = 0; m3 < n; m3++) {
+#         s = (s + list[(j3 + m3) & 7]) | 0;
+#       }
+#     }
+#     for (let j4 = 0; j4 < n; j4++) {
+#       s = (s + list[(i1 + j4 + 4) & 7]) | 0;
+#       for (let m4 = 0; m4 < n; m4++) {
+#         s = (s + list[(j4 + m4) & 7]) | 0;
+#       }
+#     }
+#     for (let j5 = 0; j5 < n; j5++) {
+#       s = (s + list[(i1 + j5 + 5) & 7]) | 0;
+#       for (let m5 = 0; m5 < n; m5++) {
+#         s = (s + list[(j5 + m5) & 7]) | 0;
+#       }
+#     }
+#     for (let j6 = 0; j6 < n; j6++) {
+#       s = (s + list[(i1 + j6 + 6) & 7]) | 0;
+#       for (let m6 = 0; m6 < n; m6++) {
+#         s = (s + list[(j6 + m6) & 7]) | 0;
+#       }
+#     }
+#     for (let j7 = 0; j7 < n; j7++) {
+#       s = (s + list[(i1 + j7 + 7) & 7]) | 0;
+#       for (let m7 = 0; m7 < n; m7++) {
+#         s = (s + list[(j7 + m7) & 7]) | 0;
+#       }
+#     }
+#   }
+#   return s;
+# }
+# print(nest(JSON.parse("3")));
+# -- end of source
+# Eight loops stand side by side in the turn of one loop, and each holds a loop. None runs other code, which a first walk cannot know: each that is found quiet asks for another walk, and the wishes meet at the
+# outermost loop. The walks grow with the width by a line: five for each loop side by side and two, as its twin of sixteen shows.
+# RUN: compile WalksOfLoops mechanisms=all
+# CHECK: statistic WalksOfLoops 42
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 863
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

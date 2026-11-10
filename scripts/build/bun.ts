@@ -16,7 +16,7 @@ import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { cc, cxx, embedCompiledLibraryPath, link, pch, type PrecompiledHeader } from "./compile.ts";
+import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
@@ -377,6 +377,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     cxxObjects.push(object);
     if (codegen.builtinTableSources.includes(src)) builtinTableObjects.push(object);
   }
+  const aotNativeTestObjects = sources.aotNativeTests.map(src =>
+    cxx(n, cfg, src, { flags: cxxFlagsFull, pch: pchOut.pch, pchHeader: pchOut.wrapperHeader }),
+  );
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
@@ -454,13 +457,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
     trimmable: true,
-    embedsCompiledLibrary: true,
     // Static scans: the deps' forbidden-symbol checks on the objects going
     // in, the smoke test on the executable coming out.
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects);
+  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects, aotNativeTestObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -477,9 +479,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * and how JSC compiles them): their sources, or with the prebuilt WebKit their
  * objects out of the tarball, linked with the WebKit and mimalloc bun links and
  * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
- * it. On request (`--target=jsc`). `engine-test-programs` is what test/aot
- * runs, `jsc` and `testaot`: a default target in CI, which packs them beside
- * bun. With a tarball that has only the linked programs it is the fetch.
+ * it; `testaot` also with the native tests that ask that table
+ * (test/aot/native). On request (`--target=jsc`). `engine-test-programs` is
+ * what test/aot runs, `jsc` and `testaot`: a default target in CI, which packs
+ * them beside bun. With a tarball that has only the linked programs it is the
+ * fetch.
  */
 function emitJscPrograms(
   n: Ninja,
@@ -487,6 +491,7 @@ function emitJscPrograms(
   deps: ReadonlyMap<DepName, ResolvedDep>,
   headersReady: string,
   builtinTableObjects: readonly string[],
+  aotNativeTestObjects: readonly string[],
 ): void {
   const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
@@ -518,6 +523,7 @@ function emitJscPrograms(
       cfg,
       from.flatMap(d => d.objects),
     );
+    if (program.name === "testaot") objects.push(...aotNativeTestObjects);
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
       libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],
@@ -883,16 +889,12 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
     // embedded — so the stripped `bun` needs its own postlink pass.
     // (machoPostlinkCommand is "" everywhere else.)
     n.rule("strip", {
-      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}${cfg.hardened ? ` && ${cfg.jsRuntime} ${quote(closeElfGapsPath, false)} $out` : ""}${cfg.compiledLibrary ? ` && ${cfg.jsRuntime} ${quote(embedCompiledLibraryPath, false)} $out --from $in` : ""}`,
+      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}${cfg.hardened ? ` && ${cfg.jsRuntime} ${quote(closeElfGapsPath, false)} $out` : ""}`,
       description: "strip $out",
     });
   }
 
-  const postlinkInputs = [
-    ...machoPostlinkImplicitInputs(cfg),
-    ...(cfg.hardened ? [closeElfGapsPath] : []),
-    ...(cfg.compiledLibrary ? [embedCompiledLibraryPath] : []),
-  ];
+  const postlinkInputs = [...machoPostlinkImplicitInputs(cfg), ...(cfg.hardened ? [closeElfGapsPath] : [])];
   const verified = strippedVerifyStamp(cfg);
   const node = {
     outputs: [out],

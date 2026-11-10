@@ -1,0 +1,1 @@
+globalThis.runs = (globalThis.runs ?? "") + "part< "; export const x = "real"; globalThis.began(); await globalThis.gate; globalThis.runs = (globalThis.runs ?? "") + "part> "; export const late = "late";

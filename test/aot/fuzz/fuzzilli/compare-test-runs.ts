@@ -1,14 +1,14 @@
 // Runs a folder of test files under `bun test` and under `bun test --aot` and says in what the two runs differ.
 // It is for projects written by hand: a probe of one area, the witness of a fault, a group of an existing suite. run-test-projects.ts draws its own.
 //
-//   bun compare-test-runs.ts --bun <the Bun that runs the tests> --project <folder> [--flags="--isolate --parallel=2"] [--words TestRunLayers:0] [--files "a.test.js b.test.js"]
+//   bun compare-test-runs.ts --bun <the Bun that runs the tests> --project <folder> [--flags="--isolate --parallel=2"] [--files "a.test.js b.test.js"]
 //   --each-alone                 every test file in a run of its own, with one trivial test file beside it
 //   --each-beside <test file>    every test file in a run of its own, with that file of the project beside it
 //   --open                       one more test file, which imports a module under a name that no build can know: then any file may be loaded by name
 //   --shrink <test file> --fails "<words of its (fail) line>"   which of the other test files does the failure take? Takes them away by halves for as long as the compiled run prints that line
 //   --groups 40 [--stream 0/4]   an existing suite, in place: its test files are shuffled once, always alike, and cut into groups of so many; each group runs plain twice and compiled once.
 //                                Printed: the tests that end alike in both plain runs and otherwise compiled. --stream i/n takes every nth group from the ith: n of them share the work
-//   --words <words>              BUN_DEBUG_TEST_AOT_WORDS for the compiled run: TestRunLayers:0 | 1 | 2, TestRunPartFiles:<n>, and words for the compiler such as testing=DelayOtherFlowRules
+//   --words <words>              BUN_DEBUG_TEST_AOT_WORDS for the compiled run: words for the compiler such as erase-types or check=Validate
 //   --jobs 4                     runs at once, with --each-alone and --each-beside
 //   --in-place                   no copy: the runs take place in the project itself and name their test files on the command line. For a large tree; nothing can be added, so not with --open,
 //                                and --each-alone has no trivial file beside. One run at a time: two compiled runs in one folder are not independent
@@ -78,6 +78,7 @@ async function run(folder: string, files: string[], isCompiled: boolean): Promis
     cmd: [
       options.bun,
       "test",
+      "--no-install",
       ...(isCompiled ? ["--aot"] : []),
       ...options.flags.split(" ").filter(Boolean),
       ...files.map(file => "./" + file),

@@ -1,0 +1,22 @@
+# -- source: small-callee-that-is-no-leaf-is-called-outside-of-loops-though-recursion-enters-the-caller-again.js
+# function log(o) { sink(o); return 1; }
+# function weigh(o) { if (o.heavy) return log(o) + o.weight; return o.weight + o.bonus; }
+# function visit(node) { let sum = weigh(node); if (node.left) sum += visit(node.left); if (node.right) sum += visit(node.right); return sum; }
+# function once(node) { return weigh(node) + 1; }
+# function each(nodes) { let sum = 0; for (let i = 0; i < nodes.length; i++) sum += weigh(nodes[i]); return sum; }
+# const tree = { heavy: false, weight: 1, bonus: 2, left: { heavy: false, weight: 3, bonus: 4, left: null, right: null }, right: null };
+# print(visit(tree), once(tree), once(tree.left), each([tree, tree.left]));
+# -- end of source
+# Whether a callee is copied goes by the place of the call in the body that is built, and by the callee. Which functions lead back to the caller is a word on the rest of the program: with it a function would be compiled otherwise in a test than in the program that ships.
+# `weigh`, nine operations of which one calls `log`, so that it is no leaf, is larger than its call. `visit` may be entered again from below itself, `once` may not: both call it. In the loop of `each` it is copied
+# That `visit` calls itself stands in its own text: it is copied into itself once, and `weigh` is called in the copies as in the body.
+# RUN: walk f3 mechanisms=all
+# CHECK-NOT: callee=f2
+# CHECK: CallDirect {{*}} function=f2
+# RUN(ONCE): walk f4 mechanisms=all
+# ONCE-NOT: frame 1
+# ONCE: CallDirect {{*}} function=f2
+# RUN(LOOP): walk f5 mechanisms=all
+# LOOP: frame 1 callee=f2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

@@ -1,0 +1,48 @@
+# `s += list[i]`: for all that is proven a text may come to `s`, so it goes round the loop boxed. Behind the tests of both numbers the sum stays boxed: int32s are added as int32s.
+# built on doubles, each turn asked both tags, converted both numbers, and asked the sum whether it is an int32 to box it again: ten instructions more
+# The list leaves the program, so that Link has seen nothing of what comes out of it (LinkTables::resultsOfReadsByKey).
+# f1 = total, f3 = inner: the head of the inner loop takes the sum. Controls: f2 = less, f4 = halves: the number goes round raw, and the sum is built on doubles as ever
+# -- source: tally.ts
+# function total(list: number[]): number {
+#   let s = 0;
+#   for (let i = 0; i < list.length; i++) s += list[i];
+#   return s;
+# }
+# function less(list: number[]): number {
+#   let s = 100;
+#   for (let i = 0; i < list.length; i++) s -= list[i];
+#   return s;
+# }
+# function inner(lists: number[][]): number {
+#   let s = 0;
+#   for (let k = 0; k < lists.length; k++) {
+#     const list = lists[k];
+#     for (let i = 0; i < list.length; i++) s += list[i];
+#   }
+#   return s;
+# }
+# function halves(n: number): number {
+#   let s = 0.5;
+#   for (let i = 0; i < n; i++) s += 0.25;
+#   return s;
+# }
+# const list: number[] = [];
+# for (let i = 0; i < 10; i++) list.push(i & 7);
+# (globalThis as any).kept = list;
+# console.log(total(list), less(list), inner([list, list]), halves(4));
+# -- end of source
+# LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw
+# RUN(TOTAL): walk f1 mechanisms=all-Inlining-LoopInvariants
+# TOTAL-LABEL: code f1:Body
+# TOTAL: number @JSValue = Add {{*}}form=Numbers
+# RUN(NEVER): walk f1 mechanisms=all-Inlining-LoopInvariants
+# NEVER-NOT: @Double = Add
+# RUN(INNER): walk f3 mechanisms=all-Inlining-LoopInvariants
+# INNER-LABEL: code f3:Body
+# INNER: number @JSValue = Add {{*}}form=Numbers
+# RUN(LESS): walk f2 mechanisms=all-Inlining
+# LESS-LABEL: code f2:Body
+# LESS: number @Double = Sub {{*}}form=Numbers
+# RUN(HALVES): walk f4 mechanisms=all-Inlining
+# HALVES-LABEL: code f4:Body
+# HALVES: number @Double = Add {{*}}form=Numbers

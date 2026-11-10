@@ -1,85 +1,61 @@
 #[cfg(test)]
 mod tests;
 
-use super::ApplicationGraph;
 use super::bindings::{
     AnswerMember, CopiedExports, Holder, ImportBinding, ModuleExport, ModuleRequest,
-    SyntheticExportId,
+    SyntheticExportId, list_in_order_of_stars,
 };
-use super::evicted::LibraryModulesStoredInCache;
+use super::failures::ModuleFailureId;
 use super::graph::{ModuleGraph, find};
 use super::imports::NamedMember;
 use super::interop::ModuleKind;
 use super::order::{OrderParts, SiteKey};
-use super::reached_targets::ReachedTargets;
+use super::requests::Spelling;
+use super::spelled_files::TextThatSpellsFile;
+use super::test_run_evictions::{NamedByCopies, is_marked};
 use super::wrapped::InnerModuleKind;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
+use crate::load::contents::load_names::{
+    PathAlone, find_module_looked_up_in_cache, find_why_resolver_takes_name_for_path,
+};
 use crate::load::sources::EntryPoint;
-use crate::options::WaysBetweenModuleObjects;
+use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
+use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
-use bun_sema::program::{FileId, Sym};
-use bun_sema::util::FxHashMap;
+use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sort_by_number::SortByNumber;
 use core::ops::Range;
+use std::borrow::Cow;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleRef {
     File(FileId),
-    /// The callback of `__commonJS(cb)` or `__esm(fn)` in a bundle.
     Inner {
         file: FileId,
         callback: FnId,
     },
-    /// What an ES importer of a CommonJS file requests in its place: it evaluates the file and takes the copies.
     Face(FileId),
-    /// Throws the link error for the first name that an ES graph imports and no CommonJS file of it has stored.
     Check(FileId),
     Runtime(RuntimeModule),
     External {
         importer: FileId,
         specifier: Atom,
-        /// `import data from "./data.txt" with { type: "toml" }`: the loader of the run time is asked as the statement asks, and keeps what it answers apart from what an import without the attribute gets.
         type_attribute: Option<Loader>,
     },
-}
-
-impl ModuleRef {
-    pub fn map_file(self, map: &dyn Fn(FileId) -> Option<FileId>) -> Option<ModuleRef> {
-        Some(match self {
-            ModuleRef::File(file) => ModuleRef::File(map(file)?),
-            ModuleRef::Inner { file, callback } => ModuleRef::Inner {
-                file: map(file)?,
-                callback,
-            },
-            ModuleRef::Face(file) => ModuleRef::Face(map(file)?),
-            ModuleRef::Check(file) => ModuleRef::Check(map(file)?),
-            ModuleRef::Runtime(_) => self,
-            ModuleRef::External {
-                importer,
-                specifier,
-                type_attribute,
-            } => ModuleRef::External {
-                importer: map(importer)?,
-                specifier,
-                type_attribute,
-            },
-        })
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Shape {
     EsModule,
-    /// No exports object: a variable for each name that somebody reads.
     Names,
-    /// One variable holds `module.exports`.
     Value,
-    /// The run time's loader has the module, as it always had.
     AsToday,
 }
 
@@ -87,9 +63,7 @@ pub enum Shape {
 pub enum Site {
     Evaluate {
         target: ModuleRef,
-        /// Every run of the body of the referrer passes the site.
         is_bare: bool,
-        /// The run time is told that the site has run.
         records: bool,
     },
     AsToday,
@@ -101,13 +75,11 @@ pub enum View {
     Exports(ModuleRef),
 }
 
-/// A member of a module's exports that is read, stored or called.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Member {
     Variable(SyntheticExportId),
     Copy(SyntheticExportId),
     Binding(Sym),
-    /// A read: nobody stores the name. A store: nobody reads it, so the value is evaluated and nothing is stored.
     Undefined,
     Marker(bool),
     OnObject,
@@ -120,66 +92,277 @@ pub(super) struct StoredSite {
     pub is_bare: bool,
 }
 
-/// The imports that lead from the ES modules of the program to its files of one other kind.
 struct LinkedFiles {
-    /// By ES module, in the order of its requests.
     by_importer: Vec<Vec<FileId>>,
-    /// By ES module.
-    targets_below: ReachedTargets,
+    es_modules_by_importer: Vec<Vec<FileId>>,
+    is_target: Vec<bool>,
+    is_on_ring: Vec<bool>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum LoadState {
+    Unrequested,
+    Requested,
+    Fetched,
+    Made,
+    Recorded,
+    Quiet,
+    Settled,
+}
+
+#[derive(Copy, Clone)]
+enum LoadJob {
+    SettleFetch,
+    MakeRecord,
+    StoreRecord,
+    LoadRequests,
+}
+
+#[derive(Copy, Clone)]
+struct StepsOfFile {
+    root_of_state: u32,
+    state: LoadState,
+    last_walk: u32,
+}
+
+#[derive(Default)]
+struct LoadSteps {
+    root_number: u32,
+    walk: u32,
+    of_files: Vec<StepsOfFile>,
+    jobs: Vec<(LoadJob, FileId)>,
+    to_walk: Vec<FileId>,
+    walked: Vec<FileId>,
+}
+
+impl LoadSteps {
+    fn begin(&mut self, file_count: usize) {
+        self.root_number += 1;
+        let untouched = StepsOfFile {
+            root_of_state: 0,
+            state: LoadState::Unrequested,
+            last_walk: 0,
+        };
+        self.of_files.resize(file_count, untouched);
+        self.jobs.clear();
+    }
+
+    fn state(&self, file: FileId) -> LoadState {
+        let of_file = &self.of_files[file.idx()];
+        if of_file.root_of_state == self.root_number {
+            of_file.state
+        } else {
+            LoadState::Unrequested
+        }
+    }
+
+    fn set_state(&mut self, file: FileId, state: LoadState) {
+        let of_file = &mut self.of_files[file.idx()];
+        of_file.root_of_state = self.root_number;
+        of_file.state = state;
+    }
+
+    fn take_if_unseen(&mut self, file: FileId) -> bool {
+        let is_unseen = self.state(file) == LoadState::Unrequested;
+        self.set_state(file, LoadState::Requested);
+        is_unseen
+    }
+}
+
+impl LinkedFiles {
+    fn leads_to_target(&self, es_module: FileId) -> bool {
+        !self.by_importer[es_module.idx()].is_empty()
+    }
+
+    fn list_targets_as_require_makes_them(
+        &self,
+        root: FileId,
+        target_count: usize,
+        steps: &mut LoadSteps,
+    ) -> Vec<FileId> {
+        steps.begin(self.by_importer.len());
+        let mut made = Vec::new();
+        steps.jobs.push((LoadJob::LoadRequests, root));
+        steps.set_state(root, LoadState::Recorded);
+        let mut next = 0;
+        while let Some(&(job, file)) = steps.jobs.get(next)
+            && made.len() < target_count
+        {
+            next += 1;
+            match (job, steps.state(file)) {
+                (LoadJob::SettleFetch, LoadState::Requested) => {
+                    steps.set_state(file, LoadState::Fetched);
+                    steps.jobs.push((LoadJob::MakeRecord, file));
+                }
+                (LoadJob::MakeRecord, LoadState::Fetched) => {
+                    steps.set_state(file, LoadState::Made);
+                    if self.is_target[file.idx()] {
+                        made.push(file);
+                    }
+                    steps.jobs.push((LoadJob::StoreRecord, file));
+                }
+                (LoadJob::StoreRecord, LoadState::Made) => {
+                    steps.set_state(file, LoadState::Recorded);
+                    if !self.is_target[file.idx()] {
+                        steps.jobs.push((LoadJob::LoadRequests, file));
+                    }
+                }
+                (LoadJob::LoadRequests, LoadState::Recorded | LoadState::Quiet) => {
+                    self.walk_stored_modules(file, steps, &mut made);
+                }
+                _ => {}
+            }
+        }
+        made
+    }
+
+    fn walk_stored_modules(&self, start: FileId, steps: &mut LoadSteps, made: &mut Vec<FileId>) {
+        steps.walk += 1;
+        let walk = steps.walk;
+        let mut is_all_recorded = true;
+        steps.to_walk.push(start);
+        while let Some(importer) = steps.to_walk.pop() {
+            let of_importer = &mut steps.of_files[importer.idx()];
+            if core::mem::replace(&mut of_importer.last_walk, walk) == walk {
+                continue;
+            }
+            steps.walked.push(importer);
+            if of_importer.state == LoadState::Quiet {
+                for &target in &self.es_modules_by_importer[importer.idx()] {
+                    let of_target = &steps.of_files[target.idx()];
+                    if of_target.last_walk != walk && of_target.state != LoadState::Settled {
+                        steps.to_walk.push(target);
+                    }
+                }
+                continue;
+            }
+            let mut is_quiet = true;
+            for &target in &self.by_importer[importer.idx()] {
+                let state = steps.state(target);
+                match state {
+                    LoadState::Unrequested => {
+                        steps.set_state(target, LoadState::Requested);
+                        steps.jobs.push((LoadJob::SettleFetch, target));
+                        is_quiet = false;
+                    }
+                    LoadState::Requested => {
+                        steps.set_state(target, LoadState::Fetched);
+                        steps.jobs.push((LoadJob::MakeRecord, target));
+                        is_quiet = false;
+                    }
+                    LoadState::Fetched | LoadState::Made => {
+                        steps.set_state(target, LoadState::Recorded);
+                        if !self.is_target[target.idx()] {
+                            steps.jobs.push((LoadJob::LoadRequests, target));
+                            steps.to_walk.push(target);
+                        } else if state == LoadState::Fetched {
+                            made.push(target);
+                        }
+                    }
+                    LoadState::Recorded | LoadState::Quiet if !self.is_target[target.idx()] => {
+                        steps.to_walk.push(target);
+                    }
+                    LoadState::Recorded | LoadState::Quiet | LoadState::Settled => {}
+                }
+            }
+            if is_quiet {
+                steps.set_state(importer, LoadState::Quiet);
+            }
+            is_all_recorded &= is_quiet;
+        }
+        for at in 0..steps.walked.len() {
+            if is_all_recorded {
+                steps.set_state(steps.walked[at], LoadState::Settled);
+            }
+        }
+        steps.walked.clear();
+    }
+}
+
+fn find_files_that_lead_to(
+    targets: Vec<FileId>,
+    imports: &[(FileId, FileId)],
+    file_count: usize,
+) -> Vec<bool> {
+    let mut leads_there = vec![false; file_count];
+    if targets.is_empty() {
+        return leads_there;
+    }
+    let mut bounds = vec![0u32; file_count + 1];
+    for &(imported, _) in imports {
+        bounds[imported.idx()] += 1;
+    }
+    let mut end = 0;
+    for bound in &mut bounds {
+        end += *bound;
+        *bound = end;
+    }
+    let mut importers = vec![FileId(0); imports.len()];
+    for &(imported, importer) in imports {
+        bounds[imported.idx()] -= 1;
+        importers[bounds[imported.idx()] as usize] = importer;
+    }
+    let mut pending = targets;
+    while let Some(file) = pending.pop() {
+        if core::mem::replace(&mut leads_there[file.idx()], true) {
+            continue;
+        }
+        let (first, end) = (bounds[file.idx()], bounds[file.idx() + 1]);
+        pending.extend_from_slice(&importers[first as usize..end as usize]);
+    }
+    leads_there
 }
 
 pub(super) struct Plan {
     order: OrderParts,
-    /// The callbacks of `order.numbers.inner_modules()`.
     inner_callbacks: Vec<FnId>,
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
     is_found_by_name: Vec<bool>,
-    ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
-    ways_followed_for_their_names: WaysBetweenModuleObjects,
-    lets_process_out_of_sight: bool,
-    is_ready_for_loader_functions: bool,
-    /// A test run in which a file stores `Module._resolveFilename` or `Module.prototype.require`: plain Bun asks them at every `require`.
-    asks_loader_functions: bool,
-    /// A `require` of a file may run before the loader has come to a CommonJS file, and code names a way between module objects: whether one did says which file has the id ".".
-    is_first_require_seen: bool,
+    is_every_require_seen: bool,
     is_namespace_seen: Vec<bool>,
-    /// A file stores `__esModule` on what `require` of the module answers.
     is_marker_stored: Vec<bool>,
     is_imported_as_namespace: Vec<bool>,
-    /// `mock.module` names the module.
+    externals_imported_as_namespace: Vec<ModuleRef>,
+    externals_named_by_mocks: Vec<ModuleRef>,
     may_be_mocked: Vec<bool>,
-    /// The order numbers no module of the library.
+    is_named_by_mock: Vec<bool>,
+    is_any_module_named_by_mock: bool,
+    runtime_modules_named_by_mocks: Vec<RuntimeModule>,
+    names_without_code_that_mocks_give: Vec<Atom>,
+    files_with_late_stars: Vec<FileId>,
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
+    originals_beside_mocks_may_run: bool,
+    runtime_modules_handed_out_by_test_runner: Vec<RuntimeModule>,
+    test_runner_hands_out_every_runtime_module: bool,
     runs_tests: bool,
-    /// A test run: `require.cache` lists the files of the program that have run.
-    lists_files_in_cache: bool,
-    /// `EvictedModules::is_table_reached`
-    reaches_entries_of_cache: bool,
-    /// `delete require.cache[path]` loads the file anew: `EvictedModules`.
-    may_be_evicted: Vec<bool>,
-    /// `EvictedModules::changed_on_disk`
-    is_changed_on_disk_by_run: Vec<bool>,
-    library_modules_stored_in_cache: LibraryModulesStoredInCache,
+    is_reached_without_extension: Vec<bool>,
+    is_reached_under_another_extension: Vec<bool>,
+    is_reached_as_folder: Vec<bool>,
     may_evict_every_module: bool,
-    /// The host loads the entry point several times in one realm: `AotOptions::entry_points_run_again`.
+    pub(super) named_by_copies: NamedByCopies,
+    reaches_entries_of_cache: Option<bool>,
+    library_modules_stored_in_cache: Vec<RuntimeModule>,
+    asks_loader_functions: bool,
+    is_closed_world: bool,
+    computed_names_ask_loader_functions: bool,
+    answers_for_names_itself: bool,
+    lists_names_of_statements: bool,
     runs_again: Vec<bool>,
-    /// Somebody out of sight may ask for any export of the module: `EvictedModules`.
-    is_every_export_asked_for: Vec<bool>,
-    is_every_export_of_every_module_asked_for: bool,
-    copies_name_every_module: bool,
-    /// Ascending. The test runner stores into them.
+    has_es_module_that_runs_again: Vec<bool>,
     replaced_variables: Vec<Sym>,
-    /// The statements that define inner modules, and those of modules that cannot be loaded.
+    makers_of_imported_requires: Vec<FileId>,
     erased_statements: Vec<(FileId, StmtId)>,
     pub named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
     pub variables: FxHashMap<(ModuleRef, Atom), SyntheticExportId>,
-    /// What the inner modules ask for.
     pub(super) inner_requests: Vec<Vec<ModuleRequest>>,
     final_requests: Vec<ModuleRequest>,
     final_ranges: FxHashMap<ModuleRef, Range<u32>>,
+    final_checks: FxHashMap<FileId, Vec<(SyntheticExportId, ModuleFailureId)>>,
     pub is_finished: bool,
+    pub(super) are_holders_settled: bool,
+    pub(super) test_run: crate::test_runs::TestRunPlan,
 }
 
 impl Plan {
@@ -191,30 +374,40 @@ impl Plan {
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
             is_found_by_name: vec![false; order.numbers.len()],
-            ways_not_followed_out_of_sight: WaysBetweenModuleObjects::default(),
-            ways_followed_for_their_names: WaysBetweenModuleObjects::default(),
-            lets_process_out_of_sight: false,
-            is_ready_for_loader_functions: false,
-            asks_loader_functions: false,
-            is_first_require_seen: false,
+            is_every_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
             is_imported_as_namespace: vec![false; order.numbers.len()],
+            externals_imported_as_namespace: Vec::new(),
+            externals_named_by_mocks: Vec::new(),
             may_be_mocked: vec![false; order.numbers.len()],
+            is_named_by_mock: vec![false; order.numbers.len()],
+            is_any_module_named_by_mock: false,
+            runtime_modules_named_by_mocks: Vec::new(),
+            names_without_code_that_mocks_give: Vec::new(),
+            files_with_late_stars: Vec::new(),
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
+            originals_beside_mocks_may_run: false,
+            runtime_modules_handed_out_by_test_runner: Vec::new(),
+            test_runner_hands_out_every_runtime_module: false,
             runs_tests: false,
-            lists_files_in_cache: false,
-            reaches_entries_of_cache: false,
-            may_be_evicted: vec![false; order.numbers.len()],
-            is_changed_on_disk_by_run: vec![false; order.numbers.len()],
-            library_modules_stored_in_cache: LibraryModulesStoredInCache::default(),
+            is_reached_without_extension: vec![false; order.numbers.len()],
+            is_reached_under_another_extension: vec![false; order.numbers.len()],
+            is_reached_as_folder: vec![false; order.numbers.len()],
             may_evict_every_module: false,
+            named_by_copies: NamedByCopies::default(),
+            reaches_entries_of_cache: None,
+            library_modules_stored_in_cache: Vec::new(),
+            asks_loader_functions: false,
+            is_closed_world: false,
+            computed_names_ask_loader_functions: false,
+            answers_for_names_itself: false,
+            lists_names_of_statements: false,
             runs_again: vec![false; order.numbers.len()],
-            is_every_export_asked_for: vec![false; order.numbers.len()],
-            is_every_export_of_every_module_asked_for: false,
-            copies_name_every_module: false,
+            has_es_module_that_runs_again: vec![false; order.numbers.len()],
             replaced_variables: Vec::new(),
+            makers_of_imported_requires: Vec::new(),
             order,
             erased_statements,
             named_members: FxHashMap::default(),
@@ -222,8 +415,16 @@ impl Plan {
             inner_requests: Vec::new(),
             final_requests: Vec::new(),
             final_ranges: FxHashMap::default(),
+            final_checks: FxHashMap::default(),
             is_finished: false,
+            are_holders_settled: false,
+            test_run: crate::test_runs::TestRunPlan::default(),
         }
+    }
+
+    pub(super) fn reopen(&mut self) {
+        self.is_finished = false;
+        self.are_holders_settled = false;
     }
 
     fn has(&self, set: &[bool], module: ModuleRef) -> bool {
@@ -243,6 +444,9 @@ impl Plan {
 
     pub(super) fn set_is_imported_as_namespace(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.is_imported_as_namespace, module);
+        if matches!(module, ModuleRef::External { .. }) {
+            self.externals_imported_as_namespace.push(module);
+        }
     }
 
     pub(super) fn set_may_be_mocked(&mut self, module: ModuleRef) {
@@ -252,67 +456,98 @@ impl Plan {
         }
     }
 
+    pub(super) fn set_is_named_by_mock(&mut self, module: ModuleRef) {
+        self.is_any_module_named_by_mock = true;
+        match module {
+            ModuleRef::Runtime(module) => {
+                if !self.runtime_modules_named_by_mocks.contains(&module) {
+                    self.runtime_modules_named_by_mocks.push(module);
+                }
+            }
+            ModuleRef::External { .. } => self.externals_named_by_mocks.push(module),
+            _ => self.add(|plan| &mut plan.is_named_by_mock, module),
+        }
+    }
+
+    pub(super) fn set_is_handed_out_by_test_runner(&mut self, module: RuntimeModule) {
+        if !self
+            .runtime_modules_handed_out_by_test_runner
+            .contains(&module)
+        {
+            self.runtime_modules_handed_out_by_test_runner.push(module);
+        }
+    }
+
+    pub(super) fn set_test_runner_hands_out_every_runtime_module(&mut self) {
+        self.test_runner_hands_out_every_runtime_module = true;
+    }
+
     pub(super) fn set_runs_tests(&mut self) {
         self.runs_tests = true;
     }
 
-    pub(super) fn set_lists_files_in_cache(&mut self) {
-        self.lists_files_in_cache = true;
-    }
-
-    pub(super) fn set_reaches_entries_of_cache(&mut self) {
-        self.reaches_entries_of_cache = true;
-    }
-
-    pub(super) fn set_may_be_evicted(&mut self, module: ModuleRef) {
-        self.add(|plan| &mut plan.may_be_evicted, module);
-    }
-
-    pub(super) fn set_is_changed_on_disk_by_run(&mut self, module: ModuleRef) {
-        self.add(|plan| &mut plan.is_changed_on_disk_by_run, module);
-    }
-
-    pub(super) fn set_library_modules_stored_in_cache(
-        &mut self,
-        stored: LibraryModulesStoredInCache,
-    ) {
-        for file in stored.files_tracking_first_load() {
-            self.add(
-                |plan| &mut plan.names_way_to_module_objects,
-                ModuleRef::File(file),
-            );
+    pub(super) fn set_is_reached_by(&mut self, module: ModuleRef, spelling: Spelling) {
+        match spelling {
+            Spelling::WithoutExtension => {
+                self.add(|plan| &mut plan.is_reached_without_extension, module);
+            }
+            Spelling::WithOtherExtension => {
+                self.add(|plan| &mut plan.is_reached_under_another_extension, module);
+            }
+            Spelling::AsDirectory => self.add(|plan| &mut plan.is_reached_as_folder, module),
         }
-        self.library_modules_stored_in_cache = stored;
     }
 
-    pub(super) fn set_runs_again(&mut self, module: ModuleRef) {
+    pub(super) fn set_runs_again(&mut self, module: ModuleRef, is_es_module: bool) {
         self.add(|plan| &mut plan.runs_again, module);
+        if is_es_module && let Some(number) = self.order.numbers.number_of(module) {
+            let component = self.order.component_of[number];
+            self.has_es_module_that_runs_again[component as usize] = true;
+        }
     }
 
     pub(super) fn set_every_module_may_be_evicted(&mut self) {
         self.may_evict_every_module = true;
     }
 
-    pub(super) fn set_every_export_is_asked_for(&mut self, module: ModuleRef) {
-        self.add(|plan| &mut plan.is_every_export_asked_for, module);
+    pub(super) fn set_reaches_entries_of_cache(&mut self, reaches: bool) {
+        self.reaches_entries_of_cache = Some(reaches);
     }
 
-    pub(super) fn set_every_export_of_every_module_is_asked_for(&mut self) {
-        self.is_every_export_of_every_module_asked_for = true;
-    }
-
-    pub(super) fn set_copies_name_every_module(&mut self) {
-        self.copies_name_every_module = true;
+    pub(super) fn set_library_modules_stored_in_cache(&mut self, modules: &[RuntimeModule]) {
+        self.library_modules_stored_in_cache = modules.to_vec();
     }
 
     pub(super) fn set_every_module_may_be_mocked(&mut self) {
         self.may_mock_every_module = true;
     }
 
+    pub(super) fn set_originals_beside_mocks_may_run(&mut self) {
+        self.originals_beside_mocks_may_run = true;
+    }
+
+    pub(super) fn set_files_with_late_stars(&mut self, files: Vec<FileId>) {
+        self.files_with_late_stars = files;
+    }
+
+    pub(super) fn set_names_without_code_that_mocks_give(&mut self, names: Vec<Atom>) {
+        for name in names {
+            if !self.names_without_code_that_mocks_give.contains(&name) {
+                self.names_without_code_that_mocks_give.push(name);
+            }
+        }
+    }
+
     pub(super) fn set_replaced_variables(&mut self, mut variables: Vec<Sym>) {
         variables.sort_unstable();
         variables.dedup();
         self.replaced_variables = variables;
+    }
+
+    pub(super) fn set_makers_of_imported_requires(&mut self, mut makers: Vec<FileId>) {
+        makers.sort_unstable();
+        makers.dedup();
+        self.makers_of_imported_requires = makers;
     }
 
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
@@ -325,10 +560,13 @@ impl Plan {
         let end = inner_modules.partition_point(|inner| inner.0 <= file);
         start..end
     }
+
+    fn inner_callbacks_of(&self, file: FileId) -> &[FnId] {
+        &self.inner_callbacks[self.inner_modules_of(file)]
+    }
 }
 
 impl ModuleGraph {
-    /// Final behind `finish_plan`.
     pub fn shape(&self, module: ModuleRef) -> Shape {
         match module {
             ModuleRef::File(_) | ModuleRef::Inner { .. } if !self.is_code_of_program(module) => {
@@ -345,7 +583,6 @@ impl ModuleGraph {
                     .of_callback(file, callback)
                     .map(|inner| inner.kind)
                 {
-                    // Its variables are the bindings of the file.
                     Some(InnerModuleKind::Esm) => Shape::EsModule,
                     Some(InnerModuleKind::CommonJs) => self.commonjs().shape(module),
                     None => Shape::AsToday,
@@ -356,21 +593,30 @@ impl ModuleGraph {
         }
     }
 
-    /// A file of the program that is code and no library, or an inner module of one: what a site can evaluate.
     pub fn is_code_of_program(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.order.is_code_of_program, module)
     }
 
-    /// `require(K)`, `module.require(K)`, `import.meta.require(K)`, a call of what `createRequire` made for the file itself, `require_x()` and `init_x()`.
+    pub fn stored_site(&self, file: FileId, call: ExprId) -> Option<Site> {
+        let site = self.find_stored_site(file, SiteKey::Call(call))?;
+        Some(self.finish_site(site))
+    }
+
     pub fn site(&self, file: FileId, call: ExprId) -> Option<Site> {
-        if let Some(site) = self.find_stored_site(file, SiteKey::Call(call)) {
-            return Some(self.finish_site(site));
+        if let Some(site) = self.stored_site(file, call) {
+            return Some(site);
         }
+        let row = self.row_by_file.get(file.idx()).copied().flatten()?;
+        let sites = &self.rows[row as usize].sites;
+        let (first, last) = (sites.first()?.0, sites.last()?.0);
         let kinds = [
             ImportSiteKind::Require(call),
             ImportSiteKind::ImportMetaRequire(call),
         ];
-        let is_site = |&kind: &ImportSiteKind| self.find_site_answer(file, kind).is_some();
+        let is_site = |&kind: &ImportSiteKind| {
+            let is_within = first <= kind && kind <= last;
+            is_within && sites.binary_search_by_key(&kind, |site| site.0).is_ok()
+        };
         kinds.iter().any(is_site).then_some(Site::AsToday)
     }
 
@@ -393,7 +639,6 @@ impl ModuleGraph {
     }
 
     fn finish_site(&self, site: StoredSite) -> Site {
-        // From the first `require` on the namespace object of an ES module has `__esModule`.
         let shows_mark = self.shape(site.target) == Shape::EsModule
             && self.plan.has(&self.plan.is_namespace_seen, site.target);
         Site::Evaluate {
@@ -402,12 +647,11 @@ impl ModuleGraph {
             records: shows_mark
                 || self.keeps_module_object(site.referrer)
                 || self.keeps_module_object(site.target)
-                || (self.plan.is_first_require_seen && matches!(site.target, ModuleRef::File(_)))
+                || (self.plan.is_every_require_seen && matches!(site.target, ModuleRef::File(_)))
                 || matches!(site.target, ModuleRef::File(file) if self.tracks_first_load(file)),
         }
     }
 
-    /// `false`: the call is a statement, the initializer of a holder or of a bound pattern, the object of a bound member, or only tested.
     pub fn is_site_read_as_value(&self, file: FileId, call: ExprId) -> bool {
         let Some(is_unread_in_every_shape) = find(&self.row(file).unread_sites, call) else {
             return true;
@@ -418,12 +662,23 @@ impl ModuleGraph {
         let Some(site) = self.find_stored_site(file, SiteKey::Call(call)) else {
             return true;
         };
-        let mut holders = self.holders(file).iter();
         !self.stands_without_object(site.target)
-            || holders.any(|holder| holder.call == call && holder.is_needed_as_value)
+            || (self.holders_of_call(file, call)).any(|holder| holder.is_needed_as_value)
     }
 
-    // Whether everything that is bound to names of the module does without its object.
+    fn holders_of_call(&self, file: FileId, call: ExprId) -> impl Iterator<Item = &Holder> {
+        let holders = self.holders(file);
+        let by_call = self.row(file).holders_by_call.get_or_init(|| {
+            let mut by_call: Vec<u32> = (0..holders.len() as u32).collect();
+            by_call.sort_by_u32(|&at| holders[at as usize].call.0);
+            by_call
+        });
+        let first = by_call.partition_point(|&at| holders[at as usize].call.0 < call.0);
+        (by_call[first..].iter())
+            .map(|&at| &holders[at as usize])
+            .take_while(move |holder| holder.call == call)
+    }
+
     fn stands_without_object(&self, module: ModuleRef) -> bool {
         match self.shape(module) {
             Shape::EsModule | Shape::Names => true,
@@ -431,7 +686,6 @@ impl ModuleGraph {
         }
     }
 
-    /// A name that stands for a module and holds `true`. A name that has to hold the object is an ordinary binding.
     pub fn holder(&self, file: FileId, symbol: SymbolId) -> Option<View> {
         let holders = self.holders(file);
         let at = holders
@@ -440,7 +694,6 @@ impl ModuleGraph {
         (!holders[at].is_needed_as_value).then_some(holders[at].view)
     }
 
-    /// The call of `require` in the initializer of such a name. What else the initializer does makes an object that nobody looks at.
     pub fn call_of_holder(&self, file: FileId, symbol: SymbolId) -> Option<ExprId> {
         let holders = self.holders(file);
         let at = holders
@@ -449,7 +702,6 @@ impl ModuleGraph {
         (!holders[at].is_needed_as_value).then_some(holders[at].call)
     }
 
-    // A name that holds what a helper makes of an answer of which the text does not say that it has the marker, where the object of the module is there and the helper is called once.
     fn holder_of_unmarked_copy(
         &self,
         file: FileId,
@@ -464,7 +716,6 @@ impl ModuleGraph {
         (holder.is_needed_as_value && copy.runs_once && !copy.has_marker).then_some((holder, copy))
     }
 
-    /// `const a = __toESM(require(K))`, where `a` is only read by name: `a` holds what `require` answers in place of the copy, unless the helper would not show that under `default` or the answer lacks one of the names. The call of `require` and the copy.
     pub fn holder_of_answer(
         &self,
         file: FileId,
@@ -475,35 +726,25 @@ impl ModuleGraph {
         holds_answer.then_some((holder.call, copy))
     }
 
-    /// `const a = __importStar(require(K))` and `const a = __toESM(require(K))`, where `a` holds the copy: a name that the answer has when the copy is made is read on the answer, as the getter of the copy does. The call of `require` and the copy.
     pub fn holder_of_copy(
         &self,
         file: FileId,
         symbol: SymbolId,
     ) -> Option<(ExprId, CopiedExports)> {
         let (holder, copy) = self.holder_of_unmarked_copy(file, symbol)?;
-        let mut members = self.row(file).answer_members.iter();
         let reads_answer = copy.is_of_ordinary_object
             && self.holder_of_answer(file, symbol).is_none()
-            && members.any(|&(_, member)| member.holder == symbol && member.name.is_some());
+            && !self.names_read_on_answer(file, symbol).is_empty();
         reads_answer.then_some((holder.call, copy))
     }
 
-    /// The names that are read through such a name, each once, in the order of the text.
-    pub fn names_read_on_answer(&self, file: FileId, holder: SymbolId) -> Vec<Atom> {
-        let mut names = Vec::new();
-        for &(_, member) in &self.row(file).answer_members {
-            if let Some(name) = member.name
-                && member.holder == holder
-                && !names.contains(&name)
-            {
-                names.push(name);
-            }
-        }
-        names
+    pub fn names_read_on_answer(&self, file: FileId, holder: SymbolId) -> &[(SymbolId, Atom)] {
+        let names = &self.row(file).names_read_on_answers;
+        let start = names.partition_point(|name| name.0 < holder);
+        let count = names[start..].partition_point(|name| name.0 == holder);
+        &names[start..start + count]
     }
 
-    /// `a.default` and `a.n` of such a name, where a variable of its own holds the answer.
     pub fn answer_member(&self, file: FileId, access: ExprId) -> Option<AnswerMember> {
         let member = find(&self.row(file).answer_members, access)?;
         let is_read_on_answer = self.holder_of_answer(file, member.holder).is_some()
@@ -511,19 +752,49 @@ impl ModuleGraph {
         is_read_on_answer.then_some(member)
     }
 
-    /// `E.N`, `R.N`, `d.N` and `ns.N`, where the access is bound to a name of a module.
     pub fn member(&self, file: FileId, access: ExprId) -> Option<Member> {
-        if let Some((module, member)) = find(&self.row(file).fixed_members, access) {
+        let row = self.row(file);
+        if let Some((module, member)) = find(&row.fixed_members, access) {
+            if matches!(member, Member::Binding(_)) && !self.runs_body_once(module) {
+                return None;
+            }
             return Some(self.finish_fixed_member(module, member));
         }
-        let Some(binding) = find(&self.row(file).members, access) else {
-            return self.commonjs().own_member(file, access);
+        let Some(binding) = find(&row.members, access) else {
+            let member = self.commonjs().own_member(file, access);
+            return match self.stores_what_variable_holds(file, access, member) {
+                true => Some(Member::Undefined),
+                false => member,
+            };
         };
-        let accessed = find(&self.row(file).accessed, access)?;
+        let accessed = find(&row.accessed, access)?;
         self.finish_member(accessed.module, binding, accessed.is_imported)
     }
 
-    /// `R.N` for a name that no expression spells: a key of `const { N } = require(K)`, a key of `module.exports = { N }`, the source of a copy.
+    fn stores_what_variable_holds(
+        &self,
+        file: FileId,
+        access: ExprId,
+        member: Option<Member>,
+    ) -> bool {
+        let Some(Member::Variable(export)) = member else {
+            return false;
+        };
+        let module = self.commonjs().module_of_store_of_nothing(file, access);
+        module.is_some_and(|module| {
+            self.synthetic_export(export).module == module && self.runs_body_once(module)
+        })
+    }
+
+    pub fn runs_body_once(&self, module: ModuleRef) -> bool {
+        let begins_once = match module {
+            ModuleRef::File(file) => self.keeps_error(module) && !self.runs_again(file),
+            ModuleRef::Inner { .. } => true,
+            _ => false,
+        };
+        begins_once && !self.may_be_evicted(module) && !self.may_be_mocked(module)
+    }
+
     pub fn member_named(&self, module: ModuleRef, name: Atom) -> Option<Member> {
         match self.plan.named_members.get(&(module, name)) {
             Some(&NamedMember::Fixed(member)) => Some(self.finish_fixed_member(module, member)),
@@ -535,7 +806,6 @@ impl ModuleGraph {
         }
     }
 
-    /// What such a name of an ES module is bound to, where it stands for a name of a CommonJS module: `export { N } from "./k.cjs"`.
     pub fn binding_of_member_named(&self, module: ModuleRef, name: Atom) -> Option<ImportBinding> {
         match self.plan.named_members.get(&(module, name)) {
             Some(&NamedMember::Binding(binding)) => Some(binding),
@@ -543,7 +813,6 @@ impl ModuleGraph {
         }
     }
 
-    // Whoever has the object can store a name on it, define it or delete it.
     fn is_object_seen(&self, module: ModuleRef) -> bool {
         match self.shape(module) {
             Shape::EsModule => self.plan.has(&self.plan.is_namespace_seen, module),
@@ -560,7 +829,6 @@ impl ModuleGraph {
         }
     }
 
-    // `accessed` is the module that the access is written on, which need not be the one that has the variable.
     fn finish_member(
         &self,
         accessed: ModuleRef,
@@ -570,7 +838,6 @@ impl ModuleGraph {
         let is_es_module = match self.shape(accessed) {
             Shape::EsModule => true,
             Shape::Names | Shape::Value => false,
-            // A library module, whose imports are bound as they always were.
             Shape::AsToday => return None,
         };
         match binding {
@@ -589,7 +856,6 @@ impl ModuleGraph {
         }
     }
 
-    /// The variable of a name of a CommonJS module. `None`: no binding asks for it.
     pub fn variable_of(&self, module: ModuleRef, name: Atom) -> Option<SyntheticExportId> {
         self.plan.variables.get(&(module, name)).copied()
     }
@@ -601,18 +867,15 @@ impl ModuleGraph {
             || self.is_placeholder(file)
     }
 
-    /// A late site names the module, or a module that a late site may run asks for it.
-    pub fn exposed(&self, module: ModuleRef) -> bool {
-        self.plan.has(&self.plan.order.is_exposed, module)
-    }
-
-    /// Somebody may look at the module while its body runs: it lies on a cycle of requests, or it is exposed.
     pub fn half(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.order.is_half, module)
     }
 
-    /// The body of `importer` may run before the body of `exporter`, which it imports, has finished.
     pub fn may_run_before(&self, importer: ModuleRef, exporter: ModuleRef) -> bool {
+        self.half(importer) || self.may_run_before_on_one_ring(importer, exporter)
+    }
+
+    pub fn may_run_before_on_one_ring(&self, importer: ModuleRef, exporter: ModuleRef) -> bool {
         let order = &self.plan.order;
         let component =
             |module: ModuleRef| Some(order.component_of[order.numbers.number_of(module)?]);
@@ -620,13 +883,11 @@ impl ModuleGraph {
             || self.plan.has(&order.is_required_at_any_time, importer)
     }
 
-    /// The loader of the run time loads the module and what it imports one by one, as `bun run` does.
     pub fn is_loaded_by_loader(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self.plan.has(&self.plan.order.is_loaded_by_loader, module)
     }
 
-    /// A `require` of the module may run while a graph is being loaded.
     pub fn is_required_during_load(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self
@@ -634,7 +895,6 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_required_during_load, module)
     }
 
-    /// An ES module that the CommonJS file leads to by a `require` or an `import()` imports the file, or such an `import()` names the file.
     pub fn may_be_imported_while_it_runs(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self
@@ -642,9 +902,16 @@ impl ModuleGraph {
                 .has(&self.plan.order.may_be_imported_while_it_runs, module)
     }
 
-    /// A file has `import * as` of the module.
+    pub fn is_es_module_to_imports(&self, module: ModuleRef) -> bool {
+        matches!(module, ModuleRef::File(_))
+            && self
+                .plan
+                .has(&self.plan.order.is_es_module_to_imports, module)
+    }
+
     pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.is_imported_as_namespace, module)
+            || self.plan.externals_imported_as_namespace.contains(&module)
     }
 
     pub fn runs_tests(&self) -> bool {
@@ -652,65 +919,74 @@ impl ModuleGraph {
     }
 
     pub fn lists_files_in_cache(&self) -> bool {
-        self.plan.lists_files_in_cache
-    }
-
-    /// A test run in which a file of the program may get at the entry of a file in `require.cache`.
-    pub fn reaches_entries_of_cache(&self) -> bool {
-        self.plan.reaches_entries_of_cache
-    }
-
-    /// `delete require.cache[path]` under a key that nobody spells: whichever file the path names, in this program or in one that is built above it.
-    pub fn may_evict_every_module(&self) -> bool {
-        self.plan.may_evict_every_module
+        self.plan.runs_tests
     }
 
     pub fn may_be_evicted(&self, module: ModuleRef) -> bool {
-        self.plan.may_evict_every_module || self.plan.has(&self.plan.may_be_evicted, module)
+        !matches!(module, ModuleRef::Inner { .. })
+            && (self.plan.may_evict_every_module
+                || is_marked(&self.plan.test_run.may_be_evicted, module))
     }
 
-    /// `writeFileSync(path, text)` with the path of the file: what the run loads from there is a text that the build has not read.
-    pub fn is_changed_on_disk_by_run(&self, module: ModuleRef) -> bool {
-        (self.plan).has(&self.plan.is_changed_on_disk_by_run, module)
+    pub fn is_named_by_copies(&self, module: ModuleRef) -> bool {
+        self.plan.named_by_copies.contains(module)
     }
 
-    /// `require.cache["fs"] = { exports: fake }`: an entry of the program may stand under the name, which is one that `require` looks for there.
+    pub fn reaches_entries_of_cache(&self) -> bool {
+        let plan = &self.plan;
+        plan.may_evict_every_module
+            || (self.lists_files_in_cache() && plan.reaches_entries_of_cache.unwrap_or(true))
+    }
+
     pub fn may_entry_in_cache_stand_under(&self, name: &[u8]) -> bool {
-        (self.plan.library_modules_stored_in_cache).may_stand_under(name)
-    }
-
-    /// A `require` of the program that names the module without `node:` is compiled for the module, whatever `require.cache` holds under that name.
-    pub fn is_held_under_name_without_prefix(&self, module: RuntimeModule) -> bool {
-        (self.plan.library_modules_stored_in_cache).is_held_under_name_without_prefix(module)
+        let stored = &self.plan.library_modules_stored_in_cache;
+        !stored.is_empty()
+            && find_module_looked_up_in_cache(name).is_some_and(|module| stored.contains(&module))
     }
 
     pub fn tracks_first_load(&self, file: FileId) -> bool {
-        (self.plan.library_modules_stored_in_cache).tracks_first_load(file)
+        (!self.plan.library_modules_stored_in_cache.is_empty() || self.plan.asks_loader_functions)
+            && self.kind(file) == ModuleKind::CommonJs
+            && self.is_code_of_program(ModuleRef::File(file))
     }
 
-    /// The body of the ES module runs each time the host loads it. Plain Bun makes a new module of the file each time, so each run has
-    /// variables of its own. It finds a CommonJS file in `require.cache` and does not run it again.
+    pub fn is_held_under_name_without_prefix(&self, module: RuntimeModule) -> bool {
+        let stored = &self.plan.library_modules_stored_in_cache;
+        module != RuntimeModule::Bun && !stored.contains(&module)
+    }
+
+    pub fn is_reached_by(&self, module: ModuleRef, spelling: Spelling) -> bool {
+        let set = match spelling {
+            Spelling::WithoutExtension => &self.plan.is_reached_without_extension,
+            Spelling::WithOtherExtension => &self.plan.is_reached_under_another_extension,
+            Spelling::AsDirectory => &self.plan.is_reached_as_folder,
+        };
+        self.plan.has(set, module)
+    }
+
     pub fn runs_again(&self, file: FileId) -> bool {
+        matches!(
+            self.kind(file),
+            ModuleKind::SourceText | ModuleKind::CommonJs
+        ) && self.plan.has(&self.plan.runs_again, ModuleRef::File(file))
+    }
+
+    pub fn is_instantiated_ahead(&self, file: FileId) -> bool {
+        let order = &self.plan.order;
+        let module = ModuleRef::File(file);
         self.kind(file) == ModuleKind::SourceText
-            && self.plan.has(&self.plan.runs_again, ModuleRef::File(file))
+            && self.half(module)
+            && order.numbers.number_of(module).is_some_and(|number| {
+                self.plan.has_es_module_that_runs_again[order.component_of[number] as usize]
+            })
     }
 
-    /// A file that is taken out of `require.cache`, or loaded under a query, runs again from disk and imports what its text names, and an
-    /// entry of `require.cache` shows all that its file exports.
-    pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
-        self.plan.is_every_export_of_every_module_asked_for
-            || self.plan.has(&self.plan.is_every_export_asked_for, module)
-    }
-
-    /// A copy from disk may name the file to the loader of the host. A file that reads `require.cache` names none.
-    pub fn is_named_by_copies(&self, module: ModuleRef) -> bool {
-        self.plan.copies_name_every_module
-            || self.plan.has(&self.plan.is_every_export_asked_for, module)
+    pub fn makes_scope_ahead(&self, file: FileId) -> bool {
+        self.is_instantiated_ahead(file) && self.runs_again(file)
     }
 
     pub fn may_be_mocked(&self, module: ModuleRef) -> bool {
         let plan = &self.plan;
-        // The build has to see which calls are spies. A mock of bun:test is named at its call.
         (plan.may_mock_every_module && module != ModuleRef::Runtime(RuntimeModule::BunTest))
             || match module {
                 ModuleRef::Runtime(module) => plan.mocked_runtime_modules.contains(&module),
@@ -718,13 +994,66 @@ impl ModuleGraph {
             }
     }
 
-    /// Whether the test runner may store another value into the variable, which an ES module exports.
-    pub fn is_replaceable(&self, variable: Sym) -> bool {
-        let replaced = &self.plan.replaced_variables;
-        replaced.binary_search(&variable).is_ok()
+    pub fn is_named_by_mock(&self, module: ModuleRef) -> bool {
+        let plan = &self.plan;
+        match module {
+            ModuleRef::Runtime(module) => plan.runtime_modules_named_by_mocks.contains(&module),
+            ModuleRef::External { .. } => {
+                plan.may_mock_every_module || plan.externals_named_by_mocks.contains(&module)
+            }
+            _ => plan.may_mock_every_module || plan.has(&plan.is_named_by_mock, module),
+        }
     }
 
-    /// A later site of a module whose body threw throws the same error again.
+    pub fn is_any_module_named_by_mock(&self) -> bool {
+        self.plan.may_mock_every_module || self.plan.is_any_module_named_by_mock
+    }
+
+    pub fn is_handed_out_by_test_runner(&self, module: RuntimeModule) -> bool {
+        let plan = &self.plan;
+        plan.test_runner_hands_out_every_runtime_module
+            || plan
+                .runtime_modules_handed_out_by_test_runner
+                .contains(&module)
+    }
+
+    pub fn is_named_to_test_runner(&self, module: RuntimeModule) -> bool {
+        let named = &self.plan.runtime_modules_handed_out_by_test_runner;
+        named.contains(&module)
+    }
+
+    pub fn runtime_modules_named_by_mocks(&self) -> &[RuntimeModule] {
+        &self.plan.runtime_modules_named_by_mocks
+    }
+
+    pub fn is_name_without_code_that_mocks_give(&self, name: Atom) -> bool {
+        (self.plan.names_without_code_that_mocks_give).contains(&name)
+    }
+
+    pub fn is_made_by_mocks_alone(&self, module: ModuleRef) -> bool {
+        let names = &self.plan.names_without_code_that_mocks_give;
+        matches!(module, ModuleRef::External { specifier, type_attribute: None, .. } if names.contains(&specifier))
+    }
+
+    pub fn is_require_made_by_file_imported(&self, file: FileId) -> bool {
+        let makers = &self.plan.makers_of_imported_requires;
+        makers.binary_search(&file).is_ok()
+    }
+
+    pub fn holds_replaceable_variable(&self, file: FileId) -> bool {
+        let replaced = &self.plan.replaced_variables;
+        let first = replaced.partition_point(|variable| variable.file < file);
+        replaced
+            .get(first)
+            .is_some_and(|variable| variable.file == file)
+    }
+
+    #[inline]
+    pub fn is_replaceable(&self, variable: Sym) -> bool {
+        let replaced = &self.plan.replaced_variables;
+        !replaced.is_empty() && replaced.binary_search(&variable).is_ok()
+    }
+
     pub fn keeps_error(&self, module: ModuleRef) -> bool {
         match module {
             ModuleRef::File(_) => self.is_code_of_program(module),
@@ -737,7 +1066,6 @@ impl ModuleGraph {
         }
     }
 
-    /// The file that has the id "." in every run. Which of several entry points has started the process is not known, and under an ES module the loader of the run time says which file it came to first.
     pub fn find_commonjs_main(&self, entry_points: &[EntryPoint]) -> Option<FileId> {
         match entry_points {
             [entry_point] if self.kind(entry_point.file) == ModuleKind::CommonJs => {
@@ -747,18 +1075,19 @@ impl ModuleGraph {
         }
     }
 
-    /// A read that the build resolved can reach the module object.
     pub fn keeps_module_object(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.keeps_module_object, module)
     }
 
-    /// Code of the file names a way from one module object to another.
     pub fn names_way_to_module_objects(&self, module: ModuleRef) -> bool {
         let plan = &self.plan;
         plan.has(&plan.names_way_to_module_objects, module)
     }
 
-    /// A load under a name that the build does not follow may find the file.
+    pub fn originals_beside_mocks_may_run(&self) -> bool {
+        self.plan.originals_beside_mocks_may_run
+    }
+
     pub fn is_found_by_name(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.is_found_by_name, module)
     }
@@ -775,7 +1104,6 @@ impl ModuleGraph {
         self.plan.has(&self.plan.is_marker_stored, module)
     }
 
-    /// Whether whoever requires the module finds `__esModule` on it.
     pub fn marker(&self, module: ModuleRef) -> Option<bool> {
         match self.shape(module) {
             Shape::EsModule => (!self.is_marker_stored(module)).then_some(true),
@@ -784,7 +1112,6 @@ impl ModuleGraph {
         }
     }
 
-    /// What `__esModule` says to whoever imports the module.
     pub fn marker_for_imports(&self, module: ModuleRef) -> Option<bool> {
         match self.shape(module) {
             Shape::Names | Shape::Value => self.commonjs().marker_for_imports(module),
@@ -804,9 +1131,12 @@ impl ModuleGraph {
         }
     }
 
-    /// The callbacks in the file that are modules of their own.
+    #[inline]
     pub fn inner_modules(&self, file: FileId) -> &[FnId] {
-        &self.plan.inner_callbacks[self.plan.inner_modules_of(file)]
+        match self.plan.inner_callbacks.is_empty() {
+            true => &[],
+            false => self.plan.inner_callbacks_of(file),
+        }
     }
 
     pub fn inner_module(&self, file: FileId, callback: FnId) -> Option<ModuleRef> {
@@ -814,7 +1144,21 @@ impl ModuleGraph {
         self.plan.order.numbers.number_of(module).map(|_| module)
     }
 
-    /// With the faces, the checks and the CommonJS files that run first. Final behind `finish_plan`.
+    pub fn in_order_of_stars<'a>(
+        &self,
+        module: ModuleRef,
+        requests: &'a [ModuleRequest],
+    ) -> Cow<'a, [ModuleRequest]> {
+        match module {
+            ModuleRef::File(file)
+                if self.plan.files_with_late_stars.binary_search(&file).is_ok() =>
+            {
+                Cow::Owned(list_in_order_of_stars(requests))
+            }
+            _ => Cow::Borrowed(requests),
+        }
+    }
+
     pub fn requests_of(&self, module: ModuleRef) -> &[ModuleRequest] {
         if let Some(range) = self.plan.final_ranges.get(&module) {
             return &self.plan.final_requests[range.start as usize..range.end as usize];
@@ -832,69 +1176,83 @@ impl ModuleGraph {
         }
     }
 
-    /// The object of the module is a value somewhere: the module is `Value`, and with it every module whose names stand for names of it.
     pub fn look_at(&mut self, module: ModuleRef) {
-        self.plan.is_finished = false;
+        self.plan.reopen();
         self.commonjs_exports.look_at(module);
     }
 
-    /// The modules whose names the text of the module hands on: by a star, by a name that stands for another, or as a whole.
     pub fn name_sources(&self, module: ModuleRef) -> &[ModuleRef] {
         self.commonjs().name_sources(module)
     }
 
-    /// A read that the build resolved reaches the module object, which shows `exports`.
     pub fn set_keeps_module_object(&mut self, module: ModuleRef) {
         self.plan.add(|plan| &mut plan.keeps_module_object, module);
         self.look_at(module);
     }
 
-    /// A module object goes where nothing follows it, and the files that these lead to from there have no module objects.
-    pub fn ways_not_followed_out_of_sight(&self) -> WaysBetweenModuleObjects {
-        self.plan.ways_not_followed_out_of_sight
-    }
-
-    pub fn set_ways_not_followed_out_of_sight(&mut self, ways: WaysBetweenModuleObjects) {
-        self.plan.ways_not_followed_out_of_sight = ways;
-    }
-
-    /// A module object goes where nothing follows it, and these are followed from there because a file names them: whether anybody reads them of a module object is the engine's to say.
-    pub fn ways_followed_for_their_names(&self) -> WaysBetweenModuleObjects {
-        self.plan.ways_followed_for_their_names
-    }
-
-    pub fn set_ways_followed_for_their_names(&mut self, ways: WaysBetweenModuleObjects) {
-        self.plan.ways_followed_for_their_names = ways;
-    }
-
-    /// `process` goes where nothing follows it, and the main module has no module object.
-    pub fn lets_process_out_of_sight(&self) -> bool {
-        self.plan.lets_process_out_of_sight
-    }
-
-    pub fn set_lets_process_out_of_sight(&mut self, lets: bool) {
-        self.plan.lets_process_out_of_sight = lets;
-    }
-
-    pub fn is_ready_for_loader_functions(&self) -> bool {
-        self.plan.is_ready_for_loader_functions
-    }
-
-    pub fn set_is_ready_for_loader_functions(&mut self, is_ready: bool) {
-        self.plan.is_ready_for_loader_functions = is_ready;
+    pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {
+        self.plan
+            .add(|plan| &mut plan.names_way_to_module_objects, module);
     }
 
     pub fn asks_loader_functions(&self) -> bool {
         self.plan.asks_loader_functions
     }
 
-    pub fn set_asks_loader_functions(&mut self, asks: bool) {
-        self.plan.asks_loader_functions = asks;
+    pub fn lists_names_of_statements(&self) -> bool {
+        self.plan.lists_names_of_statements
     }
 
-    pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {
-        self.plan
-            .add(|plan| &mut plan.names_way_to_module_objects, module);
+    pub fn set_lists_names_of_statements(&mut self) {
+        self.plan.lists_names_of_statements = true;
+    }
+
+    pub fn set_asks_loader_functions(&mut self) {
+        self.plan.asks_loader_functions = true;
+    }
+
+    pub fn is_closed_world(&self) -> bool {
+        self.plan.is_closed_world
+    }
+
+    pub fn set_closed_world(&mut self) {
+        self.plan.is_closed_world = true;
+    }
+
+    pub fn computed_names_ask_loader_functions(&self) -> bool {
+        self.plan.computed_names_ask_loader_functions
+    }
+
+    pub fn set_computed_names_ask_loader_functions(&mut self) {
+        self.plan.computed_names_ask_loader_functions = true;
+    }
+
+    pub fn set_answers_for_names_itself(&mut self) {
+        self.plan.answers_for_names_itself = true;
+    }
+
+    pub(crate) fn find_why_name_is_path_alone(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        name: ExprId,
+    ) -> Option<PathAlone> {
+        if self.plan.answers_for_names_itself {
+            return None;
+        }
+        find_why_resolver_takes_name_for_path(files.analysis(file), &files.atoms, name)
+    }
+
+    pub fn knows_texts_that_spell_files(&self) -> bool {
+        self.plan.order.texts_that_spell_files.is_some()
+    }
+
+    pub fn texts_that_spell_files_in(&self, file: FileId) -> &[TextThatSpellsFile] {
+        let texts = self.plan.order.texts_that_spell_files.as_deref();
+        let texts = texts.unwrap_or_default();
+        let start = texts.partition_point(|text| text.written_in < file);
+        let count = texts[start..].partition_point(|text| text.written_in == file);
+        &texts[start..start + count]
     }
 
     pub fn set_is_found_by_name(&mut self, module: ModuleRef) {
@@ -905,39 +1263,30 @@ impl ModuleGraph {
         self.plan.add(|plan| &mut plan.is_namespace_seen, module);
     }
 
-    /// `finish_plan` has to follow.
-    pub fn adopt_plan(&mut self, application: &ApplicationGraph<'_>) {
-        let (theirs, their_plan) = (application.graph, &application.graph.plan);
-        let modules: Vec<ModuleRef> = self.plan.order.numbers.modules().collect();
-        let mut left_out_inner_modules = Vec::new();
-        for module in modules {
-            let Some(their_module) = application.application_module(module) else {
-                continue;
-            };
-            if theirs.keeps_module_object(their_module) {
-                self.set_keeps_module_object(module);
-            }
-            if theirs.names_way_to_module_objects(their_module) {
-                self.set_names_way_to_module_objects(module);
-            }
-            if theirs.is_found_by_name(their_module) {
-                self.set_is_found_by_name(module);
-            }
-            if their_plan.has(&their_plan.is_namespace_seen, their_module) {
-                self.set_namespace_is_seen(module);
-            }
-            if matches!(module, ModuleRef::Inner { .. }) && theirs.is_left_out(their_module) {
-                left_out_inner_modules.push(module);
-            }
-        }
-        self.leave_out_inner_modules(&left_out_inner_modules);
-    }
-
-    /// Behind the last change to a shape and to the files that are left out: which holders do without the object, and what each module asks for at last.
     pub fn finish_plan(&mut self, in_parallel: InParallel<'_>) {
         if self.plan.is_finished {
             return;
         }
+        let mut steps = StepClock::new(Stage::BindModules);
+        self.settle_holders();
+        steps.end("plan: holders");
+        let linked_files = self.find_linked_files(ModuleKind::CommonJs);
+        let data_files = self.find_linked_files(ModuleKind::Data);
+        steps.end("plan: linked files");
+        let prefixes = self.collect_prefixes(&linked_files, in_parallel);
+        steps.end("plan: prefixes");
+        self.plan.final_checks = self.settle_checks(&linked_files, &prefixes, in_parallel);
+        steps.end("plan: checks");
+        (self.plan.final_requests, self.plan.final_ranges) =
+            self.settle_requests(prefixes, &data_files, in_parallel);
+        steps.end("plan: requests");
+        self.plan.is_every_require_seen = self.plan.names_way_to_module_objects.contains(&true)
+            || self.plan.may_mock_every_module
+            || self.plan.may_be_mocked.contains(&true);
+        self.plan.is_finished = true;
+    }
+
+    pub(super) fn settle_holders(&mut self) {
         let module_of = |view: View| match view {
             View::Namespace(module) | View::Exports(module) => module,
         };
@@ -949,54 +1298,138 @@ impl ModuleGraph {
         for (holder, needs_object) in holders.zip(needs_object) {
             holder.is_needed_as_value |= needs_object;
         }
-        let linked_files = self.find_linked_files(ModuleKind::CommonJs);
-        let data_files = self.find_linked_files(ModuleKind::Data);
-        (self.plan.final_requests, self.plan.final_ranges) =
-            self.settle_requests(&linked_files, &data_files, in_parallel);
-        // Nothing of the program runs before the loader has come to the first CommonJS file that the imports below an entry point lead to.
-        let mut first_requests = self.plan.order.first_requests_of_host.iter();
-        self.plan.is_first_require_seen = self.plan.names_way_to_module_objects.contains(&true)
-            && first_requests.any(|&file| {
-                self.kind(file) == ModuleKind::SourceText
-                    && !linked_files.targets_below.leads_to_target(file)
-            });
-        self.plan.is_finished = true;
+        self.plan.are_holders_settled = true;
     }
 
-    // The files of that kind, or their faces, that imports between ES modules reach from `root`, in the order in which `bun run` loads them: what a module imports comes behind everything that was asked for before.
-    fn collect_prefix(&self, root: FileId, linked: &LinkedFiles) -> Vec<ModuleRef> {
-        let below = &linked.targets_below;
-        let mut prefix = Vec::new();
-        let mut remaining = below.start_walk(root);
-        if remaining.is_empty() {
-            return prefix;
+    fn settle_checks(
+        &self,
+        linked: &LinkedFiles,
+        prefixes: &[(FileId, Vec<ModuleRef>)],
+        in_parallel: InParallel<'_>,
+    ) -> FxHashMap<FileId, Vec<(SyntheticExportId, ModuleFailureId)>> {
+        type Checks = Vec<(SyntheticExportId, ModuleFailureId)>;
+        let has_checks = |root: FileId| !self.commonjs().checked_copies(root).is_empty();
+        let mut roots: Vec<(FileId, &[ModuleRef], Checks)> = prefixes
+            .iter()
+            .filter(|(root, _)| has_checks(*root))
+            .map(|(root, prefix)| (*root, &prefix[..], Vec::new()))
+            .collect();
+        for_each_mut(&mut roots, in_parallel, &|(root, prefix, checks)| {
+            let root = *root;
+            let written = self.commonjs().checked_copies(root);
+            let mut is_linked = vec![false; linked.by_importer.len()];
+            is_linked[root.idx()] = true;
+            let mut importers = vec![root];
+            while let Some(file) = importers.pop() {
+                for &target in &linked.by_importer[file.idx()] {
+                    if !core::mem::replace(&mut is_linked[target.idx()], true) {
+                        importers.push(target);
+                    }
+                }
+            }
+            let mut left = written.to_vec();
+            left.retain(|&(_, failure)| is_linked[self.failure(failure).importer.idx()]);
+            if !self.is_loaded_by_loader(ModuleRef::File(root)) {
+                let stored = self.find_copies_stored_by(prefix.iter().copied());
+                left.retain(|(copy, _)| stored.contains(copy));
+            }
+            *checks = left;
+        });
+        let roots = roots.into_iter();
+        roots
+            .filter(|(_, _, checks)| !checks.is_empty())
+            .map(|(root, _, checks)| (root, checks))
+            .collect()
+    }
+
+    fn find_copies_stored_by(
+        &self,
+        modules: impl Iterator<Item = ModuleRef>,
+    ) -> FxHashSet<SyntheticExportId> {
+        let mut stored = FxHashSet::default();
+        for module in modules {
+            if let ModuleRef::Face(face) = module {
+                stored.extend(self.commonjs().copies(face));
+            }
         }
-        let mut is_seen = vec![false; linked.by_importer.len()];
-        is_seen[root.idx()] = true;
+        stored
+    }
+
+    pub fn checks_of(&self, root: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
+        self.plan.final_checks.get(&root).map_or(&[], |it| &it[..])
+    }
+
+    #[cfg(test)]
+    pub fn check_every_written_importer(&mut self) {
+        for root in self.plan.order.prefix_roots.clone() {
+            let written = self.commonjs().checked_copies(root).to_vec();
+            if !written.is_empty() {
+                self.plan.final_checks.insert(root, written);
+            }
+        }
+    }
+
+    pub fn find_check_of_copy_that_nothing_stores(&self) -> Option<(FileId, ModuleRef)> {
+        let mut roots: Vec<FileId> = self.plan.final_checks.keys().copied().collect();
+        roots.sort_unstable();
+        roots.retain(|&root| !self.is_loaded_by_loader(ModuleRef::File(root)));
+        roots.into_iter().find_map(|root| {
+            let requests = self.requests_of(ModuleRef::File(root)).iter();
+            let in_front = requests.take_while(|it| it.target != ModuleRef::Check(root));
+            let stored = self.find_copies_stored_by(in_front.map(|it| it.target));
+            let is_read = |&&(export, failure): &&(SyntheticExportId, ModuleFailureId)| {
+                let written = self.failure(failure);
+                let importer = Some(ModuleRef::File(written.importer));
+                let owner = Some(self.synthetic_export(export).module);
+                let mut linked = [importer, written.exporter(), owner].into_iter().flatten();
+                !linked.any(|module| self.is_left_out(module))
+            };
+            let mut checks = self.checks_of(root).iter();
+            let missing = checks.find(|check| !stored.contains(&check.0) && is_read(check))?;
+            Some((root, self.synthetic_export(missing.0).module))
+        })
+    }
+
+    fn collect_prefix(
+        &self,
+        root: FileId,
+        linked: &LinkedFiles,
+        steps: &mut LoadSteps,
+    ) -> Vec<ModuleRef> {
+        if !linked.leads_to_target(root) {
+            return Vec::new();
+        }
+        let mut prefix = Vec::new();
+        let order = &self.plan.order;
+        let is_read_by_require = order.required_prefix_roots.binary_search(&root).is_ok();
+        let runs_in_its_turn =
+            |file: FileId| !is_read_by_require && order.is_es_module_to_imports[file.idx()];
+        steps.begin(linked.by_importer.len());
+        steps.take_if_unseen(root);
+        let mut meets_ring = linked.is_on_ring[root.idx()];
         let mut importers = vec![root];
         let mut next = 0;
         while let Some(&file) = importers.get(next) {
             next += 1;
             for &target in &linked.by_importer[file.idx()] {
-                if !below.is_target(target) {
-                    if remaining.has_some_below(below, target)
-                        && !core::mem::replace(&mut is_seen[target.idx()], true)
-                    {
-                        importers.push(target);
-                    }
-                } else if remaining.take(below, target) {
-                    let target = ModuleRef::File(target);
-                    prefix.push(self.face(target).unwrap_or(target));
-                    if remaining.is_empty() {
-                        return prefix;
-                    }
+                if !steps.take_if_unseen(target) {
+                    continue;
+                }
+                if !linked.is_target[target.idx()] {
+                    meets_ring |= linked.is_on_ring[target.idx()];
+                    importers.push(target);
+                } else if !runs_in_its_turn(target) {
+                    prefix.push(target);
                 }
             }
         }
-        prefix
+        if prefix.len() > 1 && is_read_by_require && !meets_ring {
+            prefix = linked.list_targets_as_require_makes_them(root, prefix.len(), steps);
+        }
+        let faces = prefix.into_iter().map(ModuleRef::File);
+        faces.map(|file| self.face(file).unwrap_or(file)).collect()
     }
 
-    // The file of the program that is linked with whoever makes the request. `import defer` puts off when the file runs, not when it is linked.
     fn find_linked_file(&self, request: &ModuleRequest) -> Option<FileId> {
         let ModuleRef::File(target) = request.target else {
             return None;
@@ -1011,7 +1444,7 @@ impl ModuleGraph {
     fn find_linked_files(&self, kind_of_targets: ModuleKind) -> LinkedFiles {
         let mut successors = Vec::new();
         successors.resize_with(self.row_by_file.len(), Vec::new);
-        let mut targets = Vec::new();
+        let (mut targets, mut imports) = (Vec::new(), Vec::new());
         for &file in self.record_files() {
             if !self.is_code_of_program(ModuleRef::File(file))
                 || self.kind(file) != ModuleKind::SourceText
@@ -1027,19 +1460,35 @@ impl ModuleGraph {
                     _ => continue,
                 }
                 successors[file.idx()].push(target);
+                imports.push((target, file));
             }
         }
-        let targets_below = ReachedTargets::compute(targets.into_iter(), &successors);
-        for targets in &mut successors {
-            targets.retain(|&target| targets_below.leads_to_target(target));
+        let mut is_target = vec![false; successors.len()];
+        for &target in &targets {
+            is_target[target.idx()] = true;
         }
+        let leads_to_target = find_files_that_lead_to(targets, &imports, successors.len());
+        for imported in &mut successors {
+            imported.retain(|&file| leads_to_target[file.idx()]);
+        }
+        let only_es_modules = |imported: &Vec<FileId>| {
+            let imported = imported.iter().copied();
+            imported.filter(|file| !is_target[file.idx()]).collect()
+        };
+        let es_modules_by_importer: Vec<Vec<FileId>> =
+            successors.iter().map(only_es_modules).collect();
+        let numbers = |imported: &Vec<FileId>| imported.iter().map(|file| file.0).collect();
+        let edges: Vec<Vec<u32>> = es_modules_by_importer.iter().map(numbers).collect();
+        let (ring_of, rings) = strongly_connected_components(&edges);
+        let sizes = ring_of.iter().map(|&ring| rings[ring as usize].len());
         LinkedFiles {
+            is_on_ring: sizes.map(|size| size > 1).collect(),
+            es_modules_by_importer,
             by_importer: successors,
-            targets_below,
+            is_target,
         }
     }
 
-    // The ES modules at which an evaluation may come to a cycle of requests that leads to one of the files: something other than an import starts them, or a module outside the cycle imports them.
     fn find_entries_of_cycles(&self, linked: &LinkedFiles) -> Vec<FileId> {
         let component_of = &self.plan.order.component_of;
         let mut sizes = vec![0u32; component_of.len()];
@@ -1065,12 +1514,11 @@ impl ModuleGraph {
             .collect()
     }
 
-    /// The ES modules at which a graph of imports is linked: entry points, and what `import()` or a `require` names.
+    #[cfg(test)]
     pub fn prefix_roots(&self) -> &[FileId] {
         &self.plan.order.prefix_roots
     }
 
-    /// The faces of the other files that have the names which the face of `file` shows, in the order of its copies.
     pub fn faces_behind(&self, file: FileId) -> Vec<FileId> {
         let mut owners = Vec::new();
         for &copy in self.commonjs().copies(file) {
@@ -1085,40 +1533,54 @@ impl ModuleGraph {
         owners
     }
 
-    fn settle_requests(
+    fn is_es_module_of_program(&self, file: FileId) -> bool {
+        self.is_code_of_program(ModuleRef::File(file)) && self.kind(file) == ModuleKind::SourceText
+    }
+
+    fn is_prefix_root(&self, file: FileId) -> bool {
+        self.plan.order.prefix_roots.binary_search(&file).is_ok()
+    }
+
+    fn collect_prefixes(
         &self,
         linked_files: &LinkedFiles,
+        in_parallel: InParallel<'_>,
+    ) -> Vec<(FileId, Vec<ModuleRef>)> {
+        let roots = self.record_files().iter().copied();
+        let mut prefixes: Vec<(FileId, Vec<ModuleRef>)> = roots
+            .filter(|&file| self.is_es_module_of_program(file) && self.is_prefix_root(file))
+            .map(|root| (root, Vec::new()))
+            .collect();
+        let mut parts: Vec<&mut [(FileId, Vec<ModuleRef>)]> = prefixes.chunks_mut(16).collect();
+        for_each_mut(&mut parts, in_parallel, &|part| {
+            let mut steps = LoadSteps::default();
+            for (root, prefix) in part.iter_mut() {
+                if !self.is_loaded_by_loader(ModuleRef::File(*root)) {
+                    *prefix = self.collect_prefix(*root, linked_files, &mut steps);
+                }
+            }
+        });
+        prefixes
+    }
+
+    fn settle_requests(
+        &self,
+        prefixes: Vec<(FileId, Vec<ModuleRef>)>,
         data_files: &LinkedFiles,
         in_parallel: InParallel<'_>,
     ) -> (Vec<ModuleRequest>, FxHashMap<ModuleRef, Range<u32>>) {
         let mut requests: Vec<ModuleRequest> = Vec::new();
         let mut ranges = FxHashMap::default();
-        let is_es_module = |file: FileId| {
-            self.is_code_of_program(ModuleRef::File(file))
-                && self.kind(file) == ModuleKind::SourceText
-        };
-        let prefix_roots = &self.plan.order.prefix_roots;
-        let is_prefix_root = |file: FileId| prefix_roots.binary_search(&file).is_ok();
-        let roots = self.record_files().iter().copied();
-        let mut prefixes: Vec<(FileId, Vec<ModuleRef>)> = roots
-            .filter(|&file| is_es_module(file) && is_prefix_root(file))
-            .map(|root| (root, Vec::new()))
-            .collect();
-        for_each_mut(&mut prefixes, in_parallel, &|(root, prefix)| {
-            // The loader runs the files of such a root where it comes to them.
-            if !self.is_loaded_by_loader(ModuleRef::File(*root)) {
-                *prefix = self.collect_prefix(*root, linked_files);
-            }
-        });
+        let is_es_module = |file: FileId| self.is_es_module_of_program(file);
+        let is_prefix_root = |file: FileId| self.is_prefix_root(file);
         let mut prefixes = prefixes.into_iter();
-        // `bun run` has made what a data file exports when the graph is loaded. Only a function that is called across a cycle, ahead of the body of its module, can tell.
         let mut data_prefixes: Vec<(FileId, Vec<ModuleRef>)> = self
             .find_entries_of_cycles(data_files)
             .into_iter()
             .map(|entry| (entry, Vec::new()))
             .collect();
         for_each_mut(&mut data_prefixes, in_parallel, &|(entry, prefix)| {
-            *prefix = self.collect_prefix(*entry, data_files);
+            *prefix = self.collect_prefix(*entry, data_files, &mut LoadSteps::default());
         });
         let mut data_prefixes = data_prefixes.into_iter().peekable();
         for &file in self.record_files() {
@@ -1131,37 +1593,36 @@ impl ModuleGraph {
                 let (root, prefix) = prefixes.next().expect("a prefix for each root");
                 debug_assert_eq!(root, file);
                 requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));
-                if !self.commonjs().checked_copies(file).is_empty() {
+                if !self.checks_of(file).is_empty() {
                     requests.push(ModuleRequest::hoisted_import(ModuleRef::Check(file)));
                 }
             }
             if let Some((_, prefix)) = data_prefixes.next_if(|(entry, _)| *entry == file) {
                 requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));
             }
-            // The loader of the run time goes by what the module writes, in the order in which it is written.
-            requests.extend(
-                self.requests(file)
-                    .iter()
-                    .map(|&written| match written.kind {
-                        ModuleRequestKind::Import => ModuleRequest {
-                            target: self.face(written.target).unwrap_or(written.target),
-                            ..written
-                        },
-                        ModuleRequestKind::Require => written,
-                    }),
-            );
+            let written = self.requests(file);
+            let has_face = |request: &ModuleRequest| {
+                request.kind == ModuleRequestKind::Import && self.face(request.target).is_some()
+            };
+            if requests.len() == start && !written.iter().any(has_face) {
+                continue;
+            }
+            requests.extend(written.iter().map(|&written| match written.kind {
+                ModuleRequestKind::Import => ModuleRequest {
+                    target: self.face(written.target).unwrap_or(written.target),
+                    ..written
+                },
+                ModuleRequestKind::Require => written,
+            }));
             ranges.insert(module, start as u32..requests.len() as u32);
         }
-        // Also a face that no list names: `import(K)` asks for it, or another face does.
         for &face in self.record_files() {
             let file = ModuleRef::File(face);
             if self.face(file).is_none() {
                 continue;
             }
             let start = requests.len() as u32;
-            let completes_at =
-                |module: ModuleRef| self.keeps_error(module) || !self.exposed(module);
-            // The run time takes what a face captures from the file that its first request names.
+            let completes_at = |module: ModuleRef| !self.half(module);
             requests.push(ModuleRequest::require(file, completes_at(file)));
             for owner in self.faces_behind(face) {
                 let completes = completes_at(ModuleRef::File(owner));

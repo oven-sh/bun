@@ -1,0 +1,12 @@
+# the look says the code unit by the test of the body, and the walk, which has no name here that says so, finds it by the same test
+# f1 = last
+# -- source: char-code-read-at-most-the-length-less-one-comes-round-as-an-integer.ts
+# function last(text: string): number { let code = 0; for (let pos = 0; pos <= text.length - 1; pos++) code = text.charCodeAt(pos); return code; }
+# console.log(last("abc"), last(""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : int[0, 65535] @Int32{{*}}isLoopHead=true
+# CHECK: = GetStringCodeUnit
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: : number @

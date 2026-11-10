@@ -1,0 +1,18 @@
+# -- source: a-loop-is-built-for-the-text-that-a-constant-of-the-file-holds.js
+# function count(t) {
+#   let c = t & 1;
+#   for (let i = 0; i < held.length; i++) if (held[i] === "a") c = c + 1;
+#   return c;
+# }
+# sink(count);
+# const held = JSON.parse('"abcabca"');
+# print(count(0), count(1));
+# -- end of source
+# `held` is a constant of the file that `count` may be called in front of, so its read may still find the dead zone. Such a constant was read in front of a loop only where the loop reckons with the element
+# read off it. Where the loop holds the element against a written text it is read in front too, and the front tells a text from a list.
+# f1 = count
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=string
+# CHECK: = GetStringCodeUnit
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 3 4

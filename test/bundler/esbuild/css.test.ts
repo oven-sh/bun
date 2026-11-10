@@ -1,4 +1,6 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -1051,6 +1053,44 @@ describe("esbuild-bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.css").toBe(`@import "./a.svg";.t{color:green}\n`);
     },
+  });
+  test("css/ImportAssetFromCSS with Bun.build: the log has a note, and nothing is written", async () => {
+    using dir = tempDir("css-import-asset", {
+      "entry.css": `@import "./a.svg";\n.t { color: green }`,
+      // Too large to be inlined: without the error the build writes a copy of it.
+      "a.svg": Buffer.alloc(200_000, "<svg/>"),
+    });
+    const outdir = join(String(dir), "out");
+
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      outdir,
+      throw: false,
+    });
+
+    // The messages name the file by its path from the working directory.
+    const byName = (message: string) => message.replace(/"[^"]*a\.svg"/g, '"a.svg"');
+    expect({
+      success: build.success,
+      logs: build.logs.map(log => ({
+        level: log.level,
+        message: byName(log.message),
+        notes: (log as any).notes.map((note: { message: string }) => byName(note.message)),
+      })),
+      written: readdirSync(String(dir)).includes("out") ? readdirSync(outdir) : [],
+    }).toEqual({
+      success: false,
+      logs: [
+        {
+          level: "error",
+          message: 'Cannot import "a.svg" into a CSS file',
+          notes: [
+            'An "@import" rule can only import a CSS file, and "a.svg" is not a CSS file (it was loaded with the "file" loader). If it holds CSS, rename it to end in ".css" or give its extension the "css" loader.',
+          ],
+        },
+      ],
+      written: [],
+    });
   });
   itBundled("css/MissingImportURLInCSS", {
     // GENERATED

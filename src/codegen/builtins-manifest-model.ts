@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { builtinFunctionIds } from "./builtin-function-ids";
+import { builtinFunctionFiles, builtinFunctionIds } from "./builtin-function-ids";
 import { registerNativeCall } from "./generate-js2native";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 
@@ -40,17 +40,26 @@ export function specifierOf(file: string): string | undefined {
   return prefix && prefix + file.slice(prefix.length).replaceAll(".", "/").slice(0, -3);
 }
 
-export const functionFiles = fs
-  .readdirSync(path.join(BASE, "builtins"))
-  .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts"))
-  .sort()
-  .map(file => "builtins/" + file);
+export const functionFiles = [...builtinFunctionFiles(path.join(BASE, "builtins")).keys()].map(
+  file => "builtins/" + file,
+);
 export const functionIds = builtinFunctionIds(path.join(BASE, "builtins"));
 
 /** Where the text that the compiler reads under the name `file` is. A module may have a second text for the compiler, under the same name in src/js/ahead-of-time. */
 export function locate(file: string): string {
   const forCompiler = path.join(BASE, "ahead-of-time", file);
   return fs.existsSync(forCompiler) ? forCompiler : path.join(BASE, file);
+}
+
+/** Where the text that `bun run` evaluates under the name `file` is, if the compiler reads another. */
+export function locateFirstText(file: string): string | undefined {
+  const first = path.join(BASE, file);
+  return fs.existsSync(path.join(BASE, "ahead-of-time", file)) && fs.existsSync(first) ? first : undefined;
+}
+
+/** The module that `text` holds a part of, if `text` has a line that says so. */
+export function findModuleHeldInPart(text: string): string | undefined {
+  return /^\/\* part of: (\S+) \*\/$/m.exec(text)?.[1];
 }
 
 /** `aot_engine_functions.json`, which src/codegen/builtins/index.ts writes: JavaScriptCore's own functions, as the compiler reads them. */
@@ -98,7 +107,13 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
   // The bundler of the modules numbers what the first texts call before it comes here: what only a second text calls is numbered behind all of that.
   // Such a function does what code of the first text does, and no stack trace lists it.
   const secondTexts = files.map(file => path.join(BASE, "ahead-of-time", file)).filter(file => fs.existsSync(file));
-  for (const file of [...files.map(file => path.join(BASE, file)), ...secondTexts]) {
+  // So is what only a helper of the compiler calls.
+  const prelude = path.join(BASE, "../aot/prelude");
+  const isText = (file: string) => file.endsWith(".ts") && !file.endsWith(".d.ts");
+  const helpers = fs.readdirSync(prelude).filter(isText).sort();
+  secondTexts.push(...helpers.map(file => path.join(prelude, file)));
+  const firstTexts = files.map(file => path.join(BASE, file)).filter(file => fs.existsSync(file));
+  for (const file of [...firstTexts, ...secondTexts]) {
     const source = fs.readFileSync(file, "utf8");
     const namer = path
       .relative(BASE, file)

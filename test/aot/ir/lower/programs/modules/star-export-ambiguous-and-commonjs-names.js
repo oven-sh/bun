@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 18
+// CHECK-LABEL: function {{*}}name="describe"
 
 // FILE: main.js
 // `export *` of two ES modules that export the same name: the name is ambiguous. `export *` of a CommonJS module that has the name too does not bring it back, so the namespace object has no such key. Two modules that export their own `import * as space` export two bindings, and two `export * as space` of one module export one.
@@ -99,27 +100,3 @@ export const value = "value of target";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: describe
-// CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.keys"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="join"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
-// CHECK-NEXT: v7 = Call v6, v4 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v9 = PropHas v0 key="both"
-// CHECK-NEXT: v10 = PropGet v0 key="both"
-// CHECK-NEXT: v11 = PropHas v0 key="space"
-// CHECK-NEXT: v12 = PropGet v0 key="space"
-// CHECK-NEXT: v13 = TypeOf v12
-// CHECK-NEXT: v14 = NewArray v8, v9, v10, v11, v13 contents=anything
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }

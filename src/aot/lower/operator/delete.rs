@@ -4,9 +4,9 @@ use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{BlockId, ValueId};
+use crate::lower::FunctionLowering;
 use crate::lower::expression::ShortCircuit;
 use crate::lower::member::PropertyName;
-use crate::lower::{FileLowering, FunctionLowering};
 
 pub(super) fn lower_delete(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
@@ -18,18 +18,18 @@ pub(super) fn lower_delete(
         Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {
             return lowering.builder.boolean(true);
         }
-        Decision::GlobalPath(path) => return lowering.delete_global_path(path),
+        Decision::GlobalPath(path) => return lowering.delete_global_path(target, path),
         Decision::Unknown => {}
     }
     if matches!(hir[target].kind, ExprKind::Ident(_)) {
         return lowering.delete_identifier(target);
     }
     let Some((object, key)) = hir.member_key(target) else {
-        lowering.lower_expression_for_effect(target);
+        lowering.lower_taken_value_for_effect(target);
         return lowering.builder.boolean(true);
     };
     if matches!(hir[object].kind, ExprKind::Super) {
-        return lowering.delete_super_member(target, key);
+        return lowering.delete_super_member(key);
     }
     if let Some(deleted) = lowering.try_lower_exports_deletion(target) {
         return deleted;
@@ -42,20 +42,9 @@ pub(super) fn lower_delete(
     delete_member(lowering, target, None)
 }
 
-impl FileLowering<'_, '_, '_, '_> {
-    // JSC records a `delete` where its operand ends.
-    fn delete_position(&self, access: ExprId) -> u32 {
-        let closing = match self.is_shown_without_source_map() {
-            true => None,
-            false => self.find_closing_token_behind(access),
-        };
-        closing.unwrap_or_else(|| self.last_mapped_position(access))
-    }
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn delete_global_path(&mut self, path: &[Atom]) -> ValueId {
-        let last = self.lower_global_path_holder(path);
+    fn delete_global_path(&mut self, target: ExprId, path: &[Atom]) -> ValueId {
+        let last = self.lower_global_path_holder(target, path);
         let Some(holder) = last.holder else {
             return self.emit_free_name_delete(last.name);
         };
@@ -63,15 +52,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_delete(holder, PropertyName::Constant(key))
     }
 
-    fn delete_super_member(&mut self, access: ExprId, key: MemberKey) -> ValueId {
-        self.get_this();
+    fn delete_super_member(&mut self, key: MemberKey) -> ValueId {
         match key {
             MemberKey::Computed(computed) => {
                 self.lower_expression(computed);
             }
             MemberKey::Name(_) | MemberKey::PrivateName(_) => {}
         }
-        self.set_position(self.file.delete_position(access));
+        self.get_this();
         self.emit_throw_runtime_error(RuntimeErrorKind::DeleteSuperProperty, None);
         self.builder.boolean(true)
     }
@@ -92,6 +80,6 @@ fn delete_member(
         MemberKey::Name(_) | MemberKey::Computed(_) => lowering.lower_member_key(key),
         MemberKey::PrivateName(_) => return lowering.builder.boolean(true),
     };
-    lowering.set_position(lowering.file.delete_position(access));
+    lowering.report_at_member(access);
     lowering.emit_delete(base, name)
 }

@@ -1,0 +1,17 @@
+# f1 = sum
+# -- source: for-in-over-a-known-layout.ts
+# type Point = { x: number; y: number; z: number };
+# function sum(point: Point): number {
+#   let total = 0;
+#   for (const key in point) total += point[key as keyof Point];
+#   return total;
+# }
+# declare const input: any;
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = sum({ x: +input, y: +input, z: +input });
+# -- end of source
+# The compiler before this one: 24 instructions, 3 of them patches.
+# When the bound was taken: loop: operations 40, patches 3, moves 9, unlikely 33.
+# RUN(X64): loops most:49 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 49

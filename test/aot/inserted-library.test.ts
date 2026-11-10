@@ -1,6 +1,7 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -71,6 +72,34 @@ int dl_iterate_phdr(visitor visit, void *data) {
 }
 `;
 
+// Takes SIGSEGV right behind the engine, which sets its action for SIGBUS last, and says so when somebody sets another action over it.
+const setsHandler = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <signal.h>
+#include <string.h>
+#include <unistd.h>
+
+typedef int (*setter)(int, const struct sigaction *, struct sigaction *);
+static int is_set;
+static void handle(int signal, siginfo_t *info, void *context) { _exit(99); }
+
+int sigaction(int signal, const struct sigaction *action, struct sigaction *old) {
+  setter set = (setter) dlsym(RTLD_NEXT, "sigaction");
+  if (is_set && signal == SIGSEGV && action) write(1, "changed\\n", 8);
+  int result = set(signal, action, old);
+  if (signal == SIGBUS && action && (action->sa_flags & (SA_SIGINFO | SA_ONSTACK)) == SA_SIGINFO) {
+    struct sigaction mine;
+    memset(&mine, 0, sizeof mine);
+    mine.sa_sigaction = handle;
+    mine.sa_flags = SA_SIGINFO;
+    is_set = !set(SIGSEGV, &mine, 0);
+    write(1, "set\\n", 4);
+  }
+  return result;
+}
+`;
+
 const dir = tempDir("aot-inserted-library", {
   "main.ts": `
     import { readFileSync } from "node:fs";
@@ -83,6 +112,7 @@ const dir = tempDir("aot-inserted-library", {
   "inserted-1.so": emptySharedObject(),
   "inserted-2.so": emptySharedObject(),
   "listed-in-reverse.c": listedInReverse,
+  "sets-handler.c": setsHandler,
 });
 afterAll(() => dir[Symbol.dispose]());
 
@@ -147,6 +177,22 @@ test.skipIf(!isLinux || isASAN || !cc)(
       BUN_JSC_crashIfInterpreterIsUsed: "1",
     });
     expect(result).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux || isASAN || !cc)(
+  "the signal handler of an inserted library stays as it was set",
+  async () => {
+    await buildOnce();
+    const library = join(String(dir), "sets-handler.so");
+    expect(await run([cc!, "-shared", "-fPIC", "-o", library, "sets-handler.c", "-ldl"], String(dir))).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await run([join(String(dir), "program")], String(dir), { ...bunEnv, LD_PRELOAD: library });
+    expect(result).toEqual({ stdout: "set\nhello\n", stderr: "", exitCode: 0 });
   },
   120_000,
 );

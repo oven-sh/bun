@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, isLinux, isMacOS, isWindows } from "harness";
+import { isASAN, isLinux, isMacOS, isMusl, isWindows } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
@@ -14,7 +14,7 @@ import {
   trimFeatureNamed,
   withoutFeatures,
 } from "./compile-trim-features";
-import { placesThatCall, placesThatMakeSystemCalls } from "./what-an-executable-can-call";
+import { addressesOf, placesThatCall, placesThatMakeSystemCalls } from "./what-an-executable-can-call";
 
 const featuresOf = (...names: string[]) => names.flatMap(name => trimFeatureNamed(name).features);
 
@@ -119,6 +119,25 @@ if (isASAN)
 (isWindows || isASAN || !canTrim ? describe.skip : describe.concurrent)(
   "an executable without what loads native code",
   () => {
+    test.skipIf(!isLinux || isMusl)(
+      "a word of the data is a place only where the address of the import is taken",
+      async () => {
+        const { file } = await build([]);
+        const free = (file.indexOf(Buffer.alloc(24), 1 << 20) + 15) & ~7;
+        const newPlaces = (name: string) => {
+          const before = placesThatCall(file, [name]).length;
+          return addressesOf(file, name).map(address => {
+            const changed = Buffer.from(file);
+            changed.writeBigUInt64LE(BigInt(address), free);
+            return placesThatCall(changed, [name]).length - before;
+          });
+        };
+        // Bun takes the address of dlopen. It only calls execve.
+        expect(newPlaces("dlopen")).toEqual([1, 1]);
+        expect(newPlaces("execve")).toEqual([0, 0]);
+      },
+    );
+
     test("holds no place that calls dlopen", async () => {
       const whole = await build([]);
       expect(namesOf(placesThatCall(whole.file, loadsNativeCode.functions))).toEqual(["dlopen"]);

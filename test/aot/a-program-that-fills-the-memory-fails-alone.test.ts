@@ -36,7 +36,8 @@ test.skipIf(!isLinux || !isCanary)(
         file: file.slice(root.length + 1),
         state,
         stage,
-        message: message?.replace(/\d+/g, "N"),
+        // The driver builds a program in more ways than one and tells of the one that fails first: which that is hangs on the machine.
+        message: message?.replace(/^under [^:]+: /, "").replace(/\d+/g, "N"),
       }))
       .sort((a, b) => a.file.localeCompare(b.file));
     expect(verdicts).toEqual([

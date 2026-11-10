@@ -1,8 +1,8 @@
-use super::import_uses::ImportUses;
+use super::import_uses::{ImportUses, compute_import_uses};
 use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, known};
-use crate::bind::{Bound, Decl, SymbolId};
-use crate::fold::{FoldError, FoldErrorKind};
+use crate::bind::{Bound, Decl, Parent, SymbolId};
+use crate::fold::{Decisions, FoldError, FoldErrorKind, FoldInputs};
 use crate::hir::{
     ExprId, File, Flags, ImportEqualsId, ImportEqualsTarget, ImportId, NodeData, StmtId, StmtKind,
 };
@@ -11,7 +11,6 @@ fn has_macro_type(hir: &File<'_>, attributes: ExprId) -> bool {
     hir.import_attribute(attributes, known::r#type) == Some(known::r#macro)
 }
 
-/// `import { m } from x with { type: "macro" }` is a syntax error that the parser recovers from: it names no module to run.
 pub(super) fn is_macro_import(hir: &File<'_>, import: ImportId) -> bool {
     hir[import].spec.is_some() && has_macro_type(hir, hir[import].attributes)
 }
@@ -31,7 +30,6 @@ fn import_decls(hir: &File<'_>, import: ImportId) -> impl Iterator<Item = Decl> 
     default.into_iter().chain(namespace).chain(named)
 }
 
-/// `NONE` for a name that the file also declares as a value: `import { A } from "m"; const A = 1;`. The import brings the type, and code that names `A` means the constant.
 fn symbols_of_value_imports(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -106,7 +104,38 @@ pub(super) fn scan_statements(
             is_host_value: false,
         });
     }
+    for (index, import) in hir.import_equals.iter().enumerate() {
+        if let Parent::Module(namespace) = bound.parent_of_stmt(import.stmt)
+            && bound.makes_namespace_object(hir, namespace)
+            && !import.flags.contains(Flags::AMBIENT)
+            && !decisions.is_dead_stmt(import.stmt)
+            && let Some((kind, spec)) = import_equals_site(hir, ImportEqualsId(index as u32))
+        {
+            result.has_import_equals_require = true;
+            result.sites.push(ImportSite {
+                kind,
+                specifier: ImportSpecifier::Constant(spec),
+                specifier_node: ExprId::NONE,
+                attributes: ExprId::NONE,
+                consults_resolver: true,
+                is_host_value: false,
+            });
+        }
+    }
     result
+}
+
+pub fn find_statement_sites(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    inputs: &FoldInputs<'_>,
+) -> Vec<(ImportSiteKind, Atom)> {
+    debug_assert!(hir.import_equals.is_empty());
+    let drops_unused_imports = hir.has_typescript_semantics() && !inputs.preserves_unused_imports();
+    let uses = drops_unused_imports.then(|| compute_import_uses(hir, bound, &Decisions::default()));
+    hir.ids(hir.body)
+        .filter_map(|stmt| statement_site(hir, bound, stmt, uses.as_ref()))
+        .collect()
 }
 
 fn macro_export_error(kind: ImportSiteKind) -> Option<FoldErrorKind> {

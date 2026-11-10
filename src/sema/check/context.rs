@@ -87,10 +87,17 @@ impl PushedContextualTypes {
     #[inline]
     fn nodes_with_type_variables(&self, file: FileId) -> SmallVec<[ExprId; 4]> {
         let infos = (self.with_type_variables.iter()).map(|&at| &self.infos[at as usize]);
-        infos
-            .filter(|info| info.file == file)
-            .map(|info| info.node)
-            .collect()
+        let mut nodes = SmallVec::new();
+        for info in infos.filter(|info| info.file == file) {
+            nodes.push(info.node);
+        }
+        nodes
+    }
+
+    #[inline]
+    fn has_node_with_type_variables(&self, file: FileId) -> bool {
+        let mut infos = (self.with_type_variables.iter()).map(|&at| &self.infos[at as usize]);
+        infos.any(|info| info.file == file)
     }
 
     #[inline]
@@ -152,6 +159,12 @@ impl PushedContextualTypes {
         if found.is_some() || self.infos.len() <= Self::SEARCHED_ONE_BY_ONE {
             return found;
         }
+        self.higher_place_of(file, node, include_caches)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn higher_place_of(&self, file: FileId, node: ExprId, include_caches: bool) -> Option<usize> {
         let mut places = self
             .higher
             .get(&(file, node))?
@@ -198,8 +211,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Same for a direct child of `parent`.
     pub fn enclosing_fn(&self, file: FileId, mut parent: Parent) -> Option<FnId> {
+        // As in `enclosing_scope_of_expr`.
+        const UNCACHED_STEPS: usize = 32;
         let bound = self.bound(file);
-        loop {
+        for _ in 0..UNCACHED_STEPS {
             parent = match parent {
                 // FOR SPEED: most steps are these two.
                 Parent::Expr(e) if e.is_some() => bound.parent_of_expr(e),
@@ -210,6 +225,31 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => self.parent_of_node(file, parent),
             };
         }
+        self.enclosing_fn_far_out(file, parent)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn enclosing_fn_far_out(&self, file: FileId, mut parent: Parent) -> Option<FnId> {
+        let bound = self.bound(file);
+        let mut passed = Vec::new();
+        let func = loop {
+            if let Some(at) = super::errors::Passed::of(parent) {
+                if let Some(&known) = self.fns_around.borrow().get(&(file, at)) {
+                    break known;
+                }
+                passed.push(at);
+            }
+            parent = match parent {
+                Parent::FnBody(f) => break Some(f),
+                Parent::ParamDefault(p) => break Some(bound.param_fn[p.idx()]),
+                Parent::None | Parent::File => break None,
+                _ => self.parent_of_node(file, parent),
+            };
+        };
+        let mut known = self.fns_around.borrow_mut();
+        known.extend(passed.into_iter().map(|at| ((file, at), func)));
+        func
     }
 
     /// Resolves the calls that determine the parameter types of the functions enclosing `e`,
@@ -282,7 +322,7 @@ impl<'p, 's> Checker<'p, 's> {
                     ExprKind::Call(c) | ExprKind::New(c) => {
                         if hir[c].callee != at
                             && self.p.calls.get(&self.task, &(file, parent)).is_none()
-                            && !self.stack.contains(&Query::Call(file, parent))
+                            && !self.is_in_flight(Query::Call(file, parent))
                         {
                             // No query is entered on the way up through calls nested in call arguments, so nothing else
                             // checks the stack.
@@ -346,7 +386,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// element.
     fn prepare_jsx(&mut self, file: FileId, e: ExprId) {
         if self.p.calls.get(&self.task, &(file, e)).is_none()
-            && !self.stack.contains(&Query::Call(file, e))
+            && !self.is_in_flight(Query::Call(file, e))
         {
             self.prepare_context(file, e);
             self.resolved_signature(file, e);
@@ -749,11 +789,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The nodes of `file` with a pushed type that may contain type variables.
     pub(super) fn pushed_with_type_variables(&mut self, file: FileId) -> SmallVec<[ExprId; 4]> {
+        self.examine_pushed_contextual_types();
+        self.contextual.nodes_with_type_variables(file)
+    }
+
+    #[inline]
+    pub(super) fn has_pushed_with_type_variables(&mut self, file: FileId) -> bool {
+        self.examine_pushed_contextual_types();
+        self.contextual.has_node_with_type_variables(file)
+    }
+
+    #[inline]
+    fn examine_pushed_contextual_types(&mut self) {
         while let Some(t) = self.contextual.next_unexamined() {
             let has_type_variables = t.is_some_and(|t| self.has_type_variables(t));
             self.contextual.examined(has_type_variables);
         }
-        self.contextual.nodes_with_type_variables(file)
     }
 
     /// `popContextualType`
@@ -775,6 +826,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getContextualType`
+    #[inline]
     pub(super) fn contextual_type(
         &mut self,
         file: FileId,
@@ -794,7 +846,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         let hir = self.hir(file);
         // `getContextualType`: a node inside a `with` statement has no contextual type.
-        if hir.is_in_with(hir[e].pos) {
+        if !hir.with_bodies.is_empty() && hir.is_in_with(hir[e].pos) {
             return None;
         }
         // "Cached contextual types are obtained with no ContextFlags, so we can only consult them
@@ -811,6 +863,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.type_of_signature(sig, false))
     }
 
+    #[inline(never)]
     fn contextual_type_from_parent(
         &mut self,
         file: FileId,
@@ -822,7 +875,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getContextualType` has no case for a TypeQuery or QualifiedName parent. The binder
         // parents the operand of a `typeof` type to the enclosing function or property only so that
         // `this` resolves.
-        if bound.is_in_type_query(e) {
+        if !bound.type_query_operands.is_empty() && bound.is_in_type_query(e) {
             return None;
         }
         match bound.parent_of_expr(e) {
@@ -883,9 +936,11 @@ impl<'p, 's> Checker<'p, 's> {
             },
             Parent::Prop(p) => {
                 // `getContextualTypeForObjectLiteralElement`: `element.Type()`
-                let annotation = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
-                if annotation.is_some() {
-                    return Some(self.type_from_node(file, annotation));
+                if !hir.jsdoc_types.is_empty() {
+                    let annotation = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
+                    if annotation.is_some() {
+                        return Some(self.type_from_node(file, annotation));
+                    }
                 }
                 let owner = bound.prop_owner[p.idx()];
                 let prop = &hir[p];
@@ -1061,11 +1116,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn check_initializer_cached(&mut self, file: FileId, initializer: ExprId) -> Option<TypeId> {
         let q = Query::Expr(file, initializer);
         let from = self.resolution_start.min(self.stack.len());
-        let outermost = match self.may_be_in_flight(q) {
-            true => self.stack[from..].iter().position(|&visit| visit == q),
-            false => None,
-        };
-        let Some(outermost) = outermost.map(|above| from + above) else {
+        let Some(outermost) = self.outermost_in_flight(q, from) else {
             let outer = self.suspend_recheck();
             let ty = self.type_of_declaration_initializer(file, initializer);
             self.end_recheck(outer);
@@ -1083,7 +1134,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(&(.., ty)) = resolved.find(|it| it.1 == serial) {
             return Some(ty);
         }
-        let innermost = self.stack.iter().rposition(|&visit| visit == q);
+        let innermost = self.innermost_in_flight(q);
         if let Some(innermost) = innermost.filter(|&innermost| innermost != outermost)
             && self.is_half_of_stack_in_use()
         {
@@ -1181,12 +1232,17 @@ impl<'p, 's> Checker<'p, 's> {
         match &members_to_search {
             Some(members_to_search) => {
                 for at in members_to_search.iter() {
-                    types.extend(self.contextual_property_of_member(parts[at], name, name_type));
+                    if let Some(t) = self.contextual_property_of_member(parts[at], name, name_type)
+                    {
+                        types.push(t);
+                    }
                 }
             }
             None => {
                 for &part in parts {
-                    types.extend(self.contextual_property_of_member(part, name, name_type));
+                    if let Some(t) = self.contextual_property_of_member(part, name, name_type) {
+                        types.push(t);
+                    }
                 }
             }
         }
@@ -1456,7 +1512,17 @@ impl<'p, 's> Checker<'p, 's> {
             Some(sig) => self.outer_mapper_of_sig(sig),
             None => MapperId::IDENTITY,
         };
-        Some(self.map_type_unreduced(instantiated, |c, t| {
+        // FOR SPEED: each of n literals in a list of a union of n object types has that union as its contextual type.
+        let is_union_of_many =
+            matches!(self.data(instantiated), TypeData::Union(types) if types.len() > 8);
+        if is_union_of_many
+            && let Some(&known) =
+                (self.apparent_contextual_unions).get(&(instantiated, outer_mapper))
+        {
+            return Some(known);
+        }
+        let before = self.non_cacheable_mark();
+        let apparent = self.map_type_unreduced(instantiated, |c, t| {
             if c.mapped_origin(t).is_some() {
                 return t;
             }
@@ -1475,7 +1541,11 @@ impl<'p, 's> Checker<'p, 's> {
                 let constraint = c.type_with_this_argument(constraint, t);
                 c.apparent_type(constraint)
             }
-        }))
+        });
+        if is_union_of_many && before == self.non_cacheable_mark() {
+            (self.apparent_contextual_unions).insert((instantiated, outer_mapper), apparent);
+        }
+        Some(apparent)
     }
 
     /// `getApparentTypeOfIntersectionType`. `apparent_type` skips it where the members of the
@@ -1745,20 +1815,37 @@ impl<'p, 's> Checker<'p, 's> {
             && self.reverse_mapped_source_stack.is_empty()
             && self.flow_loops.is_empty()
             && self.reporting_nonexistent.is_empty()
-            && self.stack.iter().all(|q| {
-                matches!(
-                    q,
-                    Query::Expr(..)
-                        | Query::Call(..)
-                        | Query::LiteralProp(..)
-                        | Query::Pat(..)
-                        | Query::ParameterSymbol(..)
-                        | Query::Symbol(_)
-                        | Query::Return(..)
-                        | Query::ReturnOfSignature(_)
-                        | Query::ReturnAtFirstLook(..)
-                )
-            })
+            && self.do_queries_in_progress_allow_caching()
+    }
+
+    fn do_queries_in_progress_allow_caching(&self) -> bool {
+        let (forbidding, serial) = self.query_that_forbids_caching.get();
+        if (self.frames.get(forbidding)).is_some_and(|frame| frame.serial == serial) {
+            return false;
+        }
+        let seen = self.queries_seen_to_allow_caching.get();
+        for (at, frame) in self.frames.iter().enumerate().rev() {
+            if frame.serial <= seen {
+                break;
+            }
+            if !matches!(
+                self.stack[at],
+                Query::Expr(..)
+                    | Query::Call(..)
+                    | Query::LiteralProp(..)
+                    | Query::Pat(..)
+                    | Query::ParameterSymbol(..)
+                    | Query::Symbol(_)
+                    | Query::Return(..)
+                    | Query::ReturnOfSignature(_)
+                    | Query::ReturnAtFirstLook(..)
+            ) {
+                self.query_that_forbids_caching.set((at, frame.serial));
+                return false;
+            }
+        }
+        self.queries_seen_to_allow_caching.set(self.work);
+        true
     }
 
     /// `discriminateContextualTypeByJSXAttributes`: narrows the union `context`, the contextual
@@ -2361,7 +2448,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let usage = IterationUse::Element;
             let element = self.iterated_type_or_element_type(usage, part, TypeId::UNDEFINED, None);
-            types.extend(element.filter(|&element| element != TypeId::UNRESOLVED));
+            if let Some(element) = element.filter(|&element| element != TypeId::UNRESOLVED) {
+                types.push(element);
+            }
         }
         if types.is_empty() {
             None
@@ -2372,6 +2461,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     // ───────────────────────────── functions ─────────────────────────────
 
+    #[inline]
     pub(super) fn takes_context(&self, file: FileId, func: FnId) -> Option<ExprId> {
         let f = &self.hir(file)[func];
         match (f.kind, self.bound(file).fns[func.idx()].owner) {
@@ -2380,9 +2470,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // Where Bun's types are not installed what the run time provides is of type `any`, which does not say what a function that it is given is called with.
+    // Where Bun's types are not installed a package without types is of type `any`, which does not say what a function that it is given is called with.
     pub(super) fn is_given_to_what_has_no_declaration(&mut self, file: FileId, func: FnId) -> bool {
-        if !self.lacks_bun_types() {
+        if !self.lacks_installed_bun_types() {
             return false;
         }
         let Some(mut given) = self.takes_context(file, func) else {
@@ -2492,7 +2582,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.sig_params(first),
                     self.sig_this_type(first),
                 );
-                Some(self.types().intern_sig(SigData::Synth {
+                Some(self.types().intern_synth_sig(SynthSig {
                     type_params: self.list(&type_params),
                     params: self.list(&params),
                     ret: TypeId::UNRESOLVED,
@@ -2774,9 +2864,9 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.types().sig(sig) {
             SigData::Decl { file, func, .. } => {
                 let q = Query::ReturnAtFirstLook(file, func);
-                self.may_be_in_flight(q) && self.stack.contains(&q)
+                self.is_in_flight(q)
             }
-            SigData::Synth { ref of, .. } => of.iter().any(|&s| self.is_at_first_look(s)),
+            SigData::Synth(SynthSig { of, .. }) => of.iter().any(|&s| self.is_at_first_look(s)),
             _ => false,
         }
     }
@@ -2786,7 +2876,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_resolving_return_type_of_declaration(&self, sig: SigId) -> bool {
         match *self.types().sig(sig) {
             SigData::Decl { file, func, .. } => self.is_resolving(Query::Return(file, func)),
-            SigData::Synth { ref of, .. } => of
+            SigData::Synth(SynthSig { of, .. }) => of
                 .iter()
                 .any(|&s| self.is_resolving_return_type_of_declaration(s)),
             _ => false,
@@ -2799,7 +2889,7 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::Decl { mapper, .. } if self.is_instantiating(mapper) => {
                 self.is_resolving(Query::ReturnOfSignature(sig))
             }
-            SigData::Synth { ref of, .. } => {
+            SigData::Synth(SynthSig { of, .. }) => {
                 of.iter().any(|&s| self.is_resolving_return_type(s))
                     || self.is_resolving(Query::ReturnOfSignature(sig))
             }

@@ -1,0 +1,48 @@
+# `const pair = [..]; <a branch>; [a, b] = pair;`: the list is written in one block and taken apart in another, and the block that writes it is walked more than once:
+# the join once for each literal that a way brings (eachWay, spin), the body of the loop once for each copy of the loop (behindLoop). What each walk made meets in front of the pattern.
+# The steps once took the elements by their written names, which are bound to nothing there: the build aborted. Then they read what had met, while the look at the loop went on typing them by the text of the list:
+# in spin an integer was previewed and anything came round: the unit was walked again, and under the verifier the build stopped.
+# The steps of a pattern are answered out of the text of a list only where list and pattern stand in one block; such a list as these is taken apart as any list is, and look and walk ask one function.
+# OPTIONS: check=Validate
+# f1 = eachWay, f2 = behindLoop, f3 = spin
+# -- source: written-list-in-a-name-is-taken-apart-as-any-list.js
+# const unseen = (x) => [x][JSON.parse("0")];
+# const kit = { round: Math.floor };
+# unseen(kit);
+# function eachWay(at, plain, loud) {
+#   let work = 0;
+#   for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   const steps = plain ? { step: 1 } : { step: 2 };
+#   const pair = [steps.step + at, at];
+#   const mark = loud ? "!" : ".";
+#   const [a, b] = pair;
+#   return a + ":" + b + mark + work;
+# }
+# function behindLoop(limit, tools) {
+#   for (let i = 0; ; i++) {
+#     const pair = [tools.round(i + 0.5), i * 2];
+#     if (i >= limit) {
+#       const [a, b] = pair;
+#       return a + ":" + b;
+#     }
+#   }
+# }
+# function spin(turns, plain) {
+#   let a = 1, b = 2;
+#   for (let i = 0; i < turns; i++) {
+#     const steps = plain ? { step: 1 } : { step: 2 };
+#     const pair = [b, (a + steps.step) | 0];
+#     const mark = (i & 1) ? 1 : 0;
+#     [a, b] = pair;
+#     b = (b + mark) | 0;
+#   }
+#   return a + ":" + b;
+# }
+# print(eachWay(7, true, true), eachWay(7, false, false), eachWay(8, false, true));
+# print(behindLoop(0, kit), behindLoop(3, kit));
+# print(spin(300, true), spin(300, false), spin(3, true));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 8:7!1 9:7.1 10:8!1
+# ANSWERS: 0:0 3:6
+# ANSWERS: 151:302 301:452 4:3

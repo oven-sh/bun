@@ -1,0 +1,22 @@
+# `t += list[i]; if (list[i] === undefined) n++;`: behind the row in front of the loop the first read gives NaN for a hole, because the sum is its one user and takes undefined for NaN.
+# That record is no answer to whoever reads the element again: there a hole is undefined. Noted as the element, it answered every later `list[i]` of the turn: no hole was counted, and `last = list[i]` kept NaN.
+# f1 = run
+# -- source: again.ts
+# function run(list: number[]): string {
+#   let t = 0, n = 0;
+#   for (let i = 0; i < list.length; i++) {
+#     t += list[i];
+#     if (list[i] === undefined) n++;
+#   }
+#   return t + ":" + n;
+# }
+# const list: number[] = [1, 2, 3, 4, 5, 6];
+# delete list[3];
+# delete list[5];
+# console.log(run(list), run(list), run([1, 2, 3]));
+# -- end of source
+# RUN(FORM): walk f1 mechanisms=all-Inlining
+# FORM-LABEL: code f1:Body
+# FORM: number @Double = GetArrayElement {{*}}level=Proven {{*}}readsHoleAsNaN
+# FORM: undefined|number {{*}}= GetArrayElement {{*}}level=Proven
+# FORM: = TypeTest {{*}}testedType=undefined

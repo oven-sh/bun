@@ -1,0 +1,27 @@
+An import() comes to a mock whose factory waits for a timer and for the original; the next file reads the real module.
+#### a.test.mjs
+import { beforeAll, mock, test } from "bun:test";
+const later = () => new Promise(resolve => setTimeout(resolve, 30));
+beforeAll(() => {
+  mock.module("./lib.mjs", async original => (await later(), { ...(await original()), v: "mock v" }));
+});
+test("imports", async () => {
+  try {
+    const user = await import("./user.mjs");
+    console.log("| CASE user", user.v, user.kept);
+  } catch (error) {
+    console.log("| CASE user failed", error.message);
+  }
+});
+#### lib.mjs
+console.log("| CASE lib runs");
+export const v = "real v";
+export const kept = "kept";
+#### user.mjs
+import { v, kept } from "./lib.mjs";
+export { v, kept };
+#### z.test.mjs
+import { test } from "bun:test";
+import { v } from "./lib.mjs";
+console.log("| CASE the next file", v);
+test("reads", () => {});

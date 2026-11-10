@@ -1,0 +1,2 @@
+function run(out: Uint8Array, v: Uint8Array, x: any): string { let a = 1, left = 3; for (let i = 0; i < out.length; i++) { out[i] = x; a = (a + v[i]) % 251; left = Math.min(v[i] + 1, left + 1); x = a; } return out.join() + " " + a + " " + left; }
+console.log(run(new Uint8Array(3), Uint8Array.of(250, 2, 7), 300), run(new Uint8Array(3), Uint8Array.of(250, 2, 7), "9"), run(new Uint8Array(2), Uint8Array.of(5), { valueOf() { return 4.7; } }));

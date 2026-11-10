@@ -1,0 +1,24 @@
+# One function is the method of five literals that have no family in common, and a helper calls it by name. Four of them arrive at the call together, as a set, and are laid down at `this`, by no edge.
+# The fifth comes rounds later, through two reads: the receiver loses its layouts, the name is found through what is lost, enter() finds the callee listed, and while it returned with nothing laid
+# `this` stayed proven to be what was laid down before, no test for anything else was built, and those literals' slots were read off the fifth: heap pointers as numbers, reads past the end of the object.
+# f1 = describe, f2 = call, f3 = peel, f4 = unwrap
+# -- source: shared.ts
+# declare function sink(...values: unknown[]): void;
+# let work = 0;
+# function describe(this: any) { for (let i = 0; i < 2; i++) work = (work + i) | 0; return this.badge; }
+# function call(o: any) { for (let i = 0; i < 2; i++) work = (work ^ i) | 0; return o.announce(); }
+# function peel(outer: any) { return outer.inner; }
+# function unwrap(box: any) { return box.item; }
+# const first = { badge: 1, announce: describe, alpha: 0 };
+# const second = { beta: "x", gamma: "y", badge: "two", announce: describe };
+# const crate = { inner: { item: second } };
+# const third = { badge: 3, announce: describe, delta: 0 };
+# const fourth = { badge: 4, announce: describe, epsilon: 0 };
+# const fifth = { badge: 5, announce: describe, zeta: 0 };
+# sink(call(first), call(third), call(fourth), call(fifth), call(unwrap(peel(crate))));
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}}
+# LINK-NEXT: parameter 0 {{*}}proven=L1|L2|L4|L5|L6
+# LINK: function f2 {{*}}
+# LINK-NEXT: parameter 0 {{*}}proven=L1|L2|L4|L5|L6

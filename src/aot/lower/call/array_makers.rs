@@ -1,35 +1,36 @@
+use bun_sema::atom::known;
 use bun_sema::hir::{Call, Chain, ExprId, ExprKind, Flags, FnKind, ParamId, PropKey, PropKind};
 use smallvec::SmallVec;
 
-use super::call_site;
 use super::intrinsic::has_spread;
 use super::written_operands::find_locked_builtin;
+use super::{call_site, emit_call};
 use crate::builtins::id::BuiltinId;
-use crate::ir::{Edge, Opcode, TypeTable, ValueId};
+use crate::builtins::table::{self, MemberLookup};
+use crate::ir::{Edge, TypeTable, ValueId};
 use crate::lower::expression::{Tail, TailCast};
 use crate::lower::{FileLowering, FunctionLowering};
 
-// The ways in which programs write "a list of this length": `Array.from({ length }, mapper)`, `Array(length).fill(value)`.
-
-fn is_named(file: &FileLowering<'_, '_, '_, '_>, key: PropKey, name: &[u8]) -> bool {
-    matches!(key, PropKey::Name(atom) if file.queries.atom_bytes(atom) == name)
+#[derive(Copy, Clone)]
+struct FilledArray {
+    array: ExprId,
+    length: ExprId,
+    value: ExprId,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // The `n` of `{ length: n }`.
     fn find_written_length(&self, items: ExprId) -> Option<ExprId> {
         let hir = self.hir;
         let ExprKind::Object(properties) = hir[items].kind else {
             return None;
         };
         let mut properties = properties.iter();
-        let property = hir[properties.next()?];
+        let property = &hir[properties.next()?];
         let is_value = matches!(property.kind, PropKind::Init | PropKind::Shorthand);
-        (properties.next().is_none() && is_value && is_named(self, property.key, b"length"))
-            .then_some(property.value)
+        let is_length = matches!(property.key, PropKey::Name(name) if name == known::length);
+        (properties.next().is_none() && is_value && is_length).then_some(property.value)
     }
 
-    // `Array(n)`, `new Array(n)`, written so that no stack trace lists Array: none lists it in a maker.
     fn find_array_of_length(&self, expression: ExprId) -> Option<ExprId> {
         let hir = self.hir;
         let (ExprKind::Call(site) | ExprKind::New(site)) = hir[expression].kind else {
@@ -38,30 +39,57 @@ impl FileLowering<'_, '_, '_, '_> {
         let site = hir[site];
         if !matches!(site.chain, Chain::No)
             || find_locked_builtin(self, site.callee) != Some(BuiltinId::Array)
-            || !self.makes_array_in_caller(site)
         {
             return None;
         }
         self.find_only_argument(site)
     }
 
-    // `receiver.name(..)`, where the receiver is a list that the expression itself makes: the method is the one of Array.prototype.
-    fn find_receiver(&self, site: Call, name: &[u8], method: BuiltinId) -> Option<ExprId> {
+    fn position_of_array_call(&self, expression: ExprId) -> u32 {
+        match self.hir[expression].kind {
+            ExprKind::Call(site) => self.call_position(self.hir[site]),
+            _ => self.construct_position(expression),
+        }
+    }
+
+    fn find_method_of_fresh_array(&self, site: Call) -> Option<(ExprId, BuiltinId)> {
         let ExprKind::Dot {
             obj: receiver,
-            name: written,
+            name,
             chain: Chain::No,
             ..
         } = self.hir[site.callee].kind
         else {
             return None;
         };
-        let is_method = matches!(site.chain, Chain::No) && self.queries.atom_bytes(written) == name;
-        (self.is_fixed_method(method) && is_method).then_some(receiver)
+        let is_made_here = matches!(
+            self.hir[receiver].kind,
+            ExprKind::Call(_) | ExprKind::New(_)
+        );
+        if !is_made_here || !matches!(site.chain, Chain::No) {
+            return None;
+        }
+        let name = self.inputs.builtin_names.get(name)?;
+        let MemberLookup::Found(method) = table::member(BuiltinId::ArrayPrototype, name) else {
+            return None;
+        };
+        self.is_fixed_method(method)
+            .then_some((receiver, table::canonical_id(method)))
     }
 
-    // An arrow function has no `arguments`: it sees what its parameters name.
-    fn takes_at_most_two_operands(&self, mapper: ExprId) -> bool {
+    fn find_filled_array(&self, site: Call) -> Option<FilledArray> {
+        let (array, method) = self.find_method_of_fresh_array(site)?;
+        if method != BuiltinId::ArrayPrototypeFill {
+            return None;
+        }
+        Some(FilledArray {
+            array,
+            length: self.find_array_of_length(array)?,
+            value: self.find_only_argument(site)?,
+        })
+    }
+
+    fn takes_at_most_two_parameters(&self, mapper: ExprId) -> bool {
         let hir = self.hir;
         let ExprKind::Fn(function) = hir[mapper].kind else {
             return false;
@@ -88,59 +116,43 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // A maker that stands for one call of the program is in tail position where that call is.
     fn emit_maker_at(
         &mut self,
         call: ExprId,
         maker: BuiltinId,
+        this: Option<ValueId>,
         operands: &[ValueId],
         tail: Tail<'_>,
     ) -> ValueId {
-        let callee = call_site(self.file, call).callee;
-        self.set_position(self.file.last_mapped_position(callee));
-        let made = self.emit_locked_call(maker, None, operands);
+        let site = call_site(self.file, call);
+        self.set_position(self.file.call_position(site));
+        let callee = self.emit_builtin_itself(maker);
+        let made = emit_call(self, callee, this, operands);
         let Tail::Yes { casts } = tail else {
             self.set_position(self.file.hir[call].pos);
             return self.claim_call_result(call, made);
         };
+        let position = self.file.find_position_of_returned_call(call);
         let cast = TailCast {
-            position: self.call_result_position(call),
+            positions: std::slice::from_ref(&position),
             outer: casts,
+            breaks_no_int32_promise: false,
         };
         self.return_call_in_tail_position(made, Tail::Yes { casts: Some(&cast) })
     }
 
-    fn emit_maker_of_receiver_at(
-        &mut self,
-        call: ExprId,
-        maker: BuiltinId,
-        this: ValueId,
-        operands: &[ValueId],
-        tail: Tail<'_>,
-    ) -> ValueId {
-        let callee = call_site(self.file, call).callee;
-        self.set_position(self.file.last_mapped_position(callee));
-        let made = self.emit_locked_call(maker, Some(this), operands);
-        let Tail::Yes { casts } = tail else {
-            self.set_position(self.file.hir[call].pos);
-            return self.claim_call_result(call, made);
-        };
-        let cast = TailCast {
-            position: self.call_result_position(call),
-            outer: casts,
-        };
-        self.return_call_in_tail_position(made, Tail::Yes { casts: Some(&cast) })
+    fn lower_only_argument(&mut self, call: ExprId, argument: ExprId) -> ValueId {
+        let mut arguments = [self.lower_expression(argument)];
+        self.convert_arguments(call, &mut arguments);
+        arguments[0]
     }
 
-    // `Array(-1)` throws where it is written, before what stands behind it is evaluated.
-    fn lower_checked_length(&mut self, construction: ExprId, length: ExprId) -> ValueId {
-        let length = self.lower_operand_of_question(construction, length);
-        self.set_position(self.file.construct_position(construction));
-        let check = BuiltinId::CompilerHelpersCheckedArrayLength;
-        self.emit_locked_call(check, None, &[length])
+    fn lower_checked_length(&mut self, array: ExprId, length: ExprId) -> ValueId {
+        let length = self.lower_only_argument(array, length);
+        self.set_position(self.file.position_of_array_call(array));
+        self.emit_builtin_call(BuiltinId::CompilerHelpersCheckedArrayLength, &[length])
     }
 
-    // Array.from({ length: n }), Array.from({ length: n }, mapper)
     pub(super) fn lower_array_from(
         &mut self,
         call: ExprId,
@@ -160,14 +172,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(length) = self.file.find_written_length(items) else {
             return match mapper {
                 None => Some(self.lower_copy_by_array_from(call, items, tail)),
-                Some(_) => None,
+                Some(mapper) => self.lower_mapped_copy_by_array_from(call, items, mapper, tail),
             };
         };
         self.emit_locked_builtin(BuiltinId::ArrayFrom);
         let length = self.lower_expression(length);
         let Some(mapper) = mapper else {
             let maker = BuiltinId::CompilerHelpersArrayOfUndefined;
-            return Some(self.emit_maker_at(call, maker, &[length], tail));
+            return Some(self.emit_maker_at(call, maker, None, &[length], tail));
         };
         let is_written_as_function = matches!(hir[mapper].kind, ExprKind::Fn(_));
         let mut written = [self.builder.undefined(), self.lower_expression(mapper)];
@@ -175,54 +187,55 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if is_written_as_function {
             let operands = [length, written[1]];
             let maker = BuiltinId::CompilerHelpersArrayFromLength;
-            return Some(self.emit_maker_at(call, maker, &operands, tail));
+            return Some(self.emit_maker_at(call, maker, None, &operands, tail));
         }
 
-        // Array.from takes undefined for no mapper at all, and the list then holds undefined: not what a mapper returns.
-        let split = self.split_expression_on_type(None, written[1], TypeTable::UNDEFINED);
+        let split = self.split_on_type(written[1], TypeTable::UNDEFINED);
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         self.builder.switch_to(split.taken);
         let maker = BuiltinId::CompilerHelpersArrayOfUndefined;
-        let made = self.emit_maker_at(call, maker, &[length], tail);
+        let made = self.emit_maker_at(call, maker, None, &[length], tail);
         self.builder.write_variable(result, made);
         self.jump(join);
         self.builder.switch_to(split.not_taken);
         let operands = [length, split.not_taken_value];
         let maker = BuiltinId::CompilerHelpersArrayFromLength;
-        let made = self.emit_maker_at(call, maker, &operands, tail);
+        let made = self.emit_maker_at(call, maker, None, &operands, tail);
         self.builder.write_variable(result, made);
         self.jump(join);
         self.continue_in(join);
         Some(self.builder.read_variable(result))
     }
 
-    // `Array.from(list)` of a list with its own names is `[...list]`: a hole reads as undefined in both. One that has lost or replaced its iterator is not, and neither is anything but a list.
+    fn emit_copy_by_spread(&mut self, call: ExprId, items: ExprId, value: ValueId) -> ValueId {
+        self.set_position(self.file.hir[items].pos);
+        let copy = self.builder.new_array(TypeTable::ANYTHING, &[], &[]);
+        self.builder.append_spread(copy, value);
+        self.set_position(self.file.hir[call].pos);
+        self.claim_call_result(call, copy)
+    }
+
     fn lower_copy_by_array_from(&mut self, call: ExprId, items: ExprId, tail: Tail<'_>) -> ValueId {
         self.emit_locked_builtin(BuiltinId::ArrayFrom);
-        // `Array.from(new Set(list))`: what was made just here has the iterator of its class.
         let made = self.file.skip_type_syntax(items);
-        let is_new_collection = match self.file.hir[made].kind {
-            ExprKind::New(site) => matches!(
-                find_locked_builtin(self.file, self.file.hir[site].callee),
-                Some(BuiltinId::Set | BuiltinId::Map)
-            ),
-            _ => false,
+        let constructed = match self.file.hir[made].kind {
+            ExprKind::New(site) => find_locked_builtin(self.file, self.file.hir[site].callee),
+            _ => None,
         };
+        let iterator = match constructed {
+            Some(BuiltinId::Set) => Some(BuiltinId::SetPrototypeSymbolIterator),
+            Some(BuiltinId::Map) => Some(BuiltinId::MapPrototypeSymbolIterator),
+            _ => None,
+        };
+        let is_new_collection =
+            iterator.is_some_and(|iterator| self.file.is_fixed_method(iterator));
         let value = self.lower_expression(items);
         if is_new_collection {
-            let position = self.file.first_position(items);
-            self.set_position(position);
-            let copy = self.builder.new_array(TypeTable::ANYTHING, &[], &[]);
-            self.builder.append_spread(copy, value);
-            self.builder.record_position(position);
-            self.set_position(self.file.hir[call].pos);
-            return self.claim_call_result(call, copy);
+            return self.emit_copy_by_spread(call, items, value);
         }
-        self.set_position(self.file.first_position(items));
-        let is_pristine = self
-            .builder
-            .emit(Opcode::IsPristineArray, &[value.to_word()]);
+        self.set_position(self.file.hir[items].pos);
+        let is_pristine = self.builder.is_pristine_array(value);
         let (taken, not_taken) = (self.create_block(), self.create_block());
         self.builder
             .branch(is_pristine, Edge::to(taken), Edge::to(not_taken));
@@ -231,45 +244,80 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         self.builder.switch_to(taken);
-        let position = self.file.first_position(items);
-        self.set_position(position);
-        let copy = self.builder.new_array(TypeTable::ANYTHING, &[], &[]);
-        self.builder.append_spread(copy, value);
-        self.builder.record_position(position);
-        self.set_position(self.file.hir[call].pos);
-        let copy = self.claim_call_result(call, copy);
+        let copy = self.emit_copy_by_spread(call, items, value);
         self.builder.write_variable(result, copy);
         self.jump(join);
         self.builder.switch_to(not_taken);
+        let mut value = value;
+        if self
+            .file
+            .is_fixed_method(BuiltinId::StringPrototypeSymbolIterator)
+        {
+            let split = self.split_on_type(value, TypeTable::STRING);
+            self.builder.switch_to(split.taken);
+            let copy = self.emit_copy_by_spread(call, items, split.taken_value);
+            self.builder.write_variable(result, copy);
+            self.jump(join);
+            self.builder.switch_to(split.not_taken);
+            value = split.not_taken_value;
+        }
         let this = self.emit_builtin_itself(BuiltinId::Array);
-        let made = self.emit_maker_of_receiver_at(call, BuiltinId::ArrayFrom, this, &[value], tail);
+        let made = self.emit_maker_at(call, BuiltinId::ArrayFrom, Some(this), &[value], tail);
         self.builder.write_variable(result, made);
         self.jump(join);
         self.continue_in(join);
         self.builder.read_variable(result)
     }
 
-    // Array(n).fill(value)
-    fn lower_filled_array(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
-        let file = &*self.file;
-        let array = file.find_receiver(site, b"fill", BuiltinId::ArrayPrototypeFill)?;
-        let length = file.find_array_of_length(array)?;
-        let value = file.find_only_argument(site)?;
+    fn lower_mapped_copy_by_array_from(
+        &mut self,
+        call: ExprId,
+        items: ExprId,
+        mapper: ExprId,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
+        if !matches!(self.file.hir[mapper].kind, ExprKind::Fn(_)) {
+            return None;
+        }
+        self.emit_locked_builtin(BuiltinId::ArrayFrom);
+        let mut written = [self.lower_expression(items), self.lower_expression(mapper)];
+        self.convert_arguments(call, &mut written);
+        self.set_position(self.file.hir[items].pos);
+        let is_pristine = self.builder.is_pristine_array(written[0]);
+        let (taken, not_taken) = (self.create_block(), self.create_block());
+        self.builder
+            .branch(is_pristine, Edge::to(taken), Edge::to(not_taken));
+        self.builder.seal(taken);
+        self.builder.seal(not_taken);
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        self.builder.switch_to(taken);
+        let maker = BuiltinId::CompilerHelpersArrayFromList;
+        let made = self.emit_maker_at(call, maker, None, &written, tail);
+        self.builder.write_variable(result, made);
+        self.jump(join);
+        self.builder.switch_to(not_taken);
+        let this = self.emit_builtin_itself(BuiltinId::Array);
+        let made = self.emit_maker_at(call, BuiltinId::ArrayFrom, Some(this), &written, tail);
+        self.builder.write_variable(result, made);
+        self.jump(join);
+        self.continue_in(join);
+        Some(self.builder.read_variable(result))
+    }
 
-        // The maker throws what `Array(n)` throws. Nothing else in it can be seen.
-        let length = match file.is_evaluated_without_effect(value) {
-            true => self.lower_operand_of_question(array, length),
-            false => self.lower_checked_length(array, length),
+    fn lower_filled_array(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+        let filled = self.file.find_filled_array(site)?;
+        let length = match self.file.is_evaluated_without_effect(filled.value) {
+            true => self.lower_only_argument(filled.array, filled.length),
+            false => self.lower_checked_length(filled.array, filled.length),
         };
-        let value = self.lower_operand_of_question(call, value);
-        self.set_position(self.file.construct_position(array));
-        let maker = BuiltinId::CompilerHelpersFilledArray;
-        let made = self.emit_locked_call(maker, None, &[length, value]);
+        let value = self.lower_only_argument(call, filled.value);
+        self.set_position(self.file.position_of_array_call(filled.array));
+        let made = self.emit_builtin_call(BuiltinId::CompilerHelpersFilledArray, &[length, value]);
         self.set_position(self.file.hir[call].pos);
         Some(self.claim_call_result(call, made))
     }
 
-    // Array(n).fill(value).map(mapper)
     fn lower_mapped_filled_array(
         &mut self,
         call: ExprId,
@@ -277,25 +325,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         tail: Tail<'_>,
     ) -> Option<ValueId> {
         let file = &*self.file;
-        let filled = file.find_receiver(site, b"map", BuiltinId::ArrayPrototypeMap)?;
-        let ExprKind::Call(fill) = file.hir[filled].kind else {
+        let (receiver, method) = file.find_method_of_fresh_array(site)?;
+        let ExprKind::Call(fill) = file.hir[receiver].kind else {
             return None;
         };
-        let fill = file.hir[fill];
-        let array = file.find_receiver(fill, b"fill", BuiltinId::ArrayPrototypeFill)?;
-        let length = file.find_array_of_length(array)?;
-        let value = file.find_only_argument(fill)?;
+        if method != BuiltinId::ArrayPrototypeMap {
+            return None;
+        }
+        let filled = file.find_filled_array(file.hir[fill])?;
         let mapper = file.find_only_argument(site)?;
-        if !file.takes_at_most_two_operands(mapper) {
+        if !file.takes_at_most_two_parameters(mapper) {
             return None;
         }
 
-        let length = self.lower_checked_length(array, length);
-        let value = self.lower_operand_of_question(filled, value);
-        let mapper = self.lower_operand_of_question(call, mapper);
+        let length = self.lower_checked_length(filled.array, filled.length);
+        let value = self.lower_only_argument(receiver, filled.value);
+        let mapper = self.lower_only_argument(call, mapper);
         let operands = [length, value, mapper];
         let maker = BuiltinId::CompilerHelpersMappedFilledArray;
-        Some(self.emit_maker_at(call, maker, &operands, tail))
+        Some(self.emit_maker_at(call, maker, None, &operands, tail))
     }
 
     pub(super) fn try_lower_method_call(

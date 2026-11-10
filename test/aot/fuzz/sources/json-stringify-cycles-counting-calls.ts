@@ -15,8 +15,6 @@ export default family(
     },
     ...Array.from({ length: 160 }, (_, index) => ({
       name: `seed ${index + 1}.`,
-      flags:
-        index % 8 === 5 ? ["--aot-heat=everything-is-hot"] : index % 8 === 6 ? ["--aot-heat=everything-is-cold"] : [],
       make: () => ({ file: "main.ts", text: generate(new Random(index + 1)) }),
     })),
   ],

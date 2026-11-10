@@ -1,5 +1,5 @@
 // A proxy of a function is bound, called through the bound function, and values are tested against it. The handler hands every read on and has no other trap, so all of it goes on at the target, and nothing of the library is in the executable.
-// STATISTIC: ImageFunctionsEmitted <= 30
+// STATISTIC: ImageFunctionsEmitted <= 30 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 function ask(value, constructor) { return value instanceof constructor; }
 let asked = 0;
 const judge = () => {};

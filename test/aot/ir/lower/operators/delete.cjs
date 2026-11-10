@@ -38,8 +38,7 @@
 // DELETES: = PropDelete {{*}}key="p" mode=Sloppy
 // DELETES-LABEL: function {{*}}name="chainTail"
 // DELETES: [[link]] = PropGet {{*}}key="a"
-// DELETES-NEXT: [[convertedLink]] = Convert [[link]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// DELETES-NEXT: = PropDelete [[convertedLink]] key="b" mode=Sloppy
+// DELETES-NEXT: = PropDelete [[link]] key="b" mode=Sloppy
 
 function named(o) {
   return delete o.p;

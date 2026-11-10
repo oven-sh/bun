@@ -1,8 +1,8 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: b0([[a]]: anything, [[b]]: anything):
-// CHECK: = TypeTest [[b]] testedType=undefined @
-// CHECK: Jump -> next [[join]]([[a]])
+// CHECK: [[missing]] = TypeTest [[b]] testedType=undefined @
+// CHECK-NEXT: Branch [[missing]] -> taken [[join]]([[a]]), notTaken
 
 // RUN(ZONE): lower
 // ZONE-NOT: CheckInitialized

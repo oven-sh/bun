@@ -1,0 +1,31 @@
+# -- source: the-word-for-extra-properties-is-left-out-only-where-every-store-is-proven-to-fit-its-slot.ts
+# declare function sink(...values: unknown[]): void;
+# class Broken { text: string; turn: number; constructor(text: any, turn: number) { this.text = text; this.turn = turn; } }
+# class Whole { text: string; turn: number; constructor(text: any, turn: number) { this.text = text; this.turn = turn; } }
+# class Mixed { top: Whole; turn: number; constructor(top: any, turn: number) { this.top = top; this.turn = turn; } }
+# function run(count: number) { let total = 0; for (let i = 0; i < count; i++) { const broken = new Broken((i & 1) === 0 ? i : "t", i); const whole = new Whole("t", i); const mixed = new Mixed((i & 1) === 0 ? broken : whole, i); total += String(broken.text).length + whole.text.length + mixed.top.turn; } return total; }
+# sink(run(10));
+# -- end of source
+# Three deeds make extra properties: a name gained, a definition by a descriptor, and a store of what a slot does not take. None of the three classes leaves the program, gains a name or gets a descriptor.
+# `text` of a Broken is held to strings and Link sees a number go into it; `top` of a Mixed is held to the class Whole and two classes meet on their way into it, and Link proves the set of the two, which the slot does not take. Their cells have the word: 48 bytes.
+# Of a Whole Link proves that strings are all that the stores bring: no store can empty the slot, and a pair without the word is 32 bytes.
+# Without the word each object whose field leaves its slot pays with a Structure of its own (StructureTable::holdingExtraProperties()), and every cache that goes by the Structure misses: 3,700 instructions an object.
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=48
+# CHECK-NEXT: slot 0 "text" {{*}}offset=24 {{*}}type=undefined|null|string
+# CHECK-NEXT: slot 1 "turn" {{*}}offset=32
+# CHECK-NEXT: extra-properties {{*}}offset=16
+# CHECK-NEXT: layout L1 CompiledObject size=32
+# CHECK-NEXT: slot 0 "text" {{*}}offset=16 {{*}}type=undefined|null|string
+# CHECK-NEXT: slot 1 "turn" {{*}}offset=24
+# CHECK-NEXT: layout L2 CompiledObject size=48
+# CHECK-NEXT: slot 0 "top" {{*}}offset=24 {{*}}type=undefined|null|L1
+# CHECK-NEXT: slot 1 "turn" {{*}}offset=32
+# CHECK-NEXT: extra-properties {{*}}offset=16
+# RUN(LINK): link layouts fields mechanisms=all
+# LINK: layout L0 changes=[]
+# LINK-NEXT: layout L1 changes=[]
+# LINK-NEXT: layout L2 changes=[]
+# LINK: field L0.0 "text" proven=number|string writers-known
+# LINK: field L1.0 "text" proven=string writers-known
+# LINK: field L2.0 "top" proven=L0|L1 

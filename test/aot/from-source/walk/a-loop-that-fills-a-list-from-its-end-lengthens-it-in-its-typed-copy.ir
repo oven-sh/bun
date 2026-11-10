@@ -1,0 +1,33 @@
+# -- source: main.js
+# function fill(n, t) { const a = []; for (let i = 0; i < n; i++) a[i] = i * 0.5 + t; return a; }
+# function again(a, n, t) { for (let i = 0; i < n; i++) a[i] = i * 0.5 + t; return a; }
+# function seen(n, t) { const a = [t]; let s = 0; for (let i = 1; i < n; i++) { s += a.length; a[i] = i * 0.5 + t; s += a.length; } return s; }
+# const kept = [];
+# print(fill(6, 1).join(), fill(0, 1).length, again(again(kept, 4, 1), 6, 2).join(), again(kept, 2, 3).join(), seen(5, 1));
+# -- end of source
+# f1 = fill, f2 = again, f3 = seen. The typed copy of a loop held its store against the length that the list had in front of the loop, so a loop that fills a list from its own end left the copy at its first store, for good.
+# In fill() the list is a literal born for this entry into the loop, and the counter enters with the number of values written. That the list is still as long is asked once, in front. Every turn stores once under the counter,
+# which goes up by one, and no turn writes the storage: at every head the list is as long as the counter is great. The count alone ends this loop, so whether the room holds every turn is asked once, in front, and the turn only raises the length.
+# In again() nobody knows how long the list is: it is stored into as before, and its length stays read once in front.
+# In seen() the raise writes the heap of lengths alone: kind, pointer and room stay known from in front, and `a.length` is read in the turn, on either side of the store.
+# RUN(FILL): walk f1:Body mechanisms=all
+# FILL: [[room]]: {{*}} = GetArrayCapacity
+# FILL: LessEq {{*}}, [[room]]
+# FILL: isLoopHead=true
+# FILL-NOT: GetArrayLength
+# FILL-NOT: Less {{*}}, [[room]]
+# FILL: ExtendArrayLength
+# FILL-NEXT: Put{{*}}Index
+# RUN(AGAIN): walk f2:Body mechanisms=all
+# AGAIN-NOT: ExtendArrayLength
+# RUN(SEEN): walk f3:Body mechanisms=all
+# SEEN: GetArrayCapacity
+# SEEN: isLoopHead=true
+# SEEN: GetArrayLength
+# SEEN: ExtendArrayLength
+# SEEN: GetArrayLength
+# SEEN: Jump
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1,1.5,2,2.5,3,3.5 0 2,2.5,3,3.5,4,4.5 3,3.5,3,3.5,4,4.5 24
+# ANSWERS-NEXT: exited with 0
+# ANSWERS-NEXT: the source prints the same

@@ -32,7 +32,7 @@ pub(super) fn find_direct_evals(
         {
             continue;
         }
-        if let Some(call) = find_direct_eval_call(hir, bound, ident) {
+        if let Some(call) = find_call_of_name(hir, bound, ident) {
             direct_evals.push(DirectEval {
                 call,
                 scope,
@@ -43,7 +43,11 @@ pub(super) fn find_direct_evals(
     direct_evals
 }
 
-fn find_direct_eval_call(hir: &File<'_>, bound: &BoundBuilder, ident: ExprId) -> Option<ExprId> {
+pub(super) fn find_call_of_name(
+    hir: &File<'_>,
+    bound: &BoundBuilder,
+    ident: ExprId,
+) -> Option<ExprId> {
     let callee = find_outermost_cast(hir, bound, ident);
     let Parent::Expr(parent) = bound.parent_of_expr(callee) else {
         return None;
@@ -57,9 +61,7 @@ fn find_direct_eval_call(hir: &File<'_>, bound: &BoundBuilder, ident: ExprId) ->
 
 #[derive(Default)]
 pub(super) struct DynamicScopes {
-    /// `with` statements, and the scopes that take the variables of text evaluated in their code. For a function that code is its body.
     pub scopes: Vec<u64>,
-    /// The functions that take the variables of text evaluated among their parameters.
     pub parameter_eval_scopes: Vec<u64>,
 }
 
@@ -102,15 +104,47 @@ impl ReferencePass<'_, '_> {
         let bindings = self.lookup.scopes.appended_bindings.iter();
         let mut appended: Vec<_> = bindings.map(|(key, entry)| (key.0, entry.0)).collect();
         appended.shared_sort_unstable();
-        let mut symbol_lists: FxHashMap<ScopeId, IdList<SymbolId>> = FxHashMap::default();
+        let mut evals_in_scope: FxHashMap<ScopeId, usize> = FxHashMap::default();
+        for eval in &self.direct_evals {
+            *evals_in_scope.entry(eval.scope).or_default() += 1;
+        }
+        type Lists = (IdList<SymbolId>, IdList<SymbolId>);
+        let mut symbol_lists: FxHashMap<ScopeId, Lists> = FxHashMap::default();
+        let mut evals_that_hide: FxHashMap<Atom, usize> = FxHashMap::default();
+        let bound = self.lookup.bound;
+        let file_scope = self.find_file_scope(self.direct_evals[0].scope);
+        let names_of_file = file_scope.some().map_or(&[][..], |file_scope| {
+            bound.table(bound.scopes[file_scope.idx()].locals)
+        });
         for index in 0..self.direct_evals.len() {
             let eval = self.direct_evals[index];
-            let symbols = *symbol_lists
-                .entry(eval.scope)
-                .or_insert_with(|| self.append_eval_symbols(eval, &appended));
+            symbol_lists.entry(eval.scope).or_insert_with(|| {
+                let (symbols, names) = self.append_eval_symbols(eval, &appended);
+                let eval_count = evals_in_scope[&eval.scope];
+                let mut note = |name: Atom| *evals_that_hide.entry(name).or_default() += eval_count;
+                if names.len() <= names_of_file.len() {
+                    names.into_iter().for_each(note);
+                } else {
+                    let names_of_file = names_of_file.iter().map(|entry| entry.0);
+                    names_of_file
+                        .filter(|name| names.contains(name))
+                        .for_each(&mut note);
+                }
+                (symbols, self.append_constructor_symbols(eval, &appended))
+            });
+        }
+        let eval_count = self.direct_evals.len();
+        evals_that_hide.retain(|_, count| *count == eval_count);
+        let hidden_from_every_eval: FxHashSet<Atom> = evals_that_hide.into_keys().collect();
+        let file_symbols = self.append_file_symbols(file_scope, &appended, hidden_from_every_eval);
+        for index in 0..self.direct_evals.len() {
+            let eval = self.direct_evals[index];
+            let (symbols, constructor_symbols) = symbol_lists[&eval.scope];
             let eval_scope = EvalScope {
                 scope: eval.scope,
                 symbols,
+                file_symbols,
+                constructor_symbols,
                 is_sloppy: eval.is_sloppy,
             };
             self.references.eval_scopes.push((eval.call, eval_scope));
@@ -122,33 +156,102 @@ impl ReferencePass<'_, '_> {
         &mut self,
         eval: DirectEval,
         appended: &[(ScopeId, SymbolId)],
-    ) -> IdList<SymbolId> {
+    ) -> (IdList<SymbolId>, FxHashSet<Atom>) {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         let first = self.eval_symbol_ids.len();
         let mut seen: FxHashSet<Atom> = FxHashSet::default();
         let (mut at, mut from) = (eval.scope, ScopeKind::Block);
-        while at.is_some() {
-            let scope = &bound.scopes[at.idx()];
-            for &(name, local) in bound.table(scope.locals) {
-                if let Some(binding) = self.lookup.local_binding(scope.kind, from, name, local)
-                    && !seen.contains(&name)
-                {
-                    let is_passed_by_declarations =
-                        eval.is_sloppy && self.is_simple_catch_parameter(binding);
-                    if !is_passed_by_declarations {
-                        seen.insert(name);
-                    }
-                    self.list_eval_binding(binding);
+        while at.is_some() && !matches!(bound.scopes[at.idx()].kind, ScopeKind::File) {
+            self.list_names_of_scope(at, from, eval.is_sloppy, appended, &mut seen);
+            from = bound.scopes[at.idx()].kind;
+            at = bound.runtime_parent_scope(hir, at);
+        }
+        let count = self.eval_symbol_ids.len() - first;
+        let symbols = IdList::new(self.first_eval_id + first as u32, count as u32);
+        (symbols, seen)
+    }
+
+    fn find_file_scope(&self, mut at: ScopeId) -> ScopeId {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        while at.is_some() && !matches!(bound.scopes[at.idx()].kind, ScopeKind::File) {
+            at = bound.runtime_parent_scope(hir, at);
+        }
+        at
+    }
+
+    fn append_file_symbols(
+        &mut self,
+        file_scope: ScopeId,
+        appended: &[(ScopeId, SymbolId)],
+        mut hidden_from_every_eval: FxHashSet<Atom>,
+    ) -> IdList<SymbolId> {
+        let first = self.eval_symbol_ids.len();
+        if file_scope.is_some() {
+            let seen = &mut hidden_from_every_eval;
+            self.list_names_of_scope(file_scope, ScopeKind::Block, false, appended, seen);
+        }
+        let count = self.eval_symbol_ids.len() - first;
+        IdList::new(self.first_eval_id + first as u32, count as u32)
+    }
+
+    fn list_names_of_scope(
+        &mut self,
+        at: ScopeId,
+        from: ScopeKind,
+        is_sloppy: bool,
+        appended: &[(ScopeId, SymbolId)],
+        seen: &mut FxHashSet<Atom>,
+    ) {
+        let bound = self.lookup.bound;
+        let scope = &bound.scopes[at.idx()];
+        for &(name, local) in bound.table(scope.locals) {
+            if let Some(binding) = self.lookup.local_binding(scope.kind, from, name, local)
+                && !seen.contains(&name)
+                && self.lookup.find_container(binding).is_none()
+            {
+                let is_passed_by_declarations =
+                    is_sloppy && self.is_simple_catch_parameter(binding);
+                if !is_passed_by_declarations {
+                    seen.insert(name);
                 }
+                self.list_eval_binding(binding);
             }
-            let first_appended = appended.partition_point(|entry| entry.0 < at);
-            for &(_, symbol) in appended[first_appended..].iter().take_while(|e| e.0 == at) {
-                if is_appended_visible(from) && seen.insert(bound.symbols[symbol.idx()].name) {
+        }
+        let first_appended = appended.partition_point(|entry| entry.0 < at);
+        for &(_, symbol) in appended[first_appended..].iter().take_while(|e| e.0 == at) {
+            if is_appended_visible(from) && seen.insert(bound.symbols[symbol.idx()].name) {
+                let own = bound.own_binding_of_decorated_class(symbol);
+                self.list_eval_binding(Binding::Symbol(own.unwrap_or(symbol)));
+            }
+        }
+    }
+
+    fn append_constructor_symbols(
+        &mut self,
+        eval: DirectEval,
+        appended: &[(ScopeId, SymbolId)],
+    ) -> IdList<SymbolId> {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let first = self.eval_symbol_ids.len();
+        let mut around = eval.scope;
+        while around.is_some() {
+            if let Some(constructor) = bound.constructor_of_field_value(hir, around) {
+                let at = bound.fns[constructor.idx()].scope;
+                let scope = &bound.scopes[at.idx()];
+                for &(name, local) in bound.table(scope.locals) {
+                    let from = ScopeKind::Block;
+                    if let Some(binding) = self.lookup.local_binding(scope.kind, from, name, local)
+                    {
+                        self.list_eval_binding(binding);
+                    }
+                }
+                let first_appended = appended.partition_point(|entry| entry.0 < at);
+                for &(_, symbol) in appended[first_appended..].iter().take_while(|e| e.0 == at) {
                     self.list_eval_binding(Binding::Symbol(symbol));
                 }
+                self.has_direct_eval.push(constructor);
             }
-            from = scope.kind;
-            at = bound.runtime_parent_scope(hir, at);
+            around = bound.runtime_parent_scope(hir, around);
         }
         let count = self.eval_symbol_ids.len() - first;
         IdList::new(self.first_eval_id + first as u32, count as u32)
@@ -163,12 +266,10 @@ impl ReferencePass<'_, '_> {
     }
 
     fn list_eval_binding(&mut self, binding: Binding) {
-        let bound = self.lookup.bound;
         let Binding::Symbol(symbol) = binding else {
             return;
         };
-        let parent = bound.symbols[symbol.idx()].parent;
-        if parent.is_some() && parent != bound.file_symbol {
+        if self.lookup.find_container(binding).is_some() {
             return;
         }
         self.eval_symbol_ids.push(symbol.0);
@@ -194,7 +295,12 @@ impl ReferencePass<'_, '_> {
                     self.uses_arguments.push(CodeUnit::File);
                     return;
                 }
-                ScopeKind::FieldInitializer(_) => return,
+                ScopeKind::FieldInitializer(_) => {
+                    let around = bound.scopes[scope.parent.idx()].kind;
+                    if !matches!(around, ScopeKind::ClassDecorators(_)) {
+                        return;
+                    }
+                }
                 ScopeKind::Module(_)
                 | ScopeKind::Block
                 | ScopeKind::Class(_)

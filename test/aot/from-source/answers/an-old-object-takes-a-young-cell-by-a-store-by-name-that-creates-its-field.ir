@@ -1,0 +1,23 @@
+# 4,000 objects grow old with the slot of `late` empty; then `box.late = value` lays a young cell into each: the store creates the field. Without mechanisms it goes by name, through the short stub for a field that takes any value.
+# Behind a collection of the young alone every cell must still be there: the creating road has to tell the collector of the old object.
+# RUN(NONE): run-in-shell mechanisms=none globalThis.collectAll = () => { fullGC(); fullGC(); }; globalThis.fresh = number => ({ number }); globalThis.collectYoung = () => { edenGC(); const junk = []; for (let index = 0; index < 200000; index++) junk[index & 1023] = { number: -1, more: index }; edenGC(); };
+# NONE: 7998000 first,last,late
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all globalThis.collectAll = () => { fullGC(); fullGC(); }; globalThis.fresh = number => ({ number }); globalThis.collectYoung = () => { edenGC(); const junk = []; for (let index = 0; index < 200000; index++) junk[index & 1023] = { number: -1, more: index }; edenGC(); };
+# ALL: 7998000 first,last,late
+# ALL-NEXT: exited with 0
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: slot {{*}}"late" JSValue Inline
+# -- source: main.js
+# function Box(early) { this.first = 1; if (early) this.late = 0; this.last = 2; }
+# function make(early) { return new Box(early); }
+# function lay(box, value) { box.late = value; }
+# const old = [];
+# for (let index = 0; index < 4000; index++) old.push(make(false));
+# collectAll();
+# for (let index = 0; index < 4000; index++) lay(old[index], fresh(index));
+# collectYoung();
+# let sum = 0;
+# for (let index = 0; index < 4000; index++) sum += old[index].late.number;
+# print(sum + " " + Object.keys(old[3999]).join());
+# -- end of source

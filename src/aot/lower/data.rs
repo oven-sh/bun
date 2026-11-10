@@ -2,7 +2,7 @@ mod values;
 
 use bun_sema::atom::known;
 use bun_sema::bind::BindingInitializer;
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::ExprId;
 use rustc_hash::FxHashMap;
 use smallvec::smallvec;
@@ -13,7 +13,7 @@ use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{Data, DataNode, LimitId};
-use crate::ir::{DataId, ValueId};
+use crate::ir::{DataId, LayoutId, ValueId};
 use crate::modules::ExportBinding;
 
 #[derive(Default)]
@@ -45,13 +45,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.data(data)
     }
 
-    // No `import` or `require()` names the page, so the build did not bundle it. A load of a computed path can still reach it.
+    pub(in crate::lower) fn lower_data_of_object(
+        &mut self,
+        literal: ExprId,
+        layout: LayoutId,
+        entries: &[(Constant, Constant)],
+    ) -> ValueId {
+        if let Some(&data) = self.file.modules.data.records.get(&literal) {
+            return self.builder.data(data);
+        }
+        let root = values::create_object_node(self.file, layout, entries);
+        let data = add_record(self.file, literal, root);
+        self.builder.data(data)
+    }
+
     fn emit_refusal_of_unbundled_page(&mut self) -> ValueId {
-        let mut pages = self.file.inputs.sources.pages().iter();
-        let page = pages.find(|page| page.0 == self.file.file);
-        let name = page.map_or(&b""[..], |page| bun_paths::basename(&page.1));
+        let path = self.file.inputs.sources.diagnostic_path(self.file.file);
         let reason = b"': the page isn't bundled into this executable, because no import or require() names it";
-        let message = self.emit_text(&[b"Cannot load '", name, reason].concat());
+        let message = [b"Cannot load '", bun_paths::basename(path), reason].concat();
+        let message = self.emit_text(&message);
         let constructor = self.emit_builtin_itself(BuiltinId::Error);
         let error = self.emit_construct(constructor, Arguments::Values(smallvec![message]), None);
         self.emit_throw(error);
@@ -119,7 +131,6 @@ fn add_record(
     if nesting_depth(&root) > maximum {
         let position = file.hir[expression].pos;
         file.queries.answer_nothing_from_now_on();
-        file.gave_up(LimitId::MaxDataNestingDepth, position);
         let span = file.span_at(position);
         let depth = maximum.to_string();
         file.diagnostics

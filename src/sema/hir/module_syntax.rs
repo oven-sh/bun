@@ -2,7 +2,7 @@ use super::{
     ExportId, ExprId, ExprKind, FileIn, Flags, ImportId, PropKey, PropKind, StmtId, StmtKind,
     Storage, rare,
 };
-use crate::atom::Atom;
+use crate::atom::{Atom, known};
 
 impl<S: Storage> FileIn<S> {
     pub fn statement_import_attributes(&self, stmt: StmtId) -> ExprId {
@@ -29,6 +29,35 @@ impl<S: Storage> FileIn<S> {
             ExprKind::String(text) => Some(text),
             _ => None,
         }
+    }
+
+    pub fn is_import_attribute_settled(&self, attributes: ExprId, key: Atom) -> bool {
+        let Some(ExprKind::Object(props)) = self.exprs.get(attributes.idx()).map(|it| it.kind)
+        else {
+            return false;
+        };
+        let mut found = 0;
+        let are_plain = props.iter().map(|prop| &self[prop]).all(|prop| {
+            let is_key = prop.key == PropKey::Name(key);
+            found += usize::from(is_key);
+            prop.kind == PropKind::Init
+                && matches!(prop.key, PropKey::Name(_))
+                && (!is_key || matches!(self[prop.value].kind, ExprKind::String(_)))
+        });
+        are_plain && found == 1
+    }
+
+    pub fn find_name_of_loaded_import(&self, name: Atom) -> Option<(Atom, Atom)> {
+        let mut loaded = self.imports.iter().filter(|it| it.loaded_as.is_some());
+        loaded.find_map(|it| {
+            let mut named = it.named.iter().map(|spec| &self[spec]);
+            let key = match name {
+                _ if it.default == name => known::default,
+                _ if it.namespace == name => Atom::NONE,
+                _ => named.find(|spec| spec.local == name)?.imported,
+            };
+            Some((it.loaded_as, key))
+        })
     }
 
     #[cfg(any(test, feature = "test_support"))]

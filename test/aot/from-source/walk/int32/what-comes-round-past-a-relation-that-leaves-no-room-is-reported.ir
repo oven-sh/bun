@@ -1,0 +1,19 @@
+# THE LYING CONTROLS of what-comes-round-is-cut-by-the-relations-in-front-of-its-edge.ir: each step is reported
+# either: a way comes round on which `i < to` has failed . late: `i > to` lets the greatest int32 go round . more: below `to + 1` is not below an int32 . chases: nothing holds `j`; `i`, which lies below it, is not reported
+# skips: `continue` comes round in front of the test . old: the relation was asked of the value in front of the step . other: the relation on the way round was asked of another value
+# self: the other side is computed from the variable itself: while it is being asked it is what it is declared to be, and no less
+# -- source: what-comes-round-past-a-relation-that-leaves-no-room-is-reported.ts
+# declare function sink(...values: unknown[]): void;
+# function either(to: Bun.int32, more: boolean): Bun.int32 { let i: Bun.int32 = 0; do i++; while (i < to || more); return i; }
+# function late(to: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; for (;;) { i++; if (i > to) break; } return i; }
+# function more(to: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; do i++; while (i < to + 1); return i; }
+# function chases(): Bun.int32 { let i: Bun.int32 = 0; let j: Bun.int32 = 1; do { i++; j++; } while (i < j); return i; }
+# function skips(to: Bun.int32, c: boolean): Bun.int32 { let i: Bun.int32 = 0; for (;;) { i++; if (c) continue; if (i >= to) break; } return i; }
+# function old(to: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; for (;;) { if (i > to) break; i++; } return i; }
+# function other(to: Bun.int32, c: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; for (;;) { i++; if (c >= to) break; } return i; }
+# function self(): Bun.int32 { let i: Bun.int32 = 0; let k: Bun.int32 = 0; do { k = i; i++; } while (i <= k + 1); return i; }
+# sink(either, late, more, chases, skips, old, other, self);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 8
+# RUN: walk f1 f2 f3 f4 f5 f6 f7 f8 mechanisms=all
+# CHECK: the walk of f1:Body failed

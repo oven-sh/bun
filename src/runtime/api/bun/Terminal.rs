@@ -1721,7 +1721,7 @@ impl Terminal {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         match status {
             WriteStatus::Pending => {}
-            // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX
+            // `PosixStreamingWriter` has no `on_writable`, so POSIX
             // fires `drain` off this transition. Windows fires it from
             // `on_writable` and only records the state here.
             WriteStatus::Drained => {
@@ -1875,9 +1875,7 @@ impl Terminal {
             return true;
         }
         v.extend_from_slice(chunk);
-        // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
-        // via mimalloc on the C++ side) — leak the Box and hand over the slice.
-        let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
+        let bytes = v.into_boxed_slice();
         // This is the pipe reader's landing frame: a buffer that cannot be
         // built (allocation failure, a terminating VM) is folded here and
         // reading goes on.
@@ -1987,9 +1985,6 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_writer_error(&err);
-    }
-    unsafe fn on_ready(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready();
     }
     unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close();

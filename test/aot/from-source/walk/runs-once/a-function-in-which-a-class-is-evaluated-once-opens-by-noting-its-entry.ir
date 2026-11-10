@@ -1,0 +1,18 @@
+# `setUp` is entered by one call of the module's body, outside of loops: Link says that it runs at most once, and `Meter` is taken to be evaluated once on that word. So its body opens with EnterBodyThatRunsOnce, and the module's body calls it.
+# `plain` runs once as well, and nobody leans on it: it opens with nothing. `make` is called twice: Link says nothing of it.
+# f1 = setUp, f2 = plain, f3 = make
+# -- source: a-function-in-which-a-class-is-evaluated-once-opens-by-noting-its-entry.ts
+# declare function sink(...values: unknown[]): void;
+# function setUp() { class Meter { n = 1; read() { return this.n * 2; } } return Meter; }
+# function plain(n: number) { return n + 1; }
+# function make() { class Cell { n = 2; } return Cell; }
+# sink(setUp(), plain(1), make(), make());
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: EnterBodyThatRunsOnce functionNumber=1
+# RUN(PLAIN): walk f2 mechanisms=all
+# PLAIN-NOT: EnterBodyThatRunsOnce
+# RUN(TWICE): walk f3 mechanisms=all
+# TWICE-NOT: EnterBodyThatRunsOnce
+# RUN(CALLER): walk f0 mechanisms=all
+# CALLER-NOT: EnterBodyThatRunsOnce

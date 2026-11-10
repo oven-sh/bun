@@ -117,6 +117,26 @@ describe.concurrent("--compile-executable-path", () => {
     },
   );
 
+  test.skipIf(description < 0).each([
+    ["the table of built-ins", 16],
+    ["the table of native functions", 20],
+  ])("--compile-executable-path with --aot refuses a Bun that differs in %s", async (name, offset) => {
+    using dir = tempDir("aot-executable-path-table", files);
+    const other = Buffer.from(thisBun);
+    const table = other.indexOf(Buffer.from("BUNAOTTB\x18\0\0\0", "latin1"));
+    expect(table).toBeGreaterThan(0);
+    const here = other.readUInt32LE(table + offset);
+    const there = (here ^ 1) >>> 0;
+    other.writeUInt32LE(there, table + offset);
+    writeOther(String(dir), "other-table", other);
+    const { stderr, exitCode } = await build(String(dir), "./other-table");
+    expect(stderr).toContain(
+      `error: ./other-table can't run code compiled by this Bun: ${name} is ${there} there and ${here} here`,
+    );
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "out"))).toBe(false);
+  });
+
   test.skipIf(!isLinux)("the description of the run time names the version of the image format", async () => {
     using dir = tempDir("aot-executable-path-names-format-version", files);
     const { stderr, exitCode } = await build(String(dir), bunExe());

@@ -4197,8 +4197,8 @@ describe.concurrent("retry delay and condition", () => {
           ["an array with a hole", /^undefined$/, () => [new Error("first"), , ]],
           ["an empty array", /.*/, () => []],
           ["a symbol", /^Symbol\\(boom\\)$/, () => Symbol("boom")],
-          ["a function", /^function boom\\(\\) \\{\\}$/, () => function boom() {}],
         ]) test("throws " + name, { retry: { count: 1, condition } }, once(() => { throw thrown(); }));
+        test("throws an empty array, and the retry has a delay alone", { retry: { count: 1, delay: 1 } }, once(() => { throw []; }));
         test("Promise.any()", { retry: { count: 1, condition: /^last$/ } }, once(() => Promise.any(members().map(error => Promise.reject(error)))));
       `,
     });
@@ -4236,9 +4236,8 @@ describe.concurrent("retry delay and condition", () => {
         "throws a symbol: 1",
         `["Symbol(boom)"]`,
         "throws a symbol: 2",
-        "throws a function: 1",
-        `["function boom() {}"]`,
-        "throws a function: 2",
+        "throws an empty array, and the retry has a delay alone: 1",
+        "[]",
         "Promise.any(): 1",
         `["first","last"]`,
         "Promise.any(): 2",
@@ -4256,7 +4255,7 @@ describe.concurrent("retry delay and condition", () => {
         "(pass) throws an array with a hole (attempt 2)",
         "(fail) throws an empty array",
         "(pass) throws a symbol (attempt 2)",
-        "(pass) throws a function (attempt 2)",
+        "(fail) throws an empty array, and the retry has a delay alone",
         "(pass) Promise.any() (attempt 2)",
       ],
       exitCode: 1,

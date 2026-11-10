@@ -4942,7 +4942,7 @@ bool JSC__JSValue__isAggregateError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
 }
 
 // Vitest's `failTask`: what a thrown value adds to `task.result.errors`. A thrown array adds each of its elements, and an
-// AggregateError each member of its `errors`. A symbol, a function or a primitive is added as `{ message: String(value) }`.
+// AggregateError each member of its `errors`. A value that is no object is added as `{ message: String(value) }`.
 // Only own data is read and each entry is defined, not set, so none of the test's code runs here.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__TestContext__recordError(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedErrors, JSC::EncodedJSValue encodedThrown)
 {
@@ -4952,9 +4952,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__TestContext__recordError(JSC::JS
 
     const auto add = [&](JSC::JSValue value) {
         JSC::JSString* message = nullptr;
-        if (auto* function = dynamicDowncast<JSC::JSFunction>(value)) {
-            message = function->toString(globalObject);
-        } else if (value.isSymbol()) {
+        if (value.isSymbol()) {
             auto description = asSymbol(value)->tryGetDescriptiveString();
             if (!description) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);

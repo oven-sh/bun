@@ -474,6 +474,50 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The runner asks the matcher's promise whether anything took its rejection, and compiled code has its own await.
+  test.concurrent("a failed matcher whose promise the test takes up after the failure", async () => {
+    const { stderr, exitCode } = await expectSameAsBunTest({
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        const failing = () => {
+          const { promise, resolve } = Promise.withResolvers<number>();
+          const matcher = expect(promise).resolves.toBe(2);
+          resolve(1);
+          return matcher;
+        };
+        const failed = async (matcher: Promise<void>) => {
+          for (let i = 0; i < 8; i++) await null;
+          if (Bun.peek.status(matcher) !== "rejected") throw new Error("the matcher has not failed yet");
+        };
+        test("caught by .catch()", async () => {
+          const matcher = failing();
+          await failed(matcher);
+          await matcher.catch(() => {});
+        });
+        test("caught by try", async () => {
+          const matcher = failing();
+          await failed(matcher);
+          try {
+            await matcher;
+          } catch {}
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "vitest";
+        const helper = async () => expect(Promise.resolve(1)).resolves.toBe(2);
+        test("returned by an async helper", async () => {
+          try {
+            await helper();
+          } catch {}
+        });
+      `,
+    });
+    expect(stderr).toContain("(pass) caught by .catch()");
+    expect(stderr).toContain("(pass) caught by try");
+    expect(stderr).toContain("(pass) returned by an async helper");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a build error", async () => {
     using dir = tempDir("test-aot", { "bad.test.ts": `import "./does-not-exist";` });
     const { stderr, exitCode } = await runTests(String(dir), true, [], false);

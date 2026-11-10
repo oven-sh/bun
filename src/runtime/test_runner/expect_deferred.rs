@@ -46,6 +46,11 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn ExpectDeferred__takeThrown(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__isHandled(promise: JSValue) -> bool;
+    safe fn ExpectDeferred__rejectUndecided(
+        global: &JSGlobalObject,
+        promise: JSValue,
+        error: JSValue,
+    );
     safe fn ExpectDeferred__captureCallSite(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__continueStackAt(
         global: &JSGlobalObject,
@@ -76,6 +81,8 @@ pub(crate) struct Unclaimed {
     calls: Vec<Option<Strong>>,
     /// A test or hook ended with calls still pending, so `settle_ended` has to run.
     pub(crate) some_ended: bool,
+    /// A call failed with no reaction on its promise, so `take_due_verdicts` has to run once the microtasks have.
+    pub(crate) verdict_due: bool,
     /// Abandoned calls reject with this to unwind their awaiters. `is_ended_error` lets the runner drop it unreported.
     ended_error: Option<Strong>,
     /// Pending calls held by the file itself.
@@ -549,6 +556,9 @@ pub(crate) struct ExpectDeferred {
     held: JsCell<Option<RunningEntry>>,
     replays: Cell<u32>,
     is_abandoned: Cell<bool>,
+    /// The matcher failed with no reaction on its promise, which is rejected. `held` stays until
+    /// `take_due_verdicts` has asked again.
+    verdict_due: Cell<bool>,
 }
 
 pub(crate) use crate::generated_bindgen::expect_deferred::js_ExpectDeferred as js;
@@ -562,6 +572,7 @@ impl ExpectDeferred {
             held: JsCell::new(None),
             replays: Cell::new(0),
             is_abandoned: Cell::new(false),
+            verdict_due: Cell::new(false),
         }
         .to_js(global)
     }
@@ -715,8 +726,22 @@ impl ExpectDeferred {
         }
         match held {
             Some(held) if !ExpectDeferred__isHandled(promise) => {
-                held.release(global, Some(error));
-                settle.reject_as_handled(global, error)
+                let vm = global.bun_vm();
+                // Native code that continues a disposed `Bun.ModuleGraph` settles no promise, so no reaction can
+                // take this failure later.
+                let Some(buntest) = held.buntest.upgrade().filter(|_| !vm.reports_to_nobody())
+                else {
+                    held.release(global, Some(error));
+                    return settle.reject_as_handled(global, error);
+                };
+                // No reaction yet is not the verdict: an `await` of this promise can be a few promise jobs away.
+                // So the promise rejects now, and `take_due_verdicts` asks again once the microtasks have run.
+                this.held.set(Some(held));
+                this.verdict_due.set(true);
+                buntest.get().unclaimed.verdict_due = true;
+                vm.has_pending_test_step.set(true);
+                ExpectDeferred__rejectUndecided(global, promise, error);
+                Ok(())
             }
             held => {
                 if let Some(held) = held {
@@ -724,6 +749,36 @@ impl ExpectDeferred {
                 }
                 settle.reject(global, Ok(error))
             }
+        }
+    }
+
+    /// Takes the verdict of each call that failed with no reaction on its promise, in call order. The runner calls
+    /// it once the microtasks queued at that moment have run, with no script on the stack.
+    #[cold]
+    pub(crate) fn take_due_verdicts(buntest: &BunTestPtr, global: &JSGlobalObject) {
+        let mut index = 0;
+        while let Some(call) = buntest.get().unclaimed.calls.get(index) {
+            index += 1;
+            let Some(deferred) = call.as_ref().map(Strong::get) else {
+                continue;
+            };
+            let Some(this) = Self::from_js(deferred) else {
+                continue;
+            };
+            // SAFETY: `unclaimed` keeps the wrapper, which owns the payload, alive; then `deferred`, on the stack, does.
+            let this = unsafe { &*this };
+            if !this.verdict_due.replace(false) {
+                continue;
+            }
+            let Some(held) = this.held.take() else {
+                continue;
+            };
+            // With a reaction by now, the failure is that reaction's to handle or to pass on.
+            let failure = js::promise_get_cached(deferred)
+                .filter(|&promise| !ExpectDeferred__isHandled(promise))
+                .and_then(JSValue::as_promise)
+                .map(|promise| JSPromise::opaque_mut(promise).result(global.vm()));
+            held.release(global, failure);
         }
     }
 
@@ -792,6 +847,10 @@ impl ExpectDeferred {
         };
         if let Some(index) = held.and_then(|held| held.unclaimed) {
             buntest.get().unclaimed.remove(index);
+        }
+        // Already rejected, with the matcher's own error. The entry that it would have failed is over.
+        if self.verdict_due.replace(false) {
+            return Ok(());
         }
         let Some(promise) = js::promise_get_cached(deferred).and_then(JSValue::as_promise) else {
             return Ok(());

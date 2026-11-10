@@ -450,7 +450,7 @@ impl EventLoop {
         Ok(())
     }
 
-    /// Returns whether `bun test` has a test or hook to run next.
+    /// Returns whether `bun test` has a test or hook to run next, or a failed matcher that waits for its verdict.
     #[inline(always)]
     fn drain_microtasks_once(
         &mut self,
@@ -488,6 +488,7 @@ impl EventLoop {
 
     /// Runs the next test or hook before any other timer or I/O callback.
     /// Jest and Vitest chain them with promises, so nothing runs in between.
+    /// A matcher that failed with no handler on its promise gets its verdict here too, and nowhere else.
     /// Out of line, so that `drain_microtasks_with_global` needs no larger frame for it in programs that are not `bun test`.
     #[cold]
     #[inline(never)]
@@ -496,6 +497,7 @@ impl EventLoop {
         let global_object = self.global_ref();
         let jsc_vm = vm.jsc_vm();
         loop {
+            // Ahead of the clear: a verdict has no queued task behind it, so the flag has to last until a drain that can take it.
             if self.entered_event_loop_count > 1 || jsc_vm.is_entered() {
                 return Ok(());
             }

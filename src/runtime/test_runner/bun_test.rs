@@ -1109,11 +1109,16 @@ impl BunTest {
     }
 
     /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
+    /// The microtasks have run by now, so a matcher that failed among them gets its verdict first. No task stands
+    /// behind a verdict: `ExpectDeferred::run_again` only sets `has_pending_test_step`.
     #[inline(never)] // --trim cuts the test runner at the call.
     pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
         let Some(strong) = clone_active_strong() else {
             return;
         };
+        if core::mem::take(&mut strong.get().unclaimed.verdict_due) {
+            super::expect::expect_deferred::ExpectDeferred::take_due_verdicts(&strong, global_this);
+        }
         let phase = strong.get().pending_phase;
         // After a termination the exception is still pending, and the caller's next drain reports it.
         let _ = Box::new(RunTestsTask {

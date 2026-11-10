@@ -200,11 +200,16 @@ impl TimerObjectInternals {
         let delta = if enable { 1 } else { -1 };
         match self.flags.get().kind() {
             // setImmediate has slightly different event loop logic
-            // SAFETY: `state` points at the boxed per-thread `RuntimeState`;
-            // single-threaded JS heap so no concurrent `&mut` to `.timer`.
-            Kind::SetImmediate if !self.flags.get().fake() => unsafe {
-                (*state).timer.increment_immediate_ref(delta, uws_loop)
-            },
+            Kind::SetImmediate if !self.flags.get().fake() => {
+                // `init()` takes the ref before it pins the wrapper.
+                debug_assert!(
+                    !enable || self.is_queued_immediate() || self.this_value.get().is_empty(),
+                    "an Immediate that left the queue took an event loop ref"
+                );
+                // SAFETY: `state` points at the boxed per-thread `RuntimeState`;
+                // single-threaded JS heap so no concurrent `&mut` to `.timer`.
+                unsafe { (*state).timer.increment_immediate_ref(delta, uws_loop) }
+            }
             // SAFETY: as above.
             _ => unsafe { (*state).timer.increment_timer_ref(delta, uws_loop) },
         }
@@ -214,20 +219,9 @@ impl TimerObjectInternals {
     /// C++ `Bun__JSTimeout__call` thunk (which handles exceptions internally).
     /// Returns `true` if an exception was thrown.
     ///
-    /// Note (noalias re-entrancy): takes `&self`, NOT `&mut self`.
-    /// The JS callback can re-enter `cancel()`/`do_refresh()` on this same
-    /// object via another `&Self` derived from the JS wrapper's `m_ptr`.
-    /// With `&mut self` here, LLVM's `noalias` lets it keep `self.flags` in a
-    /// register across the FFI call, so `set_in_callback(false)`'s RMW
-    /// clobbers the `has_cleared_timer` bit that `cancel()` set — the interval
-    /// re-fires forever. The fields they write are `Cell`/`JsCell`, so `&self`
-    /// carries no such guarantee.
-    ///
     /// # Safety
-    /// `vm` is the live per-thread VM, `thrown` is null or a live slot, and the
-    /// caller's `ref_()` pins the parent container for the duration of the call.
+    /// `vm` is the live per-thread VM and `thrown` is null or a live slot.
     unsafe fn run(
-        &self,
         global_this: *mut JSGlobalObject,
         timer: JSValue,
         callback: JSValue,
@@ -245,16 +239,8 @@ impl TimerObjectInternals {
         }
 
         // Bun__JSTimeout__call handles exceptions.
-        // `Cell<Flags>` RMW so the `in_callback` write reaches memory before JS
-        // runs (re-entrant `_destroyed` getter reads it via a different pointer).
-        self.update_flags(|f| f.set_in_callback(true));
         // SAFETY: `thrown` is null or the caller's live stack slot.
         let result = unsafe { Bun__JSTimeout__call(global, timer, callback, arguments, thrown) };
-        // No early returns between the `in_callback` set and this clear.
-        // `Cell<Flags>` RMW: must reload `flags` from memory — re-entrant
-        // `cancel()` may have set `has_cleared_timer` / cleared
-        // `is_keeping_event_loop_alive`.
-        self.update_flags(|f| f.set_in_callback(false));
 
         // SAFETY: as above.
         if unsafe { (*vm).is_inspector_enabled() } {
@@ -371,7 +357,7 @@ impl TimerObjectInternals {
     /// `Self::run` re-enters JS which can `cancel()`/`do_refresh()` this same
     /// object via the JS wrapper's `m_ptr`. With `&mut self` LLVM may cache
     /// `self.flags`/`event_loop_timer().state` across the call and clobber the
-    /// re-entrant write (see `run()` doc). Use a raw
+    /// re-entrant write (see `fire_catching`). Use a raw
     /// pointer; helper calls `(*this).foo()` materialise short-lived `&mut`
     /// scoped to each statement only — none span the JS call.
     ///
@@ -438,7 +424,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` per fn contract; `ref_()` above pins the parent
             // across re-entrancy.
             let result = unsafe {
-                s.run(
+                Self::run(
                     global_this,
                     timer,
                     callback,
@@ -605,10 +591,12 @@ impl TimerObjectInternals {
             // block. Every path through the labelled-block + `is_timer_done`
             // tail reaches it (no `return` between here and the deref).
 
+            // No early return before the clear below, or `_destroyed` stays false.
+            s.update_flags(|f| f.set_in_callback(true));
             // SAFETY: `vm` and `thrown` per fn contract; `ref_()` above pins the
             // parent across re-entrancy.
             let _ = unsafe {
-                s.run(
+                Self::run(
                     global_this,
                     this_object,
                     callback,
@@ -618,6 +606,7 @@ impl TimerObjectInternals {
                     thrown,
                 )
             };
+            s.update_flags(|f| f.set_in_callback(false));
 
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
             let fake_clock_after = unsafe { (*state).timer.fake_timers.installs() };
@@ -990,17 +979,35 @@ impl TimerObjectInternals {
         self.update_flags(|f| f.set_has_js_ref(true));
 
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L256
-        // and
-        // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L685-L687
         // Node only re-enables the keep-alive ref when `!this._destroyed`. Checking
         // `has_cleared_timer` alone is not sufficient: a one-shot timer that has already fired
         // has `has_cleared_timer == false` but is still destroyed. Calling `.unref(); .ref()`
         // on such a timer would otherwise leak an event-loop ref and hang the process.
-        if !did_have_js_ref && !self.get_destroyed() {
-            self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), true);
+        if !did_have_js_ref {
+            self.keep_event_loop_alive_again();
         }
 
         this_value
+    }
+
+    /// `ref()` after `unref()`. Out of line: `do_ref` stays small enough to inline.
+    #[inline(never)]
+    fn keep_event_loop_alive_again(&self) {
+        let flags = self.flags.get();
+        let still_runs = if flags.kind() == Kind::SetImmediate && !flags.fake() {
+            // Node keeps an idle unref'ed Immediate queued, so `ref()` runs it there. `run_immediate_task` already dropped it here.
+            self.is_queued_immediate()
+        } else {
+            !self.get_destroyed()
+        };
+        if still_runs {
+            self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), true);
+        }
+    }
+
+    /// Node's `kRefed !== null`. `init()` pins the wrapper of a `setImmediate`, and each way off the immediate queue unpins it.
+    fn is_queued_immediate(&self) -> bool {
+        self.this_value.get().is_strong()
     }
 
     pub(crate) fn do_unref(&self, this_value: JSValue) -> JSValue {

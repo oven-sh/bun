@@ -21,6 +21,7 @@ import {
 
 export const never: DumpedType = {
   isAnything: false,
+  isMadeOfListedClasses: false,
   hasAnyObject: false,
   hasAnyFunction: false,
   hasPlainData: false,
@@ -49,7 +50,7 @@ export const operandType = (operand: DumpedOperand): DumpedType => ({ ...never, 
 export const argument = (index: number): DumpedOperand => ({ argument: index });
 export const noPlace: DumpedPlace = { place: "None" };
 export const operandPlace = (operand: DumpedOperand): DumpedPlace => ({ place: "Operand", operand });
-export const newValue = (type: DumpedType): DumpedPlace => ({ place: "NewValue", type });
+export const newValue = (type: DumpedType): DumpedPlace => ({ place: "NewValue", type, holdsWhatIsThrown: false });
 
 export function parameter(operand: DumpedOperand, changes: Partial<DumpedParameter> = {}): DumpedParameter {
   const accepted = changes.accepted ?? anything;

@@ -1,0 +1,22 @@
+# -- source: main.js
+# function Lines() { this.at = 0; }
+# Lines.prototype = Object.create(Iterator.prototype);
+# Lines.prototype.next = function () { return { done: this.at >= 2, value: this.at++ }; };
+# const lines = new Lines();
+# function lay(text) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Lines.prototype[Symbol.toStringTag] = text; Lines.prototype.constructor = Lines; return work; }
+# lay("Lines");
+# print(Object.prototype.toString.call(lines), Object.hasOwn(Lines.prototype, Symbol.toStringTag), lines.constructor === Lines, [...lines].join());
+# class Rows extends Iterator { next() { return { done: true, value: undefined }; } }
+# const rows = new Rows();
+# Rows.prototype[Symbol.toStringTag] = "Rows";
+# print(Object.prototype.toString.call(rows), Object.hasOwn(Rows.prototype, Symbol.toStringTag), [...rows].length);
+# -- end of source
+# `Symbol.toStringTag` and `constructor` are accessors on Iterator.prototype. Their setters store nothing there: native code defines the name on the object that the store was made on, here the prototype object of a constructor function and that of a class, each behind its first object.
+# RUN: run-in-shell
+# CHECK: [object Lines] true true 0,1
+# CHECK-NEXT: [object Rows] true 0
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: [object Lines] true true 0,1
+# CALLED-NEXT: [object Rows] true 0
+# CALLED-NEXT: exited with 0

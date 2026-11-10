@@ -1,0 +1,30 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# namespace Debug { export function assert(x: unknown) { if (!x) throw new Error("no"); return 1; } export function other() { return 2; } }
+# function noop() { return 0; }
+# function off(name: string) { (Debug as any)[name] = noop; }
+# function use(n: unknown) { return Debug.assert(n) + Debug.other(); }
+# (globalThis as any).off = off; (globalThis as any).use = use;
+# print(use(1), use(2)); off("other"); print(use(3)); off("assert"); print(use(0));
+# -- end of source
+# A store under a key that nobody knows may replace each function, and may lay another object above this one, so nothing is proven of what the object holds. The slot is held to the closures of the function that is declared:
+# a store of anything else takes the field out of its slot. So behind a look at the shape and at the slot the call enters the function, and where either fails it is the call that is written.
+
+# RUN: walk f3 mechanisms=all-Inlining
+# CHECK-LABEL: code f3:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = IsSlotFilled {{*}}key="assert" receivers=[L0]
+# CHECK: = CallDirect {{*}}function=f4
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject
+# PLAN: slot 0 "assert" JSValue {{*}}type=f4
+# PLAN: slot 1 "other" JSValue {{*}}type=f5
+# the store of another function is no store into the slot
+# RUN(STORE): walk f2 mechanisms=all
+# STORE-LABEL: code f2:Body
+# STORE-NOT: = PutSlot
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3 3
+# ANSWERS-NEXT: 1
+# ANSWERS-NEXT: 0
+# ANSWERS-NEXT: exited with 0

@@ -87,100 +87,86 @@ module.exports = { twice: x => x * 2 };
 
 // GENERATED: shadowed anotherFunctionUnderTheName declared Declared
 // CHECK-LABEL: function {{*}}name="shadowed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything, v3: int[0, 4294967295], v4: undefined|null|string, v5: Array):
-// CHECK-NEXT: Jump -> next b1()
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: anything, v2: int[0, 4294967295], v3: undefined|null|string, v4: Array):
+// CHECK-NEXT: v5 = CreateUnmappedArguments v2, v4, v3
+// CHECK-NEXT: v6 = NewObject -, v3 layout=[[L_1]] fields=[0]
+// CHECK-NEXT: v7 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v8 = PropGet v7 key="eval" [isFreeName]
+// CHECK-NEXT: v9 = Convert v8 declared={type=builtin(Eval) flags=[IsExpected]}
+// CHECK-NEXT: v10 = String string="require"
+// CHECK-NEXT: v11 = Builtin builtin=Eval [isNotReadFromHolder]
+// CHECK-NEXT: v12 = StrictEq v9, v11
+// CHECK-NEXT: Branch v12 -> taken b1(), notTaken b2(| 0)
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v6 = CreateUnmappedArguments v3, v5, v4
-// CHECK-NEXT: v7 = NewObject -, v4 layout=[[L_3]] fields=[0]
-// CHECK-NEXT: v8 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v9 = PropGet v8 key="eval" [isFreeName]
-// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v11 = String string="require"
-// CHECK-NEXT: v12 = Builtin builtin=Eval [isNotReadFromHolder]
-// CHECK-NEXT: v13 = StrictEq v10, v12
-// CHECK-NEXT: Branch v13 -> taken b2(), notTaken b3(| 0)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v14 = GetEnvironmentField v7 layout=[[L_3]]
-// CHECK-NEXT: Jump -> next b4(v14)
-// CHECK-NEXT: b3(v15):
-// CHECK-NEXT: v16 = Call v15, -, v11 calleeName="eval"
-// CHECK-NEXT: Jump -> next b4(v16)
-// CHECK-NEXT: b4(v17):
-// CHECK-NEXT: Return v17
+// CHECK-NEXT: v13 = GetEnvironmentField v6 layout=[[L_1]]
+// CHECK-NEXT: Jump -> next b3(v13)
+// CHECK-NEXT: b2(v14):
+// CHECK-NEXT: v15 = Call v14, -, v10 calleeName="eval"
+// CHECK-NEXT: Jump -> next b3(v15)
+// CHECK-NEXT: b3(v16):
+// CHECK-NEXT: Return v16
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="anotherFunctionUnderTheName"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything, v3: int[0, 4294967295], v4: Array):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: anything, v2: int[0, 4294967295], v3: Array):
+// CHECK-NEXT: v4 = CreateUnmappedArguments v2, v3
+// CHECK-NEXT: v5 = String string="the binding"
+// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v7 = PropGet v6 key="globalThis" [isFreeName]
+// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+// CHECK-NEXT: v9 = PropGet v8 key="eval"
+// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(Eval) flags=[IsExpected]}
+// CHECK-NEXT: v11 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v12 = PropGet v11 key="globalThis" [isFreeName]
+// CHECK-NEXT: v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+// CHECK-NEXT: v14 = NewClosure function=[[f_2]]
+// CHECK-NEXT: PropSet v13, v14 key="eval"
 // CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v5 = CreateUnmappedArguments v3, v4
-// CHECK-NEXT: v6 = String string="the binding"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|"the binding" flags=[IsExpected]}
-// CHECK-NEXT: v8 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v9 = PropGet v8 key="globalThis" [isFreeName]
-// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-// CHECK-NEXT: v11 = PropGet v10 key="eval"
-// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: v14 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v15 = PropGet v14 key="globalThis" [isFreeName]
-// CHECK-NEXT: v16 = Convert v15 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-// CHECK-NEXT: v17 = NewClosure function=[[f_6]]
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v16, v18 key="eval"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b7():
-// CHECK-NEXT: v20 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v21 = PropGet v20 key="eval" [isFreeName]
-// CHECK-NEXT: v22 = Convert v21 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v23 = String string="value"
-// CHECK-NEXT: v24 = Builtin builtin=Eval [isNotReadFromHolder]
-// CHECK-NEXT: v25 = StrictEq v22, v24
-// CHECK-NEXT: Branch v25 -> taken b3(), notTaken b4(| 0)
-// CHECK-NEXT: b3() handler=b7():
-// CHECK-NEXT: Jump -> next b5(v7)
-// CHECK-NEXT: b4(v26) handler=b7():
-// CHECK-NEXT: v27 = Call v26, -, v23 calleeName="eval"
-// CHECK-NEXT: Jump -> next b5(v27)
-// CHECK-NEXT: b5(v28) handler=b7():
-// CHECK-NEXT: Jump -> next b6(v28)
-// CHECK-NEXT: b6(v29):
-// CHECK-NEXT: v30 = Integer
-// CHECK-NEXT: v31 = Undefined
-// CHECK-NEXT: Jump -> next b8(v30, v29, v31)
-// CHECK-NEXT: b7() role=CleanupHandler:
-// CHECK-NEXT: v32 = CatchValue
-// CHECK-NEXT: v33 = Integer integer=1
-// CHECK-NEXT: v34 = Undefined
-// CHECK-NEXT: Jump -> next b8(v33, v34, v32)
-// CHECK-NEXT: b8(v35, v36, v37):
-// CHECK-NEXT: v38 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v39 = PropGet v38 key="globalThis" [isFreeName]
-// CHECK-NEXT: v40 = Convert v39 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-// CHECK-NEXT: PropSet v40, v13 key="eval"
-// CHECK-NEXT: Switch v35 cases=[0] -> case b9(), otherwise b10()
-// CHECK-NEXT: b9():
-// CHECK-NEXT: Return v36
-// CHECK-NEXT: b10():
-// CHECK-NEXT: Throw v37
+// CHECK-NEXT: b1() handler=b5():
+// CHECK-NEXT: v16 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v17 = PropGet v16 key="eval" [isFreeName]
+// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(Eval) flags=[IsExpected]}
+// CHECK-NEXT: v19 = String string="value"
+// CHECK-NEXT: v20 = Builtin builtin=Eval [isNotReadFromHolder]
+// CHECK-NEXT: v21 = StrictEq v18, v20
+// CHECK-NEXT: Branch v21 -> taken b3(v5), notTaken b2(| 0)
+// CHECK-NEXT: b2(v22) handler=b5():
+// CHECK-NEXT: v23 = Call v22, -, v19 calleeName="eval"
+// CHECK-NEXT: Jump -> next b3(v23)
+// CHECK-NEXT: b3(v24) handler=b5():
+// CHECK-NEXT: Jump -> next b4(v24)
+// CHECK-NEXT: b4(v25):
+// CHECK-NEXT: v26 = Integer
+// CHECK-NEXT: v27 = Undefined
+// CHECK-NEXT: Jump -> next b6(v26, v25, v27)
+// CHECK-NEXT: b5() role=CleanupHandler:
+// CHECK-NEXT: v28 = CatchValue
+// CHECK-NEXT: v29 = Integer integer=1
+// CHECK-NEXT: v30 = Undefined
+// CHECK-NEXT: Jump -> next b6(v29, v30, v28)
+// CHECK-NEXT: b6(v31, v32, v33):
+// CHECK-NEXT: v34 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v35 = PropGet v34 key="globalThis" [isFreeName]
+// CHECK-NEXT: v36 = Convert v35 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+// CHECK-NEXT: PropSet v36, v10 key="eval"
+// CHECK-NEXT: Switch v31 cases=[0] -> case b7(), otherwise b8()
+// CHECK-NEXT: b7():
+// CHECK-NEXT: Return v32
+// CHECK-NEXT: b8():
+// CHECK-NEXT: Throw v33
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="declared"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Integer integer=4
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Declared"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_8]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_8]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }

@@ -1,0 +1,19 @@
+# f1 = turn
+# -- source: float32-array-scale-in-place.ts
+# const levels = new Float32Array(512);
+# function turn(i: number): number {
+#   const factor = i & 1 ? 2 : 0.5;
+#   for (let k = 0; k < levels.length; k++) levels[k] = levels[k]! * factor;
+#   return levels[i & 511]!;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 18 instructions, 16 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 36, patches 0, moves 0, unlikely 6 ; loop: operations 9, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:36,9 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 36
+# X64-NEXT: loop: at most 9

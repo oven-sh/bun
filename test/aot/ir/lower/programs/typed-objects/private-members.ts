@@ -82,98 +82,85 @@ console.log(sum, vaults.map(x => x.history.length).join())
 
 // GENERATED: count isVault #next read Deep
 // CHECK-LABEL: function {{*}}name="count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_1]]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="Vault"
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v3 = StrictEq v1, v2
-// CHECK-NEXT: Branch v3 -> taken b2(), notTaken b5()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: Branch v3 -> taken b1(), notTaken b4()
+// CHECK-NEXT: b1():
+// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_3]]
 // CHECK-NEXT: v5 = TypeTest v4 testedType=absent
-// CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v6) frequency=Unlikely:
+// CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+// CHECK-NEXT: b2(v6):
 // CHECK-NEXT: v7 = NewRuntimeError runtimeError=InvalidPrivateRead
 // CHECK-NEXT: Throw v7
-// CHECK-NEXT: b4(v8):
-// CHECK-NEXT: v9 = Convert v8 declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v10 = TypeTest v1 testedType=undefined|null
-// CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b6(v11):
-// CHECK-NEXT: v12 = PropGet v11 key="#made"
+// CHECK-NEXT: b3(v8):
+// CHECK-NEXT: Return v8
+// CHECK-NEXT: b4():
+// CHECK-NEXT: v9 = TypeTest v1 testedType=undefined|null
+// CHECK-NEXT: Branch v9 -> taken b5(| 0), notTaken b6(| 0)
+// CHECK-NEXT: b5(v10):
+// CHECK-NEXT: v11 = PropGet v10 key="#made"
 // CHECK-NEXT: Unreachable
-// CHECK-NEXT: b7(v13):
-// CHECK-NEXT: v14 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v14
+// CHECK-NEXT: b6(v12):
+// CHECK-NEXT: v13 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isVault"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_6]]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v2 = PrivateHas v0, v1 layout=[[L_8]] field=3
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean site=[[w_6]]}
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v2 = PrivateHas v0, v1 layout=[[L_5]] field=3
+// CHECK-NEXT: v3 = Convert v2 declared={type=boolean}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_9]] site=[[w_10]]} results=[{type=number site=[[w_11]]}] {
-// CHECK-NEXT: b0(v0: [[L_9]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_12]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_9]] field=1
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_6]]} results=[{type=number}] {
+// CHECK-NEXT: b0(v0: [[L_6]]):
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_6]] field=1
 // CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_13]]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_12]]
-// CHECK-NEXT: PrivateSet v0, v5, v4 layout=[[L_9]] field=1
-// CHECK-NEXT: v7 = Convert v3 declared={type=number site=[[w_11]]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=number}
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: PrivateSet v0, v5, v4 layout=[[L_6]] field=1
+// CHECK-NEXT: v7 = Convert v3 declared={type=number}
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_9]] site=[[w_14]]} parameters=[{type=number site=[[w_15]]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_9]], v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_6]]} parameters=[{type=number}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: [[L_6]], v1: number):
 // CHECK-NEXT: v2 = Integer integer=2
 // CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_13]]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_12]]
-// CHECK-NEXT: PrivateSet v0, v5, v4 layout=[[L_9]] field=1
+// CHECK-NEXT: v4 = Convert v3 declared={type=number}
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: PrivateSet v0, v5, v4 layout=[[L_6]] field=1
 // CHECK-NEXT: v7 = Undefined
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_9]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_17]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_9]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_18]]
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_6]]):
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="Meter"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_19]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_9]]
 // CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_20]]
+// CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+// CHECK-NEXT: b1():
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_10]]
 // CHECK-NEXT: v6 = Call v5, v2, v0 calleeName="Meter.#helper"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number site=[[w_21]]}}, {declared={type=number site=[[w_17]]}}]
-// CHECK-NEXT: b3() frequency=Unlikely:
+// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number}}]
+// CHECK-NEXT: b2():
 // CHECK-NEXT: v7 = NewRuntimeError runtimeError=InvalidPrivateBrand
 // CHECK-NEXT: Throw v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Deep"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_22]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_23]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_23]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_24]]
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_12]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_12]]}
+// CHECK-NEXT: v6 = CallDirect v5 function=[[f_13]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

@@ -142,37 +142,31 @@ console.log(lines.join("\n"));
 
 // GENERATED: Base reader make Derived has
 // CHECK-LABEL: function {{*}}name="Base"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="reader"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|string):
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="readers"
-// CHECK-NEXT: v3 = TypeTest v0 testedType=object
-// CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = RequireObjectCoercible v2 nullishAccess=Update
-// CHECK-NEXT: v6 = ToPropertyKey v4
-// CHECK-NEXT: Jump -> next b4(v6)
-// CHECK-NEXT: b3(v7):
-// CHECK-NEXT: Jump -> next b4(v7)
-// CHECK-NEXT: b4(v8):
-// CHECK-NEXT: v9 = ElemGet v2, v8{{*}} callers
+// CHECK-NEXT: v3 = RequireObjectCoercible v2 nullishAccess=Update
+// CHECK-NEXT: v4 = TypeTest v0 testedType=object
+// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v5):
+// CHECK-NEXT: v6 = ToPropertyKey v5
+// CHECK-NEXT: Jump -> next b3(v6)
+// CHECK-NEXT: b2(v7):
+// CHECK-NEXT: Jump -> next b3(v7)
+// CHECK-NEXT: b3(v8):
+// CHECK-NEXT: v9 = ElemGet v2, v8
 // CHECK-NEXT: v10 = TypeTest v9 testedType=undefined|null
-// CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b5(v11):
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
+// CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v11):
 // CHECK-NEXT: v12 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v13 = PropGet v12 key="Function" [isFreeName]
 // CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Function) flags=[IsExpected]}
@@ -182,42 +176,34 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: v18 = String string=";"
 // CHECK-NEXT: v19 = Add v17, v18
 // CHECK-NEXT: v20 = Construct v14, -, v15, v19 calleeName="Function"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: ElemSet v2, v8, v21
-// CHECK-NEXT: Jump -> next b8(v21)
-// CHECK-NEXT: b7(v23):
-// CHECK-NEXT: Jump -> next b8(v23)
-// CHECK-NEXT: b8(v24):
-// CHECK-NEXT: Return v24
+// CHECK-NEXT: ElemSet v2, v8, v20
+// CHECK-NEXT: Jump -> next b6(v20)
+// CHECK-NEXT: b5(v22):
+// CHECK-NEXT: Jump -> next b6(v22)
+// CHECK-NEXT: b6(v23):
+// CHECK-NEXT: Return v23
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Builtin builtin=Object
 // CHECK-NEXT: v1 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="root"
 // CHECK-NEXT: v4 = Call v1, v0, v3 calleeName="Object.create"
 // CHECK-NEXT: ReturnCall v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Derived"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_6]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=true flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: v1 = Convert v0 declared={type=true flags=[IsExpected]}
-// CHECK-NEXT: Return v1
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }

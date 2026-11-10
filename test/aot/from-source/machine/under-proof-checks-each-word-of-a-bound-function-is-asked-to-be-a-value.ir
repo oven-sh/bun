@@ -1,0 +1,20 @@
+# A call to a bound function in a loop is expanded in place, after a check of the number of its bound arguments. The slot after the last bound argument is empty.
+# Fault injection, testing=OverstateBoundArgumentCount: the walk reads one more slot from the bound function than the number that was checked.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime), each slot read from a bound function is checked to hold a value. If it does not, the process crashes with a named error.
+# RUN(READS): walk f2:Body mechanisms=all
+# READS: = HasNumberOfBoundArguments {{*}}count=1
+# READS: = GetWordOfBoundFunction {{*}}index=2
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 248
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=OverstateBoundArgumentCount,CheckProofsAtRunTime
+# HELD: bun: internal AOT error:
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function join(a: string, b: string, c: number): number { return a.length + b.length + c; }
+# function method(rows: number[], turns: number): number { const bound = join.bind(null, "x"); let sum = 0; for (let i = 0; i < turns; i++) { if (rows[i & 7]! > 3) sum += bound("ab", 1); } return sum; }
+# const rows: number[] = JSON.parse("[1,9,2,8,3,7,4,6]");
+# print(method(rows, id(100)));
+# -- end of source

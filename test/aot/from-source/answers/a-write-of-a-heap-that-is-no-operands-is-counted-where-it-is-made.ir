@@ -1,0 +1,54 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare const pick: number;
+# const shelf: any = { get label() { return this._label; }, set label(value) { this._label = value; } };
+# function makeMiddle(tag: any): any { const middle = Object.create(shelf); middle.tag = tag; return middle; }
+# function makeLeaf(above: any, tag: any): any { const leaf = Object.create(above); leaf.tag = tag; return leaf; }
+# function decorate(target: any): void { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; target.zebra = work; }
+# function watch(leaf: any, middle: any, turns: number, when: number): number {
+#   let found = 0;
+#   for (let turn = 0; turn < turns; turn++) {
+#     if (leaf._label !== undefined) found++;
+#     if (turn === when) middle._label = "late";
+#   }
+#   return found;
+# }
+# const spare = makeMiddle("spare"), middle = makeMiddle("middle");
+# spare.label = "text";
+# decorate(middle);
+# const second = makeLeaf(middle, 2), third = makeLeaf(middle, 3);
+# print(watch(second, middle, 20, 5));
+# print(watch(third, middle, 20, 99));
+# class Ordered { both(): string { return "ordered"; } }
+# class Plain { both(): string { return "plain"; } }
+# const order = [Ordered, Plain];
+# class InOrder extends order[pick] {}
+# class NoOrder extends order[1 - pick] {}
+# for (let i = 0; i < 3; i++) print(new InOrder().both() + " " + new NoOrder().both() + " " + new Ordered().both());
+# print("went on");
+# -- end of source
+# testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h): member guards are not part of any operand's memory, so no digest covers them. Instead, whatever writes a member guard counts the write.
+# A call that runs no unknown code, and whose effects claim that it does not write member guards, must leave the counts unchanged.
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.pick = 0;
+# NET: 14
+# NET-NEXT: 20
+# NET-NEXT: ordered plain ordered
+# NET-NEXT: ordered plain ordered
+# NET-NEXT: ordered plain ordered
+# NET-NEXT: went on
+# Fault injection, testing=UnderstateEffects: the effects entry of one runtime operation is treated as if it did not write member guards.
+# The operation that links a new object to its prototype arms the guards for the objects that are created with `shelf` on their prototype chain.
+# RUN(ARMED): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RuntimeOperation/SetLiteralPrototype/MemberGuards mechanisms=all globalThis.pick = 0;
+# ARMED: bun: internal AOT error: effects check failed
+# ARMED-NEXT: the declared effects of operation:SetLiteralPrototype and of runtime:operationAOTSetLiteralPrototype say that the call does not write MemberGuards, but guards were armed or started
+# ARMED-NOT: went on
+# ARMED: crashed
+# ARMED: with
+# The operation that defines a class whose parent is not the speculated one invalidates the guards.
+# RUN(ENDED): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RuntimeOperation/NewClass/MemberGuards mechanisms=all globalThis.pick = 0;
+# ENDED: 20
+# ENDED: bun: internal AOT error: effects check failed
+# ENDED-NEXT: the declared effects of operation:NewClass and of runtime:operationAOTNewClass say that the call does not write MemberGuards, but guards were invalidated
+# ENDED-NOT: went on
+# ENDED: crashed
+# ENDED: with

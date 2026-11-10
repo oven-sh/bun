@@ -1,0 +1,29 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# abstract class Root { w = 1; }
+# abstract class N extends Root { abstract m(x: number): number; }
+# class A extends N { m(x: number): number { return x + this.w; } }
+# class B extends N { m(x: number): number { return x * 2; } }
+# class C extends N { z = 3; m(x: number): number { return this.z - x; } }
+# class D extends N { m(x: number): number { return x * x; } }
+# class E extends Root { e = 5; other(x: number): number { return x; } }
+# function pick(which: number): Root { switch (which) { case 0: return new A(); case 1: return new B(); case 2: return new C(); case 3: return new D(); default: return new E(); } }
+# function use(thing: Root, depth: number): number { if (depth > 0) return use(thing, depth - 1) + 0; const got: number = (thing as any).m(3); return got + 1; }
+# let said = "";
+# for (let which = 0; which < 5; which++) { try { said += use(pick(which), 1) + ";"; } catch (error) { said += (error as Error).name + ";"; } }
+# print(said);
+# print("went on");
+# -- end of source
+# A test in front of a call through a table of methods, of several classes.
+# f1 = use
+# RUN(FORM): walk f1:Body mechanisms=all
+# FORM: = ShapeTest
+# FORM: = CallTable
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 5;7;1;10;TypeError;
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Callee/f1/ShapesKnown
+# ASKED: found object in a value narrowed by a branch
+# ASKED-NOT: went on
+# ASKED: crashed with

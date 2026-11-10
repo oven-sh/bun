@@ -1,0 +1,37 @@
+# a URL that is read in several blocks and that nothing else gets hold of is never made: where it is written the text is tested and scanned, and each read is answered out of the text where it stands
+# what the scan turns away is constructed where it is written, in a rare block; a value of the query that has to be decoded makes the object after all, in a rare block too
+# in the third function the object is returned, in the fifth it is asked what no text answers: it is made as written. In the fourth it is read under a handler and in it: it stands in front of both, so both are answered
+# each function is handed to code that nobody has seen
+# f1 = route, f2 = page, f3 = returned, f4 = caught, f5 = asked
+# -- source: url-that-never-gets-out-is-never-made.ts
+# declare function sink(...values: unknown[]): void;
+# function route(text: unknown) { const url = new URL(text as string, "http://127.0.0.1"); if (url.pathname === "/a") return 1; if (url.pathname === "/b") return url.search; return 0; }
+# function page(text: unknown) { const url = new URL(text as string, "http://127.0.0.1"); if (url.pathname === "/a") { const query = url.searchParams; return [query.get("page"), query.has("limit")]; } return 0; }
+# function returned(text: unknown) { const url = new URL(text as string, "http://127.0.0.1"); if (url.pathname === "/a") return url; return 0; }
+# function caught(text: unknown) { const url = new URL(text as string, "http://127.0.0.1"); try { sink(); return url.pathname; } catch { return url.search; } }
+# function asked(text: unknown) { const url = new URL(text as string, "http://127.0.0.1"); if (url.pathname === "/a") return url.host; return 0; }
+# sink(route, page, returned, caught, asked);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=string
+# CHECK: = CallBuiltin {{*}}overload=CompilerHelpersScanPlainURLWithPlainBase
+# CHECK: = Substring
+# CHECK: = Substring
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-COUNT-1: overload=URL/
+# ONCE-COUNT-1: CompilerHelpersScanPlainURL
+# ONCE-NOT: URLPrototypePathname
+# RUN(QUERY): walk f2 mechanisms=all
+# QUERY-LABEL: code f2:Body
+# QUERY: = CallBuiltin {{*}}overload=CompilerHelpersScanPlainURLWithPlainBase
+# QUERY: = CallBuiltin {{*}}overload=CompilerHelpersFindPlainQueryValue
+# QUERY: = CallBuiltin {{*}}overload=CompilerHelpersFindPlainQueryValue
+# RUN(RETURNED): walk f3 mechanisms=all
+# RETURNED-NOT: CompilerHelpersScanPlainURL
+# RUN(CAUGHT): walk f4 mechanisms=all
+# CAUGHT-COUNT-1: CompilerHelpersScanPlainURL
+# RUN(ASKED): walk f5 mechanisms=all
+# ASKED-NOT: CompilerHelpersScanPlainURL
+# RUN(WITHHELD): walk f1 mechanisms=all-Guesses
+# WITHHELD-NOT: CompilerHelpersScanPlainURL

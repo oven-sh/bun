@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# type Tree = { op: "num"; value: number } | { op: "set"; at: number; of: Tree };
+# function walk(tree: Tree, frame: number[]): number {
+#   switch (tree.op) {
+#     case "num": return tree.value;
+#     case "set": return (frame[tree.at] = walk(tree.of, frame));
+#   }
+# }
+# const trees: Tree[] = [{ op: "set", at: 1, of: { op: "num", value: 7 } }, { op: "set", at: 2, of: { op: "set", at: 0, of: { op: "num", value: 2.5 } } }];
+# function run(first: number): number[] { const frame = [first, 0, 0]; for (const tree of trees) walk(tree, frame); return frame; }
+# print(run(4).join(), run(5).join());
+# -- end of source
+# f1 = walk
+# What walk() gives is a number by its written type, and a number or undefined by what is proven: the switch may be left at its end. A store of such a value into a list that is declared to hold numbers alone went by
+# the form of the value: boxed, so the one arm in line was the storage for any value, which no list of numbers born in compiled code has, and every store left for the stub. It goes by the kinds of storage that
+# lists of numbers have: raw doubles and int32s, each arm testing what it is given.
+# RUN(EMIT): emit f1 mechanisms=all
+# EMIT: unit f1:Body
+# EMIT: Store({{*}}indexedDoubleProperties
+# RUN(RIGHT): run-in-shell
+# RIGHT: 2.5,7,2.5 2.5,7,2.5

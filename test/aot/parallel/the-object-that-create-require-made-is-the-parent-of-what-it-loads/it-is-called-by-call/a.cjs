@@ -1,0 +1,1 @@
+(globalThis.leaves ??= {}).a = module;

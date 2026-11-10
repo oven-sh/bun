@@ -1,0 +1,42 @@
+# -- source: record-that-lists-no-name-and-is-filled-by-key-holds-ordinary-objects.js
+# function counted(words) { const counts = {}; for (const word of words) counts[word] = 1; return counts; }
+# function named(word) { const made = {}; made.first = 1; made[word] = 2; return made; }
+# function listed(word) { const made = { first: 1 }; made[word] = 2; return made; }
+# function empty() { return {}; }
+# const state = { cache: {} };
+# function remember(key, value) { state.cache[key] = value; }
+# remember("a", 1);
+# console.log(Object.keys(counted(["a", "b"])).join(), Object.keys(named("b")).join(), Object.keys(listed("b")).join(), Object.keys(empty()).join(), Object.keys(state.cache).join());
+# -- end of source
+# A record that lists no name has no slot. As a compiled object it holds extra properties alone, and each new key makes it a structure of its own: a bag of eight fresh keys took 21,030 instructions, and takes 15,285.
+# So the objects of such a layout are ordinary objects where reached code fills one by key: `counts`, and `state.cache`, which lies in a record of data.
+# What is stored under a name too has a field for the name and keeps its slots (`named`, `listed`: the front end gives both one layout). What nobody fills stays as it is (`empty`).
+# The answer claims nothing, so a wrong one costs speed alone. It hangs on what either reading of Link knows of the subject of a store: an object that unseen code has had is known by its layout in what is held alone.
+# With every mechanism withheld no layout holds ordinary objects.
+# RUN(LINK): link layouts held mechanisms=all
+# LINK: layout L0 {{*}} filled-under-computed-keys
+# LINK-NEXT: layout L1 changes=[]
+# LINK-NEXT: layout L2 {{*}} filled-under-computed-keys
+# LINK-NEXT: layout L3 changes=[]
+# LINK-NEXT: layout L4 {{*}} filled-under-computed-keys
+# RUN: plan mechanisms=all
+# CHECK: layout L0 OrdinaryObject
+# CHECK: layout L1 CompiledObject
+# CHECK: layout L2 OrdinaryObject
+# CHECK: layout L3 CompiledObject
+# CHECK: layout L4 CompiledObject
+# RUN(WALK): walk f0 f1 f2 f4 mechanisms=all
+# WALK-LABEL: code f0:Body
+# WALK: [[cache]]: object?ObjectWithoutLayout @Cell = NewDictionary
+# WALK: NewObject -, {{*}} layout=L3 fields=[0]
+# WALK-LABEL: code f1:Body
+# WALK-NOT: NewObject
+# WALK: NewDictionary
+# WALK-LABEL: code f2:Body
+# WALK: NewObject layout=L4
+# WALK-LABEL: code f4:Body
+# WALK: NewObject layout=L1
+# RUN(WITHHELD): plan mechanisms=none
+# WITHHELD-NOT: OrdinaryObject
+# WITHHELD: layout L0 CompiledObject
+# WITHHELD: layout L2 CompiledObject

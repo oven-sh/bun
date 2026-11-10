@@ -2,7 +2,8 @@
 import { expect } from "bun:test";
 import { bunExe, isASAN, isDebug, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 const functionCount = isDebug || isASAN ? 400 : 4_000;
 const timeout = isDebug || isASAN ? 240_000 : 20_000;

@@ -1,6 +1,11 @@
+use core::sync::atomic::Ordering;
+
 use bun_aot::engine::has_compiler;
 use bun_core::Global;
 use bun_event_loop::AnyEventLoop;
+use bun_options_types::aot_options::Preload;
+use bun_options_types::bundle_enums::Format;
+use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api;
 use bun_sys::Fd;
 
@@ -9,8 +14,9 @@ use super::configuration::{self, request_from_context};
 use super::printing::{exit_with_failure, print_outcome};
 use super::reports::write_metafiles;
 use super::{CompileCommand, CompileFailure, CompileOutcome, CompileProduct, RequestOrigin};
-use crate::cli::build_command::BuildCommand;
-use crate::cli::command::Context;
+use crate::cli::build_command::{BuildCommand, has_only_html_entry_points};
+use crate::cli::command::{Context, ContextData};
+use crate::cli::compile_options;
 
 impl CompileCommand {
     #[cold]
@@ -22,10 +28,17 @@ impl CompileCommand {
     #[cold]
     #[inline(never)]
     pub(crate) fn exec_command(ctx: Context<'_>) -> Result<(), crate::Error> {
+        configuration::use_installed_executable(ctx);
         if ctx.bundler_options.aot.is_none() || ctx.args.target == Some(api::Target::Browser) {
             configuration::use_default_entry_point(ctx);
-            ctx.bundler_options.aot = None;
-            return BuildCommand::exec(ctx, None);
+            if ctx.bundler_options.aot.is_none()
+                || has_only_html_entry_points(&ctx.args.entry_points)
+            {
+                ctx.bundler_options.aot = None;
+                ctx.bundler_options.keeps_entry_points = true;
+                configuration::load_script_as_code(ctx);
+                return BuildCommand::exec(ctx, None);
+            }
         }
         run(ctx, RequestOrigin::CompileCommand)
     }
@@ -37,6 +50,11 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         ..Default::default()
     });
     ctx.args.target = Some(api::Target::Bun);
+    compile_options::check_build_conflicts(&ctx, origin);
+    compile_options::note_options_without_effect(&ctx);
+    ctx.bundler_options.bytecode = false;
+    ctx.bundler_options.output_format = Format::Esm;
+    ctx.bundler_options.compile_target = CompileTarget::default();
 
     if !has_compiler() {
         exit_with_failure(
@@ -76,15 +94,19 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         Ok(outcome)
     });
     let finished = bun_core::time::nano_timestamp();
+    // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+    let log = unsafe { &mut *request.log };
     match result {
-        Ok(outcome) => print_outcome(request.log, outcome, &location.outfile, finished),
-        Err(failure) => exit_with_failure(
-            request.log,
-            request.origin,
-            request.executable.target,
-            &failure,
-        ),
+        Ok(outcome) => print_outcome(log, outcome, &location.outfile, finished),
+        Err(failure) => exit_with_failure(log, request.origin, request.executable.target, &failure),
     }
+}
+
+fn preload_of(ctx: &ContextData) -> Option<&Preload> {
+    if !bun_core::env::ENABLE_FUZZILLI {
+        return None;
+    }
+    ctx.bundler_options.aot.as_deref()?.preload.as_ref()
 }
 
 // For a caller that wants no executable: run in place, `bun check --aot`. The outer `Err`: the transpiler could not be set up.
@@ -98,6 +120,12 @@ pub(crate) fn compile_from_context(
         ..Default::default()
     });
     ctx.args.target = Some(api::Target::Bun);
+    // `on_loaded` writes the entry point's file, so nothing that reads an entry point may run before it.
+    if let Some(preload) = preload_of(ctx)
+        && !preload.is_loaded.swap(true, Ordering::Relaxed)
+    {
+        (preload.on_loaded)();
+    }
     let configuration = configuration::configure(&mut *ctx)?;
     let mut event_loop = AnyEventLoop::init();
     let mut request = request_from_context(

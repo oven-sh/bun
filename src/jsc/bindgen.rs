@@ -4,6 +4,9 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use bun_core::Environment;
 
 use crate::{
     ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
@@ -1366,6 +1369,74 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
         "a body fails exactly when an exception is pending",
     );
     value
+}
+
+/// Whether this process holds native code to the types that `.bind.ts` files declare for its results.
+///
+/// An executable compiled ahead of time does: its code takes those types for proven. A build of Bun that asserts does, so that Bun's own tests find
+/// the native code that answers outside its type. Release `bun run` does not, and answers as it always has.
+///
+/// To hold every build of Bun to them, start this as `true`. Nothing else decides it.
+static HOLDS_RESULTS_TO_DECLARED_TYPES: AtomicBool = AtomicBool::new(Environment::CI_ASSERT);
+
+/// For [`crate::initialize`], which comes before any JavaScript.
+pub(crate) fn hold_results_to_declared_types() {
+    HOLDS_RESULTS_TO_DECLARED_TYPES.store(true, Ordering::Relaxed);
+}
+
+#[inline(always)]
+pub fn holds_results_to_declared_types() -> bool {
+    HOLDS_RESULTS_TO_DECLARED_TYPES.load(Ordering::Relaxed)
+}
+
+/// Holds what a thunk ends with to the type that its `.bind.ts` file declares. The empty value stands for a pending exception.
+#[doc(hidden)]
+#[inline(always)]
+pub fn hold_to_declared_type<'a>(
+    cx: &mut JsScope<'a>,
+    returned: JSValue,
+    is_declared: impl FnOnce(JSValue) -> bool,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    if !holds_results_to_declared_types() || returned.is_empty() || is_declared(returned) {
+        return returned;
+    }
+    throw_outside_declared_type(cx, member, declared)
+}
+
+#[cold]
+#[inline(never)]
+fn throw_outside_declared_type<'a>(
+    cx: &mut JsScope<'a>,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    cx.heap
+        .type_error(format_args!(
+            "internal AOT error: type check failed: expected {declared} in the result of {member}. This is a bug in Bun, not in your code."
+        ))
+        .into_host_fn_return(cx)
+}
+
+/// As [`hold_to_declared_type`], for a value that Rust lays in the field a getter answers from. Compiled code reads that field itself, so a value
+/// outside the type must never lie there: the field is left empty, the next read asks the getter, and its thunk stops the program if the getter answers
+/// outside the type too. A build of Bun that asserts stops here, where the value comes from.
+#[doc(hidden)]
+#[inline(always)]
+pub fn hold_cached_to_declared_type(
+    value: JSValue,
+    is_declared: impl FnOnce(JSValue) -> bool,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    if !holds_results_to_declared_types() || value.is_empty() || is_declared(value) {
+        return value;
+    }
+    if Environment::CI_ASSERT {
+        panic!("{member} is declared as {declared}, and native code cached something else");
+    }
+    JSValue::ZERO
 }
 
 /// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.

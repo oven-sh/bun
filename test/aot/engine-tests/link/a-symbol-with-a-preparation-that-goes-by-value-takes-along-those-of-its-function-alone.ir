@@ -1,0 +1,82 @@
+# node:_http_server made a symbol amid its text, behind functions that read it: nobody can tell that the variable is filled where it is read, so the key is that symbol or undefined, and
+# the access goes by value. As long as the symbol had no preparation that cost nothing. With one, every access under every symbol with a preparation went by value: the library's own
+# `this[kHeaders]` called the function that is there for the looks of a program: 170,000 instructions a request for 104,000, and 22 of 154 programs answered otherwise than plain Bun.
+#   const kHeaders = Symbol("kHeaders"), kLenient = Symbol("kLenient"), kOther = Symbol("kOther");
+#   prepareHoldersBeforeLookupsUnder(kHeaders, prepare);  prepareHoldersBeforeLookupsUnder(kLenient, prepare);
+#   readLate(o);  const kLate = Symbol("kLate");  prepareHoldersBeforeLookupsUnder(kLate, prepareLate);
+#   o[kHeaders];  o[kLenient];  o[kOther];  function readLate(o) { return o[kLate]; }
+# Symbols that share a function go by name together or not at all: symbols-with-a-preparation-are-names-all-together-or-not-at-all.ir. kLate has a function of its own.
+# LIBRARY: own
+# RUN: link accesses mechanisms=all
+# STATISTIC: PreparedSymbolsAccessedByValue = 1
+# CHECK: access f2 v2 under symbol("kHeaders")@m1:0
+# CHECK-NEXT: access f3 v2 under symbol("kLenient")@m1:1
+# CHECK-NEXT: access f4 v2 under symbol("kOther")@m1:2
+# CHECK-NOT: access
+
+layout L0 module=m1 fields=[{key=symbol("kHeaders")@m1:0 declared={type=anything}}, {key=symbol("kLenient")@m1:1 declared={type=anything}}, {key=symbol("kOther")@m1:2 declared={type=anything}}, {key=symbol("kLate")@m1:3 declared={type=anything}}]
+variable g0 name="kHeaders" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g1 name="kLenient" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g2 name="kOther" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g3 name="kLate" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:http" displayPath="node:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeHttp body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:http"
+    v1 = Undefined
+    Return v1
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kHeaders"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = String string="kLenient"
+    v5 = Call v0, -, v4 calleeName="Symbol" callNumber=1
+    PutModuleVariable v5 variable=g1
+    v7 = String string="kOther"
+    v8 = Call v0, -, v7 calleeName="Symbol" callNumber=2
+    PutModuleVariable v8 variable=g2
+    v10 = NativeBinding builtin=NativeNewCppFunctionBunCompiledModulesCppJsFunctionPrepareHoldersBeforeLookupsUnder
+    v11 = NewClosure function=f6
+    v12 = Call v10, -, v2, v11 calleeName="prepareHoldersBeforeLookupsUnder"
+    v13 = Call v10, -, v5, v11 calleeName="prepareHoldersBeforeLookupsUnder"
+    v14 = NewObject layout=L0 fields=[]
+    v15 = FinishObject v14
+    v16 = NewClosure function=f5
+    v17 = Call v16, -, v15
+    v18 = String string="kLate"
+    v19 = Call v0, -, v18 calleeName="Symbol" callNumber=3
+    PutModuleVariable v19 variable=g3
+    v21 = NewClosure function=f7
+    v22 = Call v10, -, v19, v21 calleeName="prepareHoldersBeforeLookupsUnder"
+    v23 = NewClosure function=f2
+    v24 = Call v23, -, v15
+    v25 = NewClosure function=f3
+    v26 = Call v25, -, v15
+    v27 = NewClosure function=f4
+    v28 = Call v27, -, v15
+    v29 = Undefined
+    Return v29
+}
+# REPEAT: function = 2..5 ; variable = 0..3
+function f%(function) module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g%(variable)
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# END REPEAT
+function f6 name="prepare" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 name="prepareLate" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

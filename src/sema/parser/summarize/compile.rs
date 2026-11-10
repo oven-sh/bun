@@ -3,6 +3,7 @@ use bun_alloc::Arena;
 use bun_sema::atom::Interner;
 use bun_sema::hir::{DiagnosticClass, File, FileBuilder};
 use bun_sema::resolve::{Dialect, ScriptKind};
+use bun_sema::session::Session;
 
 #[derive(Copy, Clone)]
 pub struct CompileParseOptions<'a> {
@@ -11,7 +12,7 @@ pub struct CompileParseOptions<'a> {
     pub experimental_decorators: bool,
     pub every_file_is_a_module: bool,
     pub reads_jsdoc: bool,
-    pub keeps_function_directives: bool,
+    pub ignores_pure_comments: bool,
 }
 
 pub(super) fn has_reported_error(file: &FileBuilder, compiles: bool) -> bool {
@@ -26,6 +27,15 @@ pub fn parse_for_compile<'s>(
     options: &CompileParseOptions<'_>,
     text: &[u8],
     atoms: &Interner<'s>,
+) -> File<'s> {
+    parse_for_compile_in((arena, atoms.session()), options, text, atoms)
+}
+
+pub fn parse_for_compile_in<'s>(
+    memory: (&'s Arena, &'s Session),
+    options: &CompileParseOptions<'_>,
+    text: &[u8],
+    atoms: &Interner<'_>,
 ) -> File<'s> {
     let script_kind = (options.script_kind).or_else(|| ScriptKind::from_file_name(options.path));
     let dialect = match script_kind.is_some_and(ScriptKind::is_javascript) {
@@ -48,12 +58,12 @@ pub fn parse_for_compile<'s>(
         attach_comments: false,
         compiles: true,
         reads_as_bun_run: true,
-        keeps_function_directives: options.keeps_function_directives,
+        ignores_pure_comments: options.ignores_pure_comments,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
-        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
+        parse_into_arena(scratch, how, memory, text, atoms)
     })
 }

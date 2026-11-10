@@ -38,12 +38,11 @@ impl<'h> Resolver<'h> {
         let key = self.keep(&key);
         let search = FileSearch {
             directory,
-            specifier: &key[key.len() - specifier.len()..],
+            specifier,
             kind,
             prefers_module_field: options.prefers_module_field,
         };
         let answer = match self.find_code_file(&search) {
-            // What "imports" names is a module of the host, or else a package.
             FoundCode::External(target) => {
                 self.resolve_runtime_module(&target).unwrap_or_else(|| {
                     let package = FileSearch {
@@ -57,6 +56,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             }
             | FoundCode::NotFound(_)) => self.answer_search(&search, found),
         };
@@ -70,15 +70,6 @@ impl<'h> Resolver<'h> {
                     kind: ExternalKind::HostValue,
                 }
             }
-            CodeResolution::File(file)
-                if kind != CodeImportKind::EntryPoint
-                    && self.code_host().is_in_other_program(file.path) =>
-            {
-                CodeResolution::External {
-                    specifier: file.path,
-                    kind: ExternalKind::UncompiledCode,
-                }
-            }
             other => other,
         };
         *resolutions.insert_ref(key, answer)
@@ -90,6 +81,7 @@ impl<'h> Resolver<'h> {
                 path,
                 required,
                 links_followed,
+                has_side_effects,
             } => {
                 let module_path = |found: Vec<u8>| match links_followed {
                     true => found,
@@ -97,9 +89,18 @@ impl<'h> Resolver<'h> {
                 };
                 let path = module_path(path);
                 let required = required.map(module_path);
+                let found = std::iter::once(&path).chain(&required);
+                for file in found.filter(|_| has_side_effects) {
+                    if self.declared_side_effects(file) != DeclaredSideEffects::Unspecified {
+                        let state = self.code_state();
+                        let mut files = state.files_found_with_side_effects.lock();
+                        files.insert(self.keep(file));
+                    }
+                }
                 if let Some(required) = required.filter(|required| *required != path) {
-                    let required_files = &self.code_state().required_files;
-                    required_files.insert_ref(self.keep(&path), self.keep(&required));
+                    let (imported, required) = (self.keep(&path), self.keep(&required));
+                    let mut required_files = self.code_state().required_files.lock();
+                    required_files.entry(imported).or_insert(required);
                 }
                 return CodeResolution::File(self.code_file(&path, None));
             }
@@ -121,7 +122,6 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    // An entry point that is written like the name of a package may be a path from the working directory.
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
         let host = self.code_host();
         let found = host.find_code_file(search);
@@ -136,6 +136,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             } => return file,
             found @ (FoundCode::External(_) | FoundCode::NotFound(_)) => found,
         };
@@ -148,6 +149,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             } => file,
             FoundCode::External(_) | FoundCode::NotFound(_) => found,
         }
@@ -186,6 +188,17 @@ impl<'h> Resolver<'h> {
         match self.module_type_manifest(dirname::<Posix>(path)) {
             Some(manifest) => manifest.module_type,
             None => DeclaredModuleType::Unknown,
+        }
+    }
+
+    pub(crate) fn module_type_where_imported(&self, path: &[u8]) -> DeclaredModuleType {
+        let of_package = self.package_module_type(path);
+        let is_contradicted = self.code_options().builds_executable
+            && of_package == DeclaredModuleType::CommonJs
+            && self.declared_module_type(path) == DeclaredModuleType::Esm;
+        match is_contradicted {
+            true => DeclaredModuleType::Unknown,
+            false => of_package,
         }
     }
 
@@ -252,7 +265,6 @@ impl<'h> Resolver<'h> {
         None
     }
 
-    /// `./a.ts?fresh=1`: `bun run` looks for what stands in front of the first `?`. What it finds is one more module of the file for each text that stands behind it.
     fn resolve_specifier_with_query(
         &self,
         request: &CodeRequest<'_>,
@@ -287,7 +299,26 @@ impl<'h> Resolver<'h> {
     }
 }
 
+fn names_file_from_folder(specifier: &[u8]) -> bool {
+    (specifier.starts_with(b"./") || specifier.starts_with(b"../"))
+        && !is_directory_specifier(specifier)
+        && !strings::contains_char(specifier, b'\\')
+}
+
 fn code_resolution_key(directory: &[u8], kind: CodeImportKind, specifier: &[u8]) -> Vec<u8> {
+    if names_file_from_folder(specifier) {
+        let is_asked_by_package =
+            is_in_node_modules(directory) || directory.ends_with(b"/node_modules");
+        let separator: &[u8] = match (kind, is_asked_by_package) {
+            (CodeImportKind::EntryPoint, false) => b"//a",
+            (CodeImportKind::Import, false) => b"//b",
+            (CodeImportKind::Require, false) => b"//c",
+            (CodeImportKind::EntryPoint, true) => b"//d",
+            (CodeImportKind::Import, true) => b"//e",
+            (CodeImportKind::Require, true) => b"//f",
+        };
+        return [&join(directory, specifier)[..], separator].concat();
+    }
     let separator: &[u8] = match kind {
         CodeImportKind::EntryPoint => b"//0",
         CodeImportKind::Import => b"//1",
@@ -362,7 +393,6 @@ const PACKAGE_URL: &[u8] = b"/";
 const SEPARATORS: &[u8] = b"/\\";
 const ENCODED_SLASHES: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 const JOIN_HEADROOM: usize = 8;
-// `bun run` copies a subpath into a buffer of this size. A longer one becomes the empty subpath, which no key matches.
 const SUBPATH_CAPACITY: usize = 512;
 const MAIN_FIELDS: [&[u8]; 3] = [b"module", b"main", b"jsnext:main"];
 const MAIN_FIELD_EXTENSIONS: [&[u8]; 7] =
@@ -370,13 +400,11 @@ const MAIN_FIELD_EXTENSIONS: [&[u8]; 7] =
 
 static BUN_RUN: LazyLock<CodeOptions> = LazyLock::new(|| CodeOptions::bun_run(b""));
 
-/// For a host without Bun's resolver: a file, with an extension, or a folder, beside the importer or in `node_modules`. Of a `package.json` it reads "exports" and the main fields, under the conditions and in the orders of `bun run`.
 pub fn find_file_plainly<H: Host + ?Sized>(host: &H, search: &FileSearch<'_>) -> FoundCode {
     BUN_RUN.find_file(host, H::parse_package_json, search)
 }
 
 impl CodeOptions {
-    /// `find_file_plainly` under the conditions and in the orders of a build, for files that only its host has.
     pub fn find_file_plainly<H: CodeHost + ?Sized>(
         &self,
         host: &H,
@@ -419,21 +447,17 @@ enum TargetKind {
 
 struct PackageWalk<'a> {
     specifier: &'a [u8],
-    /// The folder of the package in `node_modules`, and the key of its "exports".
     parsed: Option<(&'a [u8], Vec<u8>)>,
     is_self_reference: bool,
 }
 
-/// One search without Bun's resolver.
 struct PlainSearch<'a, H: Host + ?Sized> {
     host: &'a H,
     parse_manifest: fn(&H, &Arena, &[u8]) -> Option<Json>,
     orders: &'a ExtensionOrders,
     kind: CodeImportKind,
     prefers_module_field: bool,
-    /// Whether a condition of "exports" holds.
     holds: &'a dyn Fn(&[u8]) -> bool,
-    /// Made for the first `package.json` that the search reads.
     arena: OnceCell<Arena>,
 }
 
@@ -533,7 +557,6 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
         }
     }
 
-    /// The file that `exports`, of the `package.json` in `directory`, names for `subpath`, which is `.` or starts with `./`.
     fn find_in_exports(
         &self,
         directory: &[u8],
@@ -651,7 +674,6 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
             .or_else(|| self.find_file_in_another_case(trimmed))
     }
 
-    // `bun run` looks a name up in the listing of its directory without regard to case, and opens the file under the name that is listed.
     fn find_file_in_another_case(&self, path: &[u8]) -> Option<Vec<u8>> {
         let directory = dirname::<Posix>(path);
         let name = &path[strings::last_index_of_char(path, b'/')? + 1..];
@@ -697,6 +719,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
                     path: found,
                     required: main,
                     links_followed: false,
+                    has_side_effects: false,
                 },
             });
         }
@@ -723,7 +746,6 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
         let base_start = strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
         let dot = base_start + strings::last_index_of_char(&path[base_start..], b'.')?;
         let (stem, extension) = path.split_at(dot);
-        // Under the "aot" condition `x.mts` is found for "./x.mjs" in a package too.
         let keeps_module_extensions = is_in_node_modules(path) && !(self.holds)(AOT_CONDITION);
         match (extension, keeps_module_extensions) {
             (b".mjs" | b".cjs", true) => None,
@@ -755,6 +777,7 @@ fn found_file(path: Vec<u8>) -> FoundCode {
         path,
         required: None,
         links_followed: false,
+        has_side_effects: false,
     }
 }
 
@@ -774,7 +797,6 @@ fn parse_package_specifier(specifier: &[u8]) -> Option<(&[u8], Vec<u8>)> {
     Some((name, [b".".as_slice(), rest].concat()))
 }
 
-/// The path that `exports` names for `subpath`, from the directory of the package and with a `/` in front.
 fn resolve_exports(
     exports: &ExportsEntry<'_>,
     subpath: &[u8],
@@ -847,7 +869,6 @@ fn match_expansion_key<'k>(key: &[u8], match_key: &'k [u8]) -> Option<(KeyKind, 
     (trailer.is_empty() || !subpath.is_empty()).then_some((KeyKind::Pattern, subpath))
 }
 
-/// `None` where no condition holds: the search goes on with what stands behind `value`. An error ends it.
 fn pick_target<'h>(
     value: ExportsEntry<'h>,
     holds: &dyn Fn(&[u8]) -> bool,
@@ -863,7 +884,6 @@ fn pick_target<'h>(
         ExportsEntry::Invalid => Some(Err(CodeFailure::InvalidPackageTarget)),
         ExportsEntry::Map(map) => (map.entries.iter().filter(|entry| holds(entry.0)))
             .find_map(|entry| pick_target(entry.1, holds)),
-        // Node continues past an invalid target or `null`. `bun run` stops at either.
         ExportsEntry::Array(items) => items.iter().find_map(|&item| pick_target(item, holds)),
     }
 }

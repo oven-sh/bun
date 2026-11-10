@@ -777,6 +777,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).is_in_preload = true };
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    bun_jsc::compiled_program::will_run_preloads(unsafe { &*(*vm).global });
     // Note: copy the raw ptr into a guard-owned local so the defer body
     // doesn't borrow the fn param — later `(*vm).pending_internal_promise = …`
     // would otherwise alias the guard's capture.
@@ -784,6 +786,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     scopeguard::defer! {
         // SAFETY: per fn contract.
         unsafe { (*vm_for_guard).is_in_preload = false };
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        bun_jsc::compiled_program::did_run_preloads(unsafe { &*(*vm_for_guard).global });
     }
     // SAFETY: per fn contract.
     let kept_for_this_run = core::mem::take(unsafe { &mut (*vm).preloads_kept_for_reload });
@@ -887,7 +891,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             // SAFETY: per fn contract.
             unsafe {
                 (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
-                (*vm).transpiler.options.test_file_imports_vitest = false;
+                (*vm).transpiler.options.test_file_imports_vitest =
+                    crate::test_runner::jest::compiled_entry_point_imports_vitest(path_text);
             }
             bun_core::StringView::from_bytes(path_text)
         };
@@ -3612,245 +3617,22 @@ fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
     }
 }
 
-struct CssModuleFile {
-    source: bun_ast::Source<'static>,
-    /// `None` when the file's loader is not CSS.
-    sheet: Option<bun_css::BundlerStyleSheet>,
-    symbols: Vec<bun_ast::Symbol>,
-    import_records: Vec<bun_ast::ImportRecord<'static>>,
-}
+struct CssModuleHost(*mut VirtualMachine);
 
-impl CssModuleFile {
-    fn read(
-        bump: &'static bun_alloc::Arena,
-        path_text: &[u8],
-        log: &mut bun_ast::Log,
-    ) -> crate::Result<&'static [u8]> {
-        match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_text) {
-            Ok(contents) => {
-                let contents = match bun_core::strings::BOM::detect(&contents) {
-                    Some(bom) => bom.remove_and_convert_to_utf8_and_free(contents),
-                    None => contents,
-                };
-                Ok(bump.alloc_slice_copy(&contents))
-            }
-            Err(err) => {
-                log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "{} reading \"{}\"",
-                        bstr::BStr::new(err.name()),
-                        bstr::BStr::new(path_text),
-                    ),
-                );
-                Err(crate::Error::ParseError)
-            }
-        }
+impl bun_bundler::css_module_graph::Host for CssModuleHost {
+    fn transpiler(&mut self) -> &mut bun_bundler::Transpiler<'static> {
+        // SAFETY: `self.0` is the live per-thread VM.
+        unsafe { &mut (*self.0).transpiler }
     }
 
-    /// Parses like the bundler, but skips invalid CSS the way a browser does instead of failing the import.
-    fn parse(
-        jsc_vm: *mut VirtualMachine,
-        global: &JSGlobalObject,
-        bump: &'static bun_alloc::Arena,
-        source_index: usize,
-        path_text: &[u8],
-        contents: Option<&'static [u8]>,
-        log: &mut bun_ast::Log,
-    ) -> crate::Result<CssModuleFile> {
-        let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        let mut path = Fs::Path::init(intern_transpile_path(path_text));
-        // The pretty path must fit a path buffer. Worst case is "../" per `top_level_dir` component plus `path_text`.
-        if path_text.len() + 2 * top_level_dir.len() < bun_paths::MAX_PATH_BYTES {
-            path = bun_bundler::generic_path_with_pretty_initialized(
-                &path,
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                unsafe { &*jsc_vm }.transpiler.options.target,
-                top_level_dir,
-                bump,
-            )?;
-        }
-        let mut file = CssModuleFile {
-            source: bun_ast::Source {
-                path,
-                ..Default::default()
-            },
-            sheet: None,
-            symbols: Vec::new(),
-            import_records: Vec::new(),
-        };
-        let Some(contents) = contents else {
-            return Ok(file);
-        };
-        file.source.contents = std::borrow::Cow::Borrowed(contents);
+    fn watch(&mut self, path: &[u8]) {
+        auto_watch_file(self.0, path);
+    }
 
-        let mut options = bun_css::ParserOptions::default(Some(log));
-        options.error_recovery = true;
-        if bun_css::css_modules::is_module_path(path.pretty) {
-            options.filename = path.pretty;
-            options.css_modules = Some(bun_css::css_modules::Config::default());
-        }
-        match bun_css::BundlerStyleSheet::parse_bundler(
-            bump,
-            contents,
-            options,
-            &mut file.import_records,
-            bun_ast::Index::init(source_index),
-        ) {
-            Ok((sheet, extra)) => {
-                file.sheet = Some(sheet);
-                file.symbols = extra.symbols;
-                Ok(file)
-            }
-            // With `error_recovery` on, the parser only fails when it runs out of stack.
-            Err(_) => Err(global.throw_stack_overflow().into()),
-        }
+    fn intern(&mut self, path: &[u8]) -> Option<&'static [u8]> {
+        Some(intern_transpile_path(path))
     }
 }
-
-struct CssModuleGraph(Vec<CssModuleFile>);
-
-impl bun_css::css_modules::ComposesGraph for CssModuleGraph {
-    fn stylesheet(&self, source_index: u32) -> Option<&bun_css::BundlerStyleSheet> {
-        self.0[source_index as usize].sheet.as_ref()
-    }
-
-    fn source(&self, source_index: u32) -> &bun_ast::Source<'_> {
-        &self.0[source_index as usize].source
-    }
-
-    fn import_record(
-        &self,
-        source_index: u32,
-        import_record_index: u32,
-    ) -> &bun_ast::ImportRecord<'_> {
-        &self.0[source_index as usize].import_records[import_record_index as usize]
-    }
-}
-
-impl CssModuleGraph {
-    fn load(
-        &mut self,
-        jsc_vm: *mut VirtualMachine,
-        global: &JSGlobalObject,
-        bump: &'static bun_alloc::Arena,
-        path_text: &[u8],
-        contents: &'static [u8],
-        log: &mut bun_ast::Log,
-    ) -> crate::Result<()> {
-        self.0.push(CssModuleFile::parse(
-            jsc_vm,
-            global,
-            bump,
-            0,
-            path_text,
-            Some(contents),
-            log,
-        )?);
-
-        let mut source_index = 0;
-        while source_index < self.0.len() {
-            for record_index in 0..self.0[source_index].import_records.len() {
-                let file = &self.0[source_index];
-                let record = &file.import_records[record_index];
-                if record.kind != ImportKind::Composes {
-                    continue;
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                let resolver = unsafe { &mut (*jsc_vm).transpiler.resolver };
-                let vm_log =
-                    core::mem::replace(&mut resolver.log, core::ptr::NonNull::from(&mut *log));
-                let resolved =
-                    resolver.resolve(file.source.path.source_dir(), record.path.text, record.kind);
-                resolver.log = vm_log;
-                let mut resolved = match resolved {
-                    Ok(resolved) => resolved,
-                    Err(_) => continue,
-                };
-                if resolved.flags.is_external() {
-                    continue;
-                }
-                let Some(path) = resolved.path().map(|path| *path) else {
-                    continue;
-                };
-                let composed_index = match self
-                    .0
-                    .iter()
-                    .position(|file| file.source.path.text == path.text)
-                {
-                    Some(index) => index,
-                    None => {
-                        auto_watch_file(jsc_vm, path.text);
-                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                        let loaders = unsafe { &(*jsc_vm).transpiler.options.loaders };
-                        let contents = if loader_for_path(&path, loaders) == Some(Loader::Css) {
-                            match CssModuleFile::read(bump, path.text, log) {
-                                Ok(contents) => Some(contents),
-                                Err(_) => continue,
-                            }
-                        } else {
-                            None
-                        };
-                        let index = self.0.len();
-                        self.0.push(CssModuleFile::parse(
-                            jsc_vm, global, bump, index, path.text, contents, log,
-                        )?);
-                        index
-                    }
-                };
-                self.0[source_index].import_records[record_index].source_index =
-                    bun_ast::Index::init(composed_index);
-            }
-            source_index += 1;
-        }
-        Ok(())
-    }
-
-    /// Pairs each local name in the first file with the space-separated class names it exports.
-    fn exports(
-        &self,
-        global: &JSGlobalObject,
-        scratch: &bun_alloc::Arena,
-        log: &mut bun_ast::Log,
-    ) -> crate::Result<Vec<(&[u8], Vec<u8>)>> {
-        use bun_css::css_modules::{ComposesVisitor, ExportedName, scoped_name};
-
-        let Some(sheet) = self.0.first().and_then(|file| file.sheet.as_ref()) else {
-            return Ok(Vec::new());
-        };
-        let mut visitor = ComposesVisitor::new(self);
-        let mut exports = Vec::with_capacity(sheet.local_scope.count());
-        for (local_name, local) in sheet.local_scope.iter() {
-            let mut value = Vec::new();
-            for name in visitor.exported_names(sheet, local.ref_, 0, log) {
-                if !value.is_empty() {
-                    value.push(b' ');
-                }
-                match *name {
-                    ExportedName::Local(ref_) => {
-                        let file = &self.0[ref_.source_index() as usize];
-                        value.extend_from_slice(&scoped_name(
-                            scratch,
-                            file.source.path.pretty,
-                            file.symbols[ref_.inner_index() as usize]
-                                .original_name
-                                .slice(),
-                        ));
-                    }
-                    ExportedName::Global(name) => value.extend_from_slice(name),
-                }
-            }
-            if visitor.out_of_stack {
-                return Err(global.throw_stack_overflow().into());
-            }
-            exports.push((&**local_name, value));
-        }
-        Ok(exports)
-    }
-}
-
-bun_core::declare_scope!(CssModule, hidden);
 
 /// Builds the same object `Bun.build` emits as the CSS module's default export.
 #[cold]
@@ -3863,26 +3645,17 @@ fn css_module_exports(
     virtual_source: Option<&bun_ast::Source<'_>>,
     log: &mut bun_ast::Log,
 ) -> crate::Result<JSValue> {
-    let arena = bun_alloc::Arena::new();
-    // SAFETY: only `graph` and `skipped` borrow from `arena`; they're declared after it, so they drop first.
-    let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-    let mut graph = CssModuleGraph(Vec::new());
-    let mut skipped = bun_ast::Log::init();
+    use bun_bundler::css_module_graph::{Failure, load_exports, read};
 
     let contents = match virtual_source {
-        Some(source) => &*bump.alloc_slice_copy(&source.contents),
-        None => CssModuleFile::read(bump, path_text, log)?,
+        Some(source) => std::borrow::Cow::Borrowed(&*source.contents),
+        None => read(path_text, log).ok_or(crate::Error::ParseError)?.into(),
     };
-    graph.load(jsc_vm, global, bump, path_text, contents, &mut skipped)?;
-    let exports = graph.exports(global, bump, &mut skipped)?;
-    for msg in &skipped.msgs {
-        bun_core::scoped_log!(
-            CssModule,
-            "{}: skipped: {}",
-            bstr::BStr::new(path_text),
-            bstr::BStr::new(&msg.data.text),
-        );
-    }
+    let exports = match load_exports(&mut CssModuleHost(jsc_vm), path_text, &contents) {
+        Ok(exports) => exports,
+        Err(Failure::StackOverflow) => return Err(global.throw_stack_overflow().into()),
+        Err(Failure::Path(error)) => return Err(error.into()),
+    };
 
     let object = JSValue::create_empty_object(global, exports.len());
     for (name, value) in &exports {
@@ -4118,6 +3891,7 @@ fn __bun_fetch_builtin_module(
             .get(spec)
             .filter(|file| !graph.is_asset_of_compiled_program(spec, file))
             .filter(|_| !bun_jsc::compiled_program::is_compiled_module(spec))
+            .filter(|_| !bun_jsc::compiled_program::is_entry_point_beside_thread(spec))
     }) {
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
@@ -4657,8 +4431,7 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
     is_commonjs_require: bool,
     loader: Loader,
 ) -> Option<JSValue> {
-    let loaded = what_loading_gives(loader);
-    if loaded == Loaded::Data {
+    if !DATA_ONLY && bun_jsc::compiled_program::compiled_program().is_none() {
         return None;
     }
     let code = if is_commonjs_require {
@@ -4666,6 +4439,23 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
     } else {
         bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
     };
+    let changed = bun_jsc::compiled_program::error_if_compiled_file_changed_out_of_sight(
+        global, code, specifier,
+    );
+    if changed.is_some() {
+        return changed;
+    }
+    let loaded = what_loading_gives(loader);
+    if loaded == Loaded::Data {
+        return None;
+    }
+    // Whether an executable holds a native addon is a matter of how it is packaged, which a test run cannot know.
+    if loader == Loader::Napi
+        && (bun_jsc::compiled_program::lets_test_run_load_addon(global, specifier)
+            || bun_jsc::compiled_program::is_file_in_executable(specifier))
+    {
+        return None;
+    }
     let refusal = if loaded == Loaded::Code {
         bun_jsc::compiled_program::error_if_code_outside_image_is_refused(global, code, specifier)
     } else {
@@ -4706,7 +4496,16 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
 ) -> *mut c_void {
+    unsafe extern "C" {
+        safe fn Bun__compiledProgramWillRunTextOfFile(
+            global: &JSGlobalObject,
+            path: &bun_core::String,
+        );
+    }
     bun_jsc::mark_binding();
+    if bun_jsc::compiled_program::compiled_program().is_some() {
+        Bun__compiledProgramWillRunTextOfFile(global, specifier);
+    }
     // SAFETY: the caller's contract is `transpile_file`'s.
     unsafe {
         bun_removable_features::call_removable_or!(
@@ -5142,12 +4941,65 @@ pub(crate) fn transpile_as_loaded(
     transpile_source_code_inner::<false>(jsc_vm, &args).ok()
 }
 
+/// BunCompiledModules.cpp. An error of the class that `bun run` throws at the import of a file of data that its parser refuses, with the place that the parser named at the build. Empty where the build kept nothing under the path.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__compiledProgramErrorOfRefusedData(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> JSValue {
+    let path = path.to_utf8();
+    let graph = bun_standalone_graph::Graph::get_ref();
+    let Some(refused) = graph.and_then(|graph| graph.find_refused_data(path.slice())) else {
+        return JSValue::ZERO;
+    };
+    if refused.is_syntax_error {
+        let message = bstr::BStr::new(refused.message);
+        return global.create_syntax_error_instance(format_args!("{message}"));
+    }
+    let file = match bun_core::strings::last_index_of_char(path.slice(), b'?') {
+        Some(mark) => &path.slice()[..mark],
+        None => path.slice(),
+    };
+    let location = bun_ast::Location {
+        file: Box::from(file),
+        line_text: Some(Box::default()),
+        length: refused.length as usize,
+        offset: refused.offset as usize,
+        line: refused.line,
+        column: refused.column,
+        ..Default::default()
+    };
+    let message = bun_ast::Msg {
+        data: bun_ast::Data {
+            text: std::borrow::Cow::Owned(refused.message.to_vec()),
+            location: Some(location),
+        },
+        ..Default::default()
+    };
+    bun_jsc::BuildMessage::create(global, message)
+        .unwrap_or_else(|error| global.take_exception(error))
+}
+
 /// BunCompiledModules.cpp. The executable of a compiled program holds the file as it is, so the loader of its kind can read it.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__compiledProgramHoldsFileAsItIs(path: &bun_core::String) -> bool {
     let path = path.to_utf8();
     bun_standalone_graph::Graph::get_ref()
         .is_some_and(|graph| graph.find_asset_under_root(path.slice()).is_some())
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__compiledProgramDataFileIsPrintedAsJavaScript(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let path = path.to_utf8();
+    // SAFETY: `bun_vm_ptr()` is the live per-thread VM.
+    let loaders = unsafe { &(*global.bun_vm_ptr()).transpiler.options.loaders };
+    matches!(
+        loader_for_path(&Fs::Path::init(path.slice()), loaders),
+        Some(Loader::Text | Loader::Md)
+    )
 }
 
 /// Transpiles plugin-provided source through the per-thread

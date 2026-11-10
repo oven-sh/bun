@@ -1,0 +1,17 @@
+# `path.endsWith((t = "/" + name, m = n === undefined, t))`, where that `name` is a text is a guess: the stretch of the guess goes on to the test that alone takes the join,
+# so what is made between the two is made once in each arm. What of it is read behind the arms meets there. Left bound to the arm walked last, `m` stood in front of no use behind the meeting
+# and the verifier stopped the build: the definition of an operand does not dominate the use.
+# f1 = ends
+# -- source: ends.ts
+# function ends(path: string, name: string, n: unknown) {
+#   let t: string, m: boolean;
+#   const yes = path.endsWith((t = "/" + name, m = n === undefined, t));
+#   return (yes ? "y" : "n") + (m ? "u" : "-");
+# }
+# const odd: any[] = JSON.parse('["x", 7, "y", true]');
+# console.log(ends("a/x", odd[0], undefined), ends("a/7", odd[1], undefined), ends("a/y", odd[2], 1), ends("a/true", odd[3], undefined));
+# -- end of source
+# RUN(ENDS): walk f1 mechanisms=all
+# ENDS-LABEL: code f1:Body
+# ENDS: = TypeTest
+# ENDS: = GetStringCodeUnit

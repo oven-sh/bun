@@ -1,0 +1,22 @@
+# -- source: the-effects-of-a-function-go-by-what-its-body-makes-and-by-what-doors-ask.js
+# class Counter { constructor() { this.n = 0; } bump(k) { this.n = this.n + k; return this.n; } }
+# function ownList(x) { const list = []; list.push(x); return 1; }
+# function slots() { let n = 0; return () => { n = n + 1; return n < 3; }; }
+# function read(o) { return o.a + 1; }
+# function once(c) { return c.bump(1); }
+# function add(list, x) { list.push(x); }
+# function run(o) { return o.step(); }
+# sink(ownList(1), slots()(), read({ a: 2 }), once(new Counter()), add([], 1), run({ step: () => 1 }));
+# -- end of source
+# Every caller believes Link's effects of a function, and no door stands at them. So they lean on Link's type of a value in full only where the body itself makes the value: the list of ownList().
+# Of what comes through a place of an enforced kind (a parameter, a capture, a variable, a slot of a scope, a field read by name off such an object, what a call gives) they lean on what its doors ask in every unit:
+# the primitives and the layouts: the arrow of slots(), read(), once(). Never on which function a place holds: run() calls what a field holds, which is any code.
+# Nor on where an object of a class of the engine was made and that nobody has laid a name on it: add() is any code. Nor on what has no door: what a list holds, what was thrown.
+# f1 = ownList, f3 = read, f4 = once, f5 = add, f6 = run, f10 = the arrow of slots()
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+# CHECK: function f3 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: function f4 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+# CHECK: function f5 {{*}}mayCallUnknownCode
+# CHECK: function f6 {{*}}mayCallUnknownCode
+# CHECK: function f10 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]

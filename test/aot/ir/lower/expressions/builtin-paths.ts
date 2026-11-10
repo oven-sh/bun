@@ -39,8 +39,7 @@
 // CHECK: b0([[parameter]]: anything):
 // CHECK-NOT: Builtin
 // CHECK-NOT: builtin(
-// CHECK: [[receiver]] = Convert [[parameter]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// CHECK-NEXT: = PropGet [[receiver]] key="max"
+// CHECK: = PropGet [[parameter]] key="max"
 // CHECK-NOT: Builtin
 // CHECK-NOT: builtin(
 // CHECK-LABEL: function {{*}}name="symbolIterator"

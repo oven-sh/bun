@@ -1,6 +1,6 @@
 // The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
-import { handedOver } from "./native-code.ts";
+import { answering, constructing, retainedByNativeCode } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
@@ -15,6 +15,13 @@ const bagOfFunctions = (path: b.BuiltinPath, members: Readonly<Record<string, b.
 
 const answers = (binding: b.BuiltinPath, answer: b.TableType) =>
   b.static(binding, { getter: answer, capability: "heap", implementation: b.generic });
+
+const isNoFunction = {
+  returns: b.never,
+  capability: "heap",
+  throws: true,
+  implementation: b.generic,
+} satisfies b.FunctionField;
 
 const ttyFunctions = "%BunTTYFunctions%";
 const httpFunctions = "%NodeHTTPInternalBinding%";
@@ -83,23 +90,23 @@ export default b.declarations(
   bagOfFunctions(httpFunctions, {
     // The two callbacks are called for each client error and each connection.
     setServerCustomOptions: configuresServer({
-      server: handedOver,
+      server: retainedByNativeCode,
       requireHostHeader: b.inspected,
       useStrictMethodValidation: b.inspected,
       lenientHttpFlags: converted,
       maxHeaderSize: converted,
-      onClientError: handedOver,
-      onConnection: handedOver,
+      onClientError: retainedByNativeCode,
+      onConnection: retainedByNativeCode,
       httpAllowHalfOpen: b.inspected,
     }),
     setServerAppFlags: configuresServer({
-      server: handedOver,
+      server: retainedByNativeCode,
       requireHostHeader: b.inspected,
       useStrictMethodValidation: b.inspected,
       lenientHttpFlags: converted,
       httpAllowHalfOpen: b.inspected,
     }),
-    setServerMaxHeadersCount: configuresServer({ server: handedOver, maxHeadersCount: converted }),
+    setServerMaxHeadersCount: configuresServer({ server: retainedByNativeCode, maxHeadersCount: converted }),
     drainMicrotasks: { returns: b.undefined, capability: "js", throws: true, implementation: b.generic },
   }),
   answers("native:Cpp:NodeHTTP.cpp:createNodeHTTPInternalBinding", b.builtin(httpFunctions)),
@@ -114,18 +121,31 @@ export default b.declarations(
     ["domainToAscii", "domainToUnicode", "idnaToASCII"].map(name => b.builtin(`${urlFunctions}.${name}`)),
   ),
 
-  // The constructors of two classes of which the table says nothing else. node:util exports them.
+  // The constructors of two classes, which node:util exports. JSMIMEParams.cpp, JSMIMEType.cpp: each makes an instance of its class, below what `prototype` of new.target holds, and throws where it is called without `new`.
+  // Of the members of the instances the table says nothing.
   bagOfFunctions(mimeClasses, {}),
-  ["MIMEParams", "MIMEType"].flatMap(name => b.class(`${mimeClasses}.${name}`, { hasPrototype: false })),
-  answers("native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding", b.builtin(mimeClasses)),
+  ["MIMEParams", "MIMEType"].flatMap(name =>
+    b.class(`${mimeClasses}.${name}`, {
+      hasPrototype: false,
+      call: isNoFunction,
+      construct: constructing(b.instance(`MIMEBinding.${name}`), b.hostCall),
+    }),
+  ),
+  // createJSMIMEBinding(): an object with the two constructors: a call of it throws.
+  b.static("native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding", {
+    getter: b.builtin(mimeClasses),
+    capability: "heap",
+    implementation: b.generic,
+    call: isNoFunction,
+  }),
   b.seenCodeOnly({ holders: [mimeClasses] }),
 
   // src/jsc/bindings/NodeVM.cpp. unseen-code.builtins.ts and runtime-dependencies.builtins.ts say which of them evaluate a text and start a realm.
   bagOfFunctions(vmBinding, {
     createContext: undeclaredFunction,
-    isContext: undeclaredFunction,
+    isContext: answering(b.bool),
     compileFunction: undeclaredFunction,
-    isModuleNamespaceObject: undeclaredFunction,
+    isModuleNamespaceObject: answering(b.bool),
     kLinked: b.property(b.f64),
     kEvaluated: b.property(b.f64),
     kErrored: b.property(b.f64),
@@ -137,4 +157,12 @@ export default b.declarations(
 
   // Whether the process was started with --experimental-stream-iter.
   answers("native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag", b.bool),
+  // binding() in src/runtime/node/node_fs_binding.rs makes an object for each module that asks. It is no function, and each of its methods has a row of its own: node_fs_binding.bind.ts.
+  b.static("native:Bindgen:node_fs_binding.bind.ts:binding", {
+    runsUnseenCode: false,
+    getter: b.instance("NodeJSFS").fresh,
+    capability: "heap",
+    implementation: b.generic,
+    call: { returns: b.never, capability: "heap", throws: true, implementation: b.generic },
+  }),
 );

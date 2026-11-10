@@ -1,13 +1,12 @@
 // RUN(LEAF): link
-// LEAF: module {{*}}/imports/chain/m0.js"{{*}}kind=CommonJs flags=[KeepsError]
+// LEAF: module {{*}}/imports/chain/m0.js"{{*}}kind=CommonJs flags=[CachesEvaluationError]
 
 // RUN(RECORDS): link
-// RECORDS: module {{*}}/imports/chain/m1.js"{{*}}kind=CommonJs flags=[KeepsError]{{*}}requests=[{target=m{{*}}kind=Require completes=true}]
+// RECORDS: module {{*}}/imports/chain/m1.js"{{*}}kind=CommonJs flags=[CachesEvaluationError]{{*}}requests=[{target=m{{*}}kind=Require completes=true}]
 
 // RUN(BODY): link
 // BODY: EvaluateModule module=m{{*}} [isBare, isCallOfRequire]
-// BODY: [[read]] = GetModuleVariable
-// BODY-NEXT: [[c]] = Convert [[read]]
+// BODY: [[c]] = GetModuleVariable
 // BODY: = Add [[c]]
 // BODY: PutModuleVariable
 // BODY: = NewClosure function=

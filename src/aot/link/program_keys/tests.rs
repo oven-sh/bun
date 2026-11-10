@@ -1,8 +1,8 @@
 use super::*;
 use crate::link::key_context;
 use crate::link::testing::{
-    Projects, SHARED_NAME_IMPORTERS, find_synthetic_export, in_application, key_in, path_source,
-    test_class_key, test_function_key, test_variable_key, with_projects,
+    Projects, SHARED_NAME_IMPORTERS, application_file, find_synthetic_export, in_application,
+    key_in, path_source, test_class_key, test_function_key, test_variable_key, with_projects,
     with_projects_without_bun_modules,
 };
 use bun_sema::program::FileId;
@@ -135,15 +135,15 @@ fn modules_order_by_variant_project_file() {
     };
     let (first, second) = (RuntimeModule::NodeBuffer, RuntimeModule::NodePath);
     let (application, runtime) = (ProjectId::Application, ProjectId::Runtime);
-    let inner = |file, callback| ProgramModule::Inner {
-        file,
+    let inner = |callback| ProgramModule::Inner {
+        file: in_project(application, 0),
         callback: FnId(callback),
     };
     let modules_in_order = [
         file(application, 0),
-        inner(in_project(application, 0), 1),
-        inner(in_project(application, 0), 5),
-        ProgramModule::Face(in_project(application, 0)),
+        inner(1),
+        inner(4),
+        ProgramModule::Facade(in_project(application, 0)),
         ProgramModule::Check(in_project(application, 0)),
         file(application, 9),
         file(runtime, 0),
@@ -164,39 +164,45 @@ fn modules_order_by_variant_project_file() {
 }
 
 #[test]
-fn function_keys_come_back_out_of_numbers() {
-    let file = FileId(7);
-    let function = FunctionRef {
-        file,
-        function: FnId(9),
-    };
-    let class = ClassRef {
-        file,
-        class: ClassId(9),
-    };
-    let member = MemberId(9);
-    let keys = [
-        FunctionKey::ModuleBody(file),
-        FunctionKey::WrappedModuleBody(file),
-        FunctionKey::FaceBody(file),
-        FunctionKey::CheckBody(file),
-        FunctionKey::Source(function),
-        FunctionKey::Signature(function),
-        FunctionKey::ClassSignature(class),
-        FunctionKey::ImplicitConstructor(class),
-        FunctionKey::InstanceInitializer(class),
-        FunctionKey::StaticInitializer(class),
-        FunctionKey::AccessorGetter { file, member },
-        FunctionKey::AccessorSetter { file, member },
-        FunctionKey::PrivateNameTest { file, member },
-    ];
-    let mut all = std::collections::BTreeSet::new();
-    for project in ProjectId::ALL {
-        for key in keys {
-            let key = InProject { project, key };
-            assert_eq!(ProgramFunctionKey::from_numbers(key.to_numbers()), key);
-            all.insert(key.to_numbers());
+fn variable_keys_order_the_same_whichever_name_is_interned_first() {
+    let interning_orders: [[&[u8]; 2]; 2] = [[b"apple", b"pear"], [b"pear", b"apple"]];
+    for names in interning_orders {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let [earlier, later] = names.map(|name| atoms.intern(name));
+        assert!(earlier.0 < later.0);
+        let (apple, pear) = (atoms.intern(b"apple"), atoms.intern(b"pear"));
+
+        let file = |file| ProgramModule::File(application_file(FileId(file)));
+        let external = |specifier| ProgramModule::External {
+            importer: application_file(FileId(0)),
+            specifier,
+            type_attribute: None,
+        };
+        let export = |module, name| ProgramVariableKey::SyntheticExport { module, name };
+        let copy = |module, name| ProgramVariableKey::Copy { module, name };
+        let (first, second) = (RuntimeModule::NodeBuffer, RuntimeModule::NodePath);
+        let keys_in_order = [
+            ProgramVariableKey::Declared(in_application(test_variable_key(1, 1))),
+            ProgramVariableKey::Declared(in_application(test_variable_key(2, 2))),
+            ProgramVariableKey::Declared(key_in(ProjectId::Runtime, test_variable_key(0, 0))),
+            export(file(0), apple),
+            export(file(0), pear),
+            export(file(1), apple),
+            export(external(apple), pear),
+            export(external(pear), apple),
+            copy(file(0), apple),
+            copy(file(0), pear),
+            copy(file(1), apple),
+            ProgramVariableKey::MockOfRuntimeModule(first.min(second)),
+            ProgramVariableKey::MockOfRuntimeModule(first.max(second)),
+        ];
+        for (left_index, left) in keys_in_order.iter().enumerate() {
+            for (right_index, right) in keys_in_order.iter().enumerate() {
+                let order = compare_program_variable_keys(*left, *right, &atoms);
+                assert_eq!(order, left_index.cmp(&right_index), "{left:?} {right:?}");
+                assert_eq!(left.compare(right, &atoms), order);
+            }
         }
     }
-    assert_eq!(all.len(), ProjectId::COUNT * keys.len());
 }

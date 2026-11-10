@@ -507,6 +507,8 @@ pub struct Resolver<'a> {
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'static dyn StandaloneModuleGraph>,
+    /// `Resolver::pass_over_outfile`
+    pub(crate) outfile_of_build: Option<&'static [u8]>,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -631,6 +633,7 @@ impl<'a> Resolver<'a> {
             env_loader: from.env_loader,
             store_fd: from.store_fd,
             standalone_module_graph: from.standalone_module_graph,
+            outfile_of_build: from.outfile_of_build,
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
@@ -990,6 +993,7 @@ impl<'a> Resolver<'a> {
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
+            outfile_of_build: None,
             prefer_module_field: true,
             custom_dir_paths: None,
             esm_failure: None,
@@ -1130,23 +1134,6 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    /// Code from disk that names a package which the disk does not hold gets the one that the executable holds.
-    fn resolve_package_of_program_for_code_from_disk(
-        &self,
-        specifier: &[u8],
-        kind: ast::ImportKind,
-    ) -> Option<&'static [u8]> {
-        let graph = self.standalone_module_graph?;
-        if !graph.compiled_program()?.allows_code_from_disk {
-            return None;
-        }
-        let public_root = graph.base_public_path_with_default_suffix();
-        match self.resolve_embedded_package(public_root, specifier, kind) {
-            PackageLookup::Found(file_name) => Some(file_name),
-            PackageLookup::Hidden | PackageLookup::Unknown => None,
-        }
-    }
-
     /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
     pub fn resolve_embedded_package(
         &self,
@@ -1167,6 +1154,118 @@ impl<'a> Resolver<'a> {
             return PackageLookup::Unknown;
         };
         graph.resolve_package(source_dir, specifier, is_require(kind), &search)
+    }
+
+    /// What the executable holds under `import_path` for whoever looks from `source_dir`.
+    fn look_in_executable(
+        &self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> PackageLookup {
+        let Some(graph) = self.standalone_module_graph else {
+            return PackageLookup::Unknown;
+        };
+        let followed = graph.compiled_program().and_then(|program| {
+            let public_root = graph.base_public_path_with_default_suffix();
+            program.find_name_that_build_followed(
+                public_root,
+                source_dir,
+                import_path,
+                is_require(kind),
+            )
+        });
+        if let Some(file_name) = followed.filter(|_| self.custom_dir_paths.is_none()) {
+            return PackageLookup::Found(file_name);
+        }
+        let is_left_outside = graph.compiled_program().is_some_and(|program| {
+            let public_root = graph.base_public_path_with_default_suffix();
+            program.leaves_outside(source_dir, import_path)
+                || program.looks_for_package_from_disk(public_root, source_dir, import_path)
+        });
+        if is_left_outside {
+            return PackageLookup::Unknown;
+        }
+        match self.resolve_embedded_module(source_dir, import_path, kind) {
+            Some(file_name) => PackageLookup::Found(file_name),
+            None => self.resolve_embedded_package(source_dir, import_path, kind),
+        }
+    }
+
+    /// `bun run` looks for a relative name beside the importer, and no folder on disk is known to stand for that of a file of the executable.
+    /// With `--aot-allow-code-from-disk` the build has written down where its root lay.
+    pub fn looks_in_executable_alone(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        self.custom_dir_paths.is_none()
+            && self.looks_in_executable_alone_from(source_dir, import_path)
+    }
+
+    /// The same for one folder, be it the importer's or one that `require.resolve(name, { paths })` was given.
+    fn looks_in_executable_alone_from(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        let graph = self.standalone_module_graph;
+        let program = graph.and_then(|graph| graph.compiled_program());
+        program.is_some_and(|program| {
+            !program.allows_code_from_disk
+                && ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
+                && crate::compiled_program::is_relative_specifier(import_path)
+                && !program.leaves_outside(source_dir, import_path)
+        })
+    }
+
+    /// The same from one of the folders that `require.resolve(name, { paths })` was given, in a compiled program.
+    /// `None`: the executable says nothing, and the search goes on.
+    fn look_in_executable_from_given_folder(
+        &self,
+        folder: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<ResultUnion<'static>> {
+        let is_compiled =
+            (self.standalone_module_graph).is_some_and(|graph| graph.compiled_program().is_some());
+        if !is_compiled {
+            return None;
+        }
+        match self.look_in_executable(folder, import_path, kind) {
+            PackageLookup::Found(file_name) => {
+                let found = Self::result_of_module_in_executable(file_name, kind);
+                Some(ResultUnion::Success(found))
+            }
+            PackageLookup::Hidden => Some(ResultUnion::NotFound),
+            PackageLookup::Unknown => None,
+        }
+    }
+
+    /// Where the disk is asked for what is looked for from `folder`. A folder of the executable stands for one on disk, as it does for a module that imports.
+    fn folder_on_disk_of_given_folder<'f>(&self, folder: &'f [u8]) -> std::borrow::Cow<'f, [u8]> {
+        let graph = (self.standalone_module_graph).filter(|graph| {
+            graph.compiled_program().is_some()
+                && ::bun_options_types::standalone_path::is_bun_standalone_file_path(folder)
+        });
+        let Some(graph) = graph else {
+            return std::borrow::Cow::Borrowed(folder);
+        };
+        let root_on_disk = graph.root_on_disk();
+        let base = root_on_disk
+            .as_deref()
+            .unwrap_or_else(|| Fs::FileSystem::get().top_level_dir());
+        // The deepest comes first. The root directory has no folder below the root.
+        let folders = graph.directories_of_importer(folder, base);
+        std::borrow::Cow::Owned(folders.into_iter().next().unwrap_or_else(|| base.to_vec()))
+    }
+
+    fn result_of_module_in_executable(
+        file_name: &'static [u8],
+        kind: ast::ImportKind,
+    ) -> Result<'static> {
+        Result {
+            import_kind: kind,
+            path_pair: PathPair {
+                primary: Path::init(file_name),
+                secondary: None,
+            },
+            module_type: options::ModuleType::Esm,
+            flags: ResultFlags::IS_STANDALONE_MODULE,
+            ..Default::default()
+        }
     }
 
     /// The module of `CompiledProgram::resolve_entry_point`.
@@ -1500,19 +1599,19 @@ impl<'a> Resolver<'a> {
         // ...unless you pass a relative path that exists in the standalone module graph executable.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let importer_directory: Vec<u8>;
+        let mut looks_beside_source = false;
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
-                let program = graph.compiled_program();
-                let is_left_outside =
-                    program.is_some_and(|program| program.leaves_outside(source_dir, import_path));
-                let embedded = match is_left_outside {
+                // `require.resolve("dep", { paths: [folder] })` says where to look from, and what the importer's own folder finds is another file:
+                // resolve_without_symlinks() asks the executable from each of the folders in its turn. A whole path is looked for from nowhere.
+                let looks_from_given_folders = graph.compiled_program().is_some()
+                    && self.custom_dir_paths.is_some()
+                    && !bun_paths::is_absolute(import_path);
+                let embedded = match looks_from_given_folders {
                     true => PackageLookup::Unknown,
-                    false => match self.resolve_embedded_module(source_dir, import_path, kind) {
-                        Some(file_name) => PackageLookup::Found(file_name),
-                        None => self.resolve_embedded_package(source_dir, import_path, kind),
-                    },
+                    false => self.look_in_executable(source_dir, import_path, kind),
                 };
                 if embedded == PackageLookup::Hidden {
                     self.extension_order = original_order;
@@ -1520,21 +1619,16 @@ impl<'a> Resolver<'a> {
                 }
                 if let PackageLookup::Found(file_name) = embedded {
                     self.extension_order = original_order;
-                    return ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    });
+                    return ResultUnion::Success(Self::result_of_module_in_executable(
+                        file_name, kind,
+                    ));
                 }
                 if specifier_is_embedded_path
                     || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 {
-                    if specifier_is_embedded_path {
+                    if specifier_is_embedded_path
+                        || self.looks_in_executable_alone(source_dir, import_path)
+                    {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
@@ -1550,6 +1644,7 @@ impl<'a> Resolver<'a> {
                         .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
                     {
                         importer_directory = directory;
+                        looks_beside_source = true;
                         break 'brk &importer_directory[..];
                     }
                     break 'brk top_level_dir;
@@ -1606,6 +1701,15 @@ impl<'a> Resolver<'a> {
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        // `bun build --compile` looks from the working directory. A package name has been walked up for, and what ended that walk stands.
+        if looks_beside_source
+            && matches!(tmp, ResultUnion::NotFound)
+            && crate::compiled_program::is_relative_specifier(import_path)
+            && self.custom_dir_paths.is_none()
+        {
+            let top_level_dir = Fs::FileSystem::get().top_level_dir();
+            tmp = self.resolve_without_symlinks(top_level_dir, import_path, kind, global_cache);
+        }
         if matches!(tmp, ResultUnion::NotFound)
             && let Some(path) =
                 self.resolve_at_source_path(source_dir_normalized, import_path, kind)
@@ -1662,9 +1766,16 @@ impl<'a> Resolver<'a> {
                         return ResultUnion::Failure(err);
                     }
                     // The name of a package leads to a file on disk. Where that file was compiled, the module of the executable answers.
+                    let is_left_to_disk = self.standalone_module_graph.is_some_and(|graph| {
+                        let public_root = graph.base_public_path_with_default_suffix();
+                        graph.compiled_program().is_some_and(|program| {
+                            program.leaves_package_to_disk(public_root, source_dir, import_path)
+                        })
+                    });
                     let found = result.path().map(|path| path.text());
-                    let found =
-                        found.and_then(|path| self.resolve_embedded_module(b"", path, kind));
+                    let found = found
+                        .filter(|_| !is_left_to_disk)
+                        .and_then(|path| self.resolve_embedded_module(b"", path, kind));
                     if let Some(module) = found {
                         result.path_pair = PathPair {
                             primary: Path::init(module),
@@ -1706,19 +1817,7 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::Failure(e) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
-                    Some(file_name) => ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    }),
-                    None => ResultUnion::Failure(e),
-                }
+                ResultUnion::Failure(e)
             }
             ResultUnion::Pending(pending) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
@@ -1726,19 +1825,7 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::NotFound => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
-                    Some(file_name) => ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    }),
-                    None => ResultUnion::NotFound,
-                }
+                ResultUnion::NotFound
             }
         };
 
@@ -2130,16 +2217,23 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    match self.check_relative_path(
+                    // From each folder in its turn: the disk, as in an executable built without --aot, then what the executable holds there.
+                    // Where no folder on disk is known to stand for a folder of the executable, the disk is not asked: the working directory is none.
+                    if !self.looks_in_executable_alone_from(custom_utf8.slice(), import_path) {
+                        let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
+                        match self.check_relative_path(&on_disk, import_path, kind, global_cache) {
+                            ResultUnion::Success(res) => return ResultUnion::Success(res),
+                            ResultUnion::Pending(p) => return ResultUnion::Pending(p),
+                            ResultUnion::Failure(p) => return ResultUnion::Failure(p),
+                            ResultUnion::NotFound => {}
+                        }
+                    }
+                    if let Some(answer) = self.look_in_executable_from_given_folder(
                         custom_utf8.slice(),
                         import_path,
                         kind,
-                        global_cache,
                     ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                        return answer;
                     }
                 }
                 debug_assert!(!check_package); // always from JavaScript
@@ -2268,16 +2362,29 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    // From each folder in its turn. From a folder on disk: the disk, as in an executable built without --aot, then what the executable
+                    // holds there. From a folder of the executable: the executable first, as for a file of it that imports.
+                    let given = custom_utf8.slice();
+                    let is_of_executable =
+                        ::bun_options_types::standalone_path::is_bun_standalone_file_path(given);
+                    if is_of_executable
+                        && let Some(answer) =
+                            self.look_in_executable_from_given_folder(given, import_path, kind)
+                    {
+                        return answer;
+                    }
+                    let on_disk = self.folder_on_disk_of_given_folder(given);
+                    match self.check_package_path(&on_disk, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
+                    }
+                    if !is_of_executable
+                        && let Some(answer) =
+                            self.look_in_executable_from_given_folder(given, import_path, kind)
+                    {
+                        return answer;
                     }
                 }
             } else {
@@ -6105,11 +6212,18 @@ impl<'a> Resolver<'a> {
                     dec_ret!(None);
                 };
 
-                dec_ret!(Some(LoadResult {
-                    path: abs_path.as_bytes(),
-                    dirname_fd: plain_dirname_fd,
-                    file_fd: query.entry().cache().fd,
-                }));
+                // The listing ignores case, so the test is made on what it answers.
+                let is_outfile_of_build = self.outfile_of_build.is_some_and(|outfile| {
+                    crate::compiled_program::compare_source_paths(outfile, abs_path.as_bytes())
+                        .is_eq()
+                });
+                if !is_outfile_of_build {
+                    dec_ret!(Some(LoadResult {
+                        path: abs_path.as_bytes(),
+                        dirname_fd: plain_dirname_fd,
+                        file_fd: query.entry().cache().fd,
+                    }));
+                }
             }
         }
 
@@ -7066,7 +7180,7 @@ fn is_require(kind: ast::ImportKind) -> bool {
 /// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
 /// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
 /// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
-fn rewritten_file_extensions(
+pub(crate) fn rewritten_file_extensions(
     ext: &[u8],
     inside_node_modules: impl Fn() -> bool,
 ) -> &'static [&'static [u8]] {

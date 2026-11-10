@@ -1,0 +1,23 @@
+# -- source: a-list-made-in-front-of-an-endless-loop-is-known-where-the-copy-for-another-kind-of-list-begins.js
+# let reads = 0;
+# const holder = JSON.parse('{"slice":0}');
+# Object.defineProperty(holder, "NaN", { get() { if (++reads > 3) throw new Error("enough"); return 0; } });
+# function walk(a) {
+#   const out = [];
+#   a.slice;
+#   for (let i = a;; i--)
+#     if (a[i] === 3) ;
+# }
+# try { walk(holder); } catch (error) { print(error.message, reads); }
+# -- end of source
+# `out` is made in front of the loop and the loop does not name it. The tests in front of the typed turns lead, where a list has another kind of storage, to a block that is begun late, behind the walks of the other copies, when nothing is left of what met there. Its copy was walked with nothing known, it and the purchases inside it handed over to the closed copy without what is believed there, and a purchase failed.
+# It failed with a line on the screen as users build. What is known in front of those tests is kept for that copy now: a test writes nothing.
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: enough 4
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: enough 4
+# HELD-NEXT: exited with 0

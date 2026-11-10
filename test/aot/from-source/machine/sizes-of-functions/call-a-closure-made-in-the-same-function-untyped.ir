@@ -1,0 +1,14 @@
+# f1 = scaleBoth
+# -- source: call-a-closure-made-in-the-same-function-untyped.js
+# function scaleBoth(first, second, factor) {
+#   const scale = (value) => value * factor;
+#   return scale(first) + scale(second);
+# }
+# globalThis.answer = scaleBoth(+input, +input, +input) + scaleBoth(1, 2, +input);
+# -- end of source
+# The compiler before this one: 4 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 18, patches 3, moves 7, unlikely or rare 0.
+# RUN(X64): steps most:25 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 25

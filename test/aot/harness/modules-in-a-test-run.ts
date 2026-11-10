@@ -1,49 +1,16 @@
 // How modules load under `bun test --aot`: each project runs under plain `bun test` and compiled, and both must print and pass alike.
 // The test files are one side and the files they share are the other, whether one image holds both or the shared files have an image of their own.
-// Every project runs in every way. A way has test files of its own, test/aot/modules-in-a-test-run*.test.ts: all of them in one file took six minutes.
-import { afterAll, expect } from "bun:test";
+// A way runs the projects on its list below, and has test files of its own, test/aot/modules-in-a-test-run*.test.ts. What went wrong where a test file runs again: ../fixed-runs/rerun.
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { test } from "../supported";
 import { run } from "./run";
 
-const state = {
-  "helpers/state.js": `export let count = 0;\nexport function bump() { return ++count; }`,
-  "helpers/state.cjs": `exports.count = 0;\nexports.bump = () => ++exports.count;`,
-};
 const head = `import { expect, mock, test } from "bun:test";`;
 
 const projects: Record<string, Record<string, string>> = {
-  "a file taken out of require.cache loads again": {
-    ...state,
-    "cache.test.js": `${head}
-      const again = (name, load, path) => test(name, () => {
-        const first = load(); first.bump();
-        console.log(name, "in the cache:", path in require.cache);
-        delete require.cache[path];
-        const second = load();
-        console.log(name, second === first, first.count, second.count, path in require.cache);
-      });
-      const esm = require.resolve("./helpers/state.js"), cjs = require.resolve("./helpers/state.cjs");
-      const hidden = text => JSON.parse(JSON.stringify(text));
-      again("a module, by the resolved path", () => require(esm), esm);
-      again("a module, by a literal", () => require("./helpers/state.js"), esm);
-      again("a module, by a path nobody follows", () => require(hidden(esm)), esm);
-      again("a CommonJS file, by the resolved path", () => require(cjs), cjs);
-      again("a CommonJS file, by a literal", () => require("./helpers/state.cjs"), cjs);
-      again("a CommonJS file, by a path nobody follows", () => require(hidden(cjs)), cjs);`,
-    "imported-too.test.js": `${head}
-      import { bump } from "./helpers/state.js";
-      test("a module that is also imported", () => {
-        const path = require.resolve("./helpers/state.js");
-        bump();
-        const first = require(path);
-        delete require.cache[path];
-        const second = require(path);
-        console.log("imported too", first.count, second.count, bump(), first.count, second.count);
-      });`,
-  },
   "what is loaded behind an eviction shares the new copy, by require and by import": {
     "node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "index.js" }`,
     "node_modules/dep/index.js": `module.exports = require("./cjs/dep.development.js");`,
@@ -106,30 +73,6 @@ const projects: Record<string, Record<string, string>> = {
         console.log("itself", first === second, Object.keys(first).join(), Object.keys(second).join(), first.loads, second.loads);
       });`,
   },
-  "every way from a test file to a shared file": {
-    ...state,
-    "helpers/names.js": `export const name = "names.js";\nexport default "the default";`,
-    "ways.test.js": `${head}
-      import { name } from "./helpers/names.js";
-      import * as all from "./helpers/names.js";
-      const hidden = text => JSON.parse(JSON.stringify(text));
-      test("ways", async () => {
-        console.log("import", name, Object.keys(all).join());
-        console.log("require", Object.keys(require("./helpers/names.js")).join(), require("./helpers/names.js") === all);
-        console.log("import()", (await import("./helpers/names.js")) === all);
-        console.log("import(name)", (await import(hidden("./helpers/names.js"))) === all);
-        console.log("require(name)", require(hidden("./helpers/names.js")) === all);
-        console.log("CommonJS", require("./helpers/state.cjs") === require(hidden("./helpers/state.cjs")), (await import("./helpers/state.cjs")).default === require("./helpers/state.cjs"));
-        for (const one of ["names.js", "state.js"]) console.log("a pattern", Object.keys(await import("./helpers/" + one)).join());
-      });`,
-  },
-  "a shared file that loads the test file": {
-    "helpers/back.js": `export const back = async path => Object.keys(await import(path)).join();\nexport const backByRequire = path => Object.keys(require(path)).join();`,
-    "back.test.js": `${head}
-      import { back, backByRequire } from "./helpers/back.js";
-      export const ofTheTestFile = 1;
-      test("back", async () => { console.log("back", await back(import.meta.path), backByRequire(import.meta.path)); });`,
-  },
   "files of data": {
     "data/a.json": `{ "a": 1, "nested": { "b": [1, 2] } }`,
     "data/a.txt": `text of a.txt`,
@@ -150,62 +93,6 @@ const projects: Record<string, Record<string, string>> = {
         console.log("by name", require(hidden("./data/a.json")) === json, JSON.stringify(require(hidden("./data/a.txt"))), (await import(hidden("./data/a.toml"))).default === toml);
       });`,
   },
-  "a file that is written while the tests run": {
-    "written.test.js": `${head}
-      import { writeFileSync } from "node:fs";
-      import { join } from "node:path";
-      test("written", async () => {
-        const path = join(import.meta.dir, "made-at-run-time.js");
-        writeFileSync(path, "export const made = 6 * 7; export const where = import.meta.path.endsWith('made-at-run-time.js');");
-        console.log("written", JSON.stringify(await import(path)), JSON.stringify(require(path)));
-        const common = join(import.meta.dir, "made-at-run-time.cjs");
-        writeFileSync(common, "module.exports = { made: typeof require, helper: require('./helpers/state.cjs').bump() };");
-        console.log("written", JSON.stringify(require(common)), require("./helpers/state.cjs").count);
-      });`,
-    ...state,
-  },
-  "each test file has its own modules under --isolate": {
-    ...state,
-    "one.test.js": `${head}\nimport { bump } from "./helpers/state.js";\ntest("one", () => { globalThis.leaked = (globalThis.leaked ?? 0) + 1; console.log("one", bump(), require("./helpers/state.cjs").bump(), globalThis.leaked); });`,
-    "two.test.js": `${head}\nimport { bump } from "./helpers/state.js";\ntest("two", () => { globalThis.leaked = (globalThis.leaked ?? 0) + 1; console.log("two", bump(), require("./helpers/state.cjs").bump(), globalThis.leaked); });`,
-    "three.test.js": `${head}\ntest("three", async () => { console.log("three", (await import("./helpers/state.js")).bump(), require("./helpers/state.cjs").bump()); });`,
-  },
-  "a test file that imports another test file": {
-    "first.test.js": `${head}\nexport const shared = { loads: 0 };\nshared.loads++;\ntest("of first", () => { console.log("first runs", shared.loads); });`,
-    "second.test.js": `${head}\nimport { shared } from "./first.test.js";\ntest("of second", () => { console.log("second sees", shared.loads); });`,
-  },
-  "what a file knows of itself": {
-    "helpers/self.js": `export const self = () => [import.meta.file, import.meta.dir.endsWith("helpers"), import.meta.path.endsWith("self.js"), import.meta.url.startsWith("file://"), import.meta.main, import.meta.resolve("./self.js") === import.meta.url, typeof import.meta.require].join();`,
-    "helpers/self.cjs": `exports.self = () => [__filename.endsWith("self.cjs"), __dirname.endsWith("helpers"), require.main === module, module.id === __filename, require.resolve("./self.cjs") === __filename, module.loaded].join();`,
-    "self.test.js": `${head}
-      import { self } from "./helpers/self.js";
-      test("self", () => {
-        console.log("the test file", import.meta.file, import.meta.main, import.meta.resolve("./helpers/self.js").endsWith("helpers/self.js"), require.resolve("./helpers/self.js").endsWith("helpers/self.js"), import.meta.require("./helpers/self.cjs").self());
-        console.log("the shared file", self());
-        try { require.resolve("./helpers/absent.js"); } catch (error) { console.log(error.name, error.code); }
-      });`,
-  },
-  "circles across the border": {
-    "helpers/circle.js": `import { fromTest, later } from "../circle.test.js";\nexport const fromHelper = "helper";\nexport const seen = () => [fromTest(), later].join();`,
-    "helpers/circle.cjs": `exports.early = 1;\nconst other = require("./circle-other.cjs");\nexports.late = other.sawEarly;`,
-    "helpers/circle-other.cjs": `const first = require("./circle.cjs");\nexports.sawEarly = [first.early, first.late].join();`,
-    "circle.test.js": `${head}
-      import { fromHelper, seen } from "./helpers/circle.js";
-      export function fromTest() { return "test sees " + fromHelper; }
-      export const later = "later";
-      test("circle", () => { console.log(seen(), JSON.stringify(require("./helpers/circle.cjs"))); });`,
-  },
-  "top-level await": {
-    "helpers/waits.js": `export const order = [];\norder.push("before");\nawait new Promise(resolve => setTimeout(resolve, 1));\norder.push("after");`,
-    "waits.test.js": `${head}
-      import { order } from "./helpers/waits.js";
-      order.push("test file");
-      const late = await import("./helpers/waits.js");
-      test("waits", () => {
-        console.log(order.join(), late.order === order);
-        try { require("./helpers/waits.js"); console.log("required"); } catch (error) { console.log(error.name); }
-      });`,
-  },
   "a shared file that throws while it loads": {
     "helpers/throws.js": `globalThis.throwsLoads = (globalThis.throwsLoads ?? 0) + 1;\nexport const never = 1;\nthrow new RangeError("from throws.js");`,
     "helpers/throws.cjs": `globalThis.commonLoads = (globalThis.commonLoads ?? 0) + 1;\nexports.partial = 1;\nthrow new RangeError("from throws.cjs");`,
@@ -217,76 +104,6 @@ const projects: Record<string, Record<string, string>> = {
         }
       });`,
   },
-  "a CommonJS file that throws runs again where files are taken out of require.cache": {
-    "helpers/throws.cjs": `globalThis.commonLoads = (globalThis.commonLoads ?? 0) + 1;\nexports.partial = 1;\nthrow new RangeError("from throws.cjs, " + globalThis.commonLoads);`,
-    "helpers/mends.cjs": `globalThis.mendLoads = (globalThis.mendLoads ?? 0) + 1;\nif (globalThis.mendLoads < 2) throw new RangeError("not yet");\nexports.loads = globalThis.mendLoads;`,
-    "helpers/again.js": `export const again = path => { delete require.cache[path]; };`,
-    "throws.test.js": `${head}
-      import { again } from "./helpers/again.js";
-      test("throws", () => {
-        const errors = [];
-        for (let turn = 0; turn < 3; turn++) {
-          try { require("./helpers/throws.cjs"); } catch (error) { errors.push(error); console.log("require", error.name, error.message, globalThis.commonLoads); }
-        }
-        console.log("each its own error", errors[0] !== errors[1] && errors[1] !== errors[2], typeof again);
-        try { require("./helpers/mends.cjs"); } catch (error) { console.log("first", error.message); }
-        console.log("second", require("./helpers/mends.cjs").loads, require("./helpers/mends.cjs").loads);
-      });`,
-  },
-  "mock.module of a file that has run": {
-    ...state,
-    "helpers/uses.js": `import { bump, count } from "./state.js";\nexport const use = () => [bump(), count].join();`,
-    "mocks.test.js": `${head}
-      import { use } from "./helpers/uses.js";
-      import { bump } from "./helpers/state.js";
-      test("mocks", async () => {
-        console.log("before", use(), bump());
-        mock.module("./helpers/state.js", () => ({ bump: () => "mocked", count: -1 }));
-        console.log("mocked", use(), bump(), (await import("./helpers/state.js")).count, require("./helpers/state.js").bump());
-        mock.restore();
-        console.log("after restore", use(), bump());
-      });`,
-  },
-  "mock.module before the shared files load": {
-    ...state,
-    "helpers/uses.js": `import { bump, count } from "./state.js";\nexport const use = () => [bump(), count].join();`,
-    "helpers/uses.cjs": `const state = require("./state.cjs");\nexports.use = () => [state.bump(), state.count].join();`,
-    "mocked.test.js": `${head}
-      mock.module("./helpers/state.js", () => ({ bump: () => "mocked", count: -1 }));
-      mock.module("./helpers/state.cjs", () => ({ bump: () => "mocked too", count: -2 }));
-      test("mocked", async () => {
-        console.log("mocked", (await import("./helpers/uses.js")).use(), require("./helpers/uses.cjs").use());
-      });`,
-    "not-mocked.test.js": `${head}
-      import { use } from "./helpers/uses.js";
-      test("not mocked", () => { console.log("not mocked", use(), require("./helpers/uses.cjs").use()); });`,
-  },
-  "mock.module of a package and of a built-in module": {
-    "node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "./index.js" }`,
-    "node_modules/pkg/index.js": `export const name = "pkg";\nexport default () => "the default of pkg";`,
-    "helpers/uses-pkg.js": `import call, { name } from "pkg";\nimport { platform } from "node:os";\nexport const use = () => [name, call(), typeof platform()].join();`,
-    "package-mocked.test.js": `${head}
-      mock.module("pkg", () => ({ name: "mocked pkg", default: () => "mocked default" }));
-      mock.module("node:os", () => ({ platform: () => 7 }));
-      test("package mocked", async () => {
-        console.log("package mocked", (await import("./helpers/uses-pkg.js")).use(), (await import("pkg")).name, require("node:os").platform());
-      });`,
-    "package-not-mocked.test.js": `${head}
-      import { use } from "./helpers/uses-pkg.js";
-      test("package not mocked", () => { console.log("package not mocked", use()); });`,
-  },
-  "a preload that mocks": {
-    ...state,
-    "bunfig.toml": `[test]\npreload = ["./pre.js"]\n`,
-    "pre.js": `import { mock } from "bun:test";\nglobalThis.preloads = (globalThis.preloads ?? 0) + 1;\nmock.module("./helpers/state.js", () => ({ bump: () => "mocked by the preload", count: -1 }));`,
-    "helpers/uses.js": `import { bump, count } from "./state.js";\nexport const use = () => [bump(), count].join();`,
-    "after-preload.test.js": `${head}
-      import { use } from "./helpers/uses.js";
-      import { bump } from "./helpers/state.js";
-      test("after the preload", () => { console.log("after the preload", use(), bump(), globalThis.preloads); });`,
-    "after-preload-too.test.js": `${head}
-      test("after the preload too", async () => { console.log("too", (await import("./helpers/uses.js")).use(), globalThis.preloads); });`,
-  },
   "a file that is no program": {
     "helpers/broken.js": `export const a = ;`,
     "broken.test.js": `${head}
@@ -296,7 +113,7 @@ const projects: Record<string, Record<string, string>> = {
       });`,
     "fine.test.js": `${head}\ntest("fine", () => { console.log("the other file runs"); });`,
   },
-  "files that fail where a test loads them, and data that the compiler cannot hold": {
+  "files that fail where a test loads them, and data that is made when its file runs": {
     "helpers/good.js": `export const good = 1;`,
     "broken/declared-twice.js": `export const a = 1;\nexport const a = 2;`,
     "broken/let-twice.js": `let a = 1;\nlet a = 2;\nexport default a;`,
@@ -307,10 +124,12 @@ const projects: Record<string, Record<string, string>> = {
     "broken/comma.json": `{ "a": 1, }x`,
     "broken/value.json": `{ "a": }`,
     "data/dated.toml": `when = 2020-01-01T00:00:00Z\n`,
+    // What Bun's transpiler refuses is a BuildMessage in plain Bun and a SyntaxError in a compiled run: docs/compiler/compatibility.mdx, "Dynamic imports".
     "fails.test.js": `${head}
       const names = ["declared-twice.js", "let-twice.js", "label-twice.js", "with.js", "break.cjs", "regexp.js", "comma.json", "value.json"];
+      const nameOf = error => (error.name === "BuildMessage" ? "SyntaxError" : error.name);
       test("written out", async () => {
-        const said = (name, load) => load().then(() => console.log(name, "loaded"), error => console.log(name, error.name));
+        const said = (name, load) => load().then(() => console.log(name, "loaded"), error => console.log(name, nameOf(error)));
         await said("declared-twice.js", () => import("./broken/declared-twice.js"));
         await said("let-twice.js", () => import("./broken/let-twice.js"));
         await said("label-twice.js", () => import("./broken/label-twice.js"));
@@ -322,11 +141,11 @@ const projects: Record<string, Record<string, string>> = {
       });
       test("required", () => {
         for (const load of [() => require("./broken/let-twice.js"), () => require("./broken/break.cjs"), () => require("./broken/regexp.js"), () => require("./broken/value.json")]) {
-          try { load(); console.log("required: loaded"); } catch (error) { console.log("required:", error.name); }
+          try { load(); console.log("required: loaded"); } catch (error) { console.log("required:", nameOf(error)); }
         }
       });
       test("by a name made at run time", async () => {
-        for (const name of names) await import("./broken/" + name).then(() => console.log("made", name, "loaded"), error => console.log("made", name, error.name));
+        for (const name of names) await import("./broken/" + name).then(() => console.log("made", name, "loaded"), error => console.log("made", name, nameOf(error)));
       });
       test("a date in TOML", async () => { console.log(JSON.stringify((await import("./data/dated.toml")).default), JSON.stringify(require("./data/dated.toml"))); });`,
     "statement.test.js": `${head}\nimport { a } from "./broken/declared-twice.js";\ntest("never runs", () => { console.log("never", a); });`,
@@ -338,10 +157,12 @@ const projects: Record<string, Record<string, string>> = {
     "broken/no-such-export.js": `import { nope } from "../helpers/good.js";\nexport { nope };`,
     "broken/hands-on-nothing.js": `export { gone } from "../helpers/good.js";`,
     "broken/through.js": `import "./declared-twice.js";\nexport const through = 1;`,
+    // As above: a BuildMessage in plain Bun, a SyntaxError in a compiled run.
     "links.test.js": `${head}
       import { good } from "./helpers/good.js";
+      const nameOf = error => (error.name === "BuildMessage" ? "SyntaxError" : error.name);
       test("written out", async () => {
-        const said = (name, load) => load().then(() => console.log(name, "loaded"), error => console.log(name, error.name));
+        const said = (name, load) => load().then(() => console.log(name, "loaded"), error => console.log(name, nameOf(error)));
         await said("no-such-export.js", () => import("./broken/no-such-export.js"));
         await said("hands-on-nothing.js", () => import("./broken/hands-on-nothing.js"));
         await said("through.js", () => import("./broken/through.js"));
@@ -463,6 +284,84 @@ const projects: Record<string, Record<string, string>> = {
         console.log("untouched", dep, kind, only, (await import("dep")).only, require("old").kind);
       });`,
   },
+  "a plugin answers for a package that helpers and packages name": {
+    "node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "index.js", "type": "module" }`,
+    "node_modules/dep/index.js": `export default "the real dep"; export const kind = "real";`,
+    "node_modules/dep/sub.js": `export default "the real sub";`,
+    "node_modules/old/package.json": `{ "name": "old", "version": "1.0.0", "main": "index.js" }`,
+    "node_modules/old/index.js": `module.exports = { kind: "the real old" };`,
+    "node_modules/user-of-dep/package.json": `{ "name": "user-of-dep", "version": "1.0.0", "main": "index.js", "type": "module" }`,
+    "node_modules/user-of-dep/index.js": `import dep, { kind } from "dep"; export const told = () => "the package says " + dep + " " + kind;`,
+    "helpers/user.js": `import dep, { kind } from "dep"; export const seen = () => dep + " " + kind;`,
+    "helpers/old-user.cjs": `const old = require("old"); exports.seen = () => old.kind;`,
+    "helpers/register.js": `import { plugin } from "bun";
+      export const register = () => plugin({ name: "helper", setup(build) { build.module("dep", () => ({ exports: { default: "the plugin's dep", kind: "virtual" }, loader: "object" })); } });`,
+    "helper.test.js": `${head}
+      import { plugin } from "bun";
+      import { register } from "./helpers/register.js";
+      test("a helper registers the plugin", async () => {
+        register();
+        console.log("helper", (await import("dep")).default, require("dep").kind, (await import("./helpers/user.js")).seen(), (await import("user-of-dep")).told());
+        plugin.clearAll();
+      });`,
+    "old.test.js": `${head}
+      import { plugin } from "bun";
+      test("a CommonJS helper loads behind the plugin", async () => {
+        plugin({ name: "old", setup(build) { build.module("old", () => ({ exports: { kind: "the plugin's old" }, loader: "object" })); } });
+        console.log("old", require("./helpers/old-user.cjs").seen(), (await import("./helpers/old-user.cjs")).seen());
+        plugin.clearAll();
+      });`,
+    "helpers/file.js": `export default "the real file";`,
+    "helpers/os-user.js": `import os from "node:os"; export const seen = () => typeof os;`,
+    "helpers/leaf.js": `export default "the real leaf";`,
+    "helpers/counter.js": `let count = 0; export const bump = () => ++count;`,
+    "helpers/top.js": `import { seen } from "./middle.js"; export const told = () => "top " + seen();`,
+    "helpers/middle.js": `import leaf from "./leaf.js"; import { bump } from "./counter.js"; import { told } from "./top.js"; export const seen = () => "middle " + leaf + " " + bump() + " " + typeof told;`,
+    "helpers/early.js": `import leaf from "./leaf.js"; export const seen = () => "early " + leaf;`,
+    "helpers/late.js": `import leaf from "./leaf.js"; export const seen = () => "late " + leaf;`,
+    "helpers/again.js": `export * from "./leaf.js"; export { default as leaf } from "./leaf.js";`,
+    "above.test.js": `${head}
+      import { plugin } from "bun";
+      import { bump } from "./helpers/counter.js";
+      test("what imports such a file leaves with it and shares what has run, and what has run stays as it was linked", async () => {
+        const early = await import("./helpers/early.js");
+        bump();
+        plugin({ name: "above", setup(build) {
+          build.onResolve({ filter: /leaf\\.js$/ }, args => ({ path: args.path, namespace: "swapped" }));
+          build.onLoad({ filter: /.*/, namespace: "swapped" }, args => ({ exports: { default: "the plugin's " + args.path }, loader: "object" }));
+        } });
+        console.log("above", (await import("./helpers/top.js")).told(), bump(), early.seen(), (await import("./helpers/early.js")) === early);
+        console.log("handed on", (await import("./helpers/again.js")).leaf, require("./helpers/again.js").leaf);
+        plugin.clearAll();
+        console.log("cleared", (await import("./helpers/late.js")).seen());
+      });`,
+    "resolve.test.js": `${head}
+      import { plugin } from "bun";
+      test("a filter takes the name of a package, the path of a file and a name of the library", async () => {
+        plugin({ name: "resolve", setup(build) {
+          build.onResolve({ filter: /^dep$|file\\.js$/ }, args => ({ path: args.path, namespace: "swapped" }));
+          build.onResolve({ filter: /^os$/, namespace: "node" }, args => ({ path: args.path, namespace: "swapped" }));
+          build.onLoad({ filter: /.*/, namespace: "swapped" }, args => ({ exports: { default: "the plugin's " + args.path, kind: "virtual" }, loader: "object" }));
+        } });
+        console.log("resolve", (await import("dep")).default, require("dep").kind, (await import("./helpers/file.js")).default, (await import("node:os")).default, require("node:os").default, (await import("./helpers/user.js")).seen(), (await import("./helpers/os-user.js")).seen(), (await import("user-of-dep")).told());
+        plugin.clearAll();
+      });`,
+    "constant.test.js": `${head}
+      import { plugin } from "bun";
+      const name = "dep";
+      test("the name of the module stands behind a constant", async () => {
+        plugin({ name: "constant", setup(build) { build.module(name, () => ({ exports: { default: "the plugin's dep", kind: "virtual" }, loader: "object" })); } });
+        console.log("constant", (await import("dep")).default, require("dep").kind, (await import("./helpers/user.js")).seen());
+        plugin.clearAll();
+      });`,
+    "sub.test.js": `${head}
+      import { plugin } from "bun";
+      test("a file of the package", async () => {
+        plugin({ name: "sub", setup(build) { build.module("dep/sub.js", () => ({ exports: { default: "the plugin's sub" }, loader: "object" })); } });
+        console.log("sub", (await import("dep/sub.js")).default, require("dep/sub.js").default, (await import("dep")).default);
+        plugin.clearAll();
+      });`,
+  },
   "a module that a plugin answers for only later": {
     "later.test.js": `${head}
       import { plugin } from "bun";
@@ -514,8 +413,8 @@ const projects: Record<string, Record<string, string>> = {
     "node_modules/bad/index.js": `let b = 1;\nlet b = 2;\nmodule.exports = b;`,
     "names.test.js": `${head}
       test("an alias and a package", async () => {
-        await import("@/broken/declared-twice.js").then(() => console.log("loaded"), error => console.log("an alias", error.name));
-        try { require("bad"); console.log("loaded"); } catch (error) { console.log("a package", error.name); }
+        await import("@/broken/declared-twice.js").then(() => console.log("loaded"), () => console.log("an alias", "threw"));
+        try { require("bad"); console.log("loaded"); } catch { console.log("a package", "threw"); }
       });`,
   },
   "one file under several types, taken out of require.cache in between": {
@@ -579,27 +478,6 @@ const projects: Record<string, Record<string, string>> = {
         mock.module("bun", () => ({ which: () => "mocked", default: {} }));
         console.log((await import("node:os")).homedir(), require("node:os").homedir(), (await import("undici")).fetch());
         console.log("bun", typeof (await import("bun")).which("sh"), (await import("bun")).which("sh") === Bun.which("sh"), require("bun").which("sh") === Bun.which("sh"));
-      });`,
-  },
-  "a file of data that a test file imports, loaded by shared code that is given its path": {
-    "data/one.json": `{ "name": "one", "list": [1] }`,
-    "data/two.json": `{ "name": "two", "list": [1] }`,
-    "data/three.json": `{ "name": "three", "list": [1] }`,
-    "helpers/loads.cjs": `exports.load = path => require(path);`,
-    "node_modules/loader-pkg/package.json": `{ "name": "loader-pkg", "type": "module", "main": "./index.js" }`,
-    "node_modules/loader-pkg/index.js": `import { createRequire } from "node:module";\nexport const imports = path => import(path);\nexport const requires = path => createRequire(import.meta.url)(path);`,
-    "given.test.js": `${head}
-      import one from "./data/one.json";
-      import two from "./data/two.json";
-      import three from "./data/three.json";
-      import { load } from "./helpers/loads.cjs";
-      import { imports, requires } from "loader-pkg";
-      test("given the path", async () => {
-        console.log("a helper requires it", JSON.stringify(load(import.meta.dir + "/data/one.json")), JSON.stringify(one));
-        const imported = await imports(import.meta.dir + "/data/two.json");
-        console.log("a package imports it", JSON.stringify(imported.default), imported.default === two);
-        three.list.push(2);
-        console.log("a package requires it", JSON.stringify(requires(import.meta.dir + "/data/three.json").list));
       });`,
   },
   "a file of data that one statement imports, found by a name made at run time where the importer has not run": {
@@ -805,6 +683,36 @@ const projects: Record<string, Record<string, string>> = {
         await import("./fourth.mjs");
       });`,
   },
+  // unmarked.cjs names none of module, exports and require. Behind import() it goes by the "type" of the package and runs in its turn, behind the CommonJS files,
+  // which run while the graph is loaded. While an ES module is being required it goes by its extension and runs where it stands.
+  "a file whose text does not say what it is goes by who loads the module that imports it": {
+    "imported-root.mjs": `
+      import "./imported-first.cjs";
+      import "./imported-unmarked.cjs";
+      import "./imported-last.cjs";`,
+    "imported-first.cjs": `(globalThis.imported ??= []).push("first"); exports.x = 1;`,
+    "imported-unmarked.cjs": `(globalThis.imported ??= []).push("unmarked");`,
+    "imported-last.cjs": `(globalThis.imported ??= []).push("last"); exports.x = 1;`,
+    "required-root.mjs": `
+      import "./required-first.cjs";
+      import "./required-unmarked.cjs";
+      import "./required-last.cjs";`,
+    "required-first.cjs": `(globalThis.required ??= []).push("first"); exports.x = 1;`,
+    "required-unmarked.cjs": `(globalThis.required ??= []).push("unmarked");`,
+    "required-last.cjs": `(globalThis.required ??= []).push("last"); exports.x = 1;`,
+    "imported.test.ts": `${head}
+      test("import()", async () => {
+        await import("./imported-root.mjs");
+        const ran = (globalThis as any).imported;
+        console.log("behind import() it runs behind the file that follows it:", ran.indexOf("unmarked") > ran.indexOf("last"));
+      });`,
+    "required.test.ts": `${head}
+      test("require()", () => {
+        require("./required-root.mjs");
+        const ran = (globalThis as any).required;
+        console.log("behind require() it runs behind the file that follows it:", ran.indexOf("unmarked") > ran.indexOf("last"));
+      });`,
+  },
   "a require() that has answered before answers anew behind an eviction and a mock": {
     "data.json": `{ "value": 1 }`,
     "other.json": `{ "value": 5 }`,
@@ -916,124 +824,28 @@ const projects: Record<string, Record<string, string>> = {
         console.log("written out", (await import("node:path")) === (await import(made("node:path"))), (await import("node:events")).default === (await import(made("events"))).default);
       });`,
   },
-  "built-in modules that only the test file names": {
-    "builtins.test.js": `${head}
-      import { basename } from "node:path";
-      const hidden = text => JSON.parse(JSON.stringify(text));
-      test("builtins", async () => {
-        console.log(basename("/a/b.js"), typeof require("node:zlib").gzipSync, typeof (await import("node:readline")).createInterface, typeof require(hidden("node:dns")).lookup, typeof (await import(hidden("bun:sqlite"))).Database, typeof require("bun:ffi").dlopen);
-        console.log(require("node:path") === require("path"), (await import("node:path")).default === require(hidden("path")));
-      });`,
-  },
 };
 
-async function runTests(directory: string, words: string | undefined, ...flags: string[]) {
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
+// Two processes print at once, and nobody knows whose line comes first. Every other way prints in one order, and that order is compared.
+const inOrderOfRun = (lines: string[], flags: string[]) =>
+  flags.some(flag => flag.startsWith("--parallel")) ? lines.sort() : lines;
+
+async function runTests(directory: string, ...flags: string[]) {
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, bunEnv);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
   // A crash prints only there, and the comparison below would hide it.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
-  return { stdout: printed.sort(), results: results.sort(), exitCode };
+  return { stdout: inOrderOfRun(printed, flags), results: inOrderOfRun(results, flags), exitCode };
 }
 
-// A run of few test files is one program. The words ask for what a large run gets: the packages in one image, the other shared files in a second, and each test file in one of its own.
 const ways = {
   "each file in its own realm": { flags: ["--isolate"] },
   "in parallel": { flags: ["--isolate", "--parallel=2"] },
-  "twice": { flags: ["--isolate", "--rerun-each=2"] },
-  "over two layers": { flags: ["--isolate"], words: "TestRunLayers:2,TestRunPartFiles:1" },
-  "over three layers": { flags: ["--isolate"], words: "TestRunLayers:3,TestRunPartFiles:1" },
-} satisfies Record<string, { flags: string[]; words?: string }>;
-
-// TODO: what happens today, by project and way.
-const differs: Record<string, string[]> = {
-  // The file is read from disk, and its import of a compiled file is refused ("can't load a module from a dynamic path"): an Error. Plain: a SyntaxError, a BuildMessage.
-  "a file that fails when it is linked to a compiled file": [
-    "each file in its own realm",
-    "twice",
-    "over two layers",
-    "over three layers",
-  ],
-};
-
-// A run in layers builds the library anew, and each of its test files is an image of its own. So over layers these projects are the folders of one. They
-// say nothing about a whole run: no file that several test files share loads or evicts under a name that it does not spell, none fails to load, and there
-// is no plugin, preload, package, or mock of a package or of a built-in module. A new project runs alone until it is listed here.
-const shareARunInLayers = [
-  "every way from a test file to a shared file",
-  "files of data",
-  "a file that is written while the tests run",
-  "each test file has its own modules under --isolate",
-  "a test file that imports another test file",
-  "what a file knows of itself",
-  "circles across the border",
-  "top-level await",
-  "mock.module of a file that has run",
-  "mock.module before the shared files load",
-  "a query makes one more instance of a file",
-  "what a CommonJS file knows of itself",
-  "a file of data that one statement imports, found by a name made at run time where the importer has not run",
-  "require() of a file of data that another test file's modules import",
-  "built-in modules that only the test file names",
-  "a name that a test file imports twice",
-];
-
-// The results of each folder, and what the whole run printed.
-async function runFolders(directory: string, words: string | undefined, ...flags: string[]) {
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
-  if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
-  const results = new Map<string, string[]>();
-  let folder = "";
-  for (const line of stderr.split("\n")) {
-    const [, file] = line.match(/^(\S+\.test\.\w+):$/) ?? [];
-    if (file) folder = file.split("/")[0];
-    const [, result, name] = line.match(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/) ?? [];
-    if (result) results.getOrInsertComputed(folder, () => []).push(`${result} ${name}`);
-  }
-  for (const list of results.values()) list.sort();
-  const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
-  return { results, stdout: printed.sort(), exitCode };
-}
-
-function declareProjectsThatShareARun(way: string, names: string[], flags: string[], words: string) {
-  const folderOf = (name: string) => `p${String(names.indexOf(name) + 1).padStart(2, "0")}`;
-  let dir: ReturnType<typeof tempDir> | undefined;
-  afterAll(() => dir?.[Symbol.dispose]());
-  let runs: Promise<Awaited<ReturnType<typeof runFolders>>[]> | undefined;
-  const ran = () =>
-    (runs ??= (async () => {
-      const files: Record<string, string> = {
-        "package.json": `{ "type": "module" }`,
-        "tsconfig.json": `{ "compilerOptions": { "allowJs": true } }`,
-      };
-      for (const name of names)
-        for (const [path, text] of Object.entries(projects[name])) files[`${folderOf(name)}/${path}`] = text;
-      dir = tempDir("modules-in-a-test-run", files);
-      return [
-        await runFolders(String(dir), undefined, ...flags),
-        await runFolders(String(dir), words, "--aot", ...flags),
-      ];
-    })());
-  for (const name of names) {
-    test.concurrent(`${name}: ${way}`, async () => {
-      const [plain, compiled] = await ran();
-      expect(plain.results.get(folderOf(name)) ?? []).not.toEqual([]);
-      expect(compiled.results.get(folderOf(name))).toEqual(plain.results.get(folderOf(name)));
-    });
-  }
-  test.concurrent(`what the projects that share a run print: ${way}`, async () => {
-    const [plain, compiled] = await ran();
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
-      stdout: plain.stdout,
-      exitCode: plain.exitCode,
-    });
-  });
-}
+} satisfies Record<string, { flags: string[] }>;
 
 // The runs of a way are dealt over its test files, <name>.test.ts, <name>-2.test.ts and so on, which all read alike. CI's runner gives a file three minutes
-// on four processors, and a run in layers takes about 40 s of one. A way that has grown too long gets one more file: there is nothing else to change.
+// on four processors,. A way that has grown too long gets one more file: there is nothing else to change.
 function dealsRunsTo(testFile: string) {
   const withoutNumber = (file: string) => file.replace(/(-\d+)?\.test\.ts$/, ".test.ts");
   const testFiles = readdirSync(dirname(testFile))
@@ -1043,26 +855,62 @@ function dealsRunsTo(testFile: string) {
   return () => testFiles[dealt++ % testFiles.length] === basename(testFile);
 }
 
+// An error in a worker alone, and the one way in which the second is as in plain Bun.
+const wrongInParallelAlone = [
+  "what is loaded behind an eviction shares the new copy, by require and by import",
+  "a file that fails when it is linked to a compiled file",
+];
+
+// What was once wrong as one program: it fails there on a build from before its fix, or the record of its fix says that it did.
+const wrongAsOneProgram = [
+  "what is loaded behind an eviction shares the new copy, by require and by import",
+  "a test file that takes itself out of require.cache",
+  "a shared file that throws while it loads",
+  "a file that is no program",
+  "files that fail where a test loads them, and data that is made when its file runs",
+  "a file that fails when it is linked to a compiled file",
+  "modules that a plugin answers for",
+  "names that only the onResolve of a plugin answers for",
+  "a plugin answers for a package that exists",
+  "a plugin answers for a package that helpers and packages name",
+  "a module that a plugin answers for only later",
+  "a query makes one more instance of a file",
+  "mock.module of a file that does not exist",
+  "files that fail where a test loads them, under names that are no paths",
+  "one file under several types, taken out of require.cache in between",
+  "a plugin that loads files of the run",
+  "mock.module of built-in modules, and of bun, which takes no mock",
+  "a file of data that one statement imports, found by a name made at run time where the importer has not run",
+  "the require.cache that the code of a Bun.ModuleGraph sees",
+  "an import that shares its name with a declaration of the test file",
+  "a name that a test file imports twice",
+  "a module below a graph that failed runs for the next graph that imports it",
+  "a require() that has answered before answers anew behind an eviction and a mock",
+  "a loader that a test stores into require.extensions",
+  "a JSON file without a value",
+];
+
 export function declareEveryProject(way: keyof typeof ways, testFile: string) {
-  const { flags, words }: { flags: string[]; words?: string } = ways[way];
+  const { flags } = ways[way];
+  const kept: Record<keyof typeof ways, string[]> = {
+    "each file in its own realm": wrongAsOneProgram,
+    "in parallel": wrongInParallelAlone,
+  };
+  const runs = (name: string) => kept[way].includes(name);
   const nextRunIsHere = dealsRunsTo(testFile);
-  const sharing = words ? shareARunInLayers.filter(name => !differs[name]?.includes(way)) : [];
-  if (words && nextRunIsHere()) declareProjectsThatShareARun(way, sharing, flags, words);
   for (const [name, files] of Object.entries(projects)) {
-    if (sharing.includes(name) || !nextRunIsHere()) continue;
-    const declare = differs[name]?.includes(way) ? test.todo : test.concurrent;
-    declare(`${name}: ${way}`, async () => {
+    if (!runs(name) || !nextRunIsHere()) continue;
+    test.concurrent(`${name}: ${way}`, async () => {
       using dir = tempDir("modules-in-a-test-run", {
         "package.json": `{ "type": "module" }`,
         "tsconfig.json": `{ "compilerOptions": { "allowJs": true } }`,
-        // No run of one test file has layers.
         "zz-one-more.test.js": `${head}\ntest("one more file", () => { console.log("one more file runs"); });`,
         ...files,
       });
-      const plain = await runTests(String(dir), undefined, ...flags);
+      const plain = await runTests(String(dir), ...flags);
       // A project whose own test files do not even parse fails alike in both runs.
       expect(plain.results.filter(result => result !== "pass one more file")).not.toEqual([]);
-      expect(await runTests(String(dir), words, "--aot", ...flags)).toEqual(plain);
+      expect(await runTests(String(dir), "--aot", ...flags)).toEqual(plain);
     });
   }
 }

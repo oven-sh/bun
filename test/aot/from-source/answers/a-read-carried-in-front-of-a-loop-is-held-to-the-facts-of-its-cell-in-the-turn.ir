@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# "use strict";
+# const source = { base: 2, get twice() { return this.base * 2; } };
+# function drive(turns) { let s = 0; for (let i = 0; i < turns; i++) { const spread = { ...source, base: i }; const assigned = Object.assign({ base: i }, source); s += spread.twice + assigned.twice + source.twice; } return s; }
+# print(drive(id(20)));
+# -- end of source
+# f1 = drive
+# The copies give `twice` a slot of numbers in the layout that `source` has too; the getter of `source` lies outside that slot. The typed copy of the loop tests the cell in every turn (the order of its keys, nothing beside
+# its slots) and is left in its first turn. The read `source.twice` is carried in front of the loop: it reads a slot that every object of the layout has, and what it gives is used behind those tests alone: the answer is right.
+# Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the check of what the walk remembers of the cell went in front of the loop WITH the read, in front of the tests that say so: a right program ended:
+# "f1 at 3:199: what memory holds where the compiler remembers another value ..". In front of a loop the check is not built (as its three neighbours in checkProofsOfWhatIsStoredBy() are not): in the turn the read is read again
+# where it stands, with the check in front of it.
+# That alone would have taken a net away: a compiler that forgot to branch on the copy's two tests answered NaN, and of four programs two were stopped by nothing but the check that stood early. So the copy's word about the cell
+# is checked where it is given, behind its own tests (continueIfOwnKeys()).
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 240
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: 240
+# HARDENED-NEXT: exited with 0
+# RUN(WALK): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# WALK: [[nothing]]: boolean @Boolean = HasNoExtraProperties {{*}}[hasNoFieldOutsideSlot]
+# WALK: Branch [[nothing]] ->
+# WALK: [[again]]: boolean @Boolean = HasNoFieldOutsideSlot
+# WALK-NEXT: CheckProof [[again]] checkedType=true {{*}}source=RememberedFact

@@ -135,6 +135,15 @@ export function assertNoDestructuredGlobalThis(source: string, file: string) {
   }
 }
 
+/** --minify-syntax drops the `0,`: `bun run` would show a name where a debug build and a compiled program, which reads the file as it is written, show none. */
+export function assertNoStoredFunctionBehindComma(source: string, file: string) {
+  if (/[=:]\s*\(+\s*0\s*,\s*(?:(?:async\s+)?function\b|class\b|(?:async\s*)?(?:\([^()]*\)|[\w$]+)\s*=>)/.test(source)) {
+    throw new Error(
+      `${file}: do not write \`(0, function () {})\` for a function without a name: the bundler drops the \`0,\` and the function takes the name of the variable or the property it is stored to. Store it to a member (\`holder.method = function () {}\`): that gives no name`,
+    );
+  }
+}
+
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts
 export const enums = {
@@ -186,10 +195,19 @@ export const define: Record<string, string> = {
   "IS_BUN_DEVELOPMENT": String(debug),
   // `bun compile` replaces the value: false in an executable that refuses code that was not compiled into it.
   "CAN_LOAD_CODE_AT_RUN_TIME": "true",
+  "CAN_LOAD_ADDONS_AT_RUN_TIME": "true",
   // `bun compile` replaces the value: false for a program that never names node:cluster.
   "CAN_BE_CLUSTER_WORKER": "true",
   // `bun compile` replaces the value: false, but for a test run one of whose tests replaces a built-in function.
   "CAN_REPLACE_BUILT_INS": "true",
+  // `bun compile` replaces the value: false, but for a test run one of whose tests replaces a built-in function. A name that is added to a prototype leaves it false.
+  "CAN_REPLACE_BUILT_IN_FUNCTIONS": "true",
+  // `bun compile` replaces the value: false for a program that asks `process` only for what Bun gives it.
+  "PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES": "true",
+  // `bun compile` replaces the value: false for a program that cannot tell whether node:events was loaded.
+  "WARNINGS_LOAD_NODE_EVENTS": "true",
+  // `bun compile` replaces the value: false for a program that cannot load node:path, and so cannot have replaced its functions.
+  "CAN_LOAD_NODE_PATH": "true",
   // `bun compile` replaces the value: true where these files are compiled ahead of time.
   "IS_COMPILED_AHEAD_OF_TIME": "false",
 

@@ -47,7 +47,7 @@ impl CompileFailure {
                 out.extend_from_slice(b" can't run code compiled by this Bun: ");
                 out.extend_from_slice(difference);
                 out.extend_from_slice(
-                    b"\nnote: use a build of the same revision of Bun with the same configuration",
+                    b"\nnote: use a Bun built from the same sources with the same configuration",
                 );
             }
             CompileFailure::Build { .. } => {}
@@ -58,10 +58,21 @@ impl CompileFailure {
                 out.extend_from_slice(b"failed to create executable: ");
                 out.extend_from_slice(error.name().as_bytes());
             }
+            CompileFailure::OverwritesEntryPoint { outfile } => {
+                out.extend_from_slice(b"the executable would overwrite ");
+                out.extend_from_slice(outfile);
+                out.extend_from_slice(
+                    b", which is an entry point. Choose another path with --outfile",
+                );
+            }
             CompileFailure::FileNotWritten { path, error } => {
                 out.extend_from_slice(b"failed to write ");
                 out.extend_from_slice(path);
                 let _ = write!(out, ": {error}");
+            }
+            CompileFailure::SourceChanged { path } => {
+                out.extend_from_slice(path);
+                out.extend_from_slice(b" changed while the build was running, so a source map would show code that the executable doesn't run\nnote: run the build again");
             }
         }
     }

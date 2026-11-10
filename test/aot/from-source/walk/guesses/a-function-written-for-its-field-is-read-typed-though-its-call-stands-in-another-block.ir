@@ -1,0 +1,19 @@
+# -- source: main.ts
+# namespace Checks { export function check(passes: unknown, message?: string): string { return passes ? "passes" : "fails: " + message; } }
+# function later(passes: unknown): string { return "later: " + String(passes); }
+# let deed = 0;
+# function operand(value: boolean): boolean { if (deed === 1) Object.defineProperty(Checks, "check", { configurable: true, get() { return later; } }); return value; }
+# function apart(flag: boolean, also: boolean): string { return Checks.check(operand(flag) && also, "asked") + "!"; }
+# class Holder { run: (passes: unknown) => string; constructor(run: (passes: unknown) => string) { this.run = run; } }
+# function ofAnother(holder: Holder, flag: boolean, also: boolean): string { return holder.run(operand(flag) && also) + "!"; }
+# (globalThis as any).kept = [apart, ofAnother, Holder, (value: number) => { deed = value; }];
+# -- end of source
+# `Checks.check` is read in front of operands that branch, so its call stands in another block than the read, and of the receiver a layout is only expected. A read of a method for its call counts for a guess
+# through its call, and a stretch is one block: the read stayed closed. One function is written for the field: such a read counts by itself and is one read that tests shape and slot;
+# what it finds is tested for that function at the call, as before. A field of which no one function is written is read closed in front of such operands, as before.
+
+# RUN: walk f3 mechanisms=all
+# CHECK: [[callee]]: {{*}} = GetSlot {{*}} key="check" {{*}} level=Expected
+# CHECK: TypeTest [[callee]] testedType=f6
+# RUN(OTHER): walk f4 mechanisms=all
+# OTHER: = PropGet {{*}} key="run"

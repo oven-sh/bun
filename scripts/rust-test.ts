@@ -18,7 +18,7 @@
  * the engine did not see fails. Without it such a test leaves that part out.
  *
  * BUN_UNDER_TEST=<bun>: beside the crates it builds and runs the programs of test/aot/library-sweeps, which compile all of
- * Bun's library, some in a checking mode. This step has the processors for them, and no shard of the tests waits for it.
+ * Bun's library or much of it. This step has the processors for them, and no shard of the tests waits for it.
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -56,7 +56,9 @@ const crates = [
   "bun_sema_parser",
   "bun_sema_standalone",
   "bun_shell_parser",
+  "bun_sort_by_number",
   "bun_sql_jsc",
+  "bun_standalone_graph",
   "bun_threading",
   "bun_trim",
   "bun_wyhash",

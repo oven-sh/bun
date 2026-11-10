@@ -1,5 +1,5 @@
 // marks[k] = (marks[k] + i) & 1023 inside a loop over i: the truncated sum is stored, returned or compared, and never feeds the next iteration.
-// STATISTIC: ExactIntegersBehindNumbers <= 0
+// STATISTIC: DoublesRecomputedAsIntegers >= 1
 function addToEach(marks, first, turns) {
   for (let i = first; i < first + turns; i++) {
     for (let k = 0; k < marks.length; k++) marks[k] = (marks[k] + i) & 1023;

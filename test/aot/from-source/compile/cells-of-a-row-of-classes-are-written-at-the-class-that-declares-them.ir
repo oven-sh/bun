@@ -1,0 +1,11 @@
+# Four classes in a row, a field each, all constructed: ten pairs of a layout and a field. Each class says of itself what its base says, so Link writes the four cells of the declarations one by one
+# and copies the six others down the row as blocks. It does so for each of its two readings.
+# -- source: a-row-of-four-classes.ts
+# class A { a = 1; }
+# class B extends A { b = 2; }
+# class C extends B { c = 3; }
+# class D extends C { d = 4; }
+# console.log(new A().a, new B().b, new C().c, new D().d);
+# -- end of source
+# RUN: compile InheritedFieldEntriesWrittenIndividually mechanisms=all
+# CHECK: statistic InheritedFieldEntriesWrittenIndividually 0

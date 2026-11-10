@@ -181,6 +181,7 @@ dependencies = [
  "bun_sema_driver",
  "bun_sema_parser",
  "bun_sema_standalone",
+ "bun_sort_by_number",
  "bun_sys",
  "bun_threading",
  "bun_trim",
@@ -210,6 +211,7 @@ dependencies = [
  "bun_core",
  "bun_removable_features",
  "bun_sema",
+ "bun_sort_by_number",
  "smallvec",
 ]
 
@@ -1729,6 +1731,7 @@ dependencies = [
  "bun_core",
  "bun_paths",
  "bun_sema_standalone",
+ "bun_sort_by_number",
  "bun_threading",
  "bun_wyhash",
  "bun_zstd",
@@ -1855,6 +1858,10 @@ dependencies = [
 
 [[package]]
 name = "bun_simdutf_sys"
+version = "0.0.0"
+
+[[package]]
+name = "bun_sort_by_number"
 version = "0.0.0"
 
 [[package]]
@@ -2003,6 +2010,7 @@ dependencies = [
  "bun_paths",
  "bun_perf",
  "bun_resolver",
+ "bun_sema_standalone",
  "bun_sourcemap",
  "bun_sys",
  "bun_threading",

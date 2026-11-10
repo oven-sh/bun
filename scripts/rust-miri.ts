@@ -39,6 +39,7 @@ const repo = resolve(import.meta.dirname, "..");
 const MIRI_CRATES = [
   "bun_collections",
   "bun_sema",
+  "bun_sort_by_number",
   "bun_ast",
   "bun_paths",
   "bun_hash",
@@ -63,7 +64,7 @@ const MIRI_CRATES = [
 // Crates of which Miri runs only the unit tests under these paths. The rest of
 // their tests start other programs, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
-  bun_aot: ["ir::waiting_lists"],
+  bun_aot: ["ir::parallel"],
 };
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {

@@ -1,0 +1,52 @@
+# An indexed read from an array that Link says stays pristine returns undefined for a hole and past the end, without a lookup on the prototype chain.
+# Link's claim matters only there: the read tests one bit of the cell on that path, which is rare already, and no check precedes the read.
+# The failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `odd` returns undefined,
+# so every array that it sees stored into `rows` is one that this program writes.
+# The array from the shell has a prototype that holds 70 at index 1 and 71 at index 5. The program used to print "undefined" for both and continue.
+# f1 = fill, f2 = swap, f3 = hole, f4 = beyond, f5 = found
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(FORM): walk f3 mechanisms=all
+# FORM: = GetArrayElement {{*}}level=Proven {{*}}asksCellWhereNothingIsFound
+# FORM: = GetArrayElement {{*}}level=Proven {{*}}asksCellWhereNothingIsFound
+# RUN(FRONT): walk f3 mechanisms=all
+# FRONT-NOT: = IsPristine
+# RUN(HOLE): run-in-shell mechanisms=all globalThis.odd = () => Object.setPrototypeOf([4, , 6], Object.assign(Object.create(Array.prototype), { 1: 70, 5: 71 })); globalThis.swaps = 1; globalThis.which = 1;
+# HOLE: undefined;undefined;undefined;
+# HOLE-NEXT: bun: internal AOT error: type check failed
+# HOLE-NEXT: in the result of an operation
+# HOLE-NOT: went on
+# HOLE: crashed with
+# RUN(BEYOND): run-in-shell mechanisms=all globalThis.odd = () => Object.setPrototypeOf([4, , 6], Object.assign(Object.create(Array.prototype), { 1: 70, 5: 71 })); globalThis.swaps = 1; globalThis.which = 2;
+# BEYOND: undefined;undefined;undefined;
+# BEYOND-NEXT: bun: internal AOT error: type check failed
+# BEYOND-NEXT: in the result of an operation
+# BEYOND-NOT: went on
+# BEYOND: crashed with
+# Where the read finds an element, the false claim does no harm and nothing crashes.
+# RUN(FOUND): run-in-shell mechanisms=all globalThis.odd = () => Object.setPrototypeOf([4, , 6], Object.assign(Object.create(Array.prototype), { 1: 70, 5: 71 })); globalThis.swaps = 1; globalThis.which = 3;
+# FOUND: 6;6;6;
+# FOUND-NEXT: 6;6;6;
+# FOUND-NEXT: went on
+# FOUND-NEXT: exited with 0
+# The passing control: the same reads, from the arrays that this program writes.
+# RUN(NONE): run-in-shell mechanisms=all globalThis.odd = () => undefined; globalThis.swaps = 0; globalThis.which = 1;
+# NONE: undefined;undefined;undefined;
+# NONE-NEXT: undefined;undefined;undefined;
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+# -- source: a-false-word-that-a-list-stays-as-made-is-stopped-where-a-read-finds-no-element.ts
+# declare function odd(): any;
+# declare function print(...values: unknown[]): void;
+# declare const swaps: number;
+# declare const which: number;
+# function fill(count: number) { const rows: (number | undefined)[][] = []; for (let i = 0; i < count; i++) rows.push([4, , 6]); return rows; }
+# function swap(rows: (number | undefined)[][], n: number) { if (n > 0) rows[1] = odd(); return rows; }
+# function hole(rows: (number | undefined)[][]) { let said = ""; for (let k = 0; k < rows.length; k++) { const row = rows[k]; said += (row === undefined ? "nothing" : row[1]) + ";"; } return said; }
+# function beyond(rows: (number | undefined)[][]) { let said = ""; for (let k = 0; k < rows.length; k++) { const row = rows[k]; said += (row === undefined ? "nothing" : row[5]) + ";"; } return said; }
+# function found(rows: (number | undefined)[][]) { let said = ""; for (let k = 0; k < rows.length; k++) { const row = rows[k]; said += (row === undefined ? "nothing" : row[2]) + ";"; } return said; }
+# function read(rows: (number | undefined)[][]) { return which === 1 ? hole(rows) : which === 2 ? beyond(rows) : found(rows); }
+# const rows = fill(3);
+# print(read(rows));
+# print(read(swap(rows, swaps)));
+# print("went on");
+# -- end of source

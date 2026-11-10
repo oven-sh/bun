@@ -1,0 +1,20 @@
+# -- source: spread-of-the-narrower-of-two-layouts-that-fit-each-other-is-an-allocation-and-one-copy-of-its-fields.ts
+# declare function sink(...values: unknown[]): void;
+# type Found = { file: string };
+# type Result = { file: string; root?: string; verbatim?: boolean };
+# function mark(found: Found): Result { return { ...found, verbatim: true }; }
+# sink(mark, { file: "f" } as Found);
+# -- end of source
+# A Found is a Result, whose other names may be left out, and a Result is a Found: each of the two layouts fits the other. The one that is made has an arm of its own where its words can be copied.
+# So the other is what the type of the source is written as: it is tested for, and its one field is copied.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[found]]:
+# CHECK: = ShapeTest [[found]] layouts={{*}}[[written]]]
+# CHECK: frequency=Unlikely
+# CHECK: [[empty]]: [[made]] {{*}} = NewObject layout=[[made]]
+# CHECK: CopyDataProperties [[empty]], [[found]]
+# CHECK: = HasKeyOrder {{*}} layout=[[written]] fields=[0]
+# CHECK: = HasNoExtraProperties {{*}} [hasNoFieldOutsideSlot]
+# CHECK: [[filled]]: [[made]] {{*}} = NewObject layout=[[made]]
+# CHECK-NEXT: = TryCopyFields [[filled]], {{*}} layout=[[made]] sourceLayout=[[written]] fields=[0]

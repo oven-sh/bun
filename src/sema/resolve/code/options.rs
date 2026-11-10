@@ -23,22 +23,15 @@ pub struct CodeOptions {
     pub allows_es_module_mark: bool,
     pub jsx: JsxSettings,
     pub forced_jsx_development: Option<bool>,
-    /// As if a file called `mock.module` with a path that the build does not know: no file reads a constant of another.
-    /// Tests have it from the start: a test build learns only behind this load whether it mocks any module.
     pub mocks_any_file: bool,
-    /// The load reads the entry points and no file for the sake of their types: neither what they import nor the rest of their project.
-    pub types_stop_at_entry_points: bool,
-    /// `bun build --compile`: the program is carried away from its files. `bun run --aot` and `bun test --aot` run where they lie.
+    pub follows_paths_to_functions_of_other_files: bool,
     pub builds_executable: bool,
-    /// Files that are no entry points, and any of which the host may run as the main module.
-    pub main_modules_beside_entry_points: Vec<Vec<u8>>,
-    /// Entry points that files which the build does not see load, by `import` alone.
-    pub entry_points_only_imported_from_above: Vec<Vec<u8>>,
-    /// `--ignore-dce-annotations`: a file that is loaded and imported runs, whatever `"sideEffects"` in its package.json says.
+    pub entry_points_that_run_first: Vec<Vec<u8>>,
     pub ignores_declared_side_effects: bool,
+    pub looks_for_type_errors: bool,
+    pub checks_dependency_sources: bool,
 }
 
-/// The condition of `exports` and `imports` that names what `--aot` compiles.
 pub const AOT_CONDITION: &[u8] = b"aot";
 
 fn byte_strings(texts: &[&str]) -> Vec<Vec<u8>> {
@@ -75,11 +68,12 @@ impl CodeOptions {
             jsx: JsxSettings::default(),
             forced_jsx_development: None,
             mocks_any_file: false,
-            types_stop_at_entry_points: false,
+            follows_paths_to_functions_of_other_files: false,
             builds_executable: false,
-            main_modules_beside_entry_points: Vec::new(),
-            entry_points_only_imported_from_above: Vec::new(),
+            entry_points_that_run_first: Vec::new(),
             ignores_declared_side_effects: false,
+            looks_for_type_errors: false,
+            checks_dependency_sources: false,
         };
         options.add_custom_condition(AOT_CONDITION);
         options

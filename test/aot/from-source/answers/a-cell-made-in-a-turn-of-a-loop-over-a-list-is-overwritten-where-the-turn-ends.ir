@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Box = { lid: number; rim: number };
+# const holder: { inner: Box | null } = { inner: null };
+# function keep(box: Box): number { holder.inner = box; return 1; }
+# function make(list: number[]): number {
+#   let n = 0;
+#   for (const i of list) { const box = { lid: i, rim: i + 1 }; n += keep(box); }
+#   return n;
+# }
+# print(make([0, 1, 2]));
+# print(Object.keys(holder.inner!).length);
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: no cell represents the state of the for-of iteration. The value that is live around the loop names what that state holds, and nothing more.
+# Fault injection, testing=AssumeCalleesRetainNothing: the compiler assumes that nothing retains what is passed to a function that is called directly.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 3
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed
+# CALL: with

@@ -16,18 +16,16 @@ use super::walk::{EvalUse, ScopeWalk, walk_file};
 use super::{BindingForm, BindingRef, Placement, ScopeInput, WalkedFunctionId};
 use crate::ir::VariableKey;
 use crate::lower::captures::{CaptureInput, CapturePlan, CapturedBinding, compute_captures};
-use crate::modules::ModuleKind;
+use crate::modules::{ModuleKind, ModuleRef};
 
 struct Context<'x, 's> {
     input: &'x ScopeInput<'x, 's>,
     walk: &'x ScopeWalk,
     file_scope: ScopeId,
     scope_functions: Vec<Option<WalkedFunctionId>>,
-    // By function: the body of the module that creates it, directly or through other functions.
     module_bodies: Vec<WalkedFunctionId>,
     is_module_level_scope: Vec<bool>,
     loop_updates: Vec<(ScopeId, ExprId)>,
-    // The names that hold a required module of which only members are read, in order.
     holders_without_value: Vec<SymbolId>,
 }
 
@@ -45,9 +43,10 @@ struct BindingSharing {
     variables: Vec<(BindingRef, VariableKey)>,
     shared: Vec<BindingRef>,
     fields_for_eval: Vec<BindingRef>,
+    stored_under_handlers: Vec<Vec<BindingRef>>,
     fields_for_handlers: Vec<BindingRef>,
-    functions_with_fields_for_handlers: Vec<WalkedFunctionId>,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
+    registries: Vec<(ScopeId, BindingRef)>,
 }
 
 struct Placements {
@@ -61,12 +60,11 @@ struct Parts {
     lexical_owners: Vec<ScopeId>,
     arguments_objects: ArgumentsObjects,
     forms: Vec<BindingForm>,
-    imported_copies_of_body: Vec<SymbolId>,
     placements: Placements,
+    stored_under_handlers: Vec<Vec<BindingRef>>,
     captures: CapturePlan,
-    captured: Vec<CapturedBinding>,
-    functions_with_fields_for_handlers: Vec<WalkedFunctionId>,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
+    registries: Vec<(ScopeId, BindingRef)>,
 }
 
 impl<'x, 's> Context<'x, 's> {
@@ -84,10 +82,10 @@ impl<'x, 's> Context<'x, 's> {
             holders_without_value: collect_holders_without_value(input),
         };
         let has_module_variables = match input.modules.kind(input.file) {
-            // A variable of the program is there once. What a closure of an earlier run names is what that run declared.
-            ModuleKind::SourceText if input.modules.runs_again(input.file) => false,
+            ModuleKind::SourceText if input.modules.may_be_reevaluated(input.file) => false,
             ModuleKind::SourceText | ModuleKind::Data | ModuleKind::RuntimeSource => true,
-            ModuleKind::CommonJs | ModuleKind::Runtime | ModuleKind::External => false,
+            ModuleKind::CommonJs => input.modules.runs_body_once(ModuleRef::File(input.file)),
+            ModuleKind::Runtime | ModuleKind::External => false,
         };
         for (index, scope) in bound.scopes.iter().enumerate() {
             let unit = bound.code_unit(ScopeId(index as u32));
@@ -110,11 +108,13 @@ impl<'x, 's> Context<'x, 's> {
         context
     }
 
+    #[inline]
     fn declaring_scope(&self, symbol: SymbolId) -> ScopeId {
         let scope = self.input.bound.symbol_scope(symbol);
         scope.some().unwrap_or(self.file_scope)
     }
 
+    #[inline]
     fn scope_of(&self, binding: BindingRef) -> ScopeId {
         match binding {
             BindingRef::Symbol(symbol) => self.declaring_scope(symbol),
@@ -122,22 +122,20 @@ impl<'x, 's> Context<'x, 's> {
         }
     }
 
+    #[inline]
     fn owner_of(&self, binding: BindingRef) -> Option<WalkedFunctionId> {
         self.scope_functions[self.scope_of(binding).idx()]
     }
 
-    // Every store to the name is dead code or one that `is_ignored` names.
     fn is_stable_ignoring(&self, symbol: SymbolId, is_ignored: impl Fn(ExprId) -> bool) -> bool {
         let (bound, decisions) = (self.input.bound, &self.input.compiled.analysis.decisions);
         let is_ignored = |target: ExprId| decisions.is_dead_expr(target) || is_ignored(target);
         bound.binding_stability_ignoring(symbol, &is_ignored) == BindingStability::Stable
     }
 
+    #[inline]
     fn is_holder_without_value(&self, binding: BindingRef) -> bool {
-        match binding {
-            BindingRef::Symbol(symbol) => self.holders_without_value.binary_search(&symbol).is_ok(),
-            BindingRef::Slot(..) => false,
-        }
+        binding.is_listed_in(&self.holders_without_value)
     }
 }
 
@@ -180,12 +178,11 @@ pub(super) fn analyze(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
         lexical_owners,
         arguments_objects,
         forms,
-        imported_copies_of_body: forms::find_imported_copies_of_body(&context),
         placements,
+        stored_under_handlers: sharing.stored_under_handlers,
         captures,
-        captured: sharing.captured,
-        functions_with_fields_for_handlers: sharing.functions_with_fields_for_handlers,
         initialized_holders: sharing.initialized_holders,
+        registries: sharing.registries,
     };
     tables::build_analysis(&context, parts)
 }

@@ -293,9 +293,9 @@ Use the `send` method to run any Redis command, including ones without a dedicat
 - a string as UTF-8
 - a number as the string that `String(value)` returns
 - a typed array, a `DataView`, an `ArrayBuffer`, or a `SharedArrayBuffer` as its bytes
-- a `Blob` as its bytes
+- an in-memory `Blob` as its bytes
 
-Bun does not read a `Blob` that is backed by a file, such as `Bun.file()`. To send the content of a file, pass `await file.bytes()`.
+Bun does not read a `Blob` that is backed by a file or by S3, such as `Bun.file()` or an `S3File`, so it sends none of its content. To send the content, pass `await file.bytes()`.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 // Run any Redis command

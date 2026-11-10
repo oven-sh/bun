@@ -113,8 +113,8 @@ declare module "bun" {
      * - A string is sent as UTF-8.
      * - A number is sent as the string that `String(value)` returns.
      * - A typed array, a `DataView`, an `ArrayBuffer` or a `SharedArrayBuffer` is sent as its bytes.
-     * - A `Blob` is sent as its bytes. Bun does not read a `Blob` that is backed by a file, such as `Bun.file()`:
-     *   pass `await file.bytes()`.
+     * - A `Blob` whose bytes are in memory is sent as its bytes. Bun does not read a `Blob` that is backed by a file or
+     *   by S3, such as `Bun.file()` or an `S3File`, so none of its content is sent: pass `await file.bytes()`.
      * @returns A promise that resolves with the command result
      *
      * The reply is converted as follows. See the type conversion section in

@@ -116,6 +116,9 @@ redis.send("SET", ["k", new DataView(new ArrayBuffer(1))]);
 redis.send("SET", ["k", new ArrayBuffer(1)]);
 redis.send("SET", ["k", new SharedArrayBuffer(1)]);
 redis.send("SET", ["k", new Blob(["v"])]);
+// A value that the other methods take as `RedisClient.KeyLike` is also an element of `args`.
+declare const keyLike: Bun.RedisClient.KeyLike;
+redis.send("DEL", [keyLike]);
 const readonlyArgs: readonly string[] = ["k", "v"];
 redis.send("SET", readonlyArgs);
 const tupleArgs = ["k", 0, "EX", 60] as const;
@@ -145,6 +148,8 @@ redis.send("SET", ["k", undefined]);
 redis.send("SET", ["k", ["v"]]);
 // @ts-expect-error - a plain object throws ERR_INVALID_ARG_TYPE
 redis.send("SET", ["k", {}]);
+// @ts-expect-error - an object with the members of the lib `ArrayBufferView` throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", { buffer: new ArrayBuffer(1), byteLength: 1, byteOffset: 0 }]);
 // @ts-expect-error - a Set throws "Arguments must be an array"
 redis.send("SET", new Set(["k", "v"]));
 // @ts-expect-error - a string throws "Arguments must be an array"

@@ -400,9 +400,7 @@ impl Pattern {
     }
 }
 
-/// The deepest directory that contains the `dir` of every including pattern. Only the part of a path below it can
-/// exclude a file: "node_modules" (the directory may itself be inside one) and a pattern that starts with `!**`.
-/// rolldown's `get_common_base` is the same rule. Vite's `getCommonBase` also leaves a directory whose name has a `.`.
+/// The deepest directory that contains the `dir` of every including pattern.
 fn shared_dir(patterns: &[Pattern]) -> Option<&[u8]> {
     let mut dirs = patterns
         .iter()
@@ -467,6 +465,7 @@ fn find_files(
         }
     }
 
+    // Only skip "node_modules" below the directory the including patterns share, which may itself be inside one.
     let below_shared_dir = shared_dir(patterns)
         .unwrap_or_default()
         .len()

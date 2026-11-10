@@ -5,18 +5,23 @@ import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 // are created, used through their buffer and dropped have to make it collect. With fast memories the allocator asks
 // for collections as well, because there are few of them; without (BoundsChecking mode: the ninth live memory, a
 // 64-bit memory, no fault handler) nothing else does.
+//
+// The script reads its own resident set after every round. `process.resourceUsage().maxRSS` is no measure of one
+// process on Linux: `ru_maxrss` survives exec, so it starts at the peak of the test runner that spawned the script.
 async function run(shape: "dropped" | "ring" | "grown", options: Record<string, string>) {
   const script = `
     const pages = 64, rounds = 256, ring = new Array(8);
     const before = process.memoryUsage.rss();
+    let peak = before;
     for (let i = 0; i < rounds; i++) {
       const memory = new WebAssembly.Memory({ initial: pages });
       let buffer = memory.buffer;
       new Uint8Array(buffer).fill(i);
       if (${shape === "grown"}) { memory.grow(1); buffer = memory.buffer; }
       if (${shape === "ring"}) ring[i & 7] = buffer;
+      peak = Math.max(peak, process.memoryUsage.rss());
     }
-    console.log("grew", Math.round((process.resourceUsage().maxRSS * 1024 - before) / 1048576), "MB");
+    console.log("grew", Math.round((peak - before) / 1048576), "MB");
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],

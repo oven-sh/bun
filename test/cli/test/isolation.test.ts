@@ -3190,6 +3190,49 @@ describe.concurrent("the SourceProvider cache checks a source against its file a
     );
   });
 
+  // Bun has a loader for ".js", which the handler replaces. It has none for ".custom", and loads such a file as
+  // JavaScript until a handler is set. Each extension has runs of its own, because a process in which a loader of
+  // Bun's was ever replaced looks up every handler in another place (`has_mutated_built_in_extensions`).
+  describe.each([".js", ".custom"])("a require.extensions handler for %s that was set before the reset", extension => {
+    // Without a flag no source is kept, and the handler is called. It has to be called for a source that was kept too.
+    const noFlag = ["no flag", [], {}] as const;
+    test.each([noFlag, ...modes])("%s: it is called once, and the file does not run again", async (_, args, env) => {
+      await passes(
+        {
+          [`dep${extension}`]: `globalThis.loads.push("the file"); module.exports = "from the file";`,
+          "earlier.test.ts": anEarlierTestFile,
+          "reset.test.ts": `
+            import { expect, jest, test, vi } from "bun:test";
+
+            test.each([["jest", jest], ["vi", vi]])("%s.resetModules()", (_, api) => {
+              const loads = (globalThis.loads = []);
+              // The first load comes after a reset: a source that was cached before the first reset of the process
+              // is read again after it, with or without a handler.
+              api.resetModules();
+              expect(require("./dep${extension}")).toBe("from the file");
+              const original = require.extensions["${extension}"];
+              require.extensions["${extension}"] = module => {
+                loads.push("the handler");
+                module.exports = "from the handler";
+              };
+              try {
+                api.resetModules();
+                expect(require("./dep${extension}")).toBe("from the handler");
+                expect(loads).toEqual(["the file", "the handler"]);
+              } finally {
+                if (original) require.extensions["${extension}"] = original;
+                else delete require.extensions["${extension}"];
+              }
+            });
+          `,
+        },
+        3,
+        args,
+        env,
+      );
+    });
+  });
+
   // vi.resetModules() leaves a package loaded. One that threw is not loaded, in this test file or in the one before it.
   test.each(modes)("%s: vi.resetModules() reads a package again that threw while it loaded", async (_, args, env) => {
     await passes(

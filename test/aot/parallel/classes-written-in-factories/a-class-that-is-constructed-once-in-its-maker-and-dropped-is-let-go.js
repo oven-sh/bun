@@ -1,4 +1,4 @@
-// STATISTIC: CapturesOfClassesStoredForGoodPromoted = 0
+// STATISTIC: PermanentClassCapturesPromoted = 0
 "use strict";
 const refs = [], out = [];
 (function () {

@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForTexts >= 4
+// STATISTIC: ArrayOrStringLoopsVersioned >= 4
 // The value of a for-of, a field read in front, the result of a call, an element of a list: nothing is proven of them, and the loop compares their elements with a character. It asks in front for a text or a list, whatever the front end drew from use.
 const words = JSON.parse('["alpha","Beta,","",",,","\\u00e9,\\ud83d\\ude00",["a",",","bc"],[",",null,1],[]]');
 words.push("x,".repeat(20).slice(1), [",", , ","], new String("a,"), { length: 2, 0: ",", 1: "a" }, new Uint8Array([44]), 7, true);

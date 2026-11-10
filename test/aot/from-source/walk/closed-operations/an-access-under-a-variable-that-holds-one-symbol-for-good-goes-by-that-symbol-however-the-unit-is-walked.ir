@@ -24,7 +24,7 @@
 # STORE: = PropSet {{*}}key=symbol("hidden")
 # RUN(NEVER): walk f1:SlowBody mechanisms=all
 # NEVER-NOT: = ElemGet
-# RUN(CLOSED): walk f1:Body mechanisms=all testing=WalksUnitsBy:Closed
+# RUN(CLOSED): walk f1:Body mechanisms=all testing=ForceWalkMode:Closed
 # CLOSED-LABEL: code f1:Body
 # CLOSED: = PropGet {{*}}key=symbol("hidden")
 # RUN(ANSWERS): run-in-shell

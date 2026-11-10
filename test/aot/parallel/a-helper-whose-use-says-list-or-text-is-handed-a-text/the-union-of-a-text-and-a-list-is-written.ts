@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltForListsAndForTexts >= 2
+// STATISTIC: ArrayOrStringLoopsVersioned >= 2
 // Who writes `string | string[]` in checked TypeScript gets what the untyped twin gets: the loop asks in front which of the two it is. The guard tested for the list of the union, and a text ran the slow version.
 const key: string = JSON.parse('"go"');
 function count(s: string | string[]): number { let c = 0; for (let i = 0; i <= s.length; i++) if (s[i] === ",") c++; return c; }

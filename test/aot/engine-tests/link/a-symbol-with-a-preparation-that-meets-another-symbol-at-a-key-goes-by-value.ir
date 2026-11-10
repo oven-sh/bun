@@ -7,7 +7,7 @@
 # kHeaders loses its name at `key` and goes by value. kLenient has another function and meets nobody.
 # LIBRARY: own
 # RUN: link accesses mechanisms=all
-# STATISTIC: SymbolsWithPreparationThatGoByValue = 1
+# STATISTIC: PreparedSymbolsAccessedByValue = 1
 # CHECK-NOT: access f2
 # CHECK-NOT: access f3
 # CHECK: access f4 v2 under symbol("kLenient")@m1:2

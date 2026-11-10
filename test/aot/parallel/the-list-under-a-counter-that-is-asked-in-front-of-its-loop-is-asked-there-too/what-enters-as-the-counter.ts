@@ -1,4 +1,4 @@
-// STATISTIC: ListsTakenUnderCountersAskedInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedUnderSpeculatedCounters >= 1
 const rounds = +process.argv[2]! || 3;
 function up(list: any, i: any, t: number): any { while (list[i] < t) i++; return i; }
 function upTyped(list: number[], i: number, t: number): number { while (list[i]! < t) i++; return i; }

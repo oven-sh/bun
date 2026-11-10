@@ -1,5 +1,5 @@
 // An object of one class stands below a plain object that stands below the class's prototype: nothing is hidden on the way. Later the plain object is laid below the prototype of a sister class.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 1
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 1
 const sizes = JSON.parse("[1,2,3,4,5,6]");
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}

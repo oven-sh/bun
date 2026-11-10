@@ -1,8 +1,8 @@
-// STATISTIC: LiteralsOfNumbersBornForWhatLoopStores = 0
-// STATISTIC: StoresThatLengthenTheirListInEveryTurn = 0
+// STATISTIC: ArrayLiteralsAllocatedForLoops = 0
+// STATISTIC: IndexedStoresCompiledAsAppends = 0
 // Under: --aot-check=Validate: the storage that the literal is born with is what every access names
 // Under: --aot-harden=proof-checks: what is remembered of the literal is asked of memory
-// Under: --aot-testing=FailGuesses: every guess of the typed copy fails once and the turn begins again as it is written
+// Under: --aot-testing=FailSpeculations: every guess of the typed copy fails once and the turn begins again as it is written
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: what the walk has proven of the list is asked of memory where a turn has left
 'use strict';
 const show = (list) => { let text = list.length + ":"; for (let i = 0; i < list.length; i++) text += (i in list ? typeof list[i] + " " + String(list[i]) : "_") + ","; return text; };

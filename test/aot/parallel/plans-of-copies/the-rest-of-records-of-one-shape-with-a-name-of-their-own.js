@@ -1,8 +1,8 @@
 // The same parcels, all with the same late name: the first copy goes without a plan, the second makes it, every later one goes by it.
-// COUNTER: AssignmentPlansMade >= 1
-// COUNTER: AssignmentPlansMade <= 40
+// COUNTER: AssignmentPlansCreated >= 1
+// COUNTER: AssignmentPlansCreated <= 40
 // COUNTER: CopiesCollectedByName <= 40
-// COUNTER: PropertyListsMade >= 1
+// COUNTER: PropertyListsCreated >= 1
 const parcels = [];
 for (let i = 0; i < 900; i++) {
   const parcel = { id: i, label: "p" + i };

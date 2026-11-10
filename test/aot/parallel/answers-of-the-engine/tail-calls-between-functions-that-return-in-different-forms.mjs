@@ -1,6 +1,6 @@
 // Whoever is jumped to returns in place of the caller, so a jump needs one form on both sides: an int32 is no double, and neither is a boxed value. The rings are 300,000 calls deep: each call in them has to stay a jump, by value too.
 // With no callee copied into its caller every call is a call, of the smallest function too.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function told(n) { report(n); report(n + 1); report(n * 2); report(n === n); report("" + n); report(typeof n); }
 function small(n) { return n | 0; }

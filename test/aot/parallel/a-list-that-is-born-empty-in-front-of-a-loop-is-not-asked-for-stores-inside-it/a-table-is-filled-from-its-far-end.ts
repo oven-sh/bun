@@ -1,4 +1,4 @@
-// STATISTIC: ListsTakenUnderCountersAskedInFrontOfLoops = 0
+// STATISTIC: ArraysGuardedUnderSpeculatedCounters = 0
 const rounds = Number(process.argv[2] ?? 3);
 const size = Number(process.argv[3] ?? 12);
 function table(count: number, by: number): number[] {

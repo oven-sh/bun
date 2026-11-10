@@ -59,8 +59,8 @@ impl FileLowering<'_, '_, '_, '_> {
             return function;
         }
         debug_assert!(header.body.code.is_empty(), "a header has no body");
-        if !self.inputs.options.embeds_function_text {
-            header.text = SourceRange::default();
+        if !self.inputs.options.embeds_function_source {
+            header.source_range = SourceRange::default();
         }
         self.place_declared_records(key, header.position);
         self.functions.add(function, header);

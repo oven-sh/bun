@@ -1,4 +1,4 @@
-The factory of a mock that import() asks for by name runs in the AsyncLocalStorage store of the call. A compiled run puts the factories below an import() call off to the turn in which the text of the imported module has come, where no store of the call is left. A root that is itself the waiting mock has no text to wait for and keeps to the call; for a CommonJS file the root of the call is its face, and the mock waits at the file.
+The factory of a mock that import() asks for by name runs in the AsyncLocalStorage store of the call. A compiled run puts the factories below an import() call off to the turn in which the text of the imported module has come, where no store of the call is left. A root that is itself the waiting mock has no text to wait for and keeps to the call; for a CommonJS file the root of the call is its facade, and the mock waits at the file.
 #### store.test.js
 import { mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";

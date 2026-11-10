@@ -1,7 +1,10 @@
 // answers: with-library
-// # `for (let i = 0; i < count; i++) total += i`, count a number that nobody has proven whole: the counter went round as an integer of 53 bits, held at 2^53 in every turn, the sum was made in 64 bits and asked whether it fits, and a poll stood
-// # in every turn: 13 instructions a turn for `total = (total + i) | 0`. A turn that computes with its counter (a sum or a product takes it that is not its step) takes it as an integer, as a key, a bit operator or an argument does: the loop is
-// # built a second time for its bound, the counter an int32 against the lesser of the rounded bound and 2^31 - 1: the loop whose turns the code generator lays out. A counter that no turn reads buys nothing, as before.
+// # In `for (let i = 0; i < count; i++) total += i`, count is a number that nothing has proven to be an integer. The counter used to go around the loop as a 53-bit integer
+// # that was checked against 2^53 in every iteration, the sum was computed in 64 bits and tested for whether it fits, and every iteration held a poll:
+// # 13 instructions per iteration for `total = (total + i) | 0`.
+// # An iteration that computes with its counter (a sum or a product that is not the counter's step takes it as an operand) uses the counter as an integer,
+// # as a key, a bitwise operator or an argument does. The loop is versioned for its bound: in the specialized version the counter is an int32 that is compared against
+// # the lesser of the rounded bound and 2^31 - 1. That is the kind of loop that the code generator unrolls. A counter that no iteration reads causes no versioning, as before.
 // # f1 = cut, f2 = added, f7 = top, f11 = unread
 // # RUN(FORM): walk f1 f2 f7 f11 mechanisms=all
 // # FORM-LABEL: code f1:Body
@@ -14,23 +17,27 @@
 // # FORM: int[2147483640, 2147483647] @Int32) isInLoop=true isLoopHead=true
 // # FORM-LABEL: code f11:Body
 // # FORM-NOT: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
-// # Under bounds of every kind; from 2147483640 on: the last step that is an int32 and the turn that is handed over. At the end the shell runs the same text itself: every answer is the same.
+// # The loops run with bounds of every kind. The loops that start at 2147483640 cover the last step that is still an int32 and the iteration that continues in the generic version.
+// # At the end, the shell runs the same source itself, and every result is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 28 of 28 of 28
 // # CHECK-NEXT: exited with 0
-// # RUN(FAILED): run-in-shell $SHELL testing=FailGuesses
+// # RUN(FAILED): run-in-shell $SHELL testing=FailSpeculations
 // # FAILED: 28 of 28 of 28
 // # FAILED-NEXT: exited with 0
 // # RUN(CHECKED): run-in-shell $SHELL testing=CheckProofsAtRunTime
 // # CHECKED: 28 of 28 of 28
 // # CHECKED-NEXT: exited with 0
-// # THE LIE, testing=BoundsOfCountersAreRoundedTheOtherWay: the bound is rounded in front of the loop as for <= where the head asks <, and the other way round: under 15.5 and 0.5 a turn too few or too many, in silence. No type is false there.
-// # Under the word that checks proofs the typed head holds, in every turn, the relation against the rounded bound to answer as the relation as written.
-// # RUN(LIE): run-in-shell $SHELL mechanisms=all testing=BoundsOfCountersAreRoundedTheOtherWay
+// # Fault injection, testing=MisroundLoopBounds: the preheader rounds the bound as for <= where the loop header tests <, and the other way around.
+// # With the bounds 15.5 and 0.5 the loop silently runs one iteration too few or too many. No type is wrong there.
+// # With testing=CheckProofsAtRunTime, the header of the specialized version checks in every iteration that the comparison against the rounded bound
+// # gives the same result as the comparison as written.
+// # RUN(LIE): run-in-shell $SHELL mechanisms=all testing=MisroundLoopBounds
 // # REQUIRES(LIE): as-written
 // # LIE: 26 of 28 of 28
-// # RUN(STOPPED): run-in-shell $SHELL mechanisms=all testing=CheckProofsAtRunTime,BoundsOfCountersAreRoundedTheOtherWay
-// # STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value
+// # RUN(STOPPED): run-in-shell $SHELL mechanisms=all testing=CheckProofsAtRunTime,MisroundLoopBounds
+// # STOPPED: bun: internal AOT error: redundancy elimination check failed
+// # STOPPED-NEXT: a load or check that the compiler removed as redundant gives a different result here
 // # STOPPED-NOT: of 28 of 28
 // # STOPPED: crashed with
 declare function report(value: unknown): void;

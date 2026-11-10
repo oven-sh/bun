@@ -1,4 +1,4 @@
-// STATISTIC: SwitchesTakenIntoSwitchInFront >= 1
+// STATISTIC: SwitchesMergedIntoPredecessor >= 1
 'use strict';
 function shared(k) {
   hit: {

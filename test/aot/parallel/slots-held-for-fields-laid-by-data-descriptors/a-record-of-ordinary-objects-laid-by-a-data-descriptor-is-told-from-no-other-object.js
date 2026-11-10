@@ -1,5 +1,5 @@
 // The constructor lays `bins` by a data descriptor, writable and hidden. The record that it is seen to lay lists no name and is filled under keys, so its objects are ordinary objects: the run time can tell them from no other object. The slot is held to no such record, only to objects: what is read out of it is asked each time. Code out of a text stores a list.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 1
+// STATISTIC: FieldTypesEnforced >= 1
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 const poke = (0, eval)("(holder, value) => { holder.bins = value; }");
 class Shelf {

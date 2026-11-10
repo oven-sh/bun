@@ -1,4 +1,4 @@
-// STATISTIC: SumsOfElementsAddedAsIntegers >= 1
+// STATISTIC: UnrolledLoopIntegerElementSums >= 1
 function sum(list: number[], from: number): number { let s = from; for (const v of list) s += v; return s; }
 const make = (n: number) => { const list: number[] = []; for (let j = 0; j < n; j++) list.push(j * 3 - 7); return list; };
 console.log(sum(make(0), 1));

@@ -24,7 +24,7 @@
 # WITHHELD-NOT: OptionalCell32
 # RUN: walk f1 f2 f3 f4 mechanisms=all-Inlining-ParameterGuards
 # CHECK-LABEL: code f1:Body
-# CHECK: ShapeTest {{*}}[refusesMarkedObjects]
+# CHECK: ShapeTest {{*}}[rejectsMarkedObjects]
 # CHECK: @Int32 = GetSlot {{*}}key="flags" {{*}}[holdsDeclaredType]
 # CHECK-LABEL: code f2:Body
 # CHECK: GetSlot {{*}}key="flags" {{*}}level=Expected [holdsDeclaredType

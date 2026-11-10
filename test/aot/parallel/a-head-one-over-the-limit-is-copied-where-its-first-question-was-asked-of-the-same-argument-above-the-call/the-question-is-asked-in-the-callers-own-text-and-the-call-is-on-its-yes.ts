@@ -1,5 +1,5 @@
 // The caller itself asks the bits and calls on the way of yes.
-// STATISTIC: HeadsCopiedWhoseQuestionWasAskedAbove >= 1
+// STATISTIC: PartialInlinesAfterDominatingTests >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

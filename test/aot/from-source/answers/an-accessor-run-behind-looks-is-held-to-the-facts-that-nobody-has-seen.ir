@@ -8,8 +8,9 @@
 # print(looks(5, true));
 # -- end of source
 # LIBRARY: own
-# A getter that the class declares is called directly where the cell still has the prototype of its layout.
-# The lie, testing=GuardsAndFactsAreTakenToHold: the planner of typed accesses takes every guard of a class for held and every fact of a cell for seen, and the state is not touched. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) what the access leans on is asked where nobody has answered it: the process stops by name.
+# A getter that the class declares is called directly if the cell still has its layout's prototype.
+# Fault injection, testing=AssumeGuardsAndFacts: the planner of typed accesses assumes that every class guard holds and that every cell fact is known. It does not change the walk's state.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) whatever the access relies on is checked at run time. Here nothing has established it, so the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: of the class
 # RIGHT-NEXT: from above
@@ -18,7 +19,8 @@
 # HARDENED: of the class
 # HARDENED-NEXT: from above
 # HARDENED-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts
 # LIE: of the class
-# LIE-NEXT: AOT: f1 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE-NEXT: bun: internal AOT error: redundancy elimination check failed at {{*}} (look)
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # LIE: crashed with

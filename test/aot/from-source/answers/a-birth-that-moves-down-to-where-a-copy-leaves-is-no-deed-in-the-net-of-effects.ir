@@ -16,9 +16,9 @@
 # f9 = the last arrow
 # RUN(SHAPE): walk f9 testing=CheckEffectsAtRunTime mechanisms=all
 # SHAPE-LABEL: code f9:Body
-# SHAPE: = BeginsWhatMayRunAgain
+# SHAPE: = BeginEffectsCheck
 # SHAPE: = NewObject
 # SHAPE-NEXT: PutSlotOrAdd
-# SHAPE-NEXT: CopyLeavesForCall
+# SHAPE-NEXT: CheckInlineeFallback
 # RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
 # NET: exited with 0

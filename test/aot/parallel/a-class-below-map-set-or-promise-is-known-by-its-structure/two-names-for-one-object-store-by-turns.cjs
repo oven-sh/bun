@@ -1,5 +1,5 @@
 // Two names hold one object and store by turns: a method called on either sees the newest store.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 // COUNT: operation:operationAOTFillSiteCache = 0
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } bump() { this.n = (this.n + 1) & 1023; return this.n; } two() { return this.n + 1; } put(v) { this.n = v; } }

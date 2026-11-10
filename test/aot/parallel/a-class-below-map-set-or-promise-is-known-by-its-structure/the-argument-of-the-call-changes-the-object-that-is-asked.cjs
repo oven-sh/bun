@@ -1,5 +1,5 @@
 // The argument of this.get(..) lays an own get on the object, deletes it, and lays the object below another prototype: the callee was read before.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 // Under: --aot-testing=CheckProofsAtRunTime: where the name behind the look is gone the call may not count the receiver as a Map, and only this check sees it
 "use strict";
 class H extends Map { look(f) { return this.get(f(this)); } put(f) { return this.set(f(this), 1).size; } }

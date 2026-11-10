@@ -1,4 +1,4 @@
-// STATISTIC: RowsThatAreNoListsAskedForViews >= 1
+// STATISTIC: TypedArrayRowStoreRegionsGuarded >= 1
 "use strict";
 const said = [];
 const hidden = (value) => ({ value })[JSON.parse('"value"')];

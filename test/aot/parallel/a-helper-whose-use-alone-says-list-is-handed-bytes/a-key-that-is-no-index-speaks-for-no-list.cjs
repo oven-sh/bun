@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 1
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 1
 // `alphabet[text.charAt(at)] | 0`, `p[i & 1 ? "b" : "c"]`: numbers go through the element, but the key is the answer of a call or a text: the holder is a record, a Map's stand-in, a Proxy. Only a key that comes round a loop, a written whole number or what an operator makes of numbers speaks for a list or a view.
 const key = JSON.parse('"go"');
 const masks = { go(alphabet, text) { let m = 0; for (let at = 0; at < text.length; at++) m = ((m << 1) | 1) & (alphabet[text.charAt(at)] | 0); return m; } };

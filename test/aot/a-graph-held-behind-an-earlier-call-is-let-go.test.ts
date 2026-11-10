@@ -36,8 +36,8 @@ test.concurrent.each(cases)("the earlier graph %s", async (_, pages, printed) =>
   const compiled = await run([join(cwd, "compiled.exe")], cwd, countingIn(cwd));
   expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: printed + "\n", exitCode: 0 });
   expect({
-    held: counted(cwd, "GraphsHeldBehindEarlierCalls"),
-    letGo: counted(cwd, "GraphsLetGoBehindEarlierCalls"),
+    held: counted(cwd, "GraphsDeferredForImports"),
+    letGo: counted(cwd, "DeferredGraphsResumed"),
   }).toEqual({
     held: 1,
     letGo: 1,

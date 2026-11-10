@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 "use strict";
 // The text of the turn stores: into the place read next, into the length, past the end, a fraction or a text where int32s lay (the storage changes its kind and moves), and deletes a place.
 const said = [];

@@ -1,6 +1,6 @@
 // In a compiled executable the collector cuts chains of four additions and more: what says which class an object was born of must outlive that.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
-// COUNT: counter:StructuresOfHeirsRefused = 0
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected = 0
 declare const process: { readonly argv: readonly string[] };
 declare const Bun: { gc(force: boolean): void };
 const far = (v: unknown): any => [v][JSON.parse("0")];

@@ -324,7 +324,7 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             return None;
         };
         let interop = self.graph.interop(module);
-        if interop.answers_loader_with_namespace
+        if interop.loader_returns_namespace
             && !is_linked_by_bundler(self.files.hir(file), self.files.bound(file), site)
         {
             return None;
@@ -347,14 +347,14 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             (
                 RequireResult::DefaultExport,
                 ModuleRef::Inner { .. }
-                | ModuleRef::Face(_)
+                | ModuleRef::Facade(_)
                 | ModuleRef::Check(_)
                 | ModuleRef::External { .. },
             )
             | (
                 RequireResult::ModuleExports,
                 ModuleRef::Inner { .. }
-                | ModuleRef::Face(_)
+                | ModuleRef::Facade(_)
                 | ModuleRef::Check(_)
                 | ModuleRef::Runtime(_)
                 | ModuleRef::External { .. },

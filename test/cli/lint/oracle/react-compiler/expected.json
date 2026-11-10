@@ -4912,6 +4912,21 @@
     ],
     "suppressed": []
    },
+   "names-itself.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/invariant",
+      "severity": 2,
+      "message": "Invariant: [InferMutationAliasingEffects] Expected value kind to be initialized\n\n<unknown> attempt$2.\n\n  4 |       onClick={() => {\n  5 |         retry(function attempt() {\n> 6 |           return attempt;\n    |                  ^^^^^^^ this is uninitialized\n  7 |         });\n  8 |       }}\n  9 |     />",
+      "line": 6,
+      "column": 18,
+      "endLine": 6,
+      "endColumn": 25,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
    "react-by-its-name.jsx": {
     "messages": [
      {

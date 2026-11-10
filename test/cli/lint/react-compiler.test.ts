@@ -616,6 +616,11 @@ describe.concurrent(
         "long.jsx": [
           "react-hooks/todo 3:3-15:4 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause",
         ],
+        // The plugin has no Todo for a function expression that refers to its own name. `bun build --react-compiler`
+        // has one, and `bun lint` doesn't report it.
+        "names-itself.jsx": [
+          "react-hooks/invariant 6:18-6:25 Invariant: [InferMutationAliasingEffects] Expected value kind to be initialized",
+        ],
         "typescript.tsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
       });
       expect(files["disabled.jsx"].suppressed.map(it => it.ruleId)).toEqual(["react-hooks/refs"]);

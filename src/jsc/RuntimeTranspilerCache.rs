@@ -87,7 +87,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: The React Compiler prints a function expression's read of its own name under that
 /// name. Older entries can read `Name_0`, which is not bound.
-const EXPECTED_VERSION: u32 = 52;
+/// Version 53: The React Compiler leaves a function as written when a function expression in it refers to its own name.
+const EXPECTED_VERSION: u32 = 53;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

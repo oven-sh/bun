@@ -133,8 +133,9 @@ symbol: the function keeps the name it has, so a read of that name is a read of
 the parser's symbol. Upstream lowers the name to a local that nothing declares,
 and prints the function and the read under one text (facebook/react#38100 and
 facebook/react#37511 are open on it). `PendingCompile::own_name` goes to
-lowering, which tells codegen which identifier it became. The name of a nested
-function expression is still printed by its text.
+lowering, which tells codegen which identifier it became. A nested function
+expression is printed anew, under the text of its name: where it refers to that
+name, lowering stops (see "Bail-out semantics").
 
 ### The compiler as a linter
 
@@ -156,6 +157,16 @@ upstream does for its own unsupported cases.
 A function that is nested more deeply than the thread has the stack for bails out the same way, with the
 Todo "Support functions of this size". Every function of the compiler that calls itself along the nesting
 of the source asks `Environment::has_stack()`, and the pipeline asks after each pass whether one has said no.
+
+A function with a nested function expression in it that refers to its own name bails out too, with the Todo
+"(BuildHIR::lowerFunction) Handle a function expression that refers to its own name". The nested function is
+printed anew, under the text of its name, and no HIR instruction declares that name. A read of it is an
+identifier, which lowering and RenameVariables rename, and which nothing names once the function is inlined.
+`gather_captured_context` has the name in its result, where upstream's `pure_scopes` leaves it out, and
+`lower_function` stops at that entry. Upstream stops at most of these later, with an invariant of
+InferMutationAliasingEffects (facebook/react#37058), and prints the unbound read for the others.
+facebook/react#38100 proposes this Todo for upstream. Lint mode does not have the Todo, so `bun lint` reports
+what it did before.
 
 ## Hook placement
 

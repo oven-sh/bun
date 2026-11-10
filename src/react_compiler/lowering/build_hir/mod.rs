@@ -382,6 +382,7 @@ fn arrow_expression_body<'a>(func: &FunctionNode<'a>) -> Option<&'a Expr> {
 /// scope chain between the function and `_component_scope` is implicit —
 /// any non-module-level binding referenced from inside is necessarily declared
 /// in that chain (Bun assigns a fresh `Ref` per declaration site).
+/// Not in upstream: `func`'s own name is bound in its own scope and is in the result too. `lower_function` stops at it.
 ///
 /// `enclosing_scope` is the lexical scope at the inner function's declaration
 /// site (the outer builder's `current_scope()`); it seeds the walker's scope

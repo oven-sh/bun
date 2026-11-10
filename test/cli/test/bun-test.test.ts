@@ -2245,6 +2245,35 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // The compiler names the function that is given to `map` as written and read `walk_0` inside it, which is not bound.
+  test("a component with a function expression that reads its own name is left as written", async () => {
+    const result = await compiled(
+      {
+        "src/Rows.tsx": `
+          export function Rows({ walk }) {
+            const rows = [0].map(function walk(n) {
+              return [n].map(() => typeof walk)[0];
+            });
+            return <ul title={walk}>{rows}</ul>;
+          }
+        `,
+        "compiled.test.tsx": `
+          import { expect, test } from "bun:test";
+          import { List } from "./src/List";
+          import { Rows } from "./src/Rows";
+          test("which are compiled", () => {
+            const all = { List, Rows };
+            ${printCompiled}
+            expect(Rows({ walk: "a" }).props.children).toEqual(["function"]);
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("List");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a data: URL that is longer than a path can be is not compiled", async () => {
     const result = await compiled(
       {

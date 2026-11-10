@@ -1530,8 +1530,13 @@ describe.concurrent("bun test --isolate=modules", () => {
   });
 
   // The restore can't put `process.env` back on the frozen `process`, and throws before every file that follows.
-  test.each(["", "--rerun-each=2", "--parallel=2 --parallel-delay=600000"])(
-    "an error that the restore of the globals throws is reported, and the next files run: %s",
+  test.each([
+    "--isolate=modules",
+    "--isolate=modules --rerun-each=2",
+    // With this delay the first worker takes every file, so it also makes every restore.
+    "--isolate=modules --parallel=2 --parallel-delay=600000",
+  ])(
+    "an error that the restore of the globals throws is reported, and the next files run: bun test %s",
     async flags => {
       using dir = tempDir("isolate-modules-restore-throws", {
         // With --rerun-each, the second run finds `process` as the first run left it.
@@ -1546,21 +1551,34 @@ describe.concurrent("bun test --isolate=modules", () => {
       const junit = join(String(dir), "junit.xml");
       const { stderr, exitCode } = await runTests(
         String(dir),
-        ["--isolate=modules", "--reporter=junit", "--reporter-outfile=" + junit, ...flags.split(" ").filter(Boolean)],
+        ["--reporter=junit", "--reporter-outfile=" + junit, ...flags.split(" ")],
         ["./a.test.js", "./b.test.js", "./c.test.js"],
       );
-      const runs = flags.includes("rerun") ? 2 : 1;
-      expect(stderr.match(/^\(pass\) [abc]/gm)?.sort(), stderr).toEqual(
-        ["a", "b", "c"].flatMap(name => Array(runs).fill("(pass) " + name)),
-      );
-      expect(stderr).toContain("Unhandled error between tests");
-      expect(stderr).not.toContain("worker crashed");
-      expect(stderr).toMatch(/ 0 fail\n \d+ errors?\n/);
-      expect(exitCode).toBe(1);
-      // The report of a structured reporter fails too.
       const xml = await Bun.file(junit).text();
-      expect(xml).toContain(`<testcase name="(unhandled error)"`);
-      expect(xml).not.toMatch(/<testsuites [^>]*failures="0"/);
+      const runs = flags.includes("--rerun-each=2") ? 2 : 1;
+      // One report before b and one before c. Which statement of the restore throws is not held, only that the error is the restore's.
+      expect(
+        {
+          passed: stderr.match(/^\(pass\) [abc]/gm)?.sort(),
+          reports: stderr.match(/Unhandled error between tests/g)?.length,
+          fromTheRestore: stderr.match(/at restoreGlobals \(internal:test\/globals/g)?.length,
+          counts: stderr.match(/^ \d+ (?:fail|errors?)$/gm),
+          workerCrashed: stderr.includes("worker crashed"),
+          junitCases: xml.match(/<testcase name="\(unhandled error\)"/g)?.length,
+          junitFailures: xml.match(/<testsuites [^>]*failures="(\d+)"/)?.[1],
+          exitCode,
+        },
+        stderr,
+      ).toEqual({
+        passed: ["a", "b", "c"].flatMap(name => Array(runs).fill("(pass) " + name)),
+        reports: 2,
+        fromTheRestore: 2,
+        counts: [" 0 fail", " 2 errors"],
+        workerCrashed: false,
+        junitCases: 2,
+        junitFailures: "2",
+        exitCode: 1,
+      });
     },
   );
 

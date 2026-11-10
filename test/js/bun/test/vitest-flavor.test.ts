@@ -3306,6 +3306,31 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test(`the expect of "vitest" that is made late has what the other expect got before`, async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { expect, spyOn, test } from "bun:test";
+        // The other expect changes before anything loads "vitest": an accessor in the place of soft, two matchers and a plain member.
+        spyOn(expect, "soft", "get");
+        expect.extend({ toBeOne(received) { return { pass: received === 1, message: () => "expected 1" }; }, 0() { return { pass: true, message: () => "" }; } });
+        expect.later = "written before";
+        test("test", () => {
+          const ofVitest = require("vitest").expect;
+          console.log(Object.keys(ofVitest).join(), typeof ofVitest.soft, typeof ofVitest.toBeOne, typeof ofVitest[0], ofVitest.later);
+          ofVitest({ one: 1 }).toEqual({ one: ofVitest.toBeOne() });
+          ofVitest.soft("abc1").toContain(1);
+          ofVitest.soft = "replaced";
+          console.log(ofVitest.soft, typeof expect.soft);
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["soft,poll function function function written before", "replaced function"],
+      results: ["(pass) test"],
+      exitCode: 0,
+    });
+  });
+
   test("expect.soft() and expect.poll() have the rules of the expect they are of", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `

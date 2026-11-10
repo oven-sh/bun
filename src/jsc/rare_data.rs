@@ -453,7 +453,7 @@ impl ProxyEnvSlots {
         self.0 = Default::default();
         for (key, value) in &snapshot.entries {
             match value {
-                Some(value) => bun_core::handle_oom(env.map.put(key, value)),
+                Some(value) => bun_core::handle_oom(env.put_live(key, value)),
                 None => env.remove(key),
             }
         }

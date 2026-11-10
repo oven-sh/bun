@@ -94,19 +94,23 @@ describe("Bun.parseEnv", () => {
     using dir = tempDir("dotenv-parse-env-worker", {
       ".env": "FROM_DOTENV=yes\nLAST_DOTENV=last",
       "index.ts": `
-        const text = "X=$FROM_DOTENV\\nY=$LAST_DOTENV\\nP=$PROBE";
+        const text = "X=$FROM_DOTENV\\nY=$LAST_DOTENV\\nP=$PROBE\\nH=$HTTP_PROXY";
         const main = Bun.parseEnv(text);
         // \`delete\` of a proxy variable removes an entry from the native map. The entries of the
         // .env files must not move into the process environment.
         delete process.env.HTTP_PROXY;
         const afterDelete = Bun.parseEnv(text);
+        // Bun writes a proxy variable through to the native map. The entry counts as process
+        // environment again.
+        process.env.HTTP_PROXY = "http://again";
+        const afterReset = Bun.parseEnv(text);
         const worker = new Worker(new URL("./worker.ts", import.meta.url));
         worker.onmessage = ({ data }) => {
-          console.log(JSON.stringify({ main, afterDelete, worker: data }));
+          console.log(JSON.stringify({ main, afterDelete, afterReset, worker: data }));
           worker.terminate();
         };
       `,
-      "worker.ts": `postMessage(Bun.parseEnv("X=$FROM_DOTENV\\nY=$LAST_DOTENV\\nP=$PROBE"));`,
+      "worker.ts": `postMessage(Bun.parseEnv("X=$FROM_DOTENV\\nY=$LAST_DOTENV\\nP=$PROBE\\nH=$HTTP_PROXY"));`,
     });
     const { stdout, stderr, exitCode } = await bunRun(`${dir}/index.ts`, {
       PROBE: "fromproc",
@@ -115,8 +119,38 @@ describe("Bun.parseEnv", () => {
     // The worker's loader reads the `.env` files again and names them.
     expect(stderr.replace(/^\[[\d.]+ms\] "\.env"\n?$/, "")).toBe("");
     expect(exitCode).toBe(0);
-    const expected = { X: "", Y: "", P: "fromproc" };
-    expect(JSON.parse(stdout)).toEqual({ main: expected, afterDelete: expected, worker: expected });
+    expect(JSON.parse(stdout)).toEqual({
+      main: { X: "", Y: "", P: "fromproc", H: "http://proxy" },
+      afterDelete: { X: "", Y: "", P: "fromproc", H: "" },
+      afterReset: { X: "", Y: "", P: "fromproc", H: "http://again" },
+      // A worker reads the process environment again, so it sees the value the process started with.
+      worker: { X: "", Y: "", P: "fromproc", H: "http://proxy" },
+    });
+  });
+
+  test.concurrent("a Worker of a process with an empty environment does not see the .env files", async () => {
+    using dir = tempDir("dotenv-parse-env-worker-empty", {
+      ".env": "FROM_DOTENV=yes",
+      "index.ts": `
+        const worker = new Worker(new URL("./worker.ts", import.meta.url));
+        worker.onmessage = ({ data }) => {
+          console.log(JSON.stringify({ main: Bun.parseEnv("X=$FROM_DOTENV"), worker: data }));
+          worker.terminate();
+        };
+      `,
+      "worker.ts": `postMessage(Bun.parseEnv("X=$FROM_DOTENV"));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      cwd: String(dir),
+      // Nothing but the switch that silences the debug build's logs.
+      env: { BUN_DEBUG_QUIET_LOGS: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.replace(/^\[[\d.]+ms\] "\.env"\n?$/, "")).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ main: { X: "" }, worker: { X: "" } });
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("returns the text's value for a key the environment already has", async () => {

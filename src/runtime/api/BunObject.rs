@@ -1681,14 +1681,13 @@ pub(crate) mod environment_variables {
             env.remove(slot.key);
             return;
         }
-        let env_map = &mut env.map;
 
         if value.is_empty() {
             // Store a static empty string rather than removing, so that
             // process.env.X reads back as "" (Node.js semantics) instead
             // of undefined. isNoProxy treats empty strings the same as
             // absent — no bypass.
-            bun_core::handle_oom(env_map.put(slot.key, b""));
+            bun_core::handle_oom(env.put_live(slot.key, b""));
             return;
         }
 
@@ -1699,7 +1698,7 @@ pub(crate) mod environment_variables {
         // NOTE: `Map::put` boxes its own copy — the Arc wrapper now
         // only backs `proxy_env_storage` for worker `cloneFrom`; ordering is
         // kept for spec parity.
-        bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
+        bun_core::handle_oom(env.put_live(slot.key, &stored.bytes));
     }
 
     fn get_env_value<'a>(

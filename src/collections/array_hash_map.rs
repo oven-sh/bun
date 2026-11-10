@@ -851,6 +851,30 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
+    /// Exchange the entries at `a` and `b`. O(1); changes insertion order.
+    pub fn swap_entries(&mut self, a: usize, b: usize) {
+        if a == b {
+            return;
+        }
+        let (hash_a, hash_b) = (self.hashes[a], self.hashes[b]);
+        self.keys.swap(a, b);
+        self.values.swap(a, b);
+        self.hashes.swap(a, b);
+        // Two slots with one hash are told apart by key, so they need no patch.
+        if hash_a == hash_b {
+            return;
+        }
+        let Some(index) = self.index.as_deref_mut() else {
+            return;
+        };
+        if let Some(slot) = index.find_mut(spread_hash(hash_a), |&i| i as usize == a) {
+            *slot = b as u32;
+        }
+        if let Some(slot) = index.find_mut(spread_hash(hash_b), |&i| i as usize == b) {
+            *slot = a as u32;
+        }
+    }
+
     /// Stable in-place sort of keys/values/hashes by
     /// a caller-supplied index comparator. The closure receives borrows of the
     /// key and value slices so it can compare on either without re-borrowing
@@ -1365,6 +1389,11 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         let i = self.find(key)?;
         self.inner.ordered_remove_at(i);
         Some(i)
+    }
+
+    /// Exchange the entries at `a` and `b`.
+    pub fn swap_entries(&mut self, a: usize, b: usize) {
+        self.inner.swap_entries(a, b);
     }
 
     /// Removes the entry (swapping the last element into its slot) and

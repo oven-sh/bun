@@ -152,8 +152,8 @@ pub struct Loader {
     pub quiet_loaded_files: bool,
 
     pub(crate) did_load_process: bool,
-    /// How many entries at the front of `map` came from `load_process`.
-    process_count: usize,
+    /// How many entries at the front of `map` came from `load_process`. `None` until it ran.
+    process_count: Option<usize>,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
@@ -552,7 +552,7 @@ impl Loader {
             quiet: false,
             quiet_loaded_files: false,
             did_load_process: false,
-            process_count: 0,
+            process_count: None,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         }
@@ -619,8 +619,8 @@ impl Loader {
         self.did_load_process = true;
         // A worker's loader starts from the parent's map, `.env` entries included, and
         // keeps the parent's count.
-        if self.process_count == 0 {
-            self.process_count = self.map.map.count();
+        if self.process_count.is_none() {
+            self.process_count = Some(self.map.map.count());
         }
         Ok(())
     }
@@ -628,17 +628,34 @@ impl Loader {
     /// Removes `key` and keeps the process entries at the front of the map.
     pub fn remove(&mut self, key: &[u8]) {
         if let Some(index) = self.map.remove(key) {
-            if index < self.process_count {
-                self.process_count -= 1;
+            if let Some(count) = self.process_count.as_mut() {
+                if index < *count {
+                    *count -= 1;
+                }
             }
         }
+    }
+
+    /// A write from `process.env` for a name Bun keeps in the native map. The entry counts as
+    /// process environment from then on, so `process_env` sees it.
+    pub fn put_live(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
+        self.map.put(key, value)?;
+        if let (Some(index), Some(count)) =
+            (self.map.map.get_index(key), self.process_count.as_mut())
+        {
+            if index >= *count {
+                self.map.map.swap_entries(index, *count);
+                *count += 1;
+            }
+        }
+        Ok(())
     }
 
     /// The process environment as `load_process` read it, without the `.env` files.
     pub fn process_env(&self) -> ProcessEnv<'_> {
         ProcessEnv {
             map: &self.map,
-            count: self.process_count,
+            count: self.process_count.unwrap_or(0),
         }
     }
 

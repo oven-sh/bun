@@ -1638,7 +1638,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         },
       );
 
-      test("an entry that the run adds is not taken for it", async () => {
+      test.each([[[]], [["--update-snapshots"]]])("an entry that the run adds is not taken for it %j", async args => {
         // In Bun's keys the snapshot of a hook has the name of the hook, so the two hooks have one key.
         const name = (test: string) => "hooks" + (format === "vitest" ? " > " : " ") + test;
         const aOld = '\nexports[`a old 1`] = `"x"`;\n';
@@ -1654,8 +1654,8 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
           `,
           "__snapshots__/a.test.js.snap": headers[format] + old + aOld,
         });
-        const adding = await runTests(String(dir), { CI: "false" });
-        expect(adding.stderr).toContain("2 passed, 3 added");
+        const adding = await runTests(String(dir), { CI: "false" }, ...args);
+        expect(adding.stderr).toContain("3 added");
         expect(snap(dir)).toBe(
           headers[format] +
             aOld +

@@ -76,6 +76,8 @@ struct Entry {
     checked: bool,
     /// Its test was skipped or failed, so `remove_obsolete` keeps it even if unchecked.
     stays: bool,
+    /// `value` is of this run, not of the file.
+    written: bool,
 }
 
 pub(crate) enum Outcome {
@@ -224,8 +226,6 @@ pub(crate) struct File {
     /// Without `--update-snapshots`, an entry was found under Bun's key, or differs from what its test prints in the
     /// file's format. That entry stays as it is, so it may be an older Bun's.
     left_an_entry_alone: bool,
-    /// How many entries the file had. Without `--update-snapshots` they stay where they are, and the run's own come after them.
-    loaded: usize,
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
@@ -390,7 +390,6 @@ impl Snapshots {
             dirty: false,
             may_hold_entries_of_bun,
             left_an_entry_alone: false,
-            loaded: self.values.len(),
         });
         Ok(format)
     }
@@ -432,8 +431,8 @@ impl Snapshots {
             let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
             key_of_bun.push(b' ');
             key_of_bun.extend_from_slice(counter);
-            // An entry that this run added is not an older Bun's. `--update-snapshots` moves entries, so it takes any.
-            if self.values.get_index(&key_of_bun).is_some_and(|at| self.update_snapshots || at < file.loaded) {
+            // An entry that this run wrote is not an older Bun's.
+            if self.values.get(&key_of_bun).is_some_and(|entry| !entry.written) {
                 key_in_file = Some(key_of_bun);
                 file.left_an_entry_alone |= !self.update_snapshots;
             }
@@ -487,7 +486,7 @@ impl Snapshots {
         if written_by_earlier_attempt.is_none() {
             self.added += 1;
         }
-        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false });
+        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false, written: true });
         Ok(Outcome::Written)
     }
 
@@ -557,7 +556,7 @@ impl Snapshots {
                                                 let value = value_string.slice(&arena);
                                                 self.values.insert(
                                                     key,
-                                                    Entry { value: Box::<[u8]>::from(value), checked: false, stays: false },
+                                                    Entry { value: Box::<[u8]>::from(value), checked: false, stays: false, written: false },
                                                 );
                                             }
                                         }

@@ -169,6 +169,8 @@ bun add -d @testing-library/react @testing-library/jest-dom
 
 Call `cleanup` after each test from a preload script, as in the [Testing Library guide](/guides/test/testing-library). React Testing Library registers its own cleanup when it is first imported, so without [`--isolate`](/test/parallel#--isolate) only the first test file that imports it gets it.
 
+The preload script runs in the project's environment, so the project needs the DOM: set `environment` in `bunfig.toml`, or register Happy DOM in an earlier preload script. If only a `@vitest-environment` comment in the test file sets up the DOM, the preload script imports React Testing Library without a `document`, and `screen` queries throw. With `--isolate`, the preload script runs again for each file, in that file's environment.
+
 ```ts title="component.test.tsx" icon="/icons/typescript.svg"
 /// <reference lib="dom" />
 

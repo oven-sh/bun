@@ -71,6 +71,7 @@ impl Format {
     }
 }
 
+#[derive(Default)]
 struct Entry {
     value: Box<[u8]>,
     checked: bool,
@@ -78,6 +79,8 @@ struct Entry {
     stays: bool,
     /// This run wrote it, so it is not an older Bun's.
     written: bool,
+    /// A snapshot of this run found it under the file's own key.
+    found_under_own_key: bool,
 }
 
 pub(crate) enum Outcome {
@@ -423,17 +426,18 @@ impl Snapshots {
             self.open_to_append(files)?;
         }
 
-        let (mut key, count) = self.add_count(expect, format, hint)?;
+        let (mut key, counter) = self.add_count(expect, format, hint)?;
         let name_len = key.len();
         let mut counter_string_buf = [0u8; 32];
-        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, count);
+        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
         key.push(b' ');
         key.extend_from_slice(counter);
 
         // `--update-snapshots` doesn't read a file in Bun's format, so an entry that's already there is from this run.
         let mut written_by_earlier_attempt: Option<Box<[u8]>> = None;
         let mut key_in_file = None;
-        if self.values.contains(&key) {
+        let is_under_own_key = self.values.contains(&key);
+        if is_under_own_key {
             key_in_file = Some(key.clone());
         } else if format != Format::Bun
             && !self.update_snapshots
@@ -442,12 +446,13 @@ impl Snapshots {
             // Not with `--update-snapshots`: it adds the entry under the file's key, and `remove_obsolete` drops the older one.
             let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
             let count_of_bun = self.counts.get(Self::counted_by_bun(key_of_bun.clone()).as_slice()).copied().unwrap_or(0);
-            // Where both spellings of the name are one, this run has asked for the lower counts under the file's key.
-            let is_of_an_earlier_snapshot = count_of_bun < count && key_of_bun == key[..name_len];
+            let is_one_name = key_of_bun == key[..name_len];
             let mut count_buf = [0u8; 32];
             key_of_bun.push(b' ');
             key_of_bun.extend_from_slice(bun_core::fmt::int_as_bytes(&mut count_buf, count_of_bun));
-            if !is_of_an_earlier_snapshot && self.values.get(&key_of_bun).is_some_and(|entry| !entry.written) {
+            // An entry that this run wrote, or that a snapshot of the same name found under the file's key, is not this snapshot's.
+            let is_of_bun = |entry: &Entry| !entry.written && !(is_one_name && entry.found_under_own_key);
+            if self.values.get(&key_of_bun).is_some_and(is_of_bun) {
                 key_in_file = Some(key_of_bun);
                 file.left_an_entry_alone = true;
             }
@@ -457,6 +462,7 @@ impl Snapshots {
             && let Some(entry) = self.values.get_mut(&key_in_file)
         {
             entry.checked = true;
+            entry.found_under_own_key |= is_under_own_key;
             if format.matches(&entry.value, received) {
                 self.passed += 1;
                 return Ok(Outcome::Passed);
@@ -498,7 +504,7 @@ impl Snapshots {
         if written_by_earlier_attempt.is_none() {
             self.added += 1;
         }
-        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false, written: true });
+        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, written: true, ..Default::default() });
         Ok(Outcome::Written)
     }
 
@@ -568,7 +574,7 @@ impl Snapshots {
                                                 let value = value_string.slice(&arena);
                                                 self.values.insert(
                                                     key,
-                                                    Entry { value: Box::<[u8]>::from(value), checked: false, stays: false, written: false },
+                                                    Entry { value: Box::<[u8]>::from(value), ..Default::default() },
                                                 );
                                             }
                                         }

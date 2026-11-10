@@ -109,6 +109,20 @@ function argumentsObject(...values: unknown[]) {
   )(...values);
 }
 
+// With no frames JavaScriptCore keeps, in the Error, the type of the value that the failed read was on.
+function engineTypeErrorWithoutFrames() {
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  try {
+    (undefined as any).property;
+  } catch (error) {
+    return error as TypeError;
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+  throw new Error("unreachable");
+}
+
 const ecKeys = [generateKeyPairSync("ec", { namedCurve: "P-256" }), generateKeyPairSync("ec", { namedCurve: "P-256" })];
 const rsaPublicKey = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
 const secretCryptoKey = (
@@ -681,6 +695,13 @@ const cases: Case[] = [
     b: () => new Error("y"),
     strict: false,
     loose: false,
+  },
+  {
+    name: "an engine TypeError made with no frames and a TypeError with its message",
+    a: () => engineTypeErrorWithoutFrames(),
+    b: () => new TypeError(engineTypeErrorWithoutFrames().message),
+    strict: true,
+    loose: true,
   },
   {
     name: "an Error and a TypeError",

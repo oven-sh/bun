@@ -176,6 +176,80 @@ describe("the global of a node:vm context compares by its properties", () => {
   });
 });
 
+describe("a comparison of two Errors leaves their stacks alone", () => {
+  // With no frames the engine keeps, in the Error, the type of the value that the failed read was on.
+  function engineTypeErrorWithoutFrames() {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    try {
+      (undefined as any).property;
+    } catch (error) {
+      return error as TypeError;
+    } finally {
+      Error.stackTraceLimit = limit;
+    }
+    throw new Error("unreachable");
+  }
+
+  // Each asserts the verdict from the side that prints nothing, so that only the comparison touches the operands.
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  const entryPoints: [name: string, check: (a: unknown, b: unknown, equal: boolean) => void][] = [
+    ["Bun.deepEquals", (a, b, equal) => expect(deepEquals(a, b)).toBe(equal)],
+    ["Bun.deepEquals strict", (a, b, equal) => expect(deepEquals(a, b, true)).toBe(equal)],
+    ["Bun.deepEquals strict, skipPrototype", (a, b, equal) => expect(deepEquals(a, b, true, true)).toBe(equal)],
+    ["util.isDeepStrictEqual", (a, b, equal) => expect(isDeepStrictEqual(a, b)).toBe(equal)],
+    [
+      "util.isDeepStrictEqual, skipPrototype",
+      (a, b, equal) => expect(isDeepStrictEqual(a, b, true as any)).toBe(equal),
+    ],
+    ["assert.deepEqual", (a, b, equal) => (equal ? assert.deepEqual : assert.notDeepEqual)(a, b)],
+    ["assert.deepStrictEqual", (a, b, equal) => (equal ? assert.deepStrictEqual : assert.notDeepStrictEqual)(a, b)],
+    ["toEqual", (a, b, equal) => (equal ? expect(a) : expect(a).not).toEqual(b)],
+    ["toStrictEqual", (a, b, equal) => (equal ? expect(a) : expect(a).not).toStrictEqual(b)],
+  ];
+
+  describe.each(entryPoints)("%s", (_, check) => {
+    it.each([
+      ["equal", "m", true],
+      ["with other messages", "other", false],
+    ])("does not call Error.prepareStackTrace for two Errors that are %s", (_, message, equal) => {
+      const prepareStackTrace = Error.prepareStackTrace;
+      let calls = 0;
+      Error.prepareStackTrace = () => {
+        calls++;
+        return "";
+      };
+      try {
+        check(new Error("m"), new Error(message), equal);
+        check({ nested: [new Error("m")] }, { nested: [new Error(message)] }, equal);
+      } finally {
+        Error.prepareStackTrace = prepareStackTrace;
+      }
+      expect(calls).toBe(0);
+    });
+
+    it("takes an engine TypeError made with no frames and a TypeError with its message for equal", () => {
+      for (const swapped of [false, true]) {
+        const thrown = engineTypeErrorWithoutFrames();
+        const twin = new TypeError(thrown.message);
+        check(swapped ? twin : thrown, swapped ? thrown : twin, true);
+      }
+    });
+  });
+
+  it("leaves the stack for the first read of it", () => {
+    const prepareStackTrace = Error.prepareStackTrace;
+    const compared = new Error("m");
+    expect(Bun.deepEquals(compared, new Error("m"))).toBe(true);
+    try {
+      Error.prepareStackTrace = error => "prepared for " + error.message;
+      expect(compared.stack).toBe("prepared for m");
+    } finally {
+      Error.prepareStackTrace = prepareStackTrace;
+    }
+  });
+});
+
 // The cases documented at https://bun.sh/docs/api/utils#bun-deepequals as the
 // differences between the default and strict modes.
 describe("Bun.deepEquals strict mode", () => {

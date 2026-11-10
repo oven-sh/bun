@@ -1298,7 +1298,8 @@ declare namespace $Node {
     /** How many bytes still wait. */
     flush(): number;
     detach(): void;
-    rstStream(streamId: number, code: number): true | undefined;
+    /** `sendQueued`: the queued DATA frames that flow control lets through go out ahead of the RST_STREAM. */
+    rstStream(streamId: number, code: number, sendQueued?: boolean): true | undefined;
     /** `false`: there is no such stream. Otherwise what became of the write. */
     writeStream(
       streamId: number,

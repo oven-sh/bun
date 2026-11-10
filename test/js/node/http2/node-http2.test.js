@@ -7235,9 +7235,10 @@ describe.concurrent("write() after end()", () => {
     // which an errored stream never emits.
     describe("close() before the late write", () => {
       // Raw HTTP/2 client: one GET on stream 1, with no END_STREAM if `open`. If `blocked`, it never reopens its
-      // window. Resolves with what stream 1 got, once the server has answered a PING that follows the END_STREAM
+      // window. With `until`, it grants the largest window and reads nothing before that promise resolves.
+      // Resolves with what stream 1 got, once the server has answered a PING that follows the END_STREAM
       // or the first RST_STREAM of that stream.
-      function rawResponse(port, { open = false, blocked = false } = {}) {
+      function rawResponse(port, { open = false, blocked = false, until } = {}) {
         return new Promise((resolve, reject) => {
           const socket = net.connect(port, "127.0.0.1");
           const response = { length: 0, endStream: false, resets: [] };
@@ -7246,13 +7247,19 @@ describe.concurrent("write() after end()", () => {
           socket.on("close", () => reject(new Error("closed before the PING was answered")));
           socket.on("connect", () => {
             socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
-            socket.write(frame(4, 0, 0));
+            if (until) {
+              // SETTINGS_INITIAL_WINDOW_SIZE of 2^31 - 1, and the window of the session raised to the same.
+              socket.write(frame(4, 0, 0, Buffer.from([0, 4, 0x7f, 0xff, 0xff, 0xff])));
+              socket.write(frame(8, 0, 0, Buffer.from([0x7f, 0xff, 0, 0])));
+            } else {
+              socket.write(frame(4, 0, 0));
+            }
             const request = rawRequest(1, "/");
             // END_HEADERS alone
             if (open) request[4] = 4;
             socket.write(request);
           });
-          readFrames(socket, (type, flags, streamId, length, payload) => {
+          const onFrame = (type, flags, streamId, length, payload) => {
             const endStream = (flags & 1) !== 0;
             if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
             if (type === 6 && endStream) {
@@ -7265,7 +7272,7 @@ describe.concurrent("write() after end()", () => {
             } else {
               response.length += length;
               response.endStream ||= endStream;
-              if (length > 0 && !blocked) {
+              if (length > 0 && !blocked && !until) {
                 const increment = Buffer.alloc(4);
                 increment.writeUInt32BE(length);
                 socket.write(frame(8, 0, 0, increment));
@@ -7276,7 +7283,9 @@ describe.concurrent("write() after end()", () => {
               pinged = true;
               socket.write(frame(6, 0, 0, Buffer.alloc(8)));
             }
-          });
+          };
+          if (until) until.then(() => readFrames(socket, onFrame), reject);
+          else readFrames(socket, onFrame);
         });
       }
 
@@ -7334,6 +7343,30 @@ describe.concurrent("write() after end()", () => {
           { blocked: true },
         );
         expect(result).toEqual([{ length: 65535, endStream: false, resets: [0] }, lateWriteEvents]);
+      });
+
+      it("close() under socket backpressure sends the queued chunk ahead of the reset", async () => {
+        // The raw client reads nothing until close() has run, so the chunk waits for the socket and not for
+        // flow control. Like node, the reset does not drop that chunk.
+        const closeCalled = Promise.withResolvers();
+        const chunk = Buffer.alloc(2 * 1024 * 1024, "x");
+        let written = 0;
+        const result = await closeThenLateWrite(
+          (stream, late) => {
+            stream.respond({ ":status": 200 });
+            (function fill() {
+              stream.write(chunk);
+              written += chunk.length;
+              // The socket took the whole chunk: write one more on the next turn.
+              if (stream.session.state.outboundQueueSize === 0) return setImmediate(fill);
+              stream.close();
+              stream.write("late", late);
+              closeCalled.resolve();
+            })();
+          },
+          { until: closeCalled.promise },
+        );
+        expect(result).toEqual([{ length: written, endStream: false, resets: [0] }, lateWriteEvents]);
       });
 
       it("close() resets a stream that waits for trailers, and does not ask for them", async () => {

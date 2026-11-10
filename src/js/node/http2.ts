@@ -2304,10 +2304,8 @@ function streamOnErrored(this: Http2Stream) {
   } else if ((status & StreamState.ResetAtFinish) !== 0) {
     // RST_STREAM ends a stream that close() ended, with or without an error code. This one waited for 'finish'.
     this[bunHTTP2StreamStatus] = status | StreamState.ResetScheduled;
-    const native = this[bunHTTP2Session]?.[bunHTTP2Native];
-    // A frame that waits behind the frames of another stream goes out ahead of the reset.
-    native?.flush();
-    native?.rstStream(this.id, NGHTTP2_NO_ERROR);
+    // Like node, the frames that wait for the socket or behind another stream go out ahead of the reset.
+    this[bunHTTP2Session]?.[bunHTTP2Native]?.rstStream(this.id, NGHTTP2_NO_ERROR, true);
   }
 }
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the

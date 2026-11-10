@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 bde9b0f992329da7f3c03ac1739a755b0d75da86b4abfce9b3e2aa2e06841444.
+// Written against that file with the SHA-256 4cd9e74f18f72d7b6e666213bbfed639a9e3efe0ae2d881c53f13b11c92bda36.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -2386,10 +2386,8 @@ function streamOnErrored(this: Http2Stream) {
   } else if ((status & StreamState.ResetAtFinish) !== 0) {
     // RST_STREAM ends a stream that close() ended, with or without an error code. This one waited for 'finish'.
     this[bunHTTP2StreamStatus] = status | StreamState.ResetScheduled;
-    const native = this[bunHTTP2Session]?.[bunHTTP2Native];
-    // A frame that waits behind the frames of another stream goes out ahead of the reset.
-    native?.flush();
-    native?.rstStream(this.id, NGHTTP2_NO_ERROR);
+    // Like node, the frames that wait for the socket or behind another stream go out ahead of the reset.
+    this[bunHTTP2Session]?.[bunHTTP2Native]?.rstStream(this.id, NGHTTP2_NO_ERROR, true);
   }
 }
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the

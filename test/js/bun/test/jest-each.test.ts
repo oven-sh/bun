@@ -69,8 +69,8 @@ it("passes each row as one argument if a row of the table is not an array", asyn
       import { afterAll, describe, test } from "bun:test";
 
       const calls = { value: [], done: [], table: [], proxy: [], hole: [], describe: [] };
-      const record = (label, args) =>
-        calls[label].push(Array.from(args, arg => (typeof arg === "function" ? "<done>" : arg)));
+      const shown = arg => (typeof arg === "function" ? "<done>" : arg === undefined ? "<undefined>" : arg);
+      const record = (label, args) => calls[label].push(Array.from(args, shown));
       afterAll(() => console.log("bun:test " + JSON.stringify(calls)));
 
       test.each([null, "", [], [1, 2], {}])("value %p", function (value) {
@@ -138,7 +138,7 @@ it("passes each row as one argument if a row of the table is not an array", asyn
           [1, 2],
           [3, 4],
         ],
-        hole: [[1, 2], [null], [3, 4]],
+        hole: [[1, 2], ["<undefined>"], [3, 4]],
         describe: [[0], [[5, 6]]],
       },
     ],

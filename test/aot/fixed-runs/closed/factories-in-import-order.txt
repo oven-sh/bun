@@ -1,0 +1,16 @@
+The factories of hoisted mocks run in the order of the imports.
+#### deep.js
+
+#### inner.js
+import "./deep.js";
+#### page.js
+import "./inner.js"; import "./shallow.js";
+#### shallow.js
+
+#### x.test.js
+import { expect, test, vi } from "bun:test";
+const log = vi.hoisted(() => []);
+vi.mock("./shallow.js", async () => (log.push("shallow"), {}));
+vi.mock("./deep.js", async () => (log.push("deep"), {}));
+import "./page.js";
+test("t", () => expect(log).toEqual(["deep", "shallow"]));

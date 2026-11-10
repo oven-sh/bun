@@ -1,0 +1,16 @@
+# f1 = count
+# -- source: push-of-integers-in-a-loop.ts
+# function count(limit: number): number[] {
+#   const list: number[] = [];
+#   for (let k = 0; k < limit; k++) list.push(k);
+#   return list;
+# }
+# declare const input: any;
+# (globalThis as any).answer = count(input | 0);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches ; 35 instructions, 0 of them patches ; 12 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 23, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:23 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 23

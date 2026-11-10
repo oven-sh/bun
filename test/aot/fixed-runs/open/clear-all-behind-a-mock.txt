@@ -1,0 +1,11 @@
+mock.clearAllMocks() behind a mock, beside a plugin.
+#### a.test.js
+import { test, mock } from "bun:test";
+test("t", async () => { mock.module("./lib.js", () => ({ v: "mock" })); Bun.plugin.clearAll(); const user = await import("./user.js"); console.log("| CASE reads", user.read()); });
+#### lib.js
+console.log("| CASE lib runs");
+export const v = "real";
+#### user.js
+import { v } from "./lib.js";
+console.log("| CASE user runs");
+export const read = () => v;

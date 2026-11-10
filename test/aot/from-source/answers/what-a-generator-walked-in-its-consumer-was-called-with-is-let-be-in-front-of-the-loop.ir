@@ -1,0 +1,10 @@
+# -- source: main.js
+# function* spans(box) { yield box.lid; box.rim += 1; yield box.lid + box.rim; }
+# function total(t) { let sum = 0; for (const v of spans({ lid: t, rim: 2 })) { if (v & 1) sum += v; else sum -= 1; } return sum; }
+# function drive() { let sum = 0; for (let t = 0; t < 12; t++) sum += total(t); return sum; }
+# print(drive());
+# -- end of source
+# testing=CheckProofsAtRunTime: the generator is never made: what it was called with waits for the walk of its body, and no value of the consumer names it.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(CALL): run-in-shell
+# CALL: 72

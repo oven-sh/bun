@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "JSDOMIterator.h"
 #include "JSDOMWrapper.h"
 #include "URLSearchParams.h"
 
@@ -75,5 +76,10 @@ template<> struct JSDOMWrapperConverterTraits<URLSearchParams> {
     using WrapperClass = JSURLSearchParams;
     using ToWrappedReturnType = URLSearchParams*;
 };
+
+struct URLSearchParamsIteratorTraits;
+using URLSearchParamsIteratorBase = JSDOMIteratorBase<JSURLSearchParams, URLSearchParamsIteratorTraits>;
+template<> const JSC::ClassInfo URLSearchParamsIteratorBase::s_info;
+JSC::JSObject* urlSearchParamsIteratorPrototype(JSDOMGlobalObject&);
 
 } // namespace WebCore

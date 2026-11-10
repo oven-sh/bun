@@ -43,6 +43,19 @@ const liveBindingTest = devTest("live bindings with `var`", {
     await dev.fetch("/").equals("Value: -2");
   },
 });
+devTest("a tagged template with non-ASCII text works on the server", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        return new Response(String.raw\`日本 \\n é\`);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("日本 \\n é");
+  },
+});
 devTest("live bindings through export clause", {
   framework: minimalFramework,
   files: {

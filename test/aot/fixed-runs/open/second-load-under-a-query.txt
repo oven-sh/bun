@@ -1,0 +1,20 @@
+A file loaded under a query runs from its text; loaded again behind vi.resetModules(), it imports compiled modules.
+#### node_modules/dep/index.js
+module.exports = { who: () => "real", extra: 1 };
+#### node_modules/dep/package.json
+{ "name": "dep", "main": "index.js" }
+#### node_modules/lib/index.js
+import dep from "dep"; export const who = () => dep.who(); export const extra = dep.extra;
+#### node_modules/lib/package.json
+{ "name": "lib", "main": "index.js" }
+#### query.test.js
+import { test, vi } from "vitest";
+vi.mock("dep", () => ({ default: { who: () => "mock" } }));
+test("query", async () => {
+  const first = await import("lib/index.js?query");
+  vi.resetModules();
+  const second = await import("lib/index.js?query");
+  vi.resetModules();
+  const third = await import("lib/index.js?query");
+  console.log("| CASE", first.who(), second.who(), third.who(), String(third.extra), first === second, second === third);
+});

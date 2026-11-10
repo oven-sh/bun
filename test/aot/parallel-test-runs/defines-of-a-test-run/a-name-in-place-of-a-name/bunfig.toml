@@ -1,0 +1,4 @@
+[define]
+"MODE" = "mode"
+"CALC" = "Math"
+"load" = "require"

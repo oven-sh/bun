@@ -1,0 +1,1 @@
+postMessage("by-url.ts");

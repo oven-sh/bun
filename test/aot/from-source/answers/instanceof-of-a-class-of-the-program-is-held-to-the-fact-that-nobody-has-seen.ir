@@ -1,0 +1,26 @@
+# -- source: instanceof-of-a-class-of-the-program-is-held-to-the-fact-that-nobody-has-seen.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { weight: number; constructor(weight: number) { this.weight = weight; } }
+# function look(weight: number, changes: boolean) { const parcel = new Parcel(weight); if (changes) Object.setPrototypeOf(parcel, { other: 1 }); return parcel instanceof Parcel; }
+# const looks = id(look);
+# print(looks(1, false));
+# print(looks(5, true));
+# -- end of source
+# LIBRARY: own
+# instanceof does not look at the prototype of the instance if the cell is known to have its layout's prototype.
+# Fault injection, testing=AssumeGuardsAndFacts: the planner of typed accesses assumes that every class guard holds and that every cell fact is known. It does not change the walk's state.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) whatever the access relies on is checked at run time. Here nothing has established it, so the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: true
+# RIGHT-NEXT: false
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: true
+# HARDENED-NEXT: false
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts
+# LIE: true
+# LIE-NEXT: bun: internal AOT error: redundancy elimination check failed at {{*}} (look)
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

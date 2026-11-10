@@ -1,0 +1,6 @@
+{
+  "name": "shapes",
+  "version": "1.2.3",
+  "main": "lib/index.js",
+  "license": "MIT"
+}

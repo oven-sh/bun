@@ -136,8 +136,8 @@ function buildH(cfg: Config): string {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ares_config.h — private, included by every .c via ares_setup.h. Same shape
-// as libarchive's: HAVE_* booleans + the recv/send prototype types c-ares
+// ares_config.h — private, included by every .c via ares_setup.h.
+// HAVE_* booleans + the recv/send prototype types c-ares
 // uses to cast its socket calls.
 // ───────────────────────────────────────────────────────────────────────────
 

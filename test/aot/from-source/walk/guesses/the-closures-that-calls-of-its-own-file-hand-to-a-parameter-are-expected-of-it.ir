@@ -1,0 +1,26 @@
+# -- source: the-closures-that-calls-of-its-own-file-hand-to-a-parameter-are-expected-of-it.js
+# function repeat(step, turns) {
+#   let s = 1;
+#   for (let i = 0; i < turns; i++) s = step(s) | 0;
+#   return s;
+# }
+# function twice(step, value) {
+#   return step(step(value));
+# }
+# function main(rounds) {
+#   const steps = [x => x + 3, x => x * 5 + 1, x => x ^ (x >>> 3)];
+#   let total = 0;
+#   for (let round = 0; round < rounds; round++) total = (total + repeat(steps[round % 3], 8)) | 0;
+#   return total + twice(x => x - 1, 10);
+# }
+# sink(repeat, twice);
+# print(main(6), repeat(x => x + 100, 2), twice(String, 5));
+# -- end of source
+# Both functions have left for unseen code, so nothing is proven of `step`. What the calls that are written in the function's own file hand over is text of that file: a function written at the call, or an
+# element of a list of functions written in the caller: those are expected: in front of a loop that calls the parameter a test for each, and a build of the loop for each where that pays. It is an expectation and no proof: who else comes
+# (a function out of the module's own body, a built-in) fails the test and is called as any value. No type of the rest of the program is read for it, and no call of another file.
+# f1 = repeat, f2 = twice
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest v0 testedType=f
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 976622 201 5

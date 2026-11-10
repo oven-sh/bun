@@ -11,8 +11,8 @@ use std::borrow::Cow;
 /// Enforce `includes` method over `indexOf` method.
 pub struct PreferIncludes;
 
-const PREFER_INCLUDES: Message = Message::new("preferIncludes", "Use 'includes()' method instead.");
-const PREFER_STRING_INCLUDES: Message = Message::new(
+const PREFER_INCLUDES: &Message = &Message::new("preferIncludes", "Use 'includes()' method instead.");
+const PREFER_STRING_INCLUDES: &Message = &Message::new(
     "preferStringIncludes",
     "Use `String#includes()` method with a string instead.",
 );

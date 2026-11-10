@@ -1,0 +1,16 @@
+# -- source: a-loop-of-a-slow-version-types-its-operators-on-what-is-proven.ts
+# declare function print(...values: unknown[]): void;
+# class Ledger { tint: number; twine: number; constructor(n: number) { this.tint = 0; this.twine = n; } }
+# const kept: Ledger[] = []; for (let i = 0; i < 20; i++) kept.push(new Ledger(i));
+# function elsewhere(bag: any) { let work = 0; for (let i = 0; i < 4000; i++) work = (work + i) | 0; return "" + work + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine; }
+# print(kept.length, elsewhere(JSON.parse('{"twine":1}')));
+# -- end of source
+# Nine reads of a name that one class stores make a guess at the class of `bag`, and the guard at the entry asks for it. A parsed record fails it, so the whole body runs in the slow version. Its loop never touches `bag`: what is proven of
+# `work` and `i` holds there as in the body, so the sum and the counter are reckoned as integers. A slow version without a loop stays as it was.
+# f1 = elsewhere
+# RUN(GUARD): walk f1:ParameterGuard mechanisms=all
+# GUARD: TypeTest
+# RUN(SLOW): walk f1:SlowBody mechanisms=all
+# SLOW: Add {{*}} form=Integers
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 20 7998000111111111

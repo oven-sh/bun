@@ -1,6 +1,7 @@
 #![feature(adt_const_params)]
 #![allow(non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+pub mod aot_options;
 pub mod bundle_enums;
 pub mod code_coverage_options;
 pub mod command_tag;
@@ -11,6 +12,7 @@ pub mod global_cache;
 pub mod jsx;
 pub mod offline_mode;
 pub mod schema;
+pub mod trim;
 
 pub use error::{Error, Result};
 

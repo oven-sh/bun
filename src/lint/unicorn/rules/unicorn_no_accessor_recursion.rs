@@ -8,7 +8,7 @@ use rustc_hash::FxHashSet;
 /// Disallow recursive access to `this` within getters and setters.
 pub struct NoAccessorRecursion;
 
-const NO_ACCESSOR_RECURSION: Message = Message::new("", "Disallow recursive access to `this` within {{kind}}.");
+const NO_ACCESSOR_RECURSION: &Message = &Message::new("", "Disallow recursive access to `this` within {{kind}}.");
 
 #[derive(Default)]
 pub struct State<'a> {

@@ -1,0 +1,18 @@
+# -- source: what-a-method-of-an-exactly-known-receiver-reads-stands-in-front-of-the-loop.ts
+# declare function print(...values: unknown[]): void;
+# class Disk { constructor(private r: number) {} area(): number { return 3 * this.r * this.r; } }
+# class Square { constructor(private side: number) {} area(): number { return this.side * this.side; } }
+# function sum(shape: Disk | Square, turns: number): number { let total = 0; for (let i = 0; i < turns; i++) total += shape.area(); return total; }
+# function ofDisk(turns: number): number { return sum(new Disk(Date.now() % 1 + 1), turns); }
+# (globalThis as any).ofDisk = ofDisk;
+# print(sum(new Square(Date.now() % 1 + 2), 1000));
+# -- end of source
+# `sum` is copied into the body of the module, where the receiver is of one class. The call in `sum` lists two callees, so Link names none for it; but what the read of `area` gives is proven to be one function.
+# The look at the loop takes that function's effects for the call, as it does where it counts on a guess: the loop runs no other code and stores nothing, so the product stands in front of it.
+# It took the call for unknown code: the product stood in every turn.
+# RUN: walk f0 mechanisms=all
+# CHECK: = Mul
+# CHECK: isLoopHead=true
+# CHECK-NOT: = Mul
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4000

@@ -66,6 +66,8 @@ pub(crate) mod output_file_jsc;
 pub(crate) mod standalone_graph_jsc;
 #[path = "api/TOMLObject.rs"]
 pub(crate) mod toml_object;
+#[path = "api/trim_testing.rs"]
+pub(crate) mod trim_testing;
 #[path = "api/UnsafeObject.rs"]
 pub(crate) mod unsafe_object;
 #[path = "api/XMLObject.rs"]

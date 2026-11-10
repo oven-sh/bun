@@ -19,8 +19,9 @@ impl CounterStyleRule {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        dest.write_str("@counter-style")?;
-        super::custom_ident_to_css(&self.name, dest)?;
+        dest.write_str("@counter-style ")?;
+        // `list-style` and `counter()` name it unhashed, so a CSS module leaves it global.
+        self.name.to_css_with_options(dest, false)?;
         super::decl_block_to_css(&self.declarations, dest)
     }
 }

@@ -96,7 +96,7 @@ pub fn write_migrated(manager: &mut PackageManager) {
         bun_core::pretty_errorln!(
             "<d>{} in <r><green>{}<r>",
             file.edits.join(", "),
-            bstr::BStr::new(FileSystem::instance().relative_to(&file.target.package_json_path)),
+            bstr::BStr::new(FileSystem::get().relative_to(&file.target.package_json_path)),
         );
     }
 }
@@ -287,7 +287,7 @@ fn edit_update_targets(
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
-    let top_level = FileSystem::instance().top_level_dir();
+    let top_level = FileSystem::get().top_level_dir();
     let mut selected: Vec<WorkspaceTarget> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;

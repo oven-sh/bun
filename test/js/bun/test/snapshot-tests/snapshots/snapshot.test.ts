@@ -2418,6 +2418,154 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
   });
 
+  // Bun 1.4.4 wrote formats/bun-1.4.4/lazy-getters.fixture.js and its .snap. It printed an accessor as `[native code]`
+  // and did not call it. To add a case, run it under that version.
+  describe("of a value that one of its getters changes", () => {
+    const fixture = "lazy-getters.fixture.js";
+    const snap = `__snapshots__/${fixture}.snap`;
+    // Bun 1.4.4 writes the same bytes but for these lines in a test of "vitest", and below the header of a file of Jest.
+    const variants = {
+      "bun:test": (text: string) => text,
+      "vitest": (text: string) => text.replace('from "bun:test"', 'from "vitest"'),
+      "a file of Jest": (text: string) => text.replace(headers.bun, headers.jest),
+    };
+    const copy = (variant: keyof typeof variants) => {
+      const written = (name: string) => readFileSync(join(import.meta.dir, "..", "formats", "bun-1.4.4", name), "utf8");
+      return tempDir("snapshot-lazy-getters", {
+        [fixture]: variants[variant](written(fixture)),
+        [snap]: variants[variant](written(snap)),
+      });
+    };
+    const contentsOf = (dir: unknown) => [fixture, snap].map(name => readFileSync(join(String(dir), name), "utf8"));
+    const lazy = `({ id: 1, get items() { reads++; delete this.items; return (this.items = [1, 2]); } })`;
+    // What an older Bun printed for it.
+    const older = `{\n  "id": 1,\n  "items": [native code],\n}`;
+
+    test.each(
+      (Object.keys(variants) as (keyof typeof variants)[]).flatMap(variant =>
+        ["true", "false"].map(CI => [variant, CI] as const),
+      ),
+    )("%s: what Bun 1.4.4 wrote passes, and is left alone (CI: %s)", async (variant, CI) => {
+      using dir = copy(variant);
+      const before = contentsOf(dir);
+      const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI }, "./" + fixture);
+      expect({ pass, fail, stderr: fail ? stderr : "" }).toEqual({ pass: 21, fail: 0, stderr: "" });
+      expect(stderr).toContain(" 42 snapshots, 63 expect() calls");
+      expect(contentsOf(dir)).toEqual(before);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--update-snapshots rewrites it once, and then a match calls the getter", async () => {
+      using dir = tempDir("snapshot-lazy-getters", {
+        "a.test.js": `
+            let reads = 0;
+            const lazy = () => ${lazy};
+            test("in a file", () => { expect(lazy()).toMatchSnapshot(); });
+            test("inline", () => { expect(lazy()).toMatchInlineSnapshot(\`\n${older}\n\`); });
+            test("reads", () => { console.log("reads", reads); });
+          `,
+        "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${older}\n\`;\n`,
+      });
+      const contents = () =>
+        ["a.test.js", "__snapshots__/a.test.js.snap"].map(name => readFileSync(join(String(dir), name), "utf8"));
+      const run = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", ...args],
+          env: { ...bunEnv, CI: "true" },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { reads: stdout.match(/^reads \d+$/m)?.[0], stderr: exitCode ? stderr : "", exitCode };
+      };
+      expect(await run("--update-snapshots")).toEqual({ reads: "reads 2", stderr: "", exitCode: 0 });
+      const updated = contents();
+      expect(updated.map(text => text.includes('"items": [\n'))).toEqual([true, true]);
+      expect(updated.map(text => text.includes("[native code]"))).toEqual([false, false]);
+      expect(await run("--update-snapshots")).toEqual({ reads: "reads 2", stderr: "", exitCode: 0 });
+      expect(await run()).toEqual({ reads: "reads 2", stderr: "", exitCode: 0 });
+      expect(contents()).toEqual(updated);
+    });
+
+    test("another text with `[native code]` fails as before, after one more print at most", async () => {
+      const other = older.replace('"id": 1', '"id": 2');
+      const file = (module: string) => `
+          import { test, expect } from ${JSON.stringify(module)};
+          ${firstLine}
+          let reads = 0;
+          const value = () => ({ id: 1, get items() { reads++; return [1, 2]; } });
+          const counted = call => { reads = 0; return [firstLine(call), reads].join(" "); };
+          test("t", () => {
+            console.log(counted(() => expect(value()).toMatchInlineSnapshot(\`\n${other}\n\`)));
+            console.log(counted(() => expect(value()).toMatchSnapshot()));
+          });
+        `;
+      // An inline snapshot takes a number too.
+      const entries = headers.bun + `\nexports[\`t 2\`] = \`\n${other}\n\`;\n`;
+      const [bun, vitest] = await Promise.all(
+        ["bun:test", "vitest"].map(module =>
+          logOf({ "a.test.js": file(module), "__snapshots__/a.test.js.snap": entries }),
+        ),
+      );
+      const message = (matcher: string) => `expect(received).${matcher}(expected)`;
+      // In a test of "bun:test", an inline snapshot is also printed as Jest prints it.
+      expect(bun.log).toEqual([`${message("toMatchInlineSnapshot")} 2`, `${message("toMatchSnapshot")} 1`]);
+      expect(vitest.log).toEqual([`${message("toMatchInlineSnapshot")} 1`, `${message("toMatchSnapshot")} 1`]);
+      expect([bun.exitCode, vitest.exitCode]).toEqual([0, 0]);
+    });
+
+    test("a getter that throws prints as `[native code]` now too, and that text passes after one call of the others", async () => {
+      const printed = `{\n  "bad": [native code],\n  "good": 2,\n}`;
+      const { log, stderr, exitCode } = await logOf({
+        "a.test.js": `
+            let reads = 0;
+            const value = () => ({ get bad() { throw new Error("not ready"); }, get good() { reads++; return 2; } });
+            test("in a file", () => { expect(value()).toMatchSnapshot(); });
+            test("inline", () => { expect(value()).toMatchInlineSnapshot(\`\n${printed}\n\`); });
+            test("reads", () => { console.log("reads", reads); });
+          `,
+        "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${printed}\n\`;\n`,
+      });
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: ["reads 2"], stderr: "", exitCode: 0 });
+    });
+
+    test("a snapshot keeps its number when printing the value throws, or takes a snapshot", async () => {
+      const { log, stderr, exitCode } = await logOf({
+        "a.test.js": `
+            ${firstLine}
+            let reads = 0;
+            const lazy = () => ${lazy};
+            const takesOne = (target, value) => {
+              let taken = 0;
+              return new Proxy(target, {
+                ownKeys(target) {
+                  if (!taken++) console.log("inside:", firstLine(() => expect(value()).toMatchSnapshot()));
+                  return Reflect.ownKeys(target);
+                },
+              });
+            };
+            test("throws", () => {
+              const throws = new Proxy({}, { ownKeys() { throw new RangeError("no keys"); } });
+              console.log(firstLine(() => expect(throws).toMatchSnapshot()));
+              console.log(firstLine(() => expect(lazy()).toMatchSnapshot()));
+            });
+            test("takes one", () => {
+              console.log(firstLine(() => expect(takesOne(lazy(), lazy)).toMatchSnapshot()));
+            });
+          `,
+        "__snapshots__/a.test.js.snap":
+          headers.bun +
+          `\nexports[\`throws 1\`] = \`\n${older}\n\`;\n` +
+          `\nexports[\`takes one 1\`] = \`\n${older}\n\`;\n` +
+          `\nexports[\`takes one 2\`] = \`other [native code]\`;\n`,
+      });
+      const message = "expect(received).toMatchSnapshot(expected)";
+      expect(log).toEqual(["no keys", "passes", "inside: passes", message]);
+      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+  });
+
   test("passes when it is what an older Bun wrote for a mock function or a class that native code makes", async () => {
     const printed = `{\n  "Buffer": [class Function],\n  "Response": [class Response],\n  "URL": [class Function],\n  "mock": [class Function],\n}`;
     const { log, stderr, exitCode } = await logOf({

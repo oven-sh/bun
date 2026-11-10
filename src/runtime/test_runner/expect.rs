@@ -21,7 +21,7 @@ use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::pretty_format::JestPrettyFormat;
-use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
+use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome, holds_accessor_of_older_bun};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
@@ -908,6 +908,14 @@ impl Drop for EarlierRejections<'_> {
     }
 }
 
+/// What `Expect::match_and_fmt_snapshot` did with the value.
+pub(crate) enum Printed {
+    /// An older Bun printed it as the saved text. It is not printed in the current form, which calls its getters.
+    AsOlderBun,
+    /// `shown` has the property matchers in it, and `same_as_older_bun` is `print_snapshot`'s result.
+    Now { shown: JSValue, same_as_older_bun: bool },
+}
+
 pub(crate) struct TrimResult<'a> {
     pub(crate) trimmed: &'a [u8],
     pub(crate) start_indent: Option<&'a [u8]>,
@@ -1150,8 +1158,15 @@ impl Expect {
         let format = if is_vitest { SnapshotFormat::Vitest } else { SnapshotFormat::Bun };
         let mut pretty_value: Vec<u8> = Vec::new();
         let value = Self::value_to_snapshot(global_this, received, format)?;
-        let (shown, same_as_older_bun) =
-            this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
+        let mut buf = vec![0u8; result.map_or(0, <[u8]>::len)];
+        let saved = result.map(|saved_value| Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf));
+        // Only an object has an accessor, and `--update-snapshots` prints every value, to write it in the current form.
+        let older = saved
+            .as_ref()
+            .map(|trim_res| trim_res.trimmed)
+            .filter(|saved| !update && value.is_object() && holds_accessor_of_older_bun(saved));
+        let printed =
+            this.match_and_fmt_snapshot(global_this, received, value, property_matchers, &mut pretty_value, fn_name, format, older)?;
         if this.bun_test().is_some() {
             match runner.snapshots.format_of(&runner.files, this).and_then(|format| runner.snapshots.add_count(this, format, b"")) {
                 Ok(_) => {}
@@ -1161,13 +1176,14 @@ impl Expect {
                 Err(err) => return Err(this.throw_snapshot_error(global_this, &err, b"")),
             }
         }
+        let Printed::Now { shown, same_as_older_bun } = printed else {
+            runner.snapshots.passed += 1;
+            return Ok(JSValue::UNDEFINED);
+        };
 
         let mut start_indent: Option<Box<[u8]>> = None;
         let mut end_indent: Option<Box<[u8]>> = None;
-        if let Some(saved_value) = result {
-            let mut buf = vec![0u8; saved_value.len()];
-            let trim_res = Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf);
-
+        if let Some(trim_res) = saved {
             if format.matches(trim_res.trimmed, &pretty_value) {
                 runner.snapshots.passed += 1;
                 return Ok(JSValue::UNDEFINED);
@@ -1183,7 +1199,7 @@ impl Expect {
                     (Received::Value(_), false) | (Received::Thrown(_), true) => &[SnapshotFormat::Jest],
                     (Received::Thrown(_), false) => &[SnapshotFormat::Jest, SnapshotFormat::Vitest],
                 },
-                !same_as_older_bun || property_matchers.is_some(),
+                older.is_none() && (!same_as_older_bun || property_matchers.is_some()),
                 global_this,
                 received,
                 shown,
@@ -1268,14 +1284,12 @@ impl Expect {
         property_matchers: Option<JSValue>,
         saved: &[u8],
     ) -> JsResult<bool> {
-        for format in or_older_bun.then_some(None).into_iter().chain(formats.iter().copied().map(Some)) {
+        if or_older_bun && Self::was_written_by_older_bun(global_this, received, None, with_matchers, property_matchers, saved)? {
+            return Ok(true);
+        }
+        for &format in formats {
             let is_it = (|| {
-                let value = Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))?;
-                let Some(format) = format else {
-                    // Older Bun wrote the matchers into the object in place, which didn't stick for getters or frozen objects.
-                    return Ok((property_matchers.is_some() && JestPrettyFormat::did_older_bun_print(global_this, with_matchers, saved)?)
-                        || JestPrettyFormat::did_older_bun_print(global_this, value, saved)?);
-                };
+                let value = Self::value_to_snapshot(global_this, received, format)?;
                 let mut printed: Vec<u8> = Vec::new();
                 JestPrettyFormat::print_snapshot(global_this, value, property_matchers, &mut printed, format)?;
                 Ok(printed == saved)
@@ -1290,22 +1304,46 @@ impl Expect {
         Ok(false)
     }
 
-    /// Returns `value` with `property_matchers` substituted in, and `print_snapshot`'s result.
+    /// True if `saved` is what an older Bun printed. `value` is what it read from `received` to print, if the caller has it.
+    #[cold]
     #[optimize(size)]
-    pub(crate) fn match_and_fmt_snapshot(
+    fn was_written_by_older_bun(
+        global_this: &JSGlobalObject,
+        received: Received,
+        value: Option<JSValue>,
+        with_matchers: JSValue,
+        property_matchers: Option<JSValue>,
+        saved: &[u8],
+    ) -> JsResult<bool> {
+        let is_it = (|| {
+            let value = match value {
+                Some(value) => value,
+                None => Self::value_to_snapshot(global_this, received, SnapshotFormat::Bun)?,
+            };
+            // Older Bun wrote the matchers into the object in place, which didn't stick for getters or frozen objects.
+            Ok((property_matchers.is_some() && JestPrettyFormat::did_older_bun_print(global_this, with_matchers, saved)?)
+                || JestPrettyFormat::did_older_bun_print(global_this, value, saved)?)
+        })();
+        match is_it {
+            Err(JsError::Thrown) if global_this.clear_exception_except_termination() => Ok(false),
+            is_it => is_it,
+        }
+    }
+
+    /// Returns `value` with `property_matchers` substituted in.
+    #[inline(always)]
+    fn with_property_matchers(
         &self,
         global_this: &JSGlobalObject,
         value: JSValue,
         property_matchers: Option<JSValue>,
-        pretty_value: &mut Vec<u8>,
         fn_name: &'static str,
-        format: SnapshotFormat,
-    ) -> JsResult<(JSValue, bool)> {
+    ) -> JsResult<JSValue> {
         let mut shown = value;
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(|_| (value, true));
+                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(|_| value);
             }
 
             let prop_matchers = _prop_matchers;
@@ -1319,14 +1357,38 @@ impl Expect {
                     self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
                     value.to_fmt(&mut formatter),
-                ).map(|_| (value, true));
+                ).map(|_| value);
             }
             shown = with_matchers;
         }
+        Ok(shown)
+    }
 
+    /// Substitutes `property_matchers` into `value` and prints it. `older` is the saved text, if it
+    /// `holds_accessor_of_older_bun`. Printing calls the getters of the value, and a getter can change it,
+    /// so what an older Bun printed for it is compared with `older` first.
+    #[optimize(size)]
+    pub(crate) fn match_and_fmt_snapshot(
+        &self,
+        global_this: &JSGlobalObject,
+        received: Received,
+        value: JSValue,
+        property_matchers: Option<JSValue>,
+        pretty_value: &mut Vec<u8>,
+        fn_name: &'static str,
+        format: SnapshotFormat,
+        older: Option<&[u8]>,
+    ) -> JsResult<Printed> {
+        let shown = self.with_property_matchers(global_this, value, property_matchers, fn_name)?;
+        if let Some(saved) = older {
+            let value = (format == SnapshotFormat::Bun).then_some(value);
+            if Self::was_written_by_older_bun(global_this, received, value, shown, property_matchers, saved)? {
+                return Ok(Printed::AsOlderBun);
+            }
+        }
         let printed = if format.is_pretty_format() { value } else { shown };
         let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, pretty_value, format)?;
-        Ok((shown, same_as_older_bun))
+        Ok(Printed::Now { shown, same_as_older_bun })
     }
 
     #[optimize(size)]
@@ -1345,16 +1407,32 @@ impl Expect {
             Err(err) => return Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
         };
         let value = Self::value_to_snapshot(global_this, received, format)?;
-        let (shown, same_as_older_bun) =
-            self.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
+        // Only an object has an accessor.
+        let mut pending = if value.is_object() { runner.snapshots.lookup(self, hint) } else { None };
+        let mut older = pending.as_mut().and_then(|pending| pending.older.take());
+        let (shown, same_as_older_bun) = loop {
+            let older_text = older.as_deref();
+            match self.match_and_fmt_snapshot(global_this, received, value, property_matchers, &mut pretty_value, fn_name, format, older_text)? {
+                Printed::Now { shown, same_as_older_bun } => break (shown, same_as_older_bun),
+                Printed::AsOlderBun => {}
+            }
+            match pending.take().map(|found| runner.snapshots.pass_as_older_bun(&runner.files, self, &found)) {
+                Some(Ok(true)) => return Ok(JSValue::UNDEFINED),
+                // Printing it took another snapshot of this name, so this one reads another entry: print it for that one.
+                Some(Ok(false)) | None => older = None,
+                Some(Err(err)) => return Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
+            }
+        };
 
-        match runner.snapshots.match_or_write(&runner.files, self, &pretty_value, hint) {
+        match runner.snapshots.match_or_write(&runner.files, self, &pretty_value, hint, pending) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
             Ok(SnapshotOutcome::Mismatch { saved }) => {
+                // `older` was compared before a getter could change the value, so that answer stands.
+                let is_compared = older.as_deref() == Some(&*saved);
                 if runner.snapshots.may_hold_entries_of_bun()
                     && Self::was_written_by_another(
                         &[],
-                        !same_as_older_bun || property_matchers.is_some(),
+                        !is_compared && (!same_as_older_bun || property_matchers.is_some()),
                         global_this,
                         received,
                         shown,

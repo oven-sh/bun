@@ -71,6 +71,11 @@ impl Format {
     }
 }
 
+/// Older versions of Bun printed `[native code]` for an accessor at a named or symbol key, and did not call it.
+pub(crate) fn holds_accessor_of_older_bun(saved: &[u8]) -> bool {
+    strings::contains(saved, b"[native code]")
+}
+
 struct Entry {
     value: Box<[u8]>,
     checked: bool,
@@ -83,6 +88,18 @@ pub(crate) enum Outcome {
     Written,
     /// Not counted yet: the caller bumps `passed` or `failed`.
     Mismatch { saved: Box<[u8]> },
+}
+
+/// The entry that the running test's next snapshot reads, found by `Snapshots::lookup` before the value is printed.
+pub(crate) struct Pending {
+    /// The snapshot's name, a space and `count`.
+    key: Vec<u8>,
+    name_len: usize,
+    /// The number the snapshot gets unless printing the value takes another snapshot of its name.
+    count: usize,
+    key_in_file: Option<Vec<u8>>,
+    /// The entry's text, if `holds_accessor_of_older_bun`.
+    pub(crate) older: Option<Box<[u8]>>,
 }
 
 pub(crate) enum FileOutcome {
@@ -221,6 +238,8 @@ pub(crate) struct File {
     /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
     /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
     may_hold_entries_of_bun: bool,
+    /// Some text in the file is what `holds_accessor_of_older_bun` looks for.
+    may_hold_accessor_of_older_bun: bool,
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
@@ -281,9 +300,15 @@ impl Snapshots {
         let snapshot_name = Self::name_of(expect, format, hint)?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
+        let count = self.count_name(expect, &snapshot_name)?;
+        Ok((snapshot_name, count))
+    }
+
+    #[optimize(size)]
+    fn count_name(&mut self, expect: &Expect, snapshot_name: &[u8]) -> Result<usize, Error> {
         let gop = self
             .counts
-            .get_or_put(&snapshot_name)
+            .get_or_put(snapshot_name)
             .map_err(Error::from)?;
         if gop.found_existing {
             *gop.value_ptr += 1;
@@ -296,9 +321,9 @@ impl Snapshots {
             && let Some(sequence) = parent.phase.sequence(buntest.get())
             && (sequence.remaining_retry_count > 0 || sequence.remaining_repeat_count > 0)
         {
-            sequence.counted_snapshots.push(snapshot_name.as_slice().into());
+            sequence.counted_snapshots.push(snapshot_name.into());
         }
-        Ok((snapshot_name, count))
+        Ok(count)
     }
 
     #[optimize(size)]
@@ -372,11 +397,15 @@ impl Snapshots {
                 return Err(Error::ParseError);
             }
         }
+        let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
+        // `--update-snapshots` prints every value, to write it in the current form.
+        let may_hold_accessor_of_older_bun =
+            may_hold_entries_of_bun && !self.update_snapshots && holds_accessor_of_older_bun(&self.file_buf);
         if format != Format::Bun {
             self.file_buf = Vec::new();
         }
-        let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
-        self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
+        self._current_file =
+            Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun, may_hold_accessor_of_older_bun });
         Ok(format)
     }
 
@@ -388,26 +417,21 @@ impl Snapshots {
         self._current_file.as_ref().is_some_and(|file| file.may_hold_entries_of_bun)
     }
 
-    pub(crate) fn match_or_write(
-        &mut self,
-        files: &FileList,
+    /// Returns the key of the `count`th snapshot of `name`, and the key that the file has its entry under, if it has one.
+    fn keys(
+        &self,
         expect: &Expect,
-        received: &[u8],
+        format: Format,
         hint: &[u8],
-    ) -> Result<Outcome, Error> {
-        let format = self.format_of(files, expect)?;
-        if format == Format::Bun {
-            self.open_to_append(files)?;
-        }
-
-        let (mut key, counter) = self.add_count(expect, format, hint)?;
+        name: Vec<u8>,
+        count: usize,
+    ) -> Result<(Vec<u8>, Option<Vec<u8>>), Error> {
         let mut counter_string_buf = [0u8; 32];
-        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
+        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, count);
+        let mut key = name;
         key.push(b' ');
         key.extend_from_slice(counter);
 
-        // `--update-snapshots` doesn't read a file in Bun's format, so an entry that's already there is from this run.
-        let mut written_by_earlier_attempt: Option<Box<[u8]>> = None;
         let mut key_in_file = None;
         if self.values.contains(&key) {
             key_in_file = Some(key.clone());
@@ -417,7 +441,83 @@ impl Snapshots {
             key_of_bun.extend_from_slice(counter);
             key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
         }
+        Ok((key, key_in_file))
+    }
 
+    /// Finds the entry that the running test's next snapshot reads, if the file may hold what an older Bun printed for an
+    /// accessor. Counts nothing and reports no error: `match_or_write` and `pass_as_older_bun` do, after `format_of`.
+    #[inline]
+    pub(crate) fn lookup(&self, expect: &Expect, hint: &[u8]) -> Option<Pending> {
+        let file = self._current_file.as_ref().filter(|file| file.may_hold_accessor_of_older_bun)?;
+        self.find(expect, file.format, hint)
+    }
+
+    #[cold]
+    #[optimize(size)]
+    fn find(&self, expect: &Expect, format: Format, hint: &[u8]) -> Option<Pending> {
+        let name = Self::name_of(expect, format, hint).ok()?;
+        let name_len = name.len();
+        let count = self.counts.get(name.as_slice()).map_or(1, |count| count + 1);
+        let (key, key_in_file) = self.keys(expect, format, hint, name, count).ok()?;
+        let saved = key_in_file.as_ref().and_then(|key| self.values.get(key)).map(|entry| &entry.value);
+        let older = saved.filter(|saved| holds_accessor_of_older_bun(saved)).cloned();
+        Some(Pending { key, name_len, count, key_in_file, older })
+    }
+
+    /// Counts the snapshot that `lookup` found as passed: an older Bun printed the value as that entry's text.
+    /// Returns false, with nothing counted, if another snapshot of its name was taken since. Its entry is another one then.
+    #[cold]
+    #[optimize(size)]
+    pub(crate) fn pass_as_older_bun(&mut self, files: &FileList, expect: &Expect, pending: &Pending) -> Result<bool, Error> {
+        let name = &pending.key[..pending.name_len];
+        if self.counts.get(name).map_or(1, |count| count + 1) != pending.count {
+            return Ok(false);
+        }
+        if self.format_of(files, expect)? == Format::Bun {
+            self.open_to_append(files)?;
+        }
+        self.total += 1;
+        self.count_name(expect, name)?;
+        if let Some(entry) = pending.key_in_file.as_ref().and_then(|key| self.values.get_mut(key)) {
+            entry.checked = true;
+        }
+        self.passed += 1;
+        Ok(true)
+    }
+
+    pub(crate) fn match_or_write(
+        &mut self,
+        files: &FileList,
+        expect: &Expect,
+        received: &[u8],
+        hint: &[u8],
+        pending: Option<Pending>,
+    ) -> Result<Outcome, Error> {
+        let format = self.format_of(files, expect)?;
+        if format == Format::Bun {
+            self.open_to_append(files)?;
+        }
+
+        let (key, key_in_file) = match pending {
+            None => {
+                let (name, count) = self.add_count(expect, format, hint)?;
+                self.keys(expect, format, hint, name, count)?
+            }
+            Some(mut pending) => {
+                self.total += 1;
+                let count = self.count_name(expect, &pending.key[..pending.name_len])?;
+                if count == pending.count {
+                    (pending.key, pending.key_in_file)
+                } else {
+                    // Printing the value took another snapshot of this name.
+                    pending.key.truncate(pending.name_len);
+                    self.keys(expect, format, hint, pending.key, count)?
+                }
+            }
+        };
+
+        // `--update-snapshots` doesn't read a file in Bun's format, so an entry that's already there is from this run.
+        let mut written_by_earlier_attempt: Option<Box<[u8]>> = None;
         if let Some(key_in_file) = key_in_file
             && let Some(entry) = self.values.get_mut(&key_in_file)
         {

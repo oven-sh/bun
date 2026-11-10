@@ -1,0 +1,246 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`in a file: replaces itself 1`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file: replaces itself 2`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file: redefines itself 1`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file: redefines itself 2`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file: fills a field 1`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file: fills a field 2`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file: adds a key 1`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file: adds a key 2`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file: counts in an earlier sibling 1`] = `
+{
+  "count": 0,
+  "next": [native code],
+}
+`;
+
+exports[`in a file: counts in an earlier sibling 2`] = `
+{
+  "count": 0,
+  "next": [native code],
+}
+`;
+
+exports[`in a file: writes a later sibling 1`] = `
+{
+  "first": [native code],
+  "second": 0,
+}
+`;
+
+exports[`in a file: writes a later sibling 2`] = `
+{
+  "first": [native code],
+  "second": 0,
+}
+`;
+
+exports[`in a file: writes into an object beside it 1`] = `
+{
+  "bump": [native code],
+  "inner": {
+    "count": 0,
+  },
+}
+`;
+
+exports[`in a file: writes into an object beside it 2`] = `
+{
+  "bump": [native code],
+  "inner": {
+    "count": 0,
+  },
+}
+`;
+
+exports[`in a file: writes into an array beside it 1`] = `
+{
+  "list": [],
+  "push": [native code],
+}
+`;
+
+exports[`in a file: writes into an array beside it 2`] = `
+{
+  "list": [],
+  "push": [native code],
+}
+`;
+
+exports[`in a file: writes into a Map beside it 1`] = `
+{
+  "map": Map {},
+  "set": [native code],
+}
+`;
+
+exports[`in a file: writes into a Map beside it 2`] = `
+{
+  "map": Map {},
+  "set": [native code],
+}
+`;
+
+exports[`in a file: returns an object whose getter changes the root 1`] = `
+{
+  "child": [native code],
+  "count": 0,
+}
+`;
+
+exports[`in a file: returns an object whose getter changes the root 2`] = `
+{
+  "child": [native code],
+  "count": 0,
+}
+`;
+
+exports[`in a file: in an object 1`] = `
+{
+  "outer": {
+    "id": 1,
+    "items": [native code],
+  },
+}
+`;
+
+exports[`in a file: in an object 2`] = `
+{
+  "outer": {
+    "id": 1,
+    "items": [native code],
+  },
+}
+`;
+
+exports[`in a file: in an array 1`] = `
+[
+  {
+    "id": 1,
+    "items": [native code],
+  },
+]
+`;
+
+exports[`in a file: in an array 2`] = `
+[
+  {
+    "id": 1,
+    "items": [native code],
+  },
+]
+`;
+
+exports[`in a file: in a Map 1`] = `
+Map {
+  "key" => {
+    "id": 1,
+    "items": [native code],
+  },
+}
+`;
+
+exports[`in a file: in a Map 2`] = `
+Map {
+  "key" => {
+    "id": 1,
+    "items": [native code],
+  },
+}
+`;
+
+exports[`in a file: of a class instance 1`] = `
+Model {
+  "relation": [native code],
+}
+`;
+
+exports[`in a file: of a class instance 2`] = `
+Model {
+  "relation": [native code],
+}
+`;
+
+exports[`in a file, with a hint, property matchers, from a promise and from a thrown error: hint 1`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file, with a hint, property matchers, from a promise and from a thrown error 1`] = `
+{
+  "id": Any<Number>,
+  "items": [native code],
+}
+`;
+
+exports[`in a file, with a hint, property matchers, from a promise and from a thrown error: hint 2`] = `
+{
+  "id": Any<Number>,
+  "items": [native code],
+}
+`;
+
+exports[`in a file, with a hint, property matchers, from a promise and from a thrown error 2`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;
+
+exports[`in a file, with a hint, property matchers, from a promise and from a thrown error 3`] = `
+{
+  "id": 1,
+  "items": [native code],
+}
+`;

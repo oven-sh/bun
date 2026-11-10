@@ -9974,6 +9974,9 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
       "one-unit-under-a-line-comment.js": "/**\n * @flow // c\n * é\n * keep me\n */\na;\n",
       // Without a name after `@` the joined line stays text, so the space that `+?` takes with `é` is printed.
       "one-unit-and-a-space.css": "/**\n * @\n * é \n * z\n */\na{b:c}\n",
+      // JSON5 and JSONC insert the pragma with the same function as JavaScript.
+      "one-unit.json5": "/**\n * @flow\n * é\n */\n{a:1}\n",
+      "two-units.json5": "/**\n * @flow\n * 😀\n */\n{a:1}\n",
     };
     const result = await format(files, ["--no-config", "--insert-pragma", "."], { reads: Object.keys(files) });
     expect(result.files).toEqual({
@@ -9983,6 +9986,8 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
       "two-units-two-characters.js": "/**\n * @format\n * @flow éé\n */\n\na;\n",
       "one-unit-under-a-line-comment.js": "/**\n * é\n * keep me\n *\n * @format\n * @flow\n */\n\na;\n",
       "one-unit-and-a-space.css": "/**\n * @ é \n * z\n *\n * @format\n */\n\na {\n  b: c;\n}\n",
+      "one-unit.json5": "/**\n * é\n *\n * @format\n * @flow\n */\n\n{ a: 1 }\n",
+      "two-units.json5": "/**\n * @format\n * @flow 😀\n */\n\n{ a: 1 }\n",
     });
     expect(result.exitCode).toBe(0);
   });

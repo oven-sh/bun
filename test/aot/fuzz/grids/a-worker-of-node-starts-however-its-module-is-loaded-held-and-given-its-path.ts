@@ -177,39 +177,35 @@ const known = new Map(
 // The executable stops where code of the build is interpreted.
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
-test.each(partOfGrid("starts of a Worker of node", cells, 20, ([id]) => id))(
-  "%s",
-  async (id, entry, files) => {
-    using dir = tempDir("aot-worker-of-node", { app: files, away: {} });
-    const [app, away] = [join(String(dir), "app"), join(String(dir), "away")];
-    const executable = join(away, isWindows ? "main.exe" : "main");
-    const plain = await run([bunExe(), "run", entry], app);
-    expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "answer\n", exitCode: 0 });
-    // One thread: with more, a debug build of the engine fails about one build in four (#48169).
-    const build = [bunExe(), "build", "--compile", "--aot", withThreads(1), entry, "--outfile", executable];
-    const built = await run(build, app);
-    expect({ exitCode: built.exitCode, stderr: built.exitCode ? built.stderr : "" }).toEqual({
-      exitCode: 0,
-      stderr: "",
-    });
-    const warnings = [...built.stderr.matchAll(/^warn: (TS\d+): .*\n +at (.*)$/gm)].map(
-      ([, code, at]) => `${code} ${relative(app, at).replaceAll("\\", "/")}`,
-    );
-    renameSync(app, join(String(dir), "moved-away"));
-    const ran = await run([executable], away, compiledOnly);
-    const answers = ran.exitCode === 0 && ran.stdout === plain.stdout;
-    const warned = warnings.some(warning => /TS10008[12]/.test(warning));
-    const verdict = answers
-      ? warned
-        ? "answers, and the build warned"
-        : "answers"
-      : warned
-        ? "no answer, and the build warned"
-        : "NO ANSWER AND NO WARNING";
-    const found = { cell: id, verdict, warnings };
-    const expected = { ...found, verdict: known.get(id) ?? "answers" };
-    // Beside a verdict that is not the expected one stands what the executable said.
-    expect(verdict === expected.verdict ? found : { ...found, executable: ran }).toEqual(expected);
-  },
-  300_000,
-);
+test.each(partOfGrid("starts of a Worker of node", cells, 20, ([id]) => id))("%s", async (id, entry, files) => {
+  using dir = tempDir("aot-worker-of-node", { app: files, away: {} });
+  const [app, away] = [join(String(dir), "app"), join(String(dir), "away")];
+  const executable = join(away, isWindows ? "main.exe" : "main");
+  const plain = await run([bunExe(), "run", entry], app);
+  expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "answer\n", exitCode: 0 });
+  // One thread: with more, a debug build of the engine fails about one build in four (#48169).
+  const build = [bunExe(), "build", "--compile", "--aot", withThreads(1), entry, "--outfile", executable];
+  const built = await run(build, app);
+  expect({ exitCode: built.exitCode, stderr: built.exitCode ? built.stderr : "" }).toEqual({
+    exitCode: 0,
+    stderr: "",
+  });
+  const warnings = [...built.stderr.matchAll(/^warn: (TS\d+): .*\n +at (.*)$/gm)].map(
+    ([, code, at]) => `${code} ${relative(app, at).replaceAll("\\", "/")}`,
+  );
+  renameSync(app, join(String(dir), "moved-away"));
+  const ran = await run([executable], away, compiledOnly);
+  const answers = ran.exitCode === 0 && ran.stdout === plain.stdout;
+  const warned = warnings.some(warning => /TS10008[12]/.test(warning));
+  const verdict = answers
+    ? warned
+      ? "answers, and the build warned"
+      : "answers"
+    : warned
+      ? "no answer, and the build warned"
+      : "NO ANSWER AND NO WARNING";
+  const found = { cell: id, verdict, warnings };
+  const expected = { ...found, verdict: known.get(id) ?? "answers" };
+  // Beside a verdict that is not the expected one stands what the executable said.
+  expect(verdict === expected.verdict ? found : { ...found, executable: ran }).toEqual(expected);
+});

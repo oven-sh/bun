@@ -1,7 +1,8 @@
 //! Resolves declarations and type nodes to types.
 
 use super::aot::enum_constants::{
-    ALL_RUN_TIME_INPUTS, READS_OTHER_FILE_OR_VARIABLE, run_time_inputs_of_operator,
+    ALL_RUN_TIME_INPUTS, READS_OTHER_FILE_OR_VARIABLE, RESTS_ON_INEXACT_POWER,
+    run_time_inputs_of_operator,
 };
 use super::errors_enums_names::{Location, is_ambient_enum, is_declared_before_use};
 use super::errors_names_and_exports::fully_qualified_name_of;
@@ -2658,6 +2659,35 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn enum_member_value(&mut self, file: FileId, member: EnumMemberId) -> Option<EnumValue> {
         self.get_enum_member_value(file, member).value
+    }
+
+    /// The constant of a member as a `declare enum` says it: `1`, `-1`, `"a"`. A computed member has none.
+    pub fn enum_member_initializer(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+    ) -> Option<Vec<u8>> {
+        Some(match self.enum_member_value(file, member)? {
+            EnumValue::Number(bits) => {
+                let value = f64::from_bits(bits);
+                let (sign, size): (&[u8], f64) = if value < 0.0 {
+                    (b"-", -value)
+                } else {
+                    (b"", value)
+                };
+                [sign, &crate::atom::number_to_string(size)[..]].concat()
+            }
+            EnumValue::String(value) => super::print::quoted(self.atoms().bytes(value), b'"', true),
+        })
+    }
+
+    /// The member's value rests on a power that the run time may compute to another number than `math.Pow` does.
+    pub fn enum_member_rests_on_inexact_power(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+    ) -> bool {
+        self.get_enum_member_value(file, member).run_time_inputs & RESTS_ON_INEXACT_POWER != 0
     }
 
     /// `getEnumMemberValue`

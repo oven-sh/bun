@@ -551,7 +551,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
-                js_ast::ExprData::EInlinedEnum(ie) => {
+                js_ast::ExprData::EInlinedEnum(ie) if !p.keeps_enum_read(&sw_data) => {
                     sw_data = ie.value.data;
                     continue 'sw;
                 }

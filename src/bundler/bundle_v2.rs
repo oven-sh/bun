@@ -3315,6 +3315,7 @@ pub mod bv2_impl {
 
             this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
+            this.linker.options.is_library = this.transpiler.options.is_library;
             this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
             this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
             this.linker.options.deprecated_namespace_object_setters =

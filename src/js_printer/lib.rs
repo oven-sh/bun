@@ -1364,6 +1364,8 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
+    /// `--dts`: the constant of another file's enum member is mapped to its access, where the typed file looks for it.
+    pub maps_inlined_enums: bool,
     /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
     /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
     pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings>,
@@ -1427,6 +1429,7 @@ impl<'a> Default for Options<'a> {
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
+            maps_inlined_enums: false,
             import_member_bindings: None,
             has_dynamic_import_items: false,
             line_offset_tables: None,
@@ -1787,6 +1790,10 @@ pub(crate) mod __gated_printer {
                             }
                         }
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
+                            v.left_level = Level::Call;
+                        }
+                        // The constant of an enum member can be a negative number.
+                        ExprData::EInlinedEnum(_) | ExprData::EDot(_) | ExprData::EIndex(_) => {
                             v.left_level = Level::Call;
                         }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
@@ -3663,6 +3670,9 @@ pub(crate) mod __gated_printer {
                         if let Some(inlined) =
                             self.try_to_get_imported_enum_value(e.target, &e.name)
                         {
+                            if self.options.maps_inlined_enums {
+                                self.add_source_mapping(expr.loc);
+                            }
                             self.print_inlined_enum(inlined, &e.name, level);
                             return;
                         }
@@ -3721,6 +3731,9 @@ pub(crate) mod __gated_printer {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
                                 {
+                                    if self.options.maps_inlined_enums {
+                                        self.add_source_mapping(expr.loc);
+                                    }
                                     self.print_inlined_enum(value, str.slice8(), level);
                                     return;
                                 }
@@ -4514,7 +4527,10 @@ pub(crate) mod __gated_printer {
                 }
                 ExprData::EInlinedEnum(e) => {
                     self.print_expr(e.value, level, flags);
-                    if !self.options.minify_whitespace && !self.options.minify_identifiers {
+                    if !self.options.minify_whitespace
+                        && !self.options.minify_identifiers
+                        && !strings::contains(&e.comment[..], b"*/")
+                    {
                         self.print(b" /* ");
                         self.print(&e.comment[..]);
                         self.print(b" */");

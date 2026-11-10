@@ -1360,6 +1360,8 @@ pub struct LinkerOptions {
     pub(crate) minify_whitespace: bool,
     pub(crate) minify_syntax: bool,
     pub(crate) minify_identifiers: bool,
+    /// See `Features::is_library` of the parser.
+    pub(crate) is_library: bool,
     pub(crate) banner: &'static [u8],
     pub(crate) footer: &'static [u8],
     pub(crate) css_chunking: bool,
@@ -1424,6 +1426,7 @@ impl Default for LinkerOptions {
             minify_whitespace: false,
             minify_syntax: false,
             minify_identifiers: false,
+            is_library: false,
             banner: b"",
             footer: b"",
             css_chunking: false,
@@ -2320,6 +2323,7 @@ impl<'a> LinkerContext<'a> {
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
             ts_enums: Some(&self.graph.ts_enums),
+            maps_inlined_enums: self.options.is_library,
             import_member_bindings: Some(&self.graph.import_member_bindings),
             has_dynamic_import_items: ast
                 .dynamic_import_aliases

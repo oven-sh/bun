@@ -4246,22 +4246,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             let mut member = self.text_of(ReusedNode::PropertyName(hir.name(hir.node(m))));
             // "Rewrite enum values to their constants, if available"
-            match self.c.enum_member_value(file, m) {
-                Some(EnumValue::Number(bits)) => {
-                    let value = f64::from_bits(bits);
-                    let (sign, size): (&[u8], f64) = if value < 0.0 {
-                        (b"-", -value)
-                    } else {
-                        (b"", value)
-                    };
-                    let size = crate::atom::number_to_string(size);
-                    member.extend_from_slice(&cat!(b" = ", sign, size));
-                }
-                Some(EnumValue::String(value)) => {
-                    member.extend_from_slice(b" = ");
-                    member.extend_from_slice(&super::print::quoted(self.name(value), b'"', true));
-                }
-                None => {}
+            if let Some(value) = self.c.enum_member_initializer(file, m) {
+                member.extend_from_slice(&cat!(b" = ", value));
             }
             members.push(Element {
                 range: Some((hir[m].loc.pos as usize, hir[m].loc.end as usize)),

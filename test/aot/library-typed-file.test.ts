@@ -129,6 +129,52 @@ export function area(shape: Shape): Sizes.Size {
     expect(await compile(String(dir))).toEqual(USED);
   });
 
+  test("members of an enum that two entry points read are written into .aot.ts files that compile", async () => {
+    using dir = tempDir("aot-library-typed-file-enum", {
+      ...library,
+      "library/src/kind.ts": `export enum Kind { Circle = "circle", Square = "square" }\n`,
+      "library/src/index.ts": `import { area } from "./area";
+import { Kind } from "./kind";
+export interface Shape {
+  kind: Kind;
+  size: number;
+}
+export class Circle implements Shape {
+  kind = Kind.Circle;
+  constructor(public size: number) {}
+}
+export function total(shapes: Shape[]): number {
+  let sum = 0;
+  for (const shape of shapes) sum += area(shape);
+  return sum;
+}
+export { Kind };
+`,
+      "library/src/area.ts": `import type { Shape } from "./index";
+import { Kind } from "./kind";
+export function area(shape: Shape): number {
+  switch (shape.kind) {
+    case Kind.Circle: return 3 * shape.size ** 2;
+    case Kind.Square: return shape.size ** 2;
+  }
+}
+`,
+      "library/src/version.ts": `import { Kind } from "./kind";
+export const version: string = "1.2.3";
+export const kinds = [Kind.Square];
+`,
+      "app/app.ts": `import { Circle, Kind, total } from "shapes";
+import { kinds, version } from "shapes/version";
+const circle = new Circle(1);
+circle.kind = Kind.Circle;
+kinds.push(circle.kind);
+console.log(total([{ kind: kinds[0]!, size: 2 }, circle]), version);
+`,
+    });
+    await install(String(dir));
+    expect(await compile(String(dir))).toEqual(USED);
+  });
+
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {
     using dir = tempDir("aot-library-typed-file-patched", library);
     await install(String(dir));

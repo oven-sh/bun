@@ -414,6 +414,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// we always fold constant expressions.
     pub(crate) should_fold_typescript_constant_expressions: bool,
 
+    /// The bundler needs a value: in an enum's initializer, and in what `import()`, `require()` or a macro is given.
+    pub(crate) computes_enum_reads: bool,
+
     pub(crate) emitted_namespace_vars: RefMap,
     pub(crate) is_exported_inside_namespace: RefRefMap,
     pub(crate) local_type_names: StringBoolMap,
@@ -7042,6 +7045,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // These are leaf utilities (no parse_*/visit_* deps) that block
     // handle_identifier / jsx_import / record_usage_of_runtime_require.
 
+    /// `--dts`: a read of an enum member stays as it is, so that the typed file can give it the member's type.
+    #[inline]
+    pub(crate) fn keeps_enum_read(&self, operand: &js_ast::ExprData) -> bool {
+        self.writes_typed_file()
+            && !self.computes_enum_reads
+            && matches!(operand, js_ast::ExprData::EInlinedEnum(_))
+    }
+
+    /// In a typed file the constant of an enum member is text of its template: TypeScript evaluates such a template.
+    #[inline]
+    pub(crate) fn folds_enum_reads_of(&self, template: &E::Template) -> bool {
+        let is_enum_read =
+            |part: &E::TemplatePart| matches!(part.value.data, js_ast::ExprData::EInlinedEnum(_));
+        self.writes_typed_file() && template.parts().iter().any(is_enum_read)
+    }
+
+    /// No typed file is written with `--minify-identifiers`.
+    #[inline]
+    pub(crate) fn writes_typed_file(&self) -> bool {
+        self.options.features.is_library && !self.options.features.minify_identifiers
+    }
+
+    /// Whether the constants of `binary` are folded: not where an operand is a read that `keeps_enum_read` keeps.
+    #[inline]
+    pub(crate) fn folds_constants_of(&self, binary: &E::Binary) -> bool {
+        self.should_fold_typescript_constant_expressions
+            && !self.keeps_enum_read(&binary.left.data)
+            && !self.keeps_enum_read(&binary.right.data)
+    }
+
     #[cold]
     #[inline(never)]
     pub(crate) fn wrap_inlined_enum(&mut self, value: Expr, comment: &'a [u8]) -> Expr {
@@ -7052,8 +7085,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .is_none_or(|str_| str_.next.is_none()),
             "inlined enum strings must be flat, string folding appends to rope chains in place"
         );
-        if strings::contains(comment, b"*/") {
-            // Don't wrap with a comment
+        // The printer writes no such comment. Without a typed file, such a member is a plain constant as before.
+        if strings::contains(comment, b"*/") && !self.writes_typed_file() {
             return value;
         }
         // Wrap with a comment
@@ -9785,6 +9818,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
+            computes_enum_reads: false,
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),
             local_type_names: StringBoolMap::default(),

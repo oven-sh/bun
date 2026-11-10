@@ -1,10 +1,10 @@
 use bstr::BStr;
 use bun_ast::op::Level;
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
-    TypeFormatFlags,
+    Child, ModifierFlags, NodeRef, Services, SignatureKind, SymbolFlags, SymbolOp, SymbolRef,
+    SymbolTable, TypeFlags, TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
@@ -667,6 +667,24 @@ impl<'a, 's> Syntax<'a, 's> {
     fn statement_lists(&self) -> Vec<IdList<StmtId>> {
         let file = self.file;
         let mut lists = vec![file.body];
+        lists.extend(self.local_statement_lists());
+        lists.extend(
+            (0..file.stmts.len())
+                .map(|index| StmtId(index as u32))
+                .filter_map(|id| match file[id].kind {
+                    StmtKind::Module(module) if !self.is_type_only_statement(id) => {
+                        Some(file[module].body)
+                    }
+                    _ => None,
+                }),
+        );
+        lists
+    }
+
+    /// The bodies of blocks, functions and `case` clauses.
+    fn local_statement_lists(&self) -> Vec<IdList<StmtId>> {
+        let file = self.file;
+        let mut lists = Vec::new();
         lists.extend(
             file.stmts
                 .iter()
@@ -680,17 +698,33 @@ impl<'a, 's> Syntax<'a, 's> {
             _ => None,
         }));
         lists.extend(file.cases.iter().map(|case| case.body));
-        lists.extend(
-            (0..file.stmts.len())
-                .map(|index| StmtId(index as u32))
-                .filter_map(|id| match file[id].kind {
-                    StmtKind::Module(module) if !self.is_type_only_statement(id) => {
-                        Some(file[module].body)
-                    }
-                    _ => None,
-                }),
-        );
         lists
+    }
+
+    /// Each enum of `local_statement_lists`, as the name positions of the statements of one list that share a name.
+    fn local_enums(&self) -> Vec<Vec<u32>> {
+        let file = self.file;
+        let mut found: Vec<Vec<u32>> = Vec::new();
+        for list in self.local_statement_lists() {
+            let first = found.len();
+            for id in file.ids(list) {
+                let StmtKind::Enum(declared) = file[id].kind else {
+                    continue;
+                };
+                if self.is_type_only_statement(id) {
+                    continue;
+                }
+                let name = file[declared].name_pos;
+                let same = found[first..]
+                    .iter_mut()
+                    .find(|blocks| self.word(blocks[0]) == self.word(name));
+                match same {
+                    Some(blocks) => blocks.push(name),
+                    None => found.push(vec![name]),
+                }
+            }
+        }
+        found
     }
 
     fn missing_line_breaks(&self) -> Vec<u32> {
@@ -1291,7 +1325,11 @@ impl Mappings {
                     start as usize,
                     column.max(0) as usize,
                 );
-                entries.push((generated_offset as u32, source as u32, original as u32));
+                // The printer notes a number's place before the space that parts it from a word (`case 0:`).
+                let is_before_space =
+                    generated_column > 0 && javascript.get(generated_offset) == Some(&b' ');
+                let token = generated_offset + usize::from(is_before_space);
+                entries.push((token as u32, source as u32, original as u32));
             }
         }
         entries.shared_sort_by_key(|entry| entry.0);
@@ -1404,15 +1442,105 @@ struct TypedText {
     source: Option<Vec<u8>>,
 }
 
+/// A twin that the typed files of a build share: one of them declares it, and the others import it.
+struct SharedTwin {
+    /// The typed file that declares it.
+    home: Vec<u8>,
+    declaration: Vec<u8>,
+    /// The statement that exports it from `home`. It is written only if another typed file imports the twin.
+    export: Vec<u8>,
+    exported_as: Vec<u8>,
+    is_imported: bool,
+}
+
+/// By the enum's module and the position of its name.
+type SharedTwins = FxHashMap<(Vec<u8>, u32), SharedTwin>;
+
 struct Bundle<'a> {
     modules: &'a [ModuleTypes],
     emitted_declarations: &'a [ModuleTypes],
     entry_point: Option<&'a [u8]>,
+    typed_path: &'a [u8],
+    /// A build with several outputs. There a twin is one type for all of them, as the enum is in the sources.
+    twins: Option<&'a std::cell::RefCell<SharedTwins>>,
+}
+
+impl Bundle<'_> {
+    /// The twin's declaration as `twin`, or its import from the typed file that declares it. `None` without facts.
+    fn enum_twin(
+        &self,
+        module: &Written<'_, '_>,
+        path: &[u8],
+        blocks: &[u32],
+        twin: &[u8],
+        is_emitted: bool,
+        is_exported: &dyn Fn(&[u8]) -> bool,
+    ) -> Option<Vec<u8>> {
+        let Some(twins) = self.twins else {
+            let is_const = !is_emitted && module.is_const_enum(blocks);
+            return module.enum_twin(blocks, twin, is_const);
+        };
+        let mut twins = twins.borrow_mut();
+        if let Some(shared) = twins.get_mut(&(path.to_vec(), blocks[0])) {
+            let folder = ancestors(self.typed_path).nth(1).unwrap_or(b"/");
+            let home = &shared.home;
+            let from = bun_sema::resolve::get_relative_path_from_directory(folder, home, true);
+            let dot: &[u8] = if from.starts_with(b"../") { b"" } else { b"./" };
+            shared.is_imported = true;
+            let name = &shared.exported_as;
+            return Some(
+                [
+                    &b"import type { "[..],
+                    name,
+                    b" as ",
+                    twin,
+                    b" } from \"",
+                    dot,
+                    &from,
+                    b"\";\n",
+                ]
+                .concat(),
+            );
+        }
+        // One of the typed files may hold the enum's object, so the twin that they share is no `const enum`.
+        let declaration = module.enum_twin(blocks, twin, false)?;
+        let is_taken = |name: &[u8]| {
+            let mut here = twins
+                .values()
+                .filter(|shared| shared.home == self.typed_path);
+            is_exported(name) || here.any(|shared| shared.exported_as == name)
+        };
+        let mut exported_as = [b"__enum_", twin].concat();
+        let mut number = 1;
+        while is_taken(&exported_as) {
+            number += 1;
+            exported_as = [&b"__enum_"[..], twin, number.to_string().as_bytes()].concat();
+        }
+        let export = [
+            &b"export type { "[..],
+            twin,
+            b" as ",
+            &exported_as,
+            b" };\n",
+        ]
+        .concat();
+        let shared = SharedTwin {
+            home: self.typed_path.to_vec(),
+            declaration: declaration.clone(),
+            export,
+            exported_as,
+            is_imported: false,
+        };
+        twins.insert((path.to_vec(), blocks[0]), shared);
+        Some(declaration)
+    }
 }
 
 struct Written<'a, 's> {
     syntax: Syntax<'a, 's>,
     types: Option<&'a ModuleTypes>,
+    /// `None` if the bundle has another text of the module than the checker read: the facts are positions in it.
+    enums: Option<&'a EnumFacts>,
     type_ranges: Vec<(u32, u32)>,
     declarations: Vec<(u32, u32)>,
     edits: Vec<(u32, u32, Vec<u8>)>,
@@ -1509,6 +1637,42 @@ impl Written<'_, '_> {
         Some(inside.collect::<Vec<_>>().join(&b"\n"[..]))
     }
 
+    /// The `declare enum` of a source enum. A member without a value is computed at run time. `None` without facts.
+    fn enum_twin(&self, blocks: &[u32], twin: &[u8], is_const: bool) -> Option<Vec<u8>> {
+        let (syntax, file, enums) = (&self.syntax, self.syntax.file, self.enums?);
+        let declared = (file.enums.iter()).filter(|declared| blocks.contains(&declared.name_pos));
+        let members = declared
+            .flat_map(|declared| declared.members.iter())
+            .map(|member: EnumMemberId| &file[member])
+            .filter(|member| member.name.is_some())
+            .map(|member| match enums.value(member.pos) {
+                Some(value) => [syntax.word(member.pos), b" = ", value].concat(),
+                None => syntax.word(member.pos).to_vec(),
+            });
+        let members: Vec<Vec<u8>> = members.collect();
+        let keyword: &[u8] = if is_const {
+            b"declare const enum "
+        } else {
+            b"declare enum "
+        };
+        Some([keyword, twin, b" { ", &members.join(&b", "[..]), b" }\n"].concat())
+    }
+
+    fn enum_without_facts(&self, path: &[u8], name: &[u8]) -> TypedFilesError {
+        TypedFilesError::EnumWithoutFacts {
+            path: path.to_vec(),
+            name: name.to_vec(),
+            is_other_text: self.types.is_some(),
+        }
+    }
+
+    /// Whether every block of the enum is a `const enum`.
+    fn is_const_enum(&self, blocks: &[u32]) -> bool {
+        let mut declared =
+            (self.syntax.file.enums.iter()).filter(|declared| blocks.contains(&declared.name_pos));
+        declared.all(|declared| declared.flags.contains(Flags::CONST))
+    }
+
     fn statement_text(&self, id: StmtId, dropped_modifiers: Flags) -> Vec<u8> {
         let statement = &self.syntax.file[id];
         let (mut text, mut at) = (Vec::new(), statement.start);
@@ -1547,7 +1711,7 @@ struct Declared {
     bindings: Vec<u32>,
     names: Vec<u32>,
     statements: Vec<StmtId>,
-    enum_statement: Option<StmtId>,
+    enum_blocks: Vec<u32>,
     type_parameters: usize,
     import: Option<(StmtId, ImportedAs)>,
     is_ambient_value: bool,
@@ -1908,7 +2072,7 @@ impl<'a, 's> Syntax<'a, 's> {
                         StmtKind::Var(_) | StmtKind::Class(_) | StmtKind::Enum(_) | StmtKind::Fn(_)
                     );
                 match statement.kind {
-                    StmtKind::Enum(_) if !is_type_only => entry.enum_statement = Some(id),
+                    StmtKind::Enum(_) if !is_type_only => entry.enum_blocks.push(at),
                     StmtKind::Class(class) => entry.type_parameters = file[class].type_params.len(),
                     StmtKind::Fn(function) => {
                         (entry.is_function, entry.type_parameters) =
@@ -1940,12 +2104,16 @@ fn reserved_words() -> impl Iterator<Item = &'static [u8]> {
 #[derive(Default)]
 struct Linked {
     hoisted: Vec<u8>,
-    ambient_enums: FxHashSet<(usize, u32)>,
     ambient_signatures: FxHashSet<(usize, u32)>,
     replaced_statements: FxHashSet<(usize, u32)>,
     modules_of_untyped_values: Vec<Vec<u8>>,
     emitted_enums: FxHashMap<(u32, u32), Vec<u8>>,
-    enum_names: FxHashMap<(u32, u32), Vec<u8>>,
+    /// Twin names, by the module and the index in `EnumFacts::enums`.
+    read_enums: FxHashMap<(u32, u32), Vec<u8>>,
+    /// Names for `ReadMember::property_type`, by the module and the index in `EnumFacts::members`.
+    read_members: FxHashMap<(u32, u32), Vec<u8>>,
+    /// An enum whose twin cannot be written: see `Written::enums`.
+    enum_without_facts: Option<TypedFilesError>,
 }
 
 fn link(
@@ -2035,7 +2203,7 @@ fn link(
         let Some(&binding) = found
             .bindings
             .first()
-            .filter(|_| found.import.is_none() && found.enum_statement.is_none())
+            .filter(|_| found.import.is_none() && found.enum_blocks.is_empty())
         else {
             return false;
         };
@@ -2074,12 +2242,14 @@ fn link(
     let mut wanted: FxHashSet<(usize, Box<[u8]>)> = FxHashSet::default();
     let mut queue: Vec<(usize, Box<[u8]>)> = Vec::new();
     for module in written.iter().take(mapped).flatten() {
-        queue.extend(module.types.iter().flat_map(|types| {
-            types
-                .references
-                .iter()
-                .filter_map(|reference| place_of(&reference.1))
-        }));
+        let named = (module.types.iter())
+            .flat_map(|types| types.references.iter().map(|reference| &reference.1));
+        let read = module.enums.iter().flat_map(|enums| &enums.enums);
+        let enums = read.filter_map(|of| match of {
+            EnumOf::TopLevel(target) => Some(target),
+            EnumOf::Nested(_) => None,
+        });
+        queue.extend(named.chain(enums).filter_map(|target| place_of(target)));
     }
     let entry = bundle
         .entry_point
@@ -2093,6 +2263,10 @@ fn link(
             .filter_map(|export| place_of(&export.1))
     }));
     let exports_of_entry = entry.map_or(&[][..], |types| &types.exports[..]);
+    let exported = output.exported_names();
+    let is_exported = |name: &[u8]| {
+        exported.contains(name) || exports_of_entry.iter().any(|export| &export.0[..] == name)
+    };
     #[allow(
         clippy::disallowed_methods,
         reason = "adjacent-pair check, not a byte search"
@@ -2130,16 +2304,12 @@ fn link(
         let Some(types) = module.types.filter(|_| index >= mapped) else {
             continue;
         };
-        let statements = found
-            .statements
-            .iter()
-            .chain(&found.enum_statement)
-            .map(|&statement| {
-                (
-                    module.syntax.file[statement].start,
-                    module.syntax.file[statement].loc.end,
-                )
-            });
+        let statements = found.statements.iter().map(|&statement| {
+            (
+                module.syntax.file[statement].start,
+                module.syntax.file[statement].loc.end,
+            )
+        });
         let ambient = found.bindings.first().and_then(|&binding| {
             module
                 .syntax
@@ -2207,12 +2377,16 @@ fn link(
             let is_wanted = wanted.contains(&(index, Box::from(name)));
             if let Some(in_output) = name_in_output(index, found).filter(|_| index < mapped) {
                 values[index].insert(name, in_output);
-                let Some(enum_statement) = found.enum_statement else {
+                if found.enum_blocks.is_empty() {
                     names[index].insert(name, in_output.to_vec());
                     continue;
-                };
-                linked.ambient_enums.insert((index, enum_statement.0));
+                }
                 let ambient = unique(name, &mut taken);
+                let (path, blocks) = (paths[index], &found.enum_blocks);
+                match bundle.enum_twin(module, path, blocks, &ambient, true, &is_exported) {
+                    Some(twin) => linked.hoisted.extend_from_slice(&twin),
+                    None => linked.enum_without_facts = Some(module.enum_without_facts(path, name)),
+                }
                 linked.emitted_enums.extend(
                     found
                         .bindings
@@ -2359,8 +2533,12 @@ fn link(
                 continue;
             }
             let local = unique(name, &mut taken);
-            if let Some(enum_statement) = found.enum_statement {
-                linked.ambient_enums.insert((index, enum_statement.0));
+            if !found.enum_blocks.is_empty() {
+                let (path, blocks) = (paths[index], &found.enum_blocks);
+                match bundle.enum_twin(module, path, blocks, &local, false, &is_exported) {
+                    Some(twin) => linked.hoisted.extend_from_slice(&twin),
+                    None => linked.enum_without_facts = Some(module.enum_without_facts(path, name)),
+                }
             } else if let signatures = module.syntax.overload_signatures(found)
                 && !signatures.is_empty()
             {
@@ -2406,6 +2584,47 @@ fn link(
                 }
             }
             names[index].insert(name, local);
+        }
+    }
+
+    // `declare` is for the top level alone, so the twin of a function's enum stands there under a name of its own.
+    let mut nested_enum_names: FxHashMap<(usize, u32), Vec<u8>> = FxHashMap::default();
+    for (index, module) in written.iter().enumerate().take(mapped) {
+        let Some((module, types)) = module
+            .as_ref()
+            .and_then(|module| Some((module, module.types?)))
+        else {
+            continue;
+        };
+        for blocks in module.syntax.local_enums() {
+            let is_emitted =
+                (blocks.iter()).any(|&block| generated.contains_key(&(index as u32, block)));
+            let mut by_types = types.locals.iter().map(|local| local.1);
+            let mut by_reads = types.enums.enums.iter().filter_map(|of| match *of {
+                EnumOf::Nested(block) => Some(block),
+                EnumOf::TopLevel(_) => None,
+            });
+            let is_named = by_types.any(|block| blocks.contains(&block))
+                || by_reads.any(|block| blocks.contains(&block));
+            if !is_emitted && !is_named {
+                continue;
+            }
+            let twin = unique(module.syntax.word(blocks[0]), &mut taken);
+            let path = paths[index];
+            let Some(declared) =
+                bundle.enum_twin(module, path, &blocks, &twin, is_emitted, &is_exported)
+            else {
+                continue;
+            };
+            linked.hoisted.extend_from_slice(&declared);
+            for &block in &blocks {
+                nested_enum_names.insert((index, block), twin.clone());
+                if is_emitted {
+                    linked
+                        .emitted_enums
+                        .insert((index as u32, block), twin.clone());
+                }
+            }
         }
     }
 
@@ -2489,8 +2708,30 @@ fn link(
         .collect();
     let mut pending_pairs: Vec<&[u8]> = Vec::new();
     let mut all_edits: Vec<Vec<(u32, u32, Vec<u8>)>> = Vec::new();
+    let mut member_types: FxHashMap<(Vec<u8>, &[u8]), Vec<u8>> = FxHashMap::default();
     for (index, module) in written.iter().enumerate() {
         let mut edits: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+        let enums = module.as_ref().and_then(|module| module.enums);
+        for (number, of) in enums.iter().flat_map(|enums| &enums.enums).enumerate() {
+            let twin = match of {
+                EnumOf::TopLevel(target) => final_name(target),
+                EnumOf::Nested(block) => nested_enum_names.get(&(index, *block)),
+            };
+            if let Some(twin) = twin {
+                let key = (index as u32, number as u32);
+                linked.read_enums.insert(key, twin.clone());
+            }
+        }
+        for (number, member) in enums.iter().flat_map(|enums| &enums.members).enumerate() {
+            let Some(twin) = linked.read_enums.get(&(index as u32, member.of)) else {
+                continue;
+            };
+            let name = member_types
+                .entry((twin.clone(), &member.name[..]))
+                .or_insert_with(|| unique(&member.type_name(twin), &mut taken));
+            let key = (index as u32, number as u32);
+            linked.read_members.insert(key, name.clone());
+        }
         if let Some((module, types)) = module
             .as_ref()
             .and_then(|module| Some((module, module.types?)))
@@ -2630,7 +2871,9 @@ fn link(
                 }
             }
             for &(at, binding) in types.locals.iter().filter(|_| index < mapped) {
-                if let Some(new) = generated
+                if let Some(twin) = nested_enum_names.get(&(index, binding)) {
+                    edits.push((at, syntax.token_end(at), twin.clone()));
+                } else if let Some(new) = generated
                     .get(&(index as u32, binding))
                     .map(|&offset| output.word(offset))
                     .filter(|new| *new != syntax.word(at))
@@ -2645,16 +2888,9 @@ fn link(
                     .filter(|&&at| declared_in_output.contains(syntax.word(at)))
                     .map(|&at| (at, at, b"globalThis.".to_vec())),
             );
-            for &at in &types.enum_objects {
-                if let Some(new) = targets.get(&at).and_then(|target| final_name(target)) {
-                    linked.enum_names.insert((index as u32, at), new.clone());
-                }
-            }
             for (&name, found) in &declared[index] {
                 if let Some(new) = names[index].get(name).filter(|new| &new[..] != name) {
-                    let is_type_only = |at: &&u32| {
-                        is_inside(&module.type_ranges, **at) || found.enum_statement.is_some()
-                    };
+                    let is_type_only = |at: &&u32| is_inside(&module.type_ranges, **at);
                     edits.extend(
                         found
                             .names
@@ -2725,7 +2961,6 @@ fn link(
             .concat(),
         );
     }
-    let exported = output.exported_names();
     for (name, target) in entry.iter().flat_map(|types| types.exports.iter()) {
         if exported.contains(&name[..])
             && exported_twice.contains(&name[..])
@@ -2761,7 +2996,6 @@ fn link(
                 found
                     .statements
                     .iter()
-                    .chain(&found.enum_statement)
                     .map(|&statement| (*index, statement))
                     .filter(|&(index, statement)| {
                         !linked.replaced_statements.contains(&(index, statement.0))
@@ -2800,9 +3034,7 @@ fn link(
         {
             declarations.extend_from_slice(b"// @ts-ignore\n");
         }
-        if linked.ambient_enums.contains(&(index, statement.0))
-            || linked.ambient_signatures.contains(&(index, statement.0))
-        {
+        if linked.ambient_signatures.contains(&(index, statement.0)) {
             declarations.extend_from_slice(b"declare ");
         }
         let merged = module.merged_augmentation_text(&module.syntax.file[statement]);
@@ -2959,9 +3191,24 @@ fn add_types(
                 );
             }
         }
+        // The facts are positions in the text that the checker read. The bundle can have another text behind them.
+        let enums = types.filter(|types| {
+            if types.text[..] == *text {
+                return true;
+            }
+            let same = (types.text.iter().zip(text.iter()))
+                .take_while(|(read, bundled)| read == bundled)
+                .count();
+            let declared = (syntax.file.stmts.iter())
+                .filter(|statement| matches!(statement.kind, StmtKind::Enum(_)))
+                .map(|statement| statement.loc.end);
+            let read = types.enums.reads.iter().map(|read| read.end);
+            declared.chain(read).all(|end| end as usize <= same)
+        });
         written.push(Some(Written {
             syntax,
             types,
+            enums: enums.map(|types| &types.enums),
             type_ranges: merged(type_ranges),
             declarations,
             edits: Vec::new(),
@@ -2975,7 +3222,7 @@ fn add_types(
             Target::Module { .. } => None,
         })
         .collect();
-    let linked = link(
+    let mut linked = link(
         &mut written,
         &paths,
         sources.len(),
@@ -2983,6 +3230,9 @@ fn add_types(
         &mappings,
         bundle,
     );
+    if let Some(why) = linked.enum_without_facts.take() {
+        return Err(why);
+    }
     let mut transfer = Transfer {
         javascript,
         output: &output,
@@ -3237,20 +3487,6 @@ impl<'a> Transfer<'_, 'a, '_> {
             (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
         let output_context = output.context();
-        let mut output_expressions: FxHashMap<(Shape, u32, u32), ExprId> = FxHashMap::default();
-        for index in 0..output_file.exprs.len() {
-            let expr = ExprId(index as u32);
-            let (shape, key) = output.shape(expr);
-            for (source, key) in [Some(key), output.name_of_dotted_index(expr)]
-                .into_iter()
-                .flatten()
-                .filter_map(|key| mappings.original(key))
-            {
-                output_expressions
-                    .entry((shape, source, key))
-                    .or_insert(expr);
-            }
-        }
         let is_literal = |expr: ExprId| match output_file[expr].kind {
             ExprKind::Number(_)
             | ExprKind::String(_)
@@ -3267,24 +3503,50 @@ impl<'a> Transfer<'_, 'a, '_> {
             ),
             _ => false,
         };
-        let mut output_places: FxHashMap<(Place, u32, u32), u32> = FxHashMap::default();
-        for slot in output
-            .slots()
-            .iter()
-            .filter(|slot| matches!(slot.place, Place::Binding | Place::MemberType))
-        {
-            if let Some((source, key)) = mappings.original(slot.key) {
-                output_places
-                    .entry((slot.place, source, key))
-                    .or_insert(slot.start);
-            }
-        }
         let shorthand_values: FxHashSet<ExprId> = output_file
             .props
             .iter()
             .filter(|property| property.kind == PropKind::Shorthand)
             .map(|property| property.value)
             .collect();
+        let mut declared_member_types: FxHashSet<&[u8]> = FxHashSet::default();
+        let reads_enums = (written.iter().flatten())
+            .any(|module| module.enums.is_some_and(|enums| !enums.reads.is_empty()));
+        let mut output_expressions: FxHashMap<(Shape, u32, u32), ExprId> = FxHashMap::default();
+        // A build puts the constant of one read in several places: at each use of a `const` that holds the read.
+        let mut literals: FxHashMap<(u32, u32), Vec<ExprId>> = FxHashMap::default();
+        for index in 0..output_file.exprs.len() {
+            let expr = ExprId(index as u32);
+            let (shape, key) = output.shape(expr);
+            for (source, key) in [Some(key), output.name_of_dotted_index(expr)]
+                .into_iter()
+                .flatten()
+                .filter_map(|key| mappings.original(key))
+            {
+                output_expressions
+                    .entry((shape, source, key))
+                    .or_insert(expr);
+            }
+            if reads_enums
+                && matches!(shape, Shape::Leaf | Shape::Prefix)
+                && is_literal(expr)
+                && let Some(original) = mappings.original(key)
+            {
+                literals.entry(original).or_default().push(expr);
+            }
+        }
+        let mut with_member_cast: FxHashSet<ExprId> = FxHashSet::default();
+        // Where the output holds a value as the source does: a `const`, or a field, which keeps its `readonly`.
+        let constants = (output_file.var_decls.iter())
+            .filter(|declaration| declaration.kind == VarKind::Const)
+            .map(|declaration| declaration.init);
+        let fields = (output_file.members.iter())
+            .filter(|member| member.kind == MemberKind::Property)
+            .map(|member| member.init);
+        let output_holders: FxHashSet<ExprId> = constants.chain(fields).collect();
+        let output_defaults: FxHashSet<ExprId> =
+            (output_file.params.iter().map(|parameter| parameter.default)).collect();
+        let mut output_bindings: Option<FxHashMap<(u32, u32), u32>> = None;
         for (index, module) in written.iter().enumerate() {
             let Some(module) = module.as_ref().filter(|module| !module.is_unchecked()) else {
                 continue;
@@ -3347,182 +3609,256 @@ impl<'a> Transfer<'_, 'a, '_> {
                 Some(found)
             };
             let file = syntax.file;
-            let variables = file
-                .var_decls
-                .iter()
-                .filter(|declaration| {
-                    declaration.kind != VarKind::Const && declaration.ty.is_none()
-                })
-                .map(|declaration| {
-                    (
-                        declaration.init,
-                        Place::Binding,
-                        syntax.first_identifier(declaration.pat),
-                    )
-                });
-            let parameters = file
-                .params
-                .iter()
-                .filter(|parameter| parameter.ty.is_none())
-                .map(|parameter| {
-                    (
-                        parameter.default,
-                        Place::Binding,
-                        syntax.first_identifier(parameter.pat),
-                    )
-                });
-            let properties = file.members.iter().filter(|member| {
-                member.kind == MemberKind::Property
-                    && member.ty.is_none()
-                    && !member.flags.contains(Flags::READONLY)
-            });
-            let properties = properties.map(|member| {
-                (
-                    member.init,
-                    Place::MemberType,
-                    Some(syntax.member_key(member)),
-                )
-            });
-            let widened: FxHashMap<ExprId, (Place, u32)> = variables
-                .chain(parameters)
-                .chain(properties)
-                .filter_map(|(initializer, place, key)| Some((initializer.some()?, (place, key?))))
-                .collect();
-            let enum_member_cast = |expr: ExprId| {
-                let ExprKind::Dot { obj, .. } = syntax.file[expr].kind else {
-                    return None;
-                };
-                let name_pos = syntax.file.name_pos(expr);
-                let name = linked
-                    .enum_names
-                    .get(&(index as u32, syntax.file.exprs.get(obj.idx())?.pos))?;
-                Some([&b" as "[..], name, b".", syntax.word(name_pos)].concat())
+            // A module that reads no enum member needs none of what `all` bounds.
+            let has_reads = module.enums.is_some_and(|enums| !enums.reads.is_empty());
+            let all = if has_reads { usize::MAX } else { 0 };
+            let enum_ranges = merged(
+                (file.stmts.iter().take(all))
+                    .filter(|statement| matches!(statement.kind, StmtKind::Enum(_)))
+                    .map(|statement| (statement.start, statement.loc.end))
+                    .collect(),
+            );
+            let read_of = |expr: ExprId| {
+                let access = file.exprs.get(expr.idx())?;
+                let (read, member) = module.enums?.read(access)?;
+                let twin = linked.read_enums.get(&(index as u32, member.of))?;
+                let ty = linked.read_members.get(&(index as u32, read.member))?;
+                (!is_inside(&enum_ranges, access.pos)).then_some((twin, ty, read, member))
             };
+            let computed = |key: PropKey| match key {
+                PropKey::Computed(key) => Some(key),
+                _ => None,
+            };
+            let keys: FxHashSet<ExprId> = (file.props.iter().map(|property| property.key))
+                .chain(file.members.iter().map(|member| member.key))
+                .take(all)
+                .filter_map(computed)
+                .collect();
+            // Where the source holds a value without widening its type: `const`, a `readonly` field, `export default`.
+            let constants = (file.var_decls.iter().take(all))
+                .filter(|declaration| declaration.kind == VarKind::Const)
+                .map(|declaration| declaration.init);
+            let fields = (file.members.iter().take(all))
+                .filter(|member| {
+                    member.kind == MemberKind::Property && member.flags.contains(Flags::READONLY)
+                })
+                .map(|member| member.init);
+            let defaults =
+                file.stmts
+                    .iter()
+                    .take(all)
+                    .filter_map(|statement| match statement.kind {
+                        StmtKind::ExportDefault(value) => Some(value),
+                        _ => None,
+                    });
+            let constants: FxHashSet<ExprId> = constants.collect();
+            let holders: FxHashSet<ExprId> =
+                (constants.iter().copied().chain(fields).chain(defaults)).collect();
+            let parameters: FxHashMap<ExprId, u32> = (file.params.iter().take(all))
+                .filter(|parameter| parameter.ty.is_none())
+                .filter_map(|parameter| {
+                    Some((
+                        parameter.default.some()?,
+                        syntax.first_identifier(parameter.pat)?,
+                    ))
+                })
+                .collect();
             let mut chains = syntax.cast_chains();
             let operands: FxHashSet<ExprId> = chains.iter().map(|chain| chain.operand).collect();
-            let members = (0..syntax.file.exprs.len() as u32)
+            let reads = (0..file.exprs.len() as u32)
+                .take(all)
                 .map(ExprId)
-                .filter(|&expr| !operands.contains(&expr) && enum_member_cast(expr).is_some());
-            chains.extend(members.map(|expr| CastChain {
+                .filter(|&expr| !operands.contains(&expr) && read_of(expr).is_some());
+            chains.extend(reads.map(|expr| CastChain {
                 operand: expr,
                 outermost: expr,
                 casts: Vec::new(),
             }));
+            // The use of a `const` comes before the read that the `const` holds: its place says how it is cast.
+            let is_use = |chain: &CastChain| matches!(file[chain.operand].kind, ExprKind::Ident(_));
+            if has_reads {
+                chains.sort_by_key(|chain| !is_use(chain));
+            }
             for chain in chains {
                 if is_covered(
                     &module.type_ranges,
-                    syntax.file[chain.operand].pos,
-                    syntax.file[chain.operand].end,
+                    file[chain.operand].pos,
+                    file[chain.operand].end,
                 ) {
                     continue;
                 }
-                let source_position = syntax.file[chain.operand].pos;
-                let found = find(chain.operand).or_else(|| find_via_ancestor(&chain));
-                let Some(operand) = found.or_else(|| {
+                let source_position = file[chain.operand].pos;
+                let literal = || {
                     [Shape::Leaf, Shape::Prefix].iter().find_map(|&shape| {
                         output_expressions
                             .get(&(shape, index as u32, source_position))
                             .copied()
                             .filter(|&literal| is_literal(literal))
                     })
-                }) else {
-                    continue;
                 };
-                let member = enum_member_cast(chain.operand).filter(|_| is_literal(operand));
-                if member.is_none() && chain.casts.is_empty() {
-                    continue;
-                }
-                let own = output.parentheses(operand);
-                if own.len() > 1
-                    || (own.len() == 1)
-                        != output.needs_parentheses(&output_context, operand, operand)
-                {
-                    self.dropped_casts += 1;
-                    continue;
-                }
-                let (start, end) = output.outer_span(operand);
-                let mut level = if own.is_empty() {
-                    output.level(operand)
-                } else {
-                    Level::Member
-                };
-                let (mut opens, mut suffix) = (0usize, Vec::new());
-                if let Some(member) = member {
-                    suffix.extend_from_slice(&member);
-                    level = Level::Compare;
-                    let declared = widened
-                        .get(&chain.outermost)
-                        .and_then(|&(place, key)| output_places.get(&(place, index as u32, key)));
-                    if let (Some(&declared), Some(name)) = (
-                        declared,
-                        linked.enum_names.get(&(index as u32, source_position)),
-                    ) {
-                        insertions.add(declared, Order::Slot, [&b": "[..], name].concat());
+                let own = find(chain.operand).or_else(|| find_via_ancestor(&chain));
+                let is_read = read_of(chain.operand).is_some();
+                // Each is the output expression to cast, and whether a build put it there for a use of a `const`.
+                let mut operands: Vec<(ExprId, bool)> = Vec::new();
+                let mapped = literals.get(&(index as u32, source_position));
+                match mapped.filter(|_| is_read && !is_use(&chain)) {
+                    // The constant of a read is mapped to the read. The build can move it inside its parent.
+                    Some(mapped) => {
+                        let is_copied = constants.contains(&chain.outermost);
+                        let is_copy = |literal: ExprId| is_copied && own != Some(literal);
+                        operands.extend(mapped.iter().map(|&literal| (literal, is_copy(literal))));
                     }
+                    None if is_read => operands.extend(own.map(|own| (own, false))),
+                    None => operands.extend(own.or_else(literal).map(|own| (own, false))),
                 }
-                for &cast in &chain.casts {
-                    if level.lt(syntax.level_required_by_cast(cast)) {
-                        opens += 1;
-                        suffix.push(b')');
+                for (operand, is_copy) in operands {
+                    if is_read && is_literal(operand) && !with_member_cast.insert(operand) {
+                        continue;
                     }
-                    let text_of = |node: TypeNodeId| {
-                        let (start, end) = syntax.type_span(node);
-                        module.text(start, end)
+                    // TypeScript reads the key of `table[Kind.A]` and of `{ [Kind.A]: 1 }` by its syntax: a cast is no key.
+                    let is_key = keys.contains(&chain.outermost)
+                        || places[chain.outermost.idx()].is_some_and(|(parent, place)| {
+                            place == 1 && matches!(file[parent].kind, ExprKind::Index { .. })
+                        });
+                    let is_number = matches!(output_file[operand].kind, ExprKind::Number(_));
+                    let is_constant = match output_file[operand].kind {
+                        ExprKind::Number(_) | ExprKind::String(_) => true,
+                        ExprKind::Unary { op, operand } => {
+                            op == UnOp::Minus
+                                && matches!(output_file[operand].kind, ExprKind::Number(_))
+                        }
+                        _ => false,
                     };
-                    match syntax.file[cast].kind {
-                        ExprKind::As { ty, .. } => {
-                            suffix.extend_from_slice(&[&b" as "[..], &text_of(ty)].concat())
-                        }
-                        ExprKind::Satisfies { ty, .. } => {
-                            suffix.extend_from_slice(&[&b" satisfies "[..], &text_of(ty)].concat())
-                        }
-                        ExprKind::AsConst(_)
-                            if matches!(output_file[operand].kind, ExprKind::Unary { .. })
-                                && matches!(
-                                    syntax.file[chain.operand].kind,
-                                    ExprKind::True | ExprKind::False
-                                ) =>
-                        {
-                            let literal = syntax.word(syntax.file[chain.operand].pos);
-                            suffix.extend_from_slice(&[b" as ", literal].concat())
-                        }
-                        ExprKind::AsConst(_) => suffix.extend_from_slice(b" as const"),
-                        ExprKind::NonNull(_) => suffix.push(b'!'),
-                        ExprKind::Instantiation { type_args, .. } => {
-                            if let Some((start, end)) =
-                                syntax.type_arguments_span(syntax.file.list_at(type_args))
-                            {
-                                suffix.extend_from_slice(&module.text(start, end));
-                            }
-                        }
-                        _ => {}
+                    // A number picks the member of a union as the read does. No cast does.
+                    let member = read_of(chain.operand).filter(|read| {
+                        !is_key && is_constant && !(read.2.is_discriminant && is_number)
+                    });
+                    if member.is_none() && chain.casts.is_empty() {
+                        continue;
                     }
-                    level = syntax.level(cast);
-                }
-                let is_loose = level == Level::Compare
-                    && (output_context.is_before_operator[operand.idx()]
-                        || output.next_token_extends_type(end));
-                if level.lt(output_context.required[operand.idx()]) || is_loose {
-                    opens += 1;
-                    suffix.push(b')');
-                }
-                if shorthand_values.contains(&operand) {
-                    if opens > 0 {
+                    let own = output.parentheses(operand);
+                    if own.len() > 1
+                        || (own.len() == 1)
+                            != output.needs_parentheses(&output_context, operand, operand)
+                    {
                         self.dropped_casts += 1;
                         continue;
                     }
+                    let (start, end) = output.outer_span(operand);
+                    let mut level = if own.is_empty() {
+                        output.level(operand)
+                    } else {
+                        Level::Member
+                    };
+                    let (mut opens, mut suffix) = (0usize, Vec::new());
+                    let is_member = member.is_some();
+                    if let Some((twin, ty, read, member)) = member {
+                        let is_held_otherwise = !is_copy
+                            && holders.contains(&chain.outermost)
+                            && !output_holders.contains(&operand);
+                        if read.is_in_const_context || is_held_otherwise {
+                            let ty = member.member_type(twin);
+                            suffix.extend_from_slice(&[&b" as "[..], &ty].concat());
+                            level = Level::Compare;
+                        } else {
+                            // `("px" as Unit2_Px)!` has a read's type. A cast that is the whole expression never widens.
+                            if declared_member_types.insert(&ty[..]) {
+                                let declared = member.property_type(twin);
+                                self.hoisted.extend_from_slice(
+                                    &[&b"type "[..], ty, b" = ", &declared, b";\n"].concat(),
+                                );
+                            }
+                            opens += 1;
+                            suffix.extend_from_slice(&[&b" as "[..], ty, b")!"].concat());
+                            level = Level::Member;
+                        }
+                        // A default value that the build moved out of the parameter list no longer types the parameter.
+                        let moved = (parameters.get(&chain.outermost)).filter(|_| {
+                            !is_copy
+                                && chain.casts.is_empty()
+                                && !output_defaults.contains(&operand)
+                        });
+                        if let Some(&binding) = moved {
+                            let bindings = output_bindings.get_or_insert_with(|| {
+                                let slots = output.slots();
+                                let slots =
+                                    slots.iter().filter(|slot| slot.place == Place::Binding);
+                                slots
+                                    .filter_map(|slot| {
+                                        Some((mappings.original(slot.key)?, slot.start))
+                                    })
+                                    .collect()
+                            });
+                            if let Some(&at) = bindings.get(&(index as u32, binding)) {
+                                insertions.add(at, Order::Slot, [&b": "[..], twin].concat());
+                            }
+                        }
+                    }
+                    for &cast in &chain.casts {
+                        if level.lt(syntax.level_required_by_cast(cast)) {
+                            opens += 1;
+                            suffix.push(b')');
+                        }
+                        let text_of = |node: TypeNodeId| {
+                            let (start, end) = syntax.type_span(node);
+                            module.text(start, end)
+                        };
+                        match syntax.file[cast].kind {
+                            ExprKind::As { ty, .. } => {
+                                suffix.extend_from_slice(&[&b" as "[..], &text_of(ty)].concat())
+                            }
+                            ExprKind::Satisfies { ty, .. } => suffix
+                                .extend_from_slice(&[&b" satisfies "[..], &text_of(ty)].concat()),
+                            // `as const` is not for a cast: the member's cast is `as Twin.Member` there.
+                            ExprKind::AsConst(_) if is_member => {}
+                            ExprKind::AsConst(_)
+                                if matches!(output_file[operand].kind, ExprKind::Unary { .. })
+                                    && matches!(
+                                        syntax.file[chain.operand].kind,
+                                        ExprKind::True | ExprKind::False
+                                    ) =>
+                            {
+                                let literal = syntax.word(syntax.file[chain.operand].pos);
+                                suffix.extend_from_slice(&[b" as ", literal].concat())
+                            }
+                            ExprKind::AsConst(_) => suffix.extend_from_slice(b" as const"),
+                            ExprKind::NonNull(_) => suffix.push(b'!'),
+                            ExprKind::Instantiation { type_args, .. } => {
+                                if let Some((start, end)) =
+                                    syntax.type_arguments_span(syntax.file.list_at(type_args))
+                                {
+                                    suffix.extend_from_slice(&module.text(start, end));
+                                }
+                            }
+                            _ => {}
+                        }
+                        level = syntax.level(cast);
+                    }
+                    let is_loose = level == Level::Compare
+                        && (output_context.is_before_operator[operand.idx()]
+                            || output.next_token_extends_type(end));
+                    if level.lt(output_context.required[operand.idx()]) || is_loose {
+                        opens += 1;
+                        suffix.push(b')');
+                    }
+                    if shorthand_values.contains(&operand) {
+                        if opens > 0 {
+                            self.dropped_casts += 1;
+                            continue;
+                        }
+                        insertions.add(
+                            start,
+                            Order::MemberName,
+                            [output.word(start), b": "].concat(),
+                        );
+                    }
                     insertions.add(
                         start,
-                        Order::MemberName,
-                        [output.word(start), b": "].concat(),
+                        Order::Open(u32::MAX - (end - start)),
+                        vec![b'('; opens],
                     );
+                    insertions.add(end, Order::Close(end - start), suffix);
                 }
-                insertions.add(
-                    start,
-                    Order::Open(u32::MAX - (end - start)),
-                    vec![b'('; opens],
-                );
-                insertions.add(end, Order::Close(end - start), suffix);
             }
         }
     }
@@ -3620,23 +3956,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                         StmtKind::Import(_)
                         | StmtKind::ExportNamed(_)
                         | StmtKind::ExportStar { .. } => continue,
-                        StmtKind::Enum(enum_statement)
-                            if linked.ambient_enums.contains(&(index, id.0)) =>
-                        {
-                            let is_emitted = linked
-                                .emitted_enums
-                                .contains_key(&(index as u32, file[enum_statement].name_pos));
-                            let dropped_modifiers = if is_emitted {
-                                Flags::EXPORT | Flags::DEFAULT | Flags::CONST
-                            } else {
-                                Flags::EXPORT | Flags::DEFAULT
-                            };
-                            [
-                                &b"declare "[..],
-                                &module.statement_text(id, dropped_modifiers),
-                            ]
-                            .concat()
-                        }
                         StmtKind::Var(declarations)
                             if depth == 0 && syntax.is_type_only_statement(id) =>
                         {
@@ -3881,14 +4200,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 output_classes.insert(original, end - 1);
             }
             for member in class.members.iter().map(|member| &output_file[member]) {
-                let key = output.member_key(member);
-                let space_before = key
-                    .checked_sub(1)
-                    .filter(|&before| javascript.get(before as usize) == Some(&b' '));
-                if let Some(original) = mappings
-                    .original(key)
-                    .or_else(|| mappings.original(space_before?))
-                {
+                if let Some(original) = mappings.original(output.member_key(member)) {
                     output_members.entry(original).or_insert(member.start);
                 }
             }
@@ -4112,11 +4424,97 @@ pub enum Target {
     Module { path: Box<[u8]> },
 }
 
+#[derive(PartialEq, Eq)]
+pub enum EnumOf {
+    TopLevel(Target),
+    /// An enum of the same file that is declared inside a function or a block, by the position of its name.
+    Nested(u32),
+}
+
+/// A member of an enum that a module reads.
+pub struct ReadMember {
+    /// An index of `EnumFacts::enums`.
+    pub of: u32,
+    pub name: Box<[u8]>,
+    pub is_identifier: bool,
+}
+
+impl ReadMember {
+    /// The type of the twin's own property is what a read of the member has. It widens where a value is stored.
+    fn property_type(&self, twin: &[u8]) -> Vec<u8> {
+        let mut key = Vec::new();
+        Json::String(self.name.to_vec()).stringify(&mut key);
+        [&b"(typeof "[..], twin, b")[", &key, b"]"].concat()
+    }
+
+    /// The member's type as a type never widens: `Twin.Member`, or what `Extract` finds of the twin for another name.
+    fn member_type(&self, twin: &[u8]) -> Vec<u8> {
+        match self.is_identifier {
+            true => [twin, b".", &self.name].concat(),
+            false => [b"Extract<", twin, b", ", &self.property_type(twin), b">"].concat(),
+        }
+    }
+
+    /// A name to declare `property_type` under, before it is made unique.
+    fn type_name(&self, twin: &[u8]) -> Vec<u8> {
+        let member: &[u8] = if self.is_identifier {
+            &self.name
+        } else {
+            b"member"
+        };
+        [twin, b"_", member].concat()
+    }
+}
+
+/// An access that reads an enum member, or the name of a `const` that holds one. A bundle has the constant there.
+pub struct EnumRead {
+    pub pos: u32,
+    pub end: u32,
+    /// An index of `EnumFacts::members`.
+    pub member: u32,
+    /// `isConstContext`: the checker does not widen the read's type where it is stored.
+    pub is_in_const_context: bool,
+    /// The value of a property in an object literal for a union: TypeScript picks the member by the value's syntax.
+    pub is_discriminant: bool,
+}
+
+/// What the checker knows about the enums of a module.
+#[derive(Default)]
+pub struct EnumFacts {
+    /// Each enum that the module reads a member of.
+    pub enums: Vec<EnumOf>,
+    /// Each member that the module reads.
+    pub members: Vec<ReadMember>,
+    /// In the order of `EnumRead::end`.
+    pub reads: Vec<EnumRead>,
+    /// What a `declare enum` says of each declared member, by position. An inexact power of numbers is kept as written.
+    pub values: Vec<(u32, Box<[u8]>)>,
+}
+
+impl EnumFacts {
+    /// The read that `access` is, and the member that it reads.
+    fn read(&self, access: &Expr) -> Option<(&EnumRead, &ReadMember)> {
+        let at = (self.reads).binary_search_by_key(&access.end, |read| read.end);
+        let read = &self.reads[at.ok()?];
+        let is_read = matches!(
+            access.kind,
+            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Ident(_)
+        );
+        (is_read && read.pos == access.pos).then(|| (read, &self.members[read.member as usize]))
+    }
+
+    fn value(&self, member: u32) -> Option<&[u8]> {
+        let at = self.values.binary_search_by_key(&member, |value| value.0);
+        at.ok().map(|at| &self.values[at].1[..])
+    }
+}
+
+#[derive(Default)]
 pub struct ModuleTypes {
     pub path: Box<[u8]>,
     pub text: Box<[u8]>,
     pub references: Vec<(u32, Target)>,
-    pub enum_objects: Vec<u32>,
+    pub enums: EnumFacts,
     pub exports: Vec<(Box<[u8]>, Target)>,
     pub constants: Vec<(u32, Box<[u8]>)>,
     pub functions_returning_undefined: Vec<u32>,
@@ -4234,6 +4632,444 @@ fn target_of_declaration(
     })
 }
 
+/// Notes each access in `file` that reads an enum member of a source. The checker is asked about a member once.
+fn note_enum_reads(
+    facts: &mut EnumFacts,
+    services: &mut Services<'_, '_, '_>,
+    (file, hir): (FileId, &File<'_>),
+    is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
+) {
+    let mut known: FxHashMap<SymbolRef, Option<u32>> = FxHashMap::default();
+    let mut roots: FxHashMap<ExprId, SymbolFlags> = FxHashMap::default();
+    let mut read_by: FxHashMap<ExprId, u32> = FxHashMap::default();
+    for (index, expr) in hir.exprs.iter().enumerate() {
+        let (named, object) = match expr.kind {
+            ExprKind::Dot { obj, .. } => (ExprId(index as u32), obj),
+            ExprKind::Index {
+                obj, index: key, ..
+            } if matches!(hir[key].kind, ExprKind::String(_)) => (key, obj),
+            _ => continue,
+        };
+        if !names_enum(services, (file, hir), object, &mut roots) {
+            continue;
+        }
+        let Some(symbol) = services.symbol_at_location(NodeRef {
+            file,
+            node: hir.node(named),
+        }) else {
+            continue;
+        };
+        let member = match known.get(&symbol) {
+            Some(&member) => member,
+            None => {
+                let object = hir.node(object);
+                let member = read_member(facts, services, (file, object), symbol, is_source);
+                known.insert(symbol, member);
+                member
+            }
+        };
+        if let Some(member) = member {
+            read_by.insert(ExprId(index as u32), member);
+            note_read(facts, services, (file, hir), ExprId(index as u32), member);
+        }
+    }
+    // A `const` that holds a read is a read of the same member wherever a build puts its value.
+    let mut copies: FxHashMap<SymbolRef, u32> = FxHashMap::default();
+    let mut names: FxHashSet<Atom> = FxHashSet::default();
+    for declaration in hir.var_decls.iter() {
+        let is_copy = declaration.kind == VarKind::Const && declaration.ty.is_none();
+        let member = (declaration.init.some())
+            .filter(|_| is_copy)
+            .and_then(|value| read_by.get(&value));
+        let (PatKind::Ident(name), Some(&member)) = (hir[declaration.pat].kind, member) else {
+            continue;
+        };
+        let node = hir.node(declaration.pat);
+        if let Some(symbol) = services.symbol_at_location(NodeRef { file, node }) {
+            copies.insert(symbol, member);
+            names.insert(name);
+        }
+    }
+    // Only a file with such a `const` has its names looked at.
+    let named = |expr: &Expr| matches!(expr.kind, ExprKind::Ident(name) if names.contains(&name));
+    let exprs = if copies.is_empty() {
+        &[][..]
+    } else {
+        &hir.exprs[..]
+    };
+    for (index, _) in exprs.iter().enumerate().filter(|(_, expr)| named(expr)) {
+        let node = hir.node(ExprId(index as u32));
+        let symbol = services.symbol_at_location(NodeRef { file, node });
+        if let Some(&member) = symbol.and_then(|symbol| copies.get(&symbol)) {
+            note_read(facts, services, (file, hir), ExprId(index as u32), member);
+        }
+    }
+    facts.reads.shared_sort_by_key(|read| read.end);
+}
+
+fn note_read(
+    facts: &mut EnumFacts,
+    services: &mut Services<'_, '_, '_>,
+    (file, hir): (FileId, &File<'_>),
+    read: ExprId,
+    member: u32,
+) {
+    let node = hir.node(read);
+    facts.reads.push(EnumRead {
+        pos: hir[read].pos,
+        end: hir[read].end,
+        member,
+        is_in_const_context: is_in_const_context(services, (file, hir), node),
+        is_discriminant: is_discriminant(services, file, node),
+    });
+}
+
+/// A step from the type that a call declares for an argument to the type of an expression inside the argument.
+enum Inside {
+    Element(usize),
+    Property(Box<[u8]>),
+    Returned { is_async: bool },
+}
+
+/// `isConstContext` after the check: under `as const`, or where the callee declares a `const` type parameter.
+fn is_in_const_context(
+    services: &mut Services<'_, '_, '_>,
+    (file, hir): (FileId, &File<'_>),
+    access: Node,
+) -> bool {
+    let (mut at, mut way) = (access, Vec::new());
+    loop {
+        let parent = NodeRef {
+            file,
+            node: services.node_parent(NodeRef { file, node: at }),
+        };
+        let expr = match services.node_data(parent) {
+            NodeData::Expr(expr) => Some(hir[expr].kind),
+            _ => None,
+        };
+        let is_operand = |operand: ExprId| hir.node(operand) == at;
+        at = match services.node_kind(parent) {
+            Kind::AsExpression | Kind::TypeAssertionExpression => {
+                return matches!(expr, Some(ExprKind::AsConst(_)));
+            }
+            Kind::ParenthesizedExpression => parent.node,
+            Kind::ConditionalExpression => match expr {
+                Some(ExprKind::Cond { test, .. }) if !is_operand(test) => parent.node,
+                _ => return false,
+            },
+            Kind::BinaryExpression => match expr {
+                Some(ExprKind::Binary { op, left, .. })
+                    if matches!(op, BinOp::Or | BinOp::Nullish)
+                        || (matches!(op, BinOp::And | BinOp::Comma) && !is_operand(left)) =>
+                {
+                    parent.node
+                }
+                _ => return false,
+            },
+            Kind::ArrayLiteralExpression => {
+                let elements = services.node_children(parent);
+                way.push(Inside::Element(
+                    elements
+                        .iter()
+                        .position(|&element| element == at)
+                        .unwrap_or(0),
+                ));
+                parent.node
+            }
+            Kind::PropertyAssignment => {
+                way.push(Inside::Property(name_of(services, parent)));
+                services.node_parent(parent)
+            }
+            Kind::TemplateSpan => services.node_parent(parent),
+            Kind::ArrowFunction => {
+                way.push(returned_by(services, parent));
+                parent.node
+            }
+            Kind::ReturnStatement => {
+                let mut function = parent;
+                while !services.node_kind(function).is_function_like() {
+                    if services.node_kind(function) == Kind::SourceFile {
+                        return false;
+                    }
+                    function.node = services.node_parent(function);
+                }
+                way.push(returned_by(services, function));
+                match services.node_kind(function) {
+                    Kind::ArrowFunction | Kind::FunctionExpression => function.node,
+                    Kind::MethodDeclaration => {
+                        way.push(Inside::Property(name_of(services, function)));
+                        services.node_parent(function)
+                    }
+                    _ => return false,
+                }
+            }
+            Kind::CallExpression | Kind::NewExpression => {
+                let Some(ExprKind::Call(call) | ExprKind::New(call)) = expr else {
+                    return false;
+                };
+                let mut arguments = hir.ids(hir[call].args);
+                let Some(index) = arguments.position(|argument| is_operand(argument)) else {
+                    return false;
+                };
+                return is_const_argument(services, parent, index, &way);
+            }
+            _ => return false,
+        };
+    }
+}
+
+fn name_of(services: &mut Services<'_, '_, '_>, named: NodeRef) -> Box<[u8]> {
+    let name = NodeRef {
+        file: named.file,
+        node: services.node_child(named, Child::Name),
+    };
+    services.node_text(name).into()
+}
+
+fn returned_by(services: &mut Services<'_, '_, '_>, function: NodeRef) -> Inside {
+    Inside::Returned {
+        is_async: (services.node_modifier_flags(function)).contains(ModifierFlags::ASYNC),
+    }
+}
+
+/// Whether the callee of `call` declares a `const` type parameter as the type of what is `way` inside an argument.
+fn is_const_argument(
+    services: &mut Services<'_, '_, '_>,
+    call: NodeRef,
+    index: usize,
+    way: &[Inside],
+) -> bool {
+    let declared = services
+        .resolved_signature(call)
+        .and_then(|signature| services.signature_info(signature).declaration)
+        .and_then(|declaration| services.signature_from_declaration(declaration));
+    let Some(declared) = declared else {
+        return false;
+    };
+    let parameters = services.signature_info(declared).parameters;
+    let Some(&parameter) = parameters.get(index).or(parameters.last()) else {
+        return false;
+    };
+    let mut ty = services.type_of_symbol(parameter);
+    // An argument behind the last parameter is an element of a rest parameter.
+    let rest = (index >= parameters.len()).then_some(Inside::Element(index));
+    for step in rest.iter().chain(way.iter().rev()) {
+        if is_const_type_variable(services, ty) {
+            return true;
+        }
+        let inside = match step {
+            Inside::Element(index) => {
+                let elements = services.type_arguments(ty);
+                let is_tuple = services.tuple_info(ty).is_some();
+                elements.get(if is_tuple { *index } else { 0 }).copied()
+            }
+            Inside::Property(name) => services.type_of_property_of_type(ty, name),
+            Inside::Returned { is_async } => {
+                let signatures = services.signatures_of_type(ty, SignatureKind::Call);
+                let returned = (signatures.first())
+                    .map(|&signature| services.return_type_of_signature(signature));
+                match (returned, is_async) {
+                    (Some(promise), true) => services.type_arguments(promise).first().copied(),
+                    (returned, _) => returned,
+                }
+            }
+        };
+        let Some(inside) = inside else {
+            return false;
+        };
+        ty = inside;
+    }
+    is_const_type_variable(services, ty)
+}
+
+/// `isConstTypeVariable`: a type parameter that is declared `const`, or a union or intersection that has one.
+fn is_const_type_variable(services: &mut Services<'_, '_, '_>, ty: TypeId) -> bool {
+    let flags = services.type_flags(ty);
+    if flags.intersects(TypeFlags::UNION | TypeFlags::INTERSECTION) {
+        let members = services.constituents(ty).to_vec();
+        return (members.into_iter()).any(|member| {
+            services
+                .type_flags(member)
+                .contains(TypeFlags::TYPE_PARAMETER)
+                && is_const_type_variable(services, member)
+        });
+    }
+    if !flags.contains(TypeFlags::TYPE_PARAMETER) {
+        return false;
+    }
+    let Some(symbol) = services.symbol_of_type(ty) else {
+        return false;
+    };
+    let declarations = services.declarations(symbol).to_vec();
+    (declarations.into_iter()).any(|declaration| {
+        services
+            .node_modifier_flags(declaration)
+            .contains(ModifierFlags::CONST)
+    })
+}
+
+/// TypeScript picks a member of a union by this property: two members of the union give it different types.
+fn is_discriminant(services: &mut Services<'_, '_, '_>, file: FileId, access: Node) -> bool {
+    let property = NodeRef {
+        file,
+        node: services.node_parent(NodeRef { file, node: access }),
+    };
+    if services.node_kind(property) != Kind::PropertyAssignment {
+        return false;
+    }
+    let object = NodeRef {
+        file,
+        node: services.node_parent(property),
+    };
+    let Some(expected) = services.contextual_type(object) else {
+        return false;
+    };
+    if !services.type_flags(expected).contains(TypeFlags::UNION) {
+        return false;
+    }
+    let name = name_of(services, property);
+    let members = services.constituents(expected).to_vec();
+    let mut types =
+        (members.into_iter()).filter_map(|member| services.type_of_property_of_type(member, &name));
+    let first = types.next();
+    first.is_some_and(|first| types.any(|other| other != first))
+}
+
+/// An enum is named by an identifier, or by a member of a namespace: `Kind`, `kinds.Kind`.
+fn names_enum(
+    services: &mut Services<'_, '_, '_>,
+    (file, hir): (FileId, &File<'_>),
+    object: ExprId,
+    roots: &mut FxHashMap<ExprId, SymbolFlags>,
+) -> bool {
+    let mut root = object;
+    while let ExprKind::Dot { obj, .. } = hir[root].kind {
+        root = obj;
+    }
+    if !matches!(hir[root].kind, ExprKind::Ident(_)) {
+        return false;
+    }
+    // The checker is asked about the first name of `a.b.c.d` once, and about no more if `a` is no namespace.
+    let of_root = match roots.get(&root) {
+        Some(&flags) => flags,
+        None => {
+            let flags = flags_of_named(services, file, hir.node(root));
+            roots.insert(root, flags);
+            flags
+        }
+    };
+    if root == object {
+        return of_root.intersects(SymbolFlags::ENUM);
+    }
+    of_root.intersects(SymbolFlags::MODULE)
+        && flags_of_named(services, file, hir.node(object)).intersects(SymbolFlags::ENUM)
+}
+
+/// The flags of what a name stands for: an import stands for what it imports.
+fn flags_of_named(services: &mut Services<'_, '_, '_>, file: FileId, node: Node) -> SymbolFlags {
+    let Some(symbol) = services.symbol_at_location(NodeRef { file, node }) else {
+        return SymbolFlags::empty();
+    };
+    let aliased = services.symbol_op(SymbolOp::Aliased, symbol);
+    services.symbol_info(aliased.unwrap_or(symbol)).flags
+}
+
+/// The index in `EnumFacts::members` of the member that `symbol` is, if it is a member of an enum of a source.
+fn read_member(
+    facts: &mut EnumFacts,
+    services: &mut Services<'_, '_, '_>,
+    (file, object): (FileId, Node),
+    symbol: SymbolRef,
+    is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
+) -> Option<u32> {
+    let flags = services.symbol_info(symbol).flags;
+    if !flags.intersects(SymbolFlags::ENUM_MEMBER) {
+        return None;
+    }
+    let declaration = services.declarations(symbol).first().copied()?;
+    let declared_by = NodeRef {
+        file: declaration.file,
+        node: services.node_parent(declaration),
+    };
+    let of = match target_of_declaration(services, is_source, declared_by) {
+        Some(target) => EnumOf::TopLevel(target),
+        None if declared_by.file == file => {
+            let name = services.node_child(declared_by, Child::Name);
+            EnumOf::Nested(services.node_span(NodeRef { file, node: name }).0)
+        }
+        // An enum of another package has no twin: it is named as this file imports it.
+        None => {
+            let imported = services.symbol_at_location(NodeRef { file, node: object })?;
+            EnumOf::TopLevel(target_of(services, is_source, imported)?)
+        }
+    };
+    let name = NodeRef {
+        file: declaration.file,
+        node: services.node_child(declaration, Child::Name),
+    };
+    let is_identifier = services.node_kind(name) == Kind::Identifier;
+    let name = services.node_text(name);
+    let of = match facts.enums.iter().position(|known| *known == of) {
+        Some(known) => known,
+        None => {
+            facts.enums.push(of);
+            facts.enums.len() - 1
+        }
+    };
+    facts.members.push(ReadMember {
+        of: of as u32,
+        name: name.into(),
+        is_identifier,
+    });
+    Some(facts.members.len() as u32 - 1)
+}
+
+/// Whether an initializer is made of numbers alone: `10 ** -24` is the same constant wherever it stands.
+fn names_nothing(text: &[u8]) -> bool {
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        if byte.is_ascii_digit() {
+            let is_of_number =
+                |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_');
+            at += text[at..]
+                .iter()
+                .take_while(|byte| is_of_number(byte))
+                .count();
+        } else if byte.is_ascii_alphabetic()
+            || matches!(byte, b'_' | b'$' | b'"' | b'\'' | b'`')
+            || byte >= 0x80
+        {
+            return false;
+        } else {
+            at += 1;
+        }
+    }
+    true
+}
+
+/// What a `declare enum` says of each member that `file` declares. See `EnumFacts::values`.
+fn enum_values(checker: &mut Checker<'_, '_>, file: FileId) -> Vec<(u32, Box<[u8]>)> {
+    let hir = checker.hir(file);
+    let mut values = Vec::new();
+    for member in hir
+        .enums
+        .iter()
+        .flat_map(|declared| declared.members.iter())
+    {
+        let member: EnumMemberId = member;
+        let written = (hir[member].init.some())
+            .filter(|_| checker.enum_member_rests_on_inexact_power(file, member))
+            .map(|init| &hir.text[hir[init].pos as usize..hir[init].end as usize])
+            .filter(|text| names_nothing(text))
+            .map(|text| text.to_vec());
+        if let Some(value) = written.or_else(|| checker.enum_member_initializer(file, member)) {
+            values.push((hir[member].pos, value.into_boxed_slice()));
+        }
+    }
+    values.shared_sort_by_key(|value| value.0);
+    values
+}
+
 pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
     if !is_project_source(checker, file) {
         return None;
@@ -4247,6 +5083,10 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
         .collect();
     let is_source = |file: FileId| paths.get(file.idx()).cloned().flatten();
     let hir = checker.hir(file);
+    let mut enums = EnumFacts {
+        values: enum_values(checker, file),
+        ..Default::default()
+    };
     let type_ranges = Syntax {
         file: hir,
         text: &hir.text[..],
@@ -4323,37 +5163,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 );
             }
         }
-        let mut enum_objects = Vec::new();
-        for expr in hir.exprs.iter() {
-            let ExprKind::Dot { obj, .. } = expr.kind else {
-                continue;
-            };
-            let Some(object) = hir
-                .exprs
-                .get(obj.idx())
-                .filter(|object| matches!(object.kind, ExprKind::Ident(_)))
-            else {
-                continue;
-            };
-            let Some(symbol) = services.symbol_at_location(NodeRef {
-                file,
-                node: hir.node(obj),
-            }) else {
-                continue;
-            };
-            let aliased = services
-                .symbol_op(SymbolOp::Aliased, symbol)
-                .unwrap_or(symbol);
-            if services
-                .symbol_info(aliased)
-                .flags
-                .intersects(SymbolFlags::ENUM)
-                && let Some(target) = target_of(services, &is_source, symbol)
-            {
-                references.push((object.pos, target));
-                enum_objects.push(object.pos);
-            }
-        }
+        note_enum_reads(&mut enums, services, (file, hir), &is_source);
         let mut exports = Vec::new();
         if let Some(module) = services.symbol_at_location(NodeRef {
             file,
@@ -4449,7 +5259,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             path,
             text: hir.text[..].into(),
             references,
-            enum_objects,
+            enums,
             exports,
             constants,
             functions_returning_undefined,
@@ -4482,6 +5292,12 @@ pub enum TypedFilesError {
     NotNamedJavaScript {
         path: Vec<u8>,
     },
+    EnumWithoutFacts {
+        path: Vec<u8>,
+        name: Vec<u8>,
+        /// The type check read the file, and the bundle has another text of it.
+        is_other_text: bool,
+    },
     InOutput {
         path: Vec<u8>,
         why: Box<TypedFilesError>,
@@ -4511,6 +5327,18 @@ impl core::fmt::Display for TypedFilesError {
             }
             TypedFilesError::NotNamedJavaScript { path } => {
                 write!(f, "{} is not named .js, .mjs or .cjs", BStr::new(path))
+            }
+            TypedFilesError::EnumWithoutFacts {
+                path,
+                name,
+                is_other_text,
+            } => {
+                let why = match is_other_text {
+                    true => "the bundle has another text of that file than the type check read",
+                    false => "the type check of the build does not cover that file",
+                };
+                let (path, name) = (BStr::new(path), BStr::new(name));
+                write!(f, "{path} declares the enum {name}, and {why}")
             }
             TypedFilesError::InOutput { path, why } => write!(f, "{}: {why}", BStr::new(path)),
         }
@@ -4581,13 +5409,25 @@ fn typed_outputs(
     emitted_declarations: &[ModuleTypes],
 ) -> Result<Vec<(Vec<u8>, TypedText)>, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
-    let mut found = Vec::new();
-    for output in outputs {
+    let mut found: Vec<Option<(Vec<u8>, TypedText)>> = outputs.iter().map(|_| None).collect();
+    let twins = std::cell::RefCell::new(SharedTwins::default());
+    // Chunks come first: with `--splitting` a chunk holds the object of an enum that entry points share.
+    let is_chunk = |index: &usize| outputs[*index].entry_point.is_none();
+    let chunks = (0..outputs.len()).filter(is_chunk);
+    let entry_points = (0..outputs.len()).filter(|index| !is_chunk(index));
+    for index in chunks.chain(entry_points) {
+        let output = &outputs[index];
         let shown = inside(outdir, output.path).unwrap_or(output.path);
+        let typed_path =
+            typed_path_beside(output.path).ok_or_else(|| TypedFilesError::NotNamedJavaScript {
+                path: shown.to_vec(),
+            })?;
         let bundle = Bundle {
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
+            typed_path: &typed_path,
+            twins: (outputs.len() > 1).then_some(&twins),
         };
         let typed =
             add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
@@ -4595,11 +5435,17 @@ fn typed_outputs(
                     path: shown.to_vec(),
                     why: Box::new(why),
                 })?;
-        let typed_path =
-            typed_path_beside(output.path).ok_or_else(|| TypedFilesError::NotNamedJavaScript {
-                path: shown.to_vec(),
-            })?;
-        found.push((typed_path, typed));
+        found[index] = Some((typed_path, typed));
+    }
+    let mut found: Vec<(Vec<u8>, TypedText)> = found.into_iter().flatten().collect();
+    for shared in twins.into_inner().into_values() {
+        let home = found.iter_mut().find(|typed| typed.0 == shared.home);
+        if let Some((_, home)) = home.filter(|_| shared.is_imported)
+            && let Some(at) = bun_core::strings::index_of(&home.text, &shared.declaration)
+        {
+            let after = at + shared.declaration.len();
+            home.text.splice(after..after, shared.export);
+        }
     }
     for (typed_path, typed) in &mut found {
         typed.text = import_typed_outputs(typed_path, &typed.text, outputs)?;

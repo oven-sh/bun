@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import { parseEnv } from "node:util";
 
 describe("Bun.parseEnv", () => {
+  // PROBE comes from the process environment. Every other name is defined in the text or missing.
   const content = [
     "A=1",
     "B=$A",
@@ -11,13 +12,33 @@ describe("Bun.parseEnv", () => {
     "E=${MISSING:-dflt}",
     "F=$B-$A",
     "S='$A'",
-    "PROBE=$PROBE:/x",
     "REF=$PROBE",
-    "Z=$LATE",
+    "BR=${PROBE}",
+    "BD=${PROBE:-x}",
+    "N=${NOPE:-${PROBE}}",
+    "N2=${NOPE:-${ALSO_NOPE:-$PROBE}}",
+    "Z=$LATE", // a key defined later in the text still resolves
     "LATE=late",
     "0=zero",
   ].join("\n");
-  const keys = ["A", "B", "C", "D", "E", "F", "S", "PROBE", "REF", "Z", "LATE", "0"];
+  const keys = ["A", "B", "C", "D", "E", "F", "S", "REF", "BR", "BD", "N", "N2", "Z", "LATE", "0"];
+  const expected = (probe: string) => ({
+    "0": "zero",
+    A: "1",
+    B: "1",
+    C: "1",
+    D: "$A",
+    E: "dflt",
+    F: "1-1",
+    S: "1",
+    REF: probe,
+    BR: probe,
+    BD: probe,
+    N: probe,
+    N2: probe,
+    Z: "late",
+    LATE: "late",
+  });
 
   test("gives the same values as the startup loader", async () => {
     using dir = tempDir("dotenv-parse-env", {
@@ -26,58 +47,68 @@ describe("Bun.parseEnv", () => {
     });
     const { stdout } = await bunRun(`${dir}/index.ts`, { PROBE: "fromproc" });
     const fromStartup = JSON.parse(stdout);
+    expect(fromStartup).toEqual(expected("fromproc"));
 
+    // Parse the same file from a directory without a `.env`, so no key of the text is in the
+    // environment Bun loaded at startup and every value comes from the expansion pass.
+    using other = tempDir("dotenv-parse-env-runtime", {});
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `console.log(JSON.stringify(Bun.parseEnv(require("fs").readFileSync(".env", "utf8"))))`],
-      cwd: String(dir),
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify(Bun.parseEnv(require("fs").readFileSync(process.argv[1], "utf8"))))`,
+        `${dir}/.env`,
+      ],
+      cwd: String(other),
       env: { ...bunEnv, PROBE: "fromproc" },
       stderr: "pipe",
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).toBe("");
     expect(JSON.parse(out)).toEqual(fromStartup);
-    expect(fromStartup).toEqual({
-      "0": "zero",
-      A: "1",
-      B: "1",
-      C: "1",
-      D: "$A",
-      E: "dflt",
-      F: "1-1",
-      S: "1",
-      PROBE: "fromproc",
-      REF: "fromproc",
-      Z: "late",
-      LATE: "late",
-    });
     expect(exitCode).toBe(0);
   });
 
-  test("expands against options.env instead of the process environment", () => {
-    expect(Bun.parseEnv(content, { env: { PROBE: "custom", LATE: "from-env" } })).toEqual({
-      "0": "zero",
-      A: "1",
-      B: "1",
-      C: "1",
-      D: "$A",
-      E: "dflt",
-      F: "1-1",
-      S: "1",
-      PROBE: "custom",
-      REF: "custom",
-      Z: "from-env",
-      LATE: "from-env",
+  test("returns the text's value for a key the environment already has", async () => {
+    // The startup loader keeps the environment's value for such a key. The parser returns the
+    // text's value, expanded against the environment, and leaves the precedence to the caller.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(JSON.stringify(Bun.parseEnv("PROBE=$PROBE:/x\\nREF=$PROBE\\nOTHER=plain")))`],
+      env: { ...bunEnv, PROBE: "fromproc", OTHER: "fromproc" },
+      stderr: "pipe",
     });
-    // An empty env: nothing outside the content resolves.
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toBe("");
+    expect(JSON.parse(out)).toEqual({ PROBE: "fromproc:/x", REF: "fromproc", OTHER: "plain" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("expands against options.env instead of the startup environment", () => {
+    expect(Bun.parseEnv(content, { env: { PROBE: "custom", LATE: "from-env" } })).toEqual({
+      ...expected("custom"),
+      Z: "from-env",
+    });
+    // An empty env: nothing outside the text resolves.
     expect(Bun.parseEnv("A=$PATH\nB=${PATH:-none}", { env: {} })).toEqual({ A: "", B: "none" });
-    // A later process.env write is not part of the default source, but is of `env: process.env`.
+    // `env: process.env` includes a later write to process.env.
     process.env.BUN_PARSE_ENV_LATER = "set-at-runtime";
     try {
-      expect(Bun.parseEnv("X=$BUN_PARSE_ENV_LATER")).toEqual({ X: "" });
       expect(Bun.parseEnv("X=$BUN_PARSE_ENV_LATER", { env: process.env })).toEqual({ X: "set-at-runtime" });
     } finally {
       delete process.env.BUN_PARSE_ENV_LATER;
     }
+  });
+
+  test("values from options.env are used as they are", () => {
+    expect(Bun.parseEnv("C=$A\nD=${A}\nE=${NOPE:-$A}\nA=lit", { env: { A: "$B", B: "x" } })).toEqual({
+      C: "$B",
+      D: "$B",
+      E: "$B",
+      A: "lit",
+    });
+    // The output of one parse is a valid env for the next.
+    const first = Bun.parseEnv("D=\\$A");
+    expect(Bun.parseEnv("X=$D", { env: first })).toEqual({ X: "$A" });
   });
 
   test("options.env values are stringified and undefined is skipped", () => {
@@ -86,6 +117,10 @@ describe("Bun.parseEnv", () => {
       B: "",
       C: "true",
     });
+  });
+
+  test("options.env keys are case-insensitive on Windows only", () => {
+    expect(Bun.parseEnv("X=$path", { env: { PATH: "p" } })).toEqual({ X: isWindows ? "p" : "" });
   });
 
   test("expand: false matches util.parseEnv", () => {

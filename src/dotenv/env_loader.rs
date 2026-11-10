@@ -624,18 +624,12 @@ impl Loader {
         Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer, &())
     }
 
-    /// The keys `content` defines, with the values the startup loader gives them over `env`:
-    /// `$NAME` reads `env` before the earlier keys, and a key `env` already has keeps its value.
+    /// The keys `content` defines, expanded as the startup loader expands a file: `$NAME` reads
+    /// `env` first, then any key of `content`.
     pub fn parse_expanded(content: &[u8], env: &Map) -> Result<Map, AllocError> {
         let mut map = Map::init();
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<true, false, true>(content, &mut map, &mut value_buffer, env)?;
-        for idx in 0..map.map.count() {
-            let from_env = env.get(&map.map.keys()[idx]).map(Box::<[u8]>::from);
-            if let Some(value) = from_env {
-                map.map.values_mut()[idx] = HashTableValue { value };
-            }
-        }
+        Parser::parse_bytes::<false, false, true>(content, &mut map, &mut value_buffer, env)?;
         Ok(map)
     }
 

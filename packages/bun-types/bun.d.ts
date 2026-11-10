@@ -847,12 +847,13 @@ declare module "bun" {
     expand?: boolean;
 
     /**
-     * The environment that `$NAME` resolves against before the keys defined earlier in
-     * `content`. A key that this environment already has keeps the environment's value, as it
-     * does when Bun loads `.env` files at startup.
+     * The environment that `$NAME` reads first. A name that is not in it reads the keys of
+     * `content`, including keys defined later in the text. Values from `env` are used as they
+     * are: a `$` inside them is not expanded.
      *
-     * Defaults to the environment Bun started with. A later write to `process.env` is not part
-     * of that default. Pass `process.env` to include it.
+     * Defaults to the environment Bun loaded at startup (the process environment and the `.env`
+     * files Bun loaded), the same source `Bun.which` and `Bun.spawn` use. Pass `process.env` to
+     * include later writes to it.
      */
     env?: Record<string, string | undefined>;
   }
@@ -861,7 +862,9 @@ declare module "bun" {
    * Parse the text of a `.env` file the way Bun parses `.env` files at startup, including
    * variable expansion.
    *
-   * The result holds only the keys that `content` defines. `process.env` is not changed.
+   * The result holds only the keys that `content` defines, with the values the text gives
+   * them. `process.env` is not changed, and a key that `process.env` already has is not
+   * skipped: apply the precedence you want when you copy the values.
    *
    * @category Utilities
    *

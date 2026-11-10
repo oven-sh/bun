@@ -115,7 +115,7 @@ This is a built-in alternative to the [`which`](https://www.npmjs.com/package/wh
 
 ## `Bun.parseEnv()`
 
-`Bun.parseEnv(content: string, options?: { expand?: boolean; env?: Record<string, string> })`
+`Bun.parseEnv(content: string, options?: { expand?: boolean; env?: Record<string, string | undefined> })`
 
 Parses the text of a `.env` file the way Bun parses `.env` files at startup, with the same variable expansion. The result holds only the keys that `content` defines. `process.env` is not changed.
 
@@ -124,7 +124,7 @@ const values = Bun.parseEnv("HOST=localhost\nURL=http://$HOST:${PORT:-3000}");
 console.log(values); // { HOST: "localhost", URL: "http://localhost:3000" }
 ```
 
-`$NAME` resolves against `options.env` first, then against the keys defined earlier in the text. `options.env` defaults to the environment Bun started with. A key that this environment already has keeps the environment's value, as it does when `bun run` loads a `.env` file. Pass `expand: false` to get the values as written, like `util.parseEnv`.
+`$NAME` reads `options.env` first, then any key of `content`, including a key defined later in the text. Values from `options.env` are used as they are: a `$` inside them is not expanded. `options.env` defaults to the environment Bun loaded at startup (the process environment and the `.env` files Bun loaded). Pass `process.env` to include later writes to it. Pass `expand: false` to get the values as written, like `util.parseEnv`.
 
 See [Environment variables](/runtime/environment-variables#parsing-env-files-at-runtime) for a loader that reads a set of `.env` files at runtime.
 

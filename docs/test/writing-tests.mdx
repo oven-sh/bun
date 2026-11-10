@@ -511,6 +511,9 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `toHaveProperty("a.b")` on `{ "a.b": 1 }`                 | fails: `"a.b"` is always a path      | passes: an own key with that name comes before the path              |
 | `toHaveProperty()` on `undefined` or `null`               | fails, so it passes with `.not`      | throws a `TypeError`, with `.not` too                                |
 | `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
+| `toThrow(error)` and `toThrow({ message })`               | compare only the `message`           | compare like `toEqual()`                                             |
+| `toThrow({ code })`, or a plain object without `message`  | never passes                         | compares like `toEqual()`                                            |
+| `toThrow(1)`, or a boolean, bigint or symbol              | an error                             | compares like `toEqual()`                                            |
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
 | `toThrow(expect.any(Number))` when `0` is thrown          | passes                               | fails: no matcher is asked about a falsy thrown value                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |

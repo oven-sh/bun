@@ -1441,6 +1441,62 @@ describe("expect()", () => {
         signalCode: null,
       });
     });
+
+    // The lines of the failure message after the first one, or "passes".
+    const toThrowResult = (/** @type {() => unknown} */ fn) => {
+      try {
+        fn();
+      } catch (e) {
+        return stripVTControlCharacters(ANY(e).message).split("\n").filter(Boolean).slice(1).join(" | ");
+      }
+      return "passes";
+    };
+
+    test("toThrow(Class) fails for a thrown symbol, and prints it", () => {
+      const thrower = () => {
+        throw Symbol("boom");
+      };
+      expect({
+        "toThrow(TypeError)": toThrowResult(() => expect(thrower).toThrow(TypeError)),
+        "not.toThrow(TypeError)": toThrowResult(() => expect(thrower).not.toThrow(TypeError)),
+      }).toEqual({
+        "toThrow(TypeError)": "Expected constructor: TypeError | Received constructor:  | Received value: Symbol(boom)",
+        "not.toThrow(TypeError)": "passes",
+      });
+    });
+
+    test("a thrown object without a message matches no string and no RegExp", () => {
+      for (const thrown of [{}, { a: 1 }, []]) {
+        const thrower = () => {
+          throw thrown;
+        };
+        expect({
+          'toThrow("undefined")': toThrowResult(() => expect(thrower).toThrow("undefined")).split(" | ")[0],
+          "toThrow(/undefined/)": toThrowResult(() => expect(thrower).toThrow(/undefined/)).split(" | ")[0],
+          'not.toThrow("undefined")': toThrowResult(() => expect(thrower).not.toThrow("undefined")),
+          "not.toThrow(/undefined/)": toThrowResult(() => expect(thrower).not.toThrow(/undefined/)),
+        }).toEqual({
+          'toThrow("undefined")': 'Expected substring: "undefined"',
+          "toThrow(/undefined/)": "Expected pattern: /undefined/",
+          'not.toThrow("undefined")': "passes",
+          "not.toThrow(/undefined/)": "passes",
+        });
+      }
+    });
+
+    test("a RegExp without test() matches no message", () => {
+      const pattern = Object.assign(/bad/, { test: undefined });
+      const thrower = () => {
+        throw new Error("bad");
+      };
+      expect({
+        "toThrow(pattern)": toThrowResult(() => expect(thrower).toThrow(pattern)),
+        "not.toThrow(pattern)": toThrowResult(() => expect(thrower).not.toThrow(pattern)),
+      }).toEqual({
+        "toThrow(pattern)": 'Expected pattern: /bad/ | Received message: "bad"',
+        "not.toThrow(pattern)": "passes",
+      });
+    });
   }
 
   test("deepEquals derived strings and strings", () => {

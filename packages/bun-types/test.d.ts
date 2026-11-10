@@ -2436,11 +2436,14 @@ declare module "bun:test" {
      * Asserts that a function throws an error.
      *
      * - If expected is a `string` or `RegExp`, it checks the `message` property.
-     * - If expected is an `Error` object, it checks the `name` and `message` properties.
+     * - If expected is an `Error` object, or another object with a `message`, it checks the `message` property.
      * - If expected is an `Error` constructor, it checks the class of the `Error`.
      * - If expected is an asymmetric matcher, such as `expect.objectContaining()` or an object
      *   with an `asymmetricMatch()` method, it checks the thrown value with the matcher.
      * - If expected is not provided, it checks that anything was thrown.
+     *
+     * In a test that uses `test` from `"vitest"`, an `Error` object is compared with the thrown value like
+     * `toEqual()` does. So is any other object, and a number, boolean, bigint or symbol.
      *
      * @example
      * function fail() {
@@ -2460,11 +2463,14 @@ declare module "bun:test" {
      * Asserts that a function throws an error.
      *
      * - If expected is a `string` or `RegExp`, it checks the `message` property.
-     * - If expected is an `Error` object, it checks the `name` and `message` properties.
+     * - If expected is an `Error` object, or another object with a `message`, it checks the `message` property.
      * - If expected is an `Error` constructor, it checks the class of the `Error`.
      * - If expected is an asymmetric matcher, such as `expect.objectContaining()` or an object
      *   with an `asymmetricMatch()` method, it checks the thrown value with the matcher.
      * - If expected is not provided, it checks that anything was thrown.
+     *
+     * In a test that uses `test` from `"vitest"`, an `Error` object is compared with the thrown value like
+     * `toEqual()` does. So is any other object, and a number, boolean, bigint or symbol.
      *
      * @example
      * function fail() {

@@ -1271,9 +1271,7 @@ impl Expect {
         Ok(())
     }
 
-    /// An inline snapshot's value can't be printed in the format of its test. An older Bun called no accessor and no
-    /// `toJSON` to print, so the text it saved can still match: `was_written_by_another` prints the value once more
-    /// to tell. Any other text ends in what the print threw.
+    /// The print threw. What an older Bun saved can still match: it called no getter at a key and no `toJSON`.
     #[cold]
     #[optimize(size)]
     fn print_threw(

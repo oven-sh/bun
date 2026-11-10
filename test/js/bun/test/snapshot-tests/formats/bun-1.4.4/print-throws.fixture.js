@@ -1,5 +1,5 @@
 // Bun 1.4.4 wrote the snapshots of this file, here and in __snapshots__/print-throws.fixture.js.snap.
-// It called no getter and no `toJSON` to print a value. Vitest's format does, and throws what they throw.
+// It called no getter at a key and no `toJSON` to print a value. Vitest's format does, and throws what they throw.
 // To add a case, run it under that version. Never update them with a later Bun.
 import { expect, test } from "vitest";
 

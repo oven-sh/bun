@@ -3,7 +3,7 @@
 // option describes what the build did.
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dts = readFileSync(join(import.meta.dir, "../../packages/bun-types/bun.d.ts"), "utf8");
@@ -75,6 +75,9 @@ describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
       expect(build.success).toBe(true);
 
       const maps = build.outputs.filter(output => output.kind === "sourcemap").map(output => output.path);
+      // Without `outdir` the paths are relative to the cwd and hold a content
+      // hash, so a file at one of them can only come from this build.
+      expect(maps.filter(path => existsSync(path))).toEqual([]);
       const observed = await Promise.all(
         build.outputs
           .filter(output => output.kind !== "sourcemap")

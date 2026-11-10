@@ -991,7 +991,7 @@ private:
             if (JSC::AOT::isModuleNamespace(target)) {
                 bool isBack = JSC::AOT::tryReplaceExport(target, identifier.impl(), original);
                 RETURN_IF_EXCEPTION(scope, );
-                // The spy was laid there, so the export takes a value. A spy that stays answers undefined to every later test of the process, and nobody hears of it.
+                // The spy was laid there, so the export takes a value. A spy that stays answers for the export in every later test of the process, and nobody hears of it.
                 if (!isBack)
                     throwTypeError(globalObject, scope, makeString("Cannot restore the spy on '"_s, identifier.string(), "': the module no longer takes a value for it. This is a bug in bun test --aot"_s));
                 return;
@@ -1229,7 +1229,8 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
                 return;
             }
             auto scope = DECLARE_THROW_SCOPE(vm);
-            spy->clearSpy(globalObject, !spy->isVitest);
+            // Not reset, unlike restoreAll(): a module shared with the next file may hold the spy.
+            spy->clearSpy(globalObject, false);
             // Only this file gets the error. Forget the spy, so later files don't retry it.
             if (scope.exception()) [[unlikely]]
                 spy->didUninstall();

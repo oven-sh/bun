@@ -2996,6 +2996,138 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
+  // A module that took a method while its spy was installed, as `const { send } = mailer` does, has the spy.
+  // So the files call the spies that shared.ts made.
+  const callsSpiesOfSharedModule = (name: string) => `
+    import { expect, test } from "bun:test";
+    import { Client, clients, countLoad, ofEach, spies, targets } from "./shared.ts";
+    // 1 when shared.ts has just been evaluated: in the first file, and in every file with --isolate.
+    const load = countLoad();
+    test("${name}", () => {
+      // The end of the file before this one put the properties back and cleared the calls.
+      const isInstalled = (spy, maker, key) =>
+        Object.values(Object.getOwnPropertyDescriptor(targets[maker], key)).includes(spy);
+      expect(ofEach(isInstalled)).toEqual(ofEach(() => load === 1));
+      expect(ofEach(spy => spy.mock.calls)).toEqual(ofEach(() => []));
+
+      const answers = {
+        "a getter": "original",
+        "as made": "original",
+        "mockReturnValue()": "value",
+        "mockImplementation()": "implementation",
+        "mockReturnValueOnce()": ["once", "once more"][load - 1] ?? "value",
+        "mockName()": "original",
+      };
+      expect({
+        answers: ofEach(spy => spy()),
+        names: Object.values(spies).map(ofMaker => ofMaker["mockName()"].getMockName()),
+        clients: Object.values(clients).map(client => [client instanceof Client, client.made, client.query?.()]),
+      }).toEqual({
+        answers: { "spyOn()": answers, "jest.spyOn()": answers, "vi.spyOn()": answers },
+        names: ["named", "named", "named"],
+        clients: Array(3).fill([true, "by the constructor", "rows"]),
+      });
+    });
+  `;
+  const spiesOfSharedModule = {
+    "shared.ts": `
+      import { jest, spyOn, vi } from "bun:test";
+      const makers = { "spyOn()": spyOn, "jest.spyOn()": jest.spyOn, "vi.spyOn()": vi.spyOn };
+      const configurations = {
+        "as made": spy => spy,
+        "mockReturnValue()": spy => spy.mockReturnValue("value"),
+        "mockImplementation()": spy => spy.mockImplementation(() => "implementation"),
+        "mockReturnValueOnce()": spy =>
+          spy.mockReturnValue("value").mockReturnValueOnce("once").mockReturnValueOnce("once more"),
+        "mockName()": spy => spy.mockName("named"),
+      };
+      export class Client {
+        made = "by the constructor";
+        query() { return "rows"; }
+      }
+      export const targets = {}, spies = {}, clients = {};
+      for (const [maker, make] of Object.entries(makers)) {
+        const target = (targets[maker] = { get "a getter"() { return "original"; } });
+        spies[maker] = { "a getter": make(target, "a getter", "get") };
+        for (const [key, configure] of Object.entries(configurations)) {
+          target[key] = () => "original";
+          spies[maker][key] = configure(make(target, key));
+        }
+        // What a module has that made an object with a class while the class was spied on.
+        const lib = { Client };
+        make(lib, "Client");
+        clients[maker] = new lib.Client();
+      }
+      export const ofEach = read =>
+        Object.fromEntries(
+          Object.entries(spies).map(([maker, ofMaker]) => [
+            maker,
+            Object.fromEntries(Object.entries(ofMaker).map(([key, spy]) => [key, read(spy, maker, key)])),
+          ]),
+        );
+      let loads = 0;
+      export const countLoad = () => ++loads;
+    `,
+    "a.test.ts": callsSpiesOfSharedModule("a"),
+    "b.test.ts": callsSpiesOfSharedModule("b"),
+    "c.test.ts": `
+      import { expect, jest, test } from "bun:test";
+      import { ofEach } from "./shared.ts";
+      test("c", () => {
+        jest.resetAllMocks();
+        expect(ofEach(spy => spy())).toStrictEqual(
+          ofEach((spy, maker) => (maker === "vi.spyOn()" ? "original" : undefined)),
+        );
+      });
+    `,
+  };
+
+  // With --isolate, only the repeats of a file share a global.
+  test.each([...modes, "--isolate --rerun-each=2"])(
+    "a spy that the end of a file restores keeps its implementation: bun test %s",
+    async flags => {
+      using dir = tempDir("spies-of-a-shared-module", spiesOfSharedModule);
+      const { stderr, exitCode } = await runTests(String(dir), flags.split(" "), [
+        "./a.test.ts",
+        "./b.test.ts",
+        "./c.test.ts",
+      ]);
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b", "(pass) c"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  // With --isolate=modules each file has its own modules, but a built-in module is one object for all of them.
+  test("a spy that a built-in module holds keeps its implementation: bun test --isolate=modules", async () => {
+    using dir = tempDir("spies-of-a-file", {
+      "a.test.ts": `
+        import { jest, spyOn, test, vi } from "bun:test";
+        import fs from "node:fs";
+        test("a", () => {
+          const original = () => "original";
+          const target = { asMade: original, bun: original, jest: original, vi: original };
+          fs.heldByABuiltin = [
+            spyOn(target, "asMade"),
+            spyOn(target, "bun").mockReturnValue("spied"),
+            jest.spyOn(target, "jest").mockReturnValue("spied"),
+            vi.spyOn(target, "vi").mockReturnValue("spied"),
+          ];
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import fs from "node:fs";
+        test("b", () => {
+          expect(fs.heldByABuiltin.map(spy => spy())).toEqual(["original", "spied", "spied", "spied"]);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], ["./a.test.ts", "./b.test.ts"]);
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
   test("spies of a file that fails to load are restored", async () => {
     using dir = tempDir("spies-of-a-file", {
       ...files,
@@ -3053,6 +3185,39 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       "(pass) c",
     ]);
     expect(exitCode).toBe(1);
+  });
+
+  test("a spy that can't be restored keeps its implementation", async () => {
+    using dir = tempDir("spies-of-a-file", {
+      "a.test.ts": `
+        import { jest, spyOn, test, vi } from "bun:test";
+        test("a", () => {
+          let isOver = false;
+          const original = () => "original";
+          globalThis.target = new Proxy({ asMade: original, bun: original, jest: original, vi: original }, {
+            defineProperty(...args) {
+              if (isOver) throw new Error("the trap refuses");
+              return Reflect.defineProperty(...args);
+            },
+          });
+          spyOn(target, "asMade");
+          spyOn(target, "bun").mockReturnValue("spied");
+          jest.spyOn(target, "jest").mockReturnValue("spied");
+          vi.spyOn(target, "vi").mockReturnValue("spied");
+          isOver = true;
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        test("b", () => {
+          const answers = [target.asMade(), target.bun(), target.jest(), target.vi()];
+          expect(answers).toEqual(["original", "spied", "spied", "spied"]);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+    expect(stderr).toContain("error: the trap refuses");
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 1 });
   });
 
   test.each([

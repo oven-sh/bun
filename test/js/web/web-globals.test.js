@@ -520,8 +520,11 @@ describe("Web classes on globalThis are not enumerable", () => {
         postMessage(probe());
       }
     `,
-    "a ShadowRealm": `console.log(new ShadowRealm().evaluate("(" + probe + ")()"));`,
   };
+  // A Bun built with --shadow-realm=off has no ShadowRealm.
+  if (typeof ShadowRealm === "function") {
+    realms["a ShadowRealm"] = `console.log(new ShadowRealm().evaluate("(" + probe + ")()"));`;
+  }
 
   test.concurrent.each(Object.keys(realms))("in %s", async realm => {
     using dir = tempDir("global-enumerable-names", { "realm.mjs": probe + realms[realm] });

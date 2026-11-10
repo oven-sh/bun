@@ -70,3 +70,25 @@ Bun implements the following globals.
 | [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream)                                     | Web            |                                                                                                                                                                                                                                               |
 | [`WritableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultController)   | Web            |                                                                                                                                                                                                                                               |
 | [`WritableStreamDefaultWriter`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultWriter)           | Web            |                                                                                                                                                                                                                                               |
+
+## Listing the globals
+
+`Object.keys(globalThis)`, `for...in` and `{ ...globalThis }` list the enumerable globals, such as `fetch`, `setTimeout` and `Bun`. They leave out the Web classes, such as `Headers` and `Response`. Web IDL defines the constructor of a Web class as a non-enumerable property of the global object, and Node.js does the same.
+
+`Object.getOwnPropertyNames(globalThis)` lists every global. To give a [`node:vm` context](/runtime/nodejs-compat#node-vm) the globals of the host, copy them by name:
+
+```js
+import vm from "node:vm";
+
+// The names that a new context has on its own, such as Array and Promise.
+const contextOwnNames = new Set(vm.runInNewContext("Object.getOwnPropertyNames(globalThis)"));
+
+const hostGlobals = Object.fromEntries(
+  Object.getOwnPropertyNames(globalThis)
+    .filter(name => !contextOwnNames.has(name))
+    .map(name => [name, globalThis[name]]),
+);
+
+const context = vm.createContext({ ...hostGlobals, answer: 42 });
+vm.runInContext("new Response(String(answer)).headers instanceof Headers", context); // true
+```

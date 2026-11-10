@@ -665,14 +665,8 @@ pub struct Resolver<'a> {
     pub unrecorded_reads: core::cell::Cell<u32>,
 }
 
-/// `RealFS` for `Entry::kind` and `Entry::symlink`, which stat at their first call. It counts those stats.
-struct EntryStats<'a> {
-    fs: &'a Fs::file_system::RealFS,
-    disk_reads: &'a core::cell::Cell<u32>,
-    unrecorded_reads: &'a core::cell::Cell<u32>,
-}
-
-impl Fs::EntryKindResolver for EntryStats<'_> {
+/// For `Entry::kind` and `Entry::symlink`, which stat at their first call: the resolver counts those stats.
+impl Fs::EntryKindResolver for Resolver<'_> {
     fn resolve_kind(
         &self,
         dir: &[u8],
@@ -681,7 +675,9 @@ impl Fs::EntryKindResolver for EntryStats<'_> {
         store_fd: bool,
     ) -> crate::CrateResult<Fs::EntryCache> {
         self.disk_reads.set(self.disk_reads.get().wrapping_add(1));
-        let cache = self.fs.resolve_kind(dir, base, existing_fd, store_fd);
+        let cache = self
+            .rfs_ref()
+            .resolve_kind(dir, base, existing_fd, store_fd);
         // `Entry::symlink` answers "no link" for a stat that fails, once: its next call answers from the entry.
         if bun_core::Environment::CI_ASSERT && cache.is_err() {
             let unrecorded = self.unrecorded_reads.get().wrapping_add(1);
@@ -793,15 +789,6 @@ impl<'a> Resolver<'a> {
     #[inline(always)]
     fn rfs_ref(&self) -> &Fs::file_system::RealFS {
         &self.fs_ref().fs
-    }
-
-    #[inline(always)]
-    fn entry_stats(&self) -> EntryStats<'_> {
-        EntryStats {
-            fs: self.rfs_ref(),
-            disk_reads: &self.disk_reads,
-            unrecorded_reads: &self.unrecorded_reads,
-        }
     }
 
     /// Unique-borrow of the `FileSystem` singleton. Centralizes the
@@ -2098,7 +2085,7 @@ impl<'a> Resolver<'a> {
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
-                let symlink_path = query.entry().symlink(&self.entry_stats(), self.store_fd);
+                let symlink_path = query.entry().symlink(&*self, self.store_fd);
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -4235,7 +4222,7 @@ impl<'a> Resolver<'a> {
                 };
                 let entry_kind = entry_lookup
                     .as_ref()
-                    .map(|q| q.entry().kind(&self.entry_stats(), self.store_fd));
+                    .map(|q| q.entry().kind(&*self, self.store_fd));
                 let entry_query = match entry_lookup {
                     Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
                     _ => {
@@ -4290,7 +4277,7 @@ impl<'a> Resolver<'a> {
                                 let index_query =
                                     dir_info_ref.get_entry(self.generation, &file_name[..]);
                                 if let Some(iq) = index_query {
-                                    if iq.entry().kind(&self.entry_stats(), self.store_fd)
+                                    if iq.entry().kind(&*self, self.store_fd)
                                         == Fs::file_system::EntryKind::File
                                     {
                                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4399,7 +4386,7 @@ impl<'a> Resolver<'a> {
                 if let Some(ext_query) =
                     resolved_dir_info.get_entry(self.generation, &file_name[..])
                 {
-                    if ext_query.entry().kind(&self.entry_stats(), self.store_fd)
+                    if ext_query.entry().kind(&*self, self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4439,7 +4426,7 @@ impl<'a> Resolver<'a> {
                     if let Some(ts_query) =
                         resolved_dir_info.get_entry(self.generation, &file_name[..])
                     {
-                        if ts_query.entry().kind(&self.entry_stats(), self.store_fd)
+                        if ts_query.entry().kind(&*self, self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -5855,9 +5842,7 @@ impl<'a> Resolver<'a> {
                 })
         };
         if let Some((Some(lookup), dirname_fd)) = looked_up {
-            if lookup.entry().kind(&self.entry_stats(), self.store_fd)
-                == Fs::file_system::EntryKind::File
-            {
+            if lookup.entry().kind(&*self, self.store_fd) == Fs::file_system::EntryKind::File {
                 let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
                     let parts = [dir_info.abs_path, &base[..]];
                     let out_buf_ = self
@@ -6348,9 +6333,7 @@ impl<'a> Resolver<'a> {
         // in-place rewrite this guards against).
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
         if let Some(query) = plain_query {
-            if query.entry().kind(&self.entry_stats(), self.store_fd)
-                == Fs::file_system::EntryKind::File
-            {
+            if query.entry().kind(&*self, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
@@ -6439,7 +6422,7 @@ impl<'a> Resolver<'a> {
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
                     if let Some(query) = ts_query {
-                        if query.entry().kind(&self.entry_stats(), self.store_fd)
+                        if query.entry().kind(&*self, self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -6534,9 +6517,7 @@ impl<'a> Resolver<'a> {
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         if let Some(query) = ext_query {
-            if query.entry().kind(&self.entry_stats(), self.store_fd)
-                == Fs::file_system::EntryKind::File
-            {
+            if query.entry().kind(&*self, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
                         "Found file \"{}\" ",
@@ -6628,8 +6609,7 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    entry.entry().kind(&self.entry_stats(), self.store_fd)
-                        == Fs::file_system::EntryKind::Dir,
+                    entry.entry().kind(&*self, self.store_fd) == Fs::file_system::EntryKind::Dir,
                 );
             }
         }
@@ -6670,8 +6650,7 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        if q.entry().kind(&self.entry_stats(), self.store_fd)
-                            == Fs::file_system::EntryKind::Dir
+                        if q.entry().kind(&*self, self.store_fd) == Fs::file_system::EntryKind::Dir
                         {
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
                             else {
@@ -6749,8 +6728,7 @@ impl<'a> Resolver<'a> {
                             lookup.entry().set_cache_fd(entries_fd);
                         }
 
-                        let mut symlink =
-                            lookup.entry().symlink(&self.entry_stats(), self.store_fd);
+                        let mut symlink = lookup.entry().symlink(&*self, self.store_fd);
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6808,9 +6786,7 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                if lookup.entry().kind(&self.entry_stats(), self.store_fd)
-                    == Fs::file_system::EntryKind::File
-                {
+                if lookup.entry().kind(&*self, self.store_fd) == Fs::file_system::EntryKind::File {
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
@@ -6878,9 +6854,7 @@ impl<'a> Resolver<'a> {
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                if lookup.entry().kind(&self.entry_stats(), self.store_fd)
-                    == Fs::file_system::EntryKind::File
-                {
+                if lookup.entry().kind(&*self, self.store_fd) == Fs::file_system::EntryKind::File {
                     let parts = [path, b"tsconfig.json".as_slice()];
                     tsconfig_path = self
                         .fs_ref()
@@ -6889,7 +6863,7 @@ impl<'a> Resolver<'a> {
             }
             if tsconfig_path.is_none() {
                 if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                    if lookup.entry().kind(&self.entry_stats(), self.store_fd)
+                    if lookup.entry().kind(&*self, self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"jsconfig.json".as_slice()];

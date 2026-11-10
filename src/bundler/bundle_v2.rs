@@ -5474,7 +5474,9 @@ pub mod bv2_impl {
             }
 
             // Worker-assignment teardown.
-            let pool = self.graph.pool_mut();
+            // SAFETY: see `Graph::pool`. The waits at the top of this function are over, so no
+            // source map task and no IO task still borrows the pool.
+            let pool = unsafe { self.graph.pool.get_mut() };
             {
                 let mut assignments = pool.workers_assignments.lock();
                 if assignments.count() > 0 {

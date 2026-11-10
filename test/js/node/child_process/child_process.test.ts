@@ -1880,3 +1880,73 @@ it("throw from a child stdio 'data' listener with no handler is fatal", async ()
     exitCode: 1,
   });
 });
+
+// A tool prints a banner, then its list. The program keeps the banner chunk and reads the rest with text(). The
+// child prints each part when it gets a line on stdin, so the read that gets it already waits.
+it("a child stdout chunk kept across text(child.stdout) keeps its bytes", async () => {
+  const writer = `let n = 0; process.stdin.on("data", () => { if (n++ === 0) process.stdout.write("version-7\\n"); else process.stdout.write("alpha\\nbeta\\n", () => process.exit(0)); });`;
+  const script = `
+    const { spawn } = require("node:child_process");
+    const { text } = require("node:stream/consumers");
+    const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+    child.stdout.once("data", async banner => {
+      const rest = text(child.stdout);
+      // After the ticks that start the read of the rest.
+      setImmediate(() => child.stdin.write("\\n"));
+      const list = (await rest).trim().split("\\n");
+      console.log("banner [" + banner.toString().trim() + "] list " + list.join(","));
+    });
+    // After the tick that starts the first read.
+    setImmediate(() => child.stdin.write("\\n"));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "banner [version-7] list alpha,beta",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The child writes block i (the letter a + i) when it gets a line on stdin, so the read that gets a block already
+// waits and push() runs in its reaction. The listener keeps every chunk.
+describe("a chunk that a child stdio 'data' listener keeps is not written over", () => {
+  const BLOCKS = 4;
+  const SIZE = 1024;
+  const writer = `let i = 0; const next = () => i < ${BLOCKS} ? process.stdout.write(Buffer.alloc(${SIZE}, 97 + i++)) : process.exit(0); next(); process.stdin.on("data", next);`;
+  const expected = Array.from({ length: BLOCKS }, (_, i) => String.fromCharCode(97 + i) + SIZE).join(" ");
+
+  it.each([
+    ["the listener calls read(0)", `child.stdout.read(0);`, ``],
+    [
+      "the listener throws and the 'uncaughtException' handler calls read(0)",
+      `throw new Error("data-throw");`,
+      `child.stdout.read(0);`,
+    ],
+  ])("%s", async (_label, inListener, inHandler) => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+      // The last line can reach a child that already exited.
+      child.stdin.on("error", () => {});
+      const kept = [];
+      process.on("uncaughtException", e => {
+        if (e.message !== "data-throw") { console.log("unexpected: " + e.message); process.exit(1); }
+        ${inHandler}
+      });
+      process.on("unhandledRejection", e => { console.log("unhandledRejection: " + e.message); process.exit(1); });
+      child.stdout.on("data", chunk => {
+        kept.push(chunk);
+        child.stdin.write("\\n");
+        ${inListener}
+      });
+      child.stdout.on("end", () => {
+        // "a1024 b1024 ...": each run of one letter and its length.
+        console.log(Buffer.concat(kept).toString("latin1").replace(/(.)\\1*/g, run => run[0] + run.length + " ").trim());
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  });
+});

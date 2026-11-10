@@ -3117,6 +3117,42 @@ describe.concurrent("the SourceProvider cache checks a source against its file a
     );
   });
 
+  // A file that a test wrote is too young for its size and times to show whether it changed since, so a source is
+  // compared with it by its text. A file that is older than the test run is compared by those alone, and is not read.
+  // Only a file that came with the repository is that old: the test imports isolation-old-module-fixture.ts where it
+  // is, and never writes it.
+  test.each(modes)("%s: a file that is older than the test run is not transpiled again", async (_, args, env) => {
+    await passes(
+      {
+        "young.ts": esm("young:0"),
+        "earlier.test.ts": anEarlierTestFile,
+        "reset.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          ${countsTranspiles}
+          const fixture = ${JSON.stringify(join(import.meta.dir, "isolation-old-module-fixture.ts"))};
+          const load = async () => [(await import(fixture)).text, (await import("./young.ts")).text];
+
+          test.each([
+            ["jest", jest, ":0", ":1"],
+            ["vi", vi, ":1", ":2"],
+          ])("%s.resetModules()", async (_, api, from, to) => {
+            // The first load comes after a reset, as in the test above.
+            api.resetModules();
+            expect(await load()).toEqual(["old", "young" + from]);
+            emptyCache();
+            rewrite("young.ts", from, to);
+            api.resetModules();
+            expect(await load()).toEqual(["old", "young" + to]);
+            expect(transpiled()).toHaveLength(1);
+          });
+        `,
+      },
+      3,
+      args,
+      env,
+    );
+  });
+
   const writesAndLoads = `
     import { writeFileSync } from "node:fs";
     import { join } from "node:path";

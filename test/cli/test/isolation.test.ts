@@ -3024,6 +3024,100 @@ describe.concurrent("the SourceProvider cache tells a test file that is the entr
   });
 });
 
+// After jest.resetModules() or vi.resetModules(), a load runs the file that is on disk. --isolate and --parallel keep
+// the sources that they have transpiled all the same: a source is compared with its file at its first use after a
+// reset, and at its first use after the end of a test file that reset, so only a file that changed is transpiled again.
+describe.concurrent("the SourceProvider cache checks a source against its file after resetModules()", () => {
+  const modes = [
+    ...isolateFlags.map(flag => [flag, [flag], {}] as const),
+    // One worker takes every file (scale-up gated), so the files share its sources.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }] as const,
+  ];
+  // With a second test file, --parallel starts a worker.
+  const anEarlierTestFile = `import { test } from "bun:test"; test("runs first", () => {});`;
+
+  // The test files run in the order of their names, which is the order a lone --parallel worker takes two files in.
+  const passes = async (files: Record<string, string>, pass: number, args: readonly string[], env: object) => {
+    using dir = tempDir("isolate-reset-source-cache", files);
+    const names = Object.keys(files)
+      .filter(name => name.includes(".test."))
+      .sort()
+      .map(name => "./" + name);
+    const { stderr, exitCode } = await runTests(String(dir), [...args], names, {
+      ...bunEnv,
+      ...env,
+      // bunEnv turns the transpiler cache off.
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "transpiler-cache"),
+    });
+    expect(stderr).toContain(` ${pass} pass\n 0 fail\n`);
+    expect(exitCode).toBe(0);
+  };
+
+  // The transpiler cache stores the output for each text of 4,096 bytes or more, in a file named by the hash of that
+  // text. The entries that an emptied directory gets are therefore the files that were transpiled since. The test
+  // files are smaller than that, and leave none.
+  const padding = `\n//${Buffer.alloc(4096, "x").toString()}\n`;
+  const esm = (text: string) => `export const text = "${text}";${padding}`;
+  const cjs = (text: string) => `exports.text = "${text}";${padding}`;
+  const countsTranspiles = `
+    import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+    import { join } from "node:path";
+
+    const cacheDir = process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH;
+    const emptyCache = () => {
+      rmSync(cacheDir, { recursive: true, force: true });
+      mkdirSync(cacheDir);
+    };
+    const transpiled = () => readdirSync(cacheDir);
+    // The new text is as long as the old one, so the size of the file does not show that it changed.
+    const rewrite = (name, from, to) => {
+      const path = join(import.meta.dir, name);
+      writeFileSync(path, readFileSync(path, "utf8").replace(from, to));
+    };
+  `;
+
+  test.each(modes)("%s: only the files that changed are transpiled again", async (_, args, env) => {
+    await passes(
+      {
+        "esm-a.ts": esm("esm-a:0"),
+        "esm-b.ts": esm("esm-b:0"),
+        "cjs-a.cjs": cjs("cjs-a:0"),
+        "cjs-b.cjs": cjs("cjs-b:0"),
+        "earlier.test.ts": anEarlierTestFile,
+        "reset.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          ${countsTranspiles}
+          const load = async () => [
+            (await import("./esm-a.ts")).text,
+            (await import("./esm-b.ts")).text,
+            require("./cjs-a.cjs").text,
+            require("./cjs-b.cjs").text,
+          ];
+
+          test.each([
+            ["jest", jest, ":0", ":1"],
+            ["vi", vi, ":1", ":2"],
+          ])("%s.resetModules()", async (_, api, from, to) => {
+            // The first load comes after a reset: a source that was cached before the first reset of the process
+            // is transpiled again after it, whether its file changed or not.
+            api.resetModules();
+            expect(await load()).toEqual(["esm-a" + from, "esm-b:0", "cjs-a" + from, "cjs-b:0"]);
+            emptyCache();
+            rewrite("esm-a.ts", from, to);
+            rewrite("cjs-a.cjs", from, to);
+            api.resetModules();
+            expect(await load()).toEqual(["esm-a" + to, "esm-b:0", "cjs-a" + to, "cjs-b:0"]);
+            expect(transpiled()).toHaveLength(2);
+          });
+        `,
+      },
+      3,
+      args,
+      env,
+    );
+  });
+});
+
 describe.concurrent("mocks and spies do not outlive their test file", () => {
   const modes = ["--no-isolate", "--isolate", "--rerun-each=2", "--parallel=1 --no-isolate"];
   const results = (stderr: string) => [

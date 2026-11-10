@@ -752,6 +752,204 @@ describe.concurrent("hooks of a describe block that does not run", () => {
   });
 });
 
+// "bun:test" runs beforeAll and afterAll in a block whose tests are all skipped, but never outside the aroundAll that wraps them.
+describe.concurrent("where no test runs, an aroundAll stays out and so do the hooks inside it", () => {
+  async function run(files: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("hooks-inside-around-all", files);
+    await using proc = spawn({
+      cmd: [bunExe(), "test", ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      log: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+      results: stderr
+        .split("\n")
+        .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
+        .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+      errors: stderr.split("\n").filter(line => /^\w*[eE]rror: /.test(line)),
+      exitCode,
+    };
+  }
+
+  const importAll = (module: string) => `import { test, describe, beforeAll, afterAll, aroundAll } from "${module}";`;
+  const blocks = `
+    import { AsyncLocalStorage } from "node:async_hooks";
+    const store = new AsyncLocalStorage();
+    const wrap = name => aroundAll(async runSuite => {
+      console.log(name, "aroundAll >");
+      await store.run(name, runSuite);
+      console.log(name, "aroundAll <");
+    });
+    const hooks = name => {
+      beforeAll(() => console.log(name, "beforeAll inside", store.getStore()));
+      afterAll(() => console.log(name, "afterAll inside", store.getStore()));
+    };
+    describe("runs a test", () => {
+      wrap("runs a test");
+      hooks("runs a test");
+      test("test", () => {});
+      describe("skipped, with its own aroundAll", () => {
+        wrap("unreachable");
+        hooks("unreachable");
+        test.skip("test", () => {});
+      });
+      describe("skipped, without one", () => {
+        hooks("skipped, without one");
+        test.skip("test", () => {});
+      });
+    });
+    describe("skipped", () => {
+      wrap("unreachable");
+      hooks("unreachable");
+      test.skip("test", () => {});
+      describe("nested", () => {
+        hooks("unreachable");
+        describe("twice", () => {
+          hooks("unreachable");
+          test.skip("test", () => {});
+        });
+      });
+    });
+    describe("afterAll only", () => {
+      wrap("unreachable");
+      afterAll(() => console.log("unreachable"));
+      test.skip("test", () => {});
+    });
+    describe("todo", () => {
+      wrap("unreachable");
+      hooks("unreachable");
+      test.todo("test");
+    });
+    describe("skipIf", () => {
+      wrap("unreachable");
+      hooks("unreachable");
+      test.skipIf(true)("test", () => {});
+    });
+    describe("no tests", () => {
+      wrap("unreachable");
+      hooks("unreachable");
+    });
+    describe("skipped, and nothing wraps it", () => {
+      hooks("nothing wraps it");
+      test.skip("test", () => {});
+    });
+  `;
+  const insideTheOneThatRuns = (skippedBlock: string[]) => [
+    "runs a test aroundAll >",
+    "runs a test beforeAll inside runs a test",
+    ...skippedBlock,
+    "runs a test afterAll inside runs a test",
+    "runs a test aroundAll <",
+  ];
+  const ofBun = [
+    ...insideTheOneThatRuns([
+      "skipped, without one beforeAll inside runs a test",
+      "skipped, without one afterAll inside runs a test",
+    ]),
+    "nothing wraps it beforeAll inside undefined",
+    "nothing wraps it afterAll inside undefined",
+  ];
+  test.each([
+    [`"bun:test"`, importAll("bun:test"), ofBun],
+    [`"@jest/globals"`, importAll("@jest/globals"), ofBun],
+    ["the globals", "", ofBun],
+    [
+      `"bun:test", inside an aroundAll from "vitest"`,
+      `import { test, describe, beforeAll, afterAll } from "bun:test"; import { aroundAll } from "vitest";`,
+      ofBun,
+    ],
+    [`"vitest"`, importAll("vitest"), insideTheOneThatRuns([])],
+  ])("hooks from %s", async (_, header, expected) => {
+    const { log, results, errors, exitCode } = await run({ "a.test.js": header + blocks });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: expected,
+      results: [
+        "(pass) runs a test > test",
+        "(skip) runs a test > skipped, with its own aroundAll > test",
+        "(skip) runs a test > skipped, without one > test",
+        "(skip) skipped > test",
+        "(skip) skipped > nested > twice > test",
+        "(skip) afterAll only > test",
+        "(todo) todo > test",
+        "(skip) skipIf > test",
+        "(skip) skipped, and nothing wraps it > test",
+      ],
+      errors: [],
+      exitCode: 0,
+    });
+  });
+
+  test("a beforeAll doesn't run without the set-up of its aroundAll", async () => {
+    const { results, errors, exitCode } = await run({
+      "a.test.js": `
+        ${importAll("bun:test")}
+        let db;
+        describe("D", () => {
+          aroundAll(async runSuite => { db = { query: () => 1 }; await runSuite(); db = undefined; });
+          beforeAll(() => { db.query(); });
+          test.skip("S", () => {});
+        });
+        test("T", () => {});
+      `,
+    });
+    expect({ results, errors, exitCode }).toEqual({ results: ["(skip) D > S", "(pass) T"], errors: [], exitCode: 0 });
+  });
+
+  test("a file's aroundAll keeps the file's hooks out, and the hooks of a scope above an aroundAll still run", async () => {
+    const { log, results, errors, exitCode } = await run(
+      {
+        "preload.js": `
+          ${importAll("bun:test")}
+          aroundAll(async runSuite => { console.log("preload aroundAll >"); await runSuite(); console.log("preload aroundAll <"); });
+          beforeAll(() => console.log("preload beforeAll"));
+          afterAll(() => console.log("preload afterAll"));
+        `,
+        "a.test.js": `
+          ${importAll("bun:test")}
+          aroundAll(() => console.log("unreachable"));
+          beforeAll(() => console.log("unreachable"));
+          afterAll(() => console.log("unreachable"));
+          describe("block", () => {
+            beforeAll(() => console.log("unreachable"));
+            afterAll(() => console.log("unreachable"));
+            test.skip("in a", () => {});
+          });
+        `,
+        "b.test.js": `
+          ${importAll("bun:test")}
+          beforeAll(() => console.log("b beforeAll"));
+          afterAll(() => console.log("b afterAll"));
+          describe("block", () => {
+            aroundAll(() => console.log("unreachable"));
+            beforeAll(() => console.log("unreachable"));
+            afterAll(() => console.log("unreachable"));
+            test.skip("in b", () => {});
+          });
+        `,
+      },
+      "--preload",
+      "./preload.js",
+    );
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "preload aroundAll >",
+        "preload beforeAll",
+        "b beforeAll",
+        "b afterAll",
+        "preload afterAll",
+        "preload aroundAll <",
+      ],
+      results: ["(skip) block > in a", "(skip) block > in b"],
+      errors: [],
+      exitCode: 0,
+    });
+  });
+});
+
 it("should run beforeAll() & afterAll() even without tests", async () => {
   const test_dir = tmpdirSync();
   try {

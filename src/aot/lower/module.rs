@@ -30,7 +30,7 @@ use crate::load::Sources;
 use crate::modules::{ImportBinding, KnownMemberValues};
 
 pub(in crate::lower) use self::body::finish_body;
-pub(crate) use self::loads::lower_import_call;
+pub(crate) use self::loads::{has_settled_type, lower_import_call};
 pub(crate) use self::test_run_ways::{KeptBetweenWays, find_file_that_asks_mock};
 pub use left_out::LeftOutDeclarations;
 pub use library::collect_library_functions;

@@ -1,7 +1,7 @@
 use bun_sema::bind::SymbolId;
 use bun_sema::program::FileId;
 
-use super::graph::ModuleGraph;
+use super::graph::{FileRow, ModuleGraph};
 use super::{ExportBinding, ImportBinding, ModuleKind, ModuleRef};
 
 pub struct InstanceLayout {
@@ -33,6 +33,21 @@ impl InstanceLayout {
     }
 }
 
+fn find_files_of_imports(row: &FileRow) -> Vec<FileId> {
+    let imports = row.imports.iter().map(|import| import.1);
+    let members = row.members.iter().map(|member| member.1);
+    let jsx = row.jsx.iter().map(|import| import.1);
+    let bindings = imports.chain(members).chain(jsx);
+    let files = bindings.filter_map(|binding| match binding {
+        ImportBinding::Variable(variable) => Some(variable.file),
+        _ => None,
+    });
+    let mut files: Vec<FileId> = files.filter(|&file| file != row.file).collect();
+    files.sort_unstable();
+    files.dedup();
+    files
+}
+
 impl ModuleGraph {
     pub fn has_instances(&self, file: FileId) -> bool {
         self.is_reloadable(file)
@@ -59,21 +74,23 @@ impl ModuleGraph {
         let mut exports: Vec<SymbolId> = own_variables.collect();
         exports.sort_unstable();
         exports.dedup();
-        let mut links: Vec<FileId> = Vec::new();
         let row = self.row(file);
-        let imports = row.imports.iter().map(|import| import.1);
-        let members = row.members.iter().map(|member| member.1);
-        let jsx = row.jsx.iter().map(|import| import.1);
-        for binding in imports.chain(members).chain(jsx) {
-            if let ImportBinding::Variable(variable) = binding
-                && variable.file != file
-                && self.has_instances(variable.file)
-            {
-                links.push(variable.file);
-            }
-        }
-        links.sort_unstable();
-        links.dedup();
+        let mut links = find_files_of_imports(row);
+        links.retain(|&target| {
+            self.has_instances(target) && row.unread_instances.binary_search(&target).is_err()
+        });
         InstanceLayout { exports, links }
+    }
+
+    pub fn limit_instance_links(&mut self, is_read: &dyn Fn(FileId, FileId) -> bool) {
+        for index in 0..self.rows.len() {
+            let file = self.rows[index].file;
+            if !self.is_reloadable(file) {
+                continue;
+            }
+            let mut unread = find_files_of_imports(&self.rows[index]);
+            unread.retain(|&target| !is_read(file, target));
+            self.rows[index].unread_instances = unread;
+        }
     }
 }

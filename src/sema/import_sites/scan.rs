@@ -50,6 +50,7 @@ pub(crate) fn collect_import_sites<'s>(
         paths_of_changed_files: slice_in(&calls.paths_of_changed_files, arena),
         module_relative_reads: slice_in(&calls.module_relative_reads, arena),
         caller_relative_reads: slice_in(&calls.caller_relative_reads, arena),
+        known_load_names: slice_in(&calls.known_load_names, arena),
         own_url_arguments: slice_in(&calls.own_url_arguments, arena),
         exported_file_changers: slice_in(&calls.exported_file_changers, arena),
         asked_of_other_files: slice_in(&calls.asked_of_other_files, arena),

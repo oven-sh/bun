@@ -1,5 +1,6 @@
 use crate::cli::script_or_command::{
-    LAUNCHER_SUFFIXES, is_runnable_file, nearest_package_json, read_package_json,
+    LAUNCHER_SUFFIXES, RUNNABLE_EXTENSIONS, is_runnable_file, nearest_package_json,
+    read_package_json,
 };
 
 const INDEX_FILES: [&[u8]; 4] = [b"index.ts", b"index.tsx", b"index.mts", b"index.js"];
@@ -10,8 +11,10 @@ pub(super) struct DefaultEntryPoint {
 }
 
 pub(super) enum NamedEntryPoint {
-    /// A path, a source file in the working directory, or a name that no installed package has.
+    /// A path, a file or folder of that name in the working directory, or a name that no installed package has.
     AsWritten,
+    /// `serve.ts` in the working directory, written as `serve`.
+    SourceFile(Box<[u8]>),
     Executable(DefaultEntryPoint),
     /// An installed package that provides no executable of that name. The resolver finds what `import` loads.
     Library {
@@ -154,14 +157,24 @@ pub(super) fn find_default_entry_point(
     }
 }
 
-/// `bun compile rollup`: `written` names an executable that an installed package provides, as in `bun run rollup`.
-pub(super) fn find_installed_executable(
+/// `bun compile rollup`: `written` can name an executable that an installed package provides, as in `bun run rollup`.
+/// Source of that name in the working directory goes first.
+pub(super) fn find_named_entry_point(
     working_directory: &[u8],
     written: &[u8],
 ) -> Result<NamedEntryPoint, EntryPointError> {
-    if !bun_core::strings::is_npm_package_name(written)
-        || names_source_file(working_directory, written)
-    {
+    if !bun_core::strings::is_npm_package_name(written) {
+        return Ok(NamedEntryPoint::AsWritten);
+    }
+    // An earlier `bun compile serve` wrote `./serve`. It is not source, and hides no other file.
+    let is_executable = is_native_executable(&join(working_directory, written));
+    if !is_executable && find_file(working_directory, written).is_some() {
+        return Ok(NamedEntryPoint::AsWritten);
+    }
+    if let Some(path) = find_source_file(working_directory, written) {
+        return Ok(NamedEntryPoint::SourceFile(path));
+    }
+    if !is_executable && is_runnable_file(written, working_directory) {
         return Ok(NamedEntryPoint::AsWritten);
     }
     let executable_name = strip_scope(written);
@@ -201,10 +214,25 @@ enum PackageExecutable {
     Found(Box<[u8]>),
 }
 
-/// An earlier `bun compile rollup` wrote `./rollup`, which is not source.
-fn names_source_file(working_directory: &[u8], name: &[u8]) -> bool {
-    is_runnable_file(name, working_directory)
-        && !is_native_executable(&join(working_directory, name))
+fn find_source_file(working_directory: &[u8], name: &[u8]) -> Option<Box<[u8]>> {
+    // The resolver tries them in this order for an entry point.
+    use bun_bundler::options::bundle_options_defaults::MODULE_EXTENSION_ORDER;
+    (MODULE_EXTENSION_ORDER.iter())
+        .filter(|extension| RUNNABLE_EXTENSIONS.contains(*extension))
+        .find_map(|extension| find_file(working_directory, &[name, *extension].concat()))
+}
+
+/// The name in the nearest package.json that has one.
+pub(super) fn find_package_name(path: &[u8]) -> Option<Vec<u8>> {
+    let mut directory = bun_paths::dirname(path)?;
+    loop {
+        let (found, package_json, contents) = nearest_package_json(directory)?;
+        let written_name = parse_manifest(found, &package_json, &contents).written_name;
+        if !written_name.is_empty() {
+            return Some(written_name);
+        }
+        directory = bun_paths::dirname(found)?;
+    }
 }
 
 fn is_native_executable(path: &[u8]) -> bool {
@@ -294,8 +322,8 @@ fn find_linked_executable(
     let Some(launcher) = launcher else {
         return Ok(None);
     };
-    if is_symbolic_link(&launcher) {
-        return Ok(Some(launcher));
+    if let Some(target) = read_link(&launcher) {
+        return Ok(Some(join(&bin_directory, &target).into()));
     }
     for package in installed_packages(node_modules) {
         let found = find_package_executable(&join(node_modules, &package), executable_name)?;
@@ -306,11 +334,12 @@ fn find_linked_executable(
     Ok(None)
 }
 
-fn is_symbolic_link(path: &[u8]) -> bool {
+/// Nothing if it is not a link.
+fn read_link(path: &[u8]) -> Option<Vec<u8>> {
     let path = bun_core::ZBox::from_bytes(path);
-    bun_sys::lstat(&path).is_ok_and(|found| {
-        bun_sys::kind_from_mode(found.st_mode as _) == bun_sys::EntryKind::SymLink
-    })
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let length = bun_sys::readlink(&path, &mut buffer[..]).ok()?;
+    Some(buffer[..length].to_vec())
 }
 
 /// `name` and `@scope/name`, sorted: the order of a directory's entries differs between file systems.
@@ -401,6 +430,8 @@ fn find_package_entry_point(
 }
 
 struct PackageManifest {
+    written_name: Vec<u8>,
+    // Without its scope, or that of the directory.
     name: Vec<u8>,
     // (executable name, path as written)
     executables: Vec<(Vec<u8>, Vec<u8>)>,
@@ -435,6 +466,7 @@ fn parse_manifest(directory: &[u8], package_json: &[u8], contents: &[u8]) -> Pac
         }
     }
     PackageManifest {
+        written_name,
         name,
         executables,
         module: string_member(PackageField::Module.name()),

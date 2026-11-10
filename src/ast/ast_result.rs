@@ -10,8 +10,8 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
 use crate::runtime;
 use crate::{
-    CharFreq, ExportsKind, Expr, InlinedEnumValue, Loc, LocRef, NamedExport, NamedImport, Part,
-    Range, Ref, Scope, SlotCounts, StoreSlice, StoreStr, Target,
+    CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
+    Ref, Scope, SlotCounts, StoreStr, Target,
 };
 
 use crate::part::List as PartList;
@@ -104,44 +104,6 @@ pub struct Ast<'a> {
     pub import_meta_ref: Ref,
     /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
     pub depends_on_more_than_source: bool,
-    /// Sorted by `body_loc`.
-    pub requested_originals: StoreSlice<RequestedOriginals>,
-}
-
-/// The modules that the body of one function passes to `importActual()` and `requireActual()`. `bun test` loads the
-/// original of a mocked module before it calls a factory that requests it.
-pub struct RequestedOriginals {
-    /// `G::FnBody::loc` of the function.
-    pub body_loc: Loc,
-    /// Where the printer put the `(` of the parameters, which is where JavaScriptCore says the function starts.
-    pub printed_at: core::sync::atomic::AtomicU32,
-    /// Empty if the body may request any module.
-    pub names: StoreSlice<StoreStr>,
-}
-
-impl RequestedOriginals {
-    pub const NOT_PRINTED: u32 = u32::MAX;
-
-    /// One line per printed function: `printed_at`, then a tab before each name. `Bun::requestsOriginalModule()` reads it.
-    pub fn serialize(functions: &[RequestedOriginals]) -> Vec<u8> {
-        use std::io::Write;
-        let mut lines = Vec::new();
-        for function in functions {
-            let printed_at = function
-                .printed_at
-                .load(core::sync::atomic::Ordering::Relaxed);
-            if printed_at == Self::NOT_PRINTED {
-                continue;
-            }
-            let _ = write!(lines, "{printed_at}");
-            for name in function.names.slice() {
-                lines.push(b'\t');
-                lines.extend_from_slice(name.slice());
-            }
-            lines.push(b'\n');
-        }
-        lines
-    }
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -188,7 +150,6 @@ impl<'a> Ast<'a> {
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
             depends_on_more_than_source: false,
-            requested_originals: StoreSlice::EMPTY,
         }
     }
 }

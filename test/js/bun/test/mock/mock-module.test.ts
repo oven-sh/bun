@@ -758,31 +758,6 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
-  test("is not evaluated for a factory that only has importOriginal or importActual as a word in its source", async () => {
-    const mocked = (statement: string) =>
-      testOf(
-        "enum Notes { importOriginal = 1 }",
-        `vi.doMock("./own", () => { (globalThis.order ??= []).push("factory"); ${statement}; return { value: "mock" }; });`,
-        ["factory"],
-      );
-    await expectFixturesToPass(
-      {
-        ...logged,
-        "string.test.ts": mocked(`globalThis.note = "importOriginal importActual requireActual"`),
-        "key.test.ts": mocked(`globalThis.note = { importOriginal: 1, importActual: 2, requireActual: 3 }`),
-        "local.test.ts": mocked(`const importOriginal = { caught: 1 }; try { throw importOriginal; } catch {}`),
-        "shorthand.test.ts": mocked(`const importOriginal = Math.random(); globalThis.note = { importOriginal }`),
-        "enum-member.test.ts": mocked(`globalThis.note = Notes["importOriginal"] + Math.random()`),
-        "longer-name.test.ts": mocked(`globalThis.note = (vi as any).importActually`),
-        "comment.test.ts": mocked(`/*! importActual("./own") */`),
-        "regular-expression.test.ts": mocked(`globalThis.note = /importActual/`),
-        "template.test.ts": mocked("globalThis.note = `importActual(${1})`"),
-      },
-      9,
-      ["--isolate"],
-    );
-  });
-
   test("is not evaluated for a factory that requests another module", async () => {
     await expectFixturesToPass(
       {
@@ -831,57 +806,33 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
-  test("is found by a name that is held in a constant", async () => {
-    const mocked = (setup: string, name: string, order = ["factory", "other"]) =>
-      testOf(
-        setup,
-        `vi.doMock("./own", async () => { (globalThis.order ??= []).push("factory"); return { ...(await vi.importActual(${name})), value: "mock" }; });`,
-        order,
-      );
-    await expectFixturesToPass(
-      {
-        ...logged,
-        "const.test.ts": mocked(`const other = "./other";`, `other`),
-        "const-in-sum.test.ts": mocked(`const rest = "her";`, `"./ot" + rest`),
-        "const-in-template.test.ts": mocked(`const rest = "other";`, "`./${rest}`"),
-        "const-declared-later.test.ts": mocked(``, `other`) + `const other = "./other";`,
-        "enum-member.test.ts": mocked(`enum Names { Other = "./other" }`, `Names.Other`),
-        "mocked-module.test.ts": mocked(`const own = "./own";`, `own`, ["own", "factory"]),
-        // Any of these may name the mocked module.
-        "let.test.ts": mocked(`let other = "./other";`, `other`, ["own", "factory", "other"]),
-        "shadowed.test.ts": testOf(
-          `const other = "./other";`,
-          `vi.doMock("./own", async () => { (globalThis.order ??= []).push("factory"); const load = (other: string) => vi.importActual(other); return { ...(await load("./other")), value: "mock" }; });`,
-          ["own", "factory", "other"],
-        ),
-      },
-      8,
-      ["--isolate"],
-    );
+  test("reads a very long sum", async () => {
+    const sum = Array(100_000).fill(`"a"`).join(" + ");
+    const factory = `() => { (globalThis.order ??= []).push("factory"); return vi.importActual("./other" + ${sum}).catch(() => ({ value: "mock" })); }`;
+    const files = { "sum.test.ts": testOf(`const long = ${sum};`, `vi.doMock("./own", ${factory});`, ["factory"]) };
+    await expectFixturesToPass({ ...logged, ...files }, 1);
   });
 
-  test("a file from the transpiler cache still says which functions request the original", async () => {
-    using dir = tempDir("mock-module", {
+  const setup = `mock.module("./own", async () => { ${body} });`;
+  test.each([
+    ["script", `require("./setup.cjs");`],
+    ["wrapper", `require("node:module").wrapper[0] += " "; require("./setup.cjs");`],
+    [
+      "plugin",
+      `Bun.plugin({ name: "setup", setup: ({ onLoad }) => onLoad({ filter: /virtual/ }, () => ({ contents: ${JSON.stringify(setup)}, loader: "ts" })) });
+       await import("./virtual");`,
+    ],
+  ])("is evaluated first in a %s", async (_, start) => {
+    using dir = tempDir("mock-in-script", {
       ...logged,
-      "cached.test.ts": testOf(`// ${"-".repeat(8192)}`, `vi.doMock("./own", async () => { ${body} });`, [
-        "own",
-        "factory",
-      ]),
+      "globals.ts": `import { mock, vi } from "bun:test"; Object.assign(globalThis, { mock, vi });`,
+      "setup.cjs": setup,
+      "virtual.ts": "",
+      "index.ts": `import "./globals"; ${start} const { look } = await import("./user"); console.log(look(), ...globalThis.order);`,
     });
-    const cache = join(String(dir), "cache");
-    for (let run = 0; run < 2; run++) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test"],
-        cwd: String(dir),
-        env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(" 1 pass\n 0 fail\n");
-      expect(exitCode).toBe(0);
-      expect(readdirSync(cache)).not.toBeEmpty();
-    }
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.ts"], env: bunEnv, cwd: String(dir), stderr: "inherit" });
+    expect(await proc.stdout.text()).toBe("mock own factory\n");
+    expect(await proc.exited).toBe(0);
   });
 
   test("importOriginal and vi.importActual load a module that was never loaded, once", async () => {

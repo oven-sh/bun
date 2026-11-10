@@ -1,6 +1,6 @@
 use super::alternatives::{
     AskedOfDataFiles, Folder, Found, OpenParameter, WrittenNames, find_alternatives,
-    find_caller_relative_alternatives, find_known_alternatives,
+    find_caller_relative_alternatives, find_known_alternatives, find_known_load_names,
 };
 use super::call_sites::is_free_name;
 use super::made_requires::{follow_settled_bindings, is_only_read_by_member};
@@ -398,6 +398,21 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         let (found, parameter) = find_known_alternatives(&self.inputs, names, asked, value);
         let paths = found.map_or_else(SmallVec::new, |found| self.to_module_relative_paths(&found));
         (paths, parameter)
+    }
+
+    pub(super) fn find_known_load_names(&self, value: ExprId) -> SmallVec<[Atom; 2]> {
+        let (names, asked) = (&self.written_names, &self.asked);
+        let Some(found) = find_known_load_names(&self.inputs, names, asked, value) else {
+            return SmallVec::new();
+        };
+        if found.resolved_form.is_some() || found.start_at_own_directory {
+            return self.to_module_relative_paths(&found);
+        }
+        let texts = found.alternatives.iter().filter_map(|it| match *it {
+            ImportSpecifier::Constant(text) if !found.is_out_of_data_file => Some(text),
+            _ => None,
+        });
+        texts.collect()
     }
 
     pub(super) fn find_caller_relative_reads(

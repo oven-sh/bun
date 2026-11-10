@@ -703,9 +703,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             (bun_alloc::AstAlloc::vec(), bun_ast::Loc::EMPTY)
         };
-        if p.may_request_originals {
-            p.did_parse_call(&target, &args);
-        }
 
         Ok(p.new_expr(
             E::New {

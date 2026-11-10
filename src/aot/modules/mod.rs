@@ -11,6 +11,7 @@ mod interop;
 #[cfg(test)]
 mod kept_frames_tests;
 mod known_members;
+mod link_lookups;
 mod module_set;
 mod namespace_members;
 mod order;
@@ -689,6 +690,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
                 false => Vec::new(),
             },
             unread_exports: Vec::new(),
+            unread_instances: Vec::new(),
             names_left_out: Vec::new(),
             is_left_to_loader: is_left_to_loader[file.idx()],
             required_names: imports.required_names,

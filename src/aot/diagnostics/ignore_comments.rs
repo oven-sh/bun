@@ -3,8 +3,10 @@ use std::mem::take;
 use bun_ast::{Kind, Msg};
 use bun_core::strings;
 use bun_sema::check::aot::FileOrigin;
-use bun_sema::hir::{IGNORE_COMMENT_MARKER, NodeData};
-use bun_sema::import_sites::ImportSpecifier;
+use bun_sema::file_analysis::FileAnalysis;
+use bun_sema::hir::{ExprId, IGNORE_COMMENT_MARKER};
+use bun_sema::import_sites::{ImportSite, ImportSpecifier};
+use bun_sema::node::NodeData;
 use bun_sema::program::FileId;
 
 use super::{Diagnostic, Diagnostics, Entry, ProgramView, Span};
@@ -131,6 +133,34 @@ fn parse_codes(written: &[u8]) -> Vec<u32> {
     codes
 }
 
+fn computed_load(analysis: &FileAnalysis<'_>, site: &ImportSite) -> Option<ExprId> {
+    let call = site.kind.call().filter(|_| site.kind.loads_module())?;
+    let mut written = analysis.alternatives_of(&site.specifier).iter();
+    written
+        .any(|it| {
+            matches!(
+                it,
+                ImportSpecifier::Unknown | ImportSpecifier::Pattern { .. }
+            )
+        })
+        .then_some(call)
+}
+
+pub(crate) fn has_computed_load_in_program(view: ProgramView<'_, '_>) -> bool {
+    let files = view.files();
+    let mut own = files
+        .compiled_files()
+        .iter()
+        .filter(|&&it| is_edited_by_user(view.origin(it)));
+    own.any(|&file| {
+        let analysis = files.analysis(file);
+        analysis
+            .import_sites
+            .iter()
+            .any(|site| computed_load(analysis, site).is_some())
+    })
+}
+
 fn is_edited_by_user(origin: FileOrigin) -> bool {
     matches!(
         origin,
@@ -177,20 +207,13 @@ impl Diagnostics {
                 }
             }
             let analysis = files.analysis(file);
-            for site in analysis.import_sites {
-                let Some(call) = site.kind.call().filter(|_| site.kind.loads_module()) else {
-                    continue;
-                };
-                let mut written = analysis.alternatives_of(&site.specifier).iter();
-                if written.any(|it| {
-                    matches!(
-                        it,
-                        ImportSpecifier::Unknown | ImportSpecifier::Pattern { .. }
-                    )
-                }) {
-                    let span = Span::of_node(hir, file, NodeData::Expr(call));
-                    self.withhold(view, COMPUTED_IMPORT_PATH, span);
-                }
+            for call in analysis
+                .import_sites
+                .iter()
+                .filter_map(|site| computed_load(analysis, site))
+            {
+                let span = Span::of_node(hir, file, NodeData::Expr(call));
+                self.withhold(view, COMPUTED_IMPORT_PATH, span);
             }
         }
     }

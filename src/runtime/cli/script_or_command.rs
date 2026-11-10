@@ -350,13 +350,14 @@ fn entry_kind(dir: &[u8], parts: &[&[u8]]) -> Option<bun_sys::ExistsAtType> {
     bun_sys::exists_at_type(bun_core::Fd::cwd(), &path).ok()
 }
 
+/// Those of the resolver that can be run: `bun lint -o lint.json` must not take the name away.
+pub(super) const RUNNABLE_EXTENSIONS: [&[u8]; 8] = [
+    b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts",
+];
 /// Whether `bun <name>` in `cwd` finds a file to run: `name`, `name.ts` or `name/index.ts`.
 pub(super) fn is_runnable_file(name: &[u8], cwd: &[u8]) -> bool {
     use bun_sys::ExistsAtType;
-    // Those of the resolver that can be run: `bun lint -o lint.json` must not take the name away.
-    let extensions: [&[u8]; 8] = [
-        b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts",
-    ];
+    let extensions = RUNNABLE_EXTENSIONS;
     let is_file = |parts: &[&[u8]]| entry_kind(cwd, parts) == Some(ExistsAtType::File);
     let found = match entry_kind(cwd, &[name]) {
         Some(ExistsAtType::File) => true,

@@ -963,9 +963,6 @@ impl TranspilerJob {
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
                 module_info,
                 tag: this_tag,
-                requested_originals: ResolvedSource::requested_originals_from(
-                    &entry.requested_originals,
-                ),
                 ..Default::default()
             };
 

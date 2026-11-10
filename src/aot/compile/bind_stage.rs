@@ -10,6 +10,7 @@ use crate::builtins::{
 };
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span, range_of_node};
+use crate::ir::generated::ModuleRequestKind;
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
 use crate::load::contents::worker_entries::source_path_of;
@@ -21,7 +22,7 @@ use crate::load::{PerProject, ProjectId};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, BindInput, BoundModules, DeferredExports, ImportBinding, LinkedProject, ModuleGraph,
-    ModuleKind, ModuleRef, Shape,
+    ModuleKind, ModuleRef, ModuleRequest, Shape,
 };
 use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
@@ -39,10 +40,10 @@ use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind, StmtI
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files, Sym};
 use bun_sema::resolve::CodeImportKind;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
-fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
+fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules, left_out_files: &[FileId]) {
     for &module in &reached.looked_at {
         match graph.shape(module) {
             Shape::EsModule => graph.set_namespace_is_seen(module),
@@ -64,7 +65,20 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
         graph.set_is_found_by_name(module);
     }
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
-    graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
+    let keeps =
+        |referrer: ModuleRef, request: &ModuleRequest| reached.keeps_request(referrer, request);
+    let needed = match reached.drops_imports() {
+        true => graph.find_imports_of_lookups(left_out_files, &keeps),
+        false => FxHashSet::default(),
+    };
+    graph.limit_requests(|referrer, request| {
+        let is_needed = matches!(
+            (referrer, request.target, request.kind),
+            (ModuleRef::File(importer), ModuleRef::File(target), ModuleRequestKind::Import)
+                if needed.contains(&(importer, target))
+        );
+        is_needed || keeps(referrer, request)
+    });
     graph.add_imports(&reached.readers_of_built_in_modules);
 }
 
@@ -773,7 +787,7 @@ impl Build<'_> {
                         );
                     }
                 }
-                finish_modules(&mut graph, &reached);
+                finish_modules(&mut graph, &reached, &left_out.files);
                 if reached.stores_loader_function {
                     graph.set_computed_names_ask_loader_functions();
                 }
@@ -838,7 +852,7 @@ impl Build<'_> {
                     self.started_workers.root_folders_spelled = find_root_folders_spelled(
                         view.files(),
                         view.sources,
-                        &self.options.paths.root_directory,
+                        &from_native(&self.options.paths.root_directory),
                         &in_parallel,
                     );
                 }
@@ -898,6 +912,8 @@ impl Build<'_> {
                 graph.limit_exports(&in_parallel, &|file, export| {
                     left_out.find_export_use(file, export)
                 });
+                let has_link = |file, target| left_out.has_instance_link(file, target);
+                graph.limit_instance_links(&has_link);
                 steps.end_with(|| format!("{project_name}: limit exports"));
                 left_out
             }

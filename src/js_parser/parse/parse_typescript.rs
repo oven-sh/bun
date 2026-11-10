@@ -151,9 +151,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let name = E::Str::new(p.lexer.identifier);
                         let name_loc = p.lexer.loc();
                         p.lexer.next()?;
-                        if p.may_request_originals {
-                            p.did_parse_member_name(name.slice(), name_loc);
-                        }
                         expr = p.new_expr(
                             E::Dot {
                                 target: expr,
@@ -168,9 +165,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 T::TOpenParen => {
                     let args = p.parse_call_args()?;
-                    if p.may_request_originals {
-                        p.did_parse_call(&expr, &args.list);
-                    }
                     expr = p.new_expr(
                         E::Call {
                             target: expr,
@@ -663,9 +657,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
                 value.value = Some(p.parse_expr(Level::Comma)?);
-            }
-            if p.may_request_originals {
-                p.did_parse_constant(name.ref_, Some(value.name.slice()), value.value.as_ref());
             }
 
             let value_name = value.name;

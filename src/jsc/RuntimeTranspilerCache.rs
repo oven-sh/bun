@@ -85,8 +85,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 52: An entry lists the functions that request the original of a mocked module.
-const EXPECTED_VERSION: u32 = 52;
+const EXPECTED_VERSION: u32 = 51;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -153,10 +152,6 @@ pub struct Metadata {
     pub(crate) esm_record_byte_offset: u64,
     pub(crate) esm_record_byte_length: u64,
     pub(crate) esm_record_hash: u64,
-
-    pub(crate) requested_originals_byte_offset: u64,
-    pub(crate) requested_originals_byte_length: u64,
-    pub(crate) requested_originals_hash: u64,
 }
 
 impl Default for Metadata {
@@ -177,16 +172,13 @@ impl Default for Metadata {
             esm_record_byte_offset: 0,
             esm_record_byte_length: 0,
             esm_record_hash: 0,
-            requested_originals_byte_offset: 0,
-            requested_originals_byte_length: 0,
-            requested_originals_hash: 0,
         }
     }
 }
 
 impl Metadata {
-    // 1×u32 + 2×u8 (enum reprs) + 15×u64 = 4 + 2 + 120 = 126
-    pub(crate) const SIZE: usize = 4 + 1 + 1 + 15 * 8;
+    // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
+    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
 
     pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
@@ -209,10 +201,6 @@ impl Metadata {
         writer.write_int_le::<u64>(self.esm_record_byte_offset)?;
         writer.write_int_le::<u64>(self.esm_record_byte_length)?;
         writer.write_int_le::<u64>(self.esm_record_hash)?;
-
-        writer.write_int_le::<u64>(self.requested_originals_byte_offset)?;
-        writer.write_int_le::<u64>(self.requested_originals_byte_length)?;
-        writer.write_int_le::<u64>(self.requested_originals_hash)?;
         Ok(())
     }
 
@@ -250,10 +238,6 @@ impl Metadata {
         self.esm_record_byte_length = reader.read_int_le::<u64>()?;
         self.esm_record_hash = reader.read_int_le::<u64>()?;
 
-        self.requested_originals_byte_offset = reader.read_int_le::<u64>()?;
-        self.requested_originals_byte_length = reader.read_int_le::<u64>()?;
-        self.requested_originals_hash = reader.read_int_le::<u64>()?;
-
         self.module_type = match module_type_raw {
             1 => ModuleType::Esm,
             2 => ModuleType::Cjs,
@@ -278,8 +262,6 @@ pub struct Entry {
     pub output_code: BunString,
     pub sourcemap: Box<[u8]>,
     pub esm_record: Box<[u8]>,
-    /// `bun_ast::RequestedOriginals::serialize()`
-    pub requested_originals: Box<[u8]>,
 }
 
 impl Entry {
@@ -291,7 +273,6 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        requested_originals: &[u8],
         output_code: &BunString,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
@@ -342,12 +323,6 @@ impl Entry {
                     esm_record_byte_offset: (Metadata::SIZE + output_bytes.len() + sourcemap.len())
                         as u64,
                     esm_record_byte_length: esm_record.len() as u64,
-                    requested_originals_byte_offset: (Metadata::SIZE
-                        + output_bytes.len()
-                        + sourcemap.len()
-                        + esm_record.len())
-                        as u64,
-                    requested_originals_byte_length: requested_originals.len() as u64,
                     ..Default::default()
                 };
 
@@ -355,9 +330,6 @@ impl Entry {
                 metadata.sourcemap_hash = hash(sourcemap);
                 if !esm_record.is_empty() {
                     metadata.esm_record_hash = hash(esm_record);
-                }
-                if !requested_originals.is_empty() {
-                    metadata.requested_originals_hash = hash(requested_originals);
                 }
 
                 let mut metadata_stream = bun_io::FixedBufferStream::new_mut(&mut metadata_buf[..]);
@@ -382,7 +354,7 @@ impl Entry {
             };
             let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
 
-            let mut vecs_buf: [sys::PlatformIoVecConst; 5] = bun_core::ffi::zeroed();
+            let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
             let mut vecs_i: usize = 0;
             vecs_buf[vecs_i] = sys::platform_iovec_const_create(metadata_bytes);
             vecs_i += 1;
@@ -398,18 +370,10 @@ impl Entry {
                 vecs_buf[vecs_i] = sys::platform_iovec_const_create(esm_record);
                 vecs_i += 1;
             }
-            if !requested_originals.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(requested_originals);
-                vecs_i += 1;
-            }
             let vecs: &[sys::PlatformIoVecConst] = &vecs_buf[0..vecs_i];
 
             let mut position: i64 = 0;
-            let file_len = Metadata::SIZE
-                + output_bytes.len()
-                + sourcemap.len()
-                + esm_record.len()
-                + requested_originals.len();
+            let file_len = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
 
             #[cfg(debug_assertions)]
             {
@@ -452,8 +416,7 @@ impl Entry {
         let required = (Metadata::SIZE as u64)
             .saturating_add(self.metadata.output_byte_length)
             .saturating_add(self.metadata.sourcemap_byte_length)
-            .saturating_add(self.metadata.esm_record_byte_length)
-            .saturating_add(self.metadata.requested_originals_byte_length);
+            .saturating_add(self.metadata.esm_record_byte_length);
         if stat_size < required {
             return Err(crate::CrateError::MissingData);
         }
@@ -595,18 +558,6 @@ impl Entry {
             }
 
             self.esm_record = esm_record;
-        }
-
-        if self.metadata.requested_originals_byte_length > 0 {
-            let requested_originals = pread_box(
-                file,
-                self.metadata.requested_originals_byte_length as usize,
-                self.metadata.requested_originals_byte_offset,
-            )?;
-            if hash(&requested_originals) != self.metadata.requested_originals_hash {
-                return Err(crate::CrateError::InvalidHash);
-            }
-            self.requested_originals = requested_originals;
         }
 
         Ok(())
@@ -873,7 +824,6 @@ impl RuntimeTranspilerCache {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        requested_originals: &[u8],
         source_code: &BunString,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
@@ -922,7 +872,6 @@ impl RuntimeTranspilerCache {
             features_hash,
             sourcemap,
             esm_record,
-            requested_originals,
             source_code,
             exports_kind,
         )
@@ -1070,7 +1019,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             hit
         },
-        put(output_code_bytes, sourcemap, esm_record, requested_originals) => {
+        put(output_code_bytes, sourcemap, esm_record) => {
             let this = &mut *this;
             if this.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
                 return;
@@ -1097,7 +1046,6 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 },
                 sourcemap,
                 esm_record,
-                requested_originals,
                 &output_code,
                 this.exports_kind,
             );

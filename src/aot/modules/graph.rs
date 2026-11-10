@@ -107,6 +107,7 @@ pub(super) struct FileRow {
     pub exports: Vec<ModuleExport>,
     pub ambiguous_names: Vec<Atom>,
     pub unread_exports: Vec<SymbolId>,
+    pub unread_instances: Vec<FileId>,
     pub names_left_out: Vec<Atom>,
     pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,

@@ -201,7 +201,10 @@ describe.concurrent("bun compile", () => {
           "node_modules/tool/cli.js": `#!/usr/bin/env node\nconsole.log(require("./index.js").answer);\n`,
         });
         const folder = String(dir);
-        expect(await buildAndHash(folder, "compile", "tool")).toEqual(
+        const byName = await buildAndHash(folder, "compile", "tool");
+        const note = /^ +note  tool is node_modules.tool.cli\.js, from the package tool\n/m;
+        expect(byName.output).toMatch(note);
+        expect({ ...byName, output: byName.output.replace(note, "") }).toEqual(
           await buildAndHash(folder, "compile", "node_modules/tool/cli.js"),
         );
         expect(await spawned([executable(folder, "app")], "/", interpreterForbidden)).toMatchObject({

@@ -380,18 +380,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         };
         debug_assert!(self.file.scopes.has_environment(scope));
-        let environment = self.builder.read_variable(environment);
+        let made = self.builder.read_variable(environment);
         if let Some(instance_fields) = self.file.inputs.modules.instance_layout(self.file.file) {
             let field = instance_fields.field_of_scope();
             let instance = self.get_module_instance();
             let layout = environments::instance_layout(self.file);
             self.builder
-                .put_environment_field(instance, layout, field, environment);
+                .put_environment_field(instance, layout, field, made);
             return;
         }
         let key = VariableKey::EnvironmentMadeAhead(self.file.file);
-        let made = self.file.ensure_variable(key);
-        self.builder.put_module_variable(made, environment);
+        let variable = self.file.ensure_variable(key);
+        self.builder.put_module_variable(variable, made);
     }
 
     fn allocate_environment(

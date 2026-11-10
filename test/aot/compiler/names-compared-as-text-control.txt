@@ -119,8 +119,8 @@ allows src/aot/builtins/table/members.rs the table of built-ins
     return member == b"push";
 allows src/aot/ir/name_class.rs the class of a name, read off its text once
     return name.starts_with(b"#");
-allows src/sema/import_sites/requested_originals.rs a name by which Bun's transpiler finds a request for the original of a mocked module
-    return name == known::importActual || name == known::requireActual;
+allows src/aot/lower/function/original_asked_for.rs a word that `bun test` searches the printed text of a factory for
+    return name == known::importActual;
 allows src/aot/options.rs option words, which are the build's own
     return key == "threads";
 allows src/aot/load/test_runner_names.rs a name that no program can write

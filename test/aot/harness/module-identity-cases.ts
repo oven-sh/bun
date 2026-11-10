@@ -51,9 +51,21 @@ const alwaysNamed = 4;
  * shared: as looped, and the main test is an array of steps with one loop body that reads everything after every step. So each read site runs before and after each
  * mock, unmock, write and spy, and sees every namespace object held so far.
  * reduced: the smallest project for each kind of difference that the generated cases have found.
+ * held: see module-identity-held-cases.ts.
  */
-export type Variant = "straight" | "looped" | "shared" | "reduced";
-export type Case = { variant: Variant; name: string; files: Record<string, string>; args: string[] };
+export type Variant = "straight" | "looped" | "shared" | "reduced" | "held";
+export type Case = {
+  variant: Variant;
+  name: string;
+  files: Record<string, string>;
+  args: string[];
+  /** The file whose exports the columns show. */
+  subject: string;
+  env?: Record<string, string>;
+  /** Cases of the same variant that print the same values in the compared lines. `failure` is the class of a compiled run in which they differ. */
+  agreesWith?: { name: string; isCompared: (title: string) => boolean; failure: Dependence }[];
+};
+export type Dependence = "depends on a cache" | "depends on a collection";
 
 const nameOf = (c: Choices) =>
   axisNames
@@ -599,9 +611,15 @@ function projectOf(c: Choices, variant: Variant): Case {
     tests.push("./zz-reset.test.mjs");
   }
   const args = [...(c.preload === "no-preload" ? [] : ["--preload", "./setup.mjs"]), ...tests];
+  const project = { variant, name: nameOf(c), files, args, subject: "user.mjs" };
   return c.language === "typescript"
-    ? { variant, name: nameOf(c), files: inTypeScript(files), args: args.map(arg => arg.replace(".mjs", ".ts")) }
-    : { variant, name: nameOf(c), files, args };
+    ? {
+        ...project,
+        files: inTypeScript(files),
+        args: args.map(arg => arg.replace(".mjs", ".ts")),
+        subject: "user.ts",
+      }
+    : project;
 }
 
 const annotations = [
@@ -783,6 +801,7 @@ export function moduleIdentityCases(): Case[] {
           .filter(file => file.endsWith(".test.mjs"))
           .sort()
           .map(file => "./" + file),
+        subject: "user.mjs",
       }),
     ),
     ...all.map(choices => projectOf(choices, "straight")),

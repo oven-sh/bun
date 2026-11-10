@@ -244,11 +244,14 @@ console.log(at("..", "one", "pub", "a.txt"), at("..", "two", "pub", "b.txt"), at
   }, 120_000);
 
   test("an untidy path finds an embedded file", async () => {
+    // Windows drops `absent/..` from a path before it looks, so plain Bun finds these three there.
+    const climbsOutOfNoFolder = ["/absent/../sub/note.txt", "/../absent/../lib/data.txt", "/sub/note.txt/../note.txt"];
+    const notFound = isWindows ? [] : climbsOutOfNoFolder;
     using dir = tempDir("aot-untidy-embedded-paths", {
       "app/server/main.mjs": `import fs from "node:fs";
 const texts = ["/../lib/data.txt", "/../lib/./data.txt", "/../lib//data.txt", "/./sub/note.txt", "/sub/../sub/note.txt"];
 for (const text of texts) console.log(text, fs.existsSync(import.meta.dirname + text), fs.readFileSync(import.meta.dirname + text, "utf8"));
-for (const text of ["/absent/../sub/note.txt", "/../absent/../lib/data.txt", "/sub/note.txt/../note.txt"]) console.log(text, fs.existsSync(import.meta.dirname + text));
+for (const text of ${JSON.stringify(notFound)}) console.log(text, fs.existsSync(import.meta.dirname + text));
 `,
       "app/server/sub/note.txt": "a note",
       "app/lib/data.txt": "the text",
@@ -261,10 +264,7 @@ for (const text of ["/absent/../sub/note.txt", "/../absent/../lib/data.txt", "/s
 /../lib//data.txt true the text
 /./sub/note.txt true a note
 /sub/../sub/note.txt true a note
-/absent/../sub/note.txt false
-/../absent/../lib/data.txt false
-/sub/note.txt/../note.txt false
-`,
+${notFound.map(text => text + " false\n").join("")}`,
       stderr: "",
       exitCode: 0,
     });

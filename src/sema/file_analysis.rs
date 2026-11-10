@@ -43,6 +43,7 @@ pub struct FileAnalysis<'s> {
     pub paths_of_changed_files: &'s [ChangedPath],
     pub module_relative_reads: &'s [(ExprId, Atom)],
     pub caller_relative_reads: &'s [CallerRelativeRead],
+    pub known_load_names: &'s [(ExprId, Atom)],
     pub own_url_arguments: &'s [OwnUrlArgument],
     pub exported_file_changers: &'s [ExportedFileChanger],
     pub asked_of_other_files: &'s [(Atom, Atom)],
@@ -77,6 +78,13 @@ const _: fn() = || {
 impl FileAnalysis<'_> {
     pub fn jsx_takes_this(&self) -> bool {
         self.jsx_imports.contains(JsxImport::JsxDev)
+    }
+
+    pub fn known_load_names_at(&self, argument: ExprId) -> impl Iterator<Item = Atom> {
+        let names = self.known_load_names;
+        let names = &names[names.partition_point(|it| it.0 < argument)..];
+        let names = names.iter().take_while(move |it| it.0 == argument);
+        names.map(|it| it.1)
     }
 
     pub fn alternatives_of<'a>(&'a self, specifier: &'a ImportSpecifier) -> &'a [ImportSpecifier] {

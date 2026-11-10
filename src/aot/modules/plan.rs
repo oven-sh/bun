@@ -1522,6 +1522,11 @@ impl ModuleGraph {
             .collect()
     }
 
+    pub(super) fn list_roots_left_to_loader(&self) -> impl Iterator<Item = FileId> + '_ {
+        let roots = self.plan.order.prefix_roots.iter().copied();
+        roots.filter(|&root| self.is_loaded_by_loader(ModuleRef::File(root)))
+    }
+
     #[cfg(test)]
     pub fn prefix_roots(&self) -> &[FileId] {
         &self.plan.order.prefix_roots

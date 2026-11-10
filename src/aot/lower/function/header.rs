@@ -268,11 +268,11 @@ fn create_source_header(
         header.syntax |= FunctionSyntax::HAS_LIVE_AWAIT;
     }
     header.source_range = file.compute_text_range(function);
-    let requested = file.find_requested_originals(function, header.source_range);
-    if requested.may_be_any_module {
+    let asked = file.find_originals_asked_for(function, header.source_range);
+    if asked.may_be_own {
         header.syntax |= FunctionSyntax::MAY_IMPORT_OWN_ORIGINAL;
     }
-    header.requested_originals = requested.names;
+    header.requested_originals = asked.names;
     header.length = func
         .params
         .iter()

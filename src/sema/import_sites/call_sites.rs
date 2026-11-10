@@ -29,6 +29,21 @@ use crate::hir::{
 use crate::util::{FxHashSet, SharedSort};
 use bun_core::strings;
 
+pub const WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY: [&[u8]; 3] =
+    [b"importOriginal", b"importActual", b"requireActual"];
+
+pub fn names_word_that_mock_looks_for(text: &[u8]) -> bool {
+    WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY
+        .iter()
+        .any(|word| bun_core::strings::contains(text, word))
+}
+
+pub fn may_spell_word_that_mock_looks_for(text: &[u8]) -> bool {
+    names_word_that_mock_looks_for(text)
+        || bun_core::strings::contains_char(text, b'\\')
+        || bun_core::strings::contains(text, b"&#")
+}
+
 pub(crate) fn call_site_kind(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -843,6 +858,7 @@ pub(super) struct ScannedCalls {
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
     pub(super) module_relative_reads: Vec<(ExprId, Atom)>,
     pub(super) caller_relative_reads: Vec<CallerRelativeRead>,
+    pub(super) known_load_names: Vec<(ExprId, Atom)>,
     pub(super) own_url_arguments: Vec<OwnUrlArgument>,
     pub(super) exported_file_changers: Vec<ExportedFileChanger>,
     pub(super) asked_of_other_files: Vec<(Atom, Atom)>,
@@ -873,6 +889,13 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut paths_of_changed_files = Vec::new();
     let mut module_relative_reads = Vec::new();
     let mut caller_relative_reads: Vec<CallerRelativeRead> = Vec::new();
+    let mut known_load_names = Vec::new();
+    let create_texts = || {
+        let &ScanInputs {
+            fold, file, atoms, ..
+        } = inputs;
+        TextsOfFile::new(hir, bound, decisions, fold, file, atoms)
+    };
     let mut own_url_arguments = Vec::new();
     let mut texts_of_file = None;
     let mut exported_file_changers: Vec<ExportedFileChanger> = Vec::new();
@@ -905,12 +928,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
             let named = find_file_path_operands(inputs, callee, args);
             if let Some(operand) = named.read {
-                let texts = texts_of_file.get_or_insert_with(|| {
-                    let &ScanInputs {
-                        fold, file, atoms, ..
-                    } = inputs;
-                    TextsOfFile::new(hir, bound, decisions, fold, file, atoms)
-                });
+                let texts = texts_of_file.get_or_insert_with(create_texts);
                 let (paths, parameter) = texts.find_module_relative_reads(operand);
                 module_relative_reads.extend(paths.into_iter().map(|path| (operand, path)));
                 if let Some(parameter) = parameter {
@@ -1012,6 +1030,21 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                     }
                 }
             }
+            let loads = matches!(
+                site.kind,
+                ImportSiteKind::Require(_)
+                    | ImportSiteKind::ImportMetaRequire(_)
+                    | ImportSiteKind::ImportCall(_)
+            );
+            let is_partly_unknown = matches!(
+                site.specifier,
+                ImportSpecifier::Unknown | ImportSpecifier::Pattern { .. }
+            );
+            if loads && is_partly_unknown && !argument.is_none() {
+                let texts = texts_of_file.get_or_insert_with(create_texts);
+                let names = texts.find_known_load_names(argument);
+                known_load_names.extend(names.into_iter().map(|name| (argument, name)));
+            }
             sites.push(site);
         }
     }
@@ -1031,6 +1064,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         (it.function.0, it.place, texts)
     });
     caller_relative_reads.dedup();
+    known_load_names.sort_by_key(|it| it.0);
     ScannedCalls {
         alternatives: alternatives.found,
         paths_from_own_directory: alternatives.paths_from_own_directory,
@@ -1039,6 +1073,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         paths_of_changed_files,
         module_relative_reads,
         caller_relative_reads,
+        known_load_names,
         own_url_arguments,
         exported_file_changers,
         asked_of_other_files: alternatives.asked_of_other_files.take(),
@@ -1458,14 +1493,8 @@ fn is_declared_before(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, symbol: Symb
     if !is_sequential {
         return false;
     }
-    let mut e = e;
-    let mut statement = loop {
-        match bound.parent_of_expr(e) {
-            Parent::Expr(above) => e = above,
-            Parent::Stmt(statement) => break statement,
-            Parent::VarInit(declaration) => break bound.var_stmt[declaration.idx()],
-            _ => return false,
-        }
+    let Some(mut statement) = bound.statement_of_expr(e) else {
+        return false;
     };
     loop {
         let above = bound.parent_of_stmt(statement);

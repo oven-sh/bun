@@ -130,6 +130,7 @@ fn create_analysis<'s>(
         paths_of_changed_files: scan.paths_of_changed_files,
         module_relative_reads: scan.module_relative_reads,
         caller_relative_reads: scan.caller_relative_reads,
+        known_load_names: scan.known_load_names,
         own_url_arguments: scan.own_url_arguments,
         exported_file_changers: scan.exported_file_changers,
         asked_of_other_files: scan.asked_of_other_files,

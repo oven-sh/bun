@@ -1129,7 +1129,10 @@ impl ContentsScan<'_, '_> {
         ));
         let requires = !matches!(site.kind, ImportSiteKind::ImportCall(_));
         let arms = find_written_arms(request.hir, request.bound, &analysis.decisions, site);
-        (names.written_arms_of_unknown_names).extend(arms.iter().map(|&arm| (arm, requires)));
+        let known = analysis.known_load_names_at(name);
+        let known = known.filter(|it| !arms.contains(it));
+        let arms = arms.iter().copied().chain(known);
+        (names.written_arms_of_unknown_names).extend(arms.map(|arm| (arm, requires)));
     }
 
     fn look_at_texts_passed(&mut self, call: CallId) {

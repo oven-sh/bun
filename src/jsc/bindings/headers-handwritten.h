@@ -157,10 +157,8 @@ typedef struct ResolvedSource {
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
-    // The functions of source_code that request the original of a mocked module. See Bun::requestsOriginalModule().
-    BunString requested_originals;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 160 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -183,14 +181,13 @@ public:
         result.value.source_code.deref();
         result.value.source_url.deref();
         result.value.origin_path.deref();
-        result.value.requested_originals.deref();
         if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
             ResolvedSource__freeBytecode(result.value.bytecode_cache);
         if (result.value.module_info)
             zig__ModuleInfoDeserialized__deinit(result.value.module_info);
     }
 };
-static_assert(sizeof(ErrorableResolvedSource) == 168 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
+static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 static_assert(JSC::CompiledEnvironmentType == 33 && JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::CompiledClosureType == 38 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::CompiledObjectType == 97 && JSC::SlimClosureType == 98 && JSC::SlimClosureWithPropertiesType == 99 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
 
 typedef struct SystemError {

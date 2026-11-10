@@ -192,7 +192,7 @@ const runs = {
   },
   "a file threw, a mock without a factory is made over it, and import() asks again": {
     files: { ...kiln, "b.test.mjs": inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n` + fire("second")) },
-    named: [],
+    named: ["kiln.mjs, while b.test.mjs ran"],
   },
   "a file threw, a mock without a factory is made over it, and require() asks again": {
     files: {
@@ -201,7 +201,7 @@ const runs = {
         `import { createRequire } from "node:module";\n` +
         inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n` + requireKiln),
     },
-    named: [],
+    named: ["kiln.mjs, while b.test.mjs ran"],
   },
   "a file threw, a mock is made over it, and importActual() evaluates the file again": {
     files: {
@@ -226,7 +226,7 @@ const runs = {
             `  await new Promise(done => setTimeout(done, 300));\n`,
         ),
     },
-    named: [],
+    named: ["kiln.mjs, while b.test.mjs ran"],
   },
   "a file threw below its importer, where `bun test` keeps the failure too": {
     files: {

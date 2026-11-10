@@ -277,6 +277,27 @@ pub fn find_values_passed_for(
     path.is_empty().then_some(values)
 }
 
+type ValuesPassed = (SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool);
+
+pub(super) fn find_values_passed_by_call(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mention: ExprId,
+    arguments: IdList<ExprId>,
+) -> Option<ValuesPassed> {
+    let (function, index, path) = find_parameter_key_path(hir, bound, mention)?;
+    let default = hir[hir[function].params.iter().nth(index)?].default;
+    let mut passed = hir.ids(arguments).take(index + 1);
+    let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+    if passed.clone().any(is_spread) {
+        return None;
+    }
+    let value = passed.nth(index);
+    let is_left_out = value.is_none() && default.is_none();
+    let values = default.some().into_iter().chain(value).collect();
+    Some((values, path, is_left_out))
+}
+
 pub(super) fn find_values_passed_for_pattern(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -284,7 +305,7 @@ pub(super) fn find_values_passed_for_pattern(
     mention: ExprId,
     find_written: FindWritten<'_>,
     may_be_exported: bool,
-) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool)> {
+) -> Option<ValuesPassed> {
     let (function, index, path) = find_parameter_key_path(hir, bound, mention)?;
     let id = hir[function].params.iter().nth(index)?;
     let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
@@ -296,14 +317,7 @@ pub(super) fn find_values_passed_for_pattern(
     }
     let Some(name) = find_only_name_of(hir, bound, function, find_written, may_be_exported) else {
         let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
-        let mut passed = hir.ids(arguments).take(index + 1);
-        if passed.clone().any(is_spread) {
-            return None;
-        }
-        let value = passed.nth(index);
-        is_left_out |= value.is_none() && !has_default;
-        values.extend(value);
-        return Some((values, path, is_left_out));
+        return find_values_passed_by_call(hir, bound, mention, arguments);
     };
     let text = bound.symbol(name).name;
     for callee in find_written(text) {

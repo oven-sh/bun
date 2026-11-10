@@ -2,14 +2,15 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use super::entry_points::{
-    EntryPointError, NamedEntryPoint, find_default_entry_point, find_installed_executable,
-    is_script_without_extension,
+    EntryPointError, NamedEntryPoint, find_default_entry_point, find_named_entry_point,
+    find_package_name, is_script_without_extension,
 };
 use super::library::find_default_library_entry_points;
 use super::{BundlerInputs, CompileProduct, CompileRequest, ExecutableSettings, RequestOrigin};
 pub(super) use crate::cli::build_command::compile_outfile;
 use crate::cli::command::Context;
 use crate::cli::run_compiled;
+use bun_aot::report::build_rows::write_note_row;
 use bun_bundler::aot::expand_entry_points;
 use bun_bundler::options;
 use bun_bundler::transpiler::Transpiler;
@@ -83,12 +84,14 @@ pub(super) fn use_installed_executable(ctx: &mut ContextData) {
         .absolute_working_dir
         .as_deref()
         .expect("Arguments::parse sets the working directory");
-    match find_installed_executable(working_directory, written) {
+    match find_named_entry_point(working_directory, written) {
         Ok(NamedEntryPoint::AsWritten) => {}
         Ok(NamedEntryPoint::Library { executable_names }) => {
             note_library_entry_point(written, &executable_names);
         }
+        Ok(NamedEntryPoint::SourceFile(path)) => ctx.args.entry_points[0] = path,
         Ok(NamedEntryPoint::Executable(found)) => {
+            note_installed_executable(working_directory, written, &found.path);
             ctx.args.entry_points[0] = found.path;
             if ctx.bundler_options.outfile.is_empty() {
                 ctx.bundler_options.outfile = found.executable_name;
@@ -135,6 +138,21 @@ fn note_library_entry_point(package_name: &[u8], executable_names: &[Vec<u8>]) {
         package_name,
         bstr::BStr::new(&executable_names.join(&b", "[..]))
     );
+}
+
+#[cold]
+fn note_installed_executable(working_directory: &[u8], name: &[u8], path: &[u8]) {
+    let shown_path = bun_paths::resolve_path::relative(working_directory, path);
+    let mut line = [name, b" is ", shown_path].concat();
+    if let Some(package_name) = find_package_name(path) {
+        line.extend_from_slice(b", from the package ");
+        line.extend_from_slice(&package_name);
+    }
+    let mut row = Vec::new();
+    let has_colors = Output::enable_ansi_colors_stderr();
+    write_note_row("note", &[line], has_colors, &mut row);
+    let _ = Output::error_writer().write_all(&row);
+    Output::flush();
 }
 
 #[cold]

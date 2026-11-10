@@ -1,7 +1,7 @@
 mod body;
 mod closures;
 mod header;
-mod requested_originals;
+mod original_asked_for;
 mod text;
 mod text_of_heads;
 mod text_of_jsx;
@@ -11,6 +11,9 @@ mod this;
 
 pub(crate) use self::header::{
     create_header, declare_source_function, declare_source_function_with,
+};
+pub(in crate::lower) use self::original_asked_for::{
+    ConstsOfPrefixes, StatementsThatNest, ValuesThatConstsWereFollowedTo,
 };
 pub(in crate::lower) use self::text::{print_number, print_string};
 use crate::ir::ValueId;

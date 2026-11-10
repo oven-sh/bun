@@ -69,7 +69,7 @@ bun compile ./server.ts --outfile server-aot
 
 `bun compile` is short for `bun build --compile --aot` and takes the same flags. Without an entry point, it builds the file that `"bin"` in `package.json` points to, then `"module"`, then `"main"`, then `index.ts`.
 
-The entry point can also be the name of a command-line tool that an installed package provides. `bun compile rollup` builds the file that `bun run rollup` runs: the `"bin"` entry named `rollup` in `node_modules/rollup/package.json`, or else what `node_modules/.bin/rollup` points to. This applies when no source file in the working directory has that name, such as `rollup.ts`. `bun build --compile rollup` still resolves the name the way an `import` does, to the package's library.
+The entry point can also be the name of a command-line tool that an installed package provides. `bun compile rollup` builds the file that `bun run rollup` runs: the `"bin"` entry named `rollup` in `node_modules/rollup/package.json`, or else what `node_modules/.bin/rollup` points to. The build prints which file that is. A source file of that name in the working directory, such as `rollup.ts`, is compiled instead. `bun build --compile rollup` still resolves the name the way an `import` does, to the package's library.
 
 If the package has no `"bin"` entry of that name, the build prints a note and compiles the package's library, which usually does nothing when it runs by itself.
 

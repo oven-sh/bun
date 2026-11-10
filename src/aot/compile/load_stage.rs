@@ -5,6 +5,7 @@ use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{
     Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
+    has_computed_load_in_program,
 };
 use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
@@ -15,7 +16,7 @@ use crate::load::contents::{
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
-use crate::load::host::{LoadHost, LoadHostInput, create_disk};
+use crate::load::host::{CodeLeftOut, LoadHost, LoadHostInput, create_disk};
 use crate::load::module_paths::{count_folders, spell_with_other_levels};
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
@@ -50,7 +51,7 @@ use bun_sema_driver::{
     load_program,
 };
 use bun_threading::Guarded;
-use std::cell::Cell;
+use std::cell::{Cell, LazyCell};
 use std::mem::take;
 use std::thread::Scope;
 
@@ -251,13 +252,12 @@ fn warn_of_folders_unread_at_resolves(
 fn find_resolves_that_miss(
     view: ProgramView<'_, '_>,
     host: &LoadHost<'_>,
+    held: &FxHashSet<&[u8]>,
+    code_left_out: &LazyCell<CodeLeftOut, impl FnOnce() -> CodeLeftOut>,
     withheld: &mut Vec<Diagnostic>,
 ) -> Vec<Diagnostic> {
     let mut warnings = Vec::new();
     let files = view.files();
-    let compiled = files.compiled_files().iter();
-    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
-    let mut code_left_out: Option<Option<Vec<u8>>> = None;
     for &file in files.compiled_files() {
         let (analysis, hir) = (files.analysis(file), files.hir(file));
         let Some(source) = parsed_source(files, file) else {
@@ -359,7 +359,7 @@ fn find_resolves_that_miss(
         }
         let left_out = match computed.is_empty() {
             true => &None,
-            false => code_left_out.get_or_insert_with(|| host.find_code_left_out(&held)),
+            false => &code_left_out.file,
         };
         let (said, left_out) = match left_out {
             Some(left_out) => (&mut warnings, host.display_path_of(left_out)),
@@ -897,18 +897,22 @@ impl<'a> Build<'a> {
                 warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
                 warn_of_folders_unread_at_resolves(&mut self.diagnostics, view, host);
                 warn_of_made_requires_that_go_out_of_sight(&mut self.diagnostics, view);
+                let compiled = files.compiled_files().iter();
+                let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+                let code_left_out = LazyCell::new(|| host.find_code_left_out(&held));
                 let mut withheld = Vec::new();
-                self.resolves_that_miss = find_resolves_that_miss(view, host, &mut withheld);
+                self.resolves_that_miss =
+                    find_resolves_that_miss(view, host, &held, &code_left_out, &mut withheld);
                 for warning in &withheld {
                     self.diagnostics.add_withheld(view, warning);
                 }
-                let compiled = files.compiled_files().iter();
-                let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
                 let is_in_package =
                     |&it| bun_core::strings::contains(files.file_name(it), b"node_modules");
-                self.diagnostics.has_all_project_code =
-                    !files.entry_points().iter().any(is_in_package)
-                        && host.has_all_project_code(&held);
+                self.diagnostics.has_all_project_code = !options.load.runs_tests
+                    && host.has_several_code_entry_points()
+                    && !files.entry_points().iter().any(is_in_package)
+                    && has_computed_load_in_program(view)
+                    && code_left_out.is_known_to_be_none();
             }
         }
         let aot = &options.aot;

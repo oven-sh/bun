@@ -1,4 +1,120 @@
 # Where a compiled test run differs from `bun test` in the identity of mocked modules. See harness/module-identity.ts.
+held | failed-then-mocked barrel-without-body collected cold | reported | late.again:again | 10
+held | failed-then-mocked barrel-without-body collected warm | reported | late.again:again | 10
+held | failed-then-mocked barrel-without-body kept cold | reported | late.again:again | 10
+held | failed-then-mocked barrel-without-body kept warm | reported | late.again:again | 10
+held | failed-then-mocked module collected cold | reported | late.again:again | 9
+held | failed-then-mocked module collected warm | reported | late.again:again | 9
+held | failed-then-mocked module kept cold | reported | late.again:again | 9
+held | failed-then-mocked module kept warm | reported | late.again:again | 9
+held | failed-then-mocked named-barrel collected cold | reported | late.again:again | 10
+held | failed-then-mocked named-barrel collected warm | reported | late.again:again | 10
+held | failed-then-mocked named-barrel kept cold | reported | late.again:again | 10
+held | failed-then-mocked named-barrel kept warm | reported | late.again:again | 10
+held | failed-then-mocked namespace-barrel collected cold | reported | late.again:again | 10
+held | failed-then-mocked namespace-barrel collected warm | reported | late.again:again | 10
+held | failed-then-mocked namespace-barrel kept cold | reported | late.again:again | 10
+held | failed-then-mocked namespace-barrel kept warm | reported | late.again:again | 10
+held | failed-then-mocked star-barrel collected cold | reported | late.again:again | 10
+held | failed-then-mocked star-barrel collected warm | reported | late.again:again | 10
+held | failed-then-mocked star-barrel kept cold | reported | late.again:again | 10
+held | failed-then-mocked star-barrel kept warm | reported | late.again:again | 10
+held | failed-then-mocked two-barrels collected cold | reported | late.again:again | 10
+held | failed-then-mocked two-barrels collected warm | reported | late.again:again | 10
+held | failed-then-mocked two-barrels kept cold | reported | late.again:again | 10
+held | failed-then-mocked two-barrels kept warm | reported | late.again:again | 10
+held | leaf-mock named-barrel collected cold | reported | late.again:again | 11
+held | leaf-mock named-barrel collected warm | reported | late.again:again | 11
+held | leaf-mock named-barrel kept cold | reported | late.again:again | 11
+held | leaf-mock named-barrel kept warm | reported | late.again:again | 11
+held | leaf-mock star-barrel collected cold | reported | late.again:again | 11
+held | leaf-mock star-barrel collected warm | reported | late.again:again | 11
+held | leaf-mock star-barrel kept cold | reported | late.again:again | 11
+held | leaf-mock star-barrel kept warm | reported | late.again:again | 11
+held | leaf-mock two-barrels collected cold | reported | late.again:again | 11
+held | leaf-mock two-barrels collected warm | reported | late.again:again | 11
+held | leaf-mock two-barrels kept cold | reported | late.again:again | 11
+held | leaf-mock two-barrels kept warm | reported | late.again:again | 11
+held | leaf-mock-loaded barrel-without-body collected cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded barrel-without-body collected warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded barrel-without-body kept cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded barrel-without-body kept warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded module collected cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded module collected warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded module kept cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded module kept warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded named-barrel collected cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded named-barrel collected warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded named-barrel kept cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded named-barrel kept warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded namespace-barrel collected cold | reported | early.mocked:mocked.is.first | 20
+held | leaf-mock-loaded namespace-barrel collected warm | reported | early.mocked:mocked | 21
+held | leaf-mock-loaded namespace-barrel kept cold | reported | early.mocked:mocked.is.first | 20
+held | leaf-mock-loaded namespace-barrel kept warm | reported | early.mocked:mocked | 21
+held | leaf-mock-loaded star-barrel collected cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded star-barrel collected warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded star-barrel kept cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded star-barrel kept warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded two-barrels collected cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded two-barrels collected warm | reported | early.mocked:mocked | 20
+held | leaf-mock-loaded two-barrels kept cold | reported | early.mocked:mocked.is.first | 19
+held | leaf-mock-loaded two-barrels kept warm | reported | early.mocked:mocked | 20
+held | mock named-barrel collected cold | reported | late.again:again | 11
+held | mock named-barrel collected warm | reported | late.again:again | 11
+held | mock named-barrel kept cold | reported | late.again:again | 11
+held | mock named-barrel kept warm | reported | late.again:again | 11
+held | mock star-barrel collected cold | reported | late.again:again | 10
+held | mock star-barrel collected warm | reported | late.again:again | 10
+held | mock star-barrel kept cold | reported | late.again:again | 10
+held | mock star-barrel kept warm | reported | late.again:again | 10
+held | mock two-barrels collected cold | reported | late.again:again | 11
+held | mock two-barrels collected warm | reported | late.again:again | 11
+held | mock two-barrels kept cold | reported | late.again:again | 11
+held | mock two-barrels kept warm | reported | late.again:again | 11
+held | mock-loaded barrel-without-body collected cold | reported | early.mocked:mocked.is.first | 18
+held | mock-loaded barrel-without-body collected warm | reported | early.mocked:first | 19
+held | mock-loaded barrel-without-body kept cold | reported | early.mocked:mocked.is.first | 18
+held | mock-loaded barrel-without-body kept warm | reported | early.mocked:first | 19
+held | mock-loaded module collected cold | reported | late.again:again | 11
+held | mock-loaded module collected warm | reported | late.again:again | 11
+held | mock-loaded module kept cold | reported | late.again:again | 11
+held | mock-loaded module kept warm | reported | late.again:again | 11
+held | mock-loaded named-barrel collected cold | reported | early.mocked:mocked.is.first | 19
+held | mock-loaded named-barrel collected warm | reported | early.mocked:first | 20
+held | mock-loaded named-barrel kept cold | reported | early.mocked:mocked.is.first | 19
+held | mock-loaded named-barrel kept warm | reported | early.mocked:first | 20
+held | mock-loaded namespace-barrel collected cold | reported | early.mocked:mocked.is.first | 20
+held | mock-loaded namespace-barrel collected warm | reported | early.mocked:first | 21
+held | mock-loaded namespace-barrel kept cold | reported | early.mocked:mocked.is.first | 20
+held | mock-loaded namespace-barrel kept warm | reported | early.mocked:first | 21
+held | mock-loaded star-barrel collected cold | reported | early.mocked:@3 | 15
+held | mock-loaded star-barrel collected warm | reported | early.mocked:@3 | 15
+held | mock-loaded star-barrel kept cold | reported | early.mocked:@3 | 15
+held | mock-loaded star-barrel kept warm | reported | early.mocked:@3 | 15
+held | mock-loaded two-barrels collected cold | reported | early.mocked:mocked.is.first | 19
+held | mock-loaded two-barrels collected warm | reported | early.mocked:first | 20
+held | mock-loaded two-barrels kept cold | reported | early.mocked:mocked.is.first | 19
+held | mock-loaded two-barrels kept warm | reported | early.mocked:first | 20
+held | mock-module-restored barrel-without-body collected cold | reported | early.mocked:mocked.is.first | 3
+held | mock-module-restored barrel-without-body collected warm | reported | early.mocked:mocked.is.first | 3
+held | mock-module-restored barrel-without-body kept cold | reported | early.mocked:mocked.is.first | 3
+held | mock-module-restored barrel-without-body kept warm | reported | early.mocked:mocked.is.first | 3
+held | mock-module-restored namespace-barrel collected cold | reported | early.mocked:mocked.is.first | 8
+held | mock-module-restored namespace-barrel collected warm | reported | early.mocked:mocked.is.first | 8
+held | mock-module-restored namespace-barrel kept cold | reported | early.mocked:mocked.is.first | 8
+held | mock-module-restored namespace-barrel kept warm | reported | early.mocked:mocked.is.first | 8
+held | rerun-each-without-mock barrel-without-body collected cold | silent | late.run2:first | 14
+held | rerun-each-without-mock barrel-without-body collected warm | silent | late.run2:first | 14
+held | rerun-each-without-mock barrel-without-body kept cold | silent | late.run2:first | 14
+held | rerun-each-without-mock barrel-without-body kept warm | silent | late.run2:first | 14
+held | rerun-each-without-mock module collected cold | silent | late.run2:first | 9
+held | rerun-each-without-mock module collected warm | silent | late.run2:first | 9
+held | rerun-each-without-mock module kept cold | silent | late.run2:first | 10
+held | rerun-each-without-mock module kept warm | silent | late.run2:first | 10
+held | rerun-each-without-mock namespace-barrel collected cold | silent | late.run2:first | 14
+held | rerun-each-without-mock namespace-barrel collected warm | silent | late.run2:first | 14
+held | rerun-each-without-mock namespace-barrel kept cold | silent | late.run2:first | 14
+held | rerun-each-without-mock namespace-barrel kept warm | silent | late.run2:first | 14
 looped | default dependency vi.doMock reset named-file-before | reported | main:mocked | 11
 looped | default dependency vi.doMock stop async-factory named-file-before | reported | main:mocked | 8
 looped | default dependency vi.doMock stop named-file-before typescript | reported | main:mocked | 8
@@ -36,7 +152,7 @@ looped | named dependency vi.doMock stop named-file-mocks-after | reported | oth
 looped | named dependency vi.doMock unmock named-file-before spy-on-newest | reported | main:mocked | 17
 looped | named dependency vi.doMock unmock named-file-mocks-before | reported | main:mocked | 17
 looped | named dependency vi.mock unmock named-file-before cycle | reported | main:user | 17
-looped | named itself vi.doMock stop partial-factory named-file-before | reported | main:mocked | 7
+looped | named itself vi.doMock stop partial-factory named-file-before | reported elsewhere | main:mocked | 7
 looped | named itself vi.doMock unmock async-factory named-file-before | reported | main:again | 8
 looped | named named-barrel vi.mock remock | reported | main:again | 9
 looped | named namespace-barrel vi.doMock stop namespace-file-before | reported | main:mocked | 8
@@ -134,7 +250,7 @@ shared | named dependency vi.doMock stop named-file-mocks-after | reported | oth
 shared | named dependency vi.doMock unmock named-file-before spy-on-newest | reported | main:imports | 43
 shared | named dependency vi.doMock unmock named-file-mocks-before | reported | main:imports | 42
 shared | named dependency vi.mock unmock named-file-before cycle | reported | main:imports | 26
-shared | named itself vi.doMock stop partial-factory named-file-before | reported | main:imports | 12
+shared | named itself vi.doMock stop partial-factory named-file-before | reported elsewhere | main:imports | 12
 shared | named itself vi.doMock unmock async-factory named-file-before | reported | main:imports | 12
 shared | named named-barrel vi.mock remock | reported | main:imports | 18
 shared | named namespace-barrel vi.doMock stop namespace-file-before | reported | main:imports | 18

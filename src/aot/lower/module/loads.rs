@@ -643,7 +643,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     | OwnRequire::MadeInOtherFile(_)
             )
         );
-        let operation = find_operation(&site, answer, given.len())?;
+        let names = analysis.alternatives_of(&site.specifier);
+        let is_type_settled = has_settled_type(hir, &site, names, given);
+        let operation = find_operation(&site, answer, given.len(), is_type_settled)?;
         let is_left_to_loader = matches!(answer, SiteAnswer::Module(ModuleRef::External { .. }));
         if matches!(
             path_to_resolve_from,
@@ -2870,14 +2872,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
+pub(crate) fn has_settled_type(
+    hir: &hir::File<'_>,
+    site: &ImportSite,
+    names: &[ImportSpecifier],
+    given: IdList<ExprId>,
+) -> bool {
+    let is_known = |name: &ImportSpecifier| matches!(name, ImportSpecifier::Constant(_));
+    given.len() == 2
+        && hir.ids(given).nth(1) == site.attributes.some()
+        && names.iter().all(is_known)
+        && hir.is_import_attribute_settled(site.attributes, known::r#type)
+}
+
 fn find_operation(
     site: &ImportSite,
     answer: SiteAnswer<'_>,
     argument_count: usize,
+    is_type_settled: bool,
 ) -> Option<ModuleOperation> {
     match site.kind {
         ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => match answer {
-            SiteAnswer::Computed(_) if argument_count > 1 => None,
+            SiteAnswer::Computed(_) if argument_count > 1 && !is_type_settled => None,
             _ => Some(ModuleOperation::Require),
         },
         ImportSiteKind::GetBuiltinModule(_) => match answer {

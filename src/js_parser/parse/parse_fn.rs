@@ -502,9 +502,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect(T::TOpenBrace)?;
         let mut opts = ParseStatementOptions::default();
-        let first_request = p.original_requests.len();
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
-        p.did_parse_fn_body(loc, first_request);
         p.lexer.next()?;
 
         if pushed_scope_for_function_body {
@@ -578,7 +576,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
-        let first_request = p.original_requests.len();
         let expr = match p.parse_expr(Level::Comma) {
             Ok(e) => e,
             Err(err) => {
@@ -589,7 +586,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         };
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
-        p.did_parse_fn_body(arrow_loc, first_request);
 
         let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);

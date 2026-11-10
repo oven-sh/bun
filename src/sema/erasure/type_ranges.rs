@@ -186,12 +186,22 @@ pub fn find_type_ranges(file: &File<'_>) -> TypeRanges {
     find_type_ranges_beside(file, Vec::new())
 }
 
-pub fn keep_only_comments_beside_types<'s>(file: &mut File<'s>, arena: &'s Arena) {
+pub fn keep_only_comments_beside_types_and<'s>(
+    file: &mut File<'s>,
+    arena: &'s Arena,
+    is_read_later: fn(&[u8]) -> bool,
+) {
     let mut passed = Vec::new();
     if !file.is_js && !file.comments.is_empty() {
         let mut finder = Finder::new(file);
         finder.run();
         passed = finder.comments_passed.into_inner();
+    }
+    for (index, comment) in file.comments.iter().enumerate() {
+        let text = file.text.get(comment.pos as usize..comment.end as usize);
+        if text.is_some_and(is_read_later) {
+            passed.push(index as u32);
+        }
     }
     passed.sort_unstable();
     passed.dedup();

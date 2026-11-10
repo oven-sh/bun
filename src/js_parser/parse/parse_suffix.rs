@@ -105,9 +105,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if matches!(target.data, ExprData::EImportMeta(_)) {
                 p.did_parse_import_meta_property(name.slice());
             }
-            if p.may_request_originals {
-                p.did_parse_member_name(name.slice(), name_loc);
-            }
 
             let loc = left.loc;
             *left = p.new_expr(
@@ -177,9 +174,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let list_loc = p.parse_call_args()?;
-                if p.may_request_originals {
-                    p.did_parse_call(left, &list_loc.list);
-                }
                 let loc = left.loc;
                 let target = *left;
                 *left = p.new_expr(
@@ -210,9 +204,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let list_loc = p.parse_call_args()?;
-                if p.may_request_originals {
-                    p.did_parse_call(left, &list_loc.list);
-                }
                 let loc = left.loc;
                 let target = *left;
                 *left = p.new_expr(
@@ -253,9 +244,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let name = E::Str::new(p.lexer.identifier);
                     let name_loc = p.lexer.loc();
                     p.lexer.next()?;
-                    if p.may_request_originals {
-                        p.did_parse_member_name(name.slice(), name_loc);
-                    }
 
                     let loc = left.loc;
                     let target = *left;
@@ -400,9 +388,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let list_loc = p.parse_call_args()?;
-        if p.may_request_originals {
-            p.did_parse_call(left, &list_loc.list);
-        }
         let loc = left.loc;
         let target = *left;
         *left = p.new_expr(
@@ -471,13 +456,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //             ^
-        let first_request = p.original_requests.len();
         p.parse_expr_with_flags(
             Level::Comma,
             EFlags::AfterQuestionAndBeforeColon,
             &mut e_if.yes,
         )?;
-        p.drop_requests_unless(&prev, true, first_request);
 
         p.allow_in = old_allow_in;
 
@@ -493,9 +476,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             EFlags::None
         };
-        let first_request = p.original_requests.len();
         p.parse_expr_with_flags(Level::Comma, no_flags, &mut e_if.no)?;
-        p.drop_requests_unless(&prev, false, first_request);
 
         // condition ? yes : no
         //                     ^
@@ -1174,9 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.next()?;
-        let first_request = p.original_requests.len();
         let right = p.parse_expr(Level::LogicalOr)?;
-        p.drop_requests_unless(left, false, first_request);
         let loc = left.loc;
         let prev = *left;
         *left = p.new_expr(
@@ -1237,9 +1216,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let first_request = p.original_requests.len();
         let right = p.parse_expr(Level::LogicalAnd)?;
-        p.drop_requests_unless(&prev, true, first_request);
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinLogicalAnd,

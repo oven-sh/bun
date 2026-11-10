@@ -2212,6 +2212,22 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/module-identity-held-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/module-identity-held-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/module-identity-held-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/module-identity-held-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/modules-above-an-evicted-file-are-checked-once.test.ts": {
     "default": 4500,
     "asan": 18000

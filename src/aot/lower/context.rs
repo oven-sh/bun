@@ -13,7 +13,7 @@ use bun_core::strings::{CodepointIterator, Cursor};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
-use bun_sema::erasure::ReplacedText;
+use bun_sema::erasure::{ReplacedText, TypeRanges};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
 use bun_sema::hir_from_data::DataValue;
@@ -26,6 +26,7 @@ use self::shown_names::ShownNames;
 use super::class::{ClassState, find_fields_under_signed_members};
 use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
+use super::function::{ConstsOfPrefixes, StatementsThatNest, ValuesThatConstsWereFollowedTo};
 use super::layouts::{LayoutState, NamesCreatedOnExports};
 use super::module::{LibraryFunctions, ModuleState};
 use super::object::EnumsThatStayAsBorn;
@@ -210,7 +211,11 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) stores_by_name_in_lists: RefCell<FxHashMap<u32, StoresByNameInList>>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
-    pub(in crate::lower) request_positions: OnceCell<Vec<u32>>,
+    pub(in crate::lower) names_word_that_mock_looks_for: Option<bool>,
+    pub(in crate::lower) ranges_of_types: OnceCell<TypeRanges>,
+    pub(in crate::lower) statements_that_nest: OnceCell<StatementsThatNest>,
+    pub(in crate::lower) values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo,
+    pub(in crate::lower) consts_of_prefixes: ConstsOfPrefixes,
     pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
     pub(in crate::lower) quoted_sources: QuotedSources,
@@ -320,7 +325,11 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             stores_by_name_in_lists: RefCell::default(),
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             enum_member_reads: FxHashMap::default(),
-            request_positions: OnceCell::new(),
+            names_word_that_mock_looks_for: None,
+            ranges_of_types: OnceCell::new(),
+            statements_that_nest: OnceCell::new(),
+            values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo::default(),
+            consts_of_prefixes: ConstsOfPrefixes::default(),
             enums_that_stay_as_born: None,
             counted_places,
             quoted_sources: QuotedSources::default(),

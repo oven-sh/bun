@@ -77,7 +77,7 @@ fn size_of(executable: &ExecutableDetails) -> ExecutableSize {
     ExecutableSize {
         bytes: executable.size,
         trimmed_bytes: (executable.trim_summary.as_ref())
-            .map(|summary| summary.requested_cut_bytes),
+            .and_then(|summary| summary.requested_cut_bytes),
     }
 }
 

@@ -6,7 +6,8 @@ use bun_options_types::trim::TrimRequest;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags, target_executable};
 use bun_standalone_graph::with_executable_image;
 use bun_trim::{
-    Decision, FeatureEdges, OptionRequirement, TrimError, TrimInput, TrimPlan, UsedFeatures,
+    Decision, FeatureEdges, OptionRequirement, TrimError, TrimInput, TrimPlan, UnrequestedCut,
+    UsedFeatures,
 };
 
 use super::{CompileFailure, CompileProduct, CompileRequest};
@@ -154,9 +155,12 @@ pub(super) fn decide_trimming(
     match plan {
         Some(mut plan) if trim.is_enabled() => {
             let unrequested = TrimRequest::default();
-            if let Some(unrequested) = plan_trimming(used, &settings, &unrequested, &template)? {
-                plan.set_unrequested_plan(unrequested);
-            }
+            let unrequested = plan_trimming(used, &settings, &unrequested, &template);
+            plan.set_unrequested_cut(match unrequested {
+                Ok(None) => UnrequestedCut::Nothing,
+                Ok(Some(unrequested)) => UnrequestedCut::Planned(Box::new(unrequested)),
+                Err(_) => UnrequestedCut::Unknown,
+            });
             Ok(Trimming::Planned(plan))
         }
         without_tools if trim.is_enabled() || options.explain.contains(ExplainSet::RUNTIME_USE) => {

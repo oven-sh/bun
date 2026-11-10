@@ -104,7 +104,7 @@ mod tests {
             cut_bytes: 98_300_000,
             filled_bytes: 6_650_000,
             file_bytes_saved: 98_300_000,
-            requested_cut_bytes: 98_300_000,
+            requested_cut_bytes: Some(98_300_000),
             uncut: None,
             format: None,
         }

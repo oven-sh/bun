@@ -135,6 +135,7 @@ The build compiles every file it can reach from your entry point. Where a path i
 | `` `@/plugins/${name}.ts` ``                         | The same, with `"paths": { "@/*": ["./*"] }` in `tsconfig.json`                                             |
 | `` `locales/data/${name}.js` ``                      | `node_modules/locales/data/*.js`                                                                            |
 | `process.env.PLUGIN \|\| "./plugins/a.ts"`           | `plugins/a.ts`                                                                                              |
+| `path.join(process.env.DIR \|\| __dirname, "a.ts")`  | `a.ts`                                                                                                      |
 | `"./locales/" + lang`                                | Code and data files in `locales/`. `--explain` lists the data files (`TS100088`)                            |
 | `"./" + name`                                        | Code only. The build names the data files that it leaves out (`TS100089`)                                   |
 | `"./" + name + ".json"`                              | The `.json` files                                                                                           |

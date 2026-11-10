@@ -2394,7 +2394,8 @@ export const shapes: Shape[] = [
     // The look for type errors asks for `value.kind` with a declared type of its own behind each test, and makes the property of the tag, its type and the map from tags to
     // members anew for what each test leaves of the union.
     growsSoFarInInstructions: between ? "3.56 times in instructions" : "3.60 times in instructions",
-    size: 300,
+    // A count that looks quadratic is measured at four times the size too. A list of more than 1,000 members of the union is an error there (TS2590).
+    size: 240,
     entry: "main.ts",
     write: (size: number) => ({
       "tsconfig.json": withoutLibraryTypes,

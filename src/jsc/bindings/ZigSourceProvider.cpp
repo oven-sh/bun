@@ -17,7 +17,6 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 #include "BunBuiltinNames.h"
-#include "BunClientData.h"
 
 namespace Zig {
 
@@ -75,12 +74,6 @@ Ref<SourceProvider> SourceProvider::create(
 
     auto string = resolvedSource.source_code.transferToWTFString();
     auto sourceURLString = resolvedSource.source_url.transferToWTFString();
-
-    auto& requestedOriginals = WebCore::clientData(globalObject->vm())->requestedOriginals;
-    if (auto requested = resolvedSource.requested_originals.transferToWTFString(); !requested.isEmpty()) [[unlikely]]
-        requestedOriginals.set(sourceURLString, WTF::move(requested));
-    else if (!requestedOriginals.isEmpty()) [[unlikely]]
-        requestedOriginals.remove(sourceURLString);
 
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 

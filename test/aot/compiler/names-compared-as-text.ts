@@ -68,10 +68,9 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the class of a name (an index, a number as JavaScript prints it, a word that the schema lists) is read off its text once",
   },
   {
-    paths: /^src\/sema\/import_sites\/requested_originals\.rs$/,
-    lines: /known::importActual \|\| name == known::requireActual/,
+    paths: /^src\/aot\/lower\/function\/original_asked_for\.rs$/,
     reason:
-      "which functions request the original of a mocked module: Bun's transpiler decides it in its parse pass by these two names alone, whatever they are bound to, and the build has to decide the same",
+      "what `bun test` finds by searching the printed text of a mock's factory for three words is said at the build: the words are that search's own",
   },
   {
     paths: /^src\/aot\/options\.rs$/,

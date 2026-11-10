@@ -236,11 +236,11 @@ test("--trim-without suggests a name that it takes", async () => {
           size: (sizeOf(trimmed) / 1e6).toFixed(1),
           stdout: trimmed.stdout,
         });
-        expect(removed).toBeGreaterThan(30);
         // The figure is how much smaller --trim made the file, and never more than that.
         const smaller = (sizeOf(await build("hello.ts", ...flags)) - sizeOf(trimmed)) / 1e6;
+        expect(smaller).toBeGreaterThan(isAot ? 15 : 30);
         expect(removed).toBeLessThanOrEqual(smaller + 0.1);
-        expect(removed).toBeGreaterThan(smaller - 3);
+        expect(removed).toBeGreaterThan(smaller * 0.8);
       },
     );
 

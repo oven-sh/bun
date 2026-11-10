@@ -3366,6 +3366,68 @@ fn finds_module_relative_reads() {
     }
 }
 
+const KNOWN_LOAD_NAMES: &[(&str, &str, &[&str])] = &[
+    (
+        "a.mjs",
+        "import path from 'node:path'; import.meta.require(path.join(process.argv[2] ?? import.meta.dirname, 'a.json'));",
+        &["./a.json"],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; const load = folder => import.meta.require(path.join(folder, 'a.json')); load(process.argv[2] ?? import.meta.dirname);",
+        &["./a.json"],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; const load = (folder = import.meta.dirname) => import(path.join(folder, 'a.json')); load(process.argv[2]);",
+        &["./a.json"],
+    ),
+    (
+        "a.cjs",
+        "const path = require('node:path'); require(path.join(process.env.FOLDER || __dirname, 'a.json'));",
+        &["./a.json"],
+    ),
+    (
+        "a.mjs",
+        "const load = name => import.meta.require(name); load(process.argv[2] ?? './a.json');",
+        &["./a.json"],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; import.meta.require(path.join(process.argv[2], 'a.json'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; let folder = import.meta.dirname; folder = process.argv[2]; import.meta.require(path.join(folder, 'a.json'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; import.meta.require(path.join(import.meta.dirname, 'a.json'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; import.meta.resolve(path.join(process.argv[2] ?? import.meta.dirname, 'a.json'));",
+        &[],
+    ),
+];
+
+#[test]
+fn finds_known_load_names() {
+    for &(name, text, names) in KNOWN_LOAD_NAMES {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
+            let known = s.analysis.known_load_names.iter();
+            let described: Vec<String> = known
+                .map(|&(_, name)| s.workspace.text(name).to_string())
+                .collect();
+            assert_eq!(described, names, "{text}");
+        });
+    }
+}
+
 const CALLER_RELATIVE_READS: &[(&str, &[&str], &[&str])] = &[
     (
         "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./data.txt', base)); }",

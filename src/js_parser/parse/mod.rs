@@ -1328,9 +1328,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 value = Some(p.parse_expr(Level::Comma)?);
             }
-            if p.may_request_originals {
-                p.did_parse_declarator(kind, &local, value.as_ref());
-            }
 
             decls.push(G::Decl {
                 binding: local,
@@ -1499,11 +1496,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let mut current_opts = opts;
-            let first_request = p.original_requests.len();
             let mut stmt = p.parse_stmt(&mut current_opts)?;
-            if p.original_requests.len() > first_request {
-                p.drop_requests_in_dead_stmt(&stmt, &stmts, first_request);
-            }
 
             // Skip TypeScript types entirely
             if Self::IS_TYPESCRIPT_ENABLED {

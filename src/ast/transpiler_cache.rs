@@ -64,7 +64,7 @@ impl Default for RuntimeTranspilerCache {
 bun_dispatch::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
         fn get(source: &Source<'_>, parser_options: NonNull<()>, used_jsx: bool) -> bool;
-        fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8], requested_originals: &[u8]);
+        fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
         fn is_disabled() -> bool;
     }
 }
@@ -96,17 +96,9 @@ impl RuntimeTranspilerCache {
     }
 
     #[inline]
-    pub fn put(
-        &mut self,
-        output_code: &[u8],
-        sourcemap: &[u8],
-        esm_record: &[u8],
-        requested_originals: &[u8],
-    ) {
+    pub fn put(&mut self, output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
         match self.r#impl {
-            Some(k) => {
-                Self::handle(k, self).put(output_code, sourcemap, esm_record, requested_originals)
-            }
+            Some(k) => Self::handle(k, self).put(output_code, sourcemap, esm_record),
             None => {
                 if self.input_hash.is_none() {
                     return;

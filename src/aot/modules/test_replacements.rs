@@ -18,7 +18,8 @@ use bun_sema::hir::{
     PatKind, PropKey, StmtKind, UnOp, VarDeclId,
 };
 use bun_sema::import_sites::{
-    ImportSiteKind, ImportSpecifier, find_requested_originals, is_module_call_of_plugin,
+    ImportSiteKind, ImportSpecifier, is_module_call_of_plugin, may_spell_word_that_mock_looks_for,
+    names_word_that_mock_looks_for,
 };
 use bun_sema::util::SharedSort;
 use core::ops::Range;
@@ -711,6 +712,14 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
     atoms: &Interner<'s>,
     is_test_runner: &dyn Fn(usize) -> bool,
 ) -> bool {
+    let may_word_come_from_outside = names_word_that_mock_looks_for(&hir.text)
+        || (analysis.decisions)
+            .folds_text_that(|it| names_word_that_mock_looks_for(atoms.bytes(it)));
+    let text_names_original = |factory: ExprId| {
+        let written = hir[factory].pos as usize..hir[factory].end as usize;
+        let text = hir.text.get(written);
+        may_word_come_from_outside || text.is_none_or(may_spell_word_that_mock_looks_for)
+    };
     let takes_nothing = |factory: ExprId| {
         let factory = hir.skip_type_assertions(factory);
         let ExprKind::Fn(function) = hir[factory].kind else {
@@ -719,7 +728,7 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
         hir[function].kind == FnKind::Arrow
             && hir[function].params.is_empty()
             && !hir[function].flags.contains(Flags::ASYNC)
-            && find_requested_originals(hir, bound, function, |name| atoms.bytes(name)).is_empty()
+            && !text_names_original(factory)
     };
     for site in analysis.import_sites {
         let is_dead = |call: ExprId| analysis.decisions.is_dead_expr(call);

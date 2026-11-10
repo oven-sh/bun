@@ -38,11 +38,14 @@ const HARDENING_ALLOWED: &str = "a list of these names: proof-checks, ignore-tol
 /// Each name that `--aot-harden` takes, and the words of the engine that it stands for. None is on by default.
 const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
     // What the compiler has proven of a value is tested where the value arrives. That nobody keeps a cell is a proof that no test can repeat: every cell stays in the heap.
+    // A call that was hoisted out of a loop is made again in each iteration and compared. A result that a built-in is declared to allocate is tested for being new.
     (
         b"proof-checks",
         &[
             b"testing=CheckProofsAtRunTime",
             b"testing=DisableFrameCells",
+            b"testing=CheckHoistedCallsAtRunTime",
+            b"testing=CheckResultFreshnessAtRunTime",
         ],
     ),
     // Every access by position reads the length and tests the position where it stands, whatever an earlier test or the head of a loop has shown.

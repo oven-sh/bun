@@ -919,7 +919,12 @@ describe.concurrent("compile.aotHarden", () => {
       "aotHarden",
       `aotHarden: ["proof-checks"]`,
       "Hardened with proof-checks",
-      ["--aot-testing=CheckProofsAtRunTime", "--aot-testing=DisableFrameCells"],
+      [
+        "--aot-testing=CheckProofsAtRunTime",
+        "--aot-testing=DisableFrameCells",
+        "--aot-testing=CheckHoistedCallsAtRunTime",
+        "--aot-testing=CheckResultFreshnessAtRunTime",
+      ],
     ],
     [
       "aotTesting",

@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { symlinkSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { test } from "./supported";
@@ -12,12 +13,15 @@ async function build(
   entryPoints = ["main.cjs"],
   flags: string[] = [],
   others: Record<string, string> = leftOut,
+  links: Record<string, string> = {},
+  root = ".",
 ) {
   using dir = tempDir("bun-ignore-comments", { ...others, ...files });
+  for (const [at, to] of Object.entries(links)) symlinkSync(to, join(String(dir), at), "dir");
   using out = tempDir("bun-ignore-comments-out", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--aot", ...flags, ...entryPoints, "--outfile", join(String(out), "program")],
-    cwd: String(dir),
+    cwd: join(String(dir), root),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -328,6 +332,53 @@ test("a program that is itself a package keeps the warning: what its user names 
   };
   const entryPoints = ["node_modules/tool/cli.cjs", "node_modules/tool/extra.cjs"];
   expect(await build(files, entryPoints, [], {})).toEqual({ said: ["warn: TS100064"], exitCode: 0 });
+});
+
+// Each link to an ancestor multiplies the paths that lead to every folder.
+const toAncestor = { "app/public/one": "../..", "app/public/two": "../..", "app/public/three": "..", "app/self": "." };
+const linked = {
+  "app/main.cjs": `require(${path});\n`,
+  "app/second.cjs": `module.exports = 2;\n`,
+  "app/public/page.html": "",
+};
+
+test("links to an ancestor: the build ends, and the warning stops once every code file is in the executable", async () => {
+  const links = { "app/public/one": "..", "app/public/two": "..", "app/public/three": "../public", "app/self": "." };
+  expect(await build(linked, ["main.cjs", "./second.cjs"], [], {}, links, "app")).toEqual(nothing);
+});
+
+test("links that lead above the project: the build ends and the warning stays", async () => {
+  expect(await build(linked, ["main.cjs", "./second.cjs"], [], {}, toAncestor, "app")).toEqual({
+    said: ["warn: TS100064"],
+    exitCode: 0,
+  });
+});
+
+test("a link to a sibling folder with a code file that is left out", async () => {
+  const files = { ...linked, "app/other/left-out.cjs": `module.exports = 3;\n` };
+  const links = { "app/public/other": "../other" };
+  const told = { said: ["warn: TS100064"], exitCode: 0 };
+  expect(await build(files, ["main.cjs", "./second.cjs"], [], {}, links, "app")).toEqual(told);
+  expect(await build(files, ["main.cjs", "./second.cjs", "./other/left-out.cjs"], [], {}, links, "app")).toEqual(
+    nothing,
+  );
+});
+
+test.each(["outside", "app/node_modules/dep", "app/.made"])(
+  "a link to a folder that the build doesn't look into: %s",
+  async to => {
+    const files = { ...linked, [`${to}/left-out.cjs`]: `module.exports = 3;\n` };
+    const links = { "app/plugins": to.startsWith("app/") ? to.slice("app/".length) : `../${to}` };
+    expect(await build(files, ["main.cjs", "./second.cjs"], [], {}, links, "app")).toEqual({
+      said: ["warn: TS100064"],
+      exitCode: 0,
+    });
+  },
+);
+
+test("a computed lookup beside links to an ancestor", async () => {
+  const lookup = { ...linked, "app/main.cjs": `require("./second.cjs");\nBun.resolveSync(${path}, __dirname);\n` };
+  expect(await build(lookup, ["main.cjs"], [], {}, toAncestor, "app")).toEqual(nothing);
 });
 
 test("a project of one file keeps the warning of a computed import", async () => {

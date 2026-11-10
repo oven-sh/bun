@@ -1,6 +1,9 @@
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
 use super::made_requires::{find_imported_export, may_be_modified, names_own_file, settled_symbol};
-use super::parameters::{ExportedNames, find_values_passed_for_pattern, is_exported};
+use super::parameters::{
+    ExportedNames, find_parameter_key_path, find_values_passed_by_call,
+    find_values_passed_for_pattern, is_exported,
+};
 use super::touched_exports::{is_only_tested, stands_in_function_with_arguments};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
@@ -330,12 +333,14 @@ struct Follower<'i, 'a, 's> {
     asked_of_own_exports: Option<&'i AskedOfOwnExports>,
     takes_all_as_written: bool,
     keeps_known_alternatives: bool,
+    skips_reassigned_bindings: bool,
     has_read_data_file: Cell<bool>,
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
     not_kept_as_written: FxHashSet<SymbolId>,
     variables_in_progress: Vec<SymbolId>,
     functions_in_progress: Vec<FnId>,
+    calls_in_progress: Vec<(FnId, IdList<ExprId>)>,
     expressions_left: Cell<u32>,
     texts_left: Cell<u32>,
     depth: u32,
@@ -393,12 +398,14 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             asked_of_own_exports: None,
             takes_all_as_written: false,
             keeps_known_alternatives: false,
+            skips_reassigned_bindings: false,
             has_read_data_file: Cell::new(false),
             kept_as_written: FxHashSet::default(),
             unchecked: Vec::new(),
             not_kept_as_written: FxHashSet::default(),
             variables_in_progress: Vec::new(),
             functions_in_progress: Vec::new(),
+            calls_in_progress: Vec::new(),
             expressions_left: Cell::new(most_expressions_followed(inputs.hir)),
             texts_left: Cell::new(MOST_TEXTS_MADE),
             depth: 0,
@@ -498,6 +505,19 @@ pub(super) fn find_known_alternatives(
     follower.keeps_known_alternatives = true;
     let found = find_alternatives_with(&mut follower, argument);
     (found, follower.open_parameters.first().copied())
+}
+
+pub(super) fn find_known_load_names(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    asked_of_data_files: &AskedOfDataFiles,
+    argument: ExprId,
+) -> Option<Found> {
+    let folder = Folder::OfFile;
+    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
+    follower.keeps_known_alternatives = true;
+    follower.skips_reassigned_bindings = true;
+    find_alternatives_with(&mut follower, argument)
 }
 
 pub(super) fn find_caller_relative_alternatives(
@@ -882,7 +902,15 @@ impl Follower<'_, '_, '_> {
             expr_kind(hir, e)?,
             ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Array(_) | ExprKind::Object(_)
         );
-        let values = self.values_of_kind(e)?;
+        let values = match self.can_see_calls_in_progress(e) {
+            true => self.values_of_kind(e),
+            false => {
+                let calls = std::mem::take(&mut self.calls_in_progress);
+                let values = self.values_of_kind(e);
+                self.calls_in_progress = calls;
+                values
+            }
+        }?;
         let layers = match is_born_here {
             true => count_layers_that_can_be_changed(&values),
             false => 0,
@@ -890,6 +918,29 @@ impl Follower<'_, '_, '_> {
         let is_as_written =
             self.takes_all_as_written || (0..layers).all(|below| self.asks_who_takes(e, below));
         is_as_written.then_some(values)
+    }
+
+    fn can_see_calls_in_progress(&self, e: ExprId) -> bool {
+        match expr_kind(self.inputs.hir, e) {
+            Some(
+                ExprKind::Template { .. }
+                | ExprKind::Binary { .. }
+                | ExprKind::Cond { .. }
+                | ExprKind::Call(_),
+            ) => true,
+            Some(ExprKind::Ident(_)) => self.find_arguments_in_progress(e).is_some(),
+            _ => false,
+        }
+    }
+
+    fn find_arguments_in_progress(&self, name: ExprId) -> Option<IdList<ExprId>> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let &(called, arguments) = self.calls_in_progress.last()?;
+        let Binding::Symbol(parameter) = bound.binding(name) else {
+            return None;
+        };
+        let (function, ..) = find_parameter_key_path(hir, bound, name)?;
+        (function == called && bound.is_stable_binding(parameter)).then_some(arguments)
     }
 
     fn values_of_kind(&mut self, e: ExprId) -> Option<Values> {
@@ -1279,14 +1330,25 @@ impl Follower<'_, '_, '_> {
                     written.map(|it| it.1).collect()
                 };
                 let decisions = self.inputs.decisions;
-                match find_values_passed_for_pattern(
-                    hir,
-                    bound,
-                    decisions,
-                    name,
-                    &find_written,
-                    false,
-                ) {
+                let arguments = self.find_arguments_in_progress(name);
+                let passed = arguments
+                    .and_then(|arguments| find_values_passed_by_call(hir, bound, name, arguments));
+                let kept = match passed {
+                    Some(_) => self.calls_in_progress.len() - 1,
+                    None => 0,
+                };
+                let calls = self.calls_in_progress.split_off(kept);
+                let passed = passed.or_else(|| {
+                    find_values_passed_for_pattern(
+                        hir,
+                        bound,
+                        decisions,
+                        name,
+                        &find_written,
+                        false,
+                    )
+                });
+                let values = match passed {
                     Some((passed, path, is_left_out)) => {
                         self.values_of_any(passed).and_then(|mut values| {
                             if is_left_out {
@@ -1309,7 +1371,9 @@ impl Follower<'_, '_, '_> {
                         }
                         handed
                     }
-                }
+                };
+                self.calls_in_progress.extend(calls);
+                values
             }
             BindingKind::Function if bound.is_stable_binding(symbol) => {
                 match bound.binding_initializer(hir, symbol) {
@@ -1353,12 +1417,13 @@ impl Follower<'_, '_, '_> {
 
     fn values_of_variable(&mut self, symbol: SymbolId) -> Option<Values> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
-        let is_followed = matches!(
-            bound.binding_stability(symbol),
-            BindingStability::Stable
-                | BindingStability::Stored
-                | BindingStability::NotInitializedOnce
-        );
+        let is_followed = match bound.binding_stability(symbol) {
+            BindingStability::Stable => true,
+            BindingStability::Stored | BindingStability::NotInitializedOnce => {
+                !self.skips_reassigned_bindings
+            }
+            _ => false,
+        };
         let (pattern, declared_again) = match *bound.symbol(symbol).decls {
             [Decl::Var(pattern) | Decl::Require(pattern)] => (pattern, &[][..]),
             [Decl::Var(pattern), ref again @ ..] => (pattern, again),
@@ -1651,7 +1716,7 @@ impl Follower<'_, '_, '_> {
                     let Held::Function(maker) = maker else {
                         return None;
                     };
-                    for value in self.values_returned_by(maker)? {
+                    for value in self.values_returned_by(maker, None)? {
                         add(&mut made, value);
                     }
                 }
@@ -1720,14 +1785,8 @@ impl Follower<'_, '_, '_> {
         {
             return false;
         }
-        let mut e = code;
-        let mut statement = loop {
-            match bound.parent_of_expr(e) {
-                Parent::Expr(above) => e = above,
-                Parent::Stmt(statement) => break statement,
-                Parent::VarInit(declaration) => break bound.var_stmt[declaration.idx()],
-                _ => return false,
-            }
+        let Some(mut statement) = bound.statement_of_expr(code) else {
+            return false;
         };
         if is_loop(hir[statement].kind) {
             return false;
@@ -3367,7 +3426,7 @@ impl Follower<'_, '_, '_> {
         let mut values = Distinct::new();
         for callee in self.values_of(callee)? {
             let returned = match callee {
-                Held::Function(function) => self.values_returned_by(function)?,
+                Held::Function(function) => self.values_returned_by(function, Some(call.args))?,
                 Held::FunctionOfOs(name) => self.values_returned_by_function_of_os(name)?,
                 _ => return None,
             };
@@ -3889,7 +3948,11 @@ impl Follower<'_, '_, '_> {
         Some(values.all)
     }
 
-    fn values_returned_by(&mut self, function: FnId) -> Option<Values> {
+    fn values_returned_by(
+        &mut self,
+        function: FnId,
+        arguments: Option<IdList<ExprId>>,
+    ) -> Option<Values> {
         let &ScanInputs {
             hir,
             bound,
@@ -3904,6 +3967,12 @@ impl Follower<'_, '_, '_> {
             return None;
         }
         self.functions_in_progress.push(function);
+        let hidden = match arguments {
+            Some(_) => Vec::new(),
+            None => std::mem::take(&mut self.calls_in_progress),
+        };
+        let depth = self.calls_in_progress.len();
+        (self.calls_in_progress).extend(arguments.map(|arguments| (function, arguments)));
         let values = match hir[function].body {
             FnBody::Expr(value) => self.values_of(value),
             FnBody::Block(_) => {
@@ -3932,6 +4001,8 @@ impl Follower<'_, '_, '_> {
             FnBody::None => None,
         };
         self.functions_in_progress.pop();
+        self.calls_in_progress.truncate(depth);
+        self.calls_in_progress.extend(hidden);
         values
     }
 }

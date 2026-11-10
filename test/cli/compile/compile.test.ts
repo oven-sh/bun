@@ -392,17 +392,23 @@ describe.concurrent("bun compile with the name of an installed executable", () =
     "node_modules/tool/bin/helper.js": prints("helper"),
   };
 
-  async function compiles(cwd: string, args: string[], name: string, stdout: string) {
+  const note = (name: string, path: string, packageName: string) =>
+    new RegExp(`^ +note  ${name} is ${RegExp.escape(join(...path.split("/")))}, from the package ${packageName}$`, "m");
+
+  async function compiles(cwd: string, args: string[], name: string, stdout: string, expectedNote?: RegExp) {
     const built = await bun(cwd, "compile", ...withoutCompiler, ...args);
     expect(built.stderr).not.toContain("error");
+    if (expectedNote) expect(built.stderr).toMatch(expectedNote);
+    else expect(built.stderr).not.toContain("from the package");
     expect(built.exitCode).toBe(0);
     expect(await run(cwd, [executable(cwd, name), "world"])).toEqual({ stdout, stderr: "", exitCode: 0 });
   }
 
   test("the name of a package, and again next to the executable of the first build", async () => {
     using dir = tempDir("compile-installed", tool);
-    await compiles(String(dir), ["tool"], "tool", "hello, world\n");
-    await compiles(String(dir), ["tool", "--outfile", "again"], "again", "hello, world\n");
+    const said = note("tool", "node_modules/tool/bin/cli.js", "tool");
+    await compiles(String(dir), ["tool"], "tool", "hello, world\n", said);
+    await compiles(String(dir), ["tool", "--outfile", "again"], "again", "hello, world\n", said);
   });
 
   test("a scoped package whose bin is a string", async () => {
@@ -410,14 +416,16 @@ describe.concurrent("bun compile with the name of an installed executable", () =
       "node_modules/@scope/tool/package.json": JSON.stringify({ name: "@scope/tool", bin: "cli.js" }),
       "node_modules/@scope/tool/cli.js": prints("scoped"),
     });
-    await compiles(String(dir), ["@scope/tool"], "tool", "scoped\n");
+    const said = note("@scope/tool", "node_modules/@scope/tool/cli.js", "@scope/tool");
+    await compiles(String(dir), ["@scope/tool"], "tool", "scoped\n", said);
   });
 
   test.skipIf(isWindows)("a link in node_modules/.bin", async () => {
     using dir = tempDir("compile-installed-link", tool);
     mkdirSync(join(String(dir), "node_modules", ".bin"));
     symlinkSync(join("..", "tool", "bin", "helper.js"), join(String(dir), "node_modules", ".bin", "tool-helper"));
-    await compiles(String(dir), ["tool-helper"], "tool-helper", "helper\n");
+    const said = note("tool-helper", "node_modules/tool/bin/helper.js", "tool");
+    await compiles(String(dir), ["tool-helper"], "tool-helper", "helper\n", said);
   });
 
   test("a launcher in node_modules/.bin", async () => {
@@ -426,12 +434,14 @@ describe.concurrent("bun compile with the name of an installed executable", () =
       [`node_modules/.bin/tool-helper${isWindows ? ".cmd" : ""}`]: "not JavaScript {",
       "node_modules/@scope/other/package.json": JSON.stringify({ name: "@scope/other", bin: { other: "cli.js" } }),
     });
-    await compiles(String(dir), ["tool-helper"], "tool-helper", "helper\n");
+    const said = note("tool-helper", "node_modules/tool/bin/helper.js", "tool");
+    await compiles(String(dir), ["tool-helper"], "tool-helper", "helper\n", said);
   });
 
   test("in a folder of the project", async () => {
     using dir = tempDir("compile-installed-from-below", { ...tool, "src/app.ts": "" });
-    await compiles(join(String(dir), "src"), ["tool"], "tool", "hello, world\n");
+    const said = note("tool", "../node_modules/tool/bin/cli.js", "tool");
+    await compiles(join(String(dir), "src"), ["tool"], "tool", "hello, world\n", said);
   });
 
   test("the nearest package of that name hides one further up", async () => {
@@ -451,13 +461,53 @@ describe.concurrent("bun compile with the name of an installed executable", () =
     });
   });
 
-  test("a source file of that name in the working directory is compiled instead", async () => {
-    using dir = tempDir("compile-installed-or-file", {
-      "node_modules/tool/package.json": JSON.stringify({ name: "tool", bin: "cli.js" }),
-      "node_modules/tool/cli.js": prints("installed"),
-      "tool.ts": prints("the file"),
+  const modes = unsupported ? ["--no-aot"] : ["--aot", "--no-aot"];
+  const packages: [string, Record<string, string>][] = [
+    ["a package with a library", tool],
+    [
+      "a package without a library",
+      {
+        "node_modules/tool/package.json": JSON.stringify({ name: "tool", bin: "cli.js" }),
+        "node_modules/tool/cli.js": prints("installed"),
+      },
+    ],
+    [
+      "another package",
+      {
+        "node_modules/other/package.json": JSON.stringify({ name: "other", bin: { tool: "cli.js" } }),
+        "node_modules/other/cli.js": prints("installed"),
+        [`node_modules/.bin/tool${isWindows ? ".cmd" : ""}`]: "not JavaScript {",
+      },
+    ],
+  ];
+
+  const extensions = [".tsx", ".ts", ".jsx", ".cts", ".cjs", ".js", ".mjs", ".mts"];
+  const pairs = extensions.flatMap((first, index) => extensions.slice(index + 1).map(second => [first, second]));
+
+  test.each(pairs)("of tool%s and tool%s, the one that bun run runs", async (first, second) => {
+    using dir = tempDir("compile-installed-pair", {
+      ["tool" + first]: `console.log("${first}");`,
+      ["tool" + second]: `console.log("${second}");`,
     });
-    await compiles(String(dir), ["tool"], "tool", "the file\n");
+    const ran = await bun(String(dir), "run", "tool");
+    expect([first + "\n", second + "\n"]).toContain(ran.stdout);
+    await compiles(String(dir), ["tool"], "tool", ran.stdout);
+  });
+  describe.each(modes)("a source file of that name, %s", mode => {
+    test.each(packages)("is compiled in the first build and the next, beside %s", async (_, files) => {
+      using dir = tempDir("compile-installed-or-file", { ...files, "tool.ts": prints("the file") });
+      await compiles(String(dir), [mode, "tool"], "tool", "the file\n");
+      writeFileSync(join(String(dir), "tool.ts"), prints("the changed file"));
+      await compiles(String(dir), [mode, "tool"], "tool", "the changed file\n");
+    });
+
+    test("is gone at the next build, which compiles the package's", async () => {
+      using dir = tempDir("compile-installed-after-file", { ...tool, "tool.ts": prints("the file") });
+      await compiles(String(dir), [mode, "tool"], "tool", "the file\n");
+      rmSync(join(String(dir), "tool.ts"));
+      const said = note("tool", "node_modules/tool/bin/cli.js", "tool");
+      await compiles(String(dir), [mode, "tool"], "tool", "hello, world\n", said);
+    });
   });
 
   test.each([
@@ -486,7 +536,7 @@ describe.concurrent("bun compile with the name of an installed executable", () =
     });
   });
 
-  describe.each(unsupported ? ["--no-aot"] : ["--aot", "--no-aot"])("a file without an extension, %s", mode => {
+  describe.each(modes)("a file without an extension, %s", mode => {
     const compilesInMode = async (files: Record<string, string>, entryPoint: string, stdout: string) => {
       using dir = tempDir("compile-no-extension", files);
       const built = await bun(String(dir), "compile", mode, entryPoint, "--outfile", "out");

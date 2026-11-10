@@ -110,8 +110,8 @@ pub enum ModuleObjectUse {
     Parent,
     Children,
     Object,
-    HandedOn,
-    HolderHandedOn,
+    Escaped,
+    HolderEscaped,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

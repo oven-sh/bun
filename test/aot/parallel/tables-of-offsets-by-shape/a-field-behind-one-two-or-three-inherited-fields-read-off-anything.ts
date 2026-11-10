@@ -1,4 +1,4 @@
-// STATISTIC: ReceiversToldByTablesOfOffsets >= 3
+// STATISTIC: ReceiversCheckedByOffsetTables >= 3
 interface HasV { v: number } interface HasW { w: number } interface HasX { x: number }
 class P0 { a0 = 0; }
 class P1 extends P0 { a1 = 0; } class P2 extends P1 { a2 = 0; }

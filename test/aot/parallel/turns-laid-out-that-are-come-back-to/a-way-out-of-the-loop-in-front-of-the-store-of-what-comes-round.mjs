@@ -1,5 +1,5 @@
-// STATISTIC: StoresLeftOutOfTurnsLaidOut >= 1
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
+// STATISTIC: UnrolledLoopStoresSunk >= 1
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the turns are laid out as users build them, and every raw access asks its position at the run
 // A variable of the module takes a local that the loop carries. The laid-out turns leave that store out and whoever leaves them makes up for it: but not where no turn has stored yet.
 let m = 5;
 function fail(c, stop) { if (c === stop) throw new Error("left"); }

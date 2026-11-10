@@ -8,6 +8,7 @@
 // of a field that held a table answered false in a loop after such code had stored a list there, and answered rightly where the loop was short enough to be written out, where the field held a written record, and
 // where objects of a second class came to the reader too. So one class alone comes here, and the loop is one of the dimensions.
 import { mkdirSync, writeFileSync } from "node:fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 const seen: [name: string, made: string][] = [
   ["a-whole-number", "7"],
@@ -119,7 +120,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && written < most; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     written++;
   }
   console.log(written);
@@ -129,7 +130,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

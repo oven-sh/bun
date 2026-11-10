@@ -1,4 +1,4 @@
-// STATISTIC: CapturedListsReadInFrontOfLoops >= 1
+// STATISTIC: CapturedArrayReadsHoisted >= 1
 "use strict";
 function make() { let list = [1, 2, 3, 4, 5, 6]; const other = [60, 50, 40, 30, 20, 10]; const first = list;
   function swap(i, r) { if (i === r % 7) list = list === first ? other : first; }

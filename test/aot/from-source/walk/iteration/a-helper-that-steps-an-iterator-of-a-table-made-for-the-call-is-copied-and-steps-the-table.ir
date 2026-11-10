@@ -11,8 +11,8 @@
 # A helper whose for-of opens its parameter, handed `table.values()`: the call made an iterator through the run time and every step went through the library's stepIterator().
 # The helper is copied where the iterator was made for that call alone, and the copy steps the table: no iterator is made. An iterator that the caller names again is stepped as before.
 # f1 = listOf, f2 = ofValues, f3 = ofMembers, f4 = keptBeside, f5 = madeInFront
-# RUN(COUNT): compile TablesSteppedInPlaceOfIteratorsHandedToCopies mechanisms=all
-# COUNT: statistic TablesSteppedInPlaceOfIteratorsHandedToCopies 2
+# RUN(COUNT): compile IteratorAllocationsElidedInInlinees mechanisms=all
+# COUNT: statistic IteratorAllocationsElidedInInlinees 2
 # RUN(VALUES): walk f2 mechanisms=all
 # VALUES-LABEL: code f2:Body
 # VALUES-NOT: inlineBuiltin=MapIterator

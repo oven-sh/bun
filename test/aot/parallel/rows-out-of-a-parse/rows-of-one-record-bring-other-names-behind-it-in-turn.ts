@@ -1,4 +1,4 @@
-// COUNTER: MostRecordPlansHeld = 1
+// COUNTER: PeakRecordPlansCached = 1
 // COUNTER: ObjectsParsedIntoOrdinaryObjects = 0
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate
 interface Row { id: number; name: string; active: boolean }

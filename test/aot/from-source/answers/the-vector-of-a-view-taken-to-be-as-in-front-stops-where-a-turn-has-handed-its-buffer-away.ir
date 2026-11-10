@@ -7,22 +7,26 @@
 # for (let i = 0; i < 16; i++) view[i] = i + 1;
 # print(sum(view, turns), view.length, kept.length);
 # -- end of source
-# One turn hands the bytes of the buffer to another buffer, which the program keeps: the view has no element any more.
-# The lie, testing=StorageAndLengthsAreTakenToBeAsInFront: the turns of a loop are taken to leave the storage of lists and of views, and so their lengths, as they were in front of it: what a turn reads of them is read once, in front. The turns behind it read the bytes where they still lie.
-# Under testing=TestsEveryPosition (--aot-harden=ignore-told-ranges) and testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same records are built at the same places, and what was read in front is held against the cell in the turn: the process stops by name.
+# One iteration transfers the bytes of the buffer to another buffer, which the program keeps, so the view has no elements anymore.
+# Fault injection, testing=AssumeInvariantArrayStorage: the compiler assumes that the iterations of a loop leave the storage of arrays and of views, and so their lengths, as they were before the loop.
+# So what an iteration reads of them is read once, in the preheader. The iterations after the transfer read the bytes where they still are.
+# With testing=CheckBoundsAtRunTime (--aot-harden=ignore-told-ranges) and with testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same operations are built at the same places.
+# Each iteration then checks what was read in the preheader against the cell, and the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 1210 0 1
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime
 # HELD: 1210 0 1
 # HELD-NEXT: exited with 0
-# The lie as built: another answer, and nobody stops.
-# RUN(SILENT): run-in-shell mechanisms=all testing=StorageAndLengthsAreTakenToBeAsInFront
+# With the fault injected in a default build, the program prints another result and nothing crashes.
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeInvariantArrayStorage
 # SILENT: 136 0 1
 # SILENT-NEXT: exited with 0
-# RUN(POSITIONS): run-in-shell mechanisms=all testing=TestsEveryPosition,StorageAndLengthsAreTakenToBeAsInFront
-# POSITIONS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,AssumeInvariantArrayStorage
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed
+# POSITIONS-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # POSITIONS: crashed with
-# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,StorageAndLengthsAreTakenToBeAsInFront
-# PROOFS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeInvariantArrayStorage
+# PROOFS: bun: internal AOT error: redundancy elimination check failed
+# PROOFS-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # PROOFS: crashed with

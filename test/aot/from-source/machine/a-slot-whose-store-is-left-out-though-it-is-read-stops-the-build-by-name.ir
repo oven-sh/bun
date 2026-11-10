@@ -1,5 +1,8 @@
-# The stores behind definitions. The encoder leaves out the store of a value into its slot where the allocator says that no step reads the slot. `this` waits in a slot across the call in `clear`, and the slow road of the store to `#timer` reads it out of that slot. THE LIE, testing=SpillsThatStepsReadAreTakenToBeReadByNone: the allocator says so of the slots that steps do read, so the store is left out and the slot is read without its value.
-# No check is asked for here, as in a build of a user: the encoder asks at each read of a slot whether its store was left out, and the build stops by name. Without that question it would end well and the code would be wrong.
+# This test covers the stores after definitions. The encoder omits the store of a value into its slot where the allocator says that no step reads the slot.
+# `this` stays in a slot across the call in `clear`, and the slow path of the store to `#timer` reads it from that slot.
+# Fault injection, testing=AssumeSpillSlotsDead: the allocator says the same of the slots that steps do read, so the store is omitted and the slot is read without its value.
+# The test requests no check, as in a user's build. At each read of a slot the encoder checks whether the slot's store was omitted, and the build fails with a named internal error.
+# Without that check the build would succeed and the code would be wrong.
 # f3 = clear
 # -- source: a-slot-whose-store-is-left-out-though-it-is-read-stops-the-build-by-name.ts
 # declare function sink(...values: unknown[]): void;
@@ -13,5 +16,5 @@
 # -- end of source
 # REQUIRES: x86_64
 # AS-USERS-BUILD: the encoder's question at each read of a slot is asked in every build, and under the check of the runner the allocation is checked, which finds the same
-# DIAGNOSTIC: SpillSlotLacksItsValue f3
-# RUN: emit f3 mechanisms=all testing=SpillsThatStepsReadAreTakenToBeReadByNone
+# DIAGNOSTIC: WrongValueInSpillSlot f3
+# RUN: emit f3 mechanisms=all testing=AssumeSpillSlotsDead

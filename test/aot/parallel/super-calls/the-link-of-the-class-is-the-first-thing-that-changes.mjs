@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate
-// STATISTIC: CallsThroughSuperMadeBehindGuards >= 2
+// STATISTIC: SuperCallsDevirtualized >= 2
 const words = JSON.parse('{"proto":"prototype"}');
 class Ware { constructor(worth) { this.worth = worth; } price(rate) { return this.worth * rate; } }
 class Boxed extends Ware { price(rate, again) { return again ? this.price(rate) : super.price(rate) + 1; } }

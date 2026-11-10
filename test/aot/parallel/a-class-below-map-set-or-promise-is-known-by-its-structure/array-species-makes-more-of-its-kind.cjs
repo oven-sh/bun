@@ -1,5 +1,5 @@
 // A class below Array: map() and slice() make more of its kind.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class A extends Array { constructor(...all) { super(...all); this.n = 1; } two() { return this.n + 1; } three() { return this.n + this.length; } }
 const one = A.from([1, 2, 3]);

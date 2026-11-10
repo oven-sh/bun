@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedForBesideListsInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedBesideArrays >= 1
 const marks = JSON.parse("[0.25, 137.25, 24.25, 161.25]");
 const seen = [];
 function tally(least) {

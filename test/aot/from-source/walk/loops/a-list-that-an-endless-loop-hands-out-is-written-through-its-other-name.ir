@@ -14,9 +14,11 @@
 # }
 # try { walk(holder); } catch (error) { print(error.message, reads, kept.join()); }
 # -- end of source
-# The control: the loop names `out` and hands it out, so it leaves in front of the builds and nothing is believed of it at the closed copy. Under the lie that loops name nothing from in front it stays fresh there, and what arrives says otherwise: the answer stays right.
-# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
-# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# This is the control. The loop mentions `out` and lets it escape, so `out` counts as escaped before the versions of the loop are built, and nothing is assumed about it in the generic version.
+# Fault injection, testing=IgnoreLoopEscapes: loops are assumed to mention no value from before the loop.
+# `out` then stays fresh in the generic version, but what arrives there says otherwise, so the output stays correct.
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: enough 4 4 0,1,2,3
 # SHELL-NEXT: exited with 0
@@ -24,6 +26,6 @@
 # RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # HELD: enough 4 4 0,1,2,3
 # HELD-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=LoopsAreTakenToNameNothingFromInFront
+# RUN(LIE): run-in-shell mechanisms=all testing=IgnoreLoopEscapes
 # LIE: enough 4 4 0,1,2,3
 # LIE-NEXT: exited with 0

@@ -28,8 +28,8 @@
 # -- end of source
 # The turns over a list of numbers are laid out once for each kind of storage; each layout leaves the store out and hands over on its own. Leaving at 0 stores nothing, leaving at 1, 8, 9, 20 stores
 # what the turn in front stored (with the store made always the first line of each kind ends in 0; with none made the others end in 5).
-# RUN(EVENT): compile StoresLeftOutOfTurnsLaidOut mechanisms=all
-# EVENT: statistic StoresLeftOutOfTurnsLaidOut 2
+# RUN(EVENT): compile UnrolledLoopStoresSunk mechanisms=all
+# EVENT: statistic UnrolledLoopStoresSunk 2
 # RUN(RIGHT): run-in-shell
 # RIGHT: 0 0 0 5
 # RIGHT-NEXT: 0 1 1 1

@@ -29,7 +29,7 @@ pub enum ProgramModule {
         file: ProgramFile,
         callback: FnId,
     },
-    Face(ProgramFile),
+    Facade(ProgramFile),
     Check(ProgramFile),
     Runtime(RuntimeModule),
     External {
@@ -54,7 +54,7 @@ impl ProgramModule {
                 };
                 (file.project, module)
             }
-            ProgramModule::Face(file) => (file.project, ModuleRef::Face(file.file)),
+            ProgramModule::Facade(file) => (file.project, ModuleRef::Facade(file.file)),
             ProgramModule::Check(file) => (file.project, ModuleRef::Check(file.file)),
             ProgramModule::Runtime(_) | ProgramModule::External { .. } => return None,
         })
@@ -69,7 +69,7 @@ impl ProgramModule {
                 };
                 (file, FunctionKey::Source(callback))
             }
-            ProgramModule::Face(file) => (file, FunctionKey::FaceBody(file.file)),
+            ProgramModule::Facade(file) => (file, FunctionKey::FacadeBody(file.file)),
             ProgramModule::Check(file) => (file, FunctionKey::CheckBody(file.file)),
             ProgramModule::File(_) | ProgramModule::Runtime(_) | ProgramModule::External { .. } => {
                 return None;
@@ -174,7 +174,7 @@ impl KeyContext<'_> {
                 file: in_project(file),
                 callback,
             },
-            ModuleRef::Face(file) => ProgramModule::Face(in_project(file)),
+            ModuleRef::Facade(file) => ProgramModule::Facade(in_project(file)),
             ModuleRef::Check(file) => ProgramModule::Check(in_project(file)),
             ModuleRef::Runtime(module) => match self.runtime_sources.runtime_module_file(module) {
                 Some(file) => ProgramModule::File(ProgramFile {
@@ -200,7 +200,7 @@ fn order_in_file(module: ProgramModule) -> Option<(ProgramFile, u8, u32)> {
     match module {
         ProgramModule::File(file) => Some((file, 0, 0)),
         ProgramModule::Inner { file, callback } => Some((file, 1, callback.0)),
-        ProgramModule::Face(file) => Some((file, 2, 0)),
+        ProgramModule::Facade(file) => Some((file, 2, 0)),
         ProgramModule::Check(file) => Some((file, 3, 0)),
         ProgramModule::Runtime(_) | ProgramModule::External { .. } => None,
     }
@@ -298,7 +298,7 @@ impl OrderedKey for ProgramFunctionKey {
         let (variant, file, second) = match self.key {
             FunctionKey::ModuleBody(file) => (0, file, 0),
             FunctionKey::WrappedModuleBody(file) => (1, file, 0),
-            FunctionKey::FaceBody(file) => (2, file, 0),
+            FunctionKey::FacadeBody(file) => (2, file, 0),
             FunctionKey::CheckBody(file) => (3, file, 0),
             FunctionKey::Instantiation(file) => (4, file, 0),
             FunctionKey::Source(it) => (5, it.file, it.function.0),

@@ -12,8 +12,8 @@
 # print(typeof read(2), typeof read(0), others.length);
 # -- end of source
 # Eight records elsewhere list the name: more than the family has members: each member is tied, as before. What is proven of the read is the same to the letter as in the twin.
-# RUN(COUNT): compile ReadsThroughFamiliesTiedByClassesThatDeclare mechanisms=all
-# COUNT: statistic ReadsThroughFamiliesTiedByClassesThatDeclare 0
+# RUN(COUNT): compile FamilyReadsLinkedToDeclarers mechanisms=all
+# COUNT: statistic FamilyReadsLinkedToDeclarers 0
 # RUN: link functions mechanisms=all
 # CHECK: function f2 {{*}}result=undefined|f10 
 # RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime

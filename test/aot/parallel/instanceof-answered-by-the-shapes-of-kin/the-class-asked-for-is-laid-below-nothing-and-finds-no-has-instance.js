@@ -1,5 +1,5 @@
 // Out of sight the class asked for is laid below null: it finds no Symbol.hasInstance at all, and the language then walks the chain as ever. Later it is laid below a plain function, then below a proxy.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 class Animal { constructor(n) { this.n = n; } }
 class Dog extends Animal { bark() { return 1; } }
 class Cat extends Animal { purr() { return 2; } }

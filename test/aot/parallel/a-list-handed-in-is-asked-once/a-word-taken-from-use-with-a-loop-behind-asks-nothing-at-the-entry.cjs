@@ -1,6 +1,6 @@
 // No type is written here: that `left` is a list is taken from its use, and texts arrive. Behind the first read stands a loop, which tells texts from lists by itself:
 // a way that failed at the entry would reach it closed. So nothing is asked at the entry.
-// STATISTIC: ListsHandedInAskedOnceForWhatStandsBehindBranch = 0
+// STATISTIC: ArrayParameterChecksSpanningBranches = 0
 "use strict";
 const first = JSON.parse('"kiwi, plum and pear"'), second = JSON.parse('"kiwi, plum and peach"'), name = JSON.parse('"order"');
 const table = {

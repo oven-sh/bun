@@ -1,4 +1,4 @@
-// STATISTIC: ListsTakenUnderCountersAskedInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedUnderSpeculatedCounters >= 1
 const rounds = +process.argv[2]! || 3;
 function sum(list: any, i: any, end: number): any { let s = 0; while (i < end) { const x = list[i]; s += x === undefined ? 1 : x; i++; } return s + ":" + i; }
 function upTo(list: any, i: any, t: number, end: number): any { while (!(list[i] >= t) && i < end) i++; return i; }

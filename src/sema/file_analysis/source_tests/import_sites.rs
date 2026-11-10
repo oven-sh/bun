@@ -1454,7 +1454,7 @@ const ASKED_OF_OWN_EXPORTS: &[(&str, &[&str])] = &[
 fn what_is_followed_through_the_exports_asks_who_else_touches_them() {
     for &(text, expected) in ASKED_OF_OWN_EXPORTS {
         analyzed("a.cjs", text, |s| {
-            let asked = s.analysis.asked_of_own_exports.iter();
+            let asked = s.analysis.own_export_queries.iter();
             let asked: Vec<&str> = asked.map(|&it| s.workspace.text(it)).collect();
             assert_eq!(asked, expected, "{text}");
         });
@@ -1465,7 +1465,7 @@ fn what_is_followed_through_the_exports_asks_who_else_touches_them() {
 fn names_of_loads_ask_for_texts_of_other_files() {
     for &(path, text, expected) in ASKED_OF_DATA_FILES {
         analyzed(path, text, |s| {
-            let asked = s.analysis.asked_of_data_files.iter();
+            let asked = s.analysis.data_file_queries.iter();
             let mut asked: Vec<(&str, &str)> = asked
                 .map(|it| (s.workspace.text(it.0), s.workspace.text(it.1)))
                 .collect();
@@ -1502,7 +1502,7 @@ const ASKED_WHERE_FILES_LIE: &[(&str, &str, &[&str])] = &[
 fn what_goes_on_from_answer_of_resolver_asks_where_file_lies_for_each_call() {
     for &(path, text, expected) in ASKED_WHERE_FILES_LIE {
         analyzed(path, text, |s| {
-            let asked = s.analysis.asked_of_data_files.iter();
+            let asked = s.analysis.data_file_queries.iter();
             let mut asked: Vec<(&str, &str)> = asked
                 .map(|it| (s.workspace.text(it.0), s.workspace.text(it.1)))
                 .collect();
@@ -2213,6 +2213,31 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
         "const name = (c ? './a' : null) || './b'; require(name);",
         &["./a", "./b"],
     ),
+    (
+        "let kept; const [...[first]] = (kept = [{ path: './b' }]); log(first.path); function idle() {} import(kept[0].path);",
+        &["./b"],
+    ),
+    (
+        "const kept = [{ path: './b' }]; const [...[first]] = kept; log(first.path); function idle() {} import(kept[0].path);",
+        &["./b"],
+    ),
+    (
+        "const [, ...[second]] = ['./a', './b']; require(second);",
+        &["./b"],
+    ),
+    (
+        "const [...[, second]] = ['./a', './b']; require(second);",
+        &["./b"],
+    ),
+    ("const [[inner]] = [['./a']]; require(inner);", &["./a"]),
+    (
+        "const [...[...[deep]]] = ['./a']; require(deep);",
+        &["./a"],
+    ),
+    (
+        "for (const [...[name]] of [['./a'], ['./b']]) require(name);",
+        &["./a", "./b"],
+    ),
 ];
 
 const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
@@ -2311,6 +2336,10 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "const table = { entry: { path: './b' } }; try { throw 0; } catch (entry) { var { entry } = table; entry.path = other; } import(table.entry.path);",
     "const table = { entry: { path: './b' } }; function change({ entry }, more = 0) { var entry; entry.path = other; } change(table); import(table.entry.path);",
     "let kept; const [...[first]] = (kept = [{ path: './b' }]); first.path = other; import(kept[0].path);",
+    "let kept; const [...[first]] = (kept = [{ path: './b' }]); change(first); import(kept[0].path);",
+    "const kept = [{ path: './b' }]; const [...rest] = kept; change(rest); import(kept[0].path);",
+    "const [...[first = other]] = ['./a']; require(first);",
+    "const [...rest] = ['./a']; rest.push(other); require(rest[1]);",
     "const uses = { a() { this.b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a() { (() => this)().b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a() { super.b = 1; } }; for (const name in uses) uses[name](require(name));",
@@ -3045,7 +3074,7 @@ fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
     }
 }
 
-const PATHS_OF_FILES_READ: &[(&str, &str, &[&str])] = &[
+const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
     (
         "a.mjs",
         "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', import.meta.url));",
@@ -3199,7 +3228,7 @@ const PATHS_OF_FILES_READ: &[(&str, &str, &[&str])] = &[
     (
         "a.mjs",
         "import { existsSync, statSync } from 'node:fs'; existsSync(new URL('./a.txt', import.meta.url)); statSync(new URL('./a.txt', import.meta.url));",
-        &[],
+        &["./a.txt", "./a.txt"],
     ),
     (
         "a.mjs",
@@ -3261,28 +3290,145 @@ const PATHS_OF_FILES_READ: &[(&str, &str, &[&str])] = &[
         "import fs from 'node:fs'; import os from 'node:os'; fs.openSync(new URL('./a.txt', import.meta.url), os.constants.O_RDONLY);",
         &[],
     ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.accessSync(new URL('./a.txt', import.meta.url)); fs.lstatSync(new URL('./b.txt', import.meta.url));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.accessSync(new URL('./a.txt', import.meta.url), fs.constants.W_OK);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.accessSync(new URL('./a.txt', import.meta.url), fs.constants.R_OK | fs.constants.W_OK);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.accessSync(new URL('./a.txt', import.meta.url), process.argv.length);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.accessSync(new URL('./a.txt', import.meta.url), 2);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.accessSync(new URL('./a.txt', import.meta.url), fs.constants.F_OK | fs.constants.R_OK);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { access } from 'node:fs'; access(new URL('./a.txt', import.meta.url), () => {});",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.access(new URL('./a.txt', import.meta.url), fs.constants.R_OK, () => {});",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { stat, access } from 'node:fs/promises'; await stat(new URL('./a.txt', import.meta.url)); await access(new URL('./b.txt', import.meta.url));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "await Bun.file(new URL('./a.txt', import.meta.url)).exists();",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.readdirSync(new URL('./a', import.meta.url)); fs.mkdirSync(new URL('./b', import.meta.url));",
+        &[],
+    ),
 ];
 
 #[test]
-fn paths_from_its_own_folder_that_a_file_spells_to_calls_which_read_what_is_there() {
-    for &(name, text, paths) in PATHS_OF_FILES_READ {
+fn finds_module_relative_reads() {
+    for &(name, text, paths) in MODULE_RELATIVE_READS {
         with_workspace(|w| {
             let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
-            let read = s.analysis.paths_of_files_read.iter();
+            let read = s.analysis.module_relative_reads.iter();
             let described: Vec<String> = read
                 .map(|&(_, path)| s.workspace.text(path).to_string())
                 .collect();
             assert_eq!(described, paths, "{text}");
-            let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
-                && s.analysis.asked_of_other_files.is_empty()
-                && s.analysis.asked_of_data_files.is_empty()
-                && s.analysis.asked_of_own_exports.is_empty();
+            let lays_nothing_else = s.analysis.names_from_data_files.is_empty()
+                && s.analysis.other_file_queries.is_empty()
+                && s.analysis.data_file_queries.is_empty()
+                && s.analysis.own_export_queries.is_empty();
             assert!(lays_nothing_else, "{text}");
         });
     }
 }
 
-const FILES_READ_BESIDE_THE_FILE_THAT_CALLS: &[(&str, &[&str], &[&str])] = &[
+const KNOWN_LOAD_NAMES: &[(&str, &str, &[&str])] = &[
+    (
+        "a.mjs",
+        "import path from 'node:path'; import.meta.require(path.join(process.argv[2] ?? import.meta.dirname, 'a.json'));",
+        &["./a.json"],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; const load = folder => import.meta.require(path.join(folder, 'a.json')); load(process.argv[2] ?? import.meta.dirname);",
+        &["./a.json"],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; const load = (folder = import.meta.dirname) => import(path.join(folder, 'a.json')); load(process.argv[2]);",
+        &["./a.json"],
+    ),
+    (
+        "a.cjs",
+        "const path = require('node:path'); require(path.join(process.env.FOLDER || __dirname, 'a.json'));",
+        &["./a.json"],
+    ),
+    (
+        "a.mjs",
+        "const load = name => import.meta.require(name); load(process.argv[2] ?? './a.json');",
+        &["./a.json"],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; import.meta.require(path.join(process.argv[2], 'a.json'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; let folder = import.meta.dirname; folder = process.argv[2]; import.meta.require(path.join(folder, 'a.json'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; import.meta.require(path.join(import.meta.dirname, 'a.json'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import path from 'node:path'; import.meta.resolve(path.join(process.argv[2] ?? import.meta.dirname, 'a.json'));",
+        &[],
+    ),
+];
+
+#[test]
+fn finds_known_load_names() {
+    for &(name, text, names) in KNOWN_LOAD_NAMES {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
+            let known = s.analysis.known_load_names.iter();
+            let described: Vec<String> = known
+                .map(|&(_, name)| s.workspace.text(name).to_string())
+                .collect();
+            assert_eq!(described, names, "{text}");
+        });
+    }
+}
+
+const CALLER_RELATIVE_READS: &[(&str, &[&str], &[&str])] = &[
     (
         "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./data.txt', base)); }",
         &["read 0 ./data.txt"],
@@ -3628,15 +3774,170 @@ const FILES_READ_BESIDE_THE_FILE_THAT_CALLS: &[(&str, &[&str], &[&str])] = &[
         &["read 0 other ./data.txt"],
         &[],
     ),
+    (
+        "import { read } from './lib.mjs'; const here = import.meta.url; read(here);",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; const moduleUrl = import.meta.url; read({ moduleUrl });",
+        &[],
+        &["read 0 moduleUrl"],
+    ),
+    (
+        "import { read } from './lib.mjs'; const here = import.meta.url; read({ moduleUrl: here });",
+        &[],
+        &["read 0 moduleUrl"],
+    ),
+    (
+        "import { read } from './lib.mjs'; const first = import.meta.url; const here = first; read(here);",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; var here = import.meta.url; read(here);",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; { const here = import.meta.url; if (here) { read(here); } }",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; function hand() { const here = import.meta.url; read(here); }",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; let here = import.meta.url; here = other; read(here);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; let moduleUrl = import.meta.url; moduleUrl = other; read({ moduleUrl });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; let here = import.meta.url; const set = () => { here = other; }; set(); read(here);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; const here = other; read(here);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; const { here } = { here: import.meta.url }; read(here);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; function hand(here) { read(here); } hand(import.meta.url);",
+        &[],
+        &["hand 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; const moduleUrl = import.meta.url; read({ moduleUrl, moduleUrl: other });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(here); var here = import.meta.url;",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; function pick(which) { switch (which) { case 0: const here = import.meta.url; case 1: return read(here); } }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; hand(); const here = import.meta.url; function hand() { read(here); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; const hand = () => read(here); hand(); const here = import.meta.url;",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; for (;;) { read(here); const here = import.meta.url; }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; const here = import.meta.url; function hand() { read(here); } hand();",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; const here = import.meta.url, there = read(here);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; try { other(); var here = import.meta.url; } finally { read(here); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; const here = first; read(here); var first = import.meta.url;",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; if (flag) var here = import.meta.url; else read(here);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; function pick(which) { switch (which) { case 0: var here = import.meta.url; break; default: read(here); } }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; const here = import.meta.url; switch (which) { case 0: read(here); }",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; const moduleUrl = import.meta.url; try { log(read({ moduleUrl })); } catch {}",
+        &[],
+        &["read 0 moduleUrl"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ moduleUrl }); var moduleUrl = import.meta.url;",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; function hand() { using here = import.meta.url; read(here); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; async function hand() { await using here = import.meta.url; read(here); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; function hand() { let here = import.meta.url; read(here); }",
+        &[],
+        &["read 0"],
+    ),
 ];
 
 #[test]
-fn files_that_a_function_reads_beside_the_file_whose_url_it_is_handed() {
-    for &(text, read, handed) in FILES_READ_BESIDE_THE_FILE_THAT_CALLS {
+fn finds_caller_relative_reads() {
+    for &(text, read, handed) in CALLER_RELATIVE_READS {
         with_workspace(|w| {
             let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
             let name = |symbol| s.workspace.text(s.bound.symbol(symbol).name);
-            let mut described: Vec<String> = (s.analysis.files_read_beside_callers.iter())
+            let mut described: Vec<String> = (s.analysis.caller_relative_reads.iter())
                 .map(|it| {
                     let path = s.workspace.text(it.path);
                     let property = it.property.map(|it| format!("{} ", s.workspace.text(it)));
@@ -3646,7 +3947,7 @@ fn files_that_a_function_reads_beside_the_file_whose_url_it_is_handed() {
                 .collect();
             described.sort();
             assert_eq!(described, read, "{text}");
-            let described: Vec<String> = (s.analysis.own_urls_handed.iter())
+            let described: Vec<String> = (s.analysis.own_url_arguments.iter())
                 .map(|it| {
                     let property = it.property.map(|it| format!(" {}", s.workspace.text(it)));
                     let property = property.unwrap_or_default();
@@ -3654,10 +3955,10 @@ fn files_that_a_function_reads_beside_the_file_whose_url_it_is_handed() {
                 })
                 .collect();
             assert_eq!(described, handed, "{text}");
-            let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
-                && s.analysis.asked_of_other_files.is_empty()
-                && s.analysis.asked_of_data_files.is_empty()
-                && s.analysis.asked_of_own_exports.is_empty();
+            let lays_nothing_else = s.analysis.names_from_data_files.is_empty()
+                && s.analysis.other_file_queries.is_empty()
+                && s.analysis.data_file_queries.is_empty()
+                && s.analysis.own_export_queries.is_empty();
             assert!(lays_nothing_else, "{text}");
         });
     }

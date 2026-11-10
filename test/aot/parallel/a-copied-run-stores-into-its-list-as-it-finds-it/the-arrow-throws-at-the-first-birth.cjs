@@ -1,4 +1,4 @@
-// STATISTIC: StoresOfCopiedRunsThatTakeListsAsTheyAre >= 1
+// STATISTIC: InlineeArrayStoresLeftGeneric >= 1
 "use strict";
 const show = list => list.length + ":" + Array.from({ length: list.length }, (_, i) => i in list ? (Object.is(list[i], -0) ? "-0" : typeof list[i] === "object" && list[i] !== null ? JSON.stringify(list[i]) : typeof list[i] + ":" + String(list[i])) : "<hole>").join(",");
 const plainly = (rows, take) => { const out = []; out.length = rows.length; for (let i = 0; i < rows.length; i++) if (i in rows) out[i] = take(rows[i], i); return out; };

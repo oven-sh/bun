@@ -1,5 +1,5 @@
 // Who takes the list stores into it and grows it; nobody reads it behind.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 function change(list) { list[0] = "changed"; list.push("more"); return list.join(); }
 const flags = JSON.parse("[true,false,true]");
 function fire(flag, ...args) { if (!flag) return args.length + ":" + args[1]; return change(args); }

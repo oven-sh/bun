@@ -7,13 +7,13 @@
 # f1 = each, f2 = total
 # The sweep lends a closure to the frame of the function that makes it, and two emitters lay lists and words there. They stand behind the walk and asked the mechanisms of the build:
 # a unit walked with nothing carried or closed still lent. They go by what the way withholds (`Code::has()`).
-# RUN(BARE): walk f2 mechanisms=all testing=WalksUnitsBy:NothingCarried
+# RUN(BARE): walk f2 mechanisms=all testing=ForceWalkMode:NothingCarried
 # BARE: NewClosure
 # BARE-NOT: storage=Frame
-# RUN(CLOSED): walk f2 mechanisms=all testing=WalksUnitsBy:Closed
+# RUN(CLOSED): walk f2 mechanisms=all testing=ForceWalkMode:Closed
 # CLOSED: NewClosure
 # CLOSED-NOT: storage=Frame
-# RUN(ANSWERBARE): run-in-shell mechanisms=all testing=WalksUnitsBy:NothingCarried
+# RUN(ANSWERBARE): run-in-shell mechanisms=all testing=ForceWalkMode:NothingCarried
 # ANSWERBARE: 10
-# RUN(ANSWERCLOSED): run-in-shell mechanisms=all testing=WalksUnitsBy:Closed
+# RUN(ANSWERCLOSED): run-in-shell mechanisms=all testing=ForceWalkMode:Closed
 # ANSWERCLOSED: 10

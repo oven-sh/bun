@@ -186,15 +186,23 @@ pub trait SourceProvider: Sync {
 
     fn keep_path_of_code_that_file_system_sees(&self, _source_path: &[u8]) {}
 
-    fn is_file_that_only_asset_brings(&self, _source_path: &[u8]) -> bool {
+    fn embeds_assets(&self) -> bool {
         false
     }
 
-    fn is_data_file_that_its_folder_may_hide(&self, _source_path: &[u8]) -> bool {
+    fn highest_asset_level(&self) -> usize {
+        0
+    }
+
+    fn is_embeddable_only_by_asset(&self, _source_path: &[u8]) -> bool {
         false
     }
 
-    fn warn_if_file_system_lacks(&self, _source_path: &[u8], _warning: Msg) {}
+    fn is_embedding_undecided(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
+    fn warn_if_not_embedded(&self, _source_path: &[u8], _warning: Msg) {}
 
     fn parse_data<'s>(
         &self,

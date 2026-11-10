@@ -1,5 +1,5 @@
 // An object of a class two steps below the class that is asked for: its shape says yes.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 1
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 1
 const kinds = JSON.parse('["click","key","touch","scroll","pen","click","key"]');
 class UiEvent { constructor(x) { this.x = x; } }
 class PointerEvent extends UiEvent {}

@@ -22,6 +22,6 @@
 # CHECK-NEXT: 2612 [5.5,5,5,5]
 # CHECK-NEXT: 1809 ["11","[object Object]1",5]
 # CHECK-NEXT: exited with 0
-# RUN(COUNT): compile LoopsBuiltTwice PurchasesOfLoopsThatFailed mechanisms=all
-# COUNT: statistic LoopsBuiltTwice 5
-# COUNT: statistic PurchasesOfLoopsThatFailed 0
+# RUN(COUNT): compile WalkLoopsVersioned LoopVersioningAttemptsFailed mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 5
+# COUNT: statistic LoopVersioningAttemptsFailed 0

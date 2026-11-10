@@ -1,5 +1,5 @@
 // Both arrive at one function: rows out of JSON.parse and a list of literals made in sight.
-// STATISTIC: ElementsOfListsGuessedByNamesNotAskedForLayoutsThatStayWithCompiledCode = 0
+// STATISTIC: UnescapedShapesDroppedForElements = 0
 'use strict';
 const crates = JSON.parse('[' + Array.from({ length: 24 }, (_, i) => '{"wide":' + (i + 0.5) + ',"tall":' + (i * 0.5 + 0.25) + ',"drift":' + (i * 0.25 + 0.125) + ',"sink":0.5}').join() + ']');
 function shift(list, by) { for (let i = 0; i < list.length; i++) { const c = list[i]; c.sink += 9.8 * by; c.wide += c.drift * by; c.tall += c.sink * by; if (c.tall > 40) { c.tall = 40; c.sink = -c.sink * 0.9 - 1; } } }

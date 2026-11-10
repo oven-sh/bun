@@ -1,6 +1,6 @@
 // answers: with-library
 // # What a turn of a loop reads a list or a view through is a proof like any other: where the storage lies, how long it is, of which kind. A plain build asks in front of the loop and takes pointer, length and kind into the turns.
-// # Under testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for, and under testing=TestsEveryPosition, which --aot-harden=ignore-told-ranges stands for, the walk builds the same records at the same places:
+// # Under testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for, and under testing=CheckBoundsAtRunTime, which --aot-harden=ignore-told-ranges stands for, the walk builds the same records at the same places:
 // # a net that builds another form than the one that ships can never stop a false word of the form that ships.
 // # Each access reads pointer, length and kind of the cell where it stands, holds what it was told against them, and stops by name where they differ.
 // # A length that is a value of the program, as the bound of the loop is, is read again in the turn and held against the one in front.
@@ -18,15 +18,15 @@
 // # TURN-NEXT: [[kind]]: {{*}} = HasArrayStorage [[list]] arrayStorage=Double traits
 // # TURN: isInLoop=true isLoopHead=true
 // # TURN: = GetArrayLength [[list]] traits
-// # TURN: = CheckProof {{*}} source=WhatIsRemembered
+// # TURN: = CheckProof {{*}} source=RememberedFact
 // # TURN: = GetArrayElement [[list]], {{*}}, [[storage]], [[kind]] arrayStorage={{*}}isInBounds
-// # RUN(POSITIONS): walk f4 mechanisms=all testing=TestsEveryPosition
+// # RUN(POSITIONS): walk f4 mechanisms=all testing=CheckBoundsAtRunTime
 // # POSITIONS-LABEL: code f4:Body
 // # POSITIONS: [[storage]]: {{*}} = GetArrayStorage [[list]] traits
 // # POSITIONS-NEXT: [[kind]]: {{*}} = HasArrayStorage [[list]] arrayStorage=Double traits
 // # POSITIONS: isInLoop=true isLoopHead=true
 // # POSITIONS: = GetArrayLength [[list]] traits
-// # POSITIONS: = CheckProof {{*}} source=WhatIsRemembered
+// # POSITIONS: = CheckProof {{*}} source=RememberedFact
 // # POSITIONS: = GetArrayElement [[list]], {{*}}, [[storage]], [[kind]] arrayStorage={{*}}isInBounds
 // # The same of a view: length and vector in front, the length asked again, the read names the vector.
 // # RUN(VIEW): walk f3 mechanisms=all testing=CheckProofsAtRunTime
@@ -35,14 +35,14 @@
 // # VIEW: [[vector]]: {{*}} = GetTypedArrayVector [[view]] traits
 // # VIEW: isLoopHead=true
 // # VIEW: = GetTypedArrayLength [[view]] typedArrayType
-// # VIEW: = CheckProof {{*}} source=WhatIsRemembered
+// # VIEW: = CheckProof {{*}} source=RememberedFact
 // # VIEW: = GetTypedArrayElement [[view]], {{*}}, [[vector]] typedArrayType={{*}}isInsideView
 // # What the emitter lays in front of an access that names its storage: the pointer of the cell, read through a name that no load in front answers for, and a stop where it is another.
-// # RUN(HELD): emit f1 mechanisms=all testing=TestsEveryPosition
+// # RUN(HELD): emit f1 mechanisms=all testing=CheckBoundsAtRunTime
 // # HELD: @[[told]] = Load(@[[list]], {{*}}JSArray_butterfly
 // # HELD: = Opaque(@[[list]],
 // # HELD: = Equal(@[[told]], @
-// # RUN(VECTOR): emit f3 mechanisms=all testing=TestsEveryPosition
+// # RUN(VECTOR): emit f3 mechanisms=all testing=CheckBoundsAtRunTime
 // # VECTOR: @[[asked]] = Opaque(
 // # VECTOR-NEXT: @[[inCell]] = Load(@[[asked]], {{*}}JSArrayBufferView_vector
 // # VECTOR-NEXT: = Equal({{*}}, @[[inCell]],
@@ -52,15 +52,15 @@
 // # FORMS: = HasArrayStorage
 // # FORMS: = GetArrayElement {{*}}arrayStorage={{*}}isInBounds
 // # Whether its list holds fractions a read is told as well: the read asks the cell anew, and stops where the two answers differ.
-// # RUN(KINDS): compile KindsToldToReadsHeldAgainstCells mechanisms=all testing=TestsEveryPosition
-// # KINDS: KindsToldToReadsHeldAgainstCells 2
+// # RUN(KINDS): compile IndexingTypeProofsChecked mechanisms=all testing=CheckBoundsAtRunTime
+// # KINDS: IndexingTypeProofsChecked 2
 // # No range check is left out, of a list or of a view.
 // # RUN(COUNTS): compile RangeChecksRemoved mechanisms=all testing=CheckProofsAtRunTime
 // # COUNTS: RangeChecksRemoved 0
 // # RUN: run-in-shell $SHELL testing=CheckProofsAtRunTime
 // # CHECK: 9 of 9 of 9
 // # CHECK-NEXT: exited with 0
-// # RUN(BOTH): run-in-shell $SHELL testing=CheckProofsAtRunTime,TestsEveryPosition
+// # RUN(BOTH): run-in-shell $SHELL testing=CheckProofsAtRunTime,CheckBoundsAtRunTime
 // # BOTH: 9 of 9 of 9
 // # BOTH-NEXT: exited with 0
 declare function report(value: unknown): void;

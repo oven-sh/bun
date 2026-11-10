@@ -1,6 +1,6 @@
-// STATISTIC: TruthsAskedOfRawElementsInTurnsLaidOut >= 2
-// STATISTIC: LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked >= 1
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
+// STATISTIC: UnrolledLoopRawTruthinessTests >= 2
+// STATISTIC: UnrolledLoopsForInt32Truthiness >= 1
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the turns are laid out as users build them, and every raw access asks its position at the run
 "use strict";
 // A list of values holds the empty text and one made empty at run time, texts, 0n and 1n, a symbol, null, undefined, both booleans, numbers of every kind, objects, a function and a hole.
 const said = [];

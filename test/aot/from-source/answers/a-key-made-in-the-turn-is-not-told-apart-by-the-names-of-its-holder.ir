@@ -7,10 +7,10 @@
 # `T[k](i)`: T is a record written in the file, k a const of which nobody knows anything. A key that is only EXPECTED to be one of a few texts is told apart by tests at the run and the access walked by each name;
 # of such a key nothing was expected. Now the names of the one layout proven or expected of its holder are: one to four. Nothing is proven by it: a wrong guess fails its tests and the loop runs as written.
 # A key that the turn itself makes (`ks[0]`) is compared in every turn, and the loop is not bought for it: the arms only cost (+10 .. +24% on seven programs): the names are expected of a key from in front of its loop alone.
-# RUN(EVENT): compile AccessesToldApartByTextsOfKey mechanisms=all
-# EVENT: statistic AccessesToldApartByTextsOfKey 0
-# RUN(CHECKED): compile AccessesToldApartByTextsOfKey mechanisms=all testing=CheckProofsAtRunTime
-# CHECKED: statistic AccessesToldApartByTextsOfKey 0
+# RUN(EVENT): compile AccessesDispatchedByKeyString mechanisms=all
+# EVENT: statistic AccessesDispatchedByKeyString 0
+# RUN(CHECKED): compile AccessesDispatchedByKeyString mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic AccessesDispatchedByKeyString 0
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 78
 # RIGHT-NEXT: exited with 0

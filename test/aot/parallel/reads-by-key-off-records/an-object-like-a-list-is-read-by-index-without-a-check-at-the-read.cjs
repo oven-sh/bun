@@ -1,4 +1,4 @@
-// STATISTIC: ProofsCheckedOfContents <= 0
+// STATISTIC: ContentsProofsChecked <= 0
 'use strict';
 function make(size) {
   const like = { length: size };

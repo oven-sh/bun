@@ -38,15 +38,18 @@ const HARDENING_ALLOWED: &str = "a list of these names: proof-checks, ignore-tol
 /// Each name that `--aot-harden` takes, and the words of the engine that it stands for. None is on by default.
 const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
     // What the compiler has proven of a value is tested where the value arrives. That nobody keeps a cell is a proof that no test can repeat: every cell stays in the heap.
+    // Hoisted calls are repeated and compared. Declared allocations are tested for being new.
     (
         b"proof-checks",
         &[
             b"testing=CheckProofsAtRunTime",
-            b"testing=KeepsCellsOutOfFrames",
+            b"testing=DisableFrameCells",
+            b"testing=CheckHoistedCallsAtRunTime",
+            b"testing=CheckResultFreshnessAtRunTime",
         ],
     ),
     // Every access by position reads the length and tests the position where it stands, whatever an earlier test or the head of a loop has shown.
-    (b"ignore-told-ranges", &[b"testing=TestsEveryPosition"]),
+    (b"ignore-told-ranges", &[b"testing=CheckBoundsAtRunTime"]),
 ];
 /// The words of `BUN_DEBUG_TEST_AOT_WORDS` that start with `TestRun`. With any of them the runner says what the build hands over.
 /// `TestRunLayers:0` asks for one program, which every run is.
@@ -67,8 +70,6 @@ const EXPLAIN_NAMES: &[(&[u8], ExplainSet)] = &[
     (b"allocations", ExplainSet::ALLOCATIONS),
     (b"forms", ExplainSet::FORMS),
     (b"statistics", ExplainSet::STATISTICS),
-    (b"unknown-code", ExplainSet::ONLY_UNKNOWN_CODE),
-    (b"unproven-type", ExplainSet::ONLY_UNPROVEN_TYPE),
 ];
 
 #[derive(Copy, Clone)]
@@ -572,7 +573,9 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
             None => unknown_internal.push(name),
         }
     }
-    check_unknown_names(unknown_internal)?;
+    if let Some(error) = TrimRequestError::for_unknown_features(unknown_internal) {
+        return Err(OptionError::Trim(TrimError::Request(error)));
+    }
 
     if let Some(&value) = trim.locales.iter().flatten().find(|tag| tag.is_empty()) {
         return Err(OptionError::InvalidValue {
@@ -665,12 +668,23 @@ pub(crate) fn apply_developer_word<'a>(
                         value: name,
                     });
                 };
-                for word in words {
+                if !options.hardening_names.iter().any(|given| **given == *name) {
+                    options.hardening_names.push(Box::from(name));
+                }
+                for &word in words {
+                    let is_new = !options.option_words.iter().any(|listed| **listed == *word);
                     add_engine_word(key, word.to_vec(), options)?;
+                    if is_new {
+                        options.hardening_words.push(Box::from(word));
+                    }
                 }
             }
         }
-        _ => add_engine_word(key, option_word(key, value), options)?,
+        _ => {
+            let word = option_word(key, value);
+            options.hardening_words.retain(|implied| **implied != *word);
+            add_engine_word(key, word, options)?;
+        }
     }
     Ok(())
 }
@@ -1002,7 +1016,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         exit_with_unknown_test_run_word(word);
     }
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
-        // For a test of what the runner says then. No flag of `bun test` builds a run without the text of its functions.
+        // For runner tests: no flag of `bun test` omits function source.
         embeds_function_source: !words_read_here.contains(&&b"TestRunWithoutFunctionSource"[..]),
         erases_types: words_read_here.contains(&&b"erase-types"[..]),
         takes_first_texts: words_read_here.contains(&&b"FirstTexts"[..]),

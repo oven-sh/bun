@@ -16,7 +16,7 @@
 # RUN(HEADS): walk f1 mechanisms=all
 # HEADS-COUNT-2: isLoopHead=true
 # HEADS-NOT: isLoopHead=true
-# RUN(EVENT): compile AccessesToldApartByTextsOfKey mechanisms=all
-# EVENT: statistic AccessesToldApartByTextsOfKey 2
+# RUN(EVENT): compile AccessesDispatchedByKeyString mechanisms=all
+# EVENT: statistic AccessesDispatchedByKeyString 2
 # RUN(TYPED): walk f1 mechanisms=all
 # TYPED: : number @Double, {{*}} isInLoop=true isLoopHead=true

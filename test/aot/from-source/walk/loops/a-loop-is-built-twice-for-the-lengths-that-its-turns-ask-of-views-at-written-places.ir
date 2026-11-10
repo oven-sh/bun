@@ -13,9 +13,9 @@
 # the length of its view in its turn. The walk of the loop now notes that its turns ask such lengths of views from in front, also in functions copied in line; a quiet loop of which that is noted is
 # built twice, and the typed copy holds the places below the lengths once, in front. A purchase that asks nothing there is given back, as one for lists found from in front is.
 # Where a test in front fails, the turns run in a third loop, the plain walk (the loop bought once more without the question): its reads ask their places again.
-# RUN(COUNT): compile BoundsAskedOfViewsInFrontOfTypedCopies LoopsBuiltTwice mechanisms=all
-# COUNT-NOT: statistic BoundsAskedOfViewsInFrontOfTypedCopies 0
-# COUNT-NOT: statistic LoopsBuiltTwice 0
+# RUN(COUNT): compile TypedArrayBoundsChecksHoisted WalkLoopsVersioned mechanisms=all
+# COUNT-NOT: statistic TypedArrayBoundsChecksHoisted 0
+# COUNT-NOT: statistic WalkLoopsVersioned 0
 # RUN: walk f3 mechanisms=all
 # CHECK-LABEL: code f3:Body
 # CHECK: isLoopHead=true:

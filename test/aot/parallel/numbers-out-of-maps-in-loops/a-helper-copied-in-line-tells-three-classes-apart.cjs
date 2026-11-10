@@ -1,7 +1,7 @@
 // A helper that is copied in line tells three classes apart, and the list holds all three by turns. Where the shape of an element does not say yes, the chain of its prototypes is walked in the turn,
 // so no way through the helper leaves the typed copy of the loop at an operation as it is written: what the helper hands back is asked for a number, and the sum stays typed.
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 1
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: MapResultsGuardedAsNumbers >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

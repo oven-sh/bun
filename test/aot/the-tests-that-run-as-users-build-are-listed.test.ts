@@ -6,6 +6,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 const listed = [
+  "from-source/answers/the-storage-of-a-list-taken-to-be-as-in-front-stops-where-a-turn-has-moved-it.ir",
   "from-source/machine/a-save-at-a-head-that-a-cold-operand-alone-reads-and-that-is-left-out-stops-the-build-by-name.ir",
   "from-source/machine/a-save-at-a-head-that-a-cold-operand-alone-reads-where-more-values-wait-than-registers-are-kept-stops-the-build-by-name.ir",
   "from-source/machine/a-slot-whose-store-is-left-out-though-it-is-read-stops-the-build-by-name.ir",
@@ -20,7 +21,7 @@ const listed = [
   "from-source/machine/under-the-words-a-list-that-a-turn-lengthens-is-held-below-its-room.ir",
   "from-source/machine/under-the-words-a-raw-store-into-a-list-is-held-below-its-length.ir",
   "from-source/machine/under-the-words-a-read-behind-a-store-of-the-length-is-held-below-the-length.ir",
-  "from-source/machine/what-a-hint-releases-though-a-way-on-reads-it-stops-the-build-by-name.ir",
+  "from-source/walk/builtin-calls/injected-fresh-result-is-caught.ir",
 ];
 
 test("the tests that run as users build are the listed ones", () => {

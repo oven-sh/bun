@@ -1,5 +1,5 @@
 // The constructor above is entered by super() alone, and that call is copied too.
-// STATISTIC: EntriesThatNobodyEnters >= 4
+// STATISTIC: GenericEntriesProvenUnreachable >= 4
 class Base {
   readonly seed: number;
   constructor(seed: number) {

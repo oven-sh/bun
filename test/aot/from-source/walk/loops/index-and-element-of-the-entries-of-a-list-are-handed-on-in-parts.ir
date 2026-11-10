@@ -5,10 +5,13 @@
 # class Own extends Array { *entries() { yield [5, "five"]; yield "xy"; } }
 # print(T[key]([1.5, , "c"], []) + "|" + T[key](Own.from([1, 2, 3]), []) + "|" + T[key](new Map([["k", 1]]), []));
 # -- end of source
-# `for (const [i, v] of list.entries())`: one pattern of two alone takes each pair apart. Where what is stepped is a list as made, the step by index hands the position and the element on as they are, as the step through the table of a
-# Map hands on key and value: no pair is made in a turn and the pattern runs nothing. Whatever else has a method `entries` goes by the protocol, and there the pattern takes what the iterator of the pair yields.
-# THE LIE, testing=PartsOfPairsAreTakenWhateverIsStepped: the pattern takes the parts without asking whether what is stepped goes by index. The second list is of a class below with `entries` of its own, the third is a Map where a list is
-# expected: both go by the protocol, nothing has been laid into the parts, and they are taken all the same: wrong answers, and nothing stops them: that test is all that stands between.
+# In `for (const [i, v] of list.entries())` each pair is used only by one pattern of two elements, which destructures it.
+# If the iterated value is a pristine array, the step by index passes on the index and the element as they are, just as the step through the table of a Map passes on the key and the value.
+# No pair is allocated in an iteration, and the pattern runs no code.
+# Any other value that has a method `entries` goes through the iterator protocol, and there the pattern takes what the iterator of the pair yields.
+# Fault injection, testing=SkipPairGuard: the pattern takes the two parts without checking that the iteration goes by index.
+# The second array belongs to a subclass that has `entries` of its own, and the third value is a Map where an array is speculated.
+# Both go through the protocol, nothing has been stored into the parts, and the pattern takes them anyway. The results are wrong and nothing catches them: that guard is the only safeguard.
 # f1 = each
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
@@ -20,6 +23,6 @@
 # RUN(NONE): run-in-shell mechanisms=none
 # NONE: 0:1.5,1:undefined,2:c|5:five,x:y|k:1
 # NONE-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=PartsOfPairsAreTakenWhateverIsStepped
+# RUN(LIE): run-in-shell mechanisms=all testing=SkipPairGuard
 # LIE: 0:1.5,1:undefined,2:c|0:undefined,0:undefined|0:undefined
 # LIE-NEXT: exited with 0

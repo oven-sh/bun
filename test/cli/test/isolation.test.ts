@@ -3314,6 +3314,44 @@ describe.concurrent("the SourceProvider cache checks a source against its file a
     );
   });
 
+  // Without a flag there is no source cache, and every load reads the file.
+  const noSourceCache = ["no flag", [], {}] as const;
+  test.each([noSourceCache, ...modes])("%s: a file unlinked before the reset does not load", async (_, args, env) => {
+    await passes(
+      {
+        "jest-esm.ts": `export const text = "v1";`,
+        "jest-cjs.cjs": `exports.text = "v1";`,
+        "vi-esm.ts": `export const text = "v1";`,
+        "vi-cjs.cjs": `exports.text = "v1";`,
+        "earlier.test.ts": anEarlierTestFile,
+        "reset.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { rmSync } from "node:fs";
+          import { join } from "node:path";
+
+          // A source that was cached before the first reset of the process, as those of the first row are, is not used
+          // after a reset. Those of the second row are cached later: each is compared with its file, which is gone.
+          test.each([
+            ["jest", jest],
+            ["vi", vi],
+          ])("import() and require() fail after %s.resetModules()", async (name, api) => {
+            const [esm, cjs] = ["./" + name + "-esm.ts", "./" + name + "-cjs.cjs"];
+            expect([(await import(esm)).text, require(cjs).text]).toEqual(["v1", "v1"]);
+            rmSync(join(import.meta.dir, esm));
+            rmSync(join(import.meta.dir, cjs));
+            api.resetModules();
+            const loads = await Promise.allSettled([import(esm), (async () => require(cjs))()]);
+            const missing = expect.stringContaining("ENOENT");
+            expect(loads.map(load => load.reason?.message)).toEqual([missing, missing]);
+          });
+        `,
+      },
+      3,
+      args,
+      env,
+    );
+  });
+
   // vi.resetModules() leaves a package loaded. One that threw is not loaded, in this test file or in the one before it.
   test.each(modes)("%s: vi.resetModules() reads a package again that threw while it loaded", async (_, args, env) => {
     await passes(

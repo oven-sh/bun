@@ -184,7 +184,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             _ => None,
         };
-        let module = self.file.inputs.modules.face(module).unwrap_or(module);
+        let module = self.file.inputs.modules.facade(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
         if let Some(built_in) = mocked_built_in {
             let result = self.builder.create_variable(None);

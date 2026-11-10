@@ -4,4 +4,4 @@ function halves(list) { let got; for (let turn = 0; turn < turns; turn++) got = 
 function sum(list) { let got; for (let turn = 0; turn < turns; turn++) got = list.map(x => x + 0.25).reduce((t, v) => t + v, 0); return got; }
 function odd(list) { let got; for (let turn = 0; turn < turns; turn++) got = list.map(x => x | 0).filter(v => v & 1); return got; }
 for (const n of [0, 1, 7, 8, 9, 1000, 99999, 100000, 100001, 250000]) { const list = Array.from({ length: n }, (_, i) => i); const got = halves(list); console.log(n, got.length, got[0], got[got.length - 1], sum(list), odd(list).length); }
-// STATISTIC: NewListsInPlaceOfSpecies >= 1
+// STATISTIC: ArraySpeciesLookupsElided >= 1

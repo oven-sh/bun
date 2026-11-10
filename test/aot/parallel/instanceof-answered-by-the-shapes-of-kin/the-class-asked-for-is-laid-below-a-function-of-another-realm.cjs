@@ -1,5 +1,5 @@
 // Out of sight the class asked for is laid below a function of another realm: the Symbol.hasInstance that it finds is that realm's own, which does what this realm's does.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 const vm = require("node:vm");
 class Animal { constructor(n) { this.n = n; } }
 class Dog extends Animal { bark() { return 1; } }

@@ -627,7 +627,7 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         let escapes = mentions.any(|mention| {
             mention.owner == ModuleObjectOwner::OwnFile
                 && match mention.object_use {
-                    ModuleObjectUse::HandedOn | ModuleObjectUse::HolderHandedOn => true,
+                    ModuleObjectUse::Escaped | ModuleObjectUse::HolderEscaped => true,
                     ModuleObjectUse::Object => !self.is_only_compared(mention.expr),
                     ModuleObjectUse::Field(_)
                     | ModuleObjectUse::Tested

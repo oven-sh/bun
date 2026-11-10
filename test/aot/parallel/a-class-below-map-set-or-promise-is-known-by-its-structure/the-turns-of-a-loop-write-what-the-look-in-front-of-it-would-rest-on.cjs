@@ -1,5 +1,5 @@
 // A loop calls forEach, union and the like on objects of classes below Map and Set, and an own forEach is laid midway: the look stands in front of the typed copy of a loop only where its turns write nothing that it rests on.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class M extends Map { each() { let s = 0; this.forEach((v) => { s += v; }); return s; } }
 class S extends Set { each() { let s = 0; this.forEach((v) => { s += v; }); return s; } both(o) { return this.union(o).size + this.intersection(o).size + (this.isSubsetOf(o) ? 1 : 0); } }

@@ -1,5 +1,5 @@
 // Behind a yes the object's shape is known. A plain object between it and its class's prototype bears a name that no class has, gets one later, and later hides a method.
-// STATISTIC: QuestionsOfInstanceOfWhoseArmsEndWithBranch >= 1
+// STATISTIC: InstanceOfTestsJumpThreaded >= 1
 class F { constructor(n) { this.n = n; } f() { return 1; } get g() { return 2; } }
 class Sub extends F { s() { return 3; } }
 class Other { constructor(n) { this.n = n; } }

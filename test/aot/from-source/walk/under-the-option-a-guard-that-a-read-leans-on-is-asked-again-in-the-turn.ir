@@ -15,15 +15,18 @@
 # print(watch(one, new Crate("other"), 20, 5), watch(one, Crate.prototype, 20, 5), watch(two, spare, 20, 99), two.note, Object.keys(one).join());
 # -- end of source
 # f2 = watch. The program of a-guard-that-a-read-leans-on-is-asked-again-in-the-turn-under-its-own-word.ir.
-# A read of a slot that may be empty goes without a look above where the state remembers that the guard of the class holds. That guard is asked again in front of the read, and the process ends where it does not hold: under
-# testing=CheckWalkAtRunTime, AND UNDER testing=CheckProofsAtRunTime, WHICH --aot-harden=proof-checks STANDS FOR: a guard that had ended unseen is how a silent miscompilation went by the proofs' word: with
-# its two mends taken out again six of its ten programs answer wrongly in silence under the option, and end by name with the guard asked again. THE LIE lays the row of PutSlotOrAdd false (it ends no guard): the second version
-# of the loop asks the guard once, in front of the loop, and its turn leans on that. The test built again stands IN THE TURN.
-# RUN(OPTION): walk f2 mechanisms=all testing=RowSaysLess:Operation/PutSlotOrAdd/MemberGuards,CheckProofsAtRunTime
+# A read of a slot that may be empty skips the lookup on the prototype chain where the walk's state remembers that the class guard holds.
+# That guard is tested again before the read, and the process ends if it does not hold.
+# This happens with testing=CheckWalkAtRunTime, and also with testing=CheckProofsAtRunTime, which --aot-harden=proof-checks enables.
+# The reason is that a guard that had been invalidated unnoticed is how a silent miscompilation got past the proof checks.
+# With the two fixes of that miscompilation reverted, six of its ten programs silently print wrong results with the option, and crash with a named error once the guard is tested again.
+# Fault injection, testing=UnderstateEffects:Operation/PutSlotOrAdd/MemberGuards: the effects entry of PutSlotOrAdd falsely claims that the operation invalidates no guard.
+# The second version of the loop tests the guard once, in the preheader, and its iteration relies on that. The test that is built again is in the iteration.
+# RUN(OPTION): walk f2 mechanisms=all testing=UnderstateEffects:Operation/PutSlotOrAdd/MemberGuards,CheckProofsAtRunTime
 # OPTION: isLoopHead=true
 # OPTION: isLoopHead=true
 # OPTION: [[again]]: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="note"}]
-# OPTION-NEXT: CheckProof [[again]] checkedType=true {{*}}source=WhatIsRemembered
+# OPTION-NEXT: CheckProof [[again]] checkedType=true {{*}}source=RememberedFact
 # OPTION: = GetSlotOrUndefined {{*}} key="note"
 # RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime
 # RIGHT: 0 14 20 above tag

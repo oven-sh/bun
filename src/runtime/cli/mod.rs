@@ -2061,6 +2061,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   Short for <b>bun build --compile --aot<r>. Without an entry point, it compiles the file that \"bin\" in
   <b>package.json<r> points to, then \"module\", then \"main\", then index.ts, index.tsx, index.mts or index.js.
+  The entry point can be the name of an executable of an installed package, as in <b>bun run<r>.
 
 <b>Flags:<r>"
                 );
@@ -2074,6 +2075,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Choose the name of the executable<r>
   <b><green>bun compile<r> <cyan>--outfile=my-app<r> <blue>./cli.ts<r>
+
+  <d>Compile the command-line tool of an installed package<r>
+  <b><green>bun compile<r> <blue>rollup<r>
 
   <d>List the code that compiled to a slow path<r>
   <b><green>bun compile<r> <cyan>--explain<r> <blue>./server.ts<r>

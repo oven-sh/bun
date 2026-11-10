@@ -6,5 +6,5 @@
 # -- end of source
 # The inner loop reads one list, at places that nobody has held against its length.
 # REQUIRES: as-written
-# RUN: compile LoopsLaidOutForOneKindOfStorage mechanisms=all
-# CHECK: statistic LoopsLaidOutForOneKindOfStorage 4
+# RUN: compile UnrolledLoopsForIndexingType mechanisms=all
+# CHECK: statistic UnrolledLoopsForIndexingType 4

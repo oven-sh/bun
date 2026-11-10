@@ -734,14 +734,6 @@ impl FunctionBuilder {
         matches!(self.opcode_of(value), Some(Opcode::NewClosure))
     }
 
-    pub fn write_released_variable(&mut self, variable: LocalVariable, assigned: ValueId) {
-        let released = self.read_variable(variable);
-        self.write_variable(variable, assigned);
-        if self.is_open() && !self.is_undefined_or_null(released) {
-            self.release_hint(released);
-        }
-    }
-
     fn must_split_before_store(&self, variable: LocalVariable) -> bool {
         let block = &self.blocks[self.current_block.index()];
         let Some(covering) = block.covering else {

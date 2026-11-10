@@ -19,5 +19,5 @@
 # BYTES: testedType=Uint8Array
 # RUN(NAMED): walk f4:Body mechanisms=all
 # NAMED-NOT: testedType=Array
-# RUN(COUNT): compile ListsExpectedOfPlaces mechanisms=all
-# COUNT-NOT: statistic ListsExpectedOfPlaces 0
+# RUN(COUNT): compile ArraysSpeculatedFromLocationUses mechanisms=all
+# COUNT-NOT: statistic ArraysSpeculatedFromLocationUses 0

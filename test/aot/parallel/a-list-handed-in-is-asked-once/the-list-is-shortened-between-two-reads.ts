@@ -1,5 +1,5 @@
 // Between two reads of the length stands a call that may shorten the list: the second read asks again.
-// STATISTIC: ListsHandedInAskedOnceForWhatStandsBehindBranch = 1
+// STATISTIC: ArrayParameterChecksSpanningBranches = 1
 const shared: number[] = JSON.parse("[1,2,3]");
 let calls = 0;
 function touch(): void { calls++; if (calls % 2) shared.pop(); else shared.push(calls, calls); }

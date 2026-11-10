@@ -1,5 +1,5 @@
 // A sum over lists of lists, then the same with a hole in one of them: the sum is NaN, and NaN for whoever asks it.
-// STATISTIC: StepsOfListsThatReadHolesAsNaN >= 1
+// STATISTIC: IteratorStepHoleChecksRemoved >= 1
 function sum(rows: number[][]): number { let s = 0; for (const r of rows) for (const v of r) s += v; return s; }
 const rows: number[][] = []; for (let i = 0; i < 20; i++) { const r: number[] = []; for (let j = 0; j < 20; j++) r.push(j); rows.push(r); }
 let t = 0; for (let k = 0; k < 50; k++) t += sum(rows);

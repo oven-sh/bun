@@ -32,7 +32,7 @@ console.log(inferred, either(n), maybe(n), mapped, likeTheModel, taking().next()
 
 // GENERATED: either taking giving Counter size
 // CHECK-LABEL: function {{*}}name="either"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|i32|string flags=[IsInt32Promise, OmitsNull, OmitsUndefined]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|i32|string flags=[IsInt32Promise, OmitsNull, OmitsUndefined]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: undefined|null|i32|string):
 // CHECK-NEXT: v1 = TypeTest v0 testedType=number
 // CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -47,7 +47,7 @@ console.log(inferred, either(n), maybe(n), mapped, likeTheModel, taking().next()
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="taking"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<i32> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<i32> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: function):
 // CHECK-NEXT: InitialYield
 // CHECK-NEXT: v3 = Integer integer=1
@@ -72,7 +72,7 @@ console.log(inferred, either(n), maybe(n), mapped, likeTheModel, taking().next()
 // CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="giving"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<i32> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<i32> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: function):
 // CHECK-NEXT: InitialYield
 // CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
@@ -91,7 +91,7 @@ console.log(inferred, either(n), maybe(n), mapped, likeTheModel, taking().next()
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Counter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
@@ -100,14 +100,14 @@ console.log(inferred, either(n), maybe(n), mapped, likeTheModel, taking().next()
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: [[L_2]]):
 // CHECK-NEXT: v1 = PropGet v0 key="count"
 // CHECK-NEXT: v2 = Convert v1 declared={type=i32}
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_2]]} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_2]]} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[L_2]], v1: i32):
 // CHECK-NEXT: v2 = Convert v1 declared={type=i32}
 // CHECK-NEXT: PropSet v0, v2 key="count"

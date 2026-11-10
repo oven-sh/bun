@@ -1,5 +1,5 @@
 // The word of the source is a guess: whatever arrives gets the answer of plain code, and a getter under `length` runs as often as the text reads it.
-// STATISTIC: ListsHandedInAskedOnceForWhatStandsBehindBranch >= 1
+// STATISTIC: ArrayParameterChecksSpanningBranches >= 1
 function gather(parts: readonly number[], bonus: number): unknown {
   if (parts.length === 0) return bonus;
   if (parts.length === 1) return parts[0];

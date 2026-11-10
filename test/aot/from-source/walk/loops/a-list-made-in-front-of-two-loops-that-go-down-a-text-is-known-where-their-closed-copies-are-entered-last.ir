@@ -13,8 +13,8 @@
 # print(walk(JSON.parse('"aabbbc"'), "abc"), walk(JSON.parse('""'), "abc"), walk(JSON.parse('"zz"'), "abc"));
 # -- end of source
 # Two such loops, one behind the other: each is bought.
-# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
-# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: [6,0] [0,0] [2,0]
 # SHELL-NEXT: exited with 0

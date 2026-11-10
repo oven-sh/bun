@@ -1,4 +1,4 @@
-use crate::ir::generated::Function;
+use crate::ir::generated::{Body, Function};
 use crate::ir::ids::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, Id, LayoutId, ModuleFailureId, ModuleId,
     PropertyKeyId, StringId, TypeId, TypeSiteId, VariableId,
@@ -104,7 +104,7 @@ impl ExternalBodies {
         let words_of = |list: &FunctionsOfUnit| -> usize {
             list.functions
                 .iter()
-                .map(|function| function.body.code.len())
+                .map(|function| function.body.word_count())
                 .sum()
         };
         let word_count: usize = lists.iter().map(words_of).sum();
@@ -150,13 +150,17 @@ impl ExternalBodies {
             for (function, body) in task.functions.iter_mut().zip(task.bodies.iter_mut()) {
                 let function =
                     Arc::get_mut(function).expect("the link leaves each record to one owner");
-                let written = take(&mut function.body.code);
-                let (code, rest) = free.split_at_mut(written.len());
+                let written = take(&mut function.body);
+                let (code, rest) = free.split_at_mut(written.word_count());
                 free = rest;
                 *body = ExternalFunctionBody {
-                    code: code.write_copy_of_slice(&written).as_ptr(),
-                    word_count: u32::try_from(written.len()).expect("a body fits 32 bits"),
+                    code: written.unpack_into(code).as_ptr(),
+                    word_count: u32::try_from(written.word_count()).expect("a body fits 32 bits"),
                     unit_index: task.unit_index,
+                };
+                function.body = Body {
+                    code: Vec::new(),
+                    ..written
                 };
             }
         });

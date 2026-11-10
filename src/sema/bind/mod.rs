@@ -2052,6 +2052,18 @@ impl<S: Storage> BoundIn<S> {
         parent.unwrap_or_default().get()
     }
 
+    /// Returns the statement that holds `e` if only expressions and a declarator are between them.
+    pub fn statement_of_expr(&self, mut e: ExprId) -> Option<StmtId> {
+        loop {
+            match self.parent_of_expr(e) {
+                Parent::Expr(above) => e = above,
+                Parent::Stmt(statement) => return statement.some(),
+                Parent::VarInit(declaration) => return self.var_stmt[declaration.idx()].some(),
+                _ => return None,
+            }
+        }
+    }
+
     /// Returns `expr_symbol` for `e`, or `NONE` if `e` isn't an expression of this file.
     #[inline]
     pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {

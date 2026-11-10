@@ -1,5 +1,5 @@
 // A direct eval in the function around may store the variable under its name.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies = 0
+// STATISTIC: CapturedVariableReadsHoisted = 0
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }
 function make() {

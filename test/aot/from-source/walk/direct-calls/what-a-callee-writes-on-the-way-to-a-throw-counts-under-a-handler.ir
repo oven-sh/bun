@@ -13,7 +13,7 @@
 # CHECK-LABEL: code f2:Body
 # CHECK: = CallDirect {{*}}mayThrow
 # RUN(NEVER): walk f2 mechanisms=none+TypedOperations+DirectCalls
-# NEVER-NOT: = CallDirect {{*}}mayWriteWhatIsSeen
+# NEVER-NOT: = CallDirect {{*}}mayWriteObservableState
 # RUN(UNDER): walk f3 mechanisms=none+TypedOperations+DirectCalls
 # UNDER-LABEL: code f3:Body
-# UNDER: = CallDirect {{*}}mayWriteWhatIsSeen
+# UNDER: = CallDirect {{*}}mayWriteObservableState

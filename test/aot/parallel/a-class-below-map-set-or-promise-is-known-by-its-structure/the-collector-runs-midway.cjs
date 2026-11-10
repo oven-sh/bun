@@ -1,5 +1,5 @@
 // The collector runs between a look and the reads behind it: where the fields lie is never forgotten, which structures pass is.
-// COUNT: counter:StructuresOfHeirsRemembered >= 2
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 2
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const one = new H(); function make(t) { return one; }

@@ -1,5 +1,5 @@
 // Between two calls a store written in line hides the method: what the look showed ends with the store.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const one = new H(); function make(t) { return one; }

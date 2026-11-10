@@ -23,7 +23,7 @@
 # CHECK-NEXT: {"n":393} 2,7,5,10,6,4,9,6
 # CHECK-NEXT: exited with 0
 # CHECK-NEXT: the source prints the same
-# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
 # FAILING: {"n":487} 1,7,4,10,6,3,9,6
 # FAILING-NEXT: {"n":887.5} 1,7,4,10,6,3,9,6
 # FAILING-NEXT: {"n":47} 1,7,4,10,6,3,9,6

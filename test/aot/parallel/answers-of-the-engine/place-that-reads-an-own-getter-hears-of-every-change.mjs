@@ -1,5 +1,5 @@
 // A read by name that finds a getter of the receiver's own remembers where its GetterSetter lies: at its place and in the access table. Each place is warmed on its own. Then its object changes (another getter at the same Structure, a value, a deletion, a setter alone, a throw, a freeze, another prototype, a name more), or another kind of receiver comes by: a child that inherits, two objects of one Structure in turns, a plain object, a compiled one, primitives, null.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const names = [];
 for (let i = 0;i < 40; i++) names.push("n" + i);

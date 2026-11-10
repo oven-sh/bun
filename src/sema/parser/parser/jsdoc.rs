@@ -192,6 +192,7 @@ struct Outer<'a> {
     src: &'a [u8],
     comments: Vec<Comment>,
     comment_directives: usize,
+    ignore_comments: usize,
     context: u32,
     lists: u32,
     errors_at: (u32, u32),
@@ -791,6 +792,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             // this one.
             comments: std::mem::take(&mut self.lx.comments),
             comment_directives: self.lx.comment_directives.len(),
+            ignore_comments: self.lx.ignore_comments.len(),
             context: self.context,
             lists: self.lists,
             errors_at: self.errors_at,
@@ -825,6 +827,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.lx
             .comment_directives
             .truncate(outer.comment_directives);
+        self.lx.ignore_comments.truncate(outer.ignore_comments);
         self.context = outer.context;
         self.leave_typescript_dialect(outer.dialect);
         self.lists = outer.lists;

@@ -10,8 +10,8 @@
 # closed, may run other code, and the typed copy of every loop that fills two lists side by side was thrown away. The first store asks, in front of itself, whether its key lies inside every other
 # tested list into which the same block stores later under the same key.
 # f1 = spread
-# RUN(COUNT): compile KeysOfLaterStoresAskedInFrontOfTheFirst mechanisms=all
-# COUNT: statistic KeysOfLaterStoresAskedInFrontOfTheFirst 1
+# RUN(COUNT): compile LaterStoreBoundsChecksHoisted mechanisms=all
+# COUNT: statistic LaterStoreBoundsChecksHoisted 1
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = PutContiguousIndex

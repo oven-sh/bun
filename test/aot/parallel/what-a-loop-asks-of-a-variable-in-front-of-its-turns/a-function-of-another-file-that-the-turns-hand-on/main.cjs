@@ -1,4 +1,4 @@
-// STATISTIC: FunctionsOfOtherFilesReadInFrontOfLoops >= 1
+// STATISTIC: ImportedFunctionReadsHoisted >= 1
 const tool = require("./tool.cjs");
 function apply(given, value) {
   return typeof given === "function" ? given(value) : -2;

@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". Under experimentalDecorators `bun run` and a plain executable write the expression of a computed key again at each place that
+// Under experimentalDecorators `bun run` and a plain executable write the expression of a computed key again at each place that
 // names the member: where a field is assigned (for an instance field at every `new`) and where the member is decorated. What `tsc` emits keeps the key, and so does compiled code.
 // `bun run`: static field other,a,value,a,mark:a . without a value other,a,mark:a . instance field a,mark:a, constructed other,a,value . method, static method, getter
 // a,other,a,mark:a . two and one b,plain,a,first,c,second,a,mark:a,c,mark:c

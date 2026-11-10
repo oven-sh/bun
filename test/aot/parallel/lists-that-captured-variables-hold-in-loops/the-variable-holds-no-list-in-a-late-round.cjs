@@ -1,4 +1,4 @@
-// STATISTIC: CapturedListsReadInFrontOfLoops >= 1
+// STATISTIC: CapturedArrayReadsHoisted >= 1
 "use strict";
 function make() { let list = [1, 2, 3]; return { total() { let s = ""; for (let i = 0; i < list.length; i++) s += list[i]; return s; }, set(v) { list = v; } }; }
 const box = make();

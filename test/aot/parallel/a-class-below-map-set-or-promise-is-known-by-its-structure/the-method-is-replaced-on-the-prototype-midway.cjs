@@ -1,5 +1,5 @@
 // Midway through a loop the method is replaced on the class's prototype: the guard beside the look answers for that.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const one = new H(); function make(t) { return one; }

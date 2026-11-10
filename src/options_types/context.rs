@@ -205,6 +205,8 @@ pub struct BundlerOptions {
     pub check: bool,
     pub dts: bool,
     pub library: bool,
+    /// `bun compile`: the executable never takes the place of an entry point.
+    pub keeps_entry_points: bool,
     pub react_compiler: bool,
     pub code_splitting: bool,
     pub split_require: bool,
@@ -276,6 +278,7 @@ impl Default for BundlerOptions {
             check: false,
             dts: false,
             library: false,
+            keeps_entry_points: false,
             react_compiler: false,
             code_splitting: false,
             split_require: true,

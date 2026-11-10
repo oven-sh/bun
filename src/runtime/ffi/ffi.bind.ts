@@ -33,7 +33,7 @@ export const closeCallback = b.fn({
   export: "Bun__FFI__closeCallback",
   feature: "Ffi",
   args: { callback: b.any },
-  uses: { callback: [...table.handedOver, table.definesName(["ptr"], table.strictNull)] },
+  uses: { callback: [...table.retainedByNativeCode, table.definesName(["ptr"], table.strictNull)] },
 });
 export const cfunction = b.fn({
   ...method,

@@ -4,7 +4,7 @@
 // The test files of a project end in _test, which `bun test` finds: scripts/runner.node.ts takes every name that holds ".test" for a test of the repository.
 // The packages of a project lie in a folder `installed`, which the copy has as `node_modules`: git ignores a folder of that name, and so does whatever carries this tree to another machine.
 // A file flags.txt in the folder holds flags for both runs: `--isolate`.
-// A file todo.txt in the folder, `"<words>" | "<the words for them>": <why>`: the two runs part today, and in that alone: one says the first words where the other says the second.
+// A file todo.txt in the folder, lines of the form `"<words>" | "<the words for them>": <why>`: the two runs differ today, and in that alone: one says the first words of a line where the other says the second.
 // The project is run all the same. It fails by any other difference, and once the two runs agree: the file goes out.
 // A file says.json in the folder, { why, printed, tests, exitCode }: `bun test` has more than one answer here, by how busy the machine is: the tests leave a call in flight that nobody awaits, and the run ends
 // when they have ended. A compiled run has one answer, the one that `bun test` gives most often: it alone is run, and held to what the file says.
@@ -50,9 +50,14 @@ const takenForTestsOfTheRepository = (folder: string) =>
 
 function markOf(folder: string) {
   if (!existsSync(join(folder, "todo.txt"))) return undefined;
-  const [, one, other] = /^"([^"]+)" \| "([^"]+)": \S/.exec(readFileSync(join(folder, "todo.txt"), "utf8")) ?? [];
-  if (other === undefined) throw new Error(`${folder}/todo.txt is not of the form \`"<words>" | "<the words for them>": <why>\``);
-  return (outcome: unknown) => JSON.parse(JSON.stringify(outcome).replaceAll(one, other));
+  const lines = readFileSync(join(folder, "todo.txt"), "utf8").trimEnd().split(/\r?\n/);
+  const marks = lines.map(line => {
+    const [, one, other] = /^"([^"]+)" \| "([^"]+)": \S/.exec(line) ?? [];
+    if (other === undefined) throw new Error(`${folder}/todo.txt has a line that is not of the form \`"<words>" | "<the words for them>": <why>\``);
+    return [one, other];
+  });
+  return (outcome: unknown) =>
+    JSON.parse(marks.reduce((text, [one, other]) => text.replaceAll(one, other), JSON.stringify(outcome)));
 }
 
 function saidOf(folder: string) {

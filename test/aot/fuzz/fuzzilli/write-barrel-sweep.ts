@@ -9,6 +9,7 @@
 // nobody needs it has to know who will still ask: a barrel with two stars asks about every file that came before it. Such a mistake shows now and then, and most often where the threads of a build share one
 // processor, so these are worth building several times, pinned to one. What they print is worth holding against `bun <file>` too: which names a barrel has, and in which order.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // SEEN is what the file imports beside the barrel, NAME a name that the barrel has.
 const reaches: [string, string][] = [
@@ -129,7 +130,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laid < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laid++;
   }
   console.log(laid);
@@ -139,7 +140,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltForListsAndForTexts >= 1
+// STATISTIC: ArrayOrStringLoopsVersioned >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 let entered = 0;

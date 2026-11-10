@@ -51,7 +51,7 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 
 // GENERATED: once generated [Symbol.iterator] add
 // CHECK-LABEL: function {{*}}name="once"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: v2 = NewObject layout=[[L_1]]
@@ -65,7 +65,7 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="generated"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: function):
 // CHECK-NEXT: InitialYield v0
 // CHECK-NEXT: v3 = Data data=[[d_5]]
@@ -87,7 +87,7 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v1 = String string="by an iterator"
@@ -100,7 +100,7 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 // CHECK-NEXT: ReturnCall v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="add"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_7]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_7]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_7]], v1: anything, v2: anything):
 // CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_7]] field=2
 // CHECK-NEXT: v4 = CheckInitialized v3 name="made"

@@ -99,10 +99,11 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             }
             _ => resolution,
         };
-        let arms = match site.specifier {
+        let mut arms = match site.specifier {
             ImportSpecifier::Unknown => find_written_arms(hir, bound, decisions, site),
             _ => SmallVec::new(),
         };
+        arms.extend(analyzed.analysis.known_load_names_at(site.specifier_node));
         let resolution = add_written_arms(context, key, site, &arms, resolution);
         resolutions.push(resolution);
         let origin = TargetOrigin {

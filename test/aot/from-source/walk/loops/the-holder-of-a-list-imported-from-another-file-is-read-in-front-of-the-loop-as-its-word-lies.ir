@@ -8,10 +8,10 @@
 # class Shelf { constructor(rows) { this.rows = rows; } }
 # export const shelf = new Shelf(JSON.parse("[1, 2, 3, 4.5]"));
 # -- end of source
-# RUN(COUNT): compile ConstantsOfFilesReadInFrontOfLoops LoopsBuiltForListsAndForBytes mechanisms=all
-# COUNT: statistic ConstantsOfFilesReadInFrontOfLoops 2
-# COUNT: statistic LoopsBuiltForListsAndForBytes 1
+# RUN(COUNT): compile ModuleConstantReadsHoisted ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# COUNT: statistic ModuleConstantReadsHoisted 2
+# COUNT: statistic ArrayOrUint8ArrayLoopsVersioned 1
 # RUN(WALK): walk f3 mechanisms=all
-# WALK: = GetModuleVariable variable=g{{*}} [givesWordAsItLies]
+# WALK: = GetModuleVariable variable=g{{*}} [returnsRawSlot]
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 11.5

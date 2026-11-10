@@ -1,5 +1,5 @@
 // A helper copied in line tells three classes apart in a loop. Midway the first class is given a Symbol.hasInstance of its own, by code that the compiler cannot see through: the guards fail, the turn begins again, and that method answers.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

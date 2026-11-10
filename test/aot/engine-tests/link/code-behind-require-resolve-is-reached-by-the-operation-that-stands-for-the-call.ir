@@ -7,7 +7,7 @@
 # CHECK-NOT: function f1 unreached
 # CHECK: function f2 unreached
 
-module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 module m1 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/CommonJS.ts" flags=[IsLibrary]
 entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined

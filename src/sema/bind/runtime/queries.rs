@@ -735,19 +735,10 @@ impl Bound<'_> {
     }
 
     pub fn finds_itself(&self, hir: &File, function: FnId) -> bool {
-        if hir[function].kind == FnKind::Arrow {
-            return false;
-        }
-        let ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
-        if self.function_flags(function).intersects(ways) {
-            return true;
-        }
-        if hir[function].name == Atom::NONE {
-            return false;
-        }
-        let own_name = Binding::Symbol(self.declared_symbol(Decl::Fn(function)));
-        let mut idents = (0..hir.exprs.len() as u32).map(ExprId);
-        idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
+        let ways = FunctionFlags::USES_ARGUMENTS
+            | FunctionFlags::HAS_DIRECT_EVAL
+            | FunctionFlags::MENTIONS_OWN_NAME;
+        hir[function].kind != FnKind::Arrow && self.function_flags(function).intersects(ways)
     }
 
     pub fn is_called_only_where_written(&self, hir: &File, function: FnId) -> bool {

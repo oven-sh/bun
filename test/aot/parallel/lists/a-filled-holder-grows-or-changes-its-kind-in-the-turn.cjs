@@ -1,4 +1,4 @@
-// STATISTIC: HoldersAskedForBytesPastNamesOfListsAndViews >= 1
+// STATISTIC: Uint8ArraysSpeculatedDespiteSharedMethods >= 1
 "use strict";
 const show = v => Array.isArray(v) || ArrayBuffer.isView(v) ? "[" + Array.from(v, show).join() + "]" : Object.is(v, -0) ? "-0" : typeof v === "bigint" ? v + "n" : typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
 function f0(a, b) { a.fill(0.5); let s = 0; for (let i = 0; i < a.length; i++) { a[i] = a[i] * 3; s += a[i]; } return s; }

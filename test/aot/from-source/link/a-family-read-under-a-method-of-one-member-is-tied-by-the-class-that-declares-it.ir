@@ -11,13 +11,13 @@
 # print(typeof read(2), typeof read(0));
 # -- end of source
 # The name is a method of one class of the family: the topmost member and that class are tied and no other member is looked at. The twin of this test takes the other way and is held to the same lines.
-# RUN(COUNT): compile ReadsThroughFamiliesTiedByClassesThatDeclare mechanisms=all
-# COUNT: statistic ReadsThroughFamiliesTiedByClassesThatDeclare 1
+# RUN(COUNT): compile FamilyReadsLinkedToDeclarers mechanisms=all
+# COUNT: statistic FamilyReadsLinkedToDeclarers 1
 # RUN: link functions mechanisms=all
 # CHECK: function f2 {{*}}result=undefined|f10 
-# RUN(SLOWCOUNT): compile ReadsThroughFamiliesTiedByClassesThatDeclare testing=ReadsThroughFamiliesAreTiedMemberByMember mechanisms=all
-# SLOWCOUNT: statistic ReadsThroughFamiliesTiedByClassesThatDeclare 0
-# RUN(SLOW): link functions testing=ReadsThroughFamiliesAreTiedMemberByMember mechanisms=all
+# RUN(SLOWCOUNT): compile FamilyReadsLinkedToDeclarers testing=DisableFamilyReadShortcut mechanisms=all
+# SLOWCOUNT: statistic FamilyReadsLinkedToDeclarers 0
+# RUN(SLOW): link functions testing=DisableFamilyReadShortcut mechanisms=all
 # SLOW: function f2 {{*}}result=undefined|f10 
 # RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # ANSWERS: function undefined

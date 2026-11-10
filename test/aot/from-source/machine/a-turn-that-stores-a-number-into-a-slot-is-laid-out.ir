@@ -11,9 +11,9 @@
 # -- end of source
 # A turn that stores a number into a slot of an object is laid out like any other: the list's kind and the counter's written bound are asked once, in front, also where the store stands in front of the read.
 # A way out of a turn laid out is taken by running that turn again in the loop as written: so holes do not leave such turns, and a turn that something leaves behind its store (`leaves`) is not laid out.
-# RUN: compile LoopsLaidOutWhoseTurnsStoreIntoSlots WrittenBoundsAskedOfListsInFrontOfTypedCopies mechanisms=all
-# CHECK: statistic LoopsLaidOutWhoseTurnsStoreIntoSlots 2
-# CHECK: statistic WrittenBoundsAskedOfListsInFrontOfTypedCopies 4
+# RUN: compile UnrolledLoopsWithSlotStores ArrayBoundsChecksHoisted mechanisms=all
+# CHECK: statistic UnrolledLoopsWithSlotStores 2
+# CHECK: statistic ArrayBoundsChecksHoisted 4
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: -630921332 40 -630921332 80 9 90
 # RIGHT-NEXT: -1741656407 40 -1741656407 80 9 90

@@ -26,4 +26,4 @@ for (const [name, store] of all) for (const [set, base] of [["fine", fine], ["wi
   store(a, out, k);
   console.log(name, set, n, say(k), Array.from(out, say).join(" "));
 }
-// STATISTIC: LoopsWhoseTurnsAreLaidOut >= 18
+// STATISTIC: UnrolledLoopsEmitted >= 18

@@ -10,8 +10,8 @@
 # print(walk(JSON.parse('"aabbbc"'), "abc"), walk(JSON.parse('""'), "abc"), walk(JSON.parse('"zz"'), "abc"));
 # -- end of source
 # The twin of the list: a record with a field.
-# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
-# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: [3,1] [0,1] [1,1]
 # SHELL-NEXT: exited with 0

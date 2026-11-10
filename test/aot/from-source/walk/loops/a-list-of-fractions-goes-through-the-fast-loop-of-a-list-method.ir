@@ -39,6 +39,6 @@
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|
 # ANSWERS-NEXT: exited with 0
-# RUN(HARDENED): run-in-shell testing=CheckProofsAtRunTime,TestsEveryPosition
+# RUN(HARDENED): run-in-shell testing=CheckProofsAtRunTime,CheckBoundsAtRunTime
 # HARDENED: 16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|16;4;12;6;8;NaN;622;number0.5,number1.5,number2.5,number0.5,number1.5,stringtext,number0.5,number1.5,number0.5,number1.5,|
 # HARDENED-NEXT: exited with 0

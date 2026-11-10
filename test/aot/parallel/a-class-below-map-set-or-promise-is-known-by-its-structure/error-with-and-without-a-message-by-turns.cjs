@@ -1,6 +1,6 @@
 // A class below Error: a message moves the class's own field by one place: where the field lies is learned once, and the other structure is refused.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
-// COUNT: counter:StructuresOfHeirsRefused >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected >= 1
 "use strict";
 class E extends Error { constructor(message) { super(message); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const a = new E(), b = new E("m");

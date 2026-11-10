@@ -484,13 +484,17 @@ impl Checker<'_, '_> {
         for d in syntactic.iter_mut().chain(&mut declaration) {
             self.resolve_span_end(d);
         }
+        let never_checked = self.never_checked.take();
+        if self.files.brings_declarations() {
+            self.never_checked_in_last_file.clone_from(&never_checked);
+        }
         Checked {
             syntactic,
             semantic: None,
             declaration,
             include: Vec::new(),
             expected_errors: Vec::new(),
-            never_checked: self.never_checked.take(),
+            never_checked,
             unused_private_members: std::mem::take(&mut self.unused_private_members),
             declaration_file: self.declaration_file.take(),
         }

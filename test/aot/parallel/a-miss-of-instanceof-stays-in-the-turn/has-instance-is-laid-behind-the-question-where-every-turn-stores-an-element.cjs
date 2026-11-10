@@ -1,6 +1,6 @@
 // An object is made in each turn and asked in its constructor whether it is of its class. Every turn stores an element, and one turn calls a function that lays Symbol.hasInstance on the class.
 // The next turn must find it, so the guards of the question are not asked in front of the loop alone.
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 "use strict";
 const far = v => [v][JSON.parse("0")];
 let hits = 0;

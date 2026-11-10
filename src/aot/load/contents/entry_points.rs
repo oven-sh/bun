@@ -431,7 +431,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         let mut sought: FxHashSet<(Atom, bool)> = FxHashSet::default();
         for &file in code.compiled_files() {
             let analysis = code.analysis(file);
-            for &(name, argument, is_guess) in analysis.names_out_of_data_files {
+            for &(name, argument, is_guess) in analysis.names_from_data_files {
                 let mut sites = analysis.import_sites.iter();
                 let site = sites.find(|site| site.specifier_node == argument);
                 let requires = site.and_then(|site| match site.kind {

@@ -1,4 +1,4 @@
-// STATISTIC: LoopsThatHoldLoopsWrittenOut >= 1
+// STATISTIC: LoopNestsFullyUnrolled >= 1
 "use strict";
 function made(height, width, scale) { return Array.from({ length: height }, (_, y) => Array.from({ length: width }, (_, x) => ((x * 7 + y * 5) % 11) * scale)); }
 const weights = [[0, 1, 0], [1, -4, 1], [0.5, 1, 0]];

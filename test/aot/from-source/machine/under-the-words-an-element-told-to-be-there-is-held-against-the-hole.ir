@@ -1,19 +1,22 @@
-# A guess at an element of numbers asks a list for its kind of storage and for the element's presence, and reads the number raw behind the two: the read is told that the element is there and asks nothing.
-# THE LIE, testing=ElementsInsideListsAreTakenToBeThere: the test of presence still asks the length and takes whatever lies inside it to be there: the raw read finds the hole's own word and takes it for a number.
-# The list with the hole bears a `constructor` of its own, so that it is no list as made and takes the loop as written: a list as made goes through a copy of the loop whose reads ask for the hole themselves.
-# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the read holds what it finds against the mark of a hole, or the process stops by name.
+# A speculation that an element is a number checks the array's indexing type and the element's presence, and reads the number raw after the two checks.
+# The read is marked as proven to find its element, so it checks nothing.
+# Fault injection, testing=AssumeInBoundsElementsPresent: the presence check still tests the length, but it assumes that every element within the length is present.
+# So the raw read finds the word that marks a hole and takes it for a number.
+# The array with the hole has a `constructor` property of its own, so it is not a pristine array and it takes the loop as written.
+# A pristine array goes through a version of the loop whose reads check for the hole themselves.
+# With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), the read checks what it finds against the hole marker. If it is a hole, the process crashes with a named error.
 # RUN(TAKEN): walk f2 mechanisms=all
 # TAKEN-LABEL: code f2:Body
 # TAKEN: = IsElementPresent {{*}}arrayStorage=Int32
 # TAKEN: @Int32 = GetArrayElement {{*}}arrayStorage=Int32
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: 1 0 1
 # RIGHT-NEXT: exited with 0
-# RUN(UNHELD): run-in-shell mechanisms=all testing=ElementsInsideListsAreTakenToBeThere
+# RUN(UNHELD): run-in-shell mechanisms=all testing=AssumeInBoundsElementsPresent
 # UNHELD: 1 1 1
 # UNHELD-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=ElementsInsideListsAreTakenToBeThere,TestsEveryPosition
-# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=AssumeInBoundsElementsPresent,CheckBoundsAtRunTime
+# HELD: bun: internal AOT error:
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

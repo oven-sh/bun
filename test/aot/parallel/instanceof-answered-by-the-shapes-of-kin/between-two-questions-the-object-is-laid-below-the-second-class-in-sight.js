@@ -1,5 +1,5 @@
 // Between two questions about one object the object is laid below the prototype of the second class, in the build's sight.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 const sizes = JSON.parse("[1,2,3,4,5,6,7,8,9]");
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}

@@ -1,14 +1,16 @@
-# THE LIE, testing=NothingIsDoneToFreshLists: the walk takes it that a call does nothing to a list made in its sight: what was present in front of the call is told to be present behind it.
-# A read that is told to find its element has no branch on the hole: the raw word is handed on as a value: the hole of a list of fractions reads as NaN, the hole of a list of whole numbers as no value at all.
-# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the emitter holds that the word is no hole, or the process stops by name.
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# Fault injection, testing=IgnoreFreshArrayEscapes: the walk assumes that a call does nothing to an array whose allocation the walk has seen.
+# So an element that was present before the call counts as proven to be present after it.
+# A read that is proven to find its element has no branch on the hole, so the raw word is passed on as a value.
+# The hole of an array of doubles reads as NaN, and the hole of an array of int32 values reads as no value at all.
+# With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), the emitter checks that the word is not a hole. If it is, the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: number 2.5 undefined undefined false 3
 # RIGHT-NEXT: exited with 0
-# RUN(UNHELD): run-in-shell mechanisms=all testing=NothingIsDoneToFreshLists
+# RUN(UNHELD): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes
 # UNHELD: number 2.5 number NaN false 3
 # UNHELD-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=NothingIsDoneToFreshLists,TestsEveryPosition
-# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes,CheckBoundsAtRunTime
+# HELD: bun: internal AOT error:
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

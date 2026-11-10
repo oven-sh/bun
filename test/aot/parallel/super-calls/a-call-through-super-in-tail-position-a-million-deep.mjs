@@ -1,4 +1,4 @@
-// STATISTIC: CallsThroughSuperMadeBehindGuards >= 2
+// STATISTIC: SuperCallsDevirtualized >= 2
 // a method hands on to the method above by `return super.walk(..)`, which calls the method below again: a million calls deep the stack is as it was
 const words = JSON.parse('{"walk":"walk","none":""}');
 class Path { walk(left, seen) { if (!left) return seen; return this.walk(left - 1, seen + 1); } }

@@ -82,9 +82,8 @@ fn add_compile_logs(
         log.add_msg(message);
     }
     add_notes(log, trim_log_lines);
-    if let Some(line) = developer_options.strip_suffix(b"\n") {
-        add_notes(log, vec![line.to_vec()]);
-    }
+    let lines = bun_core::strings::tokenize(developer_options, b"\n");
+    add_notes(log, lines.map(<[u8]>::to_vec).collect());
 }
 
 impl JSBundleCompletionTask {

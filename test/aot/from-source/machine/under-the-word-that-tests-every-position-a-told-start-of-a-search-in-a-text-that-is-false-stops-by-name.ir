@@ -1,11 +1,13 @@
-# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: -1 passes `-1 < at`, behind which the walk tells that `at` is no less than nought.
-# The start of a search from the front comes out of a clamp against the length that leaves its lower half out on that word. What searches tests the start for itself, so no memory is touched: it answered, and nobody heard of the false range.
-# Under TestsEveryPosition (which --aot-harden=ignore-told-ranges stands for) the search asks `start <= length` where it stands, and stops by name. A search from the end takes its argument as it is and believes nothing.
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`. So -1 passes `-1 < at`, after which the walk has proven that `at` is at least zero.
+# The start index of a forward search comes from a clamp against the length, and the clamp omits its lower bound because of that proof.
+# The search routine tests the start index itself, so no memory is touched. It returned a result, and the false range went unnoticed.
+# With CheckBoundsAtRunTime (which --aot-harden=ignore-told-ranges enables), the search itself checks `start <= length`, and a failure crashes the process with a named error.
+# A backward search takes its argument as it is and relies on no proof.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: 2
 # RIGHT-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=TestsEveryPosition,EqualIntegersAreTakenToBeLess
-# STOPPED: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: redundancy elimination check failed at {{*}} (found)
 # STOPPED: crashed with
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

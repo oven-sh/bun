@@ -2793,6 +2793,10 @@ pub struct JsDocHost {
     pub first_satisfies_tag: u32,
 }
 
+/// `// bun-ignore TS100064` silences warnings of `bun compile` on one line.
+/// Not `@bun-ignore`: a first line that begins with `// @bun` says that Bun has transpiled the file already.
+pub const IGNORE_COMMENT_MARKER: &[u8] = b"bun-ignore";
+
 /// `ast.CommentDirective`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CommentDirective {
@@ -2969,7 +2973,7 @@ pub struct FileIn<S: Storage> {
     pub texts_of_data_files: S::Few<TextOfDataFile>,
     /// Set by the loader.
     pub imported_file_changers: S::Few<ImportedFileChanger>,
-    /// Among those that `FileAnalysis::asked_of_other_files` names. Set by the loader.
+    /// Among those that `FileAnalysis::other_file_queries` names. Set by the loader.
     pub texts_of_other_files: S::Few<TextOfOtherFile>,
     pub exports_that_others_touch: S::Few<Atom>,
     pub texts_written_by_loader: S::Few<TextWrittenByLoader>,
@@ -3011,6 +3015,9 @@ pub struct FileIn<S: Storage> {
     pub references: S::Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
     /// `CommentDirectives`, in order.
     pub comment_directives: S::Few<CommentDirective>,
+    /// Each comment that begins with [`IGNORE_COMMENT_MARKER`], in order: where the marker starts and where the comment
+    /// ends. They are kept where `comments` is dropped. The type checker doesn't read them.
+    pub ignore_comments: S::Few<(u32, u32)>,
     /// Every `//` and `/* */` comment, in order. Not a `#!` line. The HTML-like comments of a script (`<!--`, `-->`)
     /// are only included if the parser was asked to attach comments.
     pub comments: S::Nodes<Comment>,
@@ -3739,6 +3746,7 @@ macro_rules! file_in_storage {
             body: $this.body,
             references: $few!($this.references),
             comment_directives: $few!($this.comment_directives),
+            ignore_comments: $few!($this.ignore_comments),
             comments: $long!($this.comments),
             mentioned: $long!($this.mentioned),
             with_bodies: $few!($this.with_bodies),
@@ -3891,6 +3899,7 @@ impl FileBuilder {
             body,
             references,
             comment_directives,
+            ignore_comments,
             comments,
             mentioned,
             with_bodies,
@@ -3999,6 +4008,7 @@ impl FileBuilder {
         *body = Default::default();
         references.clear();
         comment_directives.clear();
+        ignore_comments.clear();
         comments.clear();
         mentioned.clear();
         with_bodies.clear();

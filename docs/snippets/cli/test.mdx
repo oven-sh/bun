@@ -15,6 +15,11 @@ bun test <patterns>
   tsconfig.json lists. See <a href="/runtime/check#vue-svelte-astro-and-other-file-types">content mappers</a>
 </ParamField>
 
+<ParamField path="--aot" type="boolean">
+  Compile the test files ahead of time, then run them. See{" "}
+  <a href="/compiler/debugging#run-your-tests-compiled">Run your tests compiled</a>
+</ParamField>
+
 <ParamField path="--timeout" type="number" default="5000">
   Set the per-test timeout in milliseconds (default 5000)
 </ParamField>

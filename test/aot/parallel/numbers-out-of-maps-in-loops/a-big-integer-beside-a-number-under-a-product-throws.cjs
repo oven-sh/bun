@@ -1,5 +1,5 @@
 // Nothing is known of either operand of a product in a helper copied into a loop, and both are asked for numbers. A big integer beside a number throws as it does in plain Bun.
-// STATISTIC: OperandsAskedForNumberInQuietTurns >= 1
+// STATISTIC: NumberOperandsGuardedInIterations >= 1
 "use strict";
 const log = [];
 const rows = JSON.parse("[" + Array.from({ length: 64 }, (_, i) => '{"x":' + (i + 1) + ',"y":' + (i * 7 % 5 + 1) + "}").join() + "]");

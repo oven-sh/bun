@@ -7,7 +7,7 @@
 # console.log(out.join(" "));
 # -- end of source
 # RUN: run-in-shell mechanisms=all
-# RUN: run-in-shell mechanisms=all testing=FailGuesses
+# RUN: run-in-shell mechanisms=all testing=FailSpeculations
 # RUN: run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # RUN: run-in-shell mechanisms=all testing=IgnoreExpectedTypes
 # CHECK: out out out out out out out out out out out out out out out out out out in in in in out out out out out out out out out out out out out out out out in in in out in out out out in out out out out out out out out out TypeError

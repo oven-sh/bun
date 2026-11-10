@@ -1,5 +1,5 @@
 // A method of a class below Map asks the map that the object itself is: get, has, set and size go by the built-in's own rows behind the look at the structure.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 // COUNT: operation:operationAOTFillSiteCache = 0
 "use strict";
 class H extends Map { constructor() { super(); this.hits = 0; } look(k) { return this.get(k); } keep(k, v) { if (!this.has(k)) this.set(k, v); return this.size; } }

@@ -155,7 +155,8 @@ const builds = new Map<string, Promise<{ executable: string; said: string }>>();
 function build(program: Program, form: Form = "closed") {
   const executable = join(directory, program, "bin", form + (isWindows ? ".exe" : ""));
   const start = async () => {
-    const command = [bunExe(), "build", "--compile", "--aot", ...forms[form], "./main.cjs", "--outfile", executable];
+    const flags = ["--compile", "--aot", "--explain", ...forms[form]];
+    const command = [bunExe(), "build", ...flags, "./main.cjs", "--outfile", executable];
     const { stderr, exitCode } = await run(command, join(directory, program, "tool"));
     expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return { executable, said: stderr.replaceAll("\\", "/") };
@@ -224,6 +225,15 @@ test.each([
   },
   600_000,
 );
+
+test("without --explain the build doesn't list the data files", async () => {
+  const executable = join(directory, "a-folder", "bin", "unexplained" + (isWindows ? ".exe" : ""));
+  const command = [bunExe(), "build", "--compile", "--aot", "./main.cjs", "--outfile", executable];
+  const { stderr, exitCode } = await run(command, join(directory, "a-folder", "tool"));
+  expect(stderr).not.toContain("TS100088");
+  expect(exitCode).toBe(0);
+  expect(dataHeldBy(executable)).toEqual(dataHeldBy((await build("a-folder")).executable));
+}, 600_000);
 
 test.each(["nothing", "nothing-imported", "the-folder-above", "an-alias-of-the-own-folder"] as const)(
   "a start that names %s: the code is in the executable and no data file",

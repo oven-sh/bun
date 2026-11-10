@@ -31,7 +31,7 @@
 # INTURN: = AreMembersUnchanged conditions=[{layout=L1 key="m"}]
 # INTURN-NEXT: Branch
 # INTURN: [[again]]: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L1 key="m"}]
-# INTURN-NEXT: CheckProof [[again]] checkedType=true {{*}}source=WhatIsRemembered
+# INTURN-NEXT: CheckProof [[again]] checkedType=true {{*}}source=RememberedFact
 # RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime
 # RIGHT: 30 27 24
 # RIGHT-NEXT: exited with 0

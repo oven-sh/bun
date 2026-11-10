@@ -83,7 +83,9 @@ fn add_requested_records(
         for request in context.graph.requests_of(requester) {
             let target = context.module(request.target);
             match target {
-                ProgramModule::Inner { .. } | ProgramModule::Face(_) | ProgramModule::Check(_) => {
+                ProgramModule::Inner { .. }
+                | ProgramModule::Facade(_)
+                | ProgramModule::Check(_) => {
                     if known_modules.insert(target) {
                         modules.push(target);
                     }
@@ -291,13 +293,13 @@ mod tests {
         ];
         with_projects(&files, |projects| {
             let [index, legacy] = ["index.ts", "legacy.cjs"].map(|name| find_file(projects, name));
-            let declared = [ModuleRef::Check(index), ModuleRef::Face(legacy)];
+            let declared = [ModuleRef::Check(index), ModuleRef::Facade(legacy)];
             let names = ["index.ts", "legacy.cjs"];
             let mut units = names.map(|name| create_unit(projects, name, &declared));
             let table = collect_modules_of(projects, &mut units);
 
             let records_of_index = [ModuleRef::File(index), ModuleRef::Check(index)];
-            let records_of_legacy = [ModuleRef::File(legacy), ModuleRef::Face(legacy)];
+            let records_of_legacy = [ModuleRef::File(legacy), ModuleRef::Facade(legacy)];
             for records in [records_of_index, records_of_legacy] {
                 let records = records.map(|module| application_module(projects, module));
                 let first = table.index_of(records[0]) as usize;

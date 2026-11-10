@@ -9,5 +9,5 @@ const like = { length: 3, 0: 1, 1: 2, 2: 3, map: Array.prototype.map };
 const own = [1, 2, 3]; own.constructor = { [Symbol.species]: Rows };
 const noConstructor = [1, 2, 3]; noConstructor.constructor = undefined;
 for (let round = 0; round < 2; round++) for (const list of [[1, 2, 3], Rows.from([1, 2, 3]), Plain.from([1, 2, 3]), Odd.from([1, 2, 3]), proxied, like, own, noConstructor, new Float64Array([1, 2, 3]), new Uint8Array([1, 2, 3]), [4, 5]]) { const got = run(list); console.log(got?.constructor?.name, say(ArrayBuffer.isView(got) ? Array.from(got) : got)); }
-// STATISTIC: NewListsInPlaceOfSpecies >= 1
-// STATISTIC: NumbersStoredByKindOfStorageInCopiedRuns <= 0
+// STATISTIC: ArraySpeciesLookupsElided >= 1
+// STATISTIC: NumberStoresDispatchedByIndexingType <= 0

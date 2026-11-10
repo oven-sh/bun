@@ -8,6 +8,7 @@
 // Such a variable lives in a scope object, so a read of it is a read of memory that any call may change. A compiler that walks a loop under what it believes of the variable, finds the belief broken by a turn and
 // walks again has to have learned something by then: a build that does not end is a find here, as an answer that differs is.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // HEAD is a test of the variable for the loop's own condition, BODY what a turn does.
 const loops: [string, string][] = [
@@ -164,7 +165,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && written < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     written++;
   }
   console.log(written);
@@ -174,7 +175,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

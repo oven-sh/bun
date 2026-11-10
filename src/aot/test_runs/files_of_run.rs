@@ -7,15 +7,15 @@ use bun_core::strings;
 use bun_js_parser::Jest;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{basename, dirname};
-use bun_sema::atom::{Interner, InternerPerThread};
-use bun_sema::bind::{BindOptions, Binding, RuntimeBindOptions};
-use bun_sema::file_analysis::analyze_file;
+use bun_sema::atom::{Atom, Interner, InternerPerThread, known};
+use bun_sema::bind::{BindOptions, Binding, Bound, RuntimeBindOptions};
+use bun_sema::file_analysis::{analyze_file, bind_file};
 use bun_sema::fold::{FoldInputs, FoldOptions};
-use bun_sema::hir::{ExprId, ExprKind, FileKind, PropKey, StmtId, StmtKind};
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::hir::{ExprId, ExprKind, File, FileKind, MemberKey, PropKey, StmtId, StmtKind};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, find_statement_sites};
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{ancestors, inside};
-use bun_sema::session::Session;
+use bun_sema::session::{Arena, Session};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 use bun_sema_parser::{CompileParseOptions, parse_for_compile, parse_for_compile_in};
@@ -269,7 +269,157 @@ struct Written {
     paths: Vec<(Vec<u8>, bool)>,
 }
 
+fn is_relative(text: &[u8]) -> bool {
+    text.starts_with(b"./") || text.starts_with(b"../") || text == b"." || text == b".."
+}
+
+fn has_sites_that_need_folding(hir: &File<'_>, atoms: &Interner<'_>) -> bool {
+    let names_loader = |name: Atom| name == known::require || name == known::createRequire;
+    let key_names_loader = |key: PropKey| key.name().is_some_and(names_loader);
+    if !hir.import_equals.is_empty()
+        || hir.import_specs.iter().any(|it| names_loader(it.imported))
+        || hir.pat_props.iter().any(|it| key_names_loader(it.key))
+    {
+        return true;
+    }
+    let mut jumps = false;
+    for statement in hir.ids(hir.body) {
+        match hir[statement].kind {
+            StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. }
+                if jumps =>
+            {
+                return true;
+            }
+            StmtKind::If { .. }
+            | StmtKind::While { .. }
+            | StmtKind::DoWhile { .. }
+            | StmtKind::For { .. }
+            | StmtKind::ForIn { .. }
+            | StmtKind::ForOf { .. }
+            | StmtKind::Switch { .. }
+            | StmtKind::Try { .. }
+            | StmtKind::Block(_)
+            | StmtKind::Labeled { .. }
+            | StmtKind::Throw(_)
+            | StmtKind::Return(_) => jumps = true,
+            _ => {}
+        }
+    }
+    let is_string = |operand: Option<ExprId>| {
+        operand.is_none_or(|it| matches!(hir[it].kind, ExprKind::String(_)))
+    };
+    hir.exprs.iter().any(|node| match node.kind {
+        ExprKind::Ident(name) => names_loader(name),
+        ExprKind::String(text) => text.is_some() && is_test_module(atoms.bytes(text)),
+        ExprKind::Dot { name, .. } => names_loader(name),
+        ExprKind::ImportCall { args, .. } => !is_string(hir.ids(args).next()),
+        ExprKind::Call(call) => {
+            let callee = hir.skip_type_assertions(hir[call].callee);
+            let Some((object, MemberKey::Name(name))) = hir.member_key(callee) else {
+                return false;
+            };
+            let may_load = [
+                known::getBuiltinModule,
+                known::module,
+                known::mock,
+                known::doMock,
+                known::importActual,
+                known::importMock,
+                known::requireActual,
+                known::requireMock,
+                known::createMockFromModule,
+            ]
+            .contains(&name)
+                || names_loader(name)
+                || (name == known::resolve
+                    && matches!(
+                        hir[hir.skip_type_assertions(object)].kind,
+                        ExprKind::ImportMeta
+                    ));
+            may_load && !is_string(hir.ids(hir[call].args).next())
+        }
+        _ => false,
+    })
+}
+
+struct SitesOfFile<'s> {
+    bound: Bound<'s>,
+    specifiers: Vec<(Atom, bool)>,
+}
+
+fn bind_options() -> BindOptions {
+    BindOptions {
+        runtime: Some(RuntimeBindOptions::default()),
+        ..BindOptions::default()
+    }
+}
+
+fn exports_again(kind: ImportSiteKind) -> bool {
+    matches!(
+        kind,
+        ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+    )
+}
+
+fn find_sites_of_file<'s>(
+    hir: &mut File<'s>,
+    fold: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> SitesOfFile<'s> {
+    if !has_sites_that_need_folding(hir, atoms) {
+        let bound = bind_file(hir, bind_options(), fold, atoms, arena);
+        if !bound.ran_out_of_stack && !bound.runtime.depends_on_sloppy_mode() {
+            let sites = find_statement_sites(hir, &bound, fold).into_iter();
+            let specifiers: Vec<(Atom, bool)> = sites
+                .map(|(kind, specifier)| (specifier, exports_again(kind)))
+                .collect();
+            let is_exported_again = |text: Atom| {
+                let mut exported = specifiers.iter().filter(|it| it.1);
+                exported.any(|it| it.0 == text)
+            };
+            let spells_exported_path = hir.exprs.iter().any(
+                |node| matches!(node.kind, ExprKind::String(text) if text.is_some() && is_exported_again(text)),
+            );
+            if !spells_exported_path {
+                return SitesOfFile { bound, specifiers };
+            }
+        }
+    }
+    find_sites_by_analysis(hir, fold, atoms, arena)
+}
+
+fn find_sites_by_analysis<'s>(
+    hir: &mut File<'s>,
+    fold: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> SitesOfFile<'s> {
+    let file = inputs_of_file_that_nobody_describes();
+    let (bound, analysis) = analyze_file(hir, bind_options(), fold, file, atoms, arena);
+    let sites = analysis.import_sites.iter();
+    let specifiers = sites
+        .filter_map(|site| match site.specifier {
+            ImportSpecifier::Constant(specifier) => Some((specifier, exports_again(site.kind))),
+            _ => None,
+        })
+        .collect();
+    SitesOfFile { bound, specifiers }
+}
+
+type FindSites =
+    for<'s> fn(&mut File<'s>, &FoldInputs<'s>, &Interner<'s>, &'s Arena) -> SitesOfFile<'s>;
+
 fn read_what_file_writes(path: &[u8], text: &[u8], atoms: &Interner<'_>) -> Written {
+    read_what_file_writes_by(find_sites_of_file, path, text, atoms)
+}
+
+fn read_what_file_writes_by(
+    find_sites: FindSites,
+    path: &[u8],
+    text: &[u8],
+    atoms: &Interner<'_>,
+) -> Written {
     let session = Session::new();
     let arena = session.arena();
     let parse_options = CompileParseOptions {
@@ -287,28 +437,13 @@ fn read_what_file_writes(path: &[u8], text: &[u8], atoms: &Interner<'_>) -> Writ
     }
     hir.text = Cow::Borrowed(text);
     let fold = FoldInputs::new(FoldOptions::default(), arena);
-    let bind_options = BindOptions {
-        runtime: Some(RuntimeBindOptions::default()),
-        ..BindOptions::default()
-    };
-    let file = inputs_of_file_that_nobody_describes();
-    let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
+    let SitesOfFile { bound, specifiers } = find_sites(&mut hir, &fold, atoms, arena);
     let mut written = Written::default();
     let folder = dirname::<Posix>(path);
-    let is_relative = |text: &[u8]| {
-        text.starts_with(b"./") || text.starts_with(b"../") || text == b"." || text == b".."
-    };
-    for site in analysis.import_sites {
-        let ImportSpecifier::Constant(specifier) = site.specifier else {
-            continue;
-        };
+    for (specifier, exports_again) in specifiers {
         let specifier = atoms.bytes(specifier);
         written.takes_from_test_runner |= is_test_module(specifier);
         if is_relative(specifier) {
-            let exports_again = matches!(
-                site.kind,
-                ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
-            );
             let path = from_argument(folder, specifier);
             written.paths.push((path, !exports_again));
         }
@@ -322,13 +457,15 @@ fn read_what_file_writes(path: &[u8], text: &[u8], atoms: &Interner<'_>) -> Writ
                     written.paths.push((path, true));
                 }
             }
-            ExprKind::Ident(name) if name.is_some() => {
-                let is_free = !bound.ran_out_of_stack
-                    && bound.is_evaluated_ident(expression)
-                    && bound.binding(expression) == Binding::Free;
+            ExprKind::Ident(name) if name.is_some() && !written.takes_from_test_runner => {
+                let is_free = || {
+                    !bound.ran_out_of_stack
+                        && bound.is_evaluated_ident(expression)
+                        && bound.binding(expression) == Binding::Free
+                };
                 let mut given = Jest::GLOBALS.iter();
-                written.takes_from_test_runner |=
-                    is_free && given.any(|it| it.as_bytes() == atoms.bytes(name));
+                written.takes_from_test_runner =
+                    given.any(|it| it.as_bytes() == atoms.bytes(name)) && is_free();
             }
             _ => {}
         }
@@ -855,7 +992,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         .map(|index| package_of_file(FileId(index as u32)))
         .collect();
     let mut whose = vec![WhoseFile::OfNeither; count];
-    let mut loads_compiled_files_alone = vec![false; count];
+    let mut rejects_uncompiled_code = vec![false; count];
     for file in compiled() {
         let index = file.idx();
         whose[index] = match (is_of_tests[index], is_of_product[index]) {
@@ -866,7 +1003,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         let loads_for_tests_alone = is_in_package[index]
             && !packages_of_product.contains(package_of_file(file))
             && loads_what_it_is_told(files, file);
-        loads_compiled_files_alone[index] = !is_of_tests[index] && !loads_for_tests_alone;
+        rejects_uncompiled_code[index] = !is_of_tests[index] && !loads_for_tests_alone;
     }
     let count_of = |side: WhoseFile| compiled().filter(|file| whose[file.idx()] == side).count();
     crate::test_run_report::say_whose_files(
@@ -875,14 +1012,15 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         count_of(WhoseFile::OfProduct),
         count_of(WhoseFile::OfNeither),
     );
-    (whose, loads_compiled_files_alone)
+    (whose, rejects_uncompiled_code)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CodeOnDisk, LastWords, find_importers_outside_run, find_last_words_written, list_spellings,
-        read_what_file_writes, without_extension,
+        CodeOnDisk, FindSites, LastWords, find_importers_outside_run, find_last_words_written,
+        find_sites_by_analysis, find_sites_of_file, list_spellings, read_what_file_writes,
+        read_what_file_writes_by, without_extension,
     };
     use crate::ir::parallel::run_serially;
     use bun_sema::atom::Interner;
@@ -985,6 +1123,62 @@ mod tests {
             }
             for at in order.iter().chain(&order) {
                 assert_eq!(read(texts[*at], &atoms), alone[*at], "{}", texts[*at]);
+            }
+        }
+    }
+
+    #[test]
+    fn what_a_file_writes_is_what_its_analysis_finds() {
+        let texts = [
+            "import { test } from \"bun:test\"; import { a } from \"./a\"; test(a);",
+            "import { test } from \"bun:test\"; let one: typeof test;",
+            "import type { test } from \"vitest\"; import { type A, B } from \"./a\"; let one: A | B;",
+            "import { A } from \"./a\"; import { b } from \"./b\"; let one: A = b;",
+            "import \"./a\"; import {} from \"./b\"; import * as c from \"./c\"; let one: typeof c;",
+            "import D from \"./d\"; class E extends D {} export { E };",
+            "import D from \"./d\"; interface E extends D {} export type { E };",
+            "import { a } from \"./a\"; export { a };",
+            "import { a } from \"./a\"; { const a = 1; use(a); }",
+            "export * from \"./a\"; export { b } from \"./b\"; export type { c } from \"./c\"; export * as d from \"./d\";",
+            "export * from \"./a\"; const one = import(\"./a\");",
+            "export * from \"./a\"; const one = \"./a\";",
+            "const start = \"./fi\"; const one = import(start + \"fth\");",
+            "const start = \"./fi\"; const one = require(start + \"fth\");",
+            "const load = require; load(`./${\"a\"}`); load(\"./b\");",
+            "import { createRequire as make } from \"module\"; const load = make(import.meta.url); load(\"./a\" + \"b\");",
+            "import * as it from \"module\"; it.createRequire(import.meta.url)(\"./a\" + \"b\");",
+            "import.meta.resolve(\"./a\" + \"b\"); Promise.resolve(\"./c\" + \"d\");",
+            "import { vi } from \"vitest\"; vi.mock(\"./a\" + \"b\"); vi.mock(\"./c\", () => ({}));",
+            "import { vi } from \"vitest\"; vi.mock(import(\"./a\")); const b = vi.importActual(\"./b\");",
+            "jest.requireActual(\"./a\" + 1); mock.module(`./b`, () => ({}));",
+            "const one = import(\"vitest\");",
+            "const one = process.getBuiltinModule(\"bun:\" + \"test\");",
+            "import one = require(\"./a\"); import two = one.b; use(two);",
+            "throw 1; import \"./a\"; export * from \"./b\";",
+            "if (false) { import(\"./a\"); require(\"./b\"); } import \"./c\";",
+            "{ function test() {} } test(\"one\");",
+            "test(\"one\"); function outer() { with (one) { describe(); } }",
+            "const { require: load } = import.meta; load(\"./a\" + \"b\");",
+            "arguments[0] = eval(\"test\"); it(\"one\");",
+            "let expect: typeof import(\"./a\"); expect = 1; export const b = expect;",
+        ];
+        for text in texts {
+            for path in [
+                &b"/made-up/other/file.ts"[..],
+                b"/made-up/other/file.tsx",
+                b"/made-up/other/file.js",
+            ] {
+                let [short, full] =
+                    [find_sites_of_file as FindSites, find_sites_by_analysis].map(|find_sites| {
+                        let session = Session::new();
+                        let atoms = Interner::new_in(&session);
+                        let mut written =
+                            read_what_file_writes_by(find_sites, path, text.as_bytes(), &atoms);
+                        written.paths.sort();
+                        written.paths.dedup();
+                        (written.takes_from_test_runner, written.paths)
+                    });
+                assert_eq!(short, full, "{text} {}", path.escape_ascii());
             }
         }
     }

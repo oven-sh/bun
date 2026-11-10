@@ -1,4 +1,4 @@
-// STATISTIC: LiteralsOfNumbersBornForWhatLoopStores = 0
+// STATISTIC: ArrayLiteralsAllocatedForLoops = 0
 // Under: --aot-check=Validate: an access named a kind of storage that the maker of its list was not born with any more
 'use strict';
 function f(t, fills, k) { const a = [t | 0, 9]; if (fills) { for (let i = 2; i < 30; i++) a[i] = i * 0.5 + t; return a; } return a[k & 1]; }

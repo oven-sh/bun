@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
-// Under: --aot-testing=FailGuesses: every guess fails
+// Under: --aot-testing=FailSpeculations: every guess fails
 const proto = { total() { return this.a + this.b; } };
 globalThis.madeUpProto = proto;
 const borrower = { a: process.argv.length, b: 1, total: proto.total };

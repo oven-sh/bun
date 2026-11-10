@@ -1,5 +1,5 @@
 // `stack.pop()` where the call is closed: the stub takes the last element of a plain vector and enters no operation.
-// COUNT: operation:operationAOTArrayPopOfAnyList <= 60
+// COUNT: operation:operationAOTArrayPopGeneric <= 60
 const holders: any[] = [{ stack: [] as unknown[] }, { stack: [] as number[] }, { stack: ["a"] as string[] }]
 let sum = 0
 for (let turn = 0; turn < 3000; turn++) {

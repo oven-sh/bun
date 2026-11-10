@@ -711,7 +711,7 @@ fn an_import_of_a_settled_name_is_bound_to_the_variable() {
             assert!(program.keeps_names("m.cjs"), "{module}");
             assert!(program.is_settled("m.cjs", "a"), "{module}");
             assert_eq!(program.imported("m.cjs", "a"), "variable", "{module}");
-            assert_eq!(program.exports().face(program.module("m.cjs")), None);
+            assert_eq!(program.exports().facade(program.module("m.cjs")), None);
             assert!(program.checked("main.mjs").is_empty(), "{module}");
         });
     }
@@ -729,8 +729,8 @@ fn an_import_holds_a_copy_of_a_name_stored_after_the_body_ends() {
             let file = program.file("m.cjs");
             assert!(!program.is_settled("m.cjs", "a"), "{module}");
             assert_eq!(program.imported("m.cjs", "a"), "copy", "{module}");
-            let face = program.exports().face(ModuleRef::File(file));
-            assert_eq!(face, Some(ModuleRef::Face(file)), "{module}");
+            let facade = program.exports().facade(ModuleRef::File(file));
+            assert_eq!(facade, Some(ModuleRef::Facade(file)), "{module}");
             assert!(program.checked("main.mjs").is_empty(), "{module}");
         });
     }
@@ -758,7 +758,10 @@ fn an_import_through_a_getter_holds_a_copy_of_its_own_unless_the_name_behind_it_
                 program.describe(Some(program.exports().imported_member(variable)))
             };
             assert!(
-                program.graph.faces_behind(program.file("m.cjs")).is_empty(),
+                program
+                    .graph
+                    .facade_dependencies(program.file("m.cjs"))
+                    .is_empty(),
                 "{k} {other}"
             );
             format!("{}, {}", member("m.cjs", "a"), member("k.cjs", "b"))
@@ -1153,7 +1156,9 @@ fn a_call_through_the_namespace_passes_it_as_this() {
         let main = "import * as ns from './m.cjs'; console.log(ns.a());";
         let module = format!("exports.a = {a}; exports.b = 1;");
         with_program(&[("main.mjs", main), ("m.cjs", &module[..])], |program| {
-            program.exports().face_captures(program.file("m.cjs"))
+            program
+                .exports()
+                .has_capturing_facade(program.file("m.cjs"))
         })
     };
     assert!(captures("function () { return this.b; }"));

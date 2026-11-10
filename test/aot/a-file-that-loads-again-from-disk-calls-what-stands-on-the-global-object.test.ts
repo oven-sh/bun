@@ -5,7 +5,7 @@ import { test } from "./supported";
 
 // `delete require.cache[require.resolve("./file.cjs")]; require("./file.cjs")`: in a test run the file loads again from disk, as code that the build has not seen.
 // That copy calls `note()`, which the test file has laid on the global object. As one program the build saw only its own calls of `note`, all of them direct, and closed the entry
-// that everybody else comes in by: "This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."
+// that everybody else comes in by: "a function was called, but it was not compiled into this executable because nothing seemed to refer to it"
 const files: Record<string, string> = {
   "package.json": `{}`,
   "file.cjs": `note("the file runs");

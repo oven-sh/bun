@@ -451,13 +451,13 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state.has_exported_requires |= !parsed.code.exported_requires.is_empty();
         let analysis = &parsed.code.analyzed.analysis;
         state.has_exported_file_changers |= !analysis.exported_file_changers.is_empty();
-        if !analysis.asked_of_data_files.is_empty() {
+        if !analysis.data_file_queries.is_empty() {
             state.askers_of_data_files.push(index);
         }
-        if !analysis.asked_of_other_files.is_empty() {
+        if !analysis.other_file_queries.is_empty() {
             state.askers_of_other_files.push(index);
         }
-        if !analysis.asked_of_own_exports.is_empty() {
+        if !analysis.own_export_queries.is_empty() {
             state.askers_of_own_exports.push(index);
         }
         if analysis.asks_for_main_module {
@@ -1634,7 +1634,7 @@ fn find_texts_of_data_files(
         return Vec::new();
     };
     let analysis = &parsed.code.analyzed.analysis;
-    let asked = analysis.asked_of_data_files;
+    let asked = analysis.data_file_queries;
     let mut found = Vec::new();
     let mut next_target = 0;
     for (site, &resolution) in (analysis.import_sites.iter()).zip(&parsed.code.resolutions) {
@@ -1688,7 +1688,7 @@ fn find_texts_of_data_files(
 fn scan_askers_of_data_files_again(atoms: &Interner<'_>, state: &mut WalkState<'_, '_>) -> bool {
     let asks = |file: &WalkedFile<'_, '_>| {
         (file.parsed.as_ref())
-            .is_some_and(|it| !it.code.analyzed.analysis.asked_of_data_files.is_empty())
+            .is_some_and(|it| !it.code.analyzed.analysis.data_file_queries.is_empty())
     };
     let asking = take_noted_files(&mut state.askers_of_data_files, &state.files, asks);
     let mut askers: Vec<(u32, Vec<TextOfDataFile>)> = Vec::new();
@@ -1799,7 +1799,7 @@ fn find_texts_of_other_files<'s>(
     };
     let atoms = &context.atoms;
     let analysis = &parsed.code.analyzed.analysis;
-    let asked = analysis.asked_of_other_files;
+    let asked = analysis.other_file_queries;
     let mut found = Vec::new();
     let mut next_target = 0;
     for (site, &resolution) in (analysis.import_sites.iter()).zip(&parsed.code.resolutions) {
@@ -1875,7 +1875,7 @@ fn scan_askers_of_other_files_again<'s>(
     }
     let asks = |file: &WalkedFile<'_, '_>| {
         (file.parsed.as_ref())
-            .is_some_and(|it| !it.code.analyzed.analysis.asked_of_other_files.is_empty())
+            .is_some_and(|it| !it.code.analyzed.analysis.other_file_queries.is_empty())
     };
     let asking = take_noted_files(&mut state.askers_of_other_files, &state.files, asks);
     let mut askers: Vec<(u32, Vec<TextOfOtherFile>)> = Vec::new();
@@ -1904,7 +1904,7 @@ fn find_exports_that_others_touch(
     let Some(parsed) = &file.parsed else {
         return Vec::new();
     };
-    let asked = parsed.code.analyzed.analysis.asked_of_own_exports;
+    let asked = parsed.code.analyzed.analysis.own_export_queries;
     if files
         .iter()
         .any(|it| it.reaches_modules_unnamed == Some(true))
@@ -1945,7 +1945,7 @@ fn scan_files_whose_exports_others_touch_again(
 ) -> bool {
     let asks = |file: &WalkedFile<'_, '_>| {
         (file.parsed.as_ref())
-            .is_some_and(|it| !it.code.analyzed.analysis.asked_of_own_exports.is_empty())
+            .is_some_and(|it| !it.code.analyzed.analysis.own_export_queries.is_empty())
     };
     let asking = take_noted_files(&mut state.askers_of_own_exports, &state.files, asks);
     if !asking.is_empty() {

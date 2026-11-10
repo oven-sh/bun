@@ -8,6 +8,6 @@
 # A sum with an element of a list that is cut to an int32 in every turn. In the eight turns laid out over int32s the element is an int32 made a number, and whoever cuts the sum sees that:
 # the sum is added in words, and no number is made and cut again on the way round the loop. The turns over doubles and the loop as written keep their conversions.
 # f1 = sum, f2 = hash
-# RUN: compile ExactIntegersBehindNumbers mechanisms=all
+# RUN: compile DoublesRecomputedAsIntegers mechanisms=all
 # Eight more since the loop as written is laid out in eight turns as well (its read comes raw).
-# CHECK: statistic ExactIntegersBehindNumbers 34
+# CHECK: statistic DoublesRecomputedAsIntegers 34

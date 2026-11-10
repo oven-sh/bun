@@ -1,22 +1,22 @@
 // RUN: link
 // CHECK-LABEL: function {{*}}name="exported"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="called"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="neverNamed"
 // CHECK-NOT: Return
-// CHECK: [[errorOfNeverNamed]] = NewRuntimeError runtimeError=LeftOutOfExecutable
+// CHECK: [[errorOfNeverNamed]] = NewRuntimeError runtimeError=OmittedFromExecutable
 // CHECK-NEXT: Throw [[errorOfNeverNamed]]
 
 // RUN(ALSO): link
 // ALSO-LABEL: function {{*}}name="namedOnlyThere"
 // ALSO-NOT: Return
-// ALSO: NewRuntimeError runtimeError=LeftOutOfExecutable
+// ALSO: NewRuntimeError runtimeError=OmittedFromExecutable
 // ALSO-LABEL: function {{*}}name="namesItself"
 // ALSO-NOT: Return
-// ALSO: NewRuntimeError runtimeError=LeftOutOfExecutable
+// ALSO: NewRuntimeError runtimeError=OmittedFromExecutable
 
 // What an entry point exports is in the program. A reference from a function that is itself left out does not count, nor does a function's
 // reference to itself: such a function has no body either.

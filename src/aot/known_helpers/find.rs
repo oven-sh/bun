@@ -1,7 +1,6 @@
 use super::canonical::{CanonicalFunction, CanonicalInput, OuterName, canonical_function};
 use super::quiet::{
-    Quiet, enclosing_statement, is_absent_from_object_prototype, is_global_name,
-    is_in_statement_of_file, plain_member,
+    Quiet, is_absent_from_object_prototype, is_global_name, is_in_statement_of_file, plain_member,
 };
 use super::table::{Table, TableEntry, signature_of};
 use super::{Helper, Reference, Shape, find_by_key};
@@ -454,7 +453,7 @@ impl<'a, 's> Finder<'a, 's> {
             return false;
         };
         let created = match self.file.bound.fns[function.idx()].owner {
-            FnOwner::Expr(created) => enclosing_statement(self.file.bound, created),
+            FnOwner::Expr(created) => self.file.bound.statement_of_expr(created),
             FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
         };
         let (Some(defined), Some(created)) = (definition.statement, created) else {
@@ -473,7 +472,7 @@ impl<'a, 's> Finder<'a, 's> {
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(value) => Some(Definition {
                 value,
-                statement: enclosing_statement(bound, value),
+                statement: bound.statement_of_expr(value),
                 is_stored_again: stores.iter().any(|store| is_live(store.target)),
             }),
             BindingInitializer::Opaque if bound.binding_kind(symbol) == BindingKind::Var => {

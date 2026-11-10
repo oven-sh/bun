@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedAtHeadsOfTypedTurns >= 1
+// STATISTIC: ArraysGuardedAtLoopHeaders >= 1
 // Under: --aot-harden=proof-checks: what the head has asked is held against the cell at every access
 'use strict';
 const n = +process.argv[2] || 3; const said = [];

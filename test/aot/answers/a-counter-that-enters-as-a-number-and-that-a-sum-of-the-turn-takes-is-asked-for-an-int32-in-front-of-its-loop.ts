@@ -12,7 +12,7 @@
 // # RUN: run-in-shell $SHELL
 // # CHECK: 36 of 36 of 36
 // # CHECK-NEXT: exited with 0
-// # RUN(FAILED): run-in-shell $SHELL testing=FailGuesses
+// # RUN(FAILED): run-in-shell $SHELL testing=FailSpeculations
 // # FAILED: 36 of 36 of 36
 // # FAILED-NEXT: exited with 0
 // # RUN(CHECKED): run-in-shell $SHELL testing=CheckProofsAtRunTime

@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutWhoseTurnsStoreIntoSlots >= 1
+// STATISTIC: UnrolledLoopsWithSlotStores >= 1
 "use strict";
 // `this.n++` stands in front of the read. A turn that the generator leaves is run again from its start: the count must not be taken twice where the list has a hole, ends early, or holds doubles.
 const said = [];

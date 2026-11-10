@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 2
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 2
 // The callers in sight hand over bytes alone, by a key that is known at run time alone. One guess in front of the loop left the question "as made?" and the length in every turn; the loop asks in front for a list, a Buffer and a Uint8Array as it does where nothing was seen.
 const names = JSON.parse('["crc","add"]');
 const algorithms = {

@@ -1,4 +1,4 @@
-// STATISTIC: TurnsThatBeginAgain >= 1
+// STATISTIC: IterationRestartsEmitted >= 1
 // A character read outside its string leaves the typed turn of a loop and the turn begins again in the other copy. Whatever the turn did in front of the read would then be done twice.
 let bumps = 0, noted = 0;
 const pushed: number[] = [], counts = new Map<string, number>(), box = { stores: 0 };

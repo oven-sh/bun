@@ -438,9 +438,11 @@ for (const log of result.logs) {
 
 ### `bun compile`
 
-[`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. It also reports the type errors in code that the executable leaves out, such as a function that nothing calls. `bun compile --check` stops at those too. Like the build, it takes entry points.
+[`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. Like the build, it takes entry points. It also reports the type errors in code that the executable leaves out, such as a function that nothing calls. `bun compile --check` stops at those too.
 
-`bun check --aot` takes `--define k=v`, like `bun compile`. A define decides which code the build removes, and the build reports no errors in code that it removes. Pass both commands the same defines, so that they see the same program.
+The build doesn't stop for a type error in a package. If the TypeScript of a package that gets compiled has type errors, `bun check --aot` prints one warning that names the package, and still exits with 0. `bun check --aot --all` lists each of them as an error. Both can only check a package whose `strict` options and `lib` fit your own `tsconfig.json`. A package's options are the `compilerOptions` in its `package.json`, strict unless they say otherwise. Its `tsconfig.json` isn't read. The last line doesn't count a file that has such errors or that couldn't be checked. Errors in a package's `.d.ts` files aren't listed here. Plain `bun check` lists them.
+
+Pass both commands the same `--define` flags. The build reports no errors in code that a define removes.
 
 ```bash terminal icon="terminal"
 bun check --aot --define 'process.env.NODE_ENV="production"' ./server.ts
@@ -449,7 +451,7 @@ bun compile --define 'process.env.NODE_ENV="production"' ./server.ts
 
 It checks each file with the `tsconfig.json` that the build uses for it, so it takes neither `-b` nor [compiler options as flags](#compiler-options-as-flags). `-p` is the build's `--tsconfig-override`.
 
-With `--explain`, it also lists [the code that compiled to a slow path](/compiler/explain), worst first, with a fix for each. `--explain=guards` lists [every type guard that can fail at run time](/compiler/debugging#find-the-guards-that-fail).
+With `--explain`, it also lists [the code that compiled to a slow path](/compiler/explain). `--explain=guards` lists [every type guard that can fail at run time](/compiler/debugging).
 
 ## If `package.json` has a `check` script
 
@@ -769,6 +771,7 @@ bun check [flags] [...files or directories]
 | `--no-script`            | Run the type checker even if the project has a `check` script       |
 | `--aot`                  | Check entry points the way [`bun compile`](/compiler/aot) does      |
 | `--explain`              | With `--aot`: list the code that compiled to a slow path            |
+| `--aot --all`            | Also list the type errors in the TypeScript of packages             |
 | `--define <k=v>`         | With `--aot`: replace `k` with `v`, like `bun compile --define`     |
 | `--strict`, `--target`…  | Any compiler option, as for `tsc`. Overrides `tsconfig.json`        |
 | `-h`, `--help`           | Print the help menu                                                 |

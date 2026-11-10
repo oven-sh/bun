@@ -529,6 +529,8 @@ public:
     ModuleMockFunction function;
     // The factory's promise is pending and will patch the already-loaded module when it settles.
     bool hasPendingPatch { false };
+    // The pending patch waits for the body of the module alone: the call has stored the exports, and storeAgainOverEndedBodies() stores again what the body assigns over.
+    bool wasPatchedAheadOfBody { false };
     bool spy { false };
     bool isFromPreload { false };
     // unmockModule() registers that module under its own key again.
@@ -2900,6 +2902,164 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
     return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
 }
 
+using ExportStoredAheadOfBody = BunPlugin::OnLoad::ExportStoredAheadOfBody;
+
+// The module, if its body may still assign to its variables: it has yet to start, it waits at an `await`, or it is up the stack. One that has run to its end
+// and that a cycle still holds at Status::Evaluating counts too. The status does not tell the two apart, and storeAgainOverEndedBodies() finds nothing to do for it.
+static JSC::CyclicModuleRecord* moduleWhoseBodyMayStillRun(JSC::AbstractModuleRecord* record)
+{
+    using Status = JSC::CyclicModuleRecord::Status;
+    auto* module = dynamicDowncast<JSC::JSModuleRecord>(record);
+    if (!module || module->hasLiveExports() || module->status() < Status::Linked || module->status() == Status::Evaluated)
+        return nullptr;
+    return module;
+}
+
+// Settles behind the end of that body. Null where no promise is the body's own: the module is linked, or an evaluation that is under way holds it.
+static JSC::JSPromise* promiseOfBodyThatMayStillRun(Zig::GlobalObject* globalObject, JSC::CyclicModuleRecord* module)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSC::JSPromise* ownBody = module->asyncCapability(); ownBody && ownBody->status() == JSC::JSPromise::Status::Pending)
+        return ownBody;
+    if (module->status() != JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+        return nullptr;
+    // It waits for an import. As for an import() that comes to it, the promise is that of its cycle.
+    JSC::JSPromise* ofCycle = module->evaluate(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ofCycle->markAsHandled();
+    // The cycle has failed ahead of this body, which the engine then never runs. A reaction to a settled promise would run at once, and come back here.
+    return ofCycle->status() == JSC::JSPromise::Status::Pending ? ofCycle : nullptr;
+}
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionBodyStoredAheadOfMayHaveEnded);
+
+// Comes back to storeAgainOverEndedBodies() behind the end of each of those bodies.
+static void lookAgainWhenBodiesEnd(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& stored = globalObject->onLoadPlugins.exportsStoredAheadOfBodies;
+    for (size_t i = 0; i < stored.size(); ++i) {
+        if (stored[i].isAwaited)
+            continue;
+        auto* module = uncheckedDowncast<JSC::CyclicModuleRecord>(stored[i].module.get());
+        JSC::JSPromise* end = promiseOfBodyThatMayStillRun(globalObject, module);
+        RETURN_IF_EXCEPTION(scope, );
+        // The evaluation that is under way comes to the body, or past it, before the next job runs. No second turn: it would never end where the jobs are run from inside that evaluation.
+        bool isTurn = !end;
+        if (isTurn) {
+            if (stored[i].hasWaitedTurn)
+                continue;
+            end = JSC::JSPromise::resolvedPromise(globalObject, jsUndefined());
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        for (auto& ofSameModule : stored) {
+            if (ofSameModule.module.get() != module)
+                continue;
+            ofSameModule.isAwaited = true;
+            ofSameModule.hasWaitedTurn |= isTurn;
+        }
+        thenWithContext(globalObject, end, jsFunctionBodyStoredAheadOfMayHaveEnded, jsFunctionBodyStoredAheadOfMayHaveEnded, module);
+    }
+}
+
+// What the body has assigned to the export since Bun last stored there, if anything. It is the module's own: from here on, what the export was ahead of every mock.
+static JSValue takeValueAssignedOver(Zig::GlobalObject* globalObject, const ExportStoredAheadOfBody& stored)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* environment = uncheckedDowncast<JSC::AbstractModuleRecord>(stored.module.get())->moduleEnvironmentMayBeNull();
+    JSValue found = environment ? environment->readVariable(vm, JSC::ScopeOffset(stored.offset)) : JSValue();
+    if (!found || found == stored.value.get())
+        return {};
+    stored.originals.get()->putDirectMayBeIndex(globalObject, stored.name, found);
+    RETURN_IF_EXCEPTION(scope, {});
+    return found;
+}
+
+// The body of a module assigns its `const`, `let` and `class` exports, and each `var` that it gives a value, over what a mock stored there ahead of it.
+// When the body has ended, what it assigned is the original of the export, and the export is the mock's again. A `function` export has been the mock's all along.
+static void storeAgainOverEndedBodies(Zig::GlobalObject* globalObject)
+{
+    auto& stored = globalObject->onLoadPlugins.exportsStoredAheadOfBodies;
+    if (stored.isEmpty())
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (size_t i = 0; i < stored.size();) {
+        if (moduleWhoseBodyMayStillRun(uncheckedDowncast<JSC::AbstractModuleRecord>(stored[i].module.get()))) {
+            ++i;
+            continue;
+        }
+        ExportStoredAheadOfBody ended = stored[i];
+        stored.removeAt(i);
+        JSValue assigned = takeValueAssignedOver(globalObject, ended);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!assigned)
+            continue;
+        uncheckedDowncast<JSC::JSModuleNamespaceObject>(ended.moduleNamespace.get())->overrideExportValue(globalObject, ended.name, ended.value.get());
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    RELEASE_AND_RETURN(scope, lookAgainWhenBodiesEnd(globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionBodyStoredAheadOfMayHaveEnded, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue module = callframe->argument(1);
+    for (auto& stored : globalObject->onLoadPlugins.exportsStoredAheadOfBodies) {
+        if (stored.module.get() == module.asCell())
+            stored.isAwaited = false;
+    }
+    storeAgainOverEndedBodies(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+// `mock` ends ahead of the end of a body. What the body has assigned so far is what the end of the mock puts back.
+static void forgetExportsStoredAheadOfBodies(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    auto& stored = globalObject->onLoadPlugins.exportsStoredAheadOfBodies;
+    if (stored.isEmpty())
+        return;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    for (size_t i = 0; i < stored.size();) {
+        JSObject* originals = stored[i].originals.get();
+        if (originals != mock->originalExports.get() && originals != mock->originalExportsOfEvictedModule.get()) {
+            ++i;
+            continue;
+        }
+        ExportStoredAheadOfBody ended = stored[i];
+        stored.removeAt(i);
+        takeValueAssignedOver(globalObject, ended);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+// Stores `value` in an export: for a mock, which has saved what it found there in `originals`, for a spy, or for the end of either. Where a body may still assign
+// to the variable of the export, storeAgainOverEndedBodies() stores the newest of those values again.
+static void storeExportAheadOfBody(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, const JSC::Identifier& name, JSValue value, JSObject* originals)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ExportVariable variable = findExportVariable(globalObject, moduleNamespace, name);
+    RETURN_IF_EXCEPTION(scope, );
+    auto& stored = globalObject->onLoadPlugins.exportsStoredAheadOfBodies;
+    size_t earlier = variable.record ? stored.findIf([&](const auto& each) { return each.module.get() == variable.record && each.offset == variable.offset.offset(); }) : notFound;
+    if (earlier != notFound) {
+        takeValueAssignedOver(globalObject, stored[earlier]);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    moduleNamespace->overrideExportValue(globalObject, name, value);
+    RETURN_IF_EXCEPTION(scope, );
+    if (earlier != notFound)
+        stored[earlier].value.set(vm, value);
+    else if (variable.record && originals && moduleWhoseBodyMayStillRun(variable.record))
+        stored.append(ExportStoredAheadOfBody { JSC::Strong<JSC::JSObject> { vm, moduleNamespace }, name, JSC::Strong<JSC::JSCell> { vm, variable.record }, variable.offset.offset(), JSC::Strong<JSC::Unknown> { vm, value }, JSC::Strong<JSC::JSObject> { vm, originals } });
+}
+
 __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3026,9 +3186,15 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             RETURN_IF_EXCEPTION(scope, );
         }
 #endif
+        // Every module that declares one of the exports has run by the time the cycle of this one has. Until then a body may assign over what is stored here.
+        auto* cyclic = moduleNamespaceObject ? dynamicDowncast<JSC::CyclicModuleRecord>(moduleNamespaceObject->moduleRecord()) : nullptr;
+        bool mayBeAheadOfBody = moduleNamespaceObject && ((cyclic && !cyclic->isSCCEvaluated()) || !globalObject->onLoadPlugins.exportsStoredAheadOfBodies.isEmpty());
         for (size_t i = 0; i < names.size(); ++i) {
             if (moduleNamespaceObject) {
-                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+                if (mayBeAheadOfBody) [[unlikely]]
+                    storeExportAheadOfBody(globalObject, moduleNamespaceObject, names[i], values.at(i), mock->originalExports.get());
+                else
+                    moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                 RETURN_IF_EXCEPTION(scope, );
             }
 #if ENABLE(AOT)
@@ -3038,6 +3204,10 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 RETURN_IF_EXCEPTION(scope, );
             }
 #endif
+        }
+        if (mayBeAheadOfBody) [[unlikely]] {
+            lookAgainWhenBodiesEnd(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
         }
 #if ENABLE(AOT)
         if (laysOverCompiledModule) {
@@ -3584,7 +3754,10 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
         JSValue original = overwritten->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, );
         if (original != overwritten) {
-            moduleNamespace->overrideExportValue(globalObject, name, original);
+            if (!globalObject->onLoadPlugins.exportsStoredAheadOfBodies.isEmpty()) [[unlikely]]
+                storeExportAheadOfBody(globalObject, moduleNamespace, name, original, nullptr);
+            else
+                moduleNamespace->overrideExportValue(globalObject, name, original);
             RETURN_IF_EXCEPTION(scope, );
             continue;
         }
@@ -3775,6 +3948,8 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier)))
         evict.packagesToBringBack.append(specifier);
 
+    forgetExportsStoredAheadOfBodies(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, );
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
     if (auto* patched = mock->patchedNamespace.get(); patched && saved) {
         restoreOverwrittenExports(globalObject, patched, saved);
@@ -4144,7 +4319,7 @@ __attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObjec
     return false;
 }
 
-// The body of the module that `mock` patched has run since, and has given a value to the exports that had none. Resolves once the factory has settled too.
+// The body of the module that `mock` patched has run since. Resolves once the factory has settled too.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionBodyOfPatchedModuleDidRun, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -4157,27 +4332,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionBodyOfPatchedModuleDidRun, __
     if (registeredModuleMock(globalObject, specifier) != mock)
         return JSValue::encode(jsUndefined());
 
-    LoadedModule loaded;
-    findLoadedESModule(globalObject, mock->specifier.get(), loaded);
+    // What the mock saved of the exports that had no value yet is what the body gave them.
+    storeAgainOverEndedBodies(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (JSObject* overwritten = loaded.esmNamespace ? mock->originalExports.get() : nullptr) {
-        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        overwritten->getOwnPropertyNames(overwritten, globalObject, names, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, {});
-        for (auto& name : names) {
-            JSValue saved = overwritten->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (saved != overwritten)
-                continue;
-            ExportVariable variable = findExportVariable(globalObject, loaded.esmNamespace, name);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue original = variable.record ? variable.record->moduleEnvironment()->readVariable(vm, variable.offset) : JSValue();
-            if (!original)
-                continue;
-            overwritten->putDirectMayBeIndex(globalObject, name, original);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
 
     JSC::JSPromise* pending = mock->run(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
@@ -5849,9 +6006,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             mock->testFileOfFirstLoad = globalObject->onLoadPlugins.testFile;
 #endif
     }
-    // Its functions are the mock's from here on. What the body assigns is the mock's once it is patched again.
-    if (bodyYetToRun && isCurrent)
+    // Its functions are the mock's from here on. What the body assigns is the mock's again once the body has ended.
+    if (bodyYetToRun && isCurrent) {
+        mock->wasPatchedAheadOfBody = !pendingFactory && mock->originalExports;
         pendingFactory = thenWithContext(globalObject, bodyYetToRun, jsFunctionBodyOfPatchedModuleDidRun, nullptr, mock);
+    }
 
     auto& plugins = globalObject->onLoadPlugins;
     if (isCurrent) {
@@ -7481,7 +7640,8 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve, (JSC::JSGlobalObjec
         loaded.compiledModule = JSC::AOT::ModuleID(*mock->unevaluatedCompiledModule);
     globalObject->onLoadPlugins.compiledMocksToRun.removeAllMatching([&](const auto& waiting) { return waiting.second.get() == mock && loaded.compiledModule && waiting.first == loaded.compiledModule->index(); });
 #endif
-    if (!scope.exception()) [[likely]] {
+    // A second patch would store over a later mock of a variable that two modules export.
+    if (!scope.exception() && !std::exchange(mock->wasPatchedAheadOfBody, false)) [[likely]] {
         Zig::keepModuleObjectLeftBehindMock(mock, loaded);
         Zig::overrideLoadedModuleExports(globalObject, mock, loaded);
     }
@@ -8186,6 +8346,15 @@ JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject* globalObject
     JSObject* source = resolution.moduleRecord->liveExportsSource();
     auto* mock = source ? dynamicDowncast<Zig::JSModuleMock>(source) : nullptr;
     return mock ? mock->exports.get() : nullptr;
+}
+
+void storeExportOfModule(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, const JSC::Identifier& name, JSC::JSValue value)
+{
+    Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+    if (zigGlobalObject->onLoadPlugins.exportsStoredAheadOfBodies.isEmpty()) [[likely]]
+        moduleNamespace->overrideExportValue(globalObject, name, value);
+    else
+        Zig::storeExportAheadOfBody(zigGlobalObject, moduleNamespace, name, value, nullptr);
 }
 
 #if ENABLE(AOT)

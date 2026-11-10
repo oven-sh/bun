@@ -108,6 +108,26 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
+# These mock a module whose body has yet to run to its end. `bun test` stores the mock again when that body has ended. The body of a compiled module still assigns over it.
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > a body that throws does not keep the mock of another module from being stored again
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > a factory that returns a promise
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > a mock that takes the place of another one before the body ends
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > a package that waits at an await of its own
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > a second mock keeps what the body has assigned so far for the original
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > a spy that is made behind the mock wraps the mock, and is still there when the body has ended
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > an export that another module declares, whose body has yet to end
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > it imports the module that mocks it: what its body assigned is the mock's again
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > it is linked, and imports the module that mocks it: what its body assigned is the mock's again
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > it is linked, and waits at an await of its own: what its body assigned is the mock's again
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > it waits at an await of its own, in an import cycle whose first module has yet to run: what its body assigned is the mock's again
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > it waits at an await of its own: what its body assigned is the mock's again
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > it waits for an import that awaits: what its body assigned is the mock's again
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > its body is running, and requires the module that mocks it: what its body assigned is the mock's again
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > the exports of the mock are read once, and the call returns nothing to wait for
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > the next test file gets the original ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > the next test file gets the original ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > the next test file gets the original []
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > two mocks of one export: the newest is stored again, and both are undone
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept
@@ -122,6 +142,9 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 # The next one: vi.doMock() of a module evicts the CommonJS file that has required it, and the next require() runs the body of that file again. The body of a compiled file runs once.
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# The next two are the same of a module that a test mocks while it waits at an await.
+test/js/bun/test/mock/mock-module.test.ts: unmock > an export still uninitialized when it was mocked is the mock's once its module has assigned it, and the module's when the mock is undone {"BUN_JSC_useDFGJIT":"0"}
+test/js/bun/test/mock/mock-module.test.ts: unmock > an export still uninitialized when it was mocked is the mock's once its module has assigned it, and the module's when the mock is undone {}
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

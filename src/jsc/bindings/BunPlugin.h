@@ -3,6 +3,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/Weak.h>
@@ -158,6 +159,23 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // What a mock has stored in an export whose module has yet to run its body to the end. That body may assign over it. See storeAgainOverEndedBodies().
+        struct ExportStoredAheadOfBody {
+            // The export, as the mock that stored first names it.
+            JSC::Strong<JSC::JSObject> moduleNamespace;
+            JSC::Identifier name;
+            // The module that declares the variable of the export, and the variable.
+            JSC::Strong<JSC::JSCell> module;
+            unsigned offset;
+            // What Bun stored there last: a later mock, a spy, or the end of either.
+            JSC::Strong<JSC::Unknown> value;
+            // JSModuleMock::originalExports of the mock that stored first. It says what the export was ahead of every mock.
+            JSC::Strong<JSC::JSObject> originals;
+            // A reaction will look at the module again.
+            bool isAwaited { false };
+            bool hasWaitedTurn { false };
+        };
+        Vector<ExportStoredAheadOfBody> exportsStoredAheadOfBodies = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -190,6 +208,7 @@ public:
             fetchesOfModulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
+            exportsStoredAheadOfBodies.clear();
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
             factoriesOfCompiledMocks.clear();
@@ -351,6 +370,8 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
+// Stores `value` in the export: a spy, or what the spy found there. A mock that stored there ahead of the end of the module's body stores the same again behind it.
+void storeExportOfModule(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name, JSC::JSValue value);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.
 JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);

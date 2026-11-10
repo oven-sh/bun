@@ -69,6 +69,11 @@ declare module "bun:test" {
      * still pending, the exports are overwritten once it settles and the
      * returned promise resolves after that. Otherwise nothing is returned.
      *
+     * If the module is still being evaluated (it waits at a top-level `await`,
+     * for example), the rest of its body assigns its own `const`, `let` and
+     * `var` exports afterwards. Those exports are overwritten again when the
+     * body has ended.
+     *
      * @param id module ID to mock
      * @param factory a function returning an object used as the exports of the mocked module. It receives a function
      * that loads the real module.

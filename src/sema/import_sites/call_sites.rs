@@ -387,10 +387,25 @@ fn names_module_in_text(hir: &File<'_>, call: CallId) -> bool {
     }
 }
 
-fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> bool {
+/// What a call that ends a function does with the frame of its caller, as the transpiler decides it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadsFrame {
+    No,
+    Yes,
+    WhereAlone,
+}
+
+#[derive(Default)]
+struct CallsThatEnd {
+    reads_frame: bool,
+    reads_frame_where_alone: bool,
+    others: bool,
+}
+
+fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> ReadsFrame {
     let callee = hir.skip_type_assertions(hir[call].callee);
     let Some((object, key)) = hir.member_key(callee) else {
-        return false;
+        return ReadsFrame::No;
     };
     // The transpiler drops the assertion of `vi["mock" as const]` where it parses it.
     let key = match key {
@@ -398,22 +413,22 @@ fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> boo
         key => key,
     };
     let MemberKey::Name(name) = key else {
-        return false;
+        return ReadsFrame::No;
     };
-    let holders: &[Atom] = match name {
+    let (holders, reads): (&[Atom], ReadsFrame) = match name {
         _ if [
             known::toMatchInlineSnapshot,
             known::toThrowErrorMatchingInlineSnapshot,
         ]
         .contains(&name) =>
         {
-            return true;
+            return ReadsFrame::Yes;
         }
         _ if [known::mock, known::doMock, known::unmock].contains(&name) => {
-            &[known::vi, known::vitest, known::jest]
+            (&[known::vi, known::vitest, known::jest], ReadsFrame::Yes)
         }
         _ if [known::doUnmock, known::importActual, known::importMock].contains(&name) => {
-            &[known::vi, known::vitest]
+            (&[known::vi, known::vitest], ReadsFrame::Yes)
         }
         _ if [
             known::dontMock,
@@ -423,19 +438,43 @@ fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> boo
         ]
         .contains(&name) =>
         {
-            &[known::jest]
+            (&[known::jest], ReadsFrame::Yes)
         }
-        _ if name == known::module && names_module_in_text(hir, call) => &[known::mock],
+        _ if name == known::module && names_module_in_text(hir, call) => {
+            (&[known::mock], ReadsFrame::WhereAlone)
+        }
         _ if [known::addEqualityTesters, known::addSnapshotSerializer].contains(&name) => {
-            &[known::expect]
+            (&[known::expect], ReadsFrame::WhereAlone)
         }
-        _ => return false,
+        _ => return ReadsFrame::No,
     };
     let object = hir.skip_type_assertions(object);
     // No loader writes `mock` as a choice of a free name, as it does for the globals of the runner.
     let is_written_choice = matches!(expr_kind(hir, object), Some(ExprKind::Cond { .. }));
-    !(name == known::module && is_written_choice)
-        && is_name_that_transpiler_knows(hir, bound, object, holders)
+    let is_known = !(name == known::module && is_written_choice)
+        && is_name_that_transpiler_knows(hir, bound, object, holders);
+    if is_known { reads } else { ReadsFrame::No }
+}
+
+fn find_calls_that_end(hir: &File<'_>, bound: &Bound<'_>, value: ExprId, found: &mut CallsThatEnd) {
+    match expr_kind(hir, hir.skip_type_assertions(value)) {
+        Some(ExprKind::Call(call)) => match reads_frame_of_caller(hir, bound, call) {
+            ReadsFrame::No => found.others = true,
+            ReadsFrame::Yes => found.reads_frame = true,
+            ReadsFrame::WhereAlone => found.reads_frame_where_alone = true,
+        },
+        Some(ExprKind::Cond { branches, .. }) => {
+            let Branches { yes, no } = hir.branches(branches);
+            find_calls_that_end(hir, bound, yes, found);
+            find_calls_that_end(hir, bound, no, found);
+        }
+        Some(ExprKind::Binary {
+            op: BinOp::Comma | BinOp::And | BinOp::Or | BinOp::Nullish,
+            right,
+            ..
+        }) => find_calls_that_end(hir, bound, right, found),
+        _ => {}
+    }
 }
 
 pub fn ends_in_call_that_reads_frame_of_caller(
@@ -443,20 +482,9 @@ pub fn ends_in_call_that_reads_frame_of_caller(
     bound: &Bound<'_>,
     value: ExprId,
 ) -> bool {
-    let ends_so = |value| ends_in_call_that_reads_frame_of_caller(hir, bound, value);
-    match expr_kind(hir, hir.skip_type_assertions(value)) {
-        Some(ExprKind::Call(call)) => reads_frame_of_caller(hir, bound, call),
-        Some(ExprKind::Cond { branches, .. }) => {
-            let Branches { yes, no } = hir.branches(branches);
-            ends_so(yes) || ends_so(no)
-        }
-        Some(ExprKind::Binary {
-            op: BinOp::Comma | BinOp::And | BinOp::Or | BinOp::Nullish,
-            right,
-            ..
-        }) => ends_so(right),
-        _ => false,
-    }
+    let mut found = CallsThatEnd::default();
+    find_calls_that_end(hir, bound, value, &mut found);
+    found.reads_frame || (found.reads_frame_where_alone && !found.others)
 }
 
 fn is_export_of_test_runner(

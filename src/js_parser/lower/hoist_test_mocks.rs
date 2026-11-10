@@ -73,6 +73,22 @@ fn path_is_string(call: &E::Call) -> bool {
     matches!(call.args.slice().first().map(|path| &path.data), Some(ExprData::EString(path)) if path.next.is_none())
 }
 
+/// What a call that ends a function does with the frame of its caller.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadsFrame {
+    No,
+    Yes,
+    /// The frame is kept only where no other call ends the function too: that call may be a wrapper that hands a path on.
+    WhereAlone,
+}
+
+#[derive(Default)]
+struct CallsThatEnd {
+    reads_frame: bool,
+    reads_frame_where_alone: bool,
+    others: bool,
+}
+
 /// Rewrites a lowered import's callee to `(0, ns.fn)`, so the call doesn't pass `ns` as `this`.
 pub(crate) fn drop_namespace_of_lowered_callee(
     symbols: &[js_ast::Symbol],
@@ -458,28 +474,41 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// These find the file or the position of the call in the frame of their caller, which a tail call drops.
-    fn reads_frame_of_caller(&self, call: &E::Call) -> bool {
+    fn reads_frame_of_caller(&self, call: &E::Call) -> ReadsFrame {
         const VI: TestApi = TestApi::Mocks(MockApi::Vi);
         const JEST: TestApi = TestApi::Mocks(MockApi::Jest);
         let Some((holder, name)) = member_of_callee(&call.target) else {
-            return false;
+            return ReadsFrame::No;
         };
-        let holders: &[TestApi] = match name.slice() {
-            b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => return true,
-            b"mock" | b"doMock" | b"unmock" => &[VI, JEST],
-            b"doUnmock" | b"importActual" | b"importMock" => &[VI],
-            b"dontMock" | b"requireActual" | b"requireMock" | b"createMockFromModule" => &[JEST],
+        let (holders, reads): (&[TestApi], ReadsFrame) = match name.slice() {
+            b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => {
+                return ReadsFrame::Yes;
+            }
+            b"mock" | b"doMock" | b"unmock" => (&[VI, JEST], ReadsFrame::Yes),
+            b"doUnmock" | b"importActual" | b"importMock" => (&[VI], ReadsFrame::Yes),
+            b"dontMock" | b"requireActual" | b"requireMock" | b"createMockFromModule" => {
+                (&[JEST], ReadsFrame::Yes)
+            }
             b"module" if call.close_paren_loc != bun_ast::Loc::EMPTY => {
                 let mut noted = self.mock_modules_of_written_path.iter().rev();
-                return noted.any(|&end| end == call.close_paren_loc);
+                let is_noted = noted.any(|&end| end == call.close_paren_loc);
+                return if is_noted {
+                    ReadsFrame::WhereAlone
+                } else {
+                    ReadsFrame::No
+                };
             }
             // The React Compiler writes a call anew after the visit, with no position to find it by.
-            b"module" if path_is_string(call) => &[TestApi::Mock],
-            b"addEqualityTesters" | b"addSnapshotSerializer" => &[TestApi::Expect],
-            _ => return false,
+            b"module" if path_is_string(call) => (&[TestApi::Mock], ReadsFrame::WhereAlone),
+            b"addEqualityTesters" | b"addSnapshotSerializer" => {
+                (&[TestApi::Expect], ReadsFrame::WhereAlone)
+            }
+            _ => return ReadsFrame::No,
         };
-        self.test_api_of(&holder)
-            .is_some_and(|holder| holders.contains(&holder))
+        match self.test_api_of(&holder) {
+            Some(holder) if holders.contains(&holder) => reads,
+            _ => ReadsFrame::No,
+        }
     }
 
     /// Asked before the first visit of the path, which makes a string of a `const` too: a path that is handed on stays the caller's.
@@ -495,24 +524,36 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    fn ends_in_call_that_reads_frame_of_caller(&self, value: &Expr) -> bool {
+    fn find_calls_that_end(&self, value: &Expr, found: &mut CallsThatEnd) {
         match &value.data {
-            ExprData::ECall(call) => self.reads_frame_of_caller(call),
+            ExprData::ECall(call) => match self.reads_frame_of_caller(call) {
+                ReadsFrame::No => found.others = true,
+                ReadsFrame::Yes => found.reads_frame = true,
+                ReadsFrame::WhereAlone => found.reads_frame_where_alone = true,
+            },
             ExprData::EIf(either) => {
-                self.ends_in_call_that_reads_frame_of_caller(&either.yes)
-                    || self.ends_in_call_that_reads_frame_of_caller(&either.no)
+                self.find_calls_that_end(&either.yes, found);
+                self.find_calls_that_end(&either.no, found);
             }
             ExprData::EBinary(binary) => {
-                matches!(
+                if matches!(
                     binary.op,
                     js_ast::OpCode::BinComma
                         | js_ast::OpCode::BinLogicalAnd
                         | js_ast::OpCode::BinLogicalOr
                         | js_ast::OpCode::BinNullishCoalescing
-                ) && self.ends_in_call_that_reads_frame_of_caller(&binary.right)
+                ) {
+                    self.find_calls_that_end(&binary.right, found);
+                }
             }
-            _ => false,
+            _ => {}
         }
+    }
+
+    fn ends_in_call_that_reads_frame_of_caller(&self, value: &Expr) -> bool {
+        let mut found = CallsThatEnd::default();
+        self.find_calls_that_end(value, &mut found);
+        found.reads_frame || (found.reads_frame_where_alone && !found.others)
     }
 
     /// Whether `value` has to stay out of a `return`, where its last call would be a tail call.

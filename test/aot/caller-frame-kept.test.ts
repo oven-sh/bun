@@ -1,8 +1,8 @@
 // `vi.importActual("./dep")`, `jest.requireActual("./dep")`, `vi.doMock("./dep", ..)`, `mock.module("./dep", ..)`, `expect(a).toMatchInlineSnapshot()`,
 // `expect.addEqualityTesters(..)`, `expect.addSnapshotSerializer(..)`: native code of the test runner finds the file or the position of the call in
 // the frame of its caller. In a test run Bun's transpiler prints none of them as a tail call, which would drop that frame, so a compiled test run
-// makes none either. A `mock.module(path, ..)` whose path the call does not write as a string stays a tail call in both. Plain `bun test` says
-// what is right.
+// makes none either. A `mock.module(path, ..)` whose path the call does not write as a string stays a tail call in both, and so does a
+// `mock.module("./dep", ..)` where another call ends the function too. Plain `bun test` says what is right.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -43,6 +43,7 @@ const project = {
       const result = on && mock.module(path, undefined as any);
       return result;
     }
+    export const handOnInOneArm = (path: any) => (path ? mock.module(path, undefined as any) : mock.module("./dep", undefined as any));
     export const addTester = (tester: (a: unknown, b: unknown) => boolean | undefined) => expect.addEqualityTesters([tester]);
     export const addSerializer = (serializer: { test(value: unknown): boolean; serialize(): string }) => expect.addSnapshotSerializer(serializer);
     export const withoutName = () => vi.unmock();
@@ -75,7 +76,7 @@ const project = {
       helper.addSerializer({ test: value => value === "a value", serialize: () => "printed by the serializer of the helper" });
     });
     test("frames", () => {
-      for (const name of ["withoutName", "holdInName", "holdBehindAnotherName"] as const) {
+      for (const name of ["withoutName", "holdInName", "holdBehindAnotherName", "handOnInOneArm"] as const) {
         try {
           helper[name](true);
         } catch (error) {
@@ -147,6 +148,7 @@ test("as one program", async () => {
   expect(plain.printed).toContain("withoutName: unmock < withoutName");
   expect(plain.printed).toContain("holdInName: module < <anonymous>");
   expect(plain.printed).toContain("holdBehindAnotherName: module < <anonymous>");
+  expect(plain.printed).toContain("handOnInOneArm: module < <anonymous>");
   expect(plain.printed).toContain("tester of the helper: true");
   expect(plain.written).toContain("toMatchInlineSnapshot(`1`)");
   expect(plain.written).toContain("toMatchInlineSnapshot(`printed by the serializer of the helper`)");

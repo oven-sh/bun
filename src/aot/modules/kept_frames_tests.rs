@@ -19,6 +19,26 @@ fn keeps_frame_of(head: &str, returned: &str, member: &str) -> bool {
     })
 }
 
+/// Asks for the value that the call of `member` is an arm of.
+fn keeps_frame_of_choice(head: &str, returned: &str, member: &str) -> bool {
+    let text = format!("{head} export const actual = (on: boolean) => {returned};");
+    let files = [
+        ("a.test.ts", text.as_str()),
+        ("dep.cjs", "module.exports = 1;"),
+    ];
+    with_test_run_graph(&files, |_, input| {
+        let file = file_named(input, "a.test.ts");
+        let (hir, bound) = (input.files.hir(file), input.files.bound(file));
+        let Parent::Expr(call) = bound.parent_of_expr(member_named(input, file, member)) else {
+            panic!("the member is called");
+        };
+        let Parent::Expr(choice) = bound.parent_of_expr(call) else {
+            panic!("the call is an arm");
+        };
+        ends_in_call_that_reads_frame_of_caller(hir, bound, choice)
+    })
+}
+
 fn keeps_frame(head: &str, receiver: &str) -> bool {
     let returned = format!("{receiver}.requireActual('./dep.cjs')");
     keeps_frame_of(head, &returned, "requireActual")
@@ -113,6 +133,32 @@ fn frame_is_kept_for_a_name_in_brackets_under_an_assertion() {
     assert!(keeps("mock['module' as const]('./dep.cjs', marker.here)"));
     assert!(keeps(
         "jest['requireActual' as const]('./dep.cjs', marker.here)"
+    ));
+}
+
+#[test]
+fn frame_is_kept_for_a_newer_name_only_where_no_other_call_ends_the_function() {
+    let head = "import { expect, mock, vi } from 'bun:test'; \
+        declare function lend(path: string): unknown;";
+    let keeps = |returned: &str, member: &str| keeps_frame_of_choice(head, returned, member);
+    let written = "mock.module('./dep.cjs', () => ({}))";
+    assert!(keeps(&format!("on ? {written} : undefined"), "module"));
+    assert!(keeps(
+        &format!("on ? {written} : expect.addEqualityTesters([])"),
+        "addEqualityTesters"
+    ));
+    // A wrapper in the other arm has to stay a tail call.
+    assert!(!keeps(
+        &format!("on ? lend('./dep.cjs') : {written}"),
+        "module"
+    ));
+    assert!(!keeps(
+        "on ? lend('./dep.cjs') : expect.addEqualityTesters([])",
+        "addEqualityTesters"
+    ));
+    assert!(keeps(
+        "on ? lend('./dep.cjs') : vi.importActual('./dep.cjs')",
+        "importActual"
     ));
 }
 

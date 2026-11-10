@@ -12,9 +12,11 @@ async function expectFixturesToPass(files: Record<string, string>, pass: number,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(` ${pass} pass\n 0 fail\n`);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stderr: expect.stringContaining(` ${pass} pass\n 0 fail\n`),
+    exitCode: 0,
+  });
 }
 
 describe("mock.module() as the call that ends a function", () => {
@@ -36,6 +38,8 @@ describe("mock.module() as the call that ends a function", () => {
           export const arrow = () => mock.module("./dep", factory("arrow"));
           export function declared() { return mock.module("./dep", factory("declared")); }
           export const either = yes => (yes ? mock.module("./dep", factory("either")) : undefined);
+          export const eitherPath = yes =>
+            yes ? mock.module("./dep", factory("eitherPath")) : mock.module("./no-file", factory("never"));
           export const behindAnd = yes => yes && mock.module("./dep", factory("behindAnd"));
           export const behindOr = no => no || mock.module("./dep", factory("behindOr"));
           export const behindNullish = missing => missing ?? mock.module("./dep", factory("behindNullish"));
@@ -76,6 +80,13 @@ describe("mock.module() as the call that ends a function", () => {
           export const chosen = () => mock.module(true ? "./dep" : "./no-file", factory("chosen"));
           export const joined = () => mock.module("./" + "dep", factory("joined"));
           export const filled = () => mock.module(\`./\${"dep"}\`, factory("filled"));
+          // The rewrite takes a whole return out of tail position, so a return that another call ends too is left as it is.
+          const lend = (path, where) => mock.module(path, factory(where));
+          export const handedOnInOneArm = path =>
+            path ? mock.module(path, factory("handedOnInOneArm")) : mock.module("./dep", factory("never"));
+          export const lentInOneArm = path => (path ? lend(path, "lentInOneArm") : mock.module("./dep", factory("never")));
+          export const writtenBesideAnotherCall = yes =>
+            yes ? mock.module("./dep", factory("writtenBesideAnotherCall")) : nothing();
         `,
         "tests/shapes.test.ts": `
           import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -87,7 +98,7 @@ describe("mock.module() as the call that ends a function", () => {
           const lender = { module: (path, factory) => mock.module(path, factory) };
 
           test.each([
-            ["arrow"], ["declared"], ["either", true], ["behindAnd", true], ["behindOr", false], ["behindNullish", null],
+            ["arrow"], ["declared"], ["either", true], ["eitherPath", true], ["behindAnd", true], ["behindOr", false], ["behindNullish", null],
             ["afterComma"], ["throughName"], ["staticMethod"], ["underAnotherName"], ["fromJestGlobals"], ["asserted"],
             ["optional"], ["byString"], ["inTemplate"], ["inParentheses"], ["inContinuation"],
           ])("%s", async (shape, ...args) => {
@@ -108,15 +119,16 @@ describe("mock.module() as the call that ends a function", () => {
           // As in every release. A preload that lends vi.mock() as a wrapper like the first relies on it.
           test.each([
             ["handedOn", "./dep"], ["heldByNameOfModule"], ["ofAnotherHolder", lender], ["heldByName"],
-            ["heldByNameBehindAnother", true], ["chosen"], ["joined"], ["filled"],
-          ])("%s is not written as mock.module() of a path, so its path stays a path of the caller", (shape, ...args) => {
+            ["heldByNameBehindAnother", true], ["chosen"], ["joined"], ["filled"], ["handedOnInOneArm", "./dep"],
+            ["lentInOneArm", "./dep"], ["writtenBesideAnotherCall", true],
+          ])("%s stays a tail call, so its path is a path of the caller", (shape, ...args) => {
             const ofHelperBefore = ofHelper.where;
             mocks[shape](...args);
             expect(read()).toEqual([ofHelperBefore, shape]);
           });
         `,
       },
-      27,
+      31,
     );
   });
 

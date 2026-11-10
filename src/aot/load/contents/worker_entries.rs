@@ -803,7 +803,7 @@ impl ContentsScan<'_, '_> {
             Some(table::canonical_id(builtin)) == worker_builtins().constructor
         });
         let is_told_to_evaluate = options.is_some_and(|it| self.is_told_to_evaluate(it));
-        let is_name_in_sight = form == WorkerNameForm::OwnFile || !self.may_be_out_of_sight(&name);
+        let is_name_in_sight = self.is_name_in_sight(&name, form);
         let may_be_out_of_sight = is_told_to_evaluate || !is_name_in_sight;
         if !is_of_web && may_be_out_of_sight && !is_text_put_together {
             self.found
@@ -920,7 +920,7 @@ impl ContentsScan<'_, '_> {
         // pathToFileURL("./w.js") reads the text from the working directory of the run, not as a Worker reads it.
         let is_read_otherwise =
             is_converted && form == WorkerNameForm::AsWritten && !self.is_anchored(&name);
-        (!self.may_be_out_of_sight(&name) && !is_read_otherwise).then_some((name, form))
+        (self.is_name_in_sight(&name, form) && !is_read_otherwise).then_some((name, form))
     }
 
     fn is_anchored(&self, name: &ImportSpecifier) -> bool {
@@ -1117,6 +1117,10 @@ impl ContentsScan<'_, '_> {
         })
     }
 
+    fn is_name_in_sight(&self, name: &ImportSpecifier, form: WorkerNameForm) -> bool {
+        form == WorkerNameForm::OwnFile || !self.may_be_out_of_sight(name)
+    }
+
     fn may_be_out_of_sight(&self, name: &ImportSpecifier) -> bool {
         let mut alternatives = self.request.analysis.alternatives_of(name).iter();
         alternatives.any(|alternative| {
@@ -1246,8 +1250,8 @@ impl ContentsScan<'_, '_> {
     }
 
     fn gives_start_a_name(&self, argument: ExprId) -> bool {
-        let name = self.find_name_given_to_worker(argument).0;
-        !self.may_be_out_of_sight(&name) || self.gives_files_alone(argument)
+        let (name, form) = self.find_name_given_to_worker(argument);
+        self.is_name_in_sight(&name, form) || self.gives_files_alone(argument)
     }
 
     fn is_constructed_or_only_tested(&self, mention: ExprId) -> bool {

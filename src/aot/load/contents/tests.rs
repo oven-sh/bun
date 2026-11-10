@@ -1617,7 +1617,7 @@ fn start_that_bun_sema_gives_no_name_takes_the_name_of_each_value_that_it_may_be
 
 #[test]
 fn own_file_and_file_of_a_package_are_named_by_the_values_that_a_start_may_be_given() {
-    let rows: [(&[(&str, &str)], &str, &[&str], &[&str], &[&str]); 13] = [
+    let rows: [(&[(&str, &str)], &str, &[&str], &[&str], &[&str]); 15] = [
         (
             &[
                 ("main.ts", r#"import "./lib/pool.ts";"#),
@@ -1794,6 +1794,35 @@ fn own_file_and_file_of_a_package_are_named_by_the_values_that_a_start_may_be_gi
             &[r#"new Thread(globalThis.asked || join(__dirname, "w.js"))"#],
             &["AsWritten ?"],
             &[],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"const { url } = import.meta; async function start() { return new Thread(url); } const { Worker: Thread } = await import("node:worker_threads"); await start();"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?"],
+            &["lib/pool.ts StartsWorker"],
+        ),
+        (
+            &[
+                ("main.ts", r#"import "./lib/pool.ts";"#),
+                (
+                    "lib/pool.ts",
+                    r#"const { url } = import.meta; const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(process.argv[2] ? url : new URL("data:text/javascript,postMessage(1)"));"#,
+                ),
+            ],
+            "lib/pool.ts",
+            &[],
+            &["OwnFile ?", "AsWritten ?"],
+            &[
+                "data:text/javascript,postMessage(1) StartsWorker",
+                "lib/pool.ts StartsWorker",
+            ],
         ),
     ];
     for (files, starter, places, starts, found) in rows {

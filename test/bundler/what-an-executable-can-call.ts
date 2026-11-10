@@ -51,9 +51,14 @@ function readMachO(file: Uint8Array): Image {
     if (command === 2) [symbols, strings] = [u32(at + 8), u32(at + 16)];
     if (command === 11) indirect = u32(at + 56);
     if (command !== 0x19) continue;
-    if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable: (u32(at + 60) & 4) !== 0 });
+    const isExecutable = (u32(at + 60) & 4) !== 0;
+    if (u64(at + 48) > 0 && !isExecutable) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable });
     for (let section = at + 72; section < at + 72 + u32(at + 64) * 80; section += 80) {
       const type = u32(section + 64) & 0xff;
+      // An executable segment also holds the header, the literals and the constants (__TEXT,__const). Only a section that says so holds instructions
+      // (S_ATTR_PURE_INSTRUCTIONS, S_ATTR_SOME_INSTRUCTIONS): a word of a table of constants may read as a branch to a stub.
+      const holdsInstructions = (u32(section + 64) & 0x80000400) !== 0;
+      if (isExecutable && holdsInstructions && u64(section + 40) > 0) image.segments.push({ offset: u32(section + 48), end: u32(section + 48) + u64(section + 40), address: u64(section + 32), isExecutable });
       if (type === 6 || type === 7) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: 8, isStub: false });
       if (type === 8) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: u32(section + 72), isStub: true });
     }

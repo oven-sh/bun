@@ -2,7 +2,7 @@
 
 This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of the marks in the tree. Do not edit it: change the mark and run the tool.
 
-43 wrong answers in 14 files stand under a mark. They are no goals, and are not counted among them.
+42 wrong answers in 13 files stand under a mark. They are no goals, and are not counted among them.
 
 241 goals in 134 files: 162 on what a program reaches of the library and what --trim keeps, 23 on how a build grows with its program, 56 on other things.
 
@@ -53,7 +53,6 @@ known to fail, so the run stays green; it turns red once the compiled run says t
 | test/aot/mock-file-url.test.ts | the other spelling of the file is left alone: two-importers | `bun test` leaves it alone | under `bun test --aot` it gets the mock too |
 | test/aot/parallel/commonjs/a-files-own-read-behind-a-getter-that-another-file-defined/main.cjs | it answers as plain Bun: "real" \| "fake" | `bun <file>` prints "fake" | under `bun build --compile --aot` it prints "real" |
 | test/aot/parallel/commonjs/a-files-own-read-behind-a-store-that-follows-a-delete-by-another-file/main.cjs | it answers as plain Bun: "real" \| "stored" | `bun <file>` prints "stored" | under `bun build --compile --aot` it prints "real" |
-| test/aot/parallel/commonjs/a-files-own-read-behind-a-value-that-another-file-defined/main.cjs | it answers as plain Bun: "real" \| "fake" | `bun <file>` prints "fake" | under `bun build --compile --aot` it prints "real" |
 | test/aot/parallel/commonjs/a-files-own-read-behind-its-own-store-under-a-getter-of-another-file/main.cjs | it answers as plain Bun: "own" \| "fake" | `bun <file>` prints "fake" | under `bun build --compile --aot` it prints "own" |
 | test/aot/parallel/commonjs/a-late-store-of-a-files-own-text-in-front-of-a-delete-by-another-file/main.cjs | it answers as plain Bun: "second" \| "none" | `bun <file>` prints "none" | under `bun build --compile --aot` it prints "second" |
 | test/aot/parallel/commonjs/both-files-store-behind-a-delete-and-the-other-file-is-the-later/main.cjs | it answers as plain Bun: "own" \| "foreign" | `bun <file>` prints "foreign" | under `bun build --compile --aot` it prints "own" |

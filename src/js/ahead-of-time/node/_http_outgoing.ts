@@ -264,6 +264,12 @@ declare global {
     interface Writable {
       write(chunk: unknown, encoding: string | null | undefined, callback: ErrorCallback | null | undefined): boolean;
     }
+
+    interface OutgoingMessageConstructor {
+      new (options?: OutgoingMessageOptions): OutgoingMessage;
+      (this: OutgoingMessage, options?: OutgoingMessageOptions): void;
+      prototype: any;
+    }
   }
 }
 

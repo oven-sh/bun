@@ -3116,6 +3116,79 @@ describe.concurrent("the SourceProvider cache checks a source against its file a
       env,
     );
   });
+
+  const writesAndLoads = `
+    import { writeFileSync } from "node:fs";
+    import { join } from "node:path";
+
+    // The two texts are equally long, so the size of a file does not tell which one it holds.
+    const write = (text: string) => {
+      writeFileSync(join(import.meta.dir, "esm.ts"), 'export const text = "' + text + '";');
+      writeFileSync(join(import.meta.dir, "cjs.cjs"), 'exports.text = "' + text + '";');
+    };
+    const load = async () => [(await import("./esm.ts")).text, require("./cjs.cjs").text];
+  `;
+  // `resets` is a test file that leaves "first" in both files after its last reset, and loaded "other" last.
+  const theNextFileLoadsWhatWasPutBack = (resets: string, pass: number, args: readonly string[], env: object) =>
+    passes(
+      {
+        "esm.ts": `export const text = "first";`,
+        "cjs.cjs": `exports.text = "first";`,
+        "a-resets.test.ts": resets,
+        "b-next.test.ts": `
+          import { expect, test } from "bun:test";
+          import { text } from "./esm.ts";
+          test("loads what is in the files", () => {
+            expect([text, require("./cjs.cjs").text]).toEqual(["first", "first"]);
+          });
+        `,
+      },
+      pass,
+      args,
+      env,
+    );
+
+  test.each(modes)("%s: the next test file loads the text that a test put back", async (_, args, env) => {
+    await theNextFileLoadsWhatWasPutBack(
+      `
+        import { expect, jest, test } from "bun:test";
+        ${writesAndLoads}
+        test("loads a text, writes over it, and puts it back", async () => {
+          expect(await load()).toEqual(["first", "first"]);
+          write("other");
+          jest.resetModules();
+          expect(await load()).toEqual(["other", "other"]);
+          // No reset follows this write.
+          write("first");
+        });
+      `,
+      2,
+      args,
+      env,
+    );
+  });
+
+  test.each(modes)("%s: the next test file loads the text that afterEach() put back", async (_, args, env) => {
+    await theNextFileLoadsWhatWasPutBack(
+      `
+        import { afterEach, beforeEach, expect, test, vi } from "bun:test";
+        ${writesAndLoads}
+        beforeEach(() => {
+          write("other");
+          vi.resetModules();
+        });
+        // After the last test, no reset follows this write.
+        afterEach(() => write("first"));
+
+        test.each([1, 2])("loads the text that beforeEach() wrote: %d", async () => {
+          expect(await load()).toEqual(["other", "other"]);
+        });
+      `,
+      3,
+      args,
+      env,
+    );
+  });
 });
 
 describe.concurrent("mocks and spies do not outlive their test file", () => {

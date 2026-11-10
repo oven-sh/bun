@@ -3166,6 +3166,273 @@ describe("bundler", () => {
       },
       out: "@layer a;@layer{.t{color:#00f}}@layer a{.t{color:red}}",
     },
+    // A redundant import declares the layers of its file at its place. A layer that the file has under a
+    // condition is declared under that condition: on a screen "a" comes before "b".
+    LayerUnderMediaInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media print { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@media print{@layer b;}@layer a{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    LayerUnderSupportsInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@supports (display: grid) { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@supports (display: grid){@layer b;}@layer a{.t{color:red}}@supports (display: grid){@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    LayerUnderMozDocumentInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@-moz-document url-prefix() { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@-moz-document url-prefix(){@layer b;}@layer a{.t{color:red}}@-moz-document url-prefix(){@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    LayerUnderTwoConditionsInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media print { @supports (display: grid) { @layer b { .p { color: red } } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@media print{@supports (display: grid){@layer b;}}@layer a{.t{color:red}}@media print{@supports (display: grid){@layer b{.p{color:red}}}}@layer b{.t{color:green}}",
+    },
+    LayerStatementUnderMediaInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media print { @layer b; }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@media print{@layer b;}@layer a{.t{color:red}}@media print{@layer b;}@layer b{.t{color:green}}",
+    },
+    // The names are those of the layers around the rule.
+    SublayerUnderMediaInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer o { @layer b { .t { color: green } } }
+        `,
+        "/f.css": `@layer o { @media print { @layer b { .p { color: red } } } }`,
+        "/g.css": `@layer o { @layer a { .t { color: red } } }`,
+      },
+      out: "@layer o;@media print{@layer o.b;}@layer o{@layer a{.t{color:red}}}@layer o{@media print{@layer b{.p{color:red}}}}@layer o{@layer b{.t{color:green}}}",
+    },
+    // A style rule around the "@media" rule is no condition.
+    LayerUnderMediaInAStyleRuleOfARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `.x { @media print { @layer b { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@media print{@layer b;}@layer a{.t{color:red}}@media print{@layer b{.x{color:red}}}@layer b{.t{color:green}}",
+    },
+    // Only in print does "b" come before "c".
+    LayerUnderMediaAndInALaterStatementOfARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer c { .t { color: red } }
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": /* css */ `
+          @media print { @layer b { .p { color: red } } }
+          @layer c, b;
+        `,
+        "/g.css": `.g { color: blue }`,
+      },
+      out: "@media print{@layer b;}@layer c,b;.g{color:#00f}@media print{@layer b{.p{color:red}}}@layer c,b;@layer c{.t{color:red}}@layer b{.t{color:green}}",
+    },
+    // The minifier removes the rule, so the file declares no layer.
+    LayerUnderMediaThatNeverMatchesInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media not all { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@layer a{.t{color:red}}@layer b{.t{color:green}}",
+    },
+    LayerUnderMediaInARedundantImportUnderMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" screen;
+          @import "./g.css";
+          @import "./f.css" screen;
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@supports (display: grid) { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@media screen{@supports (display: grid){@layer b;}}@layer a{.t{color:red}}@media screen{@supports (display: grid){@layer b{.p{color:red}}}}@layer b{.t{color:green}}",
+    },
+    LayerUnderMediaInARedundantImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media print { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@layer{@media print{@layer b;}@layer a{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}}",
+    },
+    LayerUnderMediaInARedundantImportWithALeadingStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": /* css */ `
+          @layer x;
+          @import "./h.css";
+          @media print { @layer b { .p { color: red } } }
+        `,
+        "/g.css": `@layer a { .t { color: red } }`,
+        "/h.css": `.h { color: blue }`,
+      },
+      out: "@layer x;@media print{@layer b;}@layer a{.t{color:red}}.h{color:#00f}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    // The second redundant import adds nothing to the first one.
+    LayerUnderMediaInTwoRedundantImports: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @import "./h.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media print { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+        "/h.css": `@layer c { .t { color: red } }`,
+      },
+      out: "@media print{@layer b;}@layer a{.t{color:red}}@layer c{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    // "f2.css" always declares "b", and the redundant import of "f.css" ahead of it does not.
+    ListOfAnotherFileBehindLayerUnderMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./f2.css";
+          @import "./g.css";
+          @import "./f.css";
+          @import "./f2.css";
+        `,
+        "/f.css": `@media print { @layer b { .p { color: red } } }`,
+        "/f2.css": `@layer b { .t { color: red } }`,
+        "/g.css": `@layer a { .t { color: green } }`,
+      },
+      out: "@media print{@layer b;}@layer b;@layer a{.t{color:green}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:red}}",
+    },
+    // The file follows at once, so nothing has to stand for the redundant import.
+    LayerUnderMediaInAnAdjacentRedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./f.css";
+          @import "./g.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media print { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@media print{@layer b{.p{color:red}}}@layer a{.t{color:red}}@layer b{.t{color:green}}",
+    },
+    // A browser declares a layer inside "@container" whether or not the container matches.
+    LayerUnderContainerInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@container (min-width: 1px) { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: green } }`,
+      },
+      out: "@layer b;@layer a{.t{color:green}}@container (width>=1px){@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    // The file has declared "b" with no condition by then, so the list of names says it all.
+    LayerUnderMediaBehindItsOwnBlockInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": /* css */ `
+          @layer b { .q { color: red } }
+          @media print { @layer b { .p { color: red } } }
+        `,
+        "/g.css": `@layer a { .t { color: green } }`,
+      },
+      out: "@layer b,b;@layer a{.t{color:green}}@layer b{.q{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    // A block ahead of "@namespace" would make that rule invalid, so this one keeps the list of names.
+    LayerUnderMediaInARedundantImportAheadOfNamespace: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./n.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media print { @layer b { .p { color: red } } }`,
+        "/n.css": /* css */ `
+          @namespace svg url(http://www.w3.org/2000/svg);
+          svg|a { color: red }
+        `,
+      },
+      out: `@layer b;@namespace svg "http://www.w3.org/2000/svg";svg|a{color:red}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}`,
+    },
   };
   for (const [name, { files, out }] of Object.entries(layerOrderCases)) {
     itBundled(`css/CSSAtLayerOrder${name}`, {

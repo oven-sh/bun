@@ -6001,8 +6001,10 @@ pub mod bv2_impl {
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
             let mut css_orders = Vec::with_capacity(start.css_entry_points.count());
             let mut css_too_deep = Vec::new();
+            let mut layer_lists =
+                crate::linker_context::find_imported_files_in_css_order::LayerLists::default();
             for entry_point in start.css_entry_points.keys() {
-                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&self.linker, self.graph.heap, &[*entry_point]) {
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&self.linker, self.graph.heap, &[*entry_point], &mut layer_lists) {
                     Ok(order) => css_orders.push((*entry_point, order)),
                     Err(too_deep) => css_too_deep.push((*entry_point, too_deep)),
                 }

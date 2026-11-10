@@ -17,7 +17,8 @@ use crate::{BundleV2, Chunk, Index, IndexInt, LinkerContext};
 use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_order;
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::{
-    CssImportChainTooDeep, css_import_orders_are_equal, find_imported_files_in_css_order,
+    CssImportChainTooDeep, LayerLists, css_import_orders_are_equal,
+    find_imported_files_in_css_order,
 };
 use super::merge_small_chunks::merge_small_chunks;
 
@@ -82,6 +83,7 @@ pub(crate) fn compute_chunks<'a>(
     // Key is the hash of the CSS order. This deduplicates identical CSS files.
     let mut css_chunks: ArrayHashMap<u64, Chunk> = ArrayHashMap::new();
     let mut js_chunks_with_css: usize = 0;
+    let mut layer_lists = LayerLists::default();
 
     // Maps entry point IDs to their index in js_chunks.values().
     // CSS-only entry points that skip JS chunk creation get maxInt as sentinel.
@@ -161,7 +163,12 @@ pub(crate) fn compute_chunks<'a>(
         if css_asts[source_index as usize].is_some() {
             let order = css_order_or_log(
                 this,
-                find_imported_files_in_css_order(this, temp, &[Index::init(source_index)]),
+                find_imported_files_in_css_order(
+                    this,
+                    temp,
+                    &[Index::init(source_index)],
+                    &mut layer_lists,
+                ),
             );
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
@@ -234,7 +241,12 @@ pub(crate) fn compute_chunks<'a>(
             if css_source_indices.len() > 0 {
                 let order = css_order_or_log(
                     this,
-                    find_imported_files_in_css_order(this, temp, css_source_indices.slice()),
+                    find_imported_files_in_css_order(
+                        this,
+                        temp,
+                        css_source_indices.slice(),
+                        &mut layer_lists,
+                    ),
                 );
 
                 // Always use content-based hashing for CSS chunk deduplication.

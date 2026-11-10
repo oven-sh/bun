@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 
-use bun_alloc::{Arena as Bump, ArenaVec, ArenaVecExt};
+use bun_alloc::{Arena as Bump, ArenaVec};
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::{BundleV2, Chunk, LinkerContext};
@@ -129,6 +129,32 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     };
                     let mut ast = BundlerStyleSheet {
                         rules,
+                        sources: Default::default(),
+                        source_map_urls: Default::default(),
+                        license_comments: Default::default(),
+                        composes: Default::default(),
+                        ..BundlerStyleSheet::empty()
+                    };
+                    wrap_rules_with_conditions(
+                        &mut ast,
+                        bump,
+                        &entry.conditions.slice()[private_conditions..],
+                    );
+                    css_chunk.asts[i] = ast;
+                }
+                CssImportOrderKind::LayersOf(source_index) => {
+                    let stylesheet: &BundlerStyleSheet = asts[source_index.get() as usize]
+                        .as_deref()
+                        .expect("css ast present");
+                    let mut ast = BundlerStyleSheet {
+                        // SAFETY: the skeleton aliases the conditions of `stylesheet`, which
+                        // outlives the chunk, and its lists are in `bump`. It goes into
+                        // `css_chunk.asts[i]`, whose elements never run `Drop`.
+                        rules: unsafe {
+                            stylesheet
+                                .rules
+                                .layer_skeleton(!stylesheet.layers_pre_import.is_empty(), bump)
+                        },
                         sources: Default::default(),
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
@@ -440,16 +466,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
 /// the `asts` slab) and never grown after this point; the arena reclaims the
 /// storage on `reset`.
 fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
-    let len = rules.len();
-    if len == 0 {
-        return BundlerCssRuleList::default();
-    }
-    let slab = rules.into_bump_slice_mut();
-    BundlerCssRuleList {
-        // SAFETY: `slab` is arena-owned; the `Vec` is never dropped or grown
-        // (see fn doc).
-        v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), len, len) },
-    }
+    BundlerCssRuleList::from_arena(rules)
 }
 
 /// Single-element shorthand for [`arena_rule_list`].

@@ -75,12 +75,18 @@ fn memcpy_and_reset<'a>(order: &mut Vec<CssImportOrder<'a>>, wip: &mut Vec<CssIm
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
 ///
+/// For that, a list of the layer names of the file stands for the earlier copy.
+/// esbuild prints such a list for every file. A file that declares a layer under
+/// "@media" or "@supports" gets `CssImportOrderKind::LayersOf` here, which keeps
+/// the condition.
+///
 /// The traversal recurses once per `@import`. Returns `Err` if the import chain
 /// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
     this: &LinkerContext<'a>,
     temp_arena: &Arena,
     entry_points: &[Index],
+    layer_lists: &mut LayerLists,
 ) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {
     let _ = temp_arena;
 
@@ -490,10 +496,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // This import is redundant, but it might have @layer rules.
                             // So we should keep the @layer rules so that the cascade ordering of layers
                             // is preserved
-                            let layer_names =
-                                &css_asts[idx.get() as usize].as_deref().unwrap().layer_names;
-                            order.mut_(i as usize).kind =
-                                CssImportOrderKind::Layers(Layers::borrow(layer_names));
+                            let later = &order.slice()[i as usize + 1..];
+                            let layers =
+                                layers_of_redundant_copy(idx, css_asts, later, layer_lists);
+                            order.mut_(i as usize).kind = layers;
                             continue 'next_backward;
                         }
                     }
@@ -531,7 +537,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     }
                     gop.value_ptr.push(i);
                 }
-                CssImportOrderKind::Layers(_) => {}
+                CssImportOrderKind::Layers(_) | CssImportOrderKind::LayersOf(_) => {}
             }
         }
     }
@@ -640,11 +646,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             // sometimes non-layer ones can make following layer ones redundant.
             // layers_post_import
             let layers_key: &[LayerName] = match &entry.kind {
-                CssImportOrderKind::SourceIndex(idx) => css_asts[idx.get() as usize]
-                    .as_deref()
-                    .unwrap()
-                    .layer_names
-                    .slice_const(),
+                CssImportOrderKind::SourceIndex(idx) | CssImportOrderKind::LayersOf(idx) => {
+                    css_asts[idx.get() as usize]
+                        .as_deref()
+                        .unwrap()
+                        .layer_names
+                        .slice_const()
+                }
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
                 CssImportOrderKind::ExternalPath(_) => &[][..],
             };
@@ -671,20 +679,44 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 let duplicate_index = duplicates[j];
                 // A file may have these names under "@media", which is no proof
                 // that it declares them for this list.
-                if matches!(entry.kind, CssImportOrderKind::Layers(_))
-                    && match wip_order.at(duplicate_index as usize).kind {
-                        CssImportOrderKind::Layers(_) => false,
-                        CssImportOrderKind::SourceIndex(_) => !layers_key.is_empty(),
-                        CssImportOrderKind::ExternalPath(_) => in_anonymous_layer,
-                    }
-                {
+                let declares_no_more =
+                    match (&entry.kind, &wip_order.at(duplicate_index as usize).kind) {
+                        (CssImportOrderKind::Layers(_), CssImportOrderKind::Layers(_)) => true,
+                        (CssImportOrderKind::Layers(_), CssImportOrderKind::SourceIndex(_)) => {
+                            layers_key.is_empty()
+                        }
+                        (CssImportOrderKind::Layers(_), CssImportOrderKind::ExternalPath(_)) => {
+                            !in_anonymous_layer
+                        }
+                        (CssImportOrderKind::Layers(_), CssImportOrderKind::LayersOf(_)) => false,
+                        // A list has each name of the file with no condition of its own.
+                        (CssImportOrderKind::LayersOf(_), CssImportOrderKind::Layers(_)) => true,
+                        (
+                            CssImportOrderKind::LayersOf(file),
+                            CssImportOrderKind::LayersOf(earlier),
+                        ) => file.get() == earlier.get(),
+                        (
+                            CssImportOrderKind::LayersOf(_),
+                            CssImportOrderKind::SourceIndex(_)
+                            | CssImportOrderKind::ExternalPath(_),
+                        ) => false,
+                        (
+                            CssImportOrderKind::SourceIndex(_)
+                            | CssImportOrderKind::ExternalPath(_),
+                            _,
+                        ) => true,
+                    };
+                if !declares_no_more {
                     continue;
                 }
                 if is_conditional_import_redundant(
                     &entry.conditions,
                     &wip_order.at(duplicate_index as usize).conditions,
                 ) {
-                    if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
+                    if !matches!(
+                        entry.kind,
+                        CssImportOrderKind::Layers(_) | CssImportOrderKind::LayersOf(_)
+                    ) {
                         // If an empty layer is followed immediately by a full layer and
                         // everything else is identical, then we don't need to emit the
                         // empty layer. For example:
@@ -710,9 +742,18 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             && duplicate_index as usize == wip_order.len() - 1
                         {
                             let other = wip_order.at(duplicate_index as usize);
-                            if let CssImportOrderKind::Layers(layers) = &other.kind
-                                && (layers_key.is_empty()
-                                    || core::ptr::eq(layers_key, layers.inner().slice()))
+                            let is_of_this_file = match (&other.kind, &entry.kind) {
+                                (CssImportOrderKind::Layers(layers), _) => {
+                                    layers_key.is_empty()
+                                        || core::ptr::eq(layers_key, layers.inner().slice())
+                                }
+                                (
+                                    CssImportOrderKind::LayersOf(earlier),
+                                    CssImportOrderKind::SourceIndex(file),
+                                ) => earlier.get() == file.get(),
+                                _ => false,
+                            };
+                            if is_of_this_file
                                 && import_conditions_are_equal(
                                     entry.conditions.slice_const(),
                                     other.conditions.slice_const(),
@@ -892,12 +933,86 @@ pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOr
                     (CssImportOrderKind::ExternalPath(a), CssImportOrderKind::ExternalPath(b)) => {
                         a.text == b.text
                     }
-                    (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b)) => {
+                    (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b))
+                    | (CssImportOrderKind::LayersOf(a), CssImportOrderKind::LayersOf(b)) => {
                         a.get() == b.get()
                     }
                     _ => false,
                 }
         })
+}
+
+/// For each style sheet that `layers_of_redundant_copy` had to walk: whether one "@layer"
+/// statement of its layer names declares what its rules declare. One per build, so that a
+/// style sheet with many importers is walked once.
+#[derive(Default)]
+pub(crate) struct LayerLists(Vec<(u32, bool)>);
+
+/// What stands for a copy of a file that a later copy makes redundant: the layers that the
+/// copy would declare. A flat list of the names is right unless the file declares a layer only
+/// under a condition, or in another order than the list.
+fn layers_of_redundant_copy<'a>(
+    file: AstIndex,
+    css_asts: &[crate::bundled_ast::CssCol],
+    later: &[CssImportOrder],
+    layer_lists: &mut LayerLists,
+) -> CssImportOrderKind<'a> {
+    let sheet: &BundlerStyleSheet = css_asts[file.get() as usize].as_deref().unwrap();
+    let names = sheet.layer_names.slice_const();
+    let flat = || CssImportOrderKind::Layers(Layers::borrow(&sheet.layer_names));
+    if names.is_empty()
+        || sheet
+            .rules
+            .top_level_layers_are(names, !sheet.layers_pre_import.is_empty())
+    {
+        return flat();
+    }
+    let known = layer_lists.0.iter().find(|(index, _)| *index == file.get());
+    let is_flat = match known {
+        Some((_, is_flat)) => *is_flat,
+        None => {
+            let is_flat = sheet
+                .rules
+                .layers_are_in_order_of(names, sheet.layers_pre_import.slice_const());
+            layer_lists.0.push((file.get(), is_flat));
+            is_flat
+        }
+    };
+    if is_flat || is_ahead_of_namespace(later, css_asts) {
+        return flat();
+    }
+    CssImportOrderKind::LayersOf(file)
+}
+
+/// Whether the next rule that is not an "@layer" statement is the "@namespace" of a file. A
+/// block ahead of "@namespace" makes that rule invalid, and a statement does not.
+fn is_ahead_of_namespace(
+    later: &[CssImportOrder],
+    css_asts: &[crate::bundled_ast::CssCol],
+) -> bool {
+    for entry in later {
+        match &entry.kind {
+            CssImportOrderKind::Layers(layers)
+                if prints_as_layer_statement(
+                    layers.inner().is_empty(),
+                    entry.conditions.slice(),
+                ) => {}
+            CssImportOrderKind::SourceIndex(file) if entry.conditions.len() == 0 => {
+                let sheet: &BundlerStyleSheet = css_asts[file.get() as usize].as_deref().unwrap();
+                let first = sheet.rules.v.iter().find(|rule| {
+                    !matches!(
+                        rule,
+                        BundlerCssRule::Import(_)
+                            | BundlerCssRule::Ignored
+                            | BundlerCssRule::LayerStatement(_)
+                    )
+                });
+                return matches!(first, Some(BundlerCssRule::Namespace(_)));
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Whether a list of layer names under these conditions prints only "@layer"

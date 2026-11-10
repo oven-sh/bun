@@ -885,6 +885,21 @@ devTest("an @import of a file that a plugin fails to load is not an invalid impo
     expect(await dev.fetch("/").text()).toBe("ok");
   },
 });
+// The dev server builds the import order with the pass that `bun build` has.
+devTest("a redundant @import declares a layer under the @media rule that its file has around it", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "main.css": `@import "./f.css";\n@import "./g.css";\n@import "./f.css";\n@layer b { .t { color: green; } }`,
+    "f.css": `@media print { @layer b { .p { color: red; } } }`,
+    "g.css": `@layer a { .t { color: red; } }`,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const css = await dev.fetch(html.match(/\/_bun\/asset\/\w+\.css/)![0]).text();
+    // On a screen "a" is the first layer, so ".t" is green.
+    expect(css.replace(/\s+/g, " ")).toStartWith("@media print { @layer b; }");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

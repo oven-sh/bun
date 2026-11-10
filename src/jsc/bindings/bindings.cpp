@@ -6322,6 +6322,7 @@ struct MatchedRowsVisitor {
     void (*callback)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace);
     JSC::JSCell* rows;
     uint32_t place;
+    Bun::MatchedRowsTaken taken;
 
     void operator()(JSC::JSGlobalObject* globalObject, void* ctx, EncodedSlice* key, JSC::EncodedJSValue value, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace = 0) const
     {
@@ -6356,7 +6357,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
             // A matched name that the object does not list, such as a getter of its class, gets a line too.
             auto& names = properties.data()->propertyNameVector();
             WTF::Vector<Identifier> missing;
-            Bun::appendMissingMatchedRowNames(iter.rows, iter.place, names.span(), missing);
+            Bun::appendMissingMatchedRowNames(iter.rows, iter.place, names.span(), missing, iter.taken);
             names.appendVector(missing);
         }
     }
@@ -6375,7 +6376,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
 
         if constexpr (std::is_same_v<Visitor, MatchedRowsVisitor>) {
             // A matched row is shown in place of the property, which is not read.
-            if (auto row = Bun::matchedRow(iter.rows, iter.place, property); row.value) {
+            if (auto row = Bun::matchedRow(iter.rows, iter.place, object, property, iter.taken); row.value) {
                 EncodedSlice key = toEncodedSlice(property.impl());
                 JSC::EnsureStillAliveScope ensureStillAliveScope(row.value);
                 iter(globalObject, arg2, &key, JSC::JSValue::encode(row.value), property.isSymbol(), false, row.childPlace);
@@ -6451,13 +6452,13 @@ extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGettersWithRows(JSC::
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
     bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
-    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, MatchedRowsVisitor { iter, JSC::JSValue::decode(rows).asCell(), place }, true);
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, MatchedRowsVisitor { iter, JSC::JSValue::decode(rows).asCell(), place, Bun::MatchedRowsTaken::All }, true);
     return hasOnlyEnumerableValues;
 }
 
 extern "C" void JSC__JSValue__forEachPropertyOrderedWithNonEnumerableWithRows(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace), JSC::EncodedJSValue rows, uint32_t place)
 {
-    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, MatchedRowsVisitor { iter, JSC::JSValue::decode(rows).asCell(), place }, false, true);
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, MatchedRowsVisitor { iter, JSC::JSValue::decode(rows).asCell(), place, Bun::MatchedRowsTaken::AsOlderBunPrinted }, false, true);
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)

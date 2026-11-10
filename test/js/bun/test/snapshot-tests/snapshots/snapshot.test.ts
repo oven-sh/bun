@@ -2732,6 +2732,11 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       "ErrorEvent": `ErrorEvent {\n  type: "error",\n  error: Any<Error>\n}`,
       "class with a private tag": `T \nTagged {\n  "a": Any<Number>,\n  "b": 2,\n}\n`,
       "own getter": `\n{\n  "a": Any<Number>,\n  "total": [native code],\n}\n`,
+      // A matcher of the object, and one in an object that a getter returns. That version printed no line for the getter of a class.
+      "CustomEvent and its detail": `CustomEvent \nCustomEvent {\n  "isTrusted": false,\n  "timeStamp": Any<Number>,\n}\n`,
+      "URL and its searchParams": `URL \nURL {\n  "href": Any<String>,\n}\n`,
+      "object from a getter of the class": `\nPost {\n  "id": Any<Number>,\n  "title": "t",\n}\n`,
+      "object from an own getter": `\n{\n  "author": [native code],\n  "id": Any<Number>,\n}\n`,
     };
     const older =
       headers.bun +
@@ -2746,6 +2751,17 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             b = 2;
             get [Symbol.toStringTag]() {
               return this.#name;
+            }
+          }
+          class Author {
+            id = 9;
+            name = "a";
+          }
+          class Post {
+            id = 1;
+            title = "t";
+            get author() {
+              return new Author();
             }
           }
           const string = expect.any(String);
@@ -2765,6 +2781,10 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             expect(withGetter()).toMatchSnapshot({ a: number });
             expect(withGetter()).toMatchInlineSnapshot({ a: number }, \`${printed["own getter"]}\`);
           });
+          test("CustomEvent and its detail", () => { expect(new CustomEvent("x", { detail: { id: 1, k: 2 } })).toMatchSnapshot({ timeStamp: number, detail: { id: number } }); });
+          test("URL and its searchParams", () => { expect(new URL("http://example.com/a?b=1")).toMatchSnapshot({ href: string, searchParams: { size: number } }); });
+          test("object from a getter of the class", () => { expect(new Post()).toMatchSnapshot({ id: number, author: { id: number } }); });
+          test("object from an own getter", () => { expect({ id: 1, get author() { return new Author(); } }).toMatchSnapshot({ id: number, author: { id: number } }); });
         `,
       "__snapshots__/a.test.js.snap": older,
     });

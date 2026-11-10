@@ -289,7 +289,25 @@ MatchedRow matchedRowAtIndex(JSC::JSCell* rows, uint32_t place, uint32_t index)
     return JestMatchedRows::toMatchedRow(uncheckedDowncast<JestMatchedRows>(rows)->find(place, index, nullptr));
 }
 
-void appendMissingMatchedRowNames(JSC::JSCell* cell, uint32_t place, std::span<const JSC::Identifier> names, WTF::Vector<JSC::Identifier>& missing)
+// True if `holder` keeps `value` under the name as a data property of its own. A getter that returns it, of the holder or of its class, does not count.
+static bool keepsAsOwnData(JSC::VM& vm, JSC::JSObject* holder, JSC::PropertyName name, JSC::JSValue value)
+{
+    if (auto index = JSC::parseIndex(name))
+        return holder->canGetIndexQuickly(*index) && holder->getIndexQuickly(*index) == value;
+    if (JSC::AOT::PropertyWalk::isCompiledObject(holder))
+        return JSC::AOT::PropertyWalk::getDirect(vm, holder, name, nullptr) == value;
+    return holder->getDirect(vm, name) == value;
+}
+
+MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::JSObject* holder, JSC::PropertyName name, MatchedRowsTaken taken)
+{
+    MatchedRow row = matchedRow(rows, place, name);
+    if (taken == MatchedRowsTaken::AsOlderBunPrinted && row.childPlace && !keepsAsOwnData(rows->vm(), holder, name, row.value))
+        return {};
+    return row;
+}
+
+void appendMissingMatchedRowNames(JSC::JSCell* cell, uint32_t place, std::span<const JSC::Identifier> names, WTF::Vector<JSC::Identifier>& missing, MatchedRowsTaken taken)
 {
     auto* matchedRows = uncheckedDowncast<JestMatchedRows>(cell);
     auto rows = matchedRows->rowsOf(place);
@@ -303,7 +321,7 @@ void appendMissingMatchedRowNames(JSC::JSCell* cell, uint32_t place, std::span<c
     // In the order of the walk, so that what is appended does not depend on addresses.
     WTF::Vector<const JestMatchedRows::Row*, 8> unlisted;
     for (size_t i = 0; i < rows.size(); i++) {
-        if (!listed.quickGet(i))
+        if (!listed.quickGet(i) && (taken == MatchedRowsTaken::All || !rows[i].childPlace))
             unlisted.append(&rows[i]);
     }
     std::sort(unlisted.begin(), unlisted.end(), [](const JestMatchedRows::Row* a, const JestMatchedRows::Row* b) { return a->order < b->order; });

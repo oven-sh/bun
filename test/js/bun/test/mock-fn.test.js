@@ -1415,6 +1415,14 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    test("Bun.inspect of the array does not call the spy on one element", () => {
+      const arr = [1, 2, 3];
+
+      const fn = spyOn(arr, 1);
+      expect(Bun.inspect(arr)).toBe("[ 1, [Getter/Setter], 3 ]");
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     test("spyOn works with missing indexed properties", () => {
       const arr = [];
 

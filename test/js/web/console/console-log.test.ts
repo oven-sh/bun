@@ -87,6 +87,38 @@ it("console.dir treats a BigInt depth like the same number", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("console.log prints an array index getter that throws as [Getter] and finishes the line", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let calls = 0;
+       const list = Object.defineProperty([1, 2, 3], 1, {
+         get() { calls++; throw new Error("the getter was called"); },
+         enumerable: true,
+       });
+       console.log("before", list, "after");
+       console.error("before", list, "after");
+       console.log("%o and %O", list, list);
+       console.dir(list);
+       console.log(calls);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      "before [ 1, [Getter], 3 ] after\n" +
+      "[ 1, [Getter], 3 ] and [ 1, [Getter], 3 ]\n" +
+      "[ 1, [Getter], 3 ]\n" +
+      "0\n",
+    stderr: "before [ 1, [Getter], 3 ] after\n",
+    exitCode: 0,
+  });
+});
+
 it("console.group", async () => {
   const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({

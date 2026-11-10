@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
+import { openSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1493,6 +1494,174 @@ describe("own non-enumerable properties are not printed", () => {
     }
     expect(Bun.inspect(new Foo())).toBe("Foo {\n  field: 1,\n  getter: [Getter],\n  method: [Function: method],\n}");
     expect(Bun.inspect(new TextDecoder())).toContain('encoding: "utf-8"');
+  });
+});
+
+// The rule of the "getters" test above, for an index. Node.js prints the same labels: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L2357-L2375
+describe("an accessor at an array index prints as its kind and is not called", () => {
+  const accessor = (array, index, descriptor) =>
+    Object.defineProperty(array, index, { enumerable: true, configurable: true, ...descriptor });
+  const element = children => ({ $$typeof: Symbol.for("react.element"), type: "div", key: null, props: { children } });
+
+  it("getter, setter, both and neither", () => {
+    const get = mock(() => "from the getter");
+    const set = mock();
+    expect(Bun.inspect(accessor([], 0, { get }))).toBe("[ [Getter] ]");
+    expect(Bun.inspect(accessor([1, 2, 3], 0, { get }))).toBe("[ [Getter], 2, 3 ]");
+    expect(Bun.inspect(accessor([1, 2, 3], 1, { set }))).toBe("[ 1, [Setter], 3 ]");
+    expect(Bun.inspect(accessor([1, 2, 3], 2, { get, set }))).toBe("[ 1, 2, [Getter/Setter] ]");
+    expect(Bun.inspect(accessor([1, 2, 3], 1, { get, enumerable: false }))).toBe("[ 1, [Getter], 3 ]");
+    // Neither half has a label. Node.js prints `undefined` for it too.
+    expect(Bun.inspect(accessor([1, 2, 3], 1, { get: undefined, set: undefined }))).toBe("[ 1, undefined, 3 ]");
+    expect(get).toHaveBeenCalledTimes(0);
+    expect(set).toHaveBeenCalledTimes(0);
+  });
+
+  it("a getter that throws", () => {
+    const get = mock(() => {
+      throw new Error("the getter was called");
+    });
+    expect(Bun.inspect(accessor([1, 2, 3], 0, { get }))).toBe("[ [Getter], 2, 3 ]");
+    expect(Bun.inspect(accessor([1, 2, 3], 1, { get }))).toBe("[ 1, [Getter], 3 ]");
+    expect(get).toHaveBeenCalledTimes(0);
+  });
+
+  it("in a sparse, frozen or subclassed array, an arguments object and the target of a Proxy", () => {
+    const get = mock(() => "from the getter");
+    const sparse = [];
+    sparse[5] = 1;
+    expect(Bun.inspect(accessor(sparse, 2, { get }))).toBe("[ 2 x empty items, [Getter], 2 x empty items, 1 ]");
+    expect(Bun.inspect(Object.freeze(accessor([1, 2, 3], 2, { get })))).toBe("[ 1, 2, [Getter] ]");
+    class List extends Array {}
+    expect(Bun.inspect(accessor(List.of(1, 2), 1, { get }))).toBe("[ 1, [Getter] ]");
+    const mapped = new Function("a", "return arguments")(1, 2, 3);
+    const captured = new Function("a", "(function () { return a; }); return arguments")(1, 2, 3);
+    const strict = new Function("'use strict'; return arguments")(1, 2, 3);
+    for (const args of [mapped, captured, strict]) {
+      expect(Bun.inspect(accessor(args, 0, { get }))).toBe("[ [Getter], 2, 3 ]");
+      expect(Bun.inspect(accessor(args, 2, { get }))).toBe("[ [Getter], 2, [Getter] ]");
+    }
+    expect(Bun.inspect(new Proxy(accessor([1, 2], 1, { get }), {}))).toBe("[ 1, [Getter] ]");
+    expect(get).toHaveBeenCalledTimes(0);
+  });
+
+  it("nested in another value", () => {
+    const get = mock(() => "from the getter");
+    const list = accessor([1, 2], 0, { get });
+    expect(Bun.inspect({ list })).toBe("{\n  list: [ [Getter], 2 ],\n}");
+    expect(Bun.inspect([list])).toBe("[\n  [ [Getter], 2 ]\n]");
+    expect(Bun.inspect(new Map([["key", list]]))).toBe('Map(1) {\n  "key": [ [Getter], 2 ],\n}');
+    expect(Bun.inspect(new Set([list]))).toBe("Set(1) {\n  [ [Getter], 2 ],\n}");
+    expect(Bun.inspect(Object.assign(new Error("message"), { list }))).toContain("list: [ [Getter], 2 ],");
+    expect(get).toHaveBeenCalledTimes(0);
+  });
+
+  it("with the options of Bun.inspect", () => {
+    const get = mock(() => "from the getter");
+    const list = accessor([1, 2], 0, { get });
+    expect(Bun.inspect(list, { sorted: true })).toBe("[\n  [Getter],\n  2\n]");
+    expect(Bun.inspect(list, { compact: true })).toBe("[ [Getter], 2 ]");
+    expect(Bun.inspect(list, { colors: true })).toBe(
+      "[ \x1b[36m[Getter]\x1b[0m\x1b[0m\x1b[2m,\x1b[0m \x1b[0m\x1b[33m2\x1b[0m ]",
+    );
+    expect(get).toHaveBeenCalledTimes(0);
+  });
+
+  // Node.js reads `value[i]` to line up an array of more than 6 numbers, so its getter runs there. Here nothing runs at any length.
+  it("among more than 6 numbers", () => {
+    const get = mock(() => {
+      throw new Error("the getter was called");
+    });
+    const list = accessor(
+      Array.from({ length: 20 }, (_, i) => i),
+      1,
+      { get },
+    );
+    expect(Bun.inspect(list)).toBe(
+      "[\n  0, [Getter], 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19\n]",
+    );
+    expect(get).toHaveBeenCalledTimes(0);
+  });
+
+  it("at the last of the 100 items that print, and past them", () => {
+    const get = mock(() => "from the getter");
+    expect(Bun.inspect(accessor(new Array(150).fill(0), 99, { get }))).toEndWith(
+      "0, [Getter],\n  ... 50 more items\n]",
+    );
+    expect(Bun.inspect(accessor(new Array(150).fill(0), 100, { get }))).toEndWith("0, 0,\n  ... 50 more items\n]");
+    expect(get).toHaveBeenCalledTimes(0);
+  });
+
+  it("in the message of ERR_INVALID_ARG_VALUE", () => {
+    const get = mock(() => {
+      throw new Error("the getter was called");
+    });
+    let error;
+    try {
+      openSync(import.meta.path, accessor([1, 2, 3], 1, { get }));
+    } catch (thrown) {
+      error = thrown;
+    }
+    expect({ code: error?.code, message: error?.message }).toEqual({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The argument 'flags' is invalid. Received [ 1, [Getter], 3 ]",
+    });
+    expect(get).toHaveBeenCalledTimes(0);
+  });
+
+  it("defined between two prints, and during a print", () => {
+    const get = mock(() => "from the getter");
+    const list = [1, 2, 3];
+    expect(Bun.inspect(list)).toBe("[ 1, 2, 3 ]");
+    accessor(list, 1, { get });
+    expect(Bun.inspect(list)).toBe("[ 1, [Getter], 3 ]");
+    Object.defineProperty(list, 1, { value: 5 });
+    expect(Bun.inspect(list)).toBe("[ 1, 5, 3 ]");
+
+    // The hook of the first element changes how the array stores the elements that follow.
+    const changes = [1, 2, 3];
+    changes[0] = { [Bun.inspect.custom]: () => (accessor(changes, 2, { get }), "hook") };
+    expect(Bun.inspect(changes)).toBe("[\n  hook, 2, [Getter]\n]");
+    expect(get).toHaveBeenCalledTimes(0);
+  });
+
+  it("among the children of a JSX element", () => {
+    const get = mock(() => "from the getter");
+    expect(Bun.inspect(element(accessor(["text", 2, 3], 1, { get, set() {} })))).toBe(
+      "<div>\n  text\n  [Getter/Setter]\n  3\n</div>",
+    );
+    expect(get).toHaveBeenCalledTimes(0);
+    expect(Bun.inspect(element([1, , 3]))).toBe("<div>\n  1\n  undefined\n  3\n</div>");
+  });
+
+  // An index accessor on a prototype changes how the realm stores every array, so a child defines it.
+  it("an index accessor of a prototype is not an element", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let calls = 0;
+         class List extends Array {}
+         Object.defineProperty(List.prototype, 0, { get() { calls++; return "inherited"; }, enumerable: true });
+         console.log(Bun.inspect(new List(2)), calls);
+         const element = children => ({ $$typeof: Symbol.for("react.element"), type: "div", key: null, props: { children } });
+         console.log(Bun.inspect(element(new List(2))), calls);
+         const own = Object.defineProperty([1, "two", 3.5], 1, { get() { calls++; }, enumerable: true });
+         console.log(Bun.inspect(own), Bun.inspect([1, "two", 3.5]), calls);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        "[ 2 x empty items ] 0\n" +
+        "<div>\n  undefined\n  undefined\n</div> 0\n" +
+        '[ 1, [Getter], 3.5 ] [ 1, "two", 3.5 ] 0\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

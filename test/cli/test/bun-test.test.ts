@@ -2246,9 +2246,16 @@ describe.concurrent("--react-compiler", () => {
   });
 
   // The compiler names the function that is given to `map` as written and read `walk_0` inside it, which is not bound.
+  // Under --aot the text of a function is its source, so this asks which component takes a memo cache when it renders.
   test("a component with a function expression that reads its own name is left as written", async () => {
     const result = await compiled(
       {
+        "node_modules/react/compiler-runtime.js": `
+          export const c = size => {
+            globalThis.caches = (globalThis.caches ?? 0) + 1;
+            return Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          };
+        `,
         "src/Rows.tsx": `
           export function Rows({ walk }) {
             const rows = [0].map(function walk(n) {
@@ -2262,9 +2269,14 @@ describe.concurrent("--react-compiler", () => {
           import { List } from "./src/List";
           import { Rows } from "./src/Rows";
           test("which are compiled", () => {
-            const all = { List, Rows };
-            ${printCompiled}
-            expect(Rows({ walk: "a" }).props.children).toEqual(["function"]);
+            const renders = { List: () => List({ items: [1] }), Rows: () => Rows({ walk: "a" }) };
+            const takesACache = name => {
+              const before = globalThis.caches ?? 0;
+              renders[name]();
+              return (globalThis.caches ?? 0) > before;
+            };
+            console.log("compiled: " + Object.keys(renders).filter(takesACache).join(" "));
+            expect(renders.Rows().props.children).toEqual(["function"]);
           });
         `,
       },

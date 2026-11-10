@@ -586,7 +586,7 @@ bun build --compile --trim ./app.ts --outfile myapp
 
 A standalone executable is a copy of `bun` with your program attached, so it also contains the package manager, the test runner and the type checker. `--trim` removes them. With [`bun compile`](/compiler/aot), it also removes the Bun and Node.js APIs your code never calls. See [Smaller executables](/compiler/size).
 
-`strip` gains almost nothing: the copy of `bun` is already stripped. On Linux, a compiled executable keeps its program through GNU `strip` and `objcopy`. An executable built by an older version of Bun does not: GNU `strip` erases the address of its program, and the executable then starts as the `bun` CLI.
+`strip` gains almost nothing: the copy of `bun` is already stripped. On Linux, GNU `strip` and `objcopy` keep the program of an executable built without `--aot` or `--trim`. They refuse an executable built with one of those flags, and leave it as it is. An executable built by an older version of Bun loses its program to GNU `strip` and then starts as the `bun` CLI.
 
 ---
 

@@ -1021,9 +1021,8 @@ mod tests {
             );
 
             // A replaced payload keeps its address, so the word is not written.
-            let first = write_checked(&template, linked_bun.sh_addr, &payload).elf;
-            let mut bytes = first.clone();
-            let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
+            let mut first = write_checked(&template, linked_bun.sh_addr, &payload).elf;
+            let elf = ElfFile::over(TemplateBytes::Kept(&mut first)).unwrap();
             let (_, word) = elf.bun_section_in_pieces(&[&payload], None).unwrap();
             assert_eq!(word, None);
         }

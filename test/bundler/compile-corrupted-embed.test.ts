@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
+import { test as aotTest } from "../aot/supported";
 
 // Huge, but adding small offsets to it doesn't overflow.
 const HUGE_LENGTH = 0x0000ffffffffffffn;
@@ -128,16 +129,18 @@ function peStompLength(path: string): void {
   }
 }
 
-async function compileApp(dir: string): Promise<string> {
+async function compileApp(dir: string, flags: string[] = []): Promise<string> {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "app"],
+    cmd: [bunExe(), "build", "--compile", ...flags, "./app.js", "--outfile", "app"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  // `--aot` reports on stderr what it compiled.
+  expect(stderr.split("\n").filter(line => /^(warn|error)\b/.test(line))).toEqual([]);
+  if (flags.length === 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return join(dir, isWindows ? "app.exe" : "app");
 }
@@ -391,6 +394,24 @@ test.if(hasGnuStrip)(
       const { stderr, exitCode } = Bun.spawnSync({ cmd: [gnuStrip!, path], stderr: "pipe" });
       expect(stderr.toString()).toBe("");
       expect(exitCode).toBe(0);
+    });
+    expect(await run(stripped)).toEqual({ stdout: "hello from standalone\n", stderr: "", exitCode: 0 });
+    rmSync(stripped);
+  },
+  TIMEOUT,
+);
+
+// An `--aot` executable has its program header table inside a note, and GNU strip refuses that layout: it exits with an
+// error and leaves the file as it was. Whatever a version of binutils does with the layout, the program stays.
+aotTest.if(hasGnuStrip)(
+  "GNU strip never turns an --aot executable into the Bun CLI",
+  async () => {
+    using dir = tempDir("compile-aot-stripped", {
+      "app.js": `console.log("hello from standalone");`,
+    });
+    const exe = await compileApp(String(dir), ["--aot"]);
+    const stripped = corruptedCopy(exe, "stripped", path => {
+      Bun.spawnSync({ cmd: [gnuStrip!, path], stderr: "pipe" });
     });
     expect(await run(stripped)).toEqual({ stdout: "hello from standalone\n", stderr: "", exitCode: 0 });
     rmSync(stripped);

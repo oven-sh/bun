@@ -439,14 +439,13 @@ fn write_pieces<'a>(
 
 /// Replaces the section header table of the written file with one that names the symbols, if there are any, and the
 /// word that holds the payload's address. Returns whether the file has the symbols.
-fn append_elf_sections(
+fn write_section_tail(
     file: &bun_sys::File,
     size: u64,
     symbols: Option<ImageSymbols<'_>>,
     word: Option<PointerWord>,
-) -> bool {
+) -> Result<bool, ElfWriteError> {
     let mut read_at = |offset: u64, out: &mut [u8]| matches!(file.pread_all(out, offset), Ok(count) if count == out.len());
-    let write_at = |offset: u64, bytes: &[u8]| file.pwrite_all(bytes, offset as i64).is_ok();
     let symbols = symbols.and_then(|symbols| {
         symbols_tail(
             size,
@@ -456,15 +455,15 @@ fn append_elf_sections(
             word,
         )
     });
-    match symbols {
-        Some(tail) => tail.write(write_at),
-        None => {
-            if let Some(tail) = pointer_tail(size, read_at, word) {
-                tail.write(write_at);
-            }
-            false
-        }
+    let (tail, has_symbols) = match symbols {
+        Some(tail) => (Some(tail), true),
+        None => (pointer_tail(size, read_at, word), false),
+    };
+    if let Some(tail) = tail {
+        tail.write(|offset, bytes| file.pwrite_all(bytes, offset as i64))
+            .map_err(ElfWriteError::Write)?;
     }
+    Ok(has_symbols)
 }
 
 /// What is executed. The data behind it belongs to the image's code part too, and is only read.
@@ -518,7 +517,7 @@ pub(crate) fn write_elf(
         payload.relocate_image(address);
     }
     let ((size, _), word) = written?;
-    let has_symbols = append_elf_sections(file, size, symbols, word);
+    let has_symbols = write_section_tail(file, size, symbols, word)?;
     Ok(ElfWritten { has_symbols })
 }
 

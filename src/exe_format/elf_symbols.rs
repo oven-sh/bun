@@ -95,10 +95,11 @@ const E_SHOFF_OFFSET: u64 = offset_of!(Elf64_Ehdr, e_shoff) as u64;
 const E_SHNUM_OFFSET: u64 = offset_of!(Elf64_Ehdr, e_shnum) as u64;
 
 impl SectionTail {
-    pub fn write(&self, mut write_at: impl FnMut(u64, &[u8]) -> bool) -> bool {
-        write_at(self.offset, &self.bytes)
-            && write_at(E_SHOFF_OFFSET, &self.section_headers_offset.to_le_bytes())
-            && write_at(E_SHNUM_OFFSET, &self.number_of_sections.to_le_bytes())
+    /// The bytes first, then the file header's pointer to the new table. Stops at the first failed write.
+    pub fn write<E>(&self, mut write_at: impl FnMut(u64, &[u8]) -> Result<(), E>) -> Result<(), E> {
+        write_at(self.offset, &self.bytes)?;
+        write_at(E_SHOFF_OFFSET, &self.section_headers_offset.to_le_bytes())?;
+        write_at(E_SHNUM_OFFSET, &self.number_of_sections.to_le_bytes())
     }
 }
 
@@ -346,7 +347,8 @@ fn read_own_symbols(
 }
 
 /// The word that holds the payload's address, in a file whose writer did not say where it is: `.bun` as linked
-/// followed the section before it, and the compile that moved `.bun` onto the payload left the word there.
+/// followed the section before it, at its own alignment, and the compile that moved `.bun` onto the payload left
+/// the word there. The moved header keeps the alignment: 8 since 1.4.1, 16 KB in 1.3.12 to 1.4.0.
 fn find_pointer_word(
     read: &mut impl FnMut(u64, &mut [u8]) -> bool,
     sections: &SectionTable,
@@ -356,8 +358,12 @@ fn find_pointer_word(
     if previous_section.sh_type == SHT_NOBITS || previous_section.sh_flags & SHF_ALLOC == 0 {
         return None;
     }
+    let alignment = read_section_header(headers, bun_index).sh_addralign.max(8);
+    if !alignment.is_power_of_two() {
+        return None;
+    }
     let previous_section_end = (previous_section.sh_addr).checked_add(previous_section.sh_size)?;
-    let address = previous_section_end.checked_next_multiple_of(8)?;
+    let address = previous_section_end.checked_next_multiple_of(alignment)?;
     let file_offset =
         (previous_section.sh_offset).checked_add(address - previous_section.sh_addr)?;
     let mut stored = [0u8; 8];
@@ -716,11 +722,11 @@ pub(crate) mod tests {
         true
     }
 
-    fn write_at(elf: &mut Vec<u8>, offset: u64, bytes: &[u8]) -> bool {
+    fn write_at(elf: &mut Vec<u8>, offset: u64, bytes: &[u8]) -> Result<(), ()> {
         let offset = offset as usize;
         elf.resize(elf.len().max(offset + bytes.len()), 0);
         elf[offset..][..bytes.len()].copy_from_slice(bytes);
-        true
+        Ok(())
     }
 
     fn section_headers(elf: &[u8]) -> Vec<Elf64_Shdr> {
@@ -782,10 +788,11 @@ pub(crate) mod tests {
         pointer_tail(elf.len() as u64, read, word)
     }
 
-    fn append_pointer(elf: &[u8], word: Option<PointerWord>) -> Option<Vec<u8>> {
+    fn with_pointer(elf: &[u8], word: Option<PointerWord>) -> Option<Vec<u8>> {
         let tail = create_pointer_tail(elf, word)?;
         let mut with_pointer = elf.to_vec();
-        assert!(tail.write(|offset, bytes| write_at(&mut with_pointer, offset, bytes)));
+        tail.write(|offset, bytes| write_at(&mut with_pointer, offset, bytes))
+            .unwrap();
         Some(with_pointer)
     }
 
@@ -802,10 +809,11 @@ pub(crate) mod tests {
         symbols_tail(elf.len() as u64, read, table, IMAGE_OFFSET, None)
     }
 
-    fn append_symbols(elf: &[u8], table: &[u8]) -> Option<Vec<u8>> {
+    fn with_symbols(elf: &[u8], table: &[u8]) -> Option<Vec<u8>> {
         let tail = create_tail(elf, table)?;
         let mut with_symbols = elf.to_vec();
-        assert!(tail.write(|offset, bytes| write_at(&mut with_symbols, offset, bytes)));
+        tail.write(|offset, bytes| write_at(&mut with_symbols, offset, bytes))
+            .unwrap();
         Some(with_symbols)
     }
 
@@ -879,10 +887,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn appends_symbol_table() {
+    fn adds_symbol_table() {
         for architecture in ARCHITECTURES {
             let old = executable_with_payload(architecture);
-            let new = append_symbols(&old, &toy_table()).unwrap();
+            let new = with_symbols(&old, &toy_table()).unwrap();
             let bun_index = section_index(&new, b".bun").unwrap();
             let strtab_index = section_index(&new, b".strtab").unwrap();
             let strtab = find_section(&new, b".strtab");
@@ -926,7 +934,7 @@ pub(crate) mod tests {
     }
 
     fn executable_with_global_symbol(architecture: Architecture) -> Vec<u8> {
-        let local = append_symbols(&executable_with_payload(architecture), &toy_table()).unwrap();
+        let local = with_symbols(&executable_with_payload(architecture), &toy_table()).unwrap();
         let index = section_index(&local, b".symtab").unwrap();
         let symtab = section_headers(&local)[index];
         let mut elf = edit_section(&local, index, |section| section.sh_info -= 1);
@@ -940,7 +948,7 @@ pub(crate) mod tests {
         for architecture in ARCHITECTURES {
             let old = executable_with_global_symbol(architecture);
             let table = encode_table(CODE_SIZE, &[symbol(0x200, 0x10, 0)], b"later\0");
-            let new = append_symbols(&old, &table).unwrap();
+            let new = with_symbols(&old, &table).unwrap();
             let code = code_address(&new);
             let expected: [(&[u8], u8, u64); 5] = [
                 (b"", 0, 0),
@@ -985,7 +993,7 @@ pub(crate) mod tests {
             {
                 let tail = create_tail(&old, &toy_table()).unwrap();
                 assert_eq!(tail.offset, replaced_from);
-                let new = append_symbols(&old, &toy_table()).unwrap();
+                let new = with_symbols(&old, &toy_table()).unwrap();
                 let old_ehdr = read_ehdr(&old);
                 let restored_ehdr = Elf64_Ehdr {
                     e_shoff: old_ehdr.e_shoff,
@@ -1005,7 +1013,7 @@ pub(crate) mod tests {
     fn retains_existing_sections() {
         for architecture in ARCHITECTURES {
             let old = executable_with_payload(architecture);
-            let new = append_symbols(&old, &toy_table()).unwrap();
+            let new = with_symbols(&old, &toy_table()).unwrap();
             let names_index = read_ehdr(&old).e_shstrndx as usize;
             let bun_index = section_index(&old, b".bun").unwrap();
             let old_headers = section_headers(&old);
@@ -1046,7 +1054,7 @@ pub(crate) mod tests {
             assert_eq!(previous_section_end, linked_bun.sh_addr);
 
             let old = write_payload(&linked);
-            let new = append_symbols(&old, &toy_table()).unwrap();
+            let new = with_symbols(&old, &toy_table()).unwrap();
             let pointer = find_section(&new, b".bun.pointer");
             let payload_address = find_section(&new, b".bun").sh_addr;
             assert_eq!(read_ehdr(&new).e_shnum - read_ehdr(&old).e_shnum, 4);
@@ -1066,7 +1074,7 @@ pub(crate) mod tests {
                 }),
             ];
             for (index, file) in without_pointer.iter().enumerate() {
-                let new = append_symbols(file, &toy_table()).unwrap();
+                let new = with_symbols(file, &toy_table()).unwrap();
                 let added_sections = read_ehdr(&new).e_shnum - read_ehdr(&old).e_shnum;
                 assert_eq!(added_sections, 3, "file {index}");
                 assert_eq!(section_index(&new, b".bun.pointer"), None, "file {index}");
@@ -1086,7 +1094,7 @@ pub(crate) mod tests {
             for word in [Some(word), None] {
                 let tail = create_pointer_tail(&old, word).unwrap();
                 assert_eq!(tail.offset, names_offset);
-                let new = append_pointer(&old, word).unwrap();
+                let new = with_pointer(&old, word).unwrap();
                 assert_eq!(new.len(), names_offset as usize + tail.bytes.len());
                 assert_eq!(read_ehdr(&new).e_shnum, read_ehdr(&old).e_shnum + 1);
                 assert!(new[64..names_offset as usize] == old[64..names_offset as usize]);
@@ -1124,9 +1132,34 @@ pub(crate) mod tests {
             }
 
             // Neither the writer nor the file says where the word is.
-            let mut other_stored_address = old.clone();
+            let mut other_stored_address = old;
             other_stored_address[word.file_offset as usize] ^= 0xff;
             assert!(create_pointer_tail(&other_stored_address, None).is_none());
+        }
+    }
+
+    #[test]
+    fn pointer_word_is_found_at_the_alignment_of_bun() {
+        for architecture in ARCHITECTURES {
+            // A linker that aligned `.bun` to 256 left a gap behind the section before it.
+            let linked = linked_executable(architecture);
+            let word = pointer_word(&linked);
+            assert_eq!(word.address % 256, 0);
+            let bun_index = section_index(&linked, b".bun").unwrap();
+            let linked = edit_section(&linked, bun_index - 1, |section| section.sh_size -= 8);
+            let linked = edit_section(&linked, bun_index, |section| section.sh_addralign = 256);
+            let old = write_payload(&linked);
+            assert_eq!(find_section(&old, b".bun").sh_addralign, 256);
+
+            let new = with_pointer(&old, None).unwrap();
+            let pointer = find_section(&new, b".bun.pointer");
+            assert_eq!(
+                (pointer.sh_addr, pointer.sh_offset),
+                (word.address, word.file_offset)
+            );
+
+            let aligned_to_8 = edit_section(&old, bun_index, |section| section.sh_addralign = 8);
+            assert!(create_pointer_tail(&aligned_to_8, None).is_none());
         }
     }
 
@@ -1135,11 +1168,11 @@ pub(crate) mod tests {
         for architecture in ARCHITECTURES {
             let linked = linked_executable(architecture);
             let word = Some(pointer_word(&linked));
-            let with_pointer = append_pointer(&write_payload(&linked), word).unwrap();
+            let with_pointer = with_pointer(&write_payload(&linked), word).unwrap();
             assert!(create_pointer_tail(&with_pointer, word).is_none());
             assert!(create_pointer_tail(&with_pointer, None).is_none());
 
-            let with_symbols = append_symbols(&with_pointer, &toy_table()).unwrap();
+            let with_symbols = with_symbols(&with_pointer, &toy_table()).unwrap();
             let added_sections =
                 read_ehdr(&with_symbols).e_shnum - read_ehdr(&with_pointer).e_shnum;
             assert_eq!(added_sections, 3);
@@ -1157,12 +1190,12 @@ pub(crate) mod tests {
         for architecture in ARCHITECTURES {
             let linked = linked_executable(architecture);
             let word = Some(pointer_word(&linked));
-            let first = append_pointer(&write_payload_of(&linked, &[0x90; 0x1000]), word).unwrap();
+            let first = with_pointer(&write_payload_of(&linked, &[0x90; 0x1000]), word).unwrap();
             for payload in [&[0x91; 0x2800][..], &[0x92; 0x10][..]] {
                 // A compile into `first` keeps its pointer section. The tail it has is where a fresh one goes.
                 let second = write_payload_of(&first, payload);
                 assert!(create_pointer_tail(&second, None).is_none());
-                let direct = append_pointer(&write_payload_of(&linked, payload), word).unwrap();
+                let direct = with_pointer(&write_payload_of(&linked, payload), word).unwrap();
                 assert!(second == direct);
             }
         }
@@ -1182,7 +1215,7 @@ pub(crate) mod tests {
         ];
         for (architecture, cie_body) in cie_bodies {
             let old = executable_with_payload(architecture);
-            let new = append_symbols(&old, &toy_table()).unwrap();
+            let new = with_symbols(&old, &toy_table()).unwrap();
             let frame = find_section(&new, b".debug_frame");
             let mut expected = Vec::new();
             expected.extend_from_slice(&20u32.to_le_bytes());
@@ -1207,7 +1240,7 @@ pub(crate) mod tests {
         assert_eq!(tail.offset, old.len() as u64 + 5);
         assert_eq!(tail.section_headers_offset % 8, 0);
 
-        let new = append_symbols(&old, &toy_table()).unwrap();
+        let new = with_symbols(&old, &toy_table()).unwrap();
         assert_eq!(new[old.len()..tail.offset as usize], [0; 5]);
         assert_eq!(new.len(), tail.offset as usize + tail.bytes.len());
         assert!(section_index(&new, b".symtab").is_some());
@@ -1223,7 +1256,7 @@ pub(crate) mod tests {
         without_bun[bun_name_offset as usize + 1] = b'x';
         let too_many_sections = (SHN_LORESERVE - MAX_NEW_SECTIONS) as u16;
         let file_size = elf.len() as u64;
-        let with_symbols = append_symbols(&elf, &table).unwrap();
+        let with_symbols = with_symbols(&elf, &table).unwrap();
         let symtab_index = section_index(&with_symbols, b".symtab").unwrap();
         let strtab_index = section_index(&with_symbols, b".strtab").unwrap();
         let bun_index = section_index(&with_symbols, b".bun").unwrap();
@@ -1303,12 +1336,17 @@ pub(crate) mod tests {
         ];
         for successful_writes in 0..=expected_writes.len() {
             let mut writes: Vec<(u64, Vec<u8>)> = Vec::new();
-            let is_written = tail.write(|offset, bytes| {
+            let written = tail.write(|offset, bytes| {
                 writes.push((offset, bytes.to_vec()));
-                writes.len() <= successful_writes
+                (writes.len() <= successful_writes)
+                    .then_some(())
+                    .ok_or(writes.len())
             });
             let attempted_writes = (successful_writes + 1).min(expected_writes.len());
-            assert_eq!(is_written, successful_writes == expected_writes.len());
+            let expected = (successful_writes == expected_writes.len())
+                .then_some(())
+                .ok_or(attempted_writes);
+            assert_eq!(written, expected);
             assert_eq!(writes, expected_writes[..attempted_writes]);
         }
     }

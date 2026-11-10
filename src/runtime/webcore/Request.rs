@@ -1055,8 +1055,7 @@ impl Request {
         let values_to_try =
             &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
 
-        // A `body` member that is read by reference. It is extracted after every
-        // other member is read and the URL is validated.
+        // A by-reference `body`, extracted after the other members and the URL check.
         let mut body_init: Option<JSValue> = None;
         let mut keepalive_with_stream_body = false;
 
@@ -1189,8 +1188,7 @@ impl Request {
                         fields.insert(Fields::Body);
                         if BodyValue::is_extracted_by_reference(body_) {
                             body_init = Some(body_);
-                            // fetch spec Request(init): `keepalive: true` with a ReadableStream
-                            // body throws before body extraction (Node's message is "keepalive").
+                            // `keepalive: true` with a stream body throws "keepalive" (as Node).
                             if crate::webcore::ReadableStream::is_readable_stream(body_) {
                                 match value.get(cx.global(), "keepalive") {
                                     Ok(Some(keepalive)) => {

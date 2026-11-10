@@ -988,11 +988,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // body: BodyInit | null | undefined;
     //
-    // The `body` member is read here. A value that converts to a string is
-    // extracted now. A value that is read by reference (URLSearchParams,
-    // FormData, a typed array, a Blob, a stream) is extracted after the
-    // `headers` member is read and converted, as the fetch spec orders it:
-    // a `headers` getter that mutates the body object is part of the body.
+    // A by-reference body is extracted after `headers` is read and converted.
     let init_body: Option<JSValue> = 'brk: {
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
@@ -1027,15 +1023,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // headers: Headers | undefined;
     //
-    // The member is read and converted here, before a by-reference body is
-    // extracted. A Blob or FormData body sets the Content-Type after the
-    // body is extracted, when the headers have none (#2264).
+    // Converted here. A Blob or FormData Content-Type is applied after the
+    // body is extracted (#2264).
     //
     // Holds the +1 from `create_from_js` until the headers are applied.
     let mut created_headers: Option<HeadersRef> = None;
-    // A `Headers` object is borrowed, not ref'd. The guard keeps its wrapper
-    // alive until the headers are applied: the body extraction in between
-    // can run user JS.
+    // Roots a borrowed `Headers` wrapper across the body extraction, which can run JS.
     let mut headers_guard: Option<jsc::EnsureStillAlive> = None;
     let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
         let init_headers: Option<JSValue> = 'init: {

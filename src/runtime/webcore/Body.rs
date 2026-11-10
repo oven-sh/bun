@@ -910,12 +910,9 @@ impl Value {
         Ok(stream_value)
     }
 
-    /// A `body` init value that [`from_js`](Self::from_js) reads by reference:
-    /// ReadableStream, ArrayBuffer(View), FormData, URLSearchParams, Blob, Bun's
-    /// Image, and an Array of Blob parts. The fetch spec extracts such a body
-    /// after every other init member is converted, so a getter on a later
-    /// member that mutates the object is part of the body. Any other value
-    /// is converted when the member is read (WebIDL converts it to a string).
+    /// True for a `body` init that [`from_js`](Self::from_js) reads by reference
+    /// (stream, buffer, FormData, URLSearchParams, Blob, Image, Array of parts).
+    /// The fetch spec extracts it after the other init members are converted.
     pub fn is_extracted_by_reference(value: JSValue) -> bool {
         if !value.is_cell() || value.is_string() {
             return false;

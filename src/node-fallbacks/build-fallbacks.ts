@@ -83,7 +83,6 @@ for (const name of allFiles) {
       minify: { syntax: true, whitespace: true },
       define: {
         "process.env.NODE_DEBUG": "false",
-        "process.env.READABLE_STREAM": "'enable'",
         "process.browser": "true",
         "global": "globalThis",
         ...(readsBufferGlobal.has(polyfill) && { "Buffer": "__bun_Buffer" }),
@@ -103,7 +102,6 @@ for (const name of allFiles) {
         .readFileSync(`${outdir}/${name}`, "utf8")
         .replaceAll("__require(", "require(")
         .replace(requireShim, "")
-        .replaceAll("global.process", "require('process')")
         .trim();
 
       if (outfile.includes("__require")) {
@@ -122,11 +120,6 @@ for (const name of allFiles) {
         if (!polyfills.has(builtin) && builtin !== "vm" && builtin !== "timers/promises") {
           throw new Error(`Unexpected import of "${specifier}" in ${name}`);
         }
-      }
-
-      if (outfile.includes('"node:module"')) {
-        console.log(outfile);
-        throw new Error("Unexpected import in " + name);
       }
 
       if (outfile.includes("import.meta")) {

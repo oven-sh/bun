@@ -1,6 +1,6 @@
 // A loop outside of the class calls get on an object of a class below Map: the look at the structure is asked, not whether a plain Map is as it was made, which no such object is.
-// STATISTIC: HeirsTestedByTheirStructure >= 2
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// STATISTIC: BuiltinSubclassesCheckedByStructure >= 2
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 // COUNT: operation:operationAOTFillSiteCache = 0
 "use strict";
 class H extends Map { constructor() { super(); this.hits = 0; } }

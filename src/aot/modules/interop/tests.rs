@@ -19,7 +19,7 @@ const DATA_WITH_DEFAULT: Interop = Interop::new(
     RequireResult::DefaultExport,
 );
 const TEXT_IN_EXECUTABLE: Interop = Interop {
-    answers_loader_with_namespace: true,
+    loader_returns_namespace: true,
     ..DATA_WITH_DEFAULT
 };
 const TEXT_LEFT_TO_LOADER: Interop = Interop::new(

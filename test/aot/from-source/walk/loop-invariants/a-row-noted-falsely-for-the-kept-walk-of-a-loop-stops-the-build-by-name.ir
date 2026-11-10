@@ -26,10 +26,11 @@
 # globalThis.kept = painter;
 # print(painter.sheet({ heads: ["a", "b"], lines: [["1", "2"], ["3"], []] }));
 # -- end of source
-# The program of the-last-walk-of-a-loop-whose-plain-walk-a-purchase-replaced-fits-its-row-when-it-is-walked-alone.ir, which is silent under check=LastWalksOfLoopsAlone.
-# THE LIE, testing=RowSaysLess:RowOfLoop/all/WhatIsSeen: every row that is noted as the one that a kept walk of a loop was walked under says that the loop does nothing. The second walker, which walks each kept walk alone under its noted row, finds that the walk does more than the row says, and stops the build by name.
-# OPTIONS: check=LastWalksOfLoopsAlone testing=RowSaysLess:RowOfLoop/all/WhatIsSeen
-# DIAGNOSTIC: LastWalkOfLoopMisfitsRow
+# This is the program of the-last-walk-of-a-loop-whose-plain-walk-a-purchase-replaced-fits-its-row-when-it-is-walked-alone.ir, which reports nothing with check=ReplayFinalLoopVisits.
+# Fault injection, testing=UnderstateEffects:RowOfLoop/all/WhatIsSeen: every loop summary that is recorded as the one that a retained visit of a loop was made under says that the loop does nothing.
+# The second walker repeats each retained visit alone under its recorded summary. It finds that the visit does more than the summary says, and it fails the build with a named internal error.
+# OPTIONS: check=ReplayFinalLoopVisits testing=UnderstateEffects:RowOfLoop/all/WhatIsSeen
+# DIAGNOSTIC: LoopSummaryMismatch
 # RUN: walk f4 mechanisms=all
 # CHECK-NOT: code f4:Body
 

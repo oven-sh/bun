@@ -4,7 +4,7 @@
 # function mix(d) { let h = 7; for (let i = 0; i < d.length; i++) { h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; } return h; }
 # print(mix(JSON.parse("[1, 2, 3, 4, 5]")));
 # -- end of source
-# RUN(COUNT): compile LoopsBuiltForListsAndForBytes mechanisms=all
-# COUNT: statistic LoopsBuiltForListsAndForBytes 1
+# RUN(COUNT): compile ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# COUNT: statistic ArrayOrUint8ArrayLoopsVersioned 1
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 1443

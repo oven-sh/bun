@@ -1,5 +1,5 @@
 // A quote read by a method of the text in front of a loop, and what every turn reads compared with it: the quote is asked for a 32-bit integer once, in front. Beside it: a parameter of which nothing is known, which is not asked.
-// STATISTIC: ValuesComparedWithIntegersAskedOnceInFrontOfLoops >= 1
+// STATISTIC: Int32GuardsHoistedForComparisons >= 1
 function makeScanner(initial: string) { let text = initial; let pos = 0; let end = initial.length;
   function unchecked(at: number) { return text.charCodeAt(at); }
   return { setText(next: string) { text = next; pos = 0; end = next.length; },

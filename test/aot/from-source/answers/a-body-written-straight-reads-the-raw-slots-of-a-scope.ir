@@ -33,15 +33,15 @@
 # LAYOUTS-NEXT: slot 1 {{*}} OptionalInt64
 # LAYOUTS-NEXT: slot 2 {{*}} OptionalDouble
 # LAYOUTS-NEXT: slot 3 {{*}} OptionalDouble
-# RUN(COUNT): compile RawSlotsOfScopesReadStraight mechanisms=all
-# COUNT: statistic RawSlotsOfScopesReadStraight 4
-# RUN(ALL): compile RawSlotsOfScopesReadStraight testing=WritesBodiesStraight mechanisms=all
-# ALL: statistic RawSlotsOfScopesReadStraight 8
+# RUN(COUNT): compile StraightUnboxedSlotReads mechanisms=all
+# COUNT: statistic StraightUnboxedSlotReads 4
+# RUN(ALL): compile StraightUnboxedSlotReads testing=ForceStraightCompilation mechanisms=all
+# ALL: statistic StraightUnboxedSlotReads 8
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: ReferenceError 0.25 14 | ReferenceError -1.75 14
 # ANSWERS-NEXT: 1.5 1 undefined 6 | 1.5 1 undefined 60 | -6.5 -7 undefined 60
 # ANSWERS-NEXT: 2.25 2 4 6 | 2.25 2 4 60 | -14.625 -5 -10 60
-# RUN(STRAIGHT): run-in-shell testing=WritesBodiesStraight mechanisms=all
+# RUN(STRAIGHT): run-in-shell testing=ForceStraightCompilation mechanisms=all
 # STRAIGHT: ReferenceError 0.25 14 | ReferenceError -1.75 14
 # STRAIGHT-NEXT: 1.5 1 undefined 6 | 1.5 1 undefined 60 | -6.5 -7 undefined 60
 # STRAIGHT-NEXT: 2.25 2 4 6 | 2.25 2 4 60 | -14.625 -5 -10 60

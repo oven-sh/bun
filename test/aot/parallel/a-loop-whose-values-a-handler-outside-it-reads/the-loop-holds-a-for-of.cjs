@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltTwiceWhoseValuesHandlersOutsideRead >= 1
+// STATISTIC: LoopsVersionedUnderOuterHandlers >= 1
 // What steps the for-of is made in the turn of the loop around and read by the handler that closes it, which leaves both loops: that handler is walked once beside each copy, and whichever copy throws, its own iteration is closed.
 const key = JSON.parse('"go"'), log = [];
 const counted = (values, name) => ({ [Symbol.iterator]() { let at = 0; return { next() { return at < values.length ? { done: false, value: values[at++] } : { done: true, value: undefined }; }, return() { log.push("closed " + name + " at " + at); return {}; } }; } });

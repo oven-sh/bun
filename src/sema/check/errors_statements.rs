@@ -211,6 +211,12 @@ impl Checker<'_, '_> {
         self.never_checked.borrow_mut().push((start, end));
     }
 
+    /// The ranges of `never_check` in the file that was checked last, where `Files::brings_declarations`. In a build they hold
+    /// the code that it leaves out.
+    pub fn never_checked_ranges(&self) -> &[(u32, u32)] {
+        &self.never_checked_in_last_file
+    }
+
     /// `checkStrictModeWithStatement`, `checkStrictModeLabeledStatement`: 1101 1344. The binder visits every node,
     /// whether or not the checker does.
     pub(super) fn check_strict_mode_statements(&mut self, file: FileId) {

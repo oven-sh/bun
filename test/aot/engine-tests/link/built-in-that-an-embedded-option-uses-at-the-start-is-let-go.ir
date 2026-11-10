@@ -9,7 +9,7 @@
 # NONE-NOT: function f1 unreached
 
 module m0 path="main.js" displayPath="main.js" body=f0
-module m1 path="bun:sql" displayPath="bun:sql" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSql body=f1
+module m1 path="bun:sql" displayPath="bun:sql" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSql body=f1
 entry module=m0
 usedatstart builtin=Bun_sql
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {

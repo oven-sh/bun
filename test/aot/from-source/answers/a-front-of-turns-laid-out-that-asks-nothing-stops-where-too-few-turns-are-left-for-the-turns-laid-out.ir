@@ -4,19 +4,22 @@
 # var T = { go(l) { var s = 0; for (var i = 0; i < l.length; i++) s += l[i]; return s; } };
 # print(T[key](halves(globalThis.fails ? 3 : 16)));
 # -- end of source
-# What the front of the turns laid out has found is believed in every one of those turns. testing=CheckProofsAtRunTime and testing=TestsEveryPosition write checks into each turn in the walk, and a turn that holds
-# them is not laid out: so in those lanes no layout was ever run. Under testing=EmittersAloneTestEveryPosition the walk writes nothing more, the turns are laid out as in an executable, and each access holds what it
-# is told against memory. The front asks whether eight turns are left. A list of three: the loop as written runs. The lie: eight turns run, and the fourth reads behind the list.
+# Every iteration of an unrolled loop trusts what the loop's entry checks have found. With testing=CheckProofsAtRunTime and testing=CheckBoundsAtRunTime the walk adds checks to each iteration,
+# and an iteration that holds such checks is not unrolled, so no unrolled loop ever ran in those test lanes. With testing=CheckBoundsInEmittersOnly the walk adds nothing,
+# the loop is unrolled as in an executable, and each access checks the facts that it was given against memory.
+# The entry checks test whether eight iterations are left. For an array of three elements, the loop as written runs.
+# Fault injection, testing=SkipUnrollTripCountCheck: eight iterations run, and the fourth reads past the end of the array.
 # RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
 # RIGHT: 4.5
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition globalThis.fails = true;
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly globalThis.fails = true;
 # HELD: 4.5
 # HELD-NEXT: exited with 0
-# Whoever would have passed the front is not harmed by the lie: so what stops below is this question and no other.
-# RUN(PASSES): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,EnoughTurnsAreTakenToBeLeftForTurnsLaidOut
+# The injected fault does not harm an input that would have passed the entry checks. So the crash in the last run comes from this check and from no other.
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollTripCountCheck
 # PASSES: 128
 # PASSES-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,EnoughTurnsAreTakenToBeLeftForTurnsLaidOut globalThis.fails = true;
-# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollTripCountCheck globalThis.fails = true;
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # LIE: crashed with

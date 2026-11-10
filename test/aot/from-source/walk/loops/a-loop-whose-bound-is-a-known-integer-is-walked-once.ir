@@ -7,6 +7,6 @@
 # print(reach(far, list.length + 5));
 # -- end of source
 # TODO: the loops of the walk: a walk of the loop is undone where the bound of the loop is a known integer
-# STATISTIC: WalksOfLoopsUndone <= 0
+# STATISTIC: LoopVisitsUndone <= 0
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 307

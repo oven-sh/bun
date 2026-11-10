@@ -84,8 +84,7 @@ test("a test run does not know of further entry points, and says what helps", as
   using dir = tempDir("aot-a-further-entry-point", project("module.exports = name => require(name);", "undefined"));
   expect(said(await inExecutable(String(dir), "./lib/hidden.js"))[1]).toBe(found[1]);
   expect(said(await inTestRun(String(dir), "--aot"))[1]).toBe(
-    "COMPILED refused Cannot load 'the file': the build saw no import() or require() of a computed path that can reach it, so it answers only to the paths the build saw. " +
-      "The build can't see code from a string, as in eval() or new Function(). An executable refuses this too, unless you build it with this file as another entry point. " +
+    "COMPILED refused Cannot load 'the file': no import() or require() that the build saw can reach it by a dynamic path. " +
       "Import the file by a constant path, or add --aot-allow-code-from-disk. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)",
   );
   expect(said(await inTestRun(String(dir), "--aot", "--aot-allow-code-from-disk"))).toEqual(found);

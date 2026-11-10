@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 1
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 1
 // Nothing is known and nothing is expected of `c`; the turn computes with its elements. The loop asks in front for a list of numbers, a Buffer and a Uint8Array.
 const key: string = JSON.parse('"go"');
 const crc: Record<string, (c: any) => number> = { go(c: any): number { let h = 7; for (let i = 0; i <= c.length; i++) h = (h * 31 + c[i]) | 0; return h; } };

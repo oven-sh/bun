@@ -1,6 +1,13 @@
 // A module of WebAssembly that is imported as a file is compiled like one that is imported as WebAssembly.
 // A file that only has the name of one is carried as it is.
 // STATISTIC: WasmFunctionsCompiled >= 22
+// STATISTIC: WasmOptimizedCopies = 22
+// STATISTIC: WasmBaselineCopies = 22
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 22
+// COUNTER in every build: WasmInstancesUsingImageCode = 3
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 3
 import written from "../module-facts/m.wasm" with { type: "file" };
 import words from "./words.wasm" with { type: "file" };
 import fs from "node:fs";

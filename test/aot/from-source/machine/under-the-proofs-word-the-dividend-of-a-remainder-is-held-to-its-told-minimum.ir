@@ -1,14 +1,16 @@
-# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: the least int32 passes `-2147483648 < at`, behind which the walk tells that `at` is greater.
-# The remainder of two integers asks for a divisor of -1 only where the dividend may be the least of its kind: the machine traps at that one division. On a false range it trapped under the word that checks proofs too.
-# Under CheckProofsAtRunTime (which --aot-harden=proof-checks stands for) the dividend is held to its told minimum where the remainder stands, and the process stops by name.
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`.
+# So the least int32 passes `-2147483648 < at`, after which the walk has proven that `at` is greater.
+# The remainder of two integers tests for a divisor of -1 only where the dividend may be the least value of its type, because the machine traps at that one division.
+# With a false range it trapped even with the switch that checks proofs.
+# With CheckProofsAtRunTime (which --aot-harden=proof-checks enables), the remainder checks the dividend against its proven minimum, and the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: 0
 # RIGHT-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EqualIntegersAreTakenToBeLess
-# STOPPED: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: type check failed at {{*}} (left)
 # STOPPED: crashed with SIGABRT
-# RUN(ALONE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,EqualIntegersAreTakenToBeLess
-# ALONE: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(ALONE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,TreatEqualIntegersAsLess
+# ALONE: bun: internal AOT error: type check failed at {{*}} (left)
 # ALONE: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

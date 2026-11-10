@@ -1,4 +1,4 @@
-// STATISTIC: LoopsThatHoldLoopsWrittenOut >= 2
+// STATISTIC: LoopNestsFullyUnrolled >= 2
 "use strict";
 function triangle(rows, rounds) { let sum = 0; for (let round = 0; round < rounds; round++) for (let a = 0; a < 3; a++) for (let b = 0; b <= a; b++) sum += rows[a][b] + round; return sum; }
 function once(rows) { let sum = 0; for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) sum += rows[a][b]; return sum; }

@@ -7,9 +7,9 @@
 # function unitAt(text: unknown, place: unknown): unknown { let sum = 0; for (let turn = 0; turn < 3; turn++) sum += (text as string).charCodeAt(place as number) + turn; return sum; }
 # publish(unitAt);
 # -- end of source
-# RUN: compile IntegersHandedOnByTheirTests mechanisms=all
+# RUN: compile UnboxingsFusedIntoTypeChecks mechanisms=all
 # Three in unitAt; two in the library's next(), which every program holds: the position and the kind that a list's iterator keeps are asked for integers, and those tests hand theirs on as well.
-# CHECK: statistic IntegersHandedOnByTheirTests 5
+# CHECK: statistic UnboxingsFusedIntoTypeChecks 5
 # RUN(SHELL): run-in-shell globalThis.publish = unitAt => { const doubles = [0.5, 3, 0, 7, -1, 2147483647, -2147483648, 9, 10]; const others = [3, 0.5, -0, NaN, "2", null, undefined, true, 1e21, 4294967299, -0.5, 9.999]; for (let turn = 0; turn < 3; turn++) { print(doubles.map(place => unitAt("abcdefghij", place)).join()); print(others.map(place => unitAt("abcdefghij", place)).join()); } };
 # SHELL: 294,303,294,315,NaN,NaN,NaN,321,NaN
 # SHELL-NEXT: 303,294,294,294,300,294,294,297,NaN,NaN,294,321

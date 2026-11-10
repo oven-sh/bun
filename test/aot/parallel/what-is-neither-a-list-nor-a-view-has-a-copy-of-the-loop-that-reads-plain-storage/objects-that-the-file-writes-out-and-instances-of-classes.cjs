@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 "use strict";
 // The holder is a literal of the file with index keys, an instance of a class with a field or a getter named length, an object made by Object.create over a list, and a list with a name added: each comes veiled, so that the build knows nothing of it.
 const said = [];

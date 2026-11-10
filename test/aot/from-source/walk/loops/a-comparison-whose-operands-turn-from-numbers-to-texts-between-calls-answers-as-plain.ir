@@ -1,4 +1,5 @@
-# The lie: the same loop is entered with numbers, then with texts, then with a number and a text, then with numbers again. Each entry asks in its first turn; the failing way leads to the loop bought once more without the question.
+# The program misleads the compiler's speculation: the same loop is entered with numbers, then with strings, then with a number and a string, then with numbers again.
+# Each entry runs the guard in its first iteration. The failing path leads to another version of the loop, built without the guard.
 # -- source: a-comparison-whose-operands-turn-from-numbers-to-texts-between-calls-answers-as-plain.js
 # const table = { go: (a, b) => a < b, sum: (a, b) => a + b }, names = JSON.parse('["go","sum"]'), values = JSON.parse('[0.5,1.25,"b","a",null]');
 # const less = table[names[0]], sum = table[names[1]];

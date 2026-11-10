@@ -4,12 +4,15 @@
 # function run(list, t) { let last = ""; for (let i = 0; i < 10; i++) { const [x, y] = list; last = x + "|" + y; } return last + "|" + (t & 1); }
 # print(run(own, 3));
 # -- end of source
-# A pattern goes by index, without the protocol, only over what is surely a list as made. This list has an iterator of its own laid on it: the link does not say that it stays as made, and the pattern takes what that iterator yields.
-# THE LIE, testing=IterablesOfPatternsAreTakenToStayAsMade: what a pattern takes apart is taken for a list of which the link says so. The word of the link is held against the object where the iteration opens, one bit of its cell
-# and a stop by name, in every build: the lie is stopped loudly, and no element is read in place of what the iterator yields.
+# A pattern destructures by index, without the iterator protocol, only if its operand is certainly a pristine array.
+# This array has an iterator method of its own assigned to it, so Link does not claim that it stays pristine, and the pattern takes what that iterator yields.
+# Fault injection, testing=AssumePermanentlyPristineIterables: the operand of a pattern is assumed to be an array that Link claims stays pristine.
+# Link's claim is checked against the object where the iteration opens, in every build. The check tests one bit of the object's cell and crashes with a named error if it fails.
+# So the injected fault is caught loudly, and no element is read in place of what the iterator yields.
 # RUN: run-in-shell mechanisms=all
 # CHECK: 4|5|1
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=IterablesOfPatternsAreTakenToStayAsMade
-# LIE: AOT: f1 at {{*}}: what an operation gives is not of the type that the compiler has proven of it.
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumePermanentlyPristineIterables
+# LIE: bun: internal AOT error: type check failed at {{*}} (run)
+# LIE-NEXT: in the result of an operation
 # LIE: crashed with

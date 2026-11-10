@@ -13,22 +13,22 @@
 # CHECK-NEXT: = IsMemberAsBuilt builtin=MathFloor
 # CHECK-NEXT: Branch
 # CHECK: [[first]]: boolean @Boolean = IsMemberAsBuilt builtin=MathFloor
-# CHECK-NEXT: CheckProof [[first]] checkedType=true {{*}}source=WhatIsRemembered
+# CHECK-NEXT: CheckProof [[first]] checkedType=true {{*}}source=RememberedFact
 # CHECK: = CallDirect function=f1
 # CHECK: = IsMemberAsBuilt builtin=MathFloor
 # CHECK-NEXT: Branch
 # CHECK: [[behind]]: boolean @Boolean = IsMemberAsBuilt builtin=MathFloor
-# CHECK-NEXT: CheckProof [[behind]] checkedType=true {{*}}source=WhatIsRemembered
+# CHECK-NEXT: CheckProof [[behind]] checkedType=true {{*}}source=RememberedFact
 # On the way on which nothing was written the second use is answered out of the note.
 # CHECK: [[second]]: boolean @Boolean = IsMemberAsBuilt builtin=MathFloor
-# CHECK-NEXT: CheckProof [[second]] checkedType=true {{*}}source=WhatIsRemembered
+# CHECK-NEXT: CheckProof [[second]] checkedType=true {{*}}source=RememberedFact
 # layout L26 kind=Closure
 variable g0 name="lay" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="other" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
 variable g2 name="twice" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
 variable g3 name="test" module=m1 declared={type=anything}
-module m0 path="/a.test.js" displayPath="a.test.js" flags=[KeepsError, IsListedInCache] body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0, 33, 137, 169, 375, 420] quotedTexts=[{position=115 start=11 end=29}, {position=258 start=29 end=39}, {position=263 start=29 end=47}, {position=292 start=47 end=52}, {position=314 start=52 end=62}, {position=319 start=52 end=70}, {position=393 start=70 end=81}, {position=401 start=70 end=91}, {position=405 start=82 end=90}] textOfQuotes="test(\x22t\x22, )Math.floor = otherMath.floor(at / 3)lay()Math.floor(at / 3)console.log(twice(9))"} functionText="import { test } from \x22bun:test\x22;\x0afunction lay() { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; Math.floor = other; }\x0afunction other() { return -1; }\x0afunction twice(count) { let said = 0; for (let at = 0; at < count; at++) { const first = Math.floor(at / 3); if (at === 5) lay(); const second = Math.floor(at / 3); said += first + second; } return said; }\x0atest(\x22t\x22, () => { console.log(twice(9)); });\x0a" namespaceLayout=L(m0)
-module m1 path="bun:test" displayPath="bun:test" kind=Runtime flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunTest syntheticExports=[{name="test" variable=g3 isKnownMember=true}]
+module m0 path="/a.test.js" displayPath="a.test.js" flags=[CachesEvaluationError, IsListedInCache] body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0, 33, 137, 169, 375, 420] quotedSources=[{position=115 start=11 end=29}, {position=258 start=29 end=39}, {position=263 start=29 end=47}, {position=292 start=47 end=52}, {position=314 start=52 end=62}, {position=319 start=52 end=70}, {position=393 start=70 end=81}, {position=401 start=70 end=91}, {position=405 start=82 end=90}] quotedSourceText="test(\x22t\x22, )Math.floor = otherMath.floor(at / 3)lay()Math.floor(at / 3)console.log(twice(9))"} functionSource="import { test } from \x22bun:test\x22;\x0afunction lay() { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; Math.floor = other; }\x0afunction other() { return -1; }\x0afunction twice(count) { let said = 0; for (let at = 0; at < count; at++) { const first = Math.floor(at / 3); if (at === 5) lay(); const second = Math.floor(at / 3); said += first + second; } return said; }\x0atest(\x22t\x22, () => { console.log(twice(9)); });\x0a" namespaceLayout=L(m0)
+module m1 path="bun:test" displayPath="bun:test" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunTest syntheticExports=[{name="test" variable=g3 isKnownMember=true}]
 sourcestamp module=m0 low=2310532853 high=419368439
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -41,7 +41,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v6 = Undefined @375
     Return v6 @375
 }
-function f1 name="lay" module=m0 position=33 text={start=33 end=136} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="lay" module=m0 position=33 sourceRange={start=33 end=136} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Integer @61
     v1 = Convert v0 declared={type=i32 flags=[IsExpected]} @61
@@ -70,12 +70,12 @@ function f1 name="lay" module=m0 position=33 text={start=33 end=136} flags=[HasE
     v20 = Undefined @115
     Return v20 @115
 }
-function f2 name="other" module=m0 position=137 text={start=137 end=168} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="other" module=m0 position=137 sourceRange={start=137 end=168} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Integer integer=-1 @163
     Return v0 @163
 }
-function f3 name="twice" module=m0 position=169 text={start=169 end=374} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="twice" module=m0 position=169 sourceRange={start=169 end=374} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = Integer @204
     v2 = Convert v1 declared={type=number flags=[IsExpected]} @204
@@ -120,7 +120,7 @@ function f3 name="twice" module=m0 position=169 text={start=169 end=374} flags=[
   b5():
     Return v5 @367
 }
-function f4 module=m0 position=385 text={start=385 end=417} kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 module=m0 position=385 sourceRange={start=385 end=417} kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Builtin builtin=GlobalThis @393
     v1 = PropGet v0 key="console" [isFreeName] @393

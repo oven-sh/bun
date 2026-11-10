@@ -7,4 +7,4 @@ function halves(rows: Row[]): number[] { let got: number[] = []; for (let turn =
 function texts(rows: Row[]): string { let got = ""; for (let turn = 0; turn < turns; turn++) got = rows.map(row => row.qty * 1.5).map(value => value.toFixed(1)).join(","); return got; }
 function least(rows: Row[]): number { let got = 0; for (let turn = 0; turn < turns; turn++) got = rows.map(row => row.qty - 2.5).reduce((low, value) => Math.min(low, value), Infinity); return got; }
 console.log(total(rows), say(halves(rows)), texts(rows), least(rows));
-// STATISTIC: NewListsInPlaceOfSpecies >= 1
+// STATISTIC: ArraySpeciesLookupsElided >= 1

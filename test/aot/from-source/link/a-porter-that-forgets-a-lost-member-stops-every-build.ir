@@ -17,7 +17,7 @@
 # -- end of source
 # THE RED CONTROL OF THE NET IN EVERY BUILD FOR A GROUP THAT FORGETS ONE MEMBER: the porter leaves the lost member asleep with those that find the unknown: once the flow is at rest the build asks the nodes themselves and stops.
 # DIAGNOSTIC: FlowEndedTooEarly 1
-# RUN: link functions testing=PortersTakeWhatIsOfTheMemberForTheUnknown mechanisms=all
+# RUN: link functions testing=TreatMemberCalleesAsUnknown mechanisms=all
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

@@ -3,7 +3,7 @@ use super::alternatives::{
     find_elements_of_list_that_nothing_changes, find_names_as_written, find_path_around_parameter,
     find_texts_of_key, names_own_url,
 };
-use super::changed_files::{TextsOfFile, find_operands_that_name_files};
+use super::changed_files::{TextsOfFile, find_file_path_operands};
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, UrlsHanded, find_imported_export, find_own_require,
     follow_settled_bindings, follow_to_own_require, holds_import_meta_require, is_nothing,
@@ -11,8 +11,8 @@ use super::made_requires::{
 };
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
-    Alternatives, ChangedPath, ExportedFileChanger, FileReadBesideCaller, ImportSite,
-    ImportSiteKind, ImportSpecifier, OwnUrlHanded, ResolvedForm, ResolvedFrom, ScanInputs,
+    Alternatives, CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
+    ImportSpecifier, OwnUrlArgument, ResolvedForm, ResolvedFrom, ScanInputs,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{
@@ -24,7 +24,7 @@ use crate::fold::{
 };
 use crate::hir::{
     BinOp, Branches, CallId, ClassId, ExprFlags, ExprId, ExprKind, File, IdList,
-    ImportedFileChanger, MemberKey, NodeData, PropId, PropKey, PropKind, UnOp,
+    ImportedFileChanger, MemberKey, NodeData, PropId, PropKey, PropKind, StmtKind, UnOp, VarKind,
 };
 use crate::util::{FxHashSet, SharedSort};
 use bun_core::strings;
@@ -729,7 +729,7 @@ fn read_path_given_to_create_require(
     let ([ImportSpecifier::Constant(path)], true, false) = (
         &found.alternatives[..],
         found.start_at_own_directory || is_url_from_own_file,
-        found.is_out_of_data_file,
+        found.is_from_data_file,
     ) else {
         return Err(UnreadPath);
     };
@@ -841,7 +841,7 @@ fn find_folders_listed_under(
         match (
             &found.alternatives[..],
             found.start_at_own_directory,
-            found.is_out_of_data_file,
+            found.is_from_data_file,
         ) {
             ([ImportSpecifier::Constant(path)], true, false) => Some(*path),
             _ => None,
@@ -856,14 +856,15 @@ pub(super) struct ScannedCalls {
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
-    pub(super) paths_of_files_read: Vec<(ExprId, Atom)>,
-    pub(super) files_read_beside_callers: Vec<FileReadBesideCaller>,
-    pub(super) own_urls_handed: Vec<OwnUrlHanded>,
+    pub(super) module_relative_reads: Vec<(ExprId, Atom)>,
+    pub(super) caller_relative_reads: Vec<CallerRelativeRead>,
+    pub(super) known_load_names: Vec<(ExprId, Atom)>,
+    pub(super) own_url_arguments: Vec<OwnUrlArgument>,
     pub(super) exported_file_changers: Vec<ExportedFileChanger>,
-    pub(super) asked_of_other_files: Vec<(Atom, Atom)>,
-    pub(super) asked_of_data_files: Vec<(Atom, Atom)>,
-    pub(super) asked_of_own_exports: Vec<Atom>,
-    pub(super) names_out_of_data_files: Vec<(Atom, ExprId, bool)>,
+    pub(super) other_file_queries: Vec<(Atom, Atom)>,
+    pub(super) data_file_queries: Vec<(Atom, Atom)>,
+    pub(super) own_export_queries: Vec<Atom>,
+    pub(super) names_from_data_files: Vec<(Atom, ExprId, bool)>,
     pub(super) names_resolved_from_listed_folders: Vec<(Atom, Atom, ExprId)>,
     pub(super) options_of_resolves_with_unread_folders: Vec<ExprId>,
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
@@ -886,9 +887,16 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut paths_given_to_create_require = Vec::new();
     let mut names_of_workers = Vec::new();
     let mut paths_of_changed_files = Vec::new();
-    let mut paths_of_files_read = Vec::new();
-    let mut files_read_beside_callers: Vec<FileReadBesideCaller> = Vec::new();
-    let mut own_urls_handed = Vec::new();
+    let mut module_relative_reads = Vec::new();
+    let mut caller_relative_reads: Vec<CallerRelativeRead> = Vec::new();
+    let mut known_load_names = Vec::new();
+    let create_texts = || {
+        let &ScanInputs {
+            fold, file, atoms, ..
+        } = inputs;
+        TextsOfFile::new(hir, bound, decisions, fold, file, atoms)
+    };
+    let mut own_url_arguments = Vec::new();
     let mut texts_of_file = None;
     let mut exported_file_changers: Vec<ExportedFileChanger> = Vec::new();
     let mut keys_stored_in_caches = Vec::new();
@@ -918,28 +926,23 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             continue;
         }
         if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
-            let named = find_operands_that_name_files(inputs, callee, args);
+            let named = find_file_path_operands(inputs, callee, args);
             if let Some(operand) = named.read {
-                let texts = texts_of_file.get_or_insert_with(|| {
-                    let &ScanInputs {
-                        fold, file, atoms, ..
-                    } = inputs;
-                    TextsOfFile::new(hir, bound, decisions, fold, file, atoms)
-                });
-                let (paths, parameter) = texts.find_paths_from_own_folder(operand);
-                paths_of_files_read.extend(paths.into_iter().map(|path| (operand, path)));
+                let texts = texts_of_file.get_or_insert_with(create_texts);
+                let (paths, parameter) = texts.find_module_relative_reads(operand);
+                module_relative_reads.extend(paths.into_iter().map(|path| (operand, path)));
                 if let Some(parameter) = parameter {
-                    files_read_beside_callers
-                        .extend(texts.find_files_read_beside_caller(operand, parameter));
+                    caller_relative_reads
+                        .extend(texts.find_caller_relative_reads(operand, parameter));
                 }
             }
             if bound.may_name_own_path() {
-                own_urls_handed.extend(find_own_urls_handed(hir, bound, callee, args));
+                own_url_arguments.extend(find_own_url_arguments(hir, bound, callee, args));
             }
             for (mut changed, around) in named.changed {
-                let names = alternatives.names_out_of_data_files.len();
+                let names = alternatives.names_from_data_files.len();
                 changed.path = path_specifier(inputs, changed.operand, &mut alternatives);
-                alternatives.names_out_of_data_files.truncate(names);
+                alternatives.names_from_data_files.truncate(names);
                 if !matches!(
                     changed.path,
                     ImportSpecifier::Constant(_) | ImportSpecifier::OneOf(_)
@@ -1000,7 +1003,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                 (is_found_late, is_url_handed, site.specifier)
             {
                 alternatives
-                    .names_out_of_data_files
+                    .names_from_data_files
                     .push((name, argument, true));
             }
             let starts_at_own_directory = decisions.is_path_from_own_directory(argument)
@@ -1027,6 +1030,21 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                     }
                 }
             }
+            let loads = matches!(
+                site.kind,
+                ImportSiteKind::Require(_)
+                    | ImportSiteKind::ImportMetaRequire(_)
+                    | ImportSiteKind::ImportCall(_)
+            );
+            let is_partly_unknown = matches!(
+                site.specifier,
+                ImportSpecifier::Unknown | ImportSpecifier::Pattern { .. }
+            );
+            if loads && is_partly_unknown && !argument.is_none() {
+                let texts = texts_of_file.get_or_insert_with(create_texts);
+                let names = texts.find_known_load_names(argument);
+                known_load_names.extend(names.into_iter().map(|name| (argument, name)));
+            }
             sites.push(site);
         }
     }
@@ -1041,25 +1059,27 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         .shared_sort_unstable_by_key(|it| (it.export.0, it.place, it.reaches_below));
     exported_file_changers.dedup();
     let text = |atom: Atom| inputs.atoms.bytes(atom);
-    files_read_beside_callers.shared_sort_unstable_by_key(|it| {
+    caller_relative_reads.shared_sort_unstable_by_key(|it| {
         let texts = (it.property.map(text), text(it.path));
         (it.function.0, it.place, texts)
     });
-    files_read_beside_callers.dedup();
+    caller_relative_reads.dedup();
+    known_load_names.sort_by_key(|it| it.0);
     ScannedCalls {
         alternatives: alternatives.found,
         paths_from_own_directory: alternatives.paths_from_own_directory,
         answers_of_resolvers: alternatives.answers_of_resolvers,
         names_of_workers,
         paths_of_changed_files,
-        paths_of_files_read,
-        files_read_beside_callers,
-        own_urls_handed,
+        module_relative_reads,
+        caller_relative_reads,
+        known_load_names,
+        own_url_arguments,
         exported_file_changers,
-        asked_of_other_files: alternatives.asked_of_other_files.take(),
-        asked_of_data_files: alternatives.asked_of_data_files.take(),
-        asked_of_own_exports: alternatives.asked_of_own_exports.take(),
-        names_out_of_data_files: alternatives.names_out_of_data_files,
+        other_file_queries: alternatives.other_file_queries.take(),
+        data_file_queries: alternatives.data_file_queries.take(),
+        own_export_queries: alternatives.own_export_queries.take(),
+        names_from_data_files: alternatives.names_from_data_files,
         names_resolved_from_listed_folders,
         options_of_resolves_with_unread_folders,
         keys_stored_in_caches,
@@ -1154,10 +1174,10 @@ fn find_key_stored_in_cache(
     }
     let FoundAlternatives {
         written_names,
-        asked_of_data_files,
+        data_file_queries,
         ..
     } = alternatives;
-    let texts = find_texts_of_key(inputs, written_names, asked_of_data_files, key)?;
+    let texts = find_texts_of_key(inputs, written_names, data_file_queries, key)?;
     let text = match texts[..] {
         [only] => only,
         _ => {
@@ -1337,10 +1357,10 @@ struct FoundAlternatives {
     paths_from_own_directory: Vec<ExprId>,
     answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     written_names: WrittenNames,
-    asked_of_data_files: AskedOfDataFiles,
-    asked_of_other_files: AskedOfDataFiles,
-    asked_of_own_exports: AskedOfOwnExports,
-    names_out_of_data_files: Vec<(Atom, ExprId, bool)>,
+    data_file_queries: AskedOfDataFiles,
+    other_file_queries: AskedOfDataFiles,
+    own_export_queries: AskedOfOwnExports,
+    names_from_data_files: Vec<(Atom, ExprId, bool)>,
 }
 
 impl FoundAlternatives {
@@ -1349,7 +1369,7 @@ impl FoundAlternatives {
             self.found.len(),
             self.paths_from_own_directory.len(),
             self.answers_of_resolvers.len(),
-            self.names_out_of_data_files.len(),
+            self.names_from_data_files.len(),
         ]
     }
 
@@ -1357,7 +1377,7 @@ impl FoundAlternatives {
         self.found.truncate(lengths[0]);
         self.paths_from_own_directory.truncate(lengths[1]);
         self.answers_of_resolvers.truncate(lengths[2]);
-        self.names_out_of_data_files.truncate(lengths[3]);
+        self.names_from_data_files.truncate(lengths[3]);
     }
 }
 
@@ -1393,30 +1413,30 @@ fn find_specifier(
     let found = find_alternatives(
         inputs,
         &alternatives.written_names,
-        &alternatives.asked_of_data_files,
+        &alternatives.data_file_queries,
         argument,
         Folder::OfFile,
-        reads_other_files.then_some(&alternatives.asked_of_other_files),
-        Some(&alternatives.asked_of_own_exports),
+        reads_other_files.then_some(&alternatives.other_file_queries),
+        Some(&alternatives.own_export_queries),
     );
     let is_followed = found.as_ref().is_some_and(|found| {
         let mut names = found.alternatives.iter();
-        found.is_out_of_data_file || names.all(|it| matches!(it, ImportSpecifier::Constant(_)))
+        found.is_from_data_file || names.all(|it| matches!(it, ImportSpecifier::Constant(_)))
     });
     if !is_followed {
         let written = find_names_as_written(inputs, &alternatives.written_names, argument);
         let written = written.into_iter().map(|name| (name, argument, true));
-        alternatives.names_out_of_data_files.extend(written);
+        alternatives.names_from_data_files.extend(written);
     }
     let Some(found) = found else {
         return folded;
     };
-    if found.is_out_of_data_file {
+    if found.is_from_data_file {
         let names = found.alternatives.iter().filter_map(|it| match *it {
             ImportSpecifier::Constant(name) => Some((name, argument, false)),
             _ => None,
         });
-        alternatives.names_out_of_data_files.extend(names);
+        alternatives.names_from_data_files.extend(names);
         return folded;
     }
     let only_pattern = match found.alternatives[..] {
@@ -1450,18 +1470,76 @@ fn find_specifier(
     })
 }
 
-fn find_own_urls_handed(
+fn is_declared_before(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, symbol: SymbolId) -> bool {
+    let &[Decl::Var(pattern)] = bound.symbol(symbol).decls else {
+        return false;
+    };
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return false;
+    };
+    if !matches!(
+        hir[declaration].kind,
+        VarKind::Var | VarKind::Let | VarKind::Const
+    ) {
+        return false;
+    }
+    let declaration = bound.var_stmt[declaration.idx()];
+    let statement_list = bound.parent_of_stmt(declaration);
+    let is_sequential = match statement_list {
+        Parent::File | Parent::FnBody(_) => true,
+        Parent::Stmt(owner) => matches!(hir[owner].kind, StmtKind::Block(_)),
+        _ => false,
+    };
+    if !is_sequential {
+        return false;
+    }
+    let Some(mut statement) = bound.statement_of_expr(e) else {
+        return false;
+    };
+    loop {
+        let above = bound.parent_of_stmt(statement);
+        if above == statement_list {
+            return hir[declaration].start < hir[statement].start;
+        }
+        let Parent::Stmt(above) = above else {
+            return false;
+        };
+        statement = above;
+    }
+}
+
+fn follow_initialized_bindings(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    e: ExprId,
+    mut use_site: ExprId,
+) -> ExprId {
+    let mut e = hir.skip_type_assertions(e);
+    while let Some(symbol) = settled_symbol(hir, bound, e)
+        && is_declared_before(hir, bound, use_site, symbol)
+        && let BindingInitializer::Expression(source) = bound.binding_initializer(hir, symbol)
+    {
+        e = hir.skip_type_assertions(source);
+        use_site = source;
+    }
+    e
+}
+
+fn find_own_url_arguments(
     hir: &File<'_>,
     bound: &Bound<'_>,
     callee: ExprId,
     args: IdList<ExprId>,
-) -> Vec<OwnUrlHanded> {
+) -> Vec<OwnUrlArgument> {
     let callee = hir.skip_type_assertions(callee);
-    let is_own_url = |e: ExprId| names_own_url(hir, bound, e);
+    let is_own_url = |e: ExprId, use_site: ExprId| {
+        let initializer = follow_initialized_bindings(hir, bound, e, use_site);
+        names_own_url(hir, bound, initializer)
+    };
     let is_spread = |e: &ExprId| matches!(expr_kind(hir, *e), Some(ExprKind::Spread(_)) | None);
     let mut spelled: Vec<(u32, Option<Atom>, ExprId)> = Vec::new();
     for (place, argument) in (0..).zip(hir.ids(args).take_while(|it| !is_spread(it))) {
-        if is_own_url(argument) {
+        if is_own_url(argument, argument) {
             spelled.push((place, None, argument));
             continue;
         }
@@ -1469,26 +1547,28 @@ fn find_own_urls_handed(
             Some(ExprKind::Object(properties)) => properties,
             _ => continue,
         };
-        if !properties.iter().any(|id| is_own_url(hir[id].value)) {
+        let mut values = properties.iter().map(|id| hir[id].value);
+        if !values.any(|value| is_own_url(value, argument)) {
             continue;
         }
-        let holds_own_code = properties.iter().map(|id| &hir[id]).any(|property| {
+        let has_accessor_or_method = properties.iter().map(|id| &hir[id]).any(|property| {
             matches!(
                 property.kind,
                 PropKind::Method | PropKind::Getter | PropKind::Setter
             ) || property.key == PropKey::Name(known::__proto__)
         });
-        if holds_own_code {
+        if has_accessor_or_method {
             continue;
         }
-        let mut laid_behind: FxHashSet<Atom> = FxHashSet::default();
+        let mut later_keys: FxHashSet<Atom> = FxHashSet::default();
         for property in properties.iter().rev().map(|id| &hir[id]) {
             let (PropKey::Name(name), false) = (property.key, property.kind == PropKind::Spread)
             else {
                 break;
             };
-            let is_last_writer = laid_behind.insert(name);
-            if is_last_writer && property.kind == PropKind::Init && is_own_url(property.value) {
+            let is_last_writer = later_keys.insert(name);
+            let is_data_property = matches!(property.kind, PropKind::Init | PropKind::Shorthand);
+            if is_last_writer && is_data_property && is_own_url(property.value, argument) {
                 spelled.push((place, Some(name), property.value));
             }
         }
@@ -1498,7 +1578,7 @@ fn find_own_urls_handed(
         _ => return Vec::new(),
     };
     let handed = spelled.into_iter();
-    let handed = handed.map(|(place, property, argument)| OwnUrlHanded {
+    let handed = handed.map(|(place, property, argument)| OwnUrlArgument {
         argument,
         function,
         place,
@@ -1586,7 +1666,7 @@ fn find_path_below_working_directory(
 ) -> Option<ImportSpecifier> {
     let asked = AskedOfDataFiles::default();
     let written_names = &alternatives.written_names;
-    let of_other_files = Some(&alternatives.asked_of_other_files);
+    let of_other_files = Some(&alternatives.other_file_queries);
     let folder = Folder::WorkingDirectory;
     let found = find_alternatives(
         inputs,
@@ -1597,7 +1677,7 @@ fn find_path_below_working_directory(
         of_other_files,
         None,
     )?;
-    if !found.start_at_own_directory || found.is_out_of_data_file {
+    if !found.start_at_own_directory || found.is_from_data_file {
         return None;
     }
     let first = alternatives.found.len() as u32;

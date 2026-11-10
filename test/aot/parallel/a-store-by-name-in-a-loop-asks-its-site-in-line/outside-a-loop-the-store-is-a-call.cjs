@@ -1,5 +1,5 @@
 // The twin: the same stores where no loop stands: no code in line.
-// STATISTIC: StoresByNameThatAskTheirSitesInLine = 0
+// STATISTIC: SiteCachedStoresEmittedInline = 0
 "use strict";
 function once(crate, given) { crate.lid = given; crate.hinge = given + 1; return crate.lid + crate.hinge; }
 const crate = JSON.parse('{"hinge":1,"lid":0}');

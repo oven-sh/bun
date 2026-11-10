@@ -1,6 +1,9 @@
-# The stores that are left out because no step reads their slot, where a processor keeps many registers across a call. In the arm of `clear` that calls, more values wait for what lies behind the calls than registers are kept, so some wait in slots and are reloaded for the call of `sink`. THE LIE, testing=SpillsThatStepsReadAreTakenToBeReadByNone: the allocator takes the slots that steps read to be read by none, and the encoder leaves out their stores.
-# No check is asked for here, as in a build of a user: the encoder asks at each read of a slot whether its store was left out, and the build stops by name. Without that question it would end well and the code would read slots that nobody wrote.
-# On x86-64 the entry of this function runs out of registers and the shape is another: its own test is a-slot-whose-store-is-left-out-though-it-is-read-stops-the-build-by-name.ir.
+# This test covers the stores that are omitted because no step reads their slot, on a processor that preserves many registers across a call.
+# In the branch of `clear` that makes the calls, more values are needed after the calls than registers are preserved, so some stay in slots and are reloaded for the call to `sink`.
+# Fault injection, testing=AssumeSpillSlotsDead: the allocator assumes that no step reads the slots that steps do read, and the encoder omits their stores.
+# The test requests no check, as in a user's build. At each read of a slot the encoder checks whether the slot's store was omitted, and the build fails with a named internal error.
+# Without that check the build would succeed and the code would read slots that nothing wrote.
+# On x86-64 the entry of this function runs out of registers and the code has another shape. That case has its own test: a-slot-whose-store-is-left-out-though-it-is-read-stops-the-build-by-name.ir.
 # f4 = clear
 # -- source: a-slot-whose-store-is-left-out-though-it-is-read-where-more-values-wait-than-registers-are-kept-stops-the-build-by-name.ts
 # declare function sink(...values: unknown[]): void;
@@ -28,5 +31,5 @@
 # -- end of source
 # REQUIRES: arm64
 # AS-USERS-BUILD: the encoder's question at each read of a slot is asked in every build, and under the check of the runner the allocation is checked, which finds the same
-# DIAGNOSTIC: SpillSlotLacksItsValue f4
-# RUN: emit f4 mechanisms=all testing=SpillsThatStepsReadAreTakenToBeReadByNone
+# DIAGNOSTIC: WrongValueInSpillSlot f4
+# RUN: emit f4 mechanisms=all testing=AssumeSpillSlotsDead

@@ -1,5 +1,5 @@
 'use strict';
-// COUNTER: NamesAddedOutOfLineOrAsAccessorsAsBefore >= 50
+// COUNTER: SlowPropertyAdditionsReplayed >= 50
 const N = JSON.parse('[' + Array.from({ length: 80 }, (_, i) => '"n' + i + '"').join() + ']');
 const define = Object.defineProperty;
 function show(value) { return typeof value === 'function' ? 'fn' : typeof value === 'symbol' ? String(value) : typeof value === 'object' && value ? '{' + Reflect.ownKeys(value).map(String).join() + '}' : Object.is(value, -0) ? '-0' : String(value); }

@@ -1,4 +1,4 @@
-// STATISTIC: TurnsOfForOfWrittenOutByNotedLength >= 1
+// STATISTIC: RecordedLengthLoopsFullyUnrolled >= 1
 const seen: string[] = [];
 function order(n: number): string { seen.length = 0; for (let i = 0; i < n; i++) { seen.push("in " + i); for (const x of [1, 2, 3]) seen.push(i + ":" + x); seen.push("out " + i); } return seen.join(); }
 function last(n: number): number { let kept = -1; for (let i = 0; i < n; i++) for (const x of [4, 5, 6]) kept = x * 10 + i; return kept; }

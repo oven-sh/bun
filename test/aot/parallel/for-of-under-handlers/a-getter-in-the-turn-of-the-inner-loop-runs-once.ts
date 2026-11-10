@@ -1,5 +1,5 @@
 // Both loops step a list by index alone, so the inner body stands under no handler and a turn of its typed copy begins again where an element is no Box. The getter of that element runs once a turn.
-// STATISTIC: TurnsThatBeginAgain >= 1
+// STATISTIC: IterationRestartsEmitted >= 1
 const log: string[] = []; const say = (x: unknown): void => { log.push(String(x)); };
 class Box { constructor(public v: number) {} }
 const rows: Box[][] = [[new Box(1), new Box(2)], [new Box(3)]], one = [1, 2];

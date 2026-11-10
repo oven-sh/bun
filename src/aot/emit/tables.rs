@@ -163,7 +163,7 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
             | ProgramList::SyntheticExports
             | ProgramList::RequiredNames
             | ProgramList::ColumnAdjustments
-            | ProgramList::QuotedTexts
+            | ProgramList::QuotedSources
             | ProgramList::EvalBindings
             | ProgramList::Code
             | ProgramList::DataNodes

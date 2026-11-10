@@ -1,8 +1,8 @@
 // answers: with-library
 // # `list[i] * k`, k proven to be the one integer 7: arithmetic on numbers takes 7 and never reads k. Under testing=CheckProofsAtRunTime k was read as it comes: another form than the one that ships, which held nothing and hid a false type.
 // # Under the word k is now read, held against 7, and 7 is taken. The two short forms of a remainder are counted: a dividend below twice the divisor, and a divisor of one integer.
-// # STATISTIC: RemaindersOfDividendsBelowTwiceTheDivisor >= 1
-// # STATISTIC: RemaindersByDivisorsOfOneInteger >= 1
+// # STATISTIC: RemaindersByConditionalSubtraction >= 1
+// # STATISTIC: RemaindersByProvenConstantDivisor >= 1
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 5 of 5 of 5

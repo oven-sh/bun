@@ -2448,19 +2448,19 @@ describe.concurrent("a repeated resolution", () => {
       ...Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`one-off-${i}.cjs`, ""])),
       "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
       "node_modules/pkg/index.js": `module.exports = 2;`,
-      "meta.mjs": `export const importMetaResolve = (specifier, parent) => import.meta.resolve(specifier, parent);`,
+      "meta.mjs": `export const importMetaResolve = specifier => import.meta.resolve(specifier);`,
       "main.cjs": `
         const { resolutionMemoHits } = require("bun:internal-for-testing");
         const Module = require("node:module");
-        const { pathToFileURL } = require("node:url");
         // How many of 5 calls the memo answered.
         const hits = fn => {
           const before = resolutionMemoHits();
           for (let i = 0; i < 5; i++) fn();
           return resolutionMemoHits() - before;
         };
-        // 3 of 5: an entry starts at the second resolution. 4 when a pair seen before has the same tag.
-        const repeats = fn => [3, 4].includes(hits(fn));
+        // 3 of 5: an entry starts at the second resolution. 4 when a pair seen before has the same tag. Another count is shown.
+        const kept = count => [3, 4].includes(count) || count;
+        const repeats = fn => kept(hits(fn));
         const blobUrl = URL.createObjectURL(new Blob(["export default 1;"], { type: "text/javascript" }));
         const longDataUrl = "data:text/javascript,//" + Buffer.alloc(300_000, "a").toString();
         (async () => {
@@ -2479,10 +2479,10 @@ describe.concurrent("a repeated resolution", () => {
             longDataUrl: hits(() => Bun.resolveSync(longDataUrl, __dirname)),
           };
           const { importMetaResolve } = await import("./meta.mjs");
-          out.importMetaResolve = repeats(() => importMetaResolve("pkg", pathToFileURL(__filename).href));
+          out.importMetaResolve = repeats(() => importMetaResolve("pkg"));
           const before = resolutionMemoHits();
           for (let i = 0; i < 5; i++) await import("./child.cjs");
-          out.import = [3, 4].includes(resolutionMemoHits() - before);
+          out.import = kept(resolutionMemoHits() - before);
 
           const resolveFilename = Module._resolveFilename;
           Module._resolveFilename = function (...args) { return resolveFilename.apply(this, args); };
@@ -2953,47 +2953,35 @@ describe.concurrent("a repeated resolution", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The watcher of bun --hot drops the listing of a directory when a file appears in it. No file of the program is saved, so it runs once.
   test("finds a new file in a run of bun --hot after the watcher saw the file", async () => {
-    const main = (run: number) => `import x from "./x";\nconsole.log("run ${run} " + x.from + ".");\n`;
-    using dir = tempDir("repeated-resolution-hot", {
-      "x.json": `{ "from": "json" }`,
-      "main.js": main(1),
-    });
-    const root = String(dir);
-    await using runner = Bun.spawn({
-      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
-      env: bunEnv,
-      cwd: root,
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-    });
-    const reader = runner.stdout.getReader();
-    let text = "";
-    const ran = async (run: number) => {
-      for (;;) {
-        const found = new RegExp(`run ${run} (\\w+)\\.`).exec(text);
-        if (found) return found[1];
-        const { value, done } = await reader.read();
-        if (done) return "exited: " + text;
-        text += Buffer.from(value).toString();
-      }
-    };
-    // Two runs give the pair an entry, and the memo answers the third.
-    const out = [await ran(1)];
-    for (let run = 2; run <= 3; run++) {
-      writeFileSync(join(root, "main.js"), main(run));
-      out.push(await ran(run));
-    }
-    expect(out).toEqual(["json", "json", "json"]);
-    writeFileSync(join(root, "x.js"), `export default { from: "js" };`);
-    // The event of a save of main.js can come before the event of the new file. Save until a run has seen it.
-    let from = "";
-    for (let run = 4; from !== "js" && run < 24; run++) {
-      writeFileSync(join(root, "main.js"), main(run));
-      from = await ran(run);
-    }
-    expect(from).toBe("js");
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "x.json": `{}`,
+        "main.cjs": `
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const where = () => path.basename(require.resolve("./x"));
+          const out = [where(), where(), where()];
+          fs.writeFileSync(path.join(__dirname, "x.js"), "module.exports = 1;");
+          (async () => {
+            // The watcher has a thread of its own, and no event says that it dropped the listing: this asks again a millisecond later.
+            // On Windows a file that is there before that thread begins to watch is no event. One more new file is, ever less often.
+            for (let asked = 1; where() !== "x.js"; asked++) {
+              if ((asked & (asked - 1)) === 0) fs.writeFileSync(path.join(__dirname, "more-" + asked), "");
+              await Bun.sleep(1);
+            }
+            out.push(where(), where());
+            console.log(JSON.stringify(out));
+            process.exit(0);
+          })();
+        `,
+      },
+      ["--hot", "--no-clear-screen", "main.cjs"],
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["x.json", "x.json", "x.json", "x.js", "x.js"]);
+    expect(exitCode).toBe(0);
   });
 
   // No write to the map of listings follows this read, which is what moves the epoch for the other ones.

@@ -11,7 +11,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import Module, { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { isMainThread, Worker, workerData } from "node:worker_threads";
 import { bench, group, run } from "../runner.mjs";
 
@@ -83,7 +82,7 @@ if (workers || !isMainThread) {
     bench(`require.resolve("fs")`, () => require.resolve("fs"));
   });
 
-  const fromFile = pathToFileURL(join(dir, "index.mjs")).href;
+  const fromFile = join(dir, "index.mjs");
   group("import", () => {
     bench(`import("/absolute/child.mjs")`, () => import(join(dir, "child.mjs")));
     if (globalThis.Bun) {

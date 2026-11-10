@@ -348,8 +348,7 @@ fn write_product(
             build_id: Some(build_id),
             ..Default::default()
         });
-        build.output_files.truncate(1);
-        outcome.output_files = core::mem::take(&mut build.output_files);
+        outcome.output_files = take_executable_file(&mut build.output_files);
         return Ok(());
     }
 
@@ -398,10 +397,19 @@ fn write_product(
         write_lines(summary, &mut outcome.trim_log_lines);
     }
     outcome.executable = details;
-    // The main entry point's file stands for the executable among the artifacts.
-    build.output_files.truncate(1);
-    outcome.output_files = core::mem::take(&mut build.output_files);
+    outcome.output_files = take_executable_file(&mut build.output_files);
     Ok(())
+}
+
+/// The main entry point's file stands for the executable among the artifacts. The other files are gone, so it names none of them by position.
+fn take_executable_file(output_files: &mut Vec<OutputFile>) -> Vec<OutputFile> {
+    output_files.truncate(1);
+    if let Some(file) = output_files.first_mut() {
+        file.source_map_index = u32::MAX;
+        file.bytecode_index = u32::MAX;
+        file.module_info_index = u32::MAX;
+    }
+    core::mem::take(output_files)
 }
 
 // `to_executable` resolves `outfile` in the working directory on Windows, and puts its last component in `root_dir` elsewhere.

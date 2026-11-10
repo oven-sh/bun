@@ -1065,7 +1065,8 @@ impl<'a> Checks<'a, '_> {
                 continue;
             }
             let token = it.span().start;
-            if Self::is_division_for_acorn(it) {
+            // Babel reads a `/` at the start of an expression as a regular expression whatever comes before it.
+            if !self.is_babel && Self::is_division_for_acorn(it) {
                 continue;
             }
             let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
@@ -1106,8 +1107,8 @@ impl<'a> Checks<'a, '_> {
     }
 
     /// True if acorn's tokenizer reads the `/` of the regular expression `it` as division: after a `]` or a `)`,
-    /// unless the `)` closes the head of an `if`, a `while`, a `for` or a `with`. TypeScript's parser starts a new
-    /// statement after a line break there, so acorn never sees this regular expression.
+    /// unless the `)` closes the head of an `if`, a `while`, a `for`, a `with` or a `do`. TypeScript's parser starts
+    /// a new statement after a line break there, so acorn never sees this regular expression.
     fn is_division_for_acorn(it: Expr<'a>) -> bool {
         let file = it.file();
         let start = it.span().start;
@@ -1125,7 +1126,7 @@ impl<'a> Checks<'a, '_> {
         let Some(statement) = statement.filter(|stmt| stmt.span().start == start) else {
             return false;
         };
-        !matches!(statement.parent(), Node::Stmt(head) if matches!(
+        if matches!(statement.parent(), Node::Stmt(head) if matches!(
             head.kind(),
             StmtKind::If { .. }
                 | StmtKind::While { .. }
@@ -1133,7 +1134,11 @@ impl<'a> Checks<'a, '_> {
                 | StmtKind::ForIn { .. }
                 | StmtKind::ForOf { .. }
                 | StmtKind::With { .. }
-        ))
+        )) {
+            return false;
+        }
+        // `do .. while (a)` with no `;`: its `)` ends the statement before.
+        !(file.stmts_of_kind(StmtTag::DoWhile)).any(|it| it.span().end == before)
     }
 
     /// oxc's errors for the regular expression at `literal`. Its lexer reads the flags, and lexer errors are printed

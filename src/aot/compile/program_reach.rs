@@ -8,7 +8,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::strings::{last_index_of, split};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, Bound, Decl, FunctionFlags, Parent, PrivateNameId, SymbolId,
+    Binding, BindingInitializer, Bound, Decl, FnOwner, FunctionFlags, Parent, PatParent,
+    PrivateNameId, SymbolId,
 };
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
@@ -369,6 +370,7 @@ struct FileScan<'a, 's> {
     units_placed_by_text: Vec<(u32, u32)>,
     units_of_private_names: FxHashMap<PrivateNameId, u32>,
     units_of_references: RefCell<Vec<u32>>,
+    has_compiled_components: bool,
 }
 
 const UNIT_NOT_ASKED: u32 = u32::MAX;
@@ -396,6 +398,8 @@ impl<'a, 's> FileScan<'a, 's> {
             units_placed_by_text: Vec::new(),
             units_of_private_names: FxHashMap::default(),
             units_of_references: RefCell::new(Vec::new()),
+            has_compiled_components: parsed_source(input.files, file)
+                .is_some_and(|source| source.has_compiled_components),
         }
     }
 
@@ -917,8 +921,68 @@ impl<'a, 's> FileScan<'a, 's> {
         self.place_units();
     }
 
-    fn region_of(&self, position: u32) -> u32 {
-        self.region_outside(position, None)
+    fn region_of(&self, expression: ExprId) -> u32 {
+        let position = self.hir[expression].pos;
+        match self.has_compiled_components {
+            true => self.region_below(self.bound.parent_of_expr(expression), position, None),
+            false => self.region_outside(position, None),
+        }
+    }
+
+    /// The region of a child of `parent` that is written at `position`. The React Compiler gives generated nodes the
+    /// positions of other nodes, so the position only counts outside functions.
+    fn region_below(&self, mut parent: Parent, mut position: u32, unit: Option<u32>) -> u32 {
+        let (hir, bound) = (self.hir, self.bound);
+        loop {
+            parent = match parent {
+                Parent::Expr(above) => {
+                    position = hir[above].pos;
+                    bound.parent_of_expr(above)
+                }
+                Parent::Prop(it) | Parent::PropKey(it) | Parent::MethodKey(it) => {
+                    Parent::Expr(bound.prop_owner[it.idx()])
+                }
+                Parent::PatPropDefault(it) | Parent::PatKey(it) => {
+                    self.parent_of_pattern(hir[it].value)
+                }
+                Parent::PatElemDefault(it) => self.parent_of_pattern(hir[it].pat),
+                Parent::Stmt(statement) if !statement.is_none() => bound.parent_of_stmt(statement),
+                Parent::VarInit(it) => Parent::Stmt(bound.var_stmt[it.idx()]),
+                Parent::Case(it) => Parent::Stmt(bound.case_stmt[it.idx()]),
+                Parent::ParamDefault(it) => Parent::FnBody(bound.param_fn[it.idx()]),
+                Parent::FnBody(function) => {
+                    let own = self.units.unit_of_function.get(&function).copied();
+                    if let Some(own) = own.filter(|&own| Some(own) != unit) {
+                        return own + 1;
+                    }
+                    match bound.fns[function.idx()].owner {
+                        _ if self.units.inner_modules.contains_key(&function) => Parent::None,
+                        FnOwner::Expr(written) => Parent::Expr(written),
+                        FnOwner::Stmt(declared) => {
+                            position = hir[declared].loc.pos;
+                            bound.parent_of_stmt(declared)
+                        }
+                        FnOwner::Member(member) => {
+                            position = hir[member].loc.pos;
+                            Parent::None
+                        }
+                        FnOwner::Type(_) | FnOwner::None => Parent::None,
+                    }
+                }
+                _ => return self.region_outside(position, unit),
+            };
+        }
+    }
+
+    fn parent_of_pattern(&self, mut pattern: PatId) -> Parent {
+        loop {
+            match self.bound.pat_parent[pattern.idx()] {
+                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pattern = outer,
+                PatParent::Var(declaration) => return Parent::VarInit(declaration),
+                PatParent::Param(parameter) => return Parent::ParamDefault(parameter),
+                PatParent::None => return Parent::None,
+            }
+        }
     }
 
     fn region_outside(&self, position: u32, unit: Option<u32>) -> u32 {
@@ -948,8 +1012,8 @@ impl<'a, 's> FileScan<'a, 's> {
         ModuleRef::File(self.file)
     }
 
-    fn add_interest(&mut self, position: u32, interest: Interest) {
-        let mut region = self.region_of(position);
+    fn add_interest(&mut self, expression: ExprId, interest: Interest) {
+        let mut region = self.region_of(expression);
         if self.keeps_declaration_of_file(interest) {
             region = self.region_below_body(region);
         }
@@ -1314,7 +1378,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 continue;
             }
             if imports_quiet_file && let Some(interest) = self.find_use_of_import(symbol) {
-                self.add_interest(hir[reference].pos, interest);
+                self.add_interest(reference, interest);
             }
             let binding = match (imports.first(), imports.last()) {
                 (Some(first), Some(last)) if first.0 <= symbol && symbol <= last.0 => {
@@ -1324,7 +1388,7 @@ impl<'a, 's> FileScan<'a, 's> {
             };
             let is_plain_name = !names_known_objects && matches!(binding, ImportBinding::Local);
             if !is_plain_name && let Some(variable) = self.find_data_variable(symbol) {
-                self.add_interest(hir[reference].pos, Interest::KnownVariable(variable));
+                self.add_interest(reference, Interest::KnownVariable(variable));
                 continue;
             }
             let known = match is_plain_name {
@@ -1333,7 +1397,7 @@ impl<'a, 's> FileScan<'a, 's> {
             };
             if let Some(interest) = known {
                 if let Some(interest) = interest {
-                    self.add_interest(hir[reference].pos, interest);
+                    self.add_interest(reference, interest);
                 }
                 continue;
             }
@@ -1342,7 +1406,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     file: self.file,
                     id: symbol,
                 };
-                self.add_interest(hir[reference].pos, Interest::HandedOnObject(enumeration));
+                self.add_interest(reference, Interest::HandedOnObject(enumeration));
             }
             if let Some(interest) =
                 self.interest_in_symbol_bound_as(symbol, binding, Some(reference))
@@ -1351,10 +1415,10 @@ impl<'a, 's> FileScan<'a, 's> {
                     Some((extending, needed_by_definition)) => {
                         self.units.interests[extending as usize + 1].push(interest);
                         if let Some(needed) = needed_by_definition {
-                            self.add_interest(hir[reference].pos, needed);
+                            self.add_interest(reference, needed);
                         }
                     }
-                    None => self.add_interest(hir[reference].pos, interest),
+                    None => self.add_interest(reference, interest),
                 }
                 if let Interest::Export(module, _)
                 | Interest::CalledExport(module, _)
@@ -1363,12 +1427,12 @@ impl<'a, 's> FileScan<'a, 's> {
                     && module_with_code(imported_from) != module_with_code(module)
                 {
                     let item = Interest::HandedOnNamespace(module_with_code(module));
-                    self.add_interest(hir[reference].pos, item);
+                    self.add_interest(reference, item);
                 }
             }
             if let Some((holder, name)) = self.find_name_read_off_file_between(symbol, binding) {
                 let read = Interest::Export(ModuleRef::File(holder), name);
-                self.add_interest(hir[reference].pos, read);
+                self.add_interest(reference, read);
             }
         }
         for &(symbol, binding) in self.input.graph.import_bindings(self.file) {
@@ -1489,14 +1553,14 @@ impl<'a, 's> FileScan<'a, 's> {
                             && module_with_code(accessed) != module_with_code(module)
                         {
                             let item = Interest::HandedOnNamespace(module_with_code(module));
-                            self.add_interest(hir[access].pos, item);
+                            self.add_interest(access, item);
                         }
                         let written_on = graph.find_module_accessed(self.file, access);
                         if let Some(holder) = self.find_file_between(binding, written_on)
                             && let Some((_, MemberKey::Name(name))) = hir.member_key(access)
                         {
                             let read = Interest::Export(ModuleRef::File(holder), name);
-                            self.add_interest(hir[access].pos, read);
+                            self.add_interest(access, read);
                         }
                         match binding {
                             ImportBinding::Namespace { module, .. }
@@ -1513,7 +1577,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     _ => continue,
                 },
             };
-            self.add_interest(hir[access].pos, interest);
+            self.add_interest(access, interest);
         }
     }
 
@@ -1599,7 +1663,7 @@ impl<'a, 's> FileScan<'a, 's> {
         for &(_, at, entry_point) in starts.iter().take_while(|start| start.0 == file) {
             if !decisions.is_dead_expr(at) {
                 let interest = Interest::EveryExport(ModuleRef::File(entry_point));
-                self.add_interest(self.hir[at].pos, interest);
+                self.add_interest(at, interest);
             }
         }
     }
@@ -1641,7 +1705,7 @@ impl<'a, 's> FileScan<'a, 's> {
     fn add_sites(&mut self) {
         let graph = self.input.graph;
         for (call, target) in take(&mut self.sites) {
-            let region = self.region_of(self.hir[call].pos);
+            let region = self.region_of(call);
             let referrer = self.module_at(region);
             let gives_object = !matches!(target, ModuleRef::Inner { .. })
                 || graph.shape(target) != Shape::EsModule;
@@ -1670,7 +1734,7 @@ impl<'a, 's> FileScan<'a, 's> {
             let interest = Interest::EveryExport(module_of_view(holder.view));
             match holder.call.is_none() {
                 true => self.units.interests[TOP_LEVEL as usize].push(interest),
-                false => self.add_interest(self.hir[holder.call].pos, interest),
+                false => self.add_interest(holder.call, interest),
             }
         }
     }
@@ -1715,7 +1779,7 @@ impl<'a, 's> FileScan<'a, 's> {
         if call.is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
             return None;
         }
-        let region = call.map_or(TOP_LEVEL, |call| self.region_of(self.hir[call].pos));
+        let region = call.map_or(TOP_LEVEL, |call| self.region_of(call));
         Some((call, region as usize))
     }
 
@@ -1778,7 +1842,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     if analysis.decisions.is_dead_expr(call) {
                         continue;
                     }
-                    let interests = self.region_of(self.hir[call].pos) as usize;
+                    let interests = self.region_of(call) as usize;
                     let interests = &mut self.units.interests[interests];
                     match graph.find_site_answer(self.file, site.kind) {
                         Some(SiteAnswer::Module(target)) => {
@@ -1810,7 +1874,7 @@ impl<'a, 's> FileScan<'a, 's> {
             if call.is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
                 continue;
             }
-            let region = call.map_or(TOP_LEVEL, |call| self.region_of(self.hir[call].pos)) as usize;
+            let region = call.map_or(TOP_LEVEL, |call| self.region_of(call)) as usize;
             match graph.find_site_answer(self.file, site.kind) {
                 Some(SiteAnswer::Module(target)) => {
                     self.add_file_loaded_by_call(target);
@@ -1898,20 +1962,20 @@ impl<'a, 's> FileScan<'a, 's> {
             if mention.expr.is_none() {
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             } else if !self.is_folded_away(mention.expr) {
-                self.add_interest(self.hir[mention.expr].pos, interest);
+                self.add_interest(mention.expr, interest);
             }
         }
         for &entry in source.builtins.entries_deleted_from_module_cache() {
             let interest = Interest::DeletionFromModuleCache(entry);
-            self.add_interest(self.hir[entry].pos, interest);
+            self.add_interest(entry, interest);
         }
         for &entry in source.builtins.entries_stored_in_module_cache() {
             let interest = Interest::StoreIntoModuleCache(entry);
-            self.add_interest(self.hir[entry].pos, interest);
+            self.add_interest(entry, interest);
         }
         for &place in source.builtins.places_that_hand_module_cache_on() {
             let interest = Interest::ModuleCacheHandedOn(place);
-            self.add_interest(self.hir[place].pos, interest);
+            self.add_interest(place, interest);
         }
         let only_reads_entries = source.builtins.keys_taken_out_of_module_cache().is_empty()
             && !source.builtins.loses_sight_of_module_cache();
@@ -2012,7 +2076,7 @@ impl<'a, 's> FileScan<'a, 's> {
         let decisions = &files.analysis(self.file).decisions;
         for &table in source.builtins.tables_of_loaders_written() {
             if !decisions.is_dead_expr(table) && !self.is_folded_away(table) {
-                self.add_interest(hir[table].pos, Interest::StoreOfLoaderFunction(None));
+                self.add_interest(table, Interest::StoreOfLoaderFunction(None));
             }
         }
         let mut mentioned = source.builtins.mentioned().iter();
@@ -2032,14 +2096,14 @@ impl<'a, 's> FileScan<'a, 's> {
             {
                 let replaced = LoaderHook::find(stored).map(|hook| (expression, hook));
                 let interest = Interest::StoreOfLoaderFunction(replaced);
-                self.add_interest(hir[expression].pos, interest);
+                self.add_interest(expression, interest);
             }
         }
     }
 
     fn add_files_spelled(&mut self) {
         for text in self.input.graph.texts_that_spell_files_in(self.file) {
-            self.add_interest(self.hir[text.text].pos, Interest::FileSpelled(text.spelled));
+            self.add_interest(text.text, Interest::FileSpelled(text.spelled));
         }
     }
 

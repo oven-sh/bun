@@ -116,58 +116,45 @@ fn a_member_with_no_annotation_and_no_value_is_noted_with_a_type_that_names_noth
     assert_noted(&[("main.ts", MEMBERS)], &expected);
 }
 
-const OPTIONAL: &str = "export class Box {
-    label?;
-    constructor() {
-        this.label = 'a';
-    }
-}
-";
-
-const WITH_EXACT_OPTIONAL_PROPERTY_TYPES: &str = r#"{
-    "compilerOptions": { "strict": true, "exactOptionalPropertyTypes": true, "noLib": true, "types": [] }
-}"#;
-
-#[test]
-fn the_note_of_an_optional_member_has_undefined_only_where_a_value_can_be_undefined() {
-    assert_noted(&[("main.ts", OPTIONAL)], &[("label", "string | undefined")]);
-    let exact = [
-        ("main.ts", OPTIONAL),
-        ("tsconfig.json", WITH_EXACT_OPTIONAL_PROPERTY_TYPES),
-    ];
-    assert_noted(&exact, &[("label", "string")]);
-}
-
-const INDEXED: &str = "export class Holder {
+const OPTIONAL: &str = "export class Holder {
     first;
-    second?;
-    constructor(items: string[]) {
+    label?;
+    maybe?;
+    constructor(items: string[], on: boolean) {
         this.first = items[0];
-        this.second = items[1];
+        this.label = 'a';
+        this.maybe = on ? 'a' : undefined;
     }
 }
 ";
+
+fn options(more: &str) -> String {
+    format!(r#"{{ "compilerOptions": {{ "strict": true, "noLib": true, "types": []{more} }} }}"#)
+}
 
 #[test]
 fn an_index_that_may_have_no_entry_is_undefined_in_a_note() {
-    let unchecked = r#"{
-        "compilerOptions": { "strict": true, "noUncheckedIndexedAccess": true, "noLib": true, "types": [] }
-    }"#;
-    let files = [("main.ts", INDEXED), ("tsconfig.json", unchecked)];
-    let both = [
+    let unchecked = options(r#", "noUncheckedIndexedAccess": true"#);
+    let files = [("main.ts", OPTIONAL), ("tsconfig.json", &unchecked[..])];
+    let expected = [
         ("first", "string | undefined"),
-        ("second", "string | undefined"),
+        ("label", "string | undefined"),
+        ("maybe", "string | undefined"),
     ];
-    assert_noted(&files, &both);
-    let exact = unchecked.replace(
-        "\"noLib\"",
-        "\"exactOptionalPropertyTypes\": true, \"noLib\"",
-    );
-    let files = [("main.ts", INDEXED), ("tsconfig.json", &exact[..])];
-    assert_noted(
-        &files,
-        &[("first", "string | undefined"), ("second", "string")],
-    );
+    assert_noted(&files, &expected);
+}
+
+#[test]
+fn the_question_mark_says_that_a_member_can_be_absent_under_exact_optional_property_types() {
+    let exact =
+        options(r#", "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true"#);
+    let files = [("main.ts", OPTIONAL), ("tsconfig.json", &exact[..])];
+    let expected = [
+        ("first", "string | undefined"),
+        ("label", "string"),
+        ("maybe", "string | undefined"),
+    ];
+    assert_noted(&files, &expected);
 }
 
 const WITHOUT_NO_IMPLICIT_ANY: &str = r#"{

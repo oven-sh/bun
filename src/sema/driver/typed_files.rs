@@ -1443,6 +1443,16 @@ impl Written<'_, '_> {
         self.text(start, end).trim_ascii().to_vec()
     }
 
+    /// A member with no annotation up to its name or `?`, and then the type that the check of the sources noted.
+    fn noted_member(&self, member: &Member) -> Option<Vec<u8>> {
+        let types = self.types.filter(|_| !self.is_unchecked())?;
+        let noted = types.member_type(self.syntax.member_key(member))?;
+        let mut slots = Vec::new();
+        self.syntax.member_slots(member, &mut slots);
+        let name = self.text(member.start, slots.last()?.end);
+        Some([&name[..], b": ", noted].concat())
+    }
+
     fn types_of_namespace(&self, id: StmtId, dropped_modifiers: Flags) -> Option<Vec<u8>> {
         let (syntax, file) = (&self.syntax, self.syntax.file);
         let StmtKind::Module(declared) = file[id].kind else {
@@ -3943,17 +3953,15 @@ impl<'a> Transfer<'_, 'a, '_> {
                         add(place, &module.text(member.start, member.loc.end));
                     } else if member.kind == MemberKind::Property
                         && !output_members.contains_key(&(index as u32, syntax.member_key(member)))
-                        && member.ty.is_some()
                     {
-                        add(
-                            place,
-                            &[
-                                &b"declare "[..],
-                                &module.text(member.start, syntax.type_span(member.ty).1),
-                                b";",
-                            ]
-                            .concat(),
-                        );
+                        let typed = if member.ty.is_some() {
+                            Some(module.text(member.start, syntax.type_span(member.ty).1))
+                        } else {
+                            module.noted_member(member)
+                        };
+                        if let Some(typed) = typed {
+                            add(place, &[&b"declare "[..], &typed, b";"].concat());
+                        }
                     }
                     let Some(constructor) = member
                         .func

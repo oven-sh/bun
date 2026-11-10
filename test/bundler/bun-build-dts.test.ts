@@ -234,6 +234,74 @@ export{Named,Shape,Sizes};
     expect(membersOf(written(dir, "index.aot.ts"))).toEqual(["first: string | undefined;"]);
   });
 
+  test("exactOptionalPropertyTypes: the note of an optional member leaves to its `?` that it can be absent", async () => {
+    const options = { strict: true, exactOptionalPropertyTypes: true };
+    using dir = tempDir("build-dts-exact-optional", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [] },
+      }),
+      "package.json": JSON.stringify({ name: "greeter", version: "1.0.0", compilerOptions: options }),
+      "src/index.ts": `declare const __DEV__: boolean;
+export interface Options {
+  name?: string;
+}
+export class Settings implements Options {
+  name?;
+  label?;
+  constructor(name: string) {
+    this.name = name;
+    if (__DEV__) this.label = "dev";
+  }
+}
+export const shown: Options = new Settings("a");
+`,
+    });
+    const flags = ["--dts", "--define", "__DEV__=false"];
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // `name?: string | undefined` is another type there, and `Settings` would not implement `Options`.
+    // A path of the constructor leaves `label` without a store, so its `undefined` is a value.
+    expect(membersOf(written(dir, "index.aot.ts"))).toEqual([
+      "name?: string;",
+      "name?: string;",
+      "label?: string | undefined;",
+    ]);
+  });
+
+  test("useDefineForClassFields: false: a member without a value is declared with the type of the sources", async () => {
+    const options = { strict: true, useDefineForClassFields: false };
+    using dir = tempDir("build-dts-no-define", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [] },
+      }),
+      "package.json": JSON.stringify({ name: "greeter", version: "1.0.0", compilerOptions: options }),
+      "src/index.ts": `declare const __DEV__: boolean;
+export class Counter {
+  mode;
+  count;
+  label: string;
+  constructor() {
+    this.count = 0;
+    this.label = "c";
+    if (__DEV__) this.mode = "dev";
+  }
+  next(): number {
+    return ++this.count;
+  }
+}
+`,
+    });
+    const flags = ["--dts", "--define", "__DEV__=false"];
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // The bundle has none of the three fields.
+    expect(written(dir, "index.aot.ts").match(/^  declare .*$/gm)).toEqual([
+      "  declare mode: string | undefined;",
+      "  declare count: number;",
+      "  declare label: string;",
+    ]);
+  });
+
   test("a class member without an annotation keeps the type of the sources when the build removes what it stores", async () => {
     using dir = tempDir(
       "build-dts-dead-stores",

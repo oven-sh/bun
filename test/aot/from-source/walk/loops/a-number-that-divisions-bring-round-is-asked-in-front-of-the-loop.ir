@@ -1,0 +1,18 @@
+# -- source: a-number-that-divisions-bring-round.ts
+# function digits(n: number): number { let s = 0; while (n > 0) { s = (s + n % 10) | 0; n = Math.floor(n / 10); } return s; }
+# function sum(n: number): number { let s = 0; for (let i = 0; i < n; i++) s = (s + digits(n - i)) | 0; return s; }
+# console.log(sum(20), digits(2.5), digits(2 ** 53));
+# -- end of source
+# f1 = digits, f2 = sum
+# `n` enters as a number and comes round out of a rounded quotient: every turn made the remainder and the quotient on doubles. In front of the loop, which is built twice, it is asked once for an integer
+# from 0 up that fits an int32: under that type the remainder is an integer by the rule of forms and the rounded quotient is a division of integers.
+# Whatever else comes (a fraction, a negative number, a number past int32, NaN) takes the other copy, which is the plain walk as it was; the way to it is not rare: a loop behind a rare edge lies in a
+# rare region to the allocator and pays saves, reloads and constants in every turn.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}} testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch [[test]] -> taken [[typed]](), notTaken [[other]]()
+# CHECK: = Mod {{*}} form=Numbers
+# CHECK: [[other]]():
+# CHECK: int[0, 9] @Int32 = Mod {{*}} form=Integers
+# CHECK: = DivideIntegers

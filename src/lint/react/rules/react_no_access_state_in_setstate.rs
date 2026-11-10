@@ -12,8 +12,8 @@ use std::cmp::Reverse;
 /// Disallow when this.state is accessed within setState
 pub struct NoAccessStateInSetstate;
 
-const USE_CALLBACK: Message =
-    Message::new("useCallback", "Use callback in setState when referencing the previous state.");
+const USE_CALLBACK: &Message =
+    &Message::new("useCallback", "Use callback in setState when referencing the previous state.");
 
 fn is_set_state_call(node: Expr<'_>) -> bool {
     node.as_call().is_some_and(|call| {

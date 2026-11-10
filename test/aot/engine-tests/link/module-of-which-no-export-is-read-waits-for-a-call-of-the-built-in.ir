@@ -1,0 +1,22 @@
+# typeof process.openStdin
+# The row of process.openStdin says that native code evaluates node:tty and reads no export of it: nothing out of the module can be the value of the entry, so the load waits until the function may run.
+# A read alone brings nothing of the module. That the body is reached at all: module-of-which-no-export-is-read-is-loaded-where-the-built-in-is-called.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:tty" displayPath="node:tty" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeTty body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="openStdin"
+    v2 = TypeOf v1
+    Return v2
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

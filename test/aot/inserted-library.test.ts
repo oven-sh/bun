@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -44,21 +45,80 @@ function emptySharedObject() {
   return file;
 }
 
-test.skipIf(!isMacOS && !isLinux)(
-  "an executable runs its compiled code with libraries inserted by the loader",
-  async () => {
-    using dir = tempDir("aot-inserted-library", {
-      "main.ts": `
-        import { readFileSync } from "node:fs";
-        console.log("hello");
-        if (process.platform === "linux") {
-          const mapped = new Set(readFileSync("/proc/self/maps", "utf8").match(/inserted-\\d\\.so/g));
-          for (const library of [...mapped].sort()) console.log(library);
-        }
-      `,
-      "inserted-1.so": emptySharedObject(),
-      "inserted-2.so": emptySharedObject(),
-    });
+// Lists the objects of the process from the last to the first. C libraries differ in the order: glibc and musl begin with the executable, bionic begins with the dynamic linker.
+const listedInReverse = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <link.h>
+#include <stddef.h>
+
+typedef int (*visitor)(struct dl_phdr_info *, size_t, void *);
+struct list { struct dl_phdr_info objects[128]; size_t sizes[128]; int count; };
+
+static int collect(struct dl_phdr_info *object, size_t size, void *data) {
+  struct list *list = data;
+  if (list->count == 128) return 0;
+  list->objects[list->count] = *object;
+  list->sizes[list->count++] = size;
+  return 0;
+}
+
+int dl_iterate_phdr(visitor visit, void *data) {
+  struct list list = { .count = 0 };
+  ((int (*)(visitor, void *)) dlsym(RTLD_NEXT, "dl_iterate_phdr"))(collect, &list);
+  int result = 0;
+  while (!result && list.count--) result = visit(&list.objects[list.count], list.sizes[list.count], data);
+  return result;
+}
+`;
+
+// Takes SIGSEGV right behind the engine, which sets its action for SIGBUS last, and says so when somebody sets another action over it.
+const setsHandler = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <signal.h>
+#include <string.h>
+#include <unistd.h>
+
+typedef int (*setter)(int, const struct sigaction *, struct sigaction *);
+static int is_set;
+static void handle(int signal, siginfo_t *info, void *context) { _exit(99); }
+
+int sigaction(int signal, const struct sigaction *action, struct sigaction *old) {
+  setter set = (setter) dlsym(RTLD_NEXT, "sigaction");
+  if (is_set && signal == SIGSEGV && action) write(1, "changed\\n", 8);
+  int result = set(signal, action, old);
+  if (signal == SIGBUS && action && (action->sa_flags & (SA_SIGINFO | SA_ONSTACK)) == SA_SIGINFO) {
+    struct sigaction mine;
+    memset(&mine, 0, sizeof mine);
+    mine.sa_sigaction = handle;
+    mine.sa_flags = SA_SIGINFO;
+    is_set = !set(SIGSEGV, &mine, 0);
+    write(1, "set\\n", 4);
+  }
+  return result;
+}
+`;
+
+const dir = tempDir("aot-inserted-library", {
+  "main.ts": `
+    import { readFileSync } from "node:fs";
+    console.log("hello");
+    if (process.platform === "linux") {
+      const mapped = new Set(readFileSync("/proc/self/maps", "utf8").match(/inserted-\\d\\.so/g));
+      for (const library of [...mapped].sort()) console.log(library);
+    }
+  `,
+  "inserted-1.so": emptySharedObject(),
+  "inserted-2.so": emptySharedObject(),
+  "listed-in-reverse.c": listedInReverse,
+  "sets-handler.c": setsHandler,
+});
+afterAll(() => dir[Symbol.dispose]());
+
+let built: Promise<void> | undefined;
+const buildOnce = () =>
+  (built ??= (async () => {
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "program"],
       cwd: String(dir),
@@ -70,6 +130,12 @@ test.skipIf(!isMacOS && !isLinux)(
       stderr: expect.any(String),
       exitCode: 0,
     });
+  })());
+
+test.skipIf(!isMacOS && !isLinux)(
+  "an executable runs its compiled code with libraries inserted by the loader",
+  async () => {
+    await buildOnce();
     const libraries = isMacOS
       ? ["/usr/lib/libz.1.dylib", "/usr/lib/libbz2.1.0.dylib"]
       : ["inserted-1.so", "inserted-2.so"];
@@ -89,6 +155,44 @@ test.skipIf(!isMacOS && !isLinux)(
         exitCode: 0,
       });
     }
+  },
+  120_000,
+);
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+// The sanitizer's run time takes the first object listed for the executable.
+test.skipIf(!isLinux || isASAN || !cc)(
+  "an executable runs its compiled code wherever the process lists it among its objects",
+  async () => {
+    await buildOnce();
+    const library = join(String(dir), "listed-in-reverse.so");
+    expect(await run([cc!, "-shared", "-fPIC", "-o", library, "listed-in-reverse.c", "-ldl"], String(dir))).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await run([join(String(dir), "program")], String(dir), {
+      ...bunEnv,
+      LD_PRELOAD: library,
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+    });
+    expect(result).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux || isASAN || !cc)(
+  "the signal handler of an inserted library stays as it was set",
+  async () => {
+    await buildOnce();
+    const library = join(String(dir), "sets-handler.so");
+    expect(await run([cc!, "-shared", "-fPIC", "-o", library, "sets-handler.c", "-ldl"], String(dir))).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await run([join(String(dir), "program")], String(dir), { ...bunEnv, LD_PRELOAD: library });
+    expect(result).toEqual({ stdout: "set\nhello\n", stderr: "", exitCode: 0 });
   },
   120_000,
 );

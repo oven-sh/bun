@@ -13,7 +13,6 @@ extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSyncPrivate);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve, const BunString* paths, size_t paths_len);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
-extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 
 namespace Bun {
 class JSModuleGraph;
@@ -88,6 +87,9 @@ public:
     // graph's first import, and import.meta.require requires into the graph. Null otherwise.
     Bun::JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, Bun::JSModuleGraph*);
+
+    // The engine made it for a module of the executable, so its require() is a loader of the executable, whoever calls it.
+    bool isOfCompiledModule { false };
 
 private:
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);

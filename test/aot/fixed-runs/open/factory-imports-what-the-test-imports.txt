@@ -1,0 +1,29 @@
+A factory that waits imports a module above the mocked one, which the test imports at the same time.
+#### a.test.mjs
+import { beforeAll, mock, test } from "bun:test";
+const later = () => new Promise(resolve => setTimeout(resolve, 30));
+const show = settled =>
+  console.log("| CASE " + settled.map(s => (s.status === "fulfilled" ? Object.keys(s.value).map(key => (typeof s.value[key] === "function" ? "function" : s.value[key])).join() : "failed " + s.reason.message)).join(" | "));
+beforeAll(() => {
+  mock.module("./lib.mjs", async () => (await later(), { v: "mock " + typeof (await import("./third.mjs")).third, kept: "mock kept" }));
+});
+test("imports", async () => {
+  show(await Promise.allSettled([import("./user.mjs"), import("./other.mjs"), import("./third.mjs")]));
+});
+#### lib.mjs
+export const v = "real v";
+export const kept = "kept";
+#### other.mjs
+import { v, kept } from "./lib.mjs";
+export const both = v + " " + kept;
+#### third.mjs
+import { v } from "./lib.mjs";
+export const third = () => typeof v;
+#### user.mjs
+import { v, kept } from "./lib.mjs";
+export { v, kept };
+#### z.test.mjs
+import { test } from "bun:test";
+import { v } from "./lib.mjs";
+console.log("| CASE the next file", v);
+test("reads", () => {});

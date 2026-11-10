@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# class Shelf { constructor(inner) { this.inner = inner; } get width() { return this.inner.width; } at(i) { return i * this.width; } }
+# const shelf = new Shelf(JSON.parse('{"width":4}'));
+# function run(turns) { let s = 0; for (let i = 0; i < turns; i++) s += shelf.at(i & 7); return s; }
+# console.log(run(9), run(0));
+# -- end of source
+# `get width() { return this.inner.width; }`: the getter itself makes its class the only layout in sight that answers `width`, so by the name alone `this.inner` was expected to be a Shelf: a test that fails
+# at every call, a call of the getter by itself on the side that never runs, and the read by name behind a rare edge. Where each name used off a value is answered by the very getter that is being walked, the
+# names say nothing.
+# RUN: walk f3 mechanisms=all
+# CHECK-NOT: ShapeTest
+# CHECK: PropGet {{*}} key="width"

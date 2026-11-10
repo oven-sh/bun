@@ -1,0 +1,13 @@
+# `labelled[i] = prices[i] * 0.5 + unit`, `unit` a parameter of which nothing is known: the sum may join texts, so the store speaks for no list of numbers and nothing is asked for its sake: as before.
+# LIBRARY: own
+# -- source: main.js
+# const prices = JSON.parse("[1.5,2.5,3.5,4.5]"), labelled = JSON.parse("[0,0,0,0]");
+# function run(count, unit) { for (let i = 0; i < count; i++) labelled[i] = prices[i] * 0.5 + unit; return labelled.join(); }
+# publish(run);
+# -- end of source
+# RUN(LOOP): walk f1 mechanisms=all
+# LOOP: code f1:Body
+# LOOP-NOT: PutContiguousIndex
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(4, 1)); print(run(4, " kg")); };
+# SHELL: 1.75,2.25,2.75,3.25
+# SHELL-NEXT: 0.75 kg,1.25 kg,1.75 kg,2.25 kg

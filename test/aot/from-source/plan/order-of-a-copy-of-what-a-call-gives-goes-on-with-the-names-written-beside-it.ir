@@ -1,0 +1,15 @@
+# `{ ...base(1), name, resolved }` where the type that is written lists the names in another order: the keys of the object come in the order of what base() gives and then the names that the literal writes.
+# The plan holds that order, so the object is born whole; without it the object is born with the one field that the declared order shares and the others are defined one by one through a stub.
+# f1 = base, f2 = ref
+# -- source: main.ts
+# declare function print(value: any): void;
+# interface Reference { kind: number; name: string; resolved: any; parent: any; symbol: any; pos: number }
+# function base(kind: number) { return { kind, parent: undefined as any, symbol: undefined as any, pos: 0 }; }
+# function ref(name: string): Reference { return { ...base(1), name, resolved: undefined }; }
+# print(Object.keys(ref("a")).join() + " " + ref("b").name);
+# -- end of source
+# RUN(ORDERS): plan orders mechanisms=all
+# ORDERS: order {{*}}: "kind" "parent" "symbol" "pos" "name" "resolved"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: kind,parent,symbol,pos,name,resolved b
+# ANSWERS-NEXT: exited with 0

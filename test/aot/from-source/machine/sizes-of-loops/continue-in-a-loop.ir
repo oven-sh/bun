@@ -1,0 +1,21 @@
+# f1 = totalOfPositives
+# -- source: continue-in-a-loop.ts
+# function totalOfPositives(list: Float64Array): number {
+#   let sum = 0;
+#   for (let k = 0; k < list.length; k++) {
+#     const value = list[k];
+#     if (value < 0) continue;
+#     sum += value;
+#   }
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = totalOfPositives(new Float64Array(input));
+# -- end of source
+# The compiler before this one: 34 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 43, patches 0, moves 0, unlikely 6 ; loop: operations 9, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:43,9 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 43
+# X64-NEXT: loop: at most 9

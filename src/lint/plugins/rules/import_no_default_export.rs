@@ -5,10 +5,10 @@ use bun_lint::rule::Plugin;
 /// Forbid default exports.
 pub struct NoDefaultExport;
 
-const PREFER_NAMED: Message = Message::new("", "Prefer named exports.");
-const NO_ALIAS_DEFAULT: Message =
-    Message::new("", "Do not alias `{{local}}` as `default`. Just export `{{local}}` itself instead.");
-const OXLINT: Message = Message::new("", "Prefer named exports");
+const PREFER_NAMED: &Message = &Message::new("", "Prefer named exports.");
+const NO_ALIAS_DEFAULT: &Message =
+    &Message::new("", "Do not alias `{{local}}` as `default`. Just export `{{local}}` itself instead.");
+const OXLINT: &Message = &Message::new("", "Prefer named exports");
 
 const EXPORTS: [StmtTag; 5] =
     [StmtTag::Fn, StmtTag::Class, StmtTag::Interface, StmtTag::ExportNamed, StmtTag::ExportDefault];

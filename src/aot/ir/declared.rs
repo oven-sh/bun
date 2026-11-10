@@ -1,5 +1,5 @@
-pub use super::generated::{DeclaredType, PositionFlags};
-use super::ids::{TypeId, TypeSiteId};
+pub use super::generated::{DeclaredCapture, DeclaredType, PositionFlags};
+use super::ids::{StringId, TypeId, TypeSiteId};
 use super::types::TypeTable;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -14,6 +14,7 @@ impl Mapped {
         is_checked: true,
     };
 
+    #[inline]
     pub fn checked(ty: TypeId) -> Mapped {
         Mapped {
             ty,
@@ -21,7 +22,7 @@ impl Mapped {
         }
     }
 
-    // A type that says nothing has nothing to check.
+    #[inline]
     pub fn expected(ty: TypeId) -> Mapped {
         Mapped {
             ty,
@@ -30,7 +31,34 @@ impl Mapped {
     }
 }
 
+impl DeclaredCapture {
+    #[inline]
+    pub fn new(declared: DeclaredType, variable_name: Option<StringId>) -> DeclaredCapture {
+        DeclaredCapture {
+            ty: declared.ty,
+            site: declared.site,
+            flags: declared.flags,
+            variable_name,
+        }
+    }
+
+    pub fn declared(self) -> DeclaredType {
+        DeclaredType {
+            ty: self.ty,
+            site: self.site,
+            flags: self.flags,
+        }
+    }
+}
+
+impl From<DeclaredType> for DeclaredCapture {
+    fn from(declared: DeclaredType) -> DeclaredCapture {
+        DeclaredCapture::new(declared, None)
+    }
+}
+
 impl DeclaredType {
+    #[inline]
     pub fn new(mapped: Mapped, site: Option<TypeSiteId>, flags: PositionFlags) -> DeclaredType {
         let says_something = mapped.ty != TypeTable::ANYTHING;
         let is_expected = says_something && !mapped.is_checked;
@@ -48,11 +76,12 @@ impl DeclaredType {
         }
     }
 
+    #[inline]
     pub fn untyped() -> DeclaredType {
         DeclaredType::new(Mapped::UNKNOWN, None, PositionFlags::default())
     }
 
-    /// In a definition of a plain layout that says which names a type has and not what they hold.
+    #[inline]
     pub fn unsaid() -> DeclaredType {
         DeclaredType {
             ty: TypeTable::NEVER,
@@ -61,20 +90,22 @@ impl DeclaredType {
         }
     }
 
+    #[inline]
     pub fn is_said(self) -> bool {
         self.ty != TypeTable::NEVER
     }
 
+    #[inline]
     pub fn from_compiler(ty: TypeId) -> DeclaredType {
         DeclaredType::new(Mapped::checked(ty), None, PositionFlags::IS_FROM_COMPILER)
     }
 
-    // The front end says so of a value in code that it lays down itself or that the library has written: nothing tests it.
     pub fn claimed(ty: TypeId) -> DeclaredType {
         let flags = PositionFlags::IS_FROM_COMPILER | PositionFlags::IS_CLAIM;
         DeclaredType::new(Mapped::checked(ty), None, flags)
     }
 
+    #[inline]
     pub fn is_expected(self) -> bool {
         self.flags.contains(PositionFlags::IS_EXPECTED)
     }

@@ -1,0 +1,21 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function makeStep(seed: number) { let text = "s" + seed; return () => (text += "?"); }
+# function makeRunner(seed: number) { let text = "k" + seed; let step = makeStep(seed + 40); return () => { text += "!"; const said = text + step(); step = makeStep(seed + 50); return said; }; }
+# const runner = makeRunner(1);
+# const other = makeStep(2);
+# function all() { return runner() + " " + runner() + " " + other(); }
+# print(all());
+# -- end of source
+# makeStep runs more than once, so its closures hold their scopes: words that the collector could let go. The scope of makeRunner holds such a closure in `step`. It lives as long as the program whether it is
+# made or not, and what `step` held is let go where `step` is stored again, made or not: so the scope is never made. f1 = makeStep, f2 = makeRunner
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 1
+# RUN(STEP): walk f1 mechanisms=all
+# STEP-NOT: EnterBodyThatRunsOnce
+# RUN(MAKER): walk f2 mechanisms=all
+# MAKER: EnterBodyThatRunsOnce
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: k1!s41? k1!!s51? s2?
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: k1!s41? k1!!s51? s2?

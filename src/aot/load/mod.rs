@@ -1,22 +1,28 @@
+pub(crate) mod asked_by_test_runner;
 pub(crate) mod builtin_uses;
-mod bundled_commonjs;
+pub(crate) mod bundled_commonjs;
 pub(crate) mod compiler_declarations;
+pub(crate) mod contents;
 pub(crate) mod data_modules;
 pub(crate) mod disk_delegation;
-pub(crate) mod evaluated_texts;
 pub(crate) mod externals;
 pub(crate) mod fold_inputs;
+#[cfg(test)]
+mod format_grid;
+pub(crate) mod globals_of_a_window;
+pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
+pub(crate) mod import_meta_glob;
 pub(crate) mod loader_aliases;
 pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
-pub(crate) mod macros;
+mod made_own_require;
+pub(crate) mod manual_mocks;
 pub(crate) mod module_paths;
-pub(crate) mod named_loads;
+pub(crate) mod modules_with_queries;
 pub(crate) mod plugin_modules;
 pub mod project;
 pub(crate) mod react_compiler;
-pub(crate) mod runtime_declarations;
 pub(crate) mod runtime_host;
 pub(crate) mod runtime_modules;
 pub(crate) mod runtime_roots;
@@ -25,7 +31,7 @@ pub(crate) mod runtime_types;
 pub mod source_provider;
 pub mod sources;
 pub(crate) mod test_runner_names;
-pub(crate) mod worker_files;
+mod text_for_json_parse;
 
 #[cfg(not(test))]
 pub use bun_aot_interface::load::source_provider;
@@ -54,12 +60,6 @@ pub fn host_platform() -> Platforms {
 
 pub(crate) fn is_host_path(path: &[u8]) -> bool {
     path.starts_with(HOST_ROOT)
-}
-
-pub(crate) fn is_in_archive_of_bun(path: &[u8]) -> bool {
-    bun_sema_driver::host::is_bundled(path)
-        || path.starts_with(bun_builtin_sources::VIRTUAL_ROOT)
-        || path.starts_with(runtime_types::PACKAGES)
 }
 
 pub(crate) fn is_in_node_modules(path: &[u8]) -> bool {

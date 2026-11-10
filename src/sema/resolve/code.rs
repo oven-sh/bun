@@ -34,28 +34,31 @@ impl CodeImportKind {
             | ImportSiteKind::Require(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaRequire(_)
-            | ImportSiteKind::GetBuiltinModule(_) => CodeImportKind::Require,
+            | ImportSiteKind::GetBuiltinModule(_)
+            | ImportSiteKind::RequireByTestRunner(_) => CodeImportKind::Require,
             _ => CodeImportKind::Import,
         }
     }
 }
 
-/// How an import is written. A host tells its plugins, and says which directory each form looks from.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CodeImportForm {
     Static,
     Dynamic,
     ResolveOnly,
     Macro,
+    WrittenByHost,
 }
 
 impl CodeImportForm {
     pub fn from_site(kind: ImportSiteKind) -> CodeImportForm {
         match kind {
-            ImportSiteKind::ImportCall(_) => CodeImportForm::Dynamic,
-            ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_) => {
-                CodeImportForm::ResolveOnly
+            ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportByTestRunner(_) => {
+                CodeImportForm::Dynamic
             }
+            ImportSiteKind::RequireResolve(_)
+            | ImportSiteKind::ImportMetaResolve(_)
+            | ImportSiteKind::MockModule(_) => CodeImportForm::ResolveOnly,
             _ => CodeImportForm::Static,
         }
     }
@@ -78,6 +81,15 @@ pub struct ComputedCodeRequest<'a> {
     pub directory: &'a [u8],
     pub kind: CodeImportKind,
     pub form: CodeImportForm,
+    pub site: SiteOfComputedLoad<'a>,
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct SiteOfComputedLoad<'a> {
+    pub folder: &'a [u8],
+    pub type_attribute: Option<&'a [u8]>,
+    pub opens_database: bool,
+    pub starts_at_own_folder: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -92,6 +104,23 @@ pub enum CodeFailure {
     InvalidPackageConfiguration,
     UnsupportedDirectoryImport,
     QueryString,
+}
+
+impl CodeFailure {
+    pub fn is_refusal_of_package_json(self) -> bool {
+        match self {
+            CodeFailure::PackagePathNotExported
+            | CodeFailure::PackageImportNotDefined
+            | CodeFailure::InvalidModuleSpecifier
+            | CodeFailure::InvalidPackageTarget
+            | CodeFailure::InvalidPackageConfiguration
+            | CodeFailure::UnsupportedDirectoryImport => true,
+            CodeFailure::ModuleNotFound
+            | CodeFailure::PackageNotFound
+            | CodeFailure::BuiltinModuleNotFound
+            | CodeFailure::QueryString => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -125,7 +154,6 @@ pub enum ComputedUnknown {
     PackageImports,
     ConfigPaths,
     ExternalCandidate,
-    TooManyCandidates,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -137,7 +165,6 @@ pub enum ComputedCandidate<'h> {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ComputedSpelling<'h> {
     pub text: &'h [u8],
-    /// An index into the candidates.
     pub candidate: u32,
 }
 
@@ -145,7 +172,6 @@ pub struct ComputedSpelling<'h> {
 pub enum ComputedResolution<'h> {
     Candidates {
         candidates: &'h [ComputedCandidate<'h>],
-        /// Ascending by text, each text once. A candidate the host names has no spelling.
         spellings: &'h [ComputedSpelling<'h>],
     },
     All {
@@ -165,8 +191,8 @@ pub(super) struct CodeState<'h> {
     options: &'h CodeOptions,
     resolutions: Memo<&'h [u8], CodeResolution<'h>>,
     manifests: Memo<&'h [u8], Option<&'h CodeManifest<'h>>>,
-    /// For the file that "module" names in a package, the file that `require` of the package finds.
-    required_files: Memo<&'h [u8], &'h [u8]>,
+    required_files: bun_threading::Guarded<FxHashMap<&'h [u8], &'h [u8]>>,
+    files_found_with_side_effects: bun_threading::Guarded<FxHashSet<&'h [u8]>>,
     configs: ConfigCaches<'h>,
 }
 
@@ -186,7 +212,8 @@ impl<'h> Resolver<'h> {
             options: code,
             resolutions: Memo::new(false),
             manifests: Memo::new(false),
-            required_files: Memo::new(false),
+            required_files: Default::default(),
+            files_found_with_side_effects: Default::default(),
             configs: ConfigCaches::new(false),
         };
         Resolver {
@@ -202,9 +229,23 @@ impl<'h> Resolver<'h> {
             .expect("the code question needs `Resolver::for_compile`")
     }
 
-    /// `Some` if an import of a package found `path` where `require` finds another file.
-    pub fn file_required_in_place_of(&self, path: &[u8]) -> Option<&'h [u8]> {
-        self.code_state().required_files.get_ref(path).copied()
+    #[cfg(test)]
+    fn file_required_in_place_of(&self, path: &[u8]) -> Option<&'h [u8]> {
+        let required_files = self.code_state().required_files.lock();
+        required_files.get(path).copied()
+    }
+
+    pub fn files_required_in_place_of_others(&self) -> Vec<(&'h [u8], &'h [u8])> {
+        let required_files = self.code_state().required_files.lock();
+        let entries = required_files.iter();
+        entries
+            .map(|(&imported, &required)| (imported, required))
+            .collect()
+    }
+
+    pub fn is_found_with_side_effects(&self, path: &[u8]) -> bool {
+        let files = self.code_state().files_found_with_side_effects.lock();
+        files.contains(path)
     }
 
     fn code_options(&self) -> &'h CodeOptions {

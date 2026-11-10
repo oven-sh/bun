@@ -1,0 +1,25 @@
+# f3 = total
+# -- source: float64-array-in-a-field.ts
+# class Series {
+#   samples = new Float64Array(1000);
+#   total(first: number): number {
+#     let sum = first;
+#     for (let k = 0; k < this.samples.length; k++) sum += this.samples[k]!;
+#     return sum;
+#   }
+# }
+# const series = new Series();
+# function turn(i: number): number {
+#   return series.total(i & 1);
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 10 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 12, patches 0, moves 0, unlikely 6 ; loop: operations 5, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:12,5 f3 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f3:Body
+# X64-NEXT: loop: at most 12
+# X64-NEXT: loop: at most 5

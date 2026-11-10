@@ -90,18 +90,21 @@ JSC_DEFINE_HOST_FUNCTION(functionStartServerFromNamespace, (JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
-bool isImportOfMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID module)
+bool isMainModuleImport(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID module)
 {
     void* bunVM = defaultGlobalObject(lexicalGlobalObject)->bunVM();
     return Bun__VM__shouldLookForServer(bunVM) && compiledModuleForPath(Bun__VM__entryRootKey(bunVM).toWTFString(BunString::ZeroCopy)) == module;
 }
 
-void runMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID entryPoint)
+void didEvaluateMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID entryPoint)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Bun__VM__didLookForServer(globalObject->bunVM());
+    // Most programs export neither, and need no namespace object.
+    if (!AOT::mayExport(globalObject, entryPoint, vm.propertyNames->then.impl()) && !AOT::mayExport(globalObject, entryPoint, vm.propertyNames->defaultKeyword.impl()))
+        return;
     JSValue entryNamespace = AOT::moduleNamespace(globalObject, entryPoint);
     RETURN_IF_EXCEPTION(scope, void());
     JSValue then = entryNamespace.get(globalObject, vm.propertyNames->then);

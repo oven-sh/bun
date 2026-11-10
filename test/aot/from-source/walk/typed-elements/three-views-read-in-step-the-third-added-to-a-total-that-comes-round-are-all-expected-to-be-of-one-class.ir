@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function totals(xs, ys, more, k) { let total = k & 3; for (let i = 0; i < xs.length; i++) { const v = xs[i] + ys[i]; total += v; total += more[i]; } return total; }
+# const byName = { totals }, key = JSON.parse('"totals"');
+# print(byName[key](Float64Array.of(1, 2), Float64Array.of(3, 4), Float64Array.of(5, 6), 1));
+# print(byName[key](Float64Array.of(1, 2), Float64Array.of(3, 4), [5, 6], 1));
+# print(byName[key](Float64Array.of(1, 2), [3, 4], [5, 6], 1));
+# -- end of source
+# The third holder's element is added to a total that comes round the loop: no operator on numbers is found behind it, but use has written "a list of numbers" over the holder. In the copy of the loop for a class of views
+# it was asked for that list alone, and a view sent the whole loop into the copy as it is written. Three copies stand in a row: every other holder is expected to be of the class . those alone whose elements go through an operator,
+# the rest by their own word . lists. Who fails the front of one goes on to the next.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: TypeTest v2 testedType=Float32Array|Float64Array
+# WALK: TypeTest v1 testedType=Float32Array|Float64Array
+# WALK: TypeTest v2 testedType=Array<number>
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 22
+# RIGHT-NEXT: 22
+# RIGHT-NEXT: 22
+# RIGHT-NEXT: exited with 0

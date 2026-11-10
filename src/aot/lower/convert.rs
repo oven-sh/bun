@@ -1,34 +1,20 @@
 mod calls;
 mod edges;
 mod family_facts;
+mod flows;
 mod int32_flows;
-mod literals;
 mod members;
-mod narrowed;
 mod patterns;
-mod supertypes;
 
-use bun_sema::check::aot::{CheckedType, PositionTypes, WrittenType};
-use bun_sema::hir::{ExprId, ExprKind, TypeNodeId};
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::rc::Rc;
+use bun_sema::hir::{ExprId, ExprKind, PatId, TypeNodeId};
+use rustc_hash::FxHashMap;
 
 use self::edges::Construct;
-use self::int32_flows::FlowingValue;
-use self::supertypes::{AssertionSide, ComparedPair, ConversionKind};
-use super::positions::{self, SiteOrigin};
 use super::{CheckerTypeId, FileLowering, FunctionLowering};
-use crate::ir::generated::{IllTypedCause, TypeSiteKind};
-use crate::ir::{
-    DeclaredType, FunctionId, Id, Mapped, PositionFlags, Primitives, Type, TypeFlags, TypeId,
-    TypeTable, ValueId,
-};
+use crate::ir::generated::IllTypedCause;
+use crate::ir::{DeclaredType, FunctionId, Id, Mapped, PositionFlags, TypeId, TypeTable, ValueId};
 
 pub(crate) use self::family_facts::FamilyFacts;
-pub(in crate::lower) use self::int32_flows::{
-    FlowDescription as Int32FlowDescription, Subject as Int32Subject,
-};
-pub(in crate::lower) use self::literals::record_spread_flow;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct ConvertedValue {
@@ -58,7 +44,10 @@ impl ConvertedValues {
     fn record(&mut self, function: FunctionId, value: ValueId, position: DeclaredType) {
         self.enter(function);
         if self.values.len() <= value.index() {
-            self.values.resize(value.index() + 1, None);
+            self.values.reserve(value.index() + 1 - self.values.len());
+            while self.values.len() <= value.index() {
+                self.values.push(None);
+            }
         }
         self.values[value.index()] = Some(ConvertedValue {
             ty: position.ty,
@@ -70,11 +59,9 @@ impl ConvertedValues {
 #[derive(Default)]
 pub(in crate::lower) struct ConversionState {
     written_expressions: FxHashMap<ExprId, Option<CheckerTypeId>>,
-    compared_types: FxHashMap<ComparedPair, u8>,
-    types_with_layout: FxHashMap<(CheckerTypeId, AssertionSide), Rc<[CheckerTypeId]>>,
-    admitted_assertions: FxHashSet<(CheckerTypeId, CheckerTypeId, u8)>,
-    loose_types: FxHashMap<CheckerTypeId, bool>,
     converted_values: ConvertedValues,
+    followed_parts: FxHashMap<(CheckerTypeId, CheckerTypeId), u8>,
+    recorded_flows: flows::RecordedFlows,
 }
 
 pub(crate) fn establishes_type(position: DeclaredType) -> bool {
@@ -95,7 +82,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         converted
     }
 
-    // The build proves a promise of an `int32` at each request for it.
     fn is_converted(&mut self, value: ValueId, position: DeclaredType) -> bool {
         let function = self.function;
         let values = &mut self.file.types.conversions.converted_values;
@@ -105,7 +91,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             })
     }
 
-    // What a type guard or an assertion claims for a value can lie outside the type of the variable that holds it.
     pub(in crate::lower) fn is_converted_within(
         &mut self,
         value: ValueId,
@@ -124,15 +109,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // What the checker has concluded of the value was not sent where the value was read, and the position does not take all that the value may be without it.
-    fn rests_on_unclaimed_narrowing(&mut self, value: ValueId, position: DeclaredType) -> bool {
-        let Some(&before) = self.unclaimed_narrowings.get(&value) else {
-            return false;
-        };
-        !position.is_expected()
-            && self.file.fragment.types.union(position.ty, before) != position.ty
-    }
-
     fn convert_as(
         &mut self,
         value: ValueId,
@@ -140,43 +116,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         source: Option<ExprId>,
         construct: Construct,
     ) -> ValueId {
-        let description = self.described_int32_flow.take();
-        // A value with no number in its type cannot break the promise of an `int32`.
-        let is_promise = position.flags.contains(PositionFlags::IS_INT32_PROMISE);
-        let position = match source {
-            Some(source) if is_promise && self.file.has_no_number(source) => {
-                let flags = position.flags.without(PositionFlags::IS_INT32_PROMISE);
+        let flags = position.flags;
+        let is_promise = flags.contains(PositionFlags::IS_INT32_PROMISE);
+        let owes_proof = match construct {
+            Construct::Flow => true,
+            Construct::Assertion => !flags.contains(PositionFlags::IS_DECLARED_BY_DEPENDENCY),
+            Construct::CallResult { .. } => false,
+        };
+        let breaks_no_promise = is_promise
+            && (!owes_proof
+                || source.is_some_and(|source| self.file.breaks_no_int32_promise(source)));
+        let position = match breaks_no_promise {
+            true => {
+                let flags = flags.without(PositionFlags::IS_INT32_PROMISE);
                 DeclaredType { flags, ..position }
             }
-            _ => position,
+            false => position,
         };
-        let target = self.file.find_target_type(position);
-        if let (Some(source), Some(target)) = (source, target) {
-            let kind = match construct {
-                Construct::Assertion => ConversionKind::Asserted,
-                _ => ConversionKind::Performed,
-            };
-            self.file.record_flow_into_type(source, target, kind);
-        }
         if position.ty == TypeTable::ANYTHING {
             return value;
-        }
-        if let Some(description) = description {
-            self.record_flow(position, description);
         }
         if self.is_converted(value, position) {
             return value;
         }
-        let cause = match self.file.find_cause(position, source, target, construct) {
-            IllTypedCause::None if self.rests_on_unclaimed_narrowing(value, position) => {
-                IllTypedCause::Assertion
-            }
-            cause => cause,
-        };
+        let is_assertion = matches!(construct, Construct::Assertion);
+        let cause = self.file.find_cause(position, source, construct);
+        self.describe_int32_flow(position, source, is_assertion);
         self.emit_convert(value, position, cause)
     }
 
-    // The conversion of a declaration or a literal is at the value. That of an assignment is at the assignment.
     pub(crate) fn convert_initializer(
         &mut self,
         value: ValueId,
@@ -192,88 +160,47 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         converted
     }
 
-    pub(in crate::lower) fn convert_narrowed(
-        &mut self,
-        value: ValueId,
-        before: TypeId,
-        narrowed: Mapped,
-        origin: Option<SiteOrigin>,
-    ) -> ValueId {
-        let says_nothing = narrowed.ty == TypeTable::ANYTHING || narrowed.ty == TypeTable::NEVER;
-        if says_nothing || narrowed.ty == before {
-            return value;
-        }
-        if is_literal_type(self.file.fragment.types.get(narrowed.ty)) {
-            self.unclaimed_narrowings.insert(value, before);
-            return value;
-        }
-        let site = origin
-            .filter(|_| narrowed.is_checked)
-            .map(|origin| positions::add_type_site(self.file, origin, None));
-        let position = DeclaredType::new(narrowed, site, PositionFlags::default());
-        if self.is_converted(value, position) {
-            return value;
-        }
-        let cause = match position.is_expected() {
-            true => IllTypedCause::None,
-            false => IllTypedCause::Assertion,
-        };
-        self.emit_convert(value, position, cause)
-    }
-
-    /// Says what the position of the next `convert` is, for the message about an `int32` that is not proven.
-    pub(in crate::lower) fn describe_int32_flow(
-        &mut self,
-        position: DeclaredType,
-        subject: Int32Subject,
-        source: Option<ExprId>,
-    ) {
-        if position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
-            let value = source.map_or(FlowingValue::AssignedByPattern, FlowingValue::Expression);
-            self.described_int32_flow = Some(Int32FlowDescription { subject, value });
-        }
-    }
-
-    /// The casts of a tail call are at the position of the call.
-    pub(in crate::lower) fn describe_int32_tail_call(&mut self, call: ExprId) {
-        let description = Int32FlowDescription {
-            subject: Int32Subject::Result,
-            value: FlowingValue::Expression(call),
-        };
-        let returned = self.returned;
-        self.record_flow(returned, description);
-    }
-
     pub(crate) fn convert_assertion(&mut self, assertion: ExprId, value: ValueId) -> ValueId {
         let ExprKind::As { expr, ty } = self.file.hir[assertion].kind else {
             debug_assert!(false, "a type assertion was expected");
             return value;
         };
         let position = self.file.assertion_position(ty);
-        self.describe_int32_flow(position, Int32Subject::Assertion, Some(expr));
-        self.convert_as(value, position, Some(expr), Construct::Assertion)
+        if let Some(written) = self.file.queries.written_type(ty).written() {
+            self.file.record_flow_into_written_type(expr, written);
+        }
+        let at = self.position();
+        if position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
+            self.set_position(self.file.hir[ty].pos);
+        }
+        let converted = self.convert_as(value, position, Some(expr), Construct::Assertion);
+        self.set_position(at);
+        converted
     }
 
-    // No container says what it holds, so what is read out of one is tested where it is read.
-    pub(crate) fn claim_contents_read(
+    pub(in crate::lower) fn state_int32_of_read(
         &mut self,
-        contents: CheckedType,
-        kind: TypeSiteKind,
+        read: ExprId,
         value: ValueId,
     ) -> ValueId {
-        if !self.file.is_checked() {
+        match self.file.position_of_int32_read(read) {
+            Some(position) => self.convert_read(value, position, Construct::Flow),
+            None => value,
+        }
+    }
+
+    pub(in crate::lower) fn state_int32_of_binding(
+        &mut self,
+        pattern: PatId,
+        value: ValueId,
+    ) -> ValueId {
+        if !super::positions::has_int32_promise(self.file) {
             return value;
         }
-        let types = PositionTypes {
-            written: WrittenType::Unwritten,
-            checked: contents,
-        };
-        let origin = SiteOrigin {
-            kind,
-            position: self.position(),
-        };
-        let position = self.file.create_position(types, origin);
-        self.convert_read(value, position, Construct::ContentsRead)
+        match self.file.position_of_int32_binding(pattern) {
+            Some(position) => self.convert_read(value, position, Construct::Flow),
+            None => value,
+        }
     }
 
     fn convert_read(
@@ -305,26 +232,8 @@ pub(in crate::lower) fn expect_type(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(crate) fn record_type_flow(
-        &mut self,
-        source: CheckerTypeId,
-        target: CheckerTypeId,
-        position: u32,
-    ) {
-        self.record_conversion(source, target, position, ConversionKind::Performed);
-    }
-
-    pub(crate) fn record_heritage_flow(
-        &mut self,
-        instance: CheckerTypeId,
-        inherited: CheckerTypeId,
-        position: u32,
-    ) {
-        self.record_type_flow(instance, inherited, position);
-    }
-
     pub(crate) fn assertion_position(&mut self, ty: TypeNodeId) -> DeclaredType {
-        self.annotation_position(ty, TypeSiteKind::Assertion)
+        self.annotation_position(ty)
     }
 }
 
@@ -335,21 +244,4 @@ pub(crate) fn convert(
     source: Option<ExprId>,
 ) -> ValueId {
     lowering.convert_as(value, position, source, Construct::Flow)
-}
-
-// `false`, `"a"`, `undefined` and unions of them.
-fn is_literal_type(ty: &Type) -> bool {
-    let has_objects = ty.flags.intersects(TypeFlags::ANY_OBJECT_OR_FUNCTION)
-        || !(ty.layouts.is_empty()
-            && ty.classes.is_empty()
-            && ty.builtins.is_empty()
-            && ty.functions.is_empty());
-    if has_objects || ty.is_internal() {
-        return false;
-    }
-    let has_whole_kind = !ty
-        .primitives
-        .without(Primitives::NULLISH | Primitives::BOOLEAN)
-        .is_empty();
-    ty.integer_range().is_none() && !has_whole_kind && !ty.primitives.contains(Primitives::BOOLEAN)
 }

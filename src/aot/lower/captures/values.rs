@@ -2,17 +2,15 @@ use bun_sema::bind::Binding;
 use smallvec::SmallVec;
 
 use super::{Capture, CaptureList};
-use crate::ir::generated::{Field, FieldFlags, Layout, LayoutKind};
+use crate::ir::generated::{DeclaredCapture, Field, FieldFlags, Layout, LayoutKind};
 use crate::ir::{
     DeclaredType, FunctionKey, LayoutId, LayoutKey, PropertyKey, Type, TypeTable, ValueId,
 };
 use crate::lower::scope::{self, BindingRef, DeadZone, LocalBinding, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering};
 
-// The environments of a file are numbered by their scopes.
 const FIRST_PACK: u32 = 1 << 31;
 
-// A closure has room for so many captures.
 fn find_pack_layout(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Option<LayoutId> {
     let number = file.scopes.packed_captures(key)?;
     let layout = file.fragment.declare_layout(LayoutKey::Environment {
@@ -24,13 +22,14 @@ fn find_pack_layout(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -
     }
     let positions = file.list_positions(key);
     let mut fields = Vec::with_capacity(positions.len());
-    for (index, declared) in positions.into_iter().enumerate() {
+    for (index, capture) in positions.into_iter().enumerate() {
         let label = file.intern_bytes(format!("capture.{index}").as_bytes());
         let key = PropertyKey::from_engine_private_name(label);
         fields.push(Field {
             key: Some(file.fragment.property_keys.intern(key)),
-            declared,
+            declared: capture.declared(),
             flags: FieldFlags::IS_REQUIRED | FieldFlags::IS_IMMUTABLE,
+            variable_name: capture.variable_name,
             ..Field::default()
         });
     }
@@ -46,7 +45,6 @@ fn find_pack_layout(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -
     Some(layout)
 }
 
-/// At the entry of every function.
 pub(crate) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
     let Some(layout) = find_pack_layout(lowering.file, lowering.key) else {
         return;
@@ -59,7 +57,7 @@ pub(crate) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn get_capture(&self, index: usize) -> ValueId {
+    pub(in crate::lower) fn get_capture(&self, index: usize) -> ValueId {
         match self.scopes.unpacked_captures.get(index) {
             Some(&value) => value,
             None => self.builder.capture(index as u32),
@@ -101,7 +99,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> SmallVec<[ValueId; 4]> {
         let captures: CaptureList = SmallVec::from_slice(self.file.scopes.captures(key));
         let mut values = SmallVec::with_capacity(captures.len());
-        for capture in captures {
+        for &capture in captures.iter() {
             values.push(match capture {
                 Capture::Environment(scope) => self.get_environment(scope),
                 Capture::Value(binding) if self.file.is_entry_capture(key, binding) => {
@@ -120,11 +118,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(in crate::lower) fn find_captured_value(&self, capture: Capture) -> Option<ValueId> {
         let captures = self.file.scopes.captures(self.key);
+        if captures.is_empty() {
+            return None;
+        }
         let index = captures.binary_search(&capture).ok()?;
         Some(self.get_capture(index))
     }
 
     fn get_copied_value(&mut self, key: FunctionKey, binding: BindingRef) -> ValueId {
+        let is_this = matches!(binding, BindingRef::Slot(_, ScopeSlot::This));
+        assert!(
+            self.birth.is_none() || !is_this,
+            "a closure takes the object while its fields are not yet defined"
+        );
         let local = self.scopes.find_local(binding);
         debug_assert!(
             is_left_out(self.file, key)
@@ -138,7 +144,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let name = self.file.bound.symbol(symbol).name;
                 self.get_binding(Binding::Symbol(symbol), name)
             }
-            // Another closure shares the place, which holds nothing until `super(..)` returns.
             BindingRef::Slot(_, ScopeSlot::This) if reads_location => self.get_this(),
             BindingRef::Symbol(_) | BindingRef::Slot(..) => self.get_stored(binding),
         }
@@ -146,28 +151,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(in crate::lower) fn capture_positions(&mut self, key: FunctionKey) -> Vec<DeclaredType> {
+    pub(in crate::lower) fn capture_positions(&mut self, key: FunctionKey) -> Vec<DeclaredCapture> {
         match find_pack_layout(self, key) {
             Some(layout) => {
                 let pack = self.fragment.types.intern(Type::environment(layout));
-                vec![DeclaredType::from_compiler(pack)]
+                vec![DeclaredType::from_compiler(pack).into()]
             }
             None => self.list_positions(key),
         }
     }
 
-    fn list_positions(&mut self, key: FunctionKey) -> Vec<DeclaredType> {
+    fn list_positions(&mut self, key: FunctionKey) -> Vec<DeclaredCapture> {
         let captures: CaptureList = SmallVec::from_slice(self.scopes.captures(key));
         let is_left_out = is_left_out(self, key);
         let positions = captures.into_iter().map(|capture| match capture {
             Capture::Environment(scope) => {
                 let layout = scope::environment_layout(self, scope);
                 let environment = self.fragment.types.intern(Type::environment(layout));
-                DeclaredType::from_compiler(environment)
+                DeclaredType::from_compiler(environment).into()
             }
-            // The declaration of a variable may be left out with the function. What fills a slot never is.
-            Capture::Value(BindingRef::Symbol(_)) if is_left_out => DeclaredType::untyped(),
-            Capture::Value(binding) => self.stored_position(binding),
+            Capture::Value(BindingRef::Symbol(_)) if is_left_out => DeclaredType::untyped().into(),
+            Capture::Value(binding) => {
+                let name = self.written_name(binding);
+                let declared = self.stored_position(binding);
+                DeclaredCapture::new(self.mark_variable_of_module(binding, declared), name)
+            }
         });
         positions.collect()
     }

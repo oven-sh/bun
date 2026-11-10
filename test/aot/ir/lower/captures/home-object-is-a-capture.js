@@ -12,7 +12,7 @@
 // CHECK: b0([[home]]: object,
 // CHECK: = GetSuperBase [[home]]
 // CHECK-LABEL: function {{*}}name="n"
-// CHECK: captures=[{type=anything}, {type=object flags=[IsFromCompiler]}] thisType
+// CHECK: captures=[{type=anything variableName="p"}, {type=object flags=[IsFromCompiler]}] thisType
 // CHECK: b0([[copy]]: anything, [[secondHome]]: object,
 // CHECK: = GetSuperBase [[secondHome]]
 

@@ -151,7 +151,6 @@ fn reject_before_schedule(
 // single mutable field `node_fs` is wrapped in `JsCell` so the
 // `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
 // projected through interior mutability instead of `&mut Binding`.
-#[derive(Default)]
 pub(crate) struct Binding {
     pub(crate) node_fs: JsCell<NodeFS>,
 }
@@ -399,6 +398,45 @@ pub(crate) fn rm_options_for_testing(
         recursive: parsed.recursive,
         force: parsed.force,
     })
+}
+
+/// Wraps a raw Win32 `HANDLE` in a CRT fd that takes ownership of it. On error
+/// the caller still owns the `HANDLE`.
+/// https://github.com/nodejs/node/blob/98dbf6070e8439e530f1678b11962a0f3719e1f6/src/node_file.cc#L5691
+pub(crate) fn windows_handle_to_fd(cx: &mut JsScope<'_>, handle: JsLocal<'_>) -> JsResult<i32> {
+    let global = cx.global();
+
+    #[cfg(not(windows))]
+    {
+        let _ = handle;
+        return Err(global.throw(format_args!(
+            "windowsHandle is not implemented on this platform"
+        )));
+    }
+
+    #[cfg(windows)]
+    {
+        // `streams.ts` has already checked `typeof handle === "bigint"`.
+        let value = handle.to_js();
+        if !value.is_big_int_in_int64_range(i64::MIN, i64::MAX) {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::ERR_OUT_OF_RANGE,
+                    format_args!("windowsHandle does not fit into 64 bits"),
+                )
+                .throw());
+        }
+        let handle =
+            bun_jsc::JSBigInt::from_js(value).expect("windowsHandle is validated as a bigint");
+        let fd =
+            bun_core::fd::uv_open_osfhandle(handle.to_int64() as isize as *mut core::ffi::c_void);
+        if fd == -1 {
+            let err =
+                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::_open_osfhandle);
+            return Err(global.throw_value(err.to_js(global)));
+        }
+        Ok(fd)
+    }
 }
 
 /// Test-only (`bun:internal-for-testing`): run a flags value through the same

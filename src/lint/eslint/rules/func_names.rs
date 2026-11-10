@@ -27,10 +27,10 @@ impl Config {
     }
 }
 
-const UNNAMED: Message = Message::new("unnamed", "Unexpected unnamed {{name}}.");
-const NAMED: Message = Message::new("named", "Unexpected named {{name}}.");
+const UNNAMED: &Message = &Message::new("unnamed", "Unexpected unnamed {{name}}.");
+const NAMED: &Message = &Message::new("named", "Unexpected named {{name}}.");
 /// oxlint's suggestion.
-const REMOVE_NAME: Message = Message::new("removeName", "Remove the name.");
+const REMOVE_NAME: &Message = &Message::new("removeName", "Remove the name.");
 
 /// Caches [`guess_function_name`] by the function's ancestors.
 type GuessedNames<'a> = AncestorMemo<'a, Option<Name<'a>>>;

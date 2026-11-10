@@ -12,13 +12,14 @@ impl Checker<'_, '_> {
             let code = match hir.text(node) {
                 known::r#await if is_runtime_module => 1262,
                 known::r#await if is_parameter_of_async_arrow_function(hir, node) => 1359,
+                known::r#await if is_in_arrow_parameters_in(hir, node, is_await_context) => 1359,
                 known::r#yield if hir.yield_context(node) => {
                     match self.operator_as_name_error_class(file, node, Flags::GENERATOR) {
                         DiagnosticClass::EarlyError => 1359,
                         _ => continue,
                     }
                 }
-                known::r#yield if is_in_arrow_parameters_in_generator(hir, node) => 1359,
+                known::r#yield if is_in_arrow_parameters_in(hir, node, File::yield_context) => 1359,
                 _ => continue,
             };
             let name = self.declaration_name_at(file, hir.start(node));
@@ -32,7 +33,7 @@ impl Checker<'_, '_> {
             if matches!(hir.text(name), known::eval | known::arguments)
                 && (is_class_or_import_name(hir, name)
                     || is_indirect_store_target(hir, bound, name))
-                && self.is_read_as_strict_mode_code(file, name)
+                && self.is_strict_mode_code(file, name)
             {
                 let code = self.strict_mode_message(file, hir.parent(name), [1210, 1215, 1100]);
                 self.early_error_on_node(file, name, code, &[Arg::Atom(hir.text(name))]);
@@ -41,7 +42,6 @@ impl Checker<'_, '_> {
     }
 }
 
-/// `async await => 1`
 fn is_parameter_of_async_arrow_function(hir: &File<'_>, name: Node) -> bool {
     let parameter = hir.parent(name);
     let function = hir.parent(parameter);
@@ -50,15 +50,22 @@ fn is_parameter_of_async_arrow_function(hir: &File<'_>, name: Node) -> bool {
         && hir.is_parameter_without_parentheses(function, parameter)
 }
 
-/// `function* f() { (a = yield) => 1; }`: the language reads the operator there, which no parameter may hold.
-fn is_in_arrow_parameters_in_generator(hir: &File<'_>, node: Node) -> bool {
+fn is_await_context(hir: &File<'_>, node: Node) -> bool {
+    hir.await_context(node) == Ok(true)
+}
+
+fn is_in_arrow_parameters_in<'s>(
+    hir: &File<'s>,
+    node: Node,
+    is_context: fn(&File<'s>, Node) -> bool,
+) -> bool {
     let (mut below, mut above) = (node, hir.parent(node));
     while above.is_some() && !hir.kind(above).is_function_like() {
         (below, above) = (above, hir.parent(above));
     }
     hir.kind(above) == Kind::ArrowFunction
         && matches!(hir.data(below), NodeData::Param(_))
-        && (hir.yield_context(above) || is_in_arrow_parameters_in_generator(hir, above))
+        && (is_context(hir, above) || is_in_arrow_parameters_in(hir, above, is_context))
 }
 
 fn is_class_or_import_name(hir: &File<'_>, name: Node) -> bool {

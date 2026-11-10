@@ -1,23 +1,25 @@
-// Drafts an IR text test of the engine (WebKit's aot/tests/codegen, or ../engine-tests/codegen) from a small program: the IR that the front end really writes for
+// Drafts an IR text test of the engine (WebKit's aot/tests) from a small program: the IR that the front end really writes for
 // it, cut down to the program's own files and what they reach.
 //
 //   bun test/aot/tools/ir-test-from-source.ts main.ts > main.ir        needs testaot: $TESTAOT, or beside the Bun that runs this
 //
-// The source comes first, as comments, then a header that prints the B3 of every function, then the records with ids from 0 and without positions: those of the
-// program's files, the library functions that are still reachable once the flow analysis has run, and what either names. A library function that is only named
-// has no body. For the rest of the library testaot puts a stand-in in its place, in which every built-in that is written in JavaScript returns undefined.
-// Then: `testaot run main.ir --show-output`, and write the check lines. aot/tests/codegen/README.md in WebKit says how.
-// Or name the functions behind `# -- generated:` and let ./update-ir-tests.ts write them.
+// The source comes first, as comments, then a header that prints the code that the walk builds for every function, then the records with ids from 0: those of the
+// program's files, the library functions that Link does not call unreached, and what either names. A library function that is only named
+// has a body that ends at once.
+// Then: `testaot run main.ir --show-output`, and write the check lines.
+// Or add `# -- generated: f0 f2` as the last line, naming functions by id, and let ./update-ir-tests.ts write them. Delete the draft's CHECK line:
+// it needs a match above the first label, and `walk` prints nothing above its first unit.
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { testaot, toolEnv } from "../shell/tools";
 
-/** `written`: a file that counts as success where it is there, whatever the exit code. */
+/** `written`: a file that counts as success where it is there, whatever the exit code. What a signal has ended has not succeeded. */
 function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {
-  const { exitCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  if (exitCode !== 0 && !(written && existsSync(written)))
-    throw new Error(`${cmd.join(" ")} ended with ${exitCode}:\n${stderr}`);
+  const { exitCode, signalCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const hasDied = signalCode !== undefined || exitCode > 128;
+  if (hasDied || (exitCode !== 0 && !(written && existsSync(written))))
+    throw new Error(`${cmd.join(" ")} ended with ${signalCode ?? exitCode}:\n${stderr}`);
   return stdout.toString().replaceAll("\r\n", "\n");
 }
 
@@ -64,15 +66,17 @@ const outsideQuotes = (line: string, change: (part: string) => string) =>
 /**
  * The records of the files of the program whose entry point is `source`, and of what they reach in the library, as IR text.
  * `unknownIDs`: the ids in them that name no record.
+ * Without `keepsLibrary` no library function keeps its body.
  */
-export function recordsOfSource(source: string) {
+export function recordsOfSource(source: string, keepsLibrary = true) {
   using folder = tempDir("aot-ir-test-from-source", {});
   const program = join(String(folder), "program.aot");
   // The engine may stop the build with a diagnostic, which is what some tests are about. The front end has written its program by then.
   // A line `// Flags: --aot-erase-types` in the program: the front end reads it as it reads a file without types.
   const flags = /^\/\/ Flags:.* --aot-erase-types\b/m.test(readFileSync(source, "utf8")) ? ["--aot-erase-types"] : [];
   run(
-    [bunExe(), "compile", ...flags, `--aot-out=${program}`, basename(source)],
+    // Only the program is wanted. The executable is as large as Bun, and writing it takes longer than the build.
+    [bunExe(), "compile", ...flags, `--aot-out=${program}`, "--aot-testing=NoExecutable", basename(source)],
     dirname(resolve(source)),
     bunEnv,
     program,
@@ -88,22 +92,24 @@ export function recordsOfSource(source: string) {
   if (!ownModules.size) throw new Error("the printed program has no module for the file");
   const isOwn = (record: IRRecord) => ownModules.has((record.kind === "module" ? record.id : moduleOf(record)) ?? "");
 
-  // A build that stops early prints nothing here: then the stand-in is the whole library.
-  const reached = new Set<string>();
-  const later = recordsOf(
-    run([testaot!, "print", program, "--until=ApplyFlowResults"], String(folder), toolEnv, program),
+  // A line `function f3 unreached ..` for each function that nothing reaches. A build that stops early says nothing of any function:
+  // then no library function keeps its body.
+  const linkedFunctions = run([testaot!, "link", program, "functions"], String(folder), toolEnv, program)
+    .split("\n")
+    .filter(line => line.startsWith("function "));
+  const unreached = new Set(linkedFunctions.flatMap(line => /^function (f\d+) unreached\b/.exec(line)?.[1] ?? []));
+  const reached = new Set(
+    records
+      .filter(record => keepsLibrary && linkedFunctions.length && record.kind === "function" && hasBody(record))
+      .map(record => record.id!)
+      .filter(id => !unreached.has(id)),
   );
-  const sourceOf = new Map(later.map(record => [record.id, /derivation=\{source=(f\d+)/.exec(record.lines[0])?.[1]]));
-  for (const record of later) {
-    if (record.kind !== "function" || !hasBody(record)) continue;
-    let id = record.id;
-    while (sourceOf.get(id)) id = sourceOf.get(id);
-    if (id && byID.has(id)) reached.add(id);
-  }
 
   function stripped(record: IRRecord) {
-    const isWhole = record.kind !== "function" || isOwn(record) || reached.has(record.id!);
-    return record.lines.slice(0, isWhole ? undefined : 1).map((line, index) => {
+    const isWhole = record.kind !== "function" || isOwn(record) || reached.has(record.id!) || !hasBody(record);
+    // The verifier wants a body where the role says that there is one: the first block, which takes what the function takes, and no way on.
+    const lines = isWhole ? record.lines : [...record.lines.slice(0, 2), "    Unreachable", "}"];
+    return lines.map((line, index) => {
       if (record.kind === "module")
         return withoutField(line, "positions")
           .replace(/ functionText="(?:[^"\\]|\\.)*"/, "")
@@ -113,8 +119,9 @@ export function recordsOfSource(source: string) {
       if (record.kind === "entry") return withoutField(line, "hostReads");
       if (record.kind === "typesite") return line.replace(/ function=f\d+/, "");
       if (record.kind !== "function") return line;
-      if (index) return line.replace(/( @\d+)+( callers| constructs)?$/, "");
-      return isWhole ? withoutField(line, "text") : withoutField(line, "text").replace(/ \{$/, "");
+      // An operation says where in the text it stands, as in a build of the program.
+      if (index) return line;
+      return withoutField(line, "text");
     });
   }
 
@@ -153,12 +160,25 @@ export function recordsOfSource(source: string) {
       newIDs.set(record.id, record.id[0] + (counts[record.id[0]] = (counts[record.id[0]] ?? -1) + 1));
   const renumber = (line: string) => outsideQuotes(line, part => part.replace(ids, id => newIDs.get(id) ?? `${id}?`));
 
-  const kinds = ["module", "entry", "typesite", "layout", "data", "variable", "function", "runtimefunction"];
+  const kinds = [
+    "module",
+    "entry",
+    "typesite",
+    "expectedresult",
+    "layout",
+    "data",
+    "variable",
+    "evalscope",
+    "function",
+    "runtimefunction",
+  ];
+  // The reader makes the layouts by tag itself. A printed type names them beside the others, no record does, and the reader puts them back.
   const text = kinds.flatMap(kind =>
     records
       .filter(record => record.kind === kind && texts.has(record))
-      .flatMap(record => texts.get(record)!.map(renumber)),
+      .flatMap(record => texts.get(record)!.map(line => renumber(line).replace(/\|L\d+\?/g, ""))),
   );
+  for (const id of unknownIDs) if (!text.some(line => line.includes(`${id}?`))) unknownIDs.delete(id);
   return { text, unknownIDs };
 }
 
@@ -177,14 +197,10 @@ if (import.meta.main) {
         .split("\n")
         .map(line => `# ${line}`.trimEnd()),
       "# -- end of source",
-      "# FORM: AsRead",
-      "# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls",
-      "# RUN: lower-to-b3 optimized",
-      "# REQUIRES: unsanitized-code",
-      "# CHECK: function",
+      "# RUN: walk",
+      "# CHECK: code",
       "",
       ...text,
-      "# -- generated: *",
     ].join("\n"),
   );
   if (unknownIDs.size) console.error(`these name no record: ${[...unknownIDs].join(" ")}`);

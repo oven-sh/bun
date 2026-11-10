@@ -21,6 +21,7 @@ bun_core.workspace = true
 bun_js_parser.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
+bun_react_compiler = { path = "../../react_compiler" }
 bun_sema.workspace = true
 bun_sema_driver.workspace = true
 bun_trim.workspace = true

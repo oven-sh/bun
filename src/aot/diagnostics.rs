@@ -16,22 +16,18 @@ use bun_sema::hir::File;
 use bun_sema::messages::Category;
 use bun_sema::node::NodeData;
 use bun_sema::program::{FileId, Files};
-use bun_sema_driver::host::to_native;
 use bun_sema_driver::{self as driver, LoadedProgram, Locator};
 use bun_threading::Guarded;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use self::int32_flows::Int32FlowKey;
+pub(crate) use self::front_end::{describe_first_fold_error, syntax_errors_of};
 pub use self::shared::{InternalError, Severity};
-pub(crate) use self::sink::log_diagnostic_at;
-pub use self::sink::{log_diagnostic, log_internal_error};
+pub use self::sink::log_diagnostic;
 pub(crate) use self::spans::range_of_node;
 use crate::diagnostic_codes::Code;
-use crate::ir::generated::TypeSiteKind;
 use crate::load::Sources;
 use crate::statistics::Stage;
 
-// The row of `effect_of` for a `Code`: the source cannot be compiled as written, in any file.
 pub(crate) const COMPILER_DIAGNOSTIC_CLASS: DiagnosticClass = DiagnosticClass::EarlyError;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -53,13 +49,6 @@ pub struct SourcePosition {
     pub path: Vec<u8>,
     pub line: u32,
     pub column: u32,
-}
-
-/// A position with the text of its line, for a message that is written when the texts of the build are gone.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct ShownPosition {
-    pub position: SourcePosition,
-    pub line_text: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,10 +76,9 @@ fn to_owned_arguments(arguments: &[&[u8]]) -> Vec<Vec<u8>> {
     arguments.iter().map(|argument| argument.to_vec()).collect()
 }
 
-#[derive(Clone, Debug)]
-pub enum Int32FlowValue {
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Int32FlowValue {
     Expression {
-        /// Where the expression starts in its file. A message about the flow points there.
         start: u32,
         text: Vec<u8>,
         advice: Vec<u8>,
@@ -100,14 +88,10 @@ pub enum Int32FlowValue {
     SpreadArgument,
 }
 
-/// What the front end knows about a flow into an `int32` position.
-#[derive(Clone, Debug)]
-pub struct Int32Flow {
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct Int32Flow {
     pub file: FileId,
-    /// The position of the request in the program that the engine reads.
     pub position: u32,
-    /// The position and the kind of the type site of the request.
-    pub site: Option<(u32, TypeSiteKind)>,
     pub subject: Vec<u8>,
     pub value: Int32FlowValue,
 }
@@ -127,7 +111,7 @@ impl DiagnosticBuffer {
         self.diagnostics.push(diagnostic);
     }
 
-    pub fn add_int32_flow(&mut self, flow: Int32Flow) {
+    pub(crate) fn add_int32_flow(&mut self, flow: Int32Flow) {
         self.int32_flows.push(flow);
     }
 
@@ -214,15 +198,24 @@ impl LoadMessages {
         self.lists.lock().internal_errors.push(error);
     }
 
-    pub(crate) fn has_errors(&self) -> bool {
-        let lists = self.lists.lock();
-        lists.log.has_errors() || !lists.internal_errors.is_empty()
+    pub(crate) fn hand_on_to(&self, heard: &LoadMessages) {
+        let LoadMessageLists {
+            mut log,
+            mut internal_errors,
+        } = std::mem::take(&mut *self.lists.lock());
+        let mut heard = heard.lists.lock();
+        if !log.msgs.is_empty() || log.warnings != 0 || log.errors != 0 {
+            log.append_to(&mut heard.log);
+        }
+        heard.internal_errors.append(&mut internal_errors);
     }
 
     pub(crate) fn with_log<R>(&self, call: impl FnOnce(&mut Log) -> R) -> R {
         let mut log = Log::init();
         let result = call(&mut log);
-        log.append_to(&mut self.lists.lock().log);
+        if !log.msgs.is_empty() || log.warnings != 0 || log.errors != 0 {
+            log.append_to(&mut self.lists.lock().log);
+        }
         result
     }
 }
@@ -270,19 +263,6 @@ impl<'a, 's> SpanLocator<'a, 's> {
         let locator = last_file.get_or_insert_with(|| Locator::new(files, span.file));
         locator.locate(span.start, span.end, reported)
     }
-
-    pub(crate) fn position_of(&mut self, span: Span) -> SourcePosition {
-        let unlocated = new_driver_diagnostic(0, Category::Message, Vec::new(), &[]);
-        position_of_diagnostic(&self.locate(span, unlocated))
-    }
-}
-
-pub(crate) fn position_of_diagnostic(located: &driver::Diagnostic) -> SourcePosition {
-    SourcePosition {
-        path: to_native(&located.path).to_vec(),
-        line: located.line,
-        column: located.column,
-    }
 }
 
 pub(crate) fn new_driver_diagnostic(
@@ -326,8 +306,7 @@ struct Entry {
 pub(crate) struct Diagnostics {
     entries: Vec<Entry>,
     internal_errors: Vec<InternalError>,
-    int32_flows: FxHashMap<Int32FlowKey, Int32Flow>,
     error_count: u32,
-    /// How many of them the language itself has: whoever loads the file reports them.
-    early_error_count: u32,
+    missing_at_load: FxHashSet<(Vec<u8>, Vec<u8>)>,
+    int32_flows: FxHashMap<(Vec<u8>, u32), Int32Flow>,
 }

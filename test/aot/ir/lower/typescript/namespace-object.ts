@@ -2,8 +2,10 @@
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: [[head]] = NewObject layout=[[layout]] @
 // CHECK-NEXT: [[namespace]] = FinishObject [[head]]
-// CHECK: PutModuleVariable [[namespace]] variable=
-// CHECK: PropSet [[namespace]], {{*}}key="a"
+// CHECK: [[exported]] = Convert [[namespace]] declared={type=undefined|[[layout]] flags=[IsExpected]}
+// CHECK: PutModuleVariable [[exported]] variable=
+// CHECK: [[name]] = Convert [[namespace]] declared={type=undefined|[[layout]] flags=[IsExpected]}
+// CHECK: PropSet [[name]], {{*}}key="a"
 
 // RUN(HIDDEN): lower
 // HIDDEN-NOT: key="hidden"

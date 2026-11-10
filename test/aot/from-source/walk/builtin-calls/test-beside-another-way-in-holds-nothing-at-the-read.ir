@@ -1,0 +1,10 @@
+# two edges enter the block of the read, and only one of them has passed the test
+# f1 = code
+# -- source: test-beside-another-way-in-holds-nothing-at-the-read.ts
+# function code(text: string, from: number, force: boolean): number { const pos = from & 7; if (pos < text.length || force) return text.charCodeAt(pos); return -2; }
+# console.log(code("abc", 1, false), code("abc", 5, true), code("abc", 5, false));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = Less v
+# CHECK: = GetStringCodeUnit

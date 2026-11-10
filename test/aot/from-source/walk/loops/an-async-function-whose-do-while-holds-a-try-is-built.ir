@@ -1,0 +1,31 @@
+# -- source: an-async-function-whose-do-while-holds-a-try-is-built.js
+# let a1 = 0.5;
+# let t1 = "";
+# async function run1(start, end) {
+#   const c = JSON.parse('"abcd"');
+#   const to = end | 0;
+#   let i = start | 0;
+#   do {
+#     const x = c[i];
+#     a1 %= x;
+#     try {
+#       if (i === 2) throw new Error("turn");
+#     } catch (error) {
+#       t1 += "caught" + i;
+#     }
+#     i = (i + 1) | 0;
+#   } while (i < to);
+#   return String(a1) + "|" + t1;
+# }
+# run1(0, 9).then(said => print("SAID " + said));
+# -- end of source
+# A guard. For two hours the records of pending blocks outlived the block of the text in which they were made while a loop was being built twice. A snapshot that is put back lays them back whole while edges stay in kept code, so a record counted no arrival at a block that edges led to: the start of the copy for the rest was called unreachable, never begun, and the build stopped: the walk is over and an edge leads to a block that has no end.
+# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
+# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: SAID NaN|caught2
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: SAID NaN|caught2
+# HELD-NEXT: exited with 0

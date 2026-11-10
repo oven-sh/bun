@@ -127,7 +127,7 @@ impl Default for EntropyCache {
 }
 impl EntropyCache {
     pub(crate) const BUFFERED_UUIDS_COUNT: usize = 16;
-    pub const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
+    pub(crate) const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
 
     pub(crate) fn fill(&mut self) {
         bun_boringssl::rand_bytes(&mut self.cache);
@@ -844,18 +844,8 @@ impl RareData {
         vm: &mut VirtualMachine,
     ) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
-            // In-place out-param init: `event_loop` inside captures the
-            // `self` address, so the value must not move after init; allocate
-            // the Box first, then init into it.
-            let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            if !SpawnSyncEventLoop::init(
-                &mut *boxed,
-                core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            ) {
-                return None;
-            }
-            // SAFETY: `init` fully initialised the slot when it returned `true`.
-            self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
+            self.spawn_sync_event_loop_ =
+                SpawnSyncEventLoop::init(core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>());
         }
         self.spawn_sync_event_loop_.as_deref()
     }
@@ -902,7 +892,6 @@ impl RareData {
     /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would touch
     /// freed JSC heap.
     pub(crate) fn close_all_socket_groups(
-        &mut self,
         vm: &VirtualMachine,
     ) -> crate::virtual_machine::SweepResult {
         // A native close path can cascade (closing one socket completes or
@@ -914,12 +903,11 @@ impl RareData {
         // fields missed those, leaking one 88-byte us_socket_t per still-open
         // accepted connection at process.exit() (the LSAN cluster on #29932
         // build 49245).
-        let _ = self;
         let mut rounds: u8 = 0;
         while rounds < 8 {
-            // `uws_loop_mut()` is the centralised BACKREF accessor for the
+            // `uws_loop_ref()` is the centralised BACKREF accessor for the
             // per-VM uSockets loop (live for the VM lifetime).
-            if !vm.uws_loop_mut().close_all_groups() {
+            if !vm.uws_loop_ref().close_all_groups() {
                 break;
             }
             rounds += 1;
@@ -934,7 +922,7 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        vm.uws_loop_mut().drain_closed_sockets();
+        vm.uws_loop_ref().drain_closed_sockets();
         result
     }
 }

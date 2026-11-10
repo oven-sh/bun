@@ -81,6 +81,10 @@ pub(crate) mod test {
     #[path = "Timings.rs"]
     pub(crate) mod timings;
 
+    /// `bun test --aot --shard`: puts test files that import the same modules in the same shard.
+    #[path = "ShardsByReach.rs"]
+    pub(crate) mod shards_by_reach;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
@@ -375,8 +379,8 @@ pub(crate) mod cli {
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
-        // SAFETY: single-threaded process startup
-        unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
+        // SAFETY: single-threaded process startup; nothing else refers to `LOG_` yet.
+        let log = unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
         // Init the process-lifetime CLI arena here (not via `LazyLock` on first
         // use) — see `super::CLI_ARENA`. The write happens before any worker
         // thread is spawned and before `Command::start` (the first
@@ -385,8 +389,6 @@ pub(crate) mod cli {
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
-        // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
-        let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
@@ -1056,6 +1058,16 @@ pub(crate) mod command {
             }
         }
 
+        #[cfg(not(bun_locked_environment))]
+        if let Some(first) = bun::argv().get(1 + bun::bun_options_argc())
+            && first
+                .as_bytes()
+                .starts_with(run_compiled::PROGRAM_FILE_FLAG)
+            && let Some(graph) = run_compiled::load_program_file()?
+        {
+            return boot_standalone(graph, log);
+        }
+
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
         // empty-eval forms `bun -e ''` / `bun -p ''` (and the `--eval=` /
         // `--print=` spellings), and the dominant `bun <path>` / `bun .` run
@@ -1209,9 +1221,9 @@ pub(crate) mod command {
     ) -> CmdResult {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
-        let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        let graph: &'static bun_standalone_graph::Graph = unsafe { &*graph };
         #[cfg(bun_hardened)]
-        if bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some() {
+        if bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some() {
             bun_jsc::compiled_program::deny_write_execute_memory();
             #[cfg(bun_locked_environment)]
             bun_jsc::compiled_program::refuse_variables_that_are_never_read();
@@ -2103,9 +2115,6 @@ Full documentation is available at <magenta>https://bun.com/docs/compiler/aot<r>
 
   <d>Compile the test files ahead of time, then run them<r>
   <b><green>bun test<r> <cyan>--aot<r>
-
-  <d>The same, and log every value that doesn't match its declared type<r>
-  <b><green>bun test<r> <cyan>--aot-log-type-mismatches<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "

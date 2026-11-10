@@ -1,0 +1,22 @@
+# f1 = make
+# -- source: class-instance-with-field-initializers.ts
+# class Counter {
+#   count = 0;
+#   step = 1.5;
+#   label = "none";
+#   owner: Counter | null = null;
+# }
+# function make(): Counter {
+#   return new Counter();
+# }
+# for (let turn = 0; turn < 2; turn++) {
+#   const counter = make();
+#   (globalThis as any).answer = [make, counter, counter.count, counter.step, counter.label, counter.owner];
+# }
+# -- end of source
+# The compiler before this one: 13 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 4, patches 1, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:4 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 4

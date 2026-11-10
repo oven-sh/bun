@@ -1,0 +1,45 @@
+# `tint` is held to the integers of 32 bits and lies raw from birth: undefined or null in its slot sets the mark of the cell, and a read off an object that was seen to bear no mark is a bare load.
+# a typed store of a value that MAY be undefined or null sets that mark where it runs. So what the walk has seen of the mark ends at the store: of the object stored into, fresh though it is,
+# of every other name that may be the same object, and at the head of a loop whose turns store. The read behind it looks at the slot again. A store of the right kind ends nothing.
+# f1 = behindJoin, f2 = atHeadOfLoop, f3 = underAnotherName, f4 = theRightKind
+# -- source: a-store-that-may-lay-undefined-ends-what-was-seen-of-the-mark.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Tint { None = 0, Red = 1, Blue = 2, Gold = 4 }
+# class Crate { tint: Tint; constructor(seed: number) { this.tint = (seed & 7) as Tint; } }
+# class Pair { a: Tint; t: Tint; constructor(seed: number) { this.a = (seed & 7) as Tint; this.t = Tint.Red; } }
+# const pairs: Pair[] = [];
+# function behindJoin(turns: number) { let holes = 0; for (let i = 0; i < turns; i++) { const crate = new Crate(i); const next = (i & 2) ? Tint.Gold : undefined; if (i & 1) crate.tint = next as Tint; if ((crate.tint as unknown) === undefined) holes++; } return holes; }
+# function atHeadOfLoop(turns: number, depth: number) { let holes = 0; for (let i = 0; i < turns; i++) { const crate = new Crate(i); for (let k = 0; k < depth; k++) { if ((crate.tint as unknown) === undefined) holes++; crate.tint = ((k & 1) ? Tint.Gold : undefined) as Tint; } } return holes; }
+# function underAnotherName(c: boolean, d: boolean) { const next: any = d ? undefined : Tint.Blue; const x = pairs[0]; const y = pairs[1]; x.t = Tint.Blue; const work = (x.a + y.a + y.t) | 0; if (c) { x.a = next; return y.a; } return work; }
+# function theRightKind(turns: number) { let sum = 0; for (let i = 0; i < turns; i++) { const crate = new Crate(i); const next = (i & 2) ? Tint.Gold : Tint.Red; if (i & 1) crate.tint = next; sum += crate.tint; } return sum; }
+# sink(behindJoin, atHeadOfLoop, underAnotherName, theRightKind, pairs, new Crate(0), new Pair(0));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK: [[crate]]: L0 @Cell = NewObject layout=L0
+# CHECK: = FinishBirth [[crate]]
+# CHECK: = PutSlot [[crate]], {{*}} key="tint"
+# CHECK-NOT: = GetSlot [[crate]]
+# CHECK: = IsSlotFilled [[crate]] key="tint"
+# RUN(LOOP): walk f2 mechanisms=all
+# LOOP-LABEL: code f2:Body
+# LOOP: [[crate]]: L0 @Cell = NewObject layout=L0
+# LOOP: = FinishBirth [[crate]]
+# LOOP: isLoopHead=true
+# LOOP-NOT: = GetSlot [[crate]]
+# LOOP: = IsSlotFilled [[crate]] key="tint"
+# LOOP: = GetSlot [[crate]] key="tint"
+# RUN(NAME): walk f3 mechanisms=all
+# NAME-LABEL: code f3:Body
+# NAME: = PutSlot {{*}} key="a" receivers=[L1]
+# NAME-NOT: = GetSlot {{*}} key="a" receivers=[L1] level=Proven
+# NAME: = GetSlot {{*}} key="a" receivers=[L1] level=Expected
+# RUN(KIND): walk f4 mechanisms=all
+# KIND-LABEL: code f4:Body
+# KIND: [[crate]]: L0 @Cell = NewObject layout=L0
+# KIND: = FinishBirth [[crate]]
+# KIND: = PutSlot [[crate]], {{*}} key="tint"
+# KIND-NOT: = IsSlotFilled
+# KIND: = GetSlot [[crate]] key="tint" receivers=[L0] level=Proven [holdsDeclaredType]

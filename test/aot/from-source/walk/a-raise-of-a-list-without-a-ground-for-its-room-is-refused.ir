@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# function row(given, count, first) {
+#   const most = count | 0, kept = [first | 0];
+#   for (let j = 1; j <= most; j++) { let least = given[j] + 1; const beside = kept[j - 1] + 2; if (beside < least) least = beside; kept[j] = least; }
+#   return kept;
+# }
+# const made = row(new Float64Array(40).fill(100), 30, 1);
+# print(made.length, made[24], made[25], made[30]);
+# -- end of source
+# `kept` is filled from its end in the typed copy: the turn raises the length and stores raw. The raise rests on a ground that shows `key < room`: the turn's own test, or the head's `key < bound` with `bound <= room` asked once in front.
+# THE LIE, testing=RoomsAskedInFrontAreTakenForGiven: the turn passes its question over, and no ground is there to rest on. The verifier of the code asks every raise for one and stops the build at the operation.
+# f1 = row
+# OPTIONS: testing=RoomsAskedInFrontAreTakenForGiven
+# DIAGNOSTIC: OpcodeNotInForm f1
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: code f1:Body

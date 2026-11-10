@@ -73,7 +73,8 @@ console.log(path.basename(__dirname), fs.readFileSync(path.join(__dirname, "publ
       "./data.json",
     );
     expect(plain).toEqual({ stdout: "app <p>a page</p> {}\n", stderr: "", exitCode: 0 });
-    expect(compiled).toEqual({ ...plain, stdout: "root <p>a page</p> {}\n" });
+    // `__dirname` is the folder of the build, as with `bun build --compile`. That folder is gone, and the executable answers for what it holds of it.
+    expect(compiled).toEqual(plain);
   }, 120_000);
 
   test("an asset beside the folder of the entry point is beside it in the executable", async () => {
@@ -174,7 +175,8 @@ console.log(fs.existsSync(path.join(__dirname, "..", "elsewhere", "note.txt")), 
     });
     const { plain, compiled } = await bothWays(String(dir), "./main.cjs", "--asset", "../elsewhere");
     expect(plain).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
-    expect(compiled).toEqual({ ...plain, stdout: "false true\n" });
+    // The first is the file on disk, beside the folder of the build, which `__dirname` names. The second is the one in the executable.
+    expect(compiled).toEqual({ ...plain, stdout: "true true\n" });
   }, 120_000);
 
   // macOS and Windows have no such names.

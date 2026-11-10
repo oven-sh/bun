@@ -1,0 +1,24 @@
+# `make` may hand back a heron that it has handed out before: nothing that builds on it is a maker. `fresh` stores `id` into what `new` has just handed it.
+# -- source: a-function-that-may-hand-back-an-old-object-is-no-maker.ts
+# interface Plume { kind: number; root?: number; tip?: number }
+# interface Heron { flags: number; id?: number; mark?: number; plume?: Plume; shared?: number }
+# function Plume(this: Plume) { this.kind = 0; }
+# function Heron(this: Heron, flags: number) { this.flags = flags; }
+# let count = 0;
+# const kept: Heron[] = [];
+# function fresh(flags: number): Heron { const made: Heron = new (Heron as any)(flags); made.id = ++count; return made; }
+# function make(flags: number): Heron { return kept[flags] || (kept[flags] = fresh(flags)); }
+# function makeMarked(flags: number, mark: number) { const made = make(flags); made.mark = mark; made.plume = new (Plume as any)(); return made; }
+# function first(mark: number) { const made = makeMarked(1, mark); made.shared = mark; made.plume!.tip = mark; return made; }
+# function second(mark: number) { const made = make(1); made.shared = mark; return made; }
+# const one = first(3), two = second(4);
+# declare function print(text: string): void;
+# print((one === two) + " " + Object.keys(one).join() + " " + one.shared + " " + one.plume!.tip);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: "id" appended {{*}}stored-by-follower-of-maker
+# RUN(NONE): link fields mechanisms=all
+# NONE-NOT: "tip" appended {{*}}stored-by-follower-of-maker
+# NONE-NOT: "mark" appended {{*}}stored-by-follower-of-maker
+# NONE-NOT: "plume" appended {{*}}stored-by-follower-of-maker
+# NONE-NOT: "shared" appended {{*}}stored-by-follower-of-maker

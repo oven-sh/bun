@@ -1,10 +1,14 @@
 #[path = "../statistics/limit_values.rs"]
 pub mod limit_values;
 
-pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build};
+pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, limit_of_queries};
 use crate::Opaque;
-pub use crate::ir::generated::{Architecture, DegradesTo, LimitId, Stage, StatisticId};
+pub use crate::ir::generated::{Architecture, LimitId, Stage, StatisticId};
 use crate::linked;
+pub use crate::linked::{
+    bun_aot_log_part_outside_stages as log_part_outside_stages,
+    bun_aot_log_time_outside_stages as log_time_outside_stages,
+};
 
 pub struct Statistics(pub Opaque);
 

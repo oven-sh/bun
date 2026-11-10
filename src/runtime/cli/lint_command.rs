@@ -111,7 +111,7 @@ pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
         && File::stdin().read_to_end_into(&mut program).is_ok()
     {
-        ctx.runtime_options.eval.script = program.into_boxed_slice();
+        ctx.runtime_options.eval.script = program.leak();
         ctx.runtime_options.eval.reads_configuration = true;
     }
 }

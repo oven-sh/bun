@@ -1,0 +1,13 @@
+# A loop that stores under a counter into a value of which nothing is expected asks it in front for a list and for views, and has a copy for each.
+# Where the turns call, the call is the turn's price, and behind it nothing that was asked in front can be taken out of the turn: such a loop stays one loop.
+# RUN(CALLS): walk f1 mechanisms=all
+# CALLS-LABEL: code f1:Body
+# CALLS-NOT: = TypeTest {{*}} testedType=Array #
+# RUN(COPIES): walk f2 mechanisms=all
+# COPIES-LABEL: code f2:Body
+# COPIES: = TypeTest {{*}} testedType=Array #
+# -- source: main.js
+# function each(make, give) { const into = make(); for (let i = 0; i < 100; i++) into[i] = give(i); return into; }
+# function fill(make, value) { const into = make(); for (let i = 0; i < 100; i++) into[i] = value; return into; }
+# globalThis.kept = [each, fill];
+# -- end of source

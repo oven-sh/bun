@@ -1408,12 +1408,7 @@ impl CronJob {
     fn tick_settled(this: ThisPtr<Self>) {
         this.tick_cell.set(JSValue::ZERO);
         this.maybe_downgrade();
-        // SAFETY: `this` is live: the claim being released is a ref on it.
-        unsafe {
-            <Self as bun_ptr::CellRefCounted>::deref_nn(core::ptr::NonNull::new_unchecked(
-                this.as_ptr(),
-            ))
-        };
+        <Self as bun_ptr::CellRefCounted>::deref_nn(bun_ptr::BackRef::from(this).into());
     }
 
     /// The tick's promise will not settle on this VM (it is going): take the claim back, so the

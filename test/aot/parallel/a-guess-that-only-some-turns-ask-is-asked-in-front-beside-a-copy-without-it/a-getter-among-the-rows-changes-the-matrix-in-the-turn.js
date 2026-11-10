@@ -1,0 +1,4 @@
+// The same lines; one row is answered by a getter that counts its reads and lays another row into the matrix in the middle of a loop.
+class Matrix { constructor(modules) { this.size = modules.length; this.modules = modules; } runs() { const { size, modules } = this; let score = 0; const line = get => { let run = 1; for (let i = 1; i <= size; i++) { if (i < size && get(i) === get(i - 1)) { run++; continue; } if (run >= 3) score += run - 2; run = 1; } }; for (let i = 0; i < size; i++) { line(k => modules[i][k]); line(k => modules[k][i]); } return score; } }
+const rows = JSON.parse("[[1,1,1,1,0,0],[0,1,1,1,1,0],[0,0,0,0,1,1],[1,0,1,0,1,0],[1,1,1,1,1,1],[0,0,0,1,1,1]]");
+const trapped = rows.map(row => row.slice()); let reads = 0; Object.defineProperty(trapped, 3, { get() { reads++; if (reads === 5) trapped[0] = [9, 9, 9, 9, 9, 9]; return rows[3]; } }); console.log(new Matrix(trapped).runs(), reads);

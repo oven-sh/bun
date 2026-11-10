@@ -1,0 +1,28 @@
+# keeper(new AsyncDisposableStack()); hidden[hidden]
+# A control of what-lies-under-the-symbol-of-disposal-is-not-called-by-native-code-that-holds-the-object.ir
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/AsyncDisposableStackPrototype.ts" displayPath="/$bun/js/engine/AsyncDisposableStackPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=AsyncDisposableStackPrototypeDisposeAsync function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="AsyncDisposableStack" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(AsyncDisposableStack) flags=[IsExpected]}
+    v3 = Construct v2, - calleeName="AsyncDisposableStack"
+    v4 = PropGet v0 key="keeper" [isFreeName]
+    v5 = Call v4, -, v3
+    v6 = Undefined
+    v7 = PropGet v0 key="hidden" [isFreeName]
+    v8 = ElemGet v7, v7
+    Return v8
+}
+function f1 name="disposeAsync" module=m1 kind=Method role=Library flags=[HasExplicitName] enclosingRuntimeFunction=AsyncDisposableStackPrototypeDisposeAsync thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -63,6 +63,29 @@ fn resolution_key_has_directory_kind_and_specifier() {
     );
 }
 
+#[test]
+fn file_named_from_two_folders_has_one_resolution_key() {
+    let key = code_resolution_key(b"/p/b", Import, b"./c.js");
+    assert_eq!(key, code_resolution_key(b"/p/a", Import, b"../b/c.js"));
+    assert_eq!(key, code_resolution_key(b"/p", Import, b"./b/./c.js"));
+    assert_ne!(key, code_resolution_key(b"/p/b", Require, b"./c.js"));
+    assert_ne!(key, code_resolution_key(b"/p/b", EntryPoint, b"./c.js"));
+    assert_ne!(key, code_resolution_key(b"/p/b", Import, b"./c"));
+    let required = code_resolution_key(b"/p/b", Require, b"./c.js");
+    let packages: [(&[u8], &[u8]); 2] = [
+        (b"/p/node_modules/x", b"../../b/c.js"),
+        (b"/p/node_modules", b"../b/c.js"),
+    ];
+    for (directory, specifier) in packages {
+        assert_ne!(required, code_resolution_key(directory, Require, specifier));
+    }
+    let as_written: [&[u8]; 5] = [b"./b/", b"./b/.", b"..", b".", b"./b\\c.js"];
+    for specifier in as_written {
+        let key = code_resolution_key(b"/p", Import, specifier);
+        assert_eq!(key, [&b"/p//1"[..], specifier].concat());
+    }
+}
+
 const CONDITIONS: [&str; 2] = ["import", "default"];
 const NOT_EXPORTED: &str = "PackagePathNotExported";
 const BAD_SPECIFIER: &str = "InvalidModuleSpecifier";
@@ -521,6 +544,7 @@ fn module_is_taken_where_search_prefers_it() {
         path: in_package("esm.js"),
         required: Some(in_package("cjs.js")),
         links_followed: false,
+        has_side_effects: false,
     };
     assert_eq!(find(Import, true), module);
     assert_eq!(find(Require, true), found_file(in_package("cjs.js")));

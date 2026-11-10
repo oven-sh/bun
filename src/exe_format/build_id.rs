@@ -1,5 +1,7 @@
 //! The name of an executable that holds a compiled program.
 
+use std::borrow::Cow;
+
 use crate::builtins::Image;
 use crate::identity::find_rest_of_gnu_build_id;
 use crate::image::{KnownSection, read_bytes_at};
@@ -9,18 +11,50 @@ use bun_sha_hmac::sha::SHA256;
 pub const SIZE: usize = 16;
 const OFFSET_IN_SECTION: usize = 16;
 const CHUNK_SIZE: usize = 4 << 20;
-const MAX_THREADS: usize = 16;
 
 /// The same bytes give the same name, however many threads there are.
 pub fn compute(payload: &[u8]) -> [u8; SIZE] {
-    let chunks: Vec<&[u8]> = payload.chunks(CHUNK_SIZE).collect();
+    compute_of_parts(&[payload])
+}
+
+/// The chunks of the payload that `parts` are, one behind the other. A chunk that lies in more than one part is copied.
+fn chunks_of_parts<'a>(parts: &[&'a [u8]]) -> Vec<Cow<'a, [u8]>> {
+    let mut chunks = Vec::new();
+    let mut last: Cow<'a, [u8]> = Cow::default();
+    for &part in parts {
+        let missing = match last.len() {
+            0 => 0,
+            length => CHUNK_SIZE - length,
+        };
+        let (first, others) = part.split_at(missing.min(part.len()));
+        if !first.is_empty() {
+            last.to_mut().extend_from_slice(first);
+        }
+        if last.len() == CHUNK_SIZE {
+            chunks.push(core::mem::take(&mut last));
+        }
+        if !others.is_empty() {
+            let (whole, rest) = others.as_chunks::<CHUNK_SIZE>();
+            last = Cow::Borrowed(rest);
+            chunks.extend(whole.iter().map(|chunk| Cow::Borrowed(chunk.as_slice())));
+        }
+    }
+    if !last.is_empty() {
+        chunks.push(last);
+    }
+    chunks
+}
+
+/// The name of the payload that `parts` are, one behind the other. It does not tell where a part ends.
+pub fn compute_of_parts(parts: &[&[u8]]) -> [u8; SIZE] {
+    let chunks = chunks_of_parts(parts);
     let mut digests = vec![[0u8; 32]; chunks.len()];
-    let threads = std::thread::available_parallelism().map_or(1, |count| count.get());
-    let chunks_per_thread = chunks.len().div_ceil(threads.min(MAX_THREADS)).max(1);
-    let parts = chunks
+    let threads = usize::from(bun_core::get_thread_count());
+    let chunks_per_thread = chunks.len().div_ceil(threads).max(1);
+    let shares = chunks
         .chunks(chunks_per_thread)
         .zip(digests.chunks_mut(chunks_per_thread));
-    bun_core::for_each_in_parallel(parts, |(chunks, digests)| {
+    bun_core::for_each_in_parallel(shares, |(chunks, digests)| {
         for (chunk, digest) in chunks.iter().zip(digests) {
             SHA256::hash(chunk, digest);
         }
@@ -97,6 +131,31 @@ mod tests {
         let mut digest = [0u8; 32];
         SHA256::hash(digests.as_flattened(), &mut digest);
         assert_eq!(compute(&payload), digest[..SIZE]);
+    }
+
+    #[test]
+    fn name_does_not_tell_where_a_part_ends() {
+        let payload: Vec<u8> = (0..CHUNK_SIZE * 3 + 5)
+            .map(|index| (index / 7) as u8)
+            .collect();
+        let name = compute(&payload);
+        for [first, second] in [
+            [0, 0],
+            [10, 20],
+            [1, CHUNK_SIZE],
+            [CHUNK_SIZE - 1, CHUNK_SIZE + 1],
+            [CHUNK_SIZE, 2 * CHUNK_SIZE],
+            [CHUNK_SIZE + 3, 3 * CHUNK_SIZE + 4],
+            [payload.len(), payload.len()],
+        ] {
+            let parts = [
+                &payload[..first],
+                &payload[first..second],
+                &payload[second..],
+            ];
+            assert_eq!(compute_of_parts(&parts), name, "{first} {second}");
+        }
+        assert_eq!(compute_of_parts(&[]), compute(b""));
     }
 
     #[test]

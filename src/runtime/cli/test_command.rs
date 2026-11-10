@@ -2791,6 +2791,8 @@ impl TestCommand {
                 current_file: jest::CurrentFile::default(),
                 files: jest::FileList::default(),
                 index: jest::FileMap::default(),
+                named_files: &[],
+                named_file_keys: None,
                 default_timeout_override: u32::MAX,
                 vi_config: Default::default(),
                 vi_config_of_preload: Default::default(),
@@ -3847,6 +3849,9 @@ impl TestCommand {
                 }
             }
         }
+
+        // SAFETY: `files_` borrows `exec()`'s list of test files, which `exec()` drops after the runner.
+        reporter_.jest.named_files = unsafe { bun_ptr::detach_lifetime_ref(files_) };
 
         // No MimallocArena is wired through `vm.arena` on this serial run
         // path; the parallel worker path in runner.rs does wire one.

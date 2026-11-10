@@ -3,7 +3,8 @@ use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
 use crate::cli::test_command::ReportersConfig;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::array_hash_map::{ArrayHashAdapter, ArrayHashContext};
+use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
@@ -121,6 +122,10 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) current_file: CurrentFile,
     pub(crate) files: FileList,
     pub(crate) index: FileMap,
+    /// The files this run was asked for. Each is resolved and added to `index` in its turn.
+    pub(crate) named_files: &'a [bun_ptr::Interned],
+    /// The module keys of `named_files`. The first `is_test_file()` builds it, so a run that mocks no module never does.
+    pub(crate) named_file_keys: Option<ArrayHashMap<&'static [u8], ()>>,
     pub(crate) only: bool,
     pub(crate) run_todo: bool,
     pub(crate) concurrent: bool,
@@ -256,6 +261,35 @@ impl<'a> TestRunner<'a> {
             .expect("unreachable");
         *entry.value_ptr = file_id;
         GetOrPutFileResult { file_id }
+    }
+
+    /// Whether `key` is the module of a file that this run was asked for, or of one that has had its turn.
+    pub(crate) fn is_test_file(&mut self, key: &[u8]) -> bool {
+        if self.index.contains_adapted(key, &PathKey) {
+            return true;
+        }
+        let named_files = self.named_files;
+        self.named_file_keys
+            .get_or_insert_with(|| {
+                let mut keys = ArrayHashMap::with_capacity(named_files.len());
+                for file in named_files {
+                    keys.put_assume_capacity(jsc::compiled_program::entry_module_key(file.as_bytes()), ());
+                }
+                keys
+            })
+            .contains_adapted(key, &PathKey)
+    }
+}
+
+/// Looks a path up in a map of interned paths without interning it.
+struct PathKey;
+
+impl ArrayHashAdapter<[u8], &'static [u8]> for PathKey {
+    fn hash(&self, key: &[u8]) -> u32 {
+        ArrayHashContext::hash(&AutoContext, &key)
+    }
+    fn eql(&self, a: &[u8], b: &&'static [u8], _b_index: usize) -> bool {
+        a == *b
     }
 }
 

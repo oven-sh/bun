@@ -3098,6 +3098,8 @@ struct ModulesToEvict {
     bool onlyImportersFromEarlierTestFiles { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
+    // The running test file has ended: each of testFilesToReplace gets a module with its exports in its place.
+    bool replacesTestFiles { false };
     bool hasLoadSettled { false };
     // The same, for the end of a mock over a compiled file that had run: the program holds what the file exported, so nothing is listed here.
     bool endsMockOverCompiledFileThatHadRun { false };
@@ -3178,6 +3180,7 @@ static void giveLoadedModuleBackToPreloadModuleMock(Zig::GlobalObject* globalObj
 }
 
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
+extern "C" bool JSMock__isTestFile(const BunString* key);
 
 __attribute__((minsize)) static void moveLoadedModule(Zig::GlobalObject* globalObject, const String& from, const String& to)
 {
@@ -3225,6 +3228,105 @@ static void setLoadedModuleAside(Zig::GlobalObject* globalObject, const String& 
     RELEASE_AND_RETURN(scope, moveLoadedModule(globalObject, specifier, original));
 }
 
+// The values that a module exports now. Reading an export that comes from a mock may call a getter of the factory's object.
+static JSObject* copyExportsOfModule(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* exports = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto* moduleNamespace = record->getModuleNamespace(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    moduleNamespace->methodTable()->getOwnPropertyNames(moduleNamespace, globalObject, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (auto& name : names) {
+        JSValue value = moduleNamespace->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        exports->putDirectMayBeIndex(globalObject, name, value);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return exports;
+}
+
+enum class ModuleOfTestFile : uint8_t {
+    // Failed, compiled ahead of time, loaded as a mock, or not loaded: an eviction treats it as any other module.
+    Other,
+    // An ES module whose body has run: its exports can be copied.
+    ESModule,
+    // An ES module whose body has yet to finish, e.g. one that waits at a top-level await.
+    UnfinishedESModule,
+    // Its module.exports is what a later require() or import gets.
+    CommonJSModule,
+};
+
+static ModuleOfTestFile moduleOfTestFile(Zig::GlobalObject* globalObject, const String& key, JSC::CyclicModuleRecord*& esModule, Bun::JSCommonJSModule*& commonJSModule)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    esModule = nullptr;
+    commonJSModule = nullptr;
+
+    auto* entry = Bun::testFileModuleLoader(globalObject)->getRegisteredMayBeNull(JSC::Identifier::fromString(vm, key), JSC::ScriptFetchParameters::Type::JavaScript);
+    if (entry && entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed)
+        return ModuleOfTestFile::Other;
+    auto* record = entry ? entry->record() : nullptr;
+    // A module that was compiled ahead of time can't be evicted.
+    if (record && vm.hasCompiledCode() && JSC::AOT::isCompiledModuleRecord(record))
+        return ModuleOfTestFile::Other;
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record)) {
+        if (cyclic->evaluationError())
+            return ModuleOfTestFile::Other;
+        esModule = cyclic;
+        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated ? ModuleOfTestFile::ESModule : ModuleOfTestFile::UnfinishedESModule;
+    }
+    if (record && record->hasLiveExports())
+        return ModuleOfTestFile::Other;
+    JSValue cached = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(jsString(vm, key))));
+    RETURN_IF_EXCEPTION(scope, ModuleOfTestFile::Other);
+    auto* cachedModule = cached ? dynamicDowncast<Bun::JSCommonJSModule>(cached) : nullptr;
+    if (!cachedModule || !cachedModule->hasEvaluated)
+        return ModuleOfTestFile::Other;
+    commonJSModule = cachedModule;
+    return ModuleOfTestFile::CommonJSModule;
+}
+
+// A later require() of a CommonJS test file gets its module.exports. What it required is evicted when its mocks end, so it lets go of that.
+static void keepCommonJSTestFile(Bun::JSCommonJSModule* commonJSModule)
+{
+    commonJSModule->m_children.clear();
+    commonJSModule->m_childrenValue.clear();
+}
+
+// Registers a module with the exports of `record` under `key`, which an eviction has just emptied.
+// A later import of a test file gets the values it exported when it ended, and doesn't evaluate the file again.
+static void leaveExportsInPlaceOfModule(Zig::GlobalObject* globalObject, const String& key, JSC::AbstractModuleRecord* record)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    auto identifier = JSC::Identifier::fromString(vm, key);
+
+    JSObject* exports = copyExportsOfModule(globalObject, record);
+    if (scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return;
+        exports = nullptr;
+    }
+    // A getter may have loaded the file again.
+    if (loader->registryEntry(identifier))
+        return;
+    if (!exports) {
+        // An export can't be read, so the module itself goes back.
+        auto* entry = loader->ensureRegistered(globalObject, identifier, JSC::ScriptFetchParameters::Type::JavaScript);
+        RETURN_IF_EXCEPTION(scope, );
+        entry->provideModule(vm, record);
+        entry->markLoaded();
+        return;
+    }
+    RELEASE_AND_RETURN(scope, loader->provideFetch(globalObject, identifier, JSC::ScriptFetchParameters::Type::JavaScript, Zig::createObjectModuleSourceCode(vm, exports, key)));
+}
+
 // Importers stay linked to the record they imported, so they're evicted too, except preload modules, which nothing would load again.
 // The loader looks up the entries of a loading module's imports more than once and expects the same ones, so an entry that is
 // loading, or that a loading module has requested, stays until that load settles (modulesToEvictOnceLoaded).
@@ -3244,7 +3346,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     auto& plugins = globalObject->onLoadPlugins;
     Vector<String>& keys = evict.modules;
     keys.removeAllMatching([&](const String& key) { return plugins.modulesToEvictOnceLoaded.contains(key); });
-    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled && !evict.endsMockOverCompiledFileThatHadRun)
+    bool hasTestFilesToReplace = evict.replacesTestFiles && !plugins.testFilesToReplace.isEmpty();
+    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !hasTestFilesToReplace && !evict.hasLoadSettled && !evict.endsMockOverCompiledFileThatHadRun)
         return;
 
     auto& vm = JSC::getVM(globalObject);
@@ -3271,6 +3374,28 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         staysInRequireCache.add(key);
         keys.append(key);
     }
+    // A test file that the walk itself comes to stays registered: its body registers tests, so nothing may evaluate it again for a later import.
+    // One that the caller lists goes, and so does one that failed to load. Once the running test file has ended, an ES module among them
+    // is replaced by a module with its exports. What imports it is linked to the module that goes, so it is walked like any other importer.
+    if (hasTestFilesToReplace) {
+        Vector<String> testFiles;
+        for (auto& key : plugins.testFilesToReplace)
+            testFiles.append(key);
+        for (auto& key : testFiles) {
+            JSC::CyclicModuleRecord* esModule = nullptr;
+            Bun::JSCommonJSModule* commonJSModule = nullptr;
+            ModuleOfTestFile module = moduleOfTestFile(globalObject, key, esModule, commonJSModule);
+            RETURN_IF_EXCEPTION(scope, );
+            if (module == ModuleOfTestFile::ESModule)
+                keys.append(key);
+            if (module == ModuleOfTestFile::CommonJSModule)
+                keepCommonJSTestFile(commonJSModule);
+            if (module == ModuleOfTestFile::CommonJSModule || module == ModuleOfTestFile::Other)
+                plugins.testFilesToReplace.remove(key);
+        }
+    }
+    size_t listedKeys = keys.size();
+    UncheckedKeyHashSet<String> reachedByWalk;
 
     ModuleImporters importersOf;
     UncheckedKeyHashMap<String, JSC::JSPromise*> loading;
@@ -3313,8 +3438,12 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 #endif
             if (auto registered = registeredKeys.find(imported); registered != registeredKeys.end())
                 addImporter(importersOf, key, registered->value);
-            else if (evict.isEndOfTestFile && imported->hasLiveExports() && plugins.testFileOfModule.get(key))
-                keys.append(key); // Linked to a mock's record that is no longer registered, e.g. after `delete require.cache[mocked]`.
+            else if (evict.isEndOfTestFile && imported->hasLiveExports() && plugins.testFileOfModule.get(key)) {
+                // Linked to a mock's record that is no longer registered, e.g. after `delete require.cache[mocked]`.
+                if (size_t listed = keys.find(key); listed == notFound || listed >= listedKeys)
+                    reachedByWalk.add(key);
+                keys.append(key);
+            }
         }
     }
 
@@ -3415,7 +3544,10 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 continue;
             bool stayed = staysInRegistry.remove(importer);
             stayed |= staysInRequireCache.remove(importer);
-            if (evicted.add(importer).isNewEntry || stayed)
+            bool isNew = evicted.add(importer).isNewEntry;
+            if (isNew)
+                reachedByWalk.add(importer);
+            if (isNew || stayed)
                 keys.append(importer);
         }
     }
@@ -3437,7 +3569,37 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     }
     UncheckedKeyHashSet<JSC::JSPromise*> awaited;
     WTF::ListHashSet<String> stay;
+    // Asked last, for a key that would go: the answer is a lookup in the runner's list of files.
+    auto isTestFile = [](const String& key) {
+        if (!Bun::isBunTest)
+            return false;
+        BunString borrowed = Bun::toString(key);
+        return JSMock__isTestFile(&borrowed);
+    };
+    MarkedArgumentBuffer replacedTestFiles;
+    Vector<String> keysOfReplacedTestFiles;
     for (auto& key : keys) {
+        if ((evict.replacesTestFiles && plugins.testFilesToReplace.contains(key)) || (reachedByWalk.contains(key) && isTestFile(key))) {
+            JSC::CyclicModuleRecord* esModule = nullptr;
+            Bun::JSCommonJSModule* commonJSModule = nullptr;
+            ModuleOfTestFile module = moduleOfTestFile(globalObject, key, esModule, commonJSModule);
+            RETURN_IF_EXCEPTION(scope, );
+            // The exports of a test file may change until the running one has ended, so no earlier walk copies them. A load that needs the entry keeps it.
+            bool isReplacedNow = evict.replacesTestFiles && module == ModuleOfTestFile::ESModule && !loading.contains(key);
+            if (module != ModuleOfTestFile::Other && !isReplacedNow) {
+                if (evict.replacesTestFiles && module == ModuleOfTestFile::CommonJSModule) {
+                    keepCommonJSTestFile(commonJSModule);
+                    plugins.testFilesToReplace.remove(key);
+                } else
+                    plugins.testFilesToReplace.add(key);
+                continue;
+            }
+            plugins.testFilesToReplace.remove(key);
+            if (isReplacedNow) {
+                replacedTestFiles.append(esModule);
+                keysOfReplacedTestFiles.append(key);
+            }
+        }
         if (JSC::JSPromise* pendingLoad = loading.get(key)) {
             stay.add(key);
             awaited.add(pendingLoad);
@@ -3508,6 +3670,12 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         if (!didSettle)
             didSettle = JSC::JSFunction::create(vm, globalObject, 0, String(), jsFunctionEvictModulesThatHaveLoaded, ImplementationVisibility::Private);
         pendingLoad->performPromiseThenWithContext(vm, globalObject, didSettle, didSettle, jsUndefined(), jsUndefined());
+    }
+
+    // Behind everything above: a getter that a copy calls may load or evict modules itself.
+    for (size_t i = 0; i < keysOfReplacedTestFiles.size(); ++i) {
+        leaveExportsInPlaceOfModule(globalObject, keysOfReplacedTestFiles[i], uncheckedDowncast<JSC::AbstractModuleRecord>(replacedTestFiles.at(i)));
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 
@@ -6677,6 +6845,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     for (auto& module : plugins.moduleMocksBeingLoaded.keys())
         evict.modules.append(module);
     evict.isEndOfTestFile = plugins.hasVirtualModules();
+    evict.replacesTestFiles = true;
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
@@ -6689,34 +6858,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
 #endif
 }
 
-static void replaceModuleWithItsExports(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    const JSC::Identifier& key = record->moduleKey();
-
-    JSObject* exports = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    auto* moduleNamespace = record->getModuleNamespace(globalObject);
-    RETURN_IF_EXCEPTION(scope, );
-    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    moduleNamespace->methodTable()->getOwnPropertyNames(moduleNamespace, globalObject, names, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, );
-    for (auto& name : names) {
-        JSValue value = moduleNamespace->get(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, );
-        exports->putDirectMayBeIndex(globalObject, name, value);
-        RETURN_IF_EXCEPTION(scope, );
-    }
-
-    evictModulesAndTheirImporters(globalObject, Vector<String> { key.string() });
-    RETURN_IF_EXCEPTION(scope, );
-    auto* loader = Bun::testFileModuleLoader(globalObject);
-    if (!loader->registryEntry(key))
-        RELEASE_AND_RETURN(scope, loader->provideFetch(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript, Zig::createObjectModuleSourceCode(vm, exports, key.string())));
-}
-
 // A test file that mocked modules holds its own copies of their importers, partly in variables that `vi.mock()` made out of its imports.
-// So evict it too, and leave a module with the same exports in its place so that a later import doesn't evaluate the file again.
+// So it is evicted too, and a module with the same exports is left in its place so that a later import doesn't evaluate the file again.
+// So is a test file that an eviction came to as an importer and kept (testFilesToReplace), if a load still needed it when the mocks were undone.
 extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::GlobalObject* globalObject, const BunString* path)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -6726,29 +6870,40 @@ extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::Gl
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
     auto modulesThatMocked = std::exchange(plugins.modulesThatMocked, {});
-    if (modulesThatMocked.isEmpty())
+    if (modulesThatMocked.isEmpty() && plugins.testFilesToReplace.isEmpty())
         return;
     String testFile = path->toWTFString();
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode())
+    if (vm.hasCompiledCode() && !modulesThatMocked.isEmpty())
         layMocksOfBodiesAgainAtNextLoad(globalObject, modulesThatMocked, testFile);
 #endif
-    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, testFile));
-    auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
-    // A module that was compiled ahead of time can't be evicted.
-    if (record && !(record->vm().hasCompiledCode() && JSC::AOT::isCompiledModuleRecord(record)) && record->status() == JSC::CyclicModuleRecord::Status::Evaluated && !record->evaluationError()) {
-        replaceModuleWithItsExports(globalObject, record);
+
+    // Their mocks are undone, so the next file that imports them has to run them again. Nothing loads a preload's modules again,
+    // and nothing runs a test file again: the file that ends is replaced, and so is one that it imported.
+    ModulesToEvict evict;
+    evict.replacesTestFiles = true;
+    Vector<String, 1> testFiles;
+    if (!modulesThatMocked.isEmpty())
+        testFiles.append(testFile);
+    for (auto& key : modulesThatMocked) {
+        if (key == testFile || !plugins.testFileOfModule.get(key))
+            continue;
+        BunString borrowedKey = Bun::toString(key);
+        if (JSMock__isTestFile(&borrowedKey))
+            testFiles.append(key);
+        else
+            evict.modules.append(key);
+    }
+    for (auto& key : testFiles) {
+        JSC::CyclicModuleRecord* esModule = nullptr;
+        Bun::JSCommonJSModule* commonJSModule = nullptr;
+        ModuleOfTestFile module = moduleOfTestFile(globalObject, key, esModule, commonJSModule);
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
+        else if (module == ModuleOfTestFile::ESModule)
+            plugins.testFilesToReplace.add(key);
     }
-
-    // Their mocks are undone, so the next file that imports them has to run them again. Nothing loads a preload's modules again.
-    Vector<String> modulesToRunAgain;
-    for (auto& key : modulesThatMocked) {
-        if (key != testFile && plugins.testFileOfModule.get(key))
-            modulesToRunAgain.append(key);
-    }
-    evictModulesAndTheirImporters(globalObject, WTF::move(modulesToRunAgain));
+    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
 }

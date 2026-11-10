@@ -150,6 +150,9 @@ public:
         unsigned testFile = 1;
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
+        // Test files that a mock's end would have evicted as importers. They stay, because an import must not evaluate a test file again.
+        // When the running test file ends, each gets a module with its exports in its place.
+        WTF::ListHashSet<String> testFilesToReplace = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.

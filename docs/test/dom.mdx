@@ -167,6 +167,8 @@ Bun works with React Testing Library for testing React components. After setting
 bun add -d @testing-library/react @testing-library/jest-dom
 ```
 
+Call `cleanup` after each test from a preload script, as in the [Testing Library guide](/guides/test/testing-library). React Testing Library registers its own cleanup when it is first imported, so without [`--isolate`](/test/parallel#--isolate) only the first test file that imports it gets it.
+
 ```ts title="component.test.tsx" icon="/icons/typescript.svg"
 /// <reference lib="dom" />
 

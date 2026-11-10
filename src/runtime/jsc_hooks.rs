@@ -24,7 +24,9 @@ use core::ptr;
 
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
+use bun_jsc::module_loader::{
+    ArenaResetGuard, FetchFlags, SourceValidator, TranspileArgs, TranspileExtra,
+};
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
     CancelHotRunTimers, InitOptions, MainEntryPoint, RuntimeHooks,
@@ -2887,6 +2889,25 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     return Err(crate::Error::ModuleNotFound);
                 }
 
+                // The parser read `path` from disk unless it was handed a source or decoded a `data:` URL.
+                let reads_file = virtual_source.is_none() && !path.text.starts_with(b"data:");
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let captures_validator = unsafe { &*jsc_vm }.captures_source_validators();
+                // Taken here: the returns above need none, and the printer consumes `parse_result`.
+                let validator = if !reads_file {
+                    SourceValidator::NOT_A_FILE
+                } else if captures_validator {
+                    // The watcher may close a descriptor it adopted, so the path is what is left to stat.
+                    let fd = if *should_close_input_file_fd {
+                        *input_file_fd
+                    } else {
+                        bun_sys::Fd::INVALID
+                    };
+                    SourceValidator::of_file(fd, path.text, &source.contents, cache.input_hash)
+                } else {
+                    SourceValidator::default()
+                };
+
                 // already-bundled (bytecode cache hit).
                 if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
                     // The bytes live
@@ -2897,27 +2918,31 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     let already_bundled = core::mem::take(&mut parse_result.already_bundled);
                     let is_commonjs_module = already_bundled.is_common_js();
                     let bytecode_cache = Bytecode::owned(already_bundled.into_bytecode());
-                    return Ok(ResolvedSource {
+                    let mut resolved_source = ResolvedSource {
                         source_code: bun_core::String::clone_latin1(&source.contents),
                         source_url: input_specifier.create_if_different(path.text),
                         already_bundled: true,
                         bytecode_cache,
                         is_commonjs_module,
                         ..Default::default()
-                    });
+                    };
+                    validator.apply(&mut resolved_source);
+                    return Ok(resolved_source);
                 }
 
                 // Empty .cjs/.cts: synthetic `(function(){})`.
                 if parse_result.empty && matches!(loader, L::Js | L::Ts) {
                     let ext = bun_paths::extension(source.path.text);
                     if ext == b".cjs" || ext == b".cts" {
-                        return Ok(ResolvedSource {
+                        let mut resolved_source = ResolvedSource {
                             source_code: bun_core::String::static_("(function(){})"),
                             source_url: input_specifier.create_if_different(path.text),
                             is_commonjs_module: true,
                             tag: ResolvedSourceTag::Javascript,
                             ..Default::default()
-                        });
+                        };
+                        validator.apply(&mut resolved_source);
+                        return Ok(resolved_source);
                     }
                 }
 
@@ -3026,7 +3051,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
-                    return Ok(ResolvedSource {
+                    let mut resolved_source = ResolvedSource {
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),
                         is_commonjs_module,
@@ -3034,7 +3059,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         tag,
                         bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
                         ..Default::default()
-                    });
+                    };
+                    validator.apply(&mut resolved_source);
+                    return Ok(resolved_source);
                 }
 
                 // Link import records.
@@ -3232,6 +3259,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     .map_err(|_| global_object.throw_string_too_long())?;
                     resolved_source.module_info = module_info;
                     resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
+                    validator.apply(&mut resolved_source);
                     return Ok(resolved_source);
                 }
 
@@ -3322,13 +3350,15 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // (fd close handled by `fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
-                return Ok(ResolvedSource {
+                let mut resolved_source = ResolvedSource {
                     source_url: input_specifier.create_if_different(path.text),
                     module_info,
                     tag,
                     bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
                     ..ResolvedSource::printed(printed_ast, source_code)
-                });
+                };
+                validator.apply(&mut resolved_source);
+                return Ok(resolved_source);
             }
         }
 
@@ -4087,6 +4117,8 @@ fn normalize_specifier_for_loader<'a>(
 struct LoaderResult<'a> {
     loader: Option<Loader>,
     virtual_source: Option<&'a bun_ast::Source<'a>>,
+    /// A write to disk may change `virtual_source`: an import suffix such as `?inline` reads a file, and a file that appears replaces what the executable holds.
+    virtual_source_depends_on_disk: bool,
     path: Fs::Path<'a>,
     is_main: bool,
     /// The specifier is an object URL.
@@ -4121,6 +4153,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders })
     };
     let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
+    let mut virtual_source_depends_on_disk = false;
     let attribute_loader = type_attribute_str.and_then(Loader::from_string);
     let suffix = match attribute_loader {
         Some(_) => None,
@@ -4178,6 +4211,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     } else if let Some(module) = suffix.and_then(|suffix| suffix.module(path.text, specifier)) {
         *virtual_source_to_use = Some(module);
         virtual_source = virtual_source_to_use.as_ref();
+        virtual_source_depends_on_disk = true;
         path = Fs::Path::init(specifier);
     } else if virtual_source.is_none()
         && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
@@ -4194,6 +4228,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
             ..Default::default()
         });
         virtual_source = virtual_source_to_use.as_ref();
+        virtual_source_depends_on_disk = true;
     }
 
     loader = attribute_loader
@@ -4219,6 +4254,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     Ok(LoaderResult {
         loader,
         virtual_source,
+        virtual_source_depends_on_disk,
         path,
         is_main,
         is_blob,
@@ -4836,7 +4872,11 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     };
 
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
-        Ok(resolved) => {
+        Ok(mut resolved) => {
+            // With no validator, `IsolatedModuleCache` loads the source anew after a `resetModules()`.
+            if lr.virtual_source_depends_on_disk {
+                SourceValidator::default().apply(&mut resolved);
+            }
             *ret = ErrorableResolvedSource::ok(resolved);
             promise.cast::<c_void>()
         }

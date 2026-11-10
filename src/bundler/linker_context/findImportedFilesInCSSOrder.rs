@@ -449,11 +449,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         entry,
                         order.slice(),
                         css_asts,
+                        layer_lists,
                         arena,
                         &mut wip_order,
                     );
                 } else if is_hoisted {
-                    stand_ins.add_statement(entry);
+                    stand_ins.add_statement(i, entry);
                 } else {
                     stand_ins.add(i);
                 }
@@ -972,11 +973,50 @@ pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOr
         })
 }
 
-/// For each style sheet that `layers_of_redundant_copy` had to walk: whether one "@layer"
-/// statement of its layer names declares what its rules declare. One per build, so that a
-/// style sheet with many importers is walked once.
+/// What a walk of the rules of a style sheet found out about its layers. One per build, so
+/// that a style sheet with many importers is walked once.
 #[derive(Default)]
-pub(crate) struct LayerLists(Vec<(u32, bool)>);
+pub(crate) struct LayerLists {
+    /// Whether one "@layer" statement of the layer names declares what the rules declare.
+    is_flat: Vec<(u32, bool)>,
+    /// Whether a rule is an "@layer" block with no name.
+    has_anonymous_layer: Vec<(u32, bool)>,
+}
+
+impl LayerLists {
+    /// Whether one "@layer" statement of the layer names of `sheet` declares what its rules
+    /// declare: they declare no layer first under a condition, and none in another order.
+    fn is_flat(&mut self, file: AstIndex, sheet: &BundlerStyleSheet) -> bool {
+        let names = sheet.layer_names.slice_const();
+        if names.is_empty()
+            || sheet
+                .rules
+                .top_level_layers_are(names, !sheet.layers_pre_import.is_empty())
+        {
+            return true;
+        }
+        let known = self.is_flat.iter().find(|(index, _)| *index == file.get());
+        known.map(|(_, is_flat)| *is_flat).unwrap_or_else(|| {
+            let is_flat = sheet
+                .rules
+                .layers_are_in_order_of(names, sheet.layers_pre_import.slice_const());
+            self.is_flat.push((file.get(), is_flat));
+            is_flat
+        })
+    }
+
+    fn has_anonymous_layer(&mut self, file: AstIndex, sheet: &BundlerStyleSheet) -> bool {
+        let known = self
+            .has_anonymous_layer
+            .iter()
+            .find(|(index, _)| *index == file.get());
+        known.map(|(_, has)| *has).unwrap_or_else(|| {
+            let has = sheet.rules.has_anonymous_layer();
+            self.has_anonymous_layer.push((file.get(), has));
+            has
+        })
+    }
+}
 
 /// What stands for a copy of a file that a later copy makes redundant: the layers that the
 /// copy would declare. A flat list of the names is right unless the file declares a layer only
@@ -988,28 +1028,8 @@ fn layers_of_redundant_copy<'a>(
     layer_lists: &mut LayerLists,
 ) -> CssImportOrderKind<'a> {
     let sheet: &BundlerStyleSheet = css_asts[file.get() as usize].as_deref().unwrap();
-    let names = sheet.layer_names.slice_const();
-    let flat = || CssImportOrderKind::Layers(Layers::borrow(&sheet.layer_names));
-    if names.is_empty()
-        || sheet
-            .rules
-            .top_level_layers_are(names, !sheet.layers_pre_import.is_empty())
-    {
-        return flat();
-    }
-    let known = layer_lists.0.iter().find(|(index, _)| *index == file.get());
-    let is_flat = match known {
-        Some((_, is_flat)) => *is_flat,
-        None => {
-            let is_flat = sheet
-                .rules
-                .layers_are_in_order_of(names, sheet.layers_pre_import.slice_const());
-            layer_lists.0.push((file.get(), is_flat));
-            is_flat
-        }
-    };
-    if is_flat || is_ahead_of_namespace(later, css_asts) {
-        return flat();
+    if layer_lists.is_flat(file, sheet) || is_ahead_of_namespace(later, css_asts) {
+        return CssImportOrderKind::Layers(Layers::borrow(&sheet.layer_names));
     }
     CssImportOrderKind::LayersOf(file)
 }
@@ -1056,6 +1076,8 @@ fn is_layer_stand_in(entry: &CssImportOrder) -> bool {
 
 /// A layer that an entry behind the hoisted imports adds to the layer order.
 struct LayerDeclaration<'o> {
+    /// The index of the entry that declares it.
+    entry: u32,
     /// The name, with the names of the layers around it.
     path: Vec<&'static [u8]>,
     /// The import conditions whose media query list it is under.
@@ -1093,10 +1115,12 @@ impl LayerDeclaration<'_> {
 /// Adds the layers that `entry` declares to `out`, in the order of the source. Returns false
 /// at the first layer that neither an "@layer" statement nor one "@import" can declare: an
 /// anonymous layer, a layer under two media query lists or two "supports()" conditions, or
-/// a layer that the rules of a file declare (`declares_layers`).
-fn visible_layers<'o>(
+/// a layer of a file whose list of layer names does not say what its rules declare
+/// (`file_layers` is `None`).
+fn visible_layers<'o, 'n>(
+    index: u32,
     entry: &'o CssImportOrder,
-    declares_layers: impl FnOnce(AstIndex) -> bool,
+    file_layers: impl FnOnce(AstIndex) -> Option<&'n [LayerName]>,
     out: &mut Vec<LayerDeclaration<'o>>,
 ) -> bool {
     let first = out.len();
@@ -1108,6 +1132,7 @@ fn visible_layers<'o>(
                media: Option<&'o ImportConditions>,
                supports: Option<&'o ImportConditions>| {
         let declaration = LayerDeclaration {
+            entry: index,
             path: path.to_vec(),
             media,
             supports,
@@ -1143,19 +1168,21 @@ fn visible_layers<'o>(
             add(out, &path, media, supports);
         }
     }
-    match &entry.kind {
-        CssImportOrderKind::Layers(layers) => {
-            for name in layers.inner().slice() {
-                let depth = path.len();
-                path.extend_from_slice(name.v.slice());
-                add(out, &path, media, supports);
-                path.truncate(depth);
-            }
-            true
-        }
-        CssImportOrderKind::SourceIndex(file) => !declares_layers(*file),
-        CssImportOrderKind::ExternalPath(_) | CssImportOrderKind::LayersOf(_) => true,
+    let names = match &entry.kind {
+        CssImportOrderKind::Layers(layers) => layers.inner().slice(),
+        CssImportOrderKind::SourceIndex(file) => match file_layers(*file) {
+            Some(names) => names,
+            None => return false,
+        },
+        CssImportOrderKind::ExternalPath(_) | CssImportOrderKind::LayersOf(_) => &[],
+    };
+    for name in names {
+        let depth = path.len();
+        path.extend_from_slice(name.v.slice());
+        add(out, &path, media, supports);
+        path.truncate(depth);
     }
+    true
 }
 
 /// The hoist moves an external "@import" ahead of the entries that came before it. If the
@@ -1174,8 +1201,6 @@ struct LayerStandIns<'o> {
     is_closed: bool,
     has_import: bool,
     declared: Vec<LayerDeclaration<'o>>,
-    /// For each file that was asked about: whether its rules declare a layer.
-    files: Vec<(u32, bool)>,
 }
 
 impl<'o> LayerStandIns<'o> {
@@ -1186,8 +1211,8 @@ impl<'o> LayerStandIns<'o> {
     }
 
     /// An "@layer" statement that is ahead of every import.
-    fn add_statement(&mut self, statement: &'o CssImportOrder) {
-        visible_layers(statement, |_| false, &mut self.declared);
+    fn add_statement(&mut self, index: usize, statement: &'o CssImportOrder) {
+        visible_layers(index as u32, statement, |_| None, &mut self.declared);
     }
 
     /// Called ahead of each external import, in the order of the source.
@@ -1196,6 +1221,7 @@ impl<'o> LayerStandIns<'o> {
         import: &CssImportOrder,
         order: &'o [CssImportOrder<'a>],
         css_asts: &[crate::bundled_ast::CssCol],
+        layer_lists: &mut LayerLists,
         arena: &Arena,
         hoisted: &mut Vec<CssImportOrder<'a>>,
     ) {
@@ -1217,20 +1243,18 @@ impl<'o> LayerStandIns<'o> {
         }
 
         let mut declarations: Vec<LayerDeclaration<'o>> = Vec::new();
-        let files = &mut self.files;
         for (pending, &index) in self.pending.iter().enumerate() {
             let is_visible = visible_layers(
+                index,
                 &order[index as usize],
                 |file| {
-                    let known = files.iter().find(|(index, _)| *index == file.get());
-                    known.map(|(_, declares)| *declares).unwrap_or_else(|| {
-                        let sheet: &BundlerStyleSheet =
-                            css_asts[file.get() as usize].as_deref().unwrap();
-                        let declares =
-                            sheet.layer_names.len() != 0 || sheet.rules.has_anonymous_layer();
-                        files.push((file.get(), declares));
-                        declares
-                    })
+                    let sheet: &BundlerStyleSheet =
+                        css_asts[file.get() as usize].as_deref().unwrap();
+                    // No statement can stand for an anonymous layer, or for a layer that the
+                    // file declares under a condition.
+                    let is_flat = layer_lists.is_flat(file, sheet)
+                        && !layer_lists.has_anonymous_layer(file, sheet);
+                    is_flat.then_some(sheet.layer_names.slice_const())
                 },
                 &mut declarations,
             );
@@ -1269,6 +1293,9 @@ impl<'o> LayerStandIns<'o> {
                 condition_import_records: Vec::new(),
             });
         };
+        // One statement for each entry. The list of names that stands for the entry later on is
+        // then redundant, where it has the same names.
+        let mut statement_entry = u32::MAX;
         for declaration in declarations {
             if self
                 .declared
@@ -1281,6 +1308,10 @@ impl<'o> LayerStandIns<'o> {
                 v: SmallList::from_arena_iter(arena, declaration.path.iter().copied()),
             };
             if !has_import && declaration.media.is_none() && declaration.supports.is_none() {
+                if statement_entry != declaration.entry {
+                    end_statement(&mut statement, hoisted);
+                    statement_entry = declaration.entry;
+                }
                 statement.push(name);
             } else {
                 end_statement(&mut statement, hoisted);

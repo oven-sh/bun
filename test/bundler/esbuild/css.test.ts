@@ -3847,6 +3847,154 @@ describe("bundler", () => {
       },
       out: `@import "https://example.com/e.css";@media screen{@layer z;}@layer x;.a{c:d}`,
     },
+    // The rules of a file declare the layer here, not the conditions of its import.
+    LayerOfTheRulesOfAFileBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://example.com/ext.css" layer(z);
+          @layer z { .t { color: green } }
+        `,
+        "/a.css": `@layer y { .t { color: red } }`,
+      },
+      out: `@layer y;@import "https://example.com/ext.css" layer(z);@layer y{.t{color:red}}@layer z{.t{color:green}}`,
+    },
+    LayerOfTheRulesOfAFileBetweenExternalImports: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/one.css" layer;
+          @import "./a.css";
+          @import "https://example.com/ext.css" layer(z);
+        `,
+        "/a.css": `@layer y { .t { color: red } }`,
+      },
+      out: `@import "https://example.com/one.css" layer;@import "data:text/css," layer(y);@import "https://example.com/ext.css" layer(z);@layer y{.t{color:red}}`,
+    },
+    LayerOfTheRulesOfAFileBeforeExternalImportWithABareLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://example.com/ext.css" layer;
+        `,
+        "/a.css": `@layer y { .t { color: red } }`,
+      },
+      out: `@layer y;@import "https://example.com/ext.css" layer;@layer y{.t{color:red}}`,
+    },
+    SublayerOfTheRulesOfAFileBeforeExternalImportInItsLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" layer(w);
+          @import "https://example.com/ext.css" layer(w);
+        `,
+        "/a.css": `@layer inner { .t { color: red } }`,
+      },
+      out: `@layer w.inner;@import "https://example.com/ext.css" layer(w);@layer w{@layer inner{.t{color:red}}}`,
+    },
+    LayerOfTheRulesOfAFileUnderMediaBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" screen;
+          @import "https://example.com/ext.css" layer(z);
+          @layer z { .t { color: green } }
+          @layer y { .t { color: red } }
+        `,
+        "/a.css": `@layer y { .u { color: blue } }`,
+      },
+      out: `@import "data:text/css," layer(y) screen;@import "https://example.com/ext.css" layer(z);@media screen{@layer y{.u{color:#00f}}}@layer z{.t{color:green}}@layer y{.t{color:red}}`,
+    },
+    // The statement is behind the rules of "a.css", so it is not ahead of every import by itself.
+    StatementBehindAnEarlierFileBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "./b.css";
+          @layer z { .t { color: green } }
+          @layer x { .t { color: red } }
+        `,
+        "/a.css": `.a { color: blue }`,
+        "/b.css": /* css */ `
+          @layer x;
+          @import "https://example.com/ext.css" layer(z);
+        `,
+      },
+      out: `@layer x;@import "https://example.com/ext.css" layer(z);.a{color:#00f}@layer z{.t{color:green}}@layer x{.t{color:red}}`,
+    },
+    // One statement for each file. "x" and "y" are declared by then, so the second file adds only "q".
+    LayersOfTheRulesOfTwoFilesBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "./b.css";
+          @import "https://example.com/ext.css" layer(z);
+        `,
+        "/a.css": /* css */ `
+          @layer x, y.inner;
+          @layer y { .a { color: blue } }
+        `,
+        "/b.css": /* css */ `
+          @layer x { .b { color: blue } }
+          @layer q { .b { color: blue } }
+        `,
+      },
+      out: `@layer x,y.inner;@layer q;@import "https://example.com/ext.css" layer(z);@layer x,y.inner;@layer y{.a{color:#00f}}@layer x{.b{color:#00f}}@layer q{.b{color:#00f}}`,
+    },
+    // No statement can declare "q" only on a screen, and "y" must stay behind "q". The order stays as it was.
+    LayerUnderMediaInAFileThenALayerBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "./b.css";
+          @import "https://example.com/ext.css" layer(z);
+          @layer z { .t { color: green } }
+          @layer y { .t { color: red } }
+        `,
+        "/a.css": `@media screen { @layer q { .a { color: blue } } }`,
+        "/b.css": `@layer y { .b { color: blue } }`,
+      },
+      out: `@import "https://example.com/ext.css" layer(z);@media screen{@layer q{.a{color:#00f}}}@layer y{.b{color:#00f}}@layer z{.t{color:green}}@layer y{.t{color:red}}`,
+    },
+    // Nothing ahead of the import can declare the anonymous layer, and "y" must stay behind it.
+    AnonymousLayerBlockInAFileThenALayerBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "./b.css";
+          @import "https://example.com/ext.css" layer(z);
+          @layer z { .t { color: green } }
+          @layer y { .t { color: red } }
+        `,
+        "/a.css": `@layer { .a { color: blue } }`,
+        "/b.css": `@layer y { .b { color: blue } }`,
+      },
+      out: `@import "https://example.com/ext.css" layer(z);@layer{.a{color:#00f}}@layer y{.b{color:#00f}}@layer z{.t{color:green}}@layer y{.t{color:red}}`,
+    },
+    SublayerInABlockOfAFileBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://example.com/ext.css" layer(z);
+        `,
+        "/a.css": `@layer y { @layer inner { .a { color: blue } } }`,
+      },
+      out: `@layer y.inner;@import "https://example.com/ext.css" layer(z);@layer y{@layer inner{.a{color:#00f}}}`,
+    },
+    // The statement ahead of the imports has declared every layer that the external import passes.
+    LayerStatementAheadThenLayersOfFilesBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./tw.css";
+          @import "https://example.com/ext.css" layer(vendor);
+          @layer utilities { .t { color: green } }
+        `,
+        "/tw.css": /* css */ `
+          @layer theme, base, components, utilities;
+          @import "./base.css" layer(base);
+          @layer utilities { .u { color: blue } }
+        `,
+        "/base.css": `.b { color: blue }`,
+      },
+      out: `@layer theme,base,components,utilities;@import "https://example.com/ext.css" layer(vendor);@layer base{.b{color:#00f}}@layer utilities{.u{color:#00f}}@layer utilities{.t{color:green}}`,
+    },
   };
   for (const [name, { files, out }] of Object.entries(importPrologueCases)) {
     itBundled(`css/CSSImportPrologue${name}`, {

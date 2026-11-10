@@ -396,7 +396,7 @@ A test type checks every `ts`, `tsx`, and `typescript` code block in `docs/` aga
 The test checks each code block as one file of a new project. A code block can leave out the rest of its program:
 
 - It can use a name that it does not declare, such as the `server` of an earlier code block. The test does not check what the code does with that name.
-- It can import a file or a package that the page does not show, such as `./config.toml` or `hono`.
+- It can import a file or a package that the page does not show, such as `./db.ts` or `hono`.
 - It can take parameters without types, declare the same name twice to show two alternatives, and list declarations without their bodies.
 
 Everything else that TypeScript reports fails the test. Import or declare what the code uses when you can, because the test then checks those calls too.

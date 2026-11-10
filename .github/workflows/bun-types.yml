@@ -12,7 +12,7 @@ on:
       - "test/integration/bun-types/**"
       # .github/workflows/docs-samples.yml runs these.
       - "!test/integration/bun-types/docs-samples.*"
-      - "src/cli/init/tsconfig.default.json"
+      - "src/runtime/cli/init/tsconfig.default.json"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - ".github/workflows/bun-types.yml"
@@ -22,7 +22,7 @@ on:
       - "test/integration/bun-types/**"
       # .github/workflows/docs-samples.yml runs these.
       - "!test/integration/bun-types/docs-samples.*"
-      - "src/cli/init/tsconfig.default.json"
+      - "src/runtime/cli/init/tsconfig.default.json"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - ".github/workflows/bun-types.yml"

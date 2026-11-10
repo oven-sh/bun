@@ -6566,10 +6566,7 @@ impl VirtualMachine {
         self.undo_synthetic_allocation_limit();
     }
 
-    /// `--isolate=modules`: creates the graph for the test file that's about to run.
-    ///
-    /// Returns what the restore of the globals threw, for the caller to report. The file still
-    /// runs, with the globals that could not be put back as the files before it left them.
+    /// `--isolate=modules`: creates the graph for the test file that's about to run. Returns what the restore of the globals threw.
     pub fn enter_module_graph_for_test_isolation(&mut self) -> JsResult<Option<JSValue>> {
         let state = &self.test_isolation_state;
         if !state.shares_global || state.file_context != crate::ContextId::NONE {
@@ -6580,11 +6577,10 @@ impl VirtualMachine {
         // The first call snapshots the globals. Later calls restore them.
         let thrown = match restore_globals.call(global, JSValue::UNDEFINED, &[]) {
             Ok(_) => None,
-            // With half a snapshot, the next restore would delete what the snapshot lacks.
-            // A termination keeps unwinding.
+            // The next restore would delete what half a snapshot lacks.
+            Err(err) if !self.test_isolation_state.has_globals_snapshot => return Err(err),
             Err(err)
-                if !self.test_isolation_state.has_globals_snapshot
-                    || err == crate::JsError::Terminated
+                if err == crate::JsError::Terminated
                     || global.has_pending_termination_exception() =>
             {
                 return Err(err);

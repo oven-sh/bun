@@ -808,8 +808,9 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         if (actualRegExp->regExp()->pattern() != expectedRegExp->regExp()->pattern()
             || actualRegExp->regExp()->flags() != expectedRegExp->regExp()->flags())
             return false;
-        // node also compares lastIndex strictly (comparisons.js isRegExp arm).
-        bool lastIndexEqual = JSC::sameValue(globalObject, actualRegExp->getLastIndex(), expectedRegExp->getLastIndex());
+        // node compares lastIndex with ===, not Object.is:
+        // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L148-L152
+        bool lastIndexEqual = JSC::JSValue::strictEqual(globalObject, actualRegExp->getLastIndex(), expectedRegExp->getLastIndex());
         RETURN_IF_EXCEPTION(scope, false);
         if (!lastIndexEqual)
             return false;

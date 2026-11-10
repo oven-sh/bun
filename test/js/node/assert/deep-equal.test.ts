@@ -666,6 +666,22 @@ const cases: Case[] = [
     loose: false,
     looseBug: "reports equal",
   },
+  // lastIndex is compared with ===, not Object.is, in every mode.
+  {
+    name: "regexps with lastIndex -0 and 0",
+    a: () => Object.assign(/a/g, { lastIndex: -0 }),
+    b: () => /a/g,
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "regexps with lastIndex NaN",
+    a: () => Object.assign(/a/g, { lastIndex: NaN }),
+    b: () => Object.assign(/a/g, { lastIndex: NaN }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Error.
   {
@@ -1160,6 +1176,42 @@ describe("util.isDeepStrictEqual", () => {
     };
     expect(util.isDeepStrictEqual(make(), make())).toBe(true);
     expect(calls).toBe(2);
+  });
+
+  // Node's areSimilarRegExps() compares lastIndex with ===, so -0 equals 0 and NaN differs from NaN.
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L148-L152
+  describe("RegExp lastIndex", () => {
+    const withLastIndex = (lastIndex: number) => Object.assign(/a/g, { lastIndex });
+    const positions: Array<[string, (re: RegExp) => unknown]> = [
+      ["at the top level", re => re],
+      ["in an array", re => [re]],
+      ["in an object property", re => ({ re })],
+      ["in a Map value", re => new Map([["k", re]])],
+      ["in a Map key", re => new Map([[re, 1]])],
+      ["in a Set", re => new Set([re])],
+      ["in an Error cause", re => new Error("e", { cause: re })],
+    ];
+
+    test.each(positions)("is compared with === %s", (_name, wrap) => {
+      const sameObject = withLastIndex(NaN);
+      for (const skipPrototype of [false, true]) {
+        const equal = (a: RegExp, b: RegExp) => util.isDeepStrictEqual(wrap(a), wrap(b), skipPrototype as any);
+        expect({
+          skipPrototype,
+          negativeZeroAndZero: equal(withLastIndex(-0), withLastIndex(0)),
+          zeroAndNegativeZero: equal(withLastIndex(0), withLastIndex(-0)),
+          nanAndNaN: equal(withLastIndex(NaN), withLastIndex(NaN)),
+          // The identity shortcut answers before lastIndex is read.
+          sameObjectWithNaN: equal(sameObject, sameObject),
+        }).toEqual({
+          skipPrototype,
+          negativeZeroAndZero: true,
+          zeroAndNegativeZero: true,
+          nanAndNaN: false,
+          sameObjectWithNaN: true,
+        });
+      }
+    });
   });
 
   // The third argument was added in Node v26.

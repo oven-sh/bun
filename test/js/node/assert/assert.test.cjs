@@ -92,6 +92,43 @@ describe("assert.partialDeepStrictEqual", () => {
     const arr = [[]];
     assert.partialDeepStrictEqual([arr], arr);
   });
+
+  // Node's areSimilarRegExps() compares lastIndex with ===, so -0 equals 0 and NaN differs from NaN.
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L148-L152
+  test.each([
+    ["at the top level", re => re],
+    ["in an array", re => [re]],
+    ["in an object property", re => ({ re })],
+    ["in a Map value", re => new Map([["k", re]])],
+    ["in a Map key", re => new Map([[re, 1]])],
+    ["in a Set", re => new Set([re])],
+    ["in an Error cause", re => new Error("e", { cause: re })],
+  ])("RegExp lastIndex is compared with === %s", (_name, wrap) => {
+    const withLastIndex = lastIndex => Object.assign(/a/g, { lastIndex });
+    const partial = (actual, expected) => {
+      try {
+        assert.partialDeepStrictEqual(wrap(actual), wrap(expected));
+        return "equal";
+      } catch (e) {
+        return e.code;
+      }
+    };
+    const sameObject = withLastIndex(NaN);
+    expect({
+      negativeZeroAndZero: partial(withLastIndex(-0), withLastIndex(0)),
+      zeroAndNegativeZero: partial(withLastIndex(0), withLastIndex(-0)),
+      nanAndNaN: partial(withLastIndex(NaN), withLastIndex(NaN)),
+      threeAndZero: partial(withLastIndex(3), withLastIndex(0)),
+      // The identity shortcut answers before lastIndex is read.
+      sameObjectWithNaN: partial(sameObject, sameObject),
+    }).toEqual({
+      negativeZeroAndZero: "equal",
+      zeroAndNegativeZero: "equal",
+      nanAndNaN: "ERR_ASSERTION",
+      threeAndZero: "ERR_ASSERTION",
+      sameObjectWithNaN: "equal",
+    });
+  });
 });
 
 describe("AssertionError diff rendering", () => {

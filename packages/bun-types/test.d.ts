@@ -1296,7 +1296,10 @@ declare module "bun:test" {
     annotations: TestAnnotation[];
     result: {
       state: "run" | "pass" | "fail" | "skip";
-      /** Errors thrown by the test, its hooks and its fixtures. */
+      /**
+       * Errors thrown by the test, its hooks and its fixtures. A timeout, an `expect.assertions()` or
+       * `expect.hasAssertions()` that isn't met and a `test.fails` that passes each add the error Vitest throws for it.
+       */
       errors?: unknown[];
       retryCount: number;
       repeatCount: number;
@@ -1390,6 +1393,39 @@ declare module "bun:test" {
   };
 
   /**
+   * The options of a {@link TestWithContext} test. Bun runs such a test as Vitest does, so `retry` also takes
+   * Vitest's object.
+   */
+  export interface TestWithContextOptions extends Omit<TestOptions, "retry"> {
+    /**
+     * The number of times to retry the test if it fails, or an object that also says when a retry runs.
+     *
+     * @default 0
+     */
+    retry?:
+      | number
+      | {
+          /**
+           * The number of times to retry the test if it fails.
+           *
+           * @default 0
+           */
+          count?: number | undefined;
+          /**
+           * Milliseconds to wait before each retry. The wait is on the real clock, also while timers are fake.
+           *
+           * @default 0
+           */
+          delay?: number | undefined;
+          /**
+           * Retry the test only if this matches the message of its last error, which `task.result.errors` ends with.
+           * The message of a test that timed out starts with `Test timed out in`.
+           */
+          condition?: RegExp | undefined;
+        };
+  }
+
+  /**
    * A `test` whose callbacks receive the {@link TestContext} instead of a `done` callback.
    */
   export interface TestWithContext<Context, Row extends ReadonlyArray<unknown> = []> {
@@ -1397,17 +1433,17 @@ declare module "bun:test" {
     (
       label: string,
       fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
-      options: number | TestOptions,
+      options: number | TestWithContextOptions,
     ): void;
     (
       label: string,
-      options: number | TestOptions,
+      options: number | TestWithContextOptions,
       fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
     ): void;
     (
       label: string,
       fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
-      options?: number | TestOptions,
+      options?: number | TestWithContextOptions,
     ): void;
     only: TestWithContext<Context, Row>;
     skip: ((label: string) => void) & TestWithContext<Context, Row>;

@@ -306,6 +306,9 @@ test("expect", async () => {
     skip();
   });
   test("options in the middle", { timeout: 100, retry: 2, repeats: 1 }, () => {});
+  test("a retry object", { retry: { count: 2, delay: 50, condition: /ECONNRESET/ } }, () => {});
+  // @ts-expect-error Vitest never calls a function, so Bun's types leave it out.
+  test("a retry object with a function", { retry: { count: 2, condition: () => true } }, () => {});
   test("a timeout at the end", () => {}, 100);
   it("is test", async () => {});
   test.skip("skip", () => {});

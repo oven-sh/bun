@@ -2,8 +2,11 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::test_runner::scope_functions" });
 
-/** Only Vitest's `test` and `describe` take the object. */
-export const RetryOptions = b.dictionary({ count: b.f64.optional }, { reportedAs: "options.retry" });
+/** Only Vitest's `test` and `describe` take the object. `retry_policy_of` says what each kind of `condition` means. */
+export const RetryOptions = b.dictionary(
+  { count: b.f64.optional, delay: b.f64.loose.optional, condition: b.any },
+  { reportedAs: "options.retry" },
+);
 export const Retry = b.union({ count: b.f64, options: RetryOptions });
 
 const modifier = b.bool.loose.optional;

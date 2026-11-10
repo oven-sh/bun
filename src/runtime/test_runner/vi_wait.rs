@@ -88,7 +88,7 @@ pub(crate) fn delay_ms(
     Ok(clamp_delay(value.to_number(global)?))
 }
 
-fn clamp_delay(ms: f64) -> u32 {
+pub(crate) fn clamp_delay(ms: f64) -> u32 {
     if ms >= 1.0 && ms <= f64::from(i32::MAX) {
         ms as u32
     } else {

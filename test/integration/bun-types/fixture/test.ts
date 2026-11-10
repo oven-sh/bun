@@ -16,6 +16,7 @@ import {
   spyOn,
   test,
   type TestOptions,
+  type TestWithContextOptions,
   vi,
   xdescribe,
   xit,
@@ -506,6 +507,9 @@ test.for([
 test.for([1, 2])("test.for", { timeout: 100 }, (n, { expect }) => {
   expect(n).toBe(n);
 });
+test.for([1])("test.for", { retry: { count: 2, delay: 50, condition: /ECONNRESET/ } }, () => {});
+// @ts-expect-error Only a `test` that is called as in Vitest takes the object.
+test("test", { retry: { count: 2 } }, () => {});
 describe.for([[1, 2]])("describe.for", row => {
   expectType<readonly [1, 2]>(row);
 });
@@ -539,6 +543,7 @@ extended("test.extend", ({ port, url, label, task, expect }) => {
   expect(port).toBe(3000);
 });
 extended.skip("test.extend", { retry: 1 }, async ({ url }) => expectType<string>(url));
+extended("test.extend", { retry: { count: 1, delay: 50 } }, async ({ url }) => expectType<string>(url));
 extended.concurrent.for([1])("test.extend", (row, { port }) => {
   expectType<number>(row + port);
 });
@@ -563,8 +568,8 @@ extended.each`
   ${1} | ${2}
 `("$a $b", async ({ a, b }) => expectType<any>(a + b));
 // `Parameters<>` must see the (label, fn, options?) overload, same as for `test`.
-expectType<Parameters<typeof extended>[2]>().is<number | TestOptions | undefined>();
-expectType<Parameters<typeof extended.skip>[2]>().is<number | TestOptions | undefined>();
+expectType<Parameters<typeof extended>[2]>().is<number | TestWithContextOptions | undefined>();
+expectType<Parameters<typeof extended.skip>[2]>().is<number | TestWithContextOptions | undefined>();
 expectType<Parameters<ReturnType<typeof extended.each>>[2]>().is<number | TestOptions | undefined>();
 // `any` options must not break contextual typing of the callback's parameters.
 extended("options that are any", async ({ port }) => expectType<number>(port), {} as any);

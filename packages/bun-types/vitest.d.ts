@@ -558,10 +558,31 @@ declare module "vitest" {
     /** Timeout in milliseconds. */
     timeout?: number | undefined;
     /**
-     * Number of times to rerun the test if it fails.
+     * Number of times to rerun the test if it fails, or an object that also says when to rerun it.
      * @default 0
      */
-    retry?: number | { count?: number | undefined } | undefined;
+    retry?:
+      | number
+      | {
+          /**
+           * Number of times to rerun the test if it fails.
+           * @default 0
+           */
+          count?: number | undefined;
+          /**
+           * Milliseconds to wait before each rerun. The wait is on the real clock, also while timers are fake.
+           * @default 0
+           */
+          delay?: number | undefined;
+          /**
+           * Rerun the test only if this matches the message of its last error, which `task.result.errors` ends with.
+           * The message of a test that timed out starts with `Test timed out in`.
+           *
+           * Vitest's types also take a function. Vitest 5 never calls it and always reruns, and so does Bun.
+           */
+          condition?: RegExp | undefined;
+        }
+      | undefined;
     /**
      * Number of times to rerun the test regardless of the result.
      * @default 0

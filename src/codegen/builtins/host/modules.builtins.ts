@@ -175,6 +175,8 @@ const keptByRunner = (passed: Pick<b.CallbackOptions, "args" | "spreadArgs">) =>
 const passedByJest = keptByRunner({ args: [b.instance("Function").fresh] });
 // The context of the test. An around hook of either module gets what it is to run, the context and the suite: step_sequence_one() in src/runtime/test_runner/Execution.rs.
 const passedByVitest = keptByRunner({ args: [], spreadArgs: b.any });
+// The runner also keeps a RegExp under `retry.condition` and tests the error of each failed attempt with it: step_retry() in src/runtime/test_runner/Execution.rs.
+const keptOfVitestOptions = [...passedByVitest, b.memberStoredIn(["retry", "condition"], b.nativeMemory)];
 
 // `(description?, callback, options?)`, `(description, options, callback)` or `(callback, options?)`: parse_arguments() in src/runtime/test_runner/bun_test.rs.
 const registersWithRunner = (kept: readonly b.UseSpec[]) =>
@@ -194,9 +196,9 @@ const scopeFunctionsOfRunner = { test: ["it"], xtest: ["xit"], describe: [], xde
 const hooksOfRunner = ["beforeAll", "beforeEach", "afterAll", "afterEach", "onTestFinished"];
 const aroundHooksOfRunner = ["aroundAll", "aroundEach"];
 
-const functionsOfRunner = (module: b.BuiltinPath, kept: readonly b.UseSpec[]) => [
+const functionsOfRunner = (module: b.BuiltinPath, kept: readonly b.UseSpec[], keptOfOptions = kept) => [
   ...Object.entries(scopeFunctionsOfRunner).flatMap(([name, otherNames]) => [
-    ...b.fn(`${module}.${name}`, registersWithRunner(kept)),
+    ...b.fn(`${module}.${name}`, registersWithRunner(keptOfOptions)),
     // bind() in src/runtime/test_runner/ScopeFunctions.rs.
     ...b.inherits(`${module}.${name}`, "%ScopeFunctions%.prototype"),
     ...otherNames.flatMap(other => b.same(`${module}.${other}`, `${module}.${name}`)),
@@ -514,7 +516,7 @@ export default b.declarations(
     implementation: b.generic,
   }),
   functionsOfRunner("bun:test", passedByJest),
-  functionsOfRunner("bun:test/vitest", passedByVitest),
+  functionsOfRunner("bun:test/vitest", passedByVitest, keptOfVitestOptions),
   b.fn("bun:test.spyOn", spyOn),
   b.namespace("bun:test.jest", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise }),
   b.namespace("bun:test.vi", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise, stubGlobal }),

@@ -3,19 +3,21 @@ use std::rc::Rc;
 use crate::test_runner::expect::{FormatterTestExt as _, JSValueTestExt};
 
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult, Strong};
 use bun_core::{String as BunString, StringView};
 
 use crate::generated_bindgen::jest::js_ScopeFunctions as js;
 use crate::generated_bindgen::scope_functions::{
-    Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback, Retry,
+    Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback, Retry, RetryOptions,
 };
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, Calling, DescribeScope, Flavor};
+use crate::test_runner::collection::{Collection, RetryCondition, RetryPolicy, RetryPolicyId};
 use crate::test_runner::bun_test::js_fns::{GenericHookTag, Signature, create_hook};
 use crate::test_runner::test_context;
 use crate::test_runner::test_context_fixtures::TestFixtures;
 use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter, TEXT_LEFT_OUT};
 use crate::test_runner::jest;
+use crate::test_runner::vi_wait::clamp_delay;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
 // so call sites read `let _g = group_log::begin();` and drop calls `end()`. The underlying
@@ -357,6 +359,7 @@ pub(crate) fn call_as_function<'a>(
             callback: callback_mode,
             kind: FunctionKind::TestOrDescribe,
             inherited: bun_test_ptr.collection.active_scope().inherited,
+            retry_policies: Some(&mut bun_test_ptr.collection),
         },
     )?;
 
@@ -681,6 +684,7 @@ impl ScopeFunctions {
                     }
                 }
 
+                let retry = options.retry.unwrap_or_default();
                 let entry = bun_test.collection.active_scope_mut().append_test(
                     description,
                     callback,
@@ -689,7 +693,8 @@ impl ScopeFunctions {
                         around: None,
                         fixtures: Some(self.fixtures).filter(|fixtures| !fixtures.is_empty()),
                         timeout: options.timeout,
-                        retry_count: options.retry.unwrap_or(0),
+                        retry_count: retry.count,
+                        retry_policy: retry.policy,
                         repeat_count: options.repeats,
                     },
                     base,
@@ -783,7 +788,7 @@ pub(crate) struct ParseArgumentsResult {
 #[derive(Default, Clone, Copy)]
 pub(crate) struct ParseArgumentsOptions {
     pub(crate) timeout: u32,
-    pub(crate) retry: Option<u32>,
+    pub(crate) retry: Option<RetryOption>,
     pub(crate) repeats: u32,
     pub(crate) inherited: InheritedOptions,
     pub(crate) modifiers: ModifierOptions,
@@ -792,10 +797,38 @@ pub(crate) struct ParseArgumentsOptions {
 #[derive(Default, Clone, Copy)]
 pub(crate) struct InheritedOptions {
     pub(crate) timeout: Option<u32>,
-    pub(crate) retry: Option<u32>,
+    pub(crate) retry: Option<RetryOption>,
     pub(crate) repeats: Option<u32>,
     pub(crate) fails: Option<bool>,
     pub(crate) shuffle: Option<bool>,
+}
+
+/// `retry` as a number. Vitest's object also has a policy if it asks for more than its count does.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct RetryOption {
+    pub(crate) count: u32,
+    pub(crate) policy: Option<RetryPolicyId>,
+}
+
+/// `None` if `delay` and `condition` ask for what a count alone does.
+fn retry_policy_of(global: &JSGlobalObject, retry: &RetryOptions<'_>) -> Option<RetryPolicy> {
+    let condition = retry.condition.to_js();
+    let condition = if condition.is_reg_exp() {
+        RetryCondition::RegExp(Strong::create(condition, global))
+    } else if !condition.to_boolean() || condition.is_callable() {
+        // Vitest drops a function from the task before the test runs (`sanitizeRetryConditions`), so it always retries.
+        RetryCondition::Always
+    } else {
+        RetryCondition::Never
+    };
+    let delay_ms = match retry.delay {
+        Some(delay) if delay > 0.0 => clamp_delay(delay),
+        _ => 0,
+    };
+    if delay_ms == 0 && matches!(condition, RetryCondition::Always) {
+        return None;
+    }
+    Some(RetryPolicy { delay_ms, condition })
 }
 
 /// In Vitest, `test(name, { skip: true }, fn)` means `test.skip(name, fn)`, and `{ skip: false }` undoes `test.skip`.
@@ -848,11 +881,12 @@ pub(crate) enum FunctionKind {
     VitestHook,
 }
 
-#[derive(Copy, Clone)]
-pub(crate) struct ParseArgumentsCfg {
+pub(crate) struct ParseArgumentsCfg<'a> {
     pub callback: CallbackMode,
     pub(crate) kind: FunctionKind,
     pub(crate) inherited: InheritedOptions,
+    /// Takes the policy of a Vitest `retry` object. `None` for a hook, which takes no such object.
+    pub(crate) retry_policies: Option<&'a mut Collection>,
 }
 
 /// What a test is called that is named after a class or a function.
@@ -891,7 +925,7 @@ pub(crate) fn parse_arguments<'a>(
     second: CallbackOrOptions<'a>,
     third: CallbackOrOptions<'a>,
     signature: Signature,
-    cfg: ParseArgumentsCfg,
+    cfg: ParseArgumentsCfg<'_>,
 ) -> JsResult<ParseArgumentsResult> {
     let is_vitest = matches!(signature, Signature::ScopeFunctions(function) if function.cfg.flavor == Flavor::Vitest);
 
@@ -976,16 +1010,19 @@ pub(crate) fn parse_arguments<'a>(
         CallbackOrOptions::Options(options) => {
             timeout_option = options.timeout;
             // Lossy cast: Rust `as` saturates on overflow/NaN.
-            result.options.retry = match options.retry {
-                None => None,
-                Some(Retry::Count(count)) => Some(count as u32),
-                Some(Retry::Options(retry)) if is_vitest => Some(retry.count.unwrap_or(0.0) as u32),
-                Some(Retry::Options(_)) => {
+            result.options.retry = match (options.retry, cfg.retry_policies.filter(|_| is_vitest)) {
+                (None, _) => None,
+                (Some(Retry::Count(count)), _) => Some(RetryOption { count: count as u32, policy: None }),
+                (Some(Retry::Options(retry)), Some(policies)) => Some(RetryOption {
+                    count: retry.count.unwrap_or(0.0) as u32,
+                    policy: retry_policy_of(global, &retry).map(|policy| policies.add_retry_policy(policy)),
+                }),
+                (Some(Retry::Options(_)), None) => {
                     return Err(global.throw(format_args!("{}() expects retry to be a number", signature)));
                 }
             };
             if let Some(repeats) = options.repeats {
-                if !is_vitest && result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
+                if !is_vitest && result.options.retry.is_some_and(|retry| retry.count != 0) {
                     return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
                 }
                 repeats_option = Some(repeats as u32);
@@ -1035,10 +1072,10 @@ pub(crate) fn parse_arguments<'a>(
 
     if result.options.retry.is_none() {
         if let Some(runner) = jest::Jest::runner() {
-            result.options.retry = Some(runner.test_options.retry);
+            result.options.retry = Some(RetryOption { count: runner.test_options.retry, policy: None });
         }
     }
-    if !is_vitest && result.options.retry.unwrap_or(0) != 0 && result.options.repeats != 0 {
+    if !is_vitest && result.options.retry.is_some_and(|retry| retry.count != 0) && result.options.repeats != 0 {
         return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
     }
 

@@ -371,6 +371,7 @@ impl TestContext {
                 callback: CallbackMode::Require,
                 kind: FunctionKind::VitestHook,
                 inherited: Default::default(),
+                retry_policies: None,
             },
         )?;
         let this = Self::of_call(global, this_value)?;

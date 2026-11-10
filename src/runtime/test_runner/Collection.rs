@@ -1,8 +1,9 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
+use core::num::NonZeroU32;
 use core::ptr::NonNull;
 
-use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{
@@ -26,7 +27,39 @@ pub(crate) struct Collection {
     pub(crate) active_scope: NonNull<DescribeScope>,
 
     pub(crate) filter_buffer: Vec<u8>,
+
+    /// One per `test()` or `describe()` call whose `retry` has a delay or a condition. The tests inside share it.
+    retry_policies: Vec<RetryPolicy>,
 }
+
+/// What Vitest's `retry: { delay, condition }` adds to the count.
+pub(crate) struct RetryPolicy {
+    pub(crate) delay_ms: u32,
+    pub(crate) condition: RetryCondition,
+}
+
+pub(crate) enum RetryCondition<RegExp = Strong> {
+    Always,
+    /// What Vitest's `passesRetryCondition` gives for a truthy condition that is no RegExp and no function.
+    Never,
+    /// Retry if it matches the message of the test's last error.
+    RegExp(RegExp),
+}
+
+impl RetryCondition {
+    /// A copy to hold while the test's code runs, which can add to `Collection::retry_policies`.
+    pub(crate) fn get(&self) -> RetryCondition<JSValue> {
+        match self {
+            RetryCondition::Always => RetryCondition::Always,
+            RetryCondition::Never => RetryCondition::Never,
+            RetryCondition::RegExp(regexp) => RetryCondition::RegExp(regexp.get()),
+        }
+    }
+}
+
+/// Names an entry of `Collection::retry_policies`. It is `Copy`, so the options that tests inherit stay `Copy`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RetryPolicyId(NonZeroU32);
 
 pub(crate) struct QueuedDescribe {
     callback: DeprecatedStrong, // jsc.Strong.Deprecated
@@ -74,7 +107,18 @@ impl Collection {
             root_scope,
             active_scope,
             filter_buffer: Vec::new(),
+            retry_policies: Vec::new(),
         }
+    }
+
+    pub(crate) fn add_retry_policy(&mut self, policy: RetryPolicy) -> RetryPolicyId {
+        let id = RetryPolicyId(NonZeroU32::MIN.saturating_add(self.retry_policies.len() as u32));
+        self.retry_policies.push(policy);
+        id
+    }
+
+    pub(crate) fn retry_policy(&self, id: RetryPolicyId) -> Option<&RetryPolicy> {
+        self.retry_policies.get(id.0.get() as usize - 1)
     }
 
     // Cleanup is covered by field Drop (Box, Vec<QueuedDescribe>, Vec<u8>).

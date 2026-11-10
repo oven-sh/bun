@@ -763,6 +763,16 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
     ),
     (
         "a.mjs",
+        r#"import { createRequire } from "module"; const { URL } = await import("node:url"); createRequire(new URL(import.meta.url))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const { createRequire } = await import("module"); const { fileURLToPath, URL } = await import("url"); createRequire(fileURLToPath(new URL(import.meta.url)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
         r#"import { createRequire } from "module"; import { pathToFileURL } from "url"; createRequire(pathToFileURL(import.meta.filename))("a");"#,
         &["a"],
     ),
@@ -1802,6 +1812,11 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
     ),
     (
         "a.mjs",
+        r#"import { createRequire } from "node:module"; const { URL } = await import("node:url"); createRequire(new URL("./lib/", import.meta.url))("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mjs",
         r#"import { createRequire } from "node:module"; import { URL } from "./own.mjs"; createRequire(new URL("./lib/", import.meta.url))("./a");"#,
         None,
     ),
@@ -2757,6 +2772,11 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         &["./a.js"],
     ),
     (
+        "export {}; const { URL } = await import('node:url'); await import(new URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
         "export {}; await import(new globalThis.URL('./a.js', import.meta.url));",
         ResolvedForm::UrlObject,
         &["./a.js"],
@@ -2906,7 +2926,6 @@ const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "export {}; import { Url as URL } from 'node:url'; await import(new URL('./a.js', import.meta.url));",
     "export {}; import { URLSearchParams as URL } from 'node:url'; await import(new URL('./a.js', import.meta.url));",
     "export {}; import { URL } from './url.js'; await import(new URL('./a.js', import.meta.url));",
-    "export {}; const { URL } = await import('node:url'); await import(new URL('./a.js', import.meta.url));",
     "export {}; import * as URL from 'node:url'; await import(URL.parse('./a.js', import.meta.url));",
     "export {}; const globalThis = own; await import(new globalThis.URL('./a.js', import.meta.url));",
     "export {}; await import(new own.URL('./a.js', import.meta.url));",

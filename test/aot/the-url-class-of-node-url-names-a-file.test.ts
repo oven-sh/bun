@@ -72,6 +72,19 @@ import { fileURLToPath, URL } from "node:url";`,
     ],
   },
   {
+    // A made require of a folder is read twice: once to tell that it is one, and once for the path of the folder. Both have to read the class here.
+    file: "awaited.mjs",
+    head: `import { createRequire } from "node:module";\nconst { URL } = await import("node:url");`,
+    rows: [
+      ["behind an awaited import: a name that is known in part", inPart("URL", "a"), "a"],
+      [
+        "behind an awaited import: createRequire() of the URL of a folder",
+        `createRequire(new URL("./lib/", import.meta.url))("./f8.cjs")`,
+        "f8",
+      ],
+    ],
+  },
+  {
     file: "global.mjs",
     head: ``,
     rows: [["the member of the global object: a name that is known in part", inPart("globalThis.URL", "g"), "g"]],
@@ -91,6 +104,8 @@ const named: Record<string, string> = {
   "src/f4.cjs": `module.exports = "f4";\n`,
   "src/lib/f5.cjs": `module.exports = "f5";\n`,
   "src/f6.mjs": `export default "f6";\n`,
+  "src/a-job.mjs": `postMessage("a");\n`,
+  "src/lib/f8.cjs": `module.exports = "f8";\n`,
   "src/g-job.mjs": `postMessage("g");\n`,
   "node_modules/says/package.json": `{ "name": "says", "version": "1.0.0", "type": "module", "main": "index.js" }`,
   "node_modules/says/index.js": `export const said = "f7";\n`,

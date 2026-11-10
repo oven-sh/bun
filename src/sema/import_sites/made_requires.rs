@@ -1,6 +1,6 @@
 use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
-    is_free_name, names_url_class,
+    is_free_name, is_member_of_global_object,
 };
 use super::parameters::find_values_passed_for_pattern;
 use super::touched_exports::is_only_tested;
@@ -252,9 +252,18 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
     }
 
     fn is_url_class(self, callee: ExprId, left: StepsLeft) -> bool {
-        let callee = self.hir.skip_type_assertions(callee);
-        let find_export = || self.find_export_read_off_module(callee, left, URL_MODULES);
-        names_url_class(self.hir, self.bound, callee, find_export)
+        let Text { hir, bound, .. } = self;
+        let callee = hir.skip_type_assertions(callee);
+        let classes = [known::URL];
+        if is_free_name(hir, bound, callee, &classes) {
+            return true;
+        }
+        if let Some(export) = self.find_export_read_off_module(callee, left, URL_MODULES) {
+            return classes.contains(&export);
+        }
+        let class = follow_settled_bindings(hir, bound, callee);
+        is_free_name(hir, bound, class, &classes)
+            || is_member_of_global_object(hir, bound, class, &classes)
     }
 
     fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
@@ -366,6 +375,10 @@ fn compute_may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
 pub(crate) fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let text = Text::of(hir, bound, None);
     names_own_file_behind(text, e, LONGEST_CHAIN_OF_BINDINGS, StepsLeft::ALL)
+}
+
+pub(super) fn names_url_class(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> bool {
+    Text::of(hir, bound, None).is_url_class(callee, StepsLeft::ALL)
 }
 
 fn names_own_file_behind(

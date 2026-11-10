@@ -1,5 +1,7 @@
-use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process, names_url_class};
-use super::made_requires::{find_imported_export, may_be_modified, names_own_file, settled_symbol};
+use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
+use super::made_requires::{
+    find_imported_export, may_be_modified, names_own_file, names_url_class, settled_symbol,
+};
 use super::parameters::{
     ExportedNames, find_parameter_key_path, find_values_passed_by_call,
     find_values_passed_for_pattern, is_exported,
@@ -3560,9 +3562,7 @@ impl Follower<'_, '_, '_> {
 
     fn values_of_new_url(&mut self, call: Call) -> Option<Values> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
-        let callee = hir.skip_type_assertions(call.callee);
-        let find_export = || self.find_export_of(callee, &[b"url", b"node:url"]);
-        if !names_url_class(hir, bound, callee, find_export) {
+        if !names_url_class(hir, bound, call.callee) {
             return None;
         }
         let mut arguments = hir.ids(call.args);

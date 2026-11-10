@@ -586,7 +586,7 @@ fn is_global_object(hir: &File<'_>, bound: &Bound<'_>, object: ExprId) -> bool {
     is_free_name(hir, bound, object, &global_objects)
 }
 
-fn is_member_of_global_object(
+pub(super) fn is_member_of_global_object(
     hir: &File<'_>,
     bound: &Bound<'_>,
     e: ExprId,
@@ -1261,24 +1261,6 @@ pub(crate) fn may_construct_worker(hir: &File<'_>, bound: &Bound<'_>, callee: Ex
         Some(ExprKind::Ident(name) | ExprKind::Dot { name, .. }) if name == known::Worker
     );
     find_whether_constructor_is_worker(hir, bound, callee).unwrap_or(is_called_worker)
-}
-
-pub(super) fn names_url_class(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    callee: ExprId,
-    find_export_of_url_module: impl FnOnce() -> Option<Atom>,
-) -> bool {
-    let classes = [known::URL];
-    if is_free_name(hir, bound, callee, &classes) {
-        return true;
-    }
-    if let Some(export) = find_export_of_url_module() {
-        return classes.contains(&export);
-    }
-    let class = follow_settled_bindings(hir, bound, callee);
-    is_free_name(hir, bound, class, &classes)
-        || is_member_of_global_object(hir, bound, class, &classes)
 }
 
 fn find_name_of_worker(

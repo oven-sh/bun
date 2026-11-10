@@ -333,6 +333,18 @@ export { join };
       expect([typed[0], typed.at(-2)]).toEqual(["", javascript.at(-2)]);
     });
 
+    test("a type error that the file has with and without export {}: export {} stays", async () => {
+      using dir = tempDir("build-api-dts-same-error", {
+        ...project,
+        // The .aot.ts file has no such reference: `globalThis.build` is an error there, with and without export {}.
+        "src/globals.d.ts": `declare var build: { id: string };\n`,
+        "src/cli.ts": `/// <reference path="./globals.d.ts" />\nimport { join } from "./join";\njoin("build", globalThis.build.id);\n`,
+      });
+      const root = String(dir);
+      const outputs = await build(root, { entrypoints: [join(root, "src/cli.ts")] });
+      expect((await lines(outputs, "cli.aot.ts")).slice(-2)).toEqual(["export {};", ""]);
+    });
+
     test("a module that declares a global under declare global: ends with export {}", async () => {
       using dir = tempDir("build-api-dts-declare-global", {
         ...project,

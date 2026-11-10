@@ -518,4 +518,50 @@ describe("property matchers", () => {
     expect(live.filter(cells => cells >= 10)).toEqual([]);
     expect(exitCode).toBe(0);
   });
+
+  test("a collection counts the rows of a call that is not over", async () => {
+    using dir = tempDir("snapshot-matched-rows-visited", {
+      "rows.test.ts": `
+        import { heapStats } from "bun:jsc";
+        import { expect, test } from "bun:test";
+
+        // Bun offers the value to the serializer while the call has its rows. The serializer collects, and reads what the collector counted.
+        let counted = 0;
+        expect.addSnapshotSerializer({
+          test() {
+            Bun.gc(true);
+            counted = heapStats().extraMemorySize;
+            return false;
+          },
+          serialize: () => "",
+        });
+        test("rows", () => {
+          const names = Array.from({ length: 4000 }, (_, i) => "k" + i);
+          const received = Object.assign(new Date(0), Object.fromEntries(names.map((name, i) => [name, i])));
+          const number = expect.any(Number);
+          const all = Object.fromEntries(names.map(name => [name, number]));
+          const countedWith = matchers => {
+            expect(received).toMatchInlineSnapshot(matchers, \`1970-01-01T00:00:00.000Z\`);
+            return counted;
+          };
+          const grown = [1, 2, 3].map(() => -countedWith({ k0: number }) + countedWith(all));
+          console.log(JSON.stringify(grown));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "rows.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = stdout.trim().split("\n").at(-1) ?? "";
+    const grown: number[] = printed.startsWith("[") ? JSON.parse(printed) : [];
+    expect({ samples: grown.length, stderr: grown.length === 3 ? "" : stderr }).toEqual({ samples: 3, stderr: "" });
+    // 3,999 more rows are 127,968 more bytes. Without them the count moves by a few hundred bytes.
+    expect(grown.filter(bytes => bytes < 64_000)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
 });

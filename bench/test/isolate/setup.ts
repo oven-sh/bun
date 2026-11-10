@@ -59,3 +59,67 @@ test("t${f}", () => {
 
 const bytes = Buffer.byteLength(big);
 console.log(`wrote ${root}/big.ts (${(bytes / 1024 / 1024).toFixed(2)} MB, 1 function) + ${FILES} test files`);
+
+// A second suite, for jest.resetModules(): every test imports one graph of small modules through src/index.ts.
+const RESET_MODULES = 300;
+const RESET_FILES = 100;
+const RESET_TESTS = 3;
+// Named "suite" so that bench/test/.gitignore covers it. Not inside ./suite, which `bun test ./isolate/suite` scans.
+const resetRoot = import.meta.dir + "/reset/suite";
+
+// The README runs the benchmark from inside resetRoot, so replace its folders and never remove resetRoot itself:
+// a shell whose working directory was removed cannot run anything there, even after the directory is made again.
+for (const dir of ["src", "tests", "tests-noreset"]) {
+  rmSync(`${resetRoot}/${dir}`, { recursive: true, force: true });
+  mkdirSync(`${resetRoot}/${dir}`, { recursive: true });
+}
+
+let imports = "";
+const calls: string[] = [];
+for (let m = 0; m < RESET_MODULES; m++) {
+  writeFileSync(
+    `${resetRoot}/src/m${m}.ts`,
+    `export interface T${m} { id: number; name: string }
+export const v${m}: number = ${m};
+export function f${m}(x: number, t?: T${m}): number {
+  return x + v${m} + (t ? t.id : 0);
+}
+`,
+  );
+  imports += `import { f${m} } from "./m${m}.ts";\n`;
+  calls.push(`f${m}(x)`);
+}
+writeFileSync(
+  `${resetRoot}/src/index.ts`,
+  `${imports}export const sum = (x: number): number => ${calls.join(" + ")};\n`,
+);
+
+const sumOfModuleNumbers = (RESET_MODULES * (RESET_MODULES - 1)) / 2;
+let tests = "";
+for (let t = 1; t <= RESET_TESTS; t++) {
+  tests += `test("t${t}", async () => {
+  const { sum } = await import("../src/index.ts");
+  expect(sum(${t})).toBe(${sumOfModuleNumbers + RESET_MODULES * t});
+});
+`;
+}
+const header = `import { beforeEach, expect, jest, test } from "bun:test";\n`;
+const reset = `beforeEach(() => {\n  jest.resetModules();\n});\n`;
+for (let f = 0; f < RESET_FILES; f++) {
+  const name = `f${String(f).padStart(3, "0")}.test.ts`;
+  writeFileSync(`${resetRoot}/tests/${name}`, header + reset + tests);
+  writeFileSync(`${resetRoot}/tests-noreset/${name}`, header + tests);
+}
+
+writeFileSync(
+  `${resetRoot}/preload-reset.ts`,
+  `import { beforeAll, jest } from "bun:test";
+beforeAll(() => {
+  jest.resetModules();
+});
+`,
+);
+
+console.log(
+  `wrote ${resetRoot}: ${RESET_MODULES} modules, 2 × ${RESET_FILES} files × ${RESET_TESTS} tests, preload-reset.ts`,
+);

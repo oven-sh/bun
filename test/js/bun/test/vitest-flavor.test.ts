@@ -525,17 +525,44 @@ describe.concurrent("test context", () => {
         });
         test("times out", { timeout: 20 }, async ({ signal }) => {
           onTestFinished(() => console.log("finished", signal.aborted));
-          await new Promise((resolve, reject) => signal.addEventListener("abort", () => { console.log("abort", signal.reason.name); reject(signal.reason); }));
+          await new Promise((resolve, reject) => signal.addEventListener("abort", () => { console.log("abort", String(signal.reason).split("\\n")[0]); reject(signal.reason); }));
         });
         test("looks at the signal afterwards", { timeout: 20 }, async () => {
-          onTestFinished((ctx) => console.log("finished", ctx.signal.aborted));
+          onTestFinished((ctx) => console.log("finished", ctx.signal.aborted, ctx.signal.reason.message === ctx.task.result.errors.at(-1).message));
           await new Promise(() => {});
+        });
+        let attempt = 0;
+        test("is retried", { timeout: 20, retry: { count: 1, condition: /^Test timed out in 20ms\\./ } }, async ({ signal }) => {
+          console.log("attempt", ++attempt, signal.aborted);
+          if (attempt === 1) await new Promise(() => {});
+          throw signal.reason;
+        });
+        test("throws after its deadline", { timeout: 20 }, ({ signal }) => {
+          onTestFinished(() => console.log("finished", signal.aborted));
+          const end = performance.now() + 60;
+          while (performance.now() < end);
+          throw new Error("own error");
         });
       `,
     });
     expect({ log, results, exitCode }).toEqual({
-      log: ["true false", "finished true false", "abort TimeoutError", "finished true", "finished true"],
-      results: ["(pass) in time", "(fail) times out", "(fail) looks at the signal afterwards"],
+      log: [
+        "true false",
+        "finished true false",
+        "abort Error: Test timed out in 20ms.",
+        "finished true",
+        "finished true true",
+        "attempt 1 false",
+        "attempt 2 true",
+        "finished false",
+      ],
+      results: [
+        "(pass) in time",
+        "(fail) times out",
+        "(fail) looks at the signal afterwards",
+        "(fail) is retried (attempt 2)",
+        "(fail) throws after its deadline",
+      ],
       exitCode: 1,
     });
   });
@@ -4053,7 +4080,8 @@ describe.concurrent("options", () => {
 
 // `retry: { count, delay, condition }`. Where Vitest takes the same input, the expected output is Vitest 5.0.3's.
 describe.concurrent("retry delay and condition", () => {
-  // `once(fail)` logs each attempt of a test and fails the first one.
+  // `once(fail)` logs each attempt of a test and fails the first one. `always(fail)` fails each one.
+  // A test with a short timeout uses `always`, so that no attempt has to end before a deadline on a slow machine.
   const helpers = `
     const attempts = {};
     const count = task => {
@@ -4062,6 +4090,7 @@ describe.concurrent("retry delay and condition", () => {
       return attempt;
     };
     const once = fail => ({ task }) => { if (count(task) === 1) return fail(); };
+    const always = fail => ({ task }) => { count(task); return fail(); };
     const boom = () => { throw new Error("boom"); };
   `;
 
@@ -4144,8 +4173,153 @@ describe.concurrent("retry delay and condition", () => {
     });
   });
 
+  test("a thrown array and an AggregateError are recorded as their members", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, afterEach } from "vitest";
+        ${helpers}
+        afterEach(({ task }) => {
+          if (task.result.state !== "fail" || task.result.retryCount > 0) return;
+          // Vitest leaves \`errors\` undefined for an empty array.
+          console.log(JSON.stringify((task.result.errors ?? []).map(error => error?.message)));
+        });
+        const members = () => [new Error("first"), new Error("last")];
+        for (const [name, condition, thrown] of [
+          ["an AggregateError", /^last$/, () => new AggregateError(members(), "outer")],
+          ["an AggregateError, and its own message is asked for", /outer/, () => new AggregateError(members(), "outer")],
+          ["an AggregateError without members", /empty/, () => new AggregateError([], "empty")],
+          ["an AggregateError of an AggregateError", /^inner$/, () => new AggregateError([new AggregateError(members(), "inner")], "outer")],
+          ["an AggregateError of values that are no errors", /^null$/, () => new AggregateError(["a string", null])],
+          ["a class that extends AggregateError", /^last$/, () => new (class extends AggregateError {})(members(), "outer")],
+          ["an array", /^last$/, () => members()],
+          ["an array with an AggregateError", /^last$/, () => [new Error("of the array"), new AggregateError(members(), "outer")]],
+          ["an array of an array", /last/, () => [members()]],
+          ["an array with a hole", /^undefined$/, () => [new Error("first"), , ]],
+          ["an empty array", /.*/, () => []],
+          ["a symbol", /^Symbol\\(boom\\)$/, () => Symbol("boom")],
+          ["a function", /^function boom\\(\\) \\{\\}$/, () => function boom() {}],
+        ]) test("throws " + name, { retry: { count: 1, condition } }, once(() => { throw thrown(); }));
+        test("Promise.any()", { retry: { count: 1, condition: /^last$/ } }, once(() => Promise.any(members().map(error => Promise.reject(error)))));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "throws an AggregateError: 1",
+        `["first","last"]`,
+        "throws an AggregateError: 2",
+        "throws an AggregateError, and its own message is asked for: 1",
+        `["first","last"]`,
+        "throws an AggregateError without members: 1",
+        "[]",
+        "throws an AggregateError of an AggregateError: 1",
+        `["inner"]`,
+        "throws an AggregateError of an AggregateError: 2",
+        "throws an AggregateError of values that are no errors: 1",
+        `["a string","null"]`,
+        "throws an AggregateError of values that are no errors: 2",
+        "throws a class that extends AggregateError: 1",
+        `["first","last"]`,
+        "throws a class that extends AggregateError: 2",
+        "throws an array: 1",
+        `["first","last"]`,
+        "throws an array: 2",
+        "throws an array with an AggregateError: 1",
+        `["of the array","first","last"]`,
+        "throws an array with an AggregateError: 2",
+        "throws an array of an array: 1",
+        "[null]",
+        "throws an array with a hole: 1",
+        `["first","undefined"]`,
+        "throws an array with a hole: 2",
+        "throws an empty array: 1",
+        "[]",
+        "throws a symbol: 1",
+        `["Symbol(boom)"]`,
+        "throws a symbol: 2",
+        "throws a function: 1",
+        `["function boom() {}"]`,
+        "throws a function: 2",
+        "Promise.any(): 1",
+        `["first","last"]`,
+        "Promise.any(): 2",
+      ],
+      results: [
+        "(pass) throws an AggregateError (attempt 2)",
+        "(fail) throws an AggregateError, and its own message is asked for",
+        "(fail) throws an AggregateError without members",
+        "(pass) throws an AggregateError of an AggregateError (attempt 2)",
+        "(pass) throws an AggregateError of values that are no errors (attempt 2)",
+        "(pass) throws a class that extends AggregateError (attempt 2)",
+        "(pass) throws an array (attempt 2)",
+        "(pass) throws an array with an AggregateError (attempt 2)",
+        "(fail) throws an array of an array",
+        "(pass) throws an array with a hole (attempt 2)",
+        "(fail) throws an empty array",
+        "(pass) throws a symbol (attempt 2)",
+        "(pass) throws a function (attempt 2)",
+        "(pass) Promise.any() (attempt 2)",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("the errors of a connection that every address of a host refuses", async () => {
+    // Where "localhost" has an IPv4 and an IPv6 address, the connection fails with an AggregateError of one error for each.
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "vitest";
+        import net from "node:net";
+        ${helpers}
+        test("a refused connection", { retry: { count: 1, condition: /ECONNREFUSED/ } }, async ({ task }) => {
+          count(task);
+          const port = await new Promise(resolve => {
+            const server = net.createServer().listen(0, () => {
+              const { port } = server.address();
+              server.close(() => resolve(port));
+            });
+          });
+          await new Promise((resolve, reject) => net.connect({ host: "localhost", port }).on("connect", resolve).on("error", reject));
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["a refused connection: 1", "a refused connection: 2"],
+      results: ["(fail) a refused connection (attempt 2)"],
+      exitCode: 1,
+    });
+    // A debug build takes seconds to load node:net and to exit after a lookup.
+  }, 30_000);
+
+  test("the message of a matcher is tested without the colours that a terminal gets", async () => {
+    const { log, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, expect } from "vitest";
+          ${helpers}
+          test("a matcher", { retry: { count: 1, condition: /^expect\\(received\\)\\.toBe\\(expected\\)\\n\\nExpected: 2\\nReceived: 1/ } }, once(() => {
+            try {
+              expect(1).toBe(2);
+            } catch (error) {
+              console.log("has colours:", error.message.includes("\\x1b["));
+              throw error;
+            }
+          }));
+        `,
+      },
+      [],
+      { FORCE_COLOR: "1" },
+    );
+    // The colours are also in what console.log() and `bun test` print.
+    expect({
+      log: log.map(line => Bun.stripANSI(line)).filter(line => /^(a matcher|has colours)/.test(line)),
+      exitCode,
+    }).toEqual({
+      log: ["a matcher: 1", "has colours: true", "a matcher: 2"],
+      exitCode: 0,
+    });
+  });
+
   test("a failure that the runner finds has the error that Vitest throws for it", async () => {
-    // A test that is to pass its second attempt gets a timeout that a slow machine does not reach.
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test, describe, expect, beforeEach, afterEach } from "vitest";
@@ -4154,8 +4328,8 @@ describe.concurrent("retry delay and condition", () => {
         afterEach(({ task }) => {
           if (task.result.state === "fail" && task.result.retryCount === 0) console.log(JSON.stringify(task.result.errors.map(error => error.message)));
         });
-        test("a timeout", { timeout: 250, retry: { count: 1, condition: /^Test timed out in 250ms\\./ } }, once(hang));
-        test("a timeout that does not match", { timeout: 20, retry: { count: 1, condition: /^Hook timed out/ } }, once(hang));
+        test("a timeout", { timeout: 20, retry: { count: 1, condition: /^Test timed out in 20ms\\./ } }, always(hang));
+        test("a timeout that does not match", { timeout: 20, retry: { count: 1, condition: /^Hook timed out/ } }, always(hang));
         test("a wrong number of assertions", { retry: { count: 1, condition: /^expected number of assertions to be 2, but got 1$/ } }, once(() => {
           expect.assertions(2);
           expect(1).toBe(1);
@@ -4165,22 +4339,20 @@ describe.concurrent("retry delay and condition", () => {
         test.fails("a test.fails that passes", { retry: { count: 1, condition: /^Expect test to fail$/ } }, ({ task }) => {
           if (count(task) === 2) boom();
         });
+        // test.failing is not Vitest's. Bun knows that such a test fails after it decides on a retry, so a number does not retry it and the object does not.
+        test.failing("a test.failing that passes", { retry: 1 }, ({ task }) => { count(task); });
+        test.failing("a test.failing that passes, with the object", { retry: { count: 1, delay: 1 } }, ({ task }) => { count(task); });
         describe("a hook", () => {
-          let hung = false;
-          beforeEach(() => { if (!hung) { hung = true; return hang(); } }, 250);
-          test("times out", { retry: { count: 1, condition: /^Hook timed out in 250ms\\./ } }, ({ task }) => { count(task); });
+          beforeEach(hang, 20);
+          test("times out", { retry: { count: 1, condition: /^Hook timed out in 20ms\\./ } }, ({ task }) => { count(task); });
         });
-        let hangs = true;
         const withFixture = test.extend({
           fixture: async ({}, use) => {
-            if (hangs) {
-              hangs = false;
-              await hang();
-            }
+            await hang();
             await use(1);
           },
         });
-        withFixture("a fixture of the test times out", { timeout: 250, retry: { count: 1, condition: /^Test timed out in 250ms\\./ } }, ({ fixture, task }) => {
+        withFixture("a fixture of the test times out", { timeout: 20, retry: { count: 1, condition: /^Test timed out in 20ms\\./ } }, ({ fixture, task }) => {
           count(task);
         });
       `,
@@ -4190,7 +4362,7 @@ describe.concurrent("retry delay and condition", () => {
     expect({ log, results, exitCode }).toEqual({
       log: [
         "a timeout: 1",
-        `["Test timed out in 250ms${ifLongRunning("test")}`,
+        `["Test timed out in 20ms${ifLongRunning("test")}`,
         "a timeout: 2",
         "a timeout that does not match: 1",
         `["Test timed out in 20ms${ifLongRunning("test")}`,
@@ -4204,20 +4376,132 @@ describe.concurrent("retry delay and condition", () => {
         "no assertion: 2",
         "a test.fails that passes: 1",
         "a test.fails that passes: 2",
-        `["Hook timed out in 250ms${ifLongRunning("hook")}`,
-        "a hook > times out: 1",
-        `["Test timed out in 250ms${ifLongRunning("test")}`,
-        "a fixture of the test times out: 1",
+        "a test.failing that passes: 1",
+        "a test.failing that passes, with the object: 1",
+        `["Hook timed out in 20ms${ifLongRunning("hook")}`,
+        `["Test timed out in 20ms${ifLongRunning("test")}`,
       ],
       results: [
-        "(pass) a timeout (attempt 2)",
+        "(fail) a timeout (attempt 2)",
         "(fail) a timeout that does not match",
         "(pass) a wrong number of assertions (attempt 2)",
         "(fail) a wrong number of assertions that does not match",
         "(pass) no assertion (attempt 2)",
         "(pass) a test.fails that passes (attempt 2)",
-        "(pass) a hook > times out (attempt 2)",
-        "(pass) a fixture of the test times out (attempt 2)",
+        "(fail) a test.failing that passes",
+        "(fail) a test.failing that passes, with the object",
+        "(fail) a hook > times out (attempt 2)",
+        "(fail) a fixture of the test times out (attempt 2)",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("a callback that ends after its deadline, and one that ends after a failed expect.soft()", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, expect, afterEach } from "vitest";
+        ${helpers}
+        // Longer than the 30 ms that the test has on any machine, and no timer fires before it returns.
+        const busy = () => { const end = performance.now() + 80; while (performance.now() < end); };
+        const soft = () => expect.soft(1, "soft").toBe(2);
+        afterEach(({ task }) => {
+          if (task.result.state === "fail" && task.result.retryCount === 0) console.log(JSON.stringify(task.result.errors.map(error => error.message.split("\\n")[0])));
+        });
+        const late = (name, condition, fail) => test(name, { timeout: 30, retry: { count: 1, condition } }, always(fail));
+        late("throws", /^own error$/, () => { busy(); throw new Error("own error"); });
+        late("throws, and the timeout is asked for", /timed out/, () => { busy(); throw new Error("own error"); });
+        late("rejects", /^own error$/, async () => { busy(); throw new Error("own error"); });
+        late("a matcher fails", /timed out/, () => { busy(); expect(1).toBe(2); });
+        late("returns", /^Test timed out in 30ms\\./, busy);
+        late("returns after a failed expect.soft()", /^Test timed out in 30ms\\./, () => { soft(); busy(); });
+        test("a wrong number of assertions after a failed expect.soft()", { retry: { count: 1, condition: /^expected number of assertions to be 3, but got 1$/ } }, once(() => {
+          expect.assertions(3);
+          soft();
+        }));
+        test("a wrong number of assertions and a throw", { retry: { count: 1, condition: /expected number of assertions/ } }, once(() => {
+          expect.assertions(3);
+          boom();
+        }));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "throws: 1",
+        `["own error"]`,
+        "throws: 2",
+        "throws, and the timeout is asked for: 1",
+        `["own error"]`,
+        "rejects: 1",
+        `["own error"]`,
+        "rejects: 2",
+        "a matcher fails: 1",
+        `["expect(received).toBe(expected)"]`,
+        "returns: 1",
+        `["Test timed out in 30ms."]`,
+        "returns: 2",
+        "returns after a failed expect.soft(): 1",
+        `["soft","Test timed out in 30ms."]`,
+        "returns after a failed expect.soft(): 2",
+        "a wrong number of assertions after a failed expect.soft(): 1",
+        `["soft","expected number of assertions to be 3, but got 1"]`,
+        "a wrong number of assertions after a failed expect.soft(): 2",
+        "a wrong number of assertions and a throw: 1",
+        `["boom"]`,
+      ],
+      results: [
+        "(fail) throws (attempt 2)",
+        "(fail) throws, and the timeout is asked for",
+        "(fail) rejects (attempt 2)",
+        "(fail) a matcher fails",
+        "(fail) returns (attempt 2)",
+        "(fail) returns after a failed expect.soft() (attempt 2)",
+        "(pass) a wrong number of assertions after a failed expect.soft() (attempt 2)",
+        "(fail) a wrong number of assertions and a throw",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("what times out after the test has the error that Vitest throws for a hook", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeEach, onTestFinished, onTestFailed } from "vitest";
+        ${helpers}
+        const hang = () => new Promise(() => {});
+        const retry = { retry: { count: 1, condition: /^Hook timed out in 20ms\\./ } };
+        test("onTestFinished()", retry, ({ task }) => {
+          count(task);
+          onTestFinished(hang, 20);
+        });
+        test("onTestFailed()", retry, ({ task }) => {
+          count(task);
+          onTestFailed(hang, 20);
+          boom();
+        });
+        describe("a function that beforeEach returns", () => {
+          beforeEach(() => hang, 20);
+          test("test", retry, () => {});
+        });
+        describe("a fixture of a hook", () => {
+          const withFixture = test.extend({
+            fixture: async ({}, use) => {
+              await hang();
+              await use(1);
+            },
+          });
+          withFixture.beforeEach(({ fixture }) => {}, 20);
+          withFixture("test", retry, () => {});
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["onTestFinished(): 1", "onTestFinished(): 2", "onTestFailed(): 1", "onTestFailed(): 2"],
+      results: [
+        "(fail) onTestFinished() (attempt 2)",
+        "(fail) onTestFailed() (attempt 2)",
+        "(fail) a function that beforeEach returns > test (attempt 2)",
+        "(fail) a fixture of a hook > test (attempt 2)",
       ],
       exitCode: 1,
     });
@@ -4320,6 +4604,13 @@ describe.concurrent("retry delay and condition", () => {
             if (inBunTest === 1) boom();
           });
         });
+        describe("inherits a condition that matches", { retry: { count: 1, condition: /boom/ } }, () => {
+          let inBunTest = 0;
+          bunTest("a test of bun:test", () => {
+            console.log("a retried test of bun:test:", ++inBunTest);
+            if (inBunTest === 1) boom();
+          });
+        });
         test("options after the callback", once(boom), { retry: never });
         test.concurrent.skipIf(false)("a modifier chain", { retry: never }, once(boom));
         test.for([1])("test.for", { retry: never }, onceForRow);
@@ -4346,6 +4637,8 @@ describe.concurrent("retry delay and condition", () => {
         "row 1: 2",
         "row 2: 1",
         "a test of bun:test: 1",
+        "a retried test of bun:test: 1",
+        "a retried test of bun:test: 2",
         "options after the callback: 1",
         "a modifier chain: 1",
         "test.for: 1",
@@ -4362,6 +4655,7 @@ describe.concurrent("retry delay and condition", () => {
         "(pass) inherits > row 1 (attempt 2)",
         "(fail) inherits > row 2",
         "(fail) inherits > a test of bun:test",
+        "(pass) inherits a condition that matches > a test of bun:test (attempt 2)",
         "(fail) options after the callback",
         "(fail) a modifier chain",
         "(fail) test.for",
@@ -4380,15 +4674,21 @@ describe.concurrent("retry delay and condition", () => {
   });
 
   test("the delay is waited before each retry, on the real clock", async () => {
-    const { log, results, exitCode } = await runTests({
-      "a.test.js": `
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
         import { test, beforeEach, afterEach, vi } from "vitest";
         // Fake timers replace \`performance\`. This is the real clock.
         const now = performance.now.bind(performance);
         let ended = 0;
         const waits = {};
         beforeEach(({ task }) => { if (task.result.retryCount > 0) (waits[task.name] ??= []).push(now() - ended); });
-        afterEach(() => { ended = now(); });
+        let startedSecond = 0;
+        let secondTook = 0;
+        afterEach(({ task }) => {
+          ended = now();
+          if (startedSecond && !secondTook) secondTook = ended - startedSecond;
+        });
         const failing = times => ({ task }) => { if (task.result.retryCount < times) throw new Error("boom"); };
 
         test("before each retry", { retry: { count: 2, delay: 50 } }, failing(2));
@@ -4399,7 +4699,12 @@ describe.concurrent("retry delay and condition", () => {
           }
           vi.useRealTimers();
         });
-        test("longer than the timeout", { timeout: 200, retry: { count: 1, delay: 250 } }, failing(1));
+        // The second attempt never ends, so it shows that its deadline starts with it and not before the wait.
+        test("longer than the timeout", { timeout: 150, retry: { count: 1, delay: 250 } }, async ({ task }) => {
+          if (task.result.retryCount === 0) throw new Error("boom");
+          startedSecond = now();
+          await new Promise(() => {});
+        });
 
         // A wait of this length would outlast the test that runs this file.
         const long = 600_000;
@@ -4415,15 +4720,25 @@ describe.concurrent("retry delay and condition", () => {
           for (const name of ["before each retry", "with fake timers", "longer than the timeout"]) {
             console.log(name + ":", waits[name].map(wait => wait >= (name === "longer than the timeout" ? 249 : 49)).join(" "));
           }
+          console.log("the second attempt had its 150 ms:", secondTook >= 149);
         });
       `,
-    });
+      },
+      [],
+      {},
+      beforeTheTestTimesOut,
+    );
     expect({ log, results, exitCode }).toEqual({
-      log: ["before each retry: true true", "with fake timers: true", "longer than the timeout: true"],
+      log: [
+        "before each retry: true true",
+        "with fake timers: true",
+        "longer than the timeout: true",
+        "the second attempt had its 150 ms: true",
+      ],
       results: [
         "(pass) before each retry (attempt 3)",
         "(pass) with fake timers (attempt 2)",
-        "(pass) longer than the timeout (attempt 2)",
+        "(fail) longer than the timeout (attempt 2)",
         "(fail) not when the condition says no",
         "(fail) not after the last attempt",
         "(pass) not when the test passes",
@@ -4456,8 +4771,8 @@ describe.concurrent("retry delay and condition", () => {
       test("report", () => console.log(order.join(" ")));
     `;
     const [one, two] = await Promise.all([
-      runTests({ "a.test.js": file }, ["--max-concurrency=1"]),
-      runTests({ "a.test.js": file }, ["--max-concurrency=2"]),
+      runTests({ "a.test.js": file }, ["--max-concurrency=1"], {}, beforeTheTestTimesOut),
+      runTests({ "a.test.js": file }, ["--max-concurrency=2"], {}, beforeTheTestTimesOut),
     ]);
     expect({ one: one.log, two: two.log, exitCodes: [one.exitCode, two.exitCode] }).toEqual({
       one: ["a1 a2 b c d"],
@@ -4466,79 +4781,188 @@ describe.concurrent("retry delay and condition", () => {
     });
   });
 
-  test("the condition is asked once for each failed attempt", async () => {
-    // The timeout of "b" fires the test timer while "a" waits. Asking /boom/g again then would move its lastIndex.
-    const { log, results, exitCode } = await runTests({
-      "a.test.js": `
-        import { test, describe } from "vitest";
-        describe.concurrent("group", () => {
-          test("a", { retry: { count: 3, delay: 150, condition: /boom/g } }, ({ task }) => {
-            console.log("a:", task.result.retryCount + 1);
-            throw new Error("boom");
+  test("a test that waits goes on after the limit of concurrent tests is lowered", async () => {
+    // "long" ends only when the second attempt of "waits" runs, and "long" then has the one place that the limit leaves.
+    const { results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, describe, vi } from "vitest";
+          describe.concurrent("group", () => {
+            let release;
+            test("long", async () => {
+              vi.setConfig({ maxConcurrency: 1 });
+              await new Promise(resolve => { release = resolve; });
+            });
+            test("waits", { retry: { count: 1, delay: 50 } }, ({ task }) => {
+              if (task.result.retryCount === 0) throw new Error("boom");
+              release();
+            });
           });
-          test("b", { timeout: 20 }, () => new Promise(() => {}));
-        });
-      `,
+        `,
+      },
+      [],
+      {},
+      beforeTheTestTimesOut,
+    );
+    expect({ results, exitCode }).toEqual({
+      results: ["(pass) group > waits (attempt 2)", "(pass) group > long"],
+      exitCode: 0,
     });
-    expect({ log, results, exitCode }).toEqual({
+  });
+
+  test("the condition is asked once for each failed attempt", async () => {
+    // The timeout of "b" fires the test timer long before the 500 ms of "a" are over. Asking /boom/g again then would move its lastIndex.
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, describe } from "vitest";
+          describe.concurrent("group", () => {
+            test("a", { retry: { count: 3, delay: 500, condition: /boom/g } }, ({ task }) => {
+              console.log("a:", task.result.retryCount + 1);
+              throw new Error("boom");
+            });
+            test("b", { timeout: 20 }, () => new Promise(() => {}));
+          });
+        `,
+      },
+      [],
+      {},
+      beforeTheTestTimesOut,
+    );
+    expect({ log, results: results.sort(), exitCode }).toEqual({
       log: ["a: 1", "a: 2"],
-      results: ["(fail) group > b", "(fail) group > a (attempt 2)"],
+      results: ["(fail) group > a (attempt 2)", "(fail) group > b"],
       exitCode: 1,
     });
   });
 
-  test("a process that beforeAll started is alive after a delayed retry", async () => {
-    const { log, results, exitCode } = await runTests({
-      "a.test.js": `
-        import { test, beforeAll, afterAll } from "vitest";
-        let child;
-        beforeAll(() => {
-          child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 100000)"], stdio: ["ignore", "ignore", "ignore"] });
-        });
-        afterAll(() => child.kill());
-        test("retried", { retry: { count: 1, delay: 20 } }, ({ task }) => {
-          console.log("attempt", task.result.retryCount + 1, "alive:", child.exitCode === null && !child.killed);
-          if (task.result.retryCount === 0) throw new Error("boom");
-        });
-      `,
-    });
-    expect({ log, results, exitCode }).toEqual({
-      log: ["attempt 1 alive: true", "attempt 2 alive: true"],
+  test("a process that beforeAll started is not killed when the delay is over", async () => {
+    // The test timer fires for the end of the delay, and a test with no deadline has not timed out then.
+    const { results, stderr, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, beforeAll, afterAll } from "vitest";
+          let child;
+          beforeAll(() => {
+            child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 100000)"], stdio: ["ignore", "ignore", "ignore"] });
+          });
+          afterAll(() => child.kill());
+          test("retried", { retry: { count: 1, delay: 20 } }, ({ task }) => {
+            if (task.result.retryCount === 0) throw new Error("boom");
+          });
+        `,
+      },
+      [],
+      {},
+      beforeTheTestTimesOut,
+    );
+    expect({ results, killed: /killed \d+ dangling process/.exec(stderr)?.[0], exitCode }).toEqual({
       results: ["(pass) retried (attempt 2)"],
+      killed: undefined,
       exitCode: 0,
     });
   });
 
   test("what the earlier attempt does during the delay counts for the next one", async () => {
-    // The callbacks run in the turn of the event loop after the attempts fail, long before the 500 ms are over.
-    const { log, results, stderr, exitCode } = await runTests({
+    // The callbacks run in the turn of the event loop after the attempts fail, long before the delay is over.
+    const during = `
+      const during = (name, fn, inSecondAttempt = () => {}) => test(name, { retry: { count: 1, delay: 300 } }, context => {
+        if (context.task.result.retryCount > 0) return inSecondAttempt(context);
+        setImmediate(() => fn(context));
+        throw new Error("boom");
+      });
+    `;
+    const [concurrent, sequential] = await Promise.all([
+      runTests(
+        {
+          "a.test.js": `
+            import { test, describe } from "vitest";
+            ${during}
+            describe.concurrent("group", () => {
+              during("skip()", context => { try { context.skip(); } catch {} });
+              during("a failed expect.soft()", context => context.expect.soft(1).toBe(2));
+              during("task.result", ({ task }) => console.log(task.result.state, task.result.retryCount));
+              during("an uncaught error", () => { throw new Error("during the delay"); });
+            });
+          `,
+        },
+        [],
+        {},
+        beforeTheTestTimesOut,
+      ),
+      // A test that is alone in its group is also the one that the functions of the module are for.
+      runTests(
+        {
+          "a.test.js": `
+            import { test, expect, onTestFinished } from "vitest";
+            ${during}
+            during("a failed expect.soft() of the module", () => expect.soft(1).toBe(2));
+            let resolve;
+            during(
+              "a matcher that waits for a promise",
+              context => { context.expect(new Promise(r => { resolve = r; })).resolves.toBe(1).then(() => console.log("the matcher passed")); },
+              () => resolve(1),
+            );
+            during("onTestFinished()", ({ task }) => onTestFinished(() => console.log("onTestFinished() in attempt", task.result.retryCount + 1)));
+            during("an uncaught error", () => { throw new Error("during the delay"); });
+          `,
+        },
+        [],
+        {},
+        beforeTheTestTimesOut,
+      ),
+    ]);
+    const betweenTests = ({ stderr }: { stderr: string }) => stderr.split("Unhandled error between tests").length - 1;
+    expect({
+      concurrent: { log: concurrent.log, results: concurrent.results, betweenTests: betweenTests(concurrent) },
+      sequential: { log: sequential.log, results: sequential.results, betweenTests: betweenTests(sequential) },
+      exitCodes: [concurrent.exitCode, sequential.exitCode],
+    }).toEqual({
+      concurrent: {
+        log: ["run 1"],
+        results: [
+          "(skip) group > skip() (attempt 2)",
+          "(fail) group > a failed expect.soft() (attempt 2)",
+          "(pass) group > task.result (attempt 2)",
+          "(pass) group > an uncaught error (attempt 2)",
+        ],
+        betweenTests: 1,
+      },
+      sequential: {
+        log: ["the matcher passed", "onTestFinished() in attempt 2"],
+        results: [
+          "(fail) a failed expect.soft() of the module (attempt 2)",
+          "(pass) a matcher that waits for a promise (attempt 2)",
+          "(pass) onTestFinished() (attempt 2)",
+          "(pass) an uncaught error (attempt 2)",
+        ],
+        betweenTests: 1,
+      },
+      exitCodes: [1, 1],
+    });
+  });
+
+  test("a process that the earlier attempt runs during the delay is not ended at the deadline of that attempt", async () => {
+    // The process lives longer than the 250 ms of the test. Bun.spawnSync() ends its process at the deadline of the test that calls it.
+    const { log, results, exitCode } = await runTests({
       "a.test.js": `
-        import { test, describe } from "vitest";
-        const during = (name, fn) => test(name, { retry: { count: 1, delay: 500 } }, context => {
-          if (context.task.result.retryCount > 0) return;
-          setImmediate(() => fn(context));
+        import { test } from "vitest";
+        test("retried", { timeout: 250, retry: { count: 1, delay: 20 } }, ({ task }) => {
+          if (task.result.retryCount > 0) return;
+          setImmediate(() => {
+            const { exitCode, signalCode } = Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(500)"] });
+            console.log("exited with", exitCode, signalCode);
+          });
           throw new Error("boom");
-        });
-        describe.concurrent("group", () => {
-          during("skip()", context => { try { context.skip(); } catch {} });
-          during("a failed expect.soft()", context => context.expect.soft(1).toBe(2));
-          during("task.result", ({ task }) => console.log(task.result.state, task.result.retryCount));
-          during("an uncaught error", () => { throw new Error("during the delay"); });
         });
       `,
     });
-    expect({ log, results, betweenTests: stderr.includes("Unhandled error between tests"), exitCode }).toEqual({
-      log: ["run 1"],
-      results: [
-        "(skip) group > skip() (attempt 2)",
-        "(fail) group > a failed expect.soft() (attempt 2)",
-        "(pass) group > task.result (attempt 2)",
-        "(pass) group > an uncaught error (attempt 2)",
-      ],
-      betweenTests: true,
-      exitCode: 1,
+    expect({ log, results, exitCode }).toEqual({
+      log: ["exited with 0 undefined"],
+      results: ["(pass) retried (attempt 2)"],
+      exitCode: 0,
     });
-  });
+  }, 30_000);
 
   test("hooks can change the errors that the condition reads", async () => {
     const { log, results, exitCode } = await runTests({
@@ -4552,6 +4976,13 @@ describe.concurrent("retry delay and condition", () => {
         change("emptied", /boom/, errors => { errors.length = 0; });
         change("pushed to", /pushed/, errors => { errors.push(new Error("pushed")); });
         change("rewritten", /rewritten/, errors => { errors[errors.length - 1] = { message: "rewritten" }; });
+        // What the runner records always has a message. A hook can leave anything.
+        change("null pushed", /.*/, errors => { errors.push(null); });
+        change("a string pushed", /^$/, errors => { errors.push("boom"); });
+        change("a string pushed that is asked for", /boom/, errors => { errors.push("boom"); });
+        change("a message that is a number", /^42$/, errors => { errors.push({ message: 42 }); });
+        change("a message that is zero", /^$/, errors => { errors.push({ message: 0 }); });
+        change("a message that is zero and is asked for", /0/, errors => { errors.push({ message: 0 }); });
       `,
     });
     expect({ log, results, exitCode }).toEqual({
@@ -4561,8 +4992,27 @@ describe.concurrent("retry delay and condition", () => {
         "pushed to > test: 2",
         "rewritten > test: 1",
         "rewritten > test: 2",
+        "null pushed > test: 1",
+        "a string pushed > test: 1",
+        "a string pushed > test: 2",
+        "a string pushed that is asked for > test: 1",
+        "a message that is a number > test: 1",
+        "a message that is a number > test: 2",
+        "a message that is zero > test: 1",
+        "a message that is zero > test: 2",
+        "a message that is zero and is asked for > test: 1",
       ],
-      results: ["(fail) emptied > test", "(pass) pushed to > test (attempt 2)", "(pass) rewritten > test (attempt 2)"],
+      results: [
+        "(fail) emptied > test",
+        "(pass) pushed to > test (attempt 2)",
+        "(pass) rewritten > test (attempt 2)",
+        "(fail) null pushed > test",
+        "(pass) a string pushed > test (attempt 2)",
+        "(fail) a string pushed that is asked for > test",
+        "(pass) a message that is a number > test (attempt 2)",
+        "(pass) a message that is zero > test (attempt 2)",
+        "(fail) a message that is zero and is asked for > test",
+      ],
       exitCode: 1,
     });
   });

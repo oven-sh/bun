@@ -485,7 +485,7 @@ The test context is the object you destructure fixtures from. Each test has one,
 | `expect`                                 | An `expect` whose assertion counts and snapshots belong to this test, even in [concurrent](/test#concurrent-test-execution) tests |
 | `skip(note?)`, `skip(condition, note?)`  | Stops the test and reports it as skipped                                                                                          |
 | `onTestFinished(fn)`, `onTestFailed(fn)` | Runs `fn` after the test's `afterEach` hooks and fixture teardown. `onTestFailed` only runs it if the test failed                 |
-| `signal`                                 | An `AbortSignal` that's aborted when the test times out                                                                           |
+| `signal`                                 | An `AbortSignal` that's aborted when the test times out. Its `reason` is the timeout error in `task.result.errors`                |
 | `annotate(message, type?, attachment?)`  | Adds an entry to `task.annotations`                                                                                               |
 
 As in Vitest, the context isn't a `done` callback. Calling it throws an error.
@@ -545,12 +545,14 @@ test("flaky network request", { retry: { count: 3, delay: 500, condition: /ECONN
 | `condition` | A `RegExp`. Bun retries the test only if it matches the `message` of the test's last error.           |
 
 - The last error is the last entry of [`task.result.errors`](#test-context), which has the errors of every attempt. An error that an `afterEach` hook throws comes after the error of the test.
+- As in Vitest, a thrown `AggregateError` adds each member of its `errors`, and a thrown array adds each of its elements. So the `condition` is tested against the last error of a failed `Promise.any()`, and of a connection that every address of a host refused.
 - A failure that Bun finds itself adds the error that Vitest throws for it. A test that times out adds `Test timed out in 5000ms.` and a hook adds `Hook timed out in 10000ms.`, each followed by a hint on a second line. An `expect.assertions(2)` that isn't met adds `expected number of assertions to be 2, but got 1`.
-- Bun's matchers word their messages differently from Vitest's. For a failed assertion, write the `condition` against the message that Bun prints.
+- Bun's matchers word their messages differently from Vitest's. For a failed assertion, write the `condition` against the message that Bun prints. Bun tests the `condition` against the message without the colors that a terminal gets.
+- A hook can change the array in `task.result.errors`, and the `condition` is tested against what the hook leaves. Bun doesn't read a new array that a hook assigns to `task.result.errors`.
 - Vitest's types also allow a function as `condition`. Vitest 5 never calls the function and retries after every error, and so does Bun.
-- The `retry` of a `describe` block is the default for its tests. A test's own `retry` replaces all of it.
+- The `retry` of a `describe` block is the default for its tests. A test's own `retry` replaces all of it. Bun doesn't read `tags` or `meta` from the options, so a tag can't give a `retry` to its tests.
 - `task.retry` is the count.
-- `test.for()` and `test.extend()` tests from `"bun:test"` take the object too.
+- `test.for()`, `test.extend()` and `describe.for()` from `"bun:test"` take the object too.
 
 ### Types
 

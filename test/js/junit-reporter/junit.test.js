@@ -454,6 +454,53 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(1);
   });
 
+  it("reports the earlier attempts of a test whose retries have a delay or a condition", async () => {
+    await using tmpDir = tempDir("junit-retry-policy", {
+      "package.json": "{}",
+      "policy.test.js": `
+        import { test } from "vitest";
+        const attempts = {};
+        const attempt = name => (attempts[name] = (attempts[name] ?? 0) + 1);
+
+        test("fails once, then passes", { retry: { count: 2, delay: 1 } }, () => {
+          if (attempt("a") === 1) throw new Error("first attempt");
+        });
+        test("fails twice", { retry: { count: 2, condition: /first/ } }, () => {
+          throw new Error(attempt("b") === 1 ? "first attempt" : "second attempt");
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const attemptsOf = name =>
+      [
+        ...xmlContent
+          .match(new RegExp(`<testcase[^>]*name="${name}"[^/]*>[\\s\\S]*?</testcase>`))[0]
+          .matchAll(/<(\w+) type="(\w+)" message="([^"]*)"/g),
+      ].map(match => match.slice(1));
+    expect({
+      "fails once, then passes": attemptsOf("fails once, then passes"),
+      "fails twice": attemptsOf("fails twice"),
+    }).toEqual({
+      "fails once, then passes": [["flakyFailure", "Error", "first attempt"]],
+      // The condition does not match the error of the second attempt, so the third does not run.
+      "fails twice": [
+        ["failure", "Error", "second attempt"],
+        ["rerunFailure", "Error", "first attempt"],
+      ],
+    });
+    expect(proc.exitCode).toBe(1);
+  });
+
   it("reports a concurrent test's earlier attempts under that test", async () => {
     await using tmpDir = tempDir("junit-retry-concurrent", {
       "package.json": "{}",

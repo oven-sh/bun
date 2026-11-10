@@ -576,7 +576,8 @@ declare module "vitest" {
           delay?: number | undefined;
           /**
            * Rerun the test only if this matches the message of its last error, which `task.result.errors` ends with.
-           * The message of a test that timed out starts with `Test timed out in`.
+           * The message of a test that timed out starts with `Test timed out in`. The colors that a terminal gets
+           * are removed from the message first.
            *
            * Vitest's types also take a function. Vitest 5 never calls it and always reruns, and so does Bun.
            */

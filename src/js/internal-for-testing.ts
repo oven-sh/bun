@@ -963,6 +963,13 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
+// `bun test`: how many import() calls the module mocks keep a note of, to find who holds a mock when it ends.
+export const moduleCallsKeptForModuleMocks: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_moduleCallsKeptForModuleMocks",
+  0,
+);
+
 // `parallelism` threads each spawn `iterations` no-op threads through bun's own pthread_create,
 // writing every failure to `fd`. Returns the first failing errno, or with `detach` 0 as soon as
 // every loop runs; a detached loop also writes to `fd` when it runs out of iterations.

@@ -918,6 +918,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
     // they would keep it (and everything it loaded) alive for the rest of the run.
     oldGlobal->onLoadPlugins.clear();
+    oldGlobal->onLoadPlugins.forgetModuleCalls();
     oldGlobal->onResolvePlugins.clear();
     // If JSC's CodeCache holds fewer entries than a file loads modules, each file evicts what the next one needs.
     // Capped because an entry keeps 20 to 100 KB of unlinked and Baseline code alive.
@@ -4396,6 +4397,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     ASSERT(result);
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
+        if (globalObject->onLoadPlugins.loadsShareModules)
+            Bun::didCallImport(globalObject, sourceURL, referrer, key);
         Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
         RETURN_IF_EXCEPTION(scope, nullptr);
     }

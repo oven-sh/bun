@@ -454,6 +454,8 @@ pub struct TestIsolationState {
     pub synthetic_allocation_limit: Option<usize>,
     /// `--isolate=modules`: all files share one global object, and each gets its own `Bun.ModuleGraph`.
     pub shares_global: bool,
+    /// Another load of a test file in this process finds in the module registry what this load leaves. See `TestCommand::run`.
+    pub loads_share_modules: bool,
     /// The context of the running file's graph. Its callbacks run in this context.
     pub file_context: crate::ContextId,
     /// What the outgoing file gives back once its realm is retired. See
@@ -6215,13 +6217,19 @@ impl VirtualMachine {
             }
         }
 
-        // After the preloads, so the modules they loaded still count as loaded by a preload.
-        crate::cpp::JSMock__didBeginTestFile(self.global());
-
         // Note: reshaped for borrowck.
         let global = self.global;
         let main = (self.main()).expect("set to the test file above");
         let main_str = bun_core::StringView::from_bytes(main);
+        // After the preloads, so the modules they loaded still count as loaded by a preload.
+        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` extern; `global` is this VM's global object and `main_str` outlives the call.
+        unsafe {
+            crate::cpp::JSMock__didBeginTestFile(
+                global,
+                &*main_str,
+                self.test_isolation_state.loads_share_modules,
+            );
+        }
         let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
             global, &main_str,
         ) {

@@ -801,6 +801,8 @@ void ImportMetaObject::finishCreation(VM& vm)
         ASSERT(object);
         if (meta->isOfCompiledModule)
             Bun::didCreateRequireOfCompiledModule(object);
+        if (isBunTest) [[unlikely]]
+            Bun::didCreateRequireOfModule(defaultGlobalObject(meta->globalObject()), url, object);
         init.set(uncheckedDowncast<JSFunction>(object));
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {

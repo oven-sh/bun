@@ -8,6 +8,7 @@
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/URL.h>
 #include "helpers.h"
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
@@ -151,6 +152,76 @@ public:
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+        // Another load of a test file in this process finds in the module registry what this load leaves. The runner says so before each load.
+        bool loadsShareModules = false;
+        // The test file has ended and the next has yet to begin.
+        bool hasTestFileEnded = false;
+        // The running test file has made a mock.
+        bool hasMadeModuleMock = false;
+        // Goes up at the first mock of each test file, and each time modules leave the registry. It tells what came first: a call below, that
+        // mock, or the departure of the module that is registered under the name of the caller now.
+        unsigned moduleClock = 0;
+        unsigned clockAtFirstModuleMock = 0;
+        // The name that the calls of the running test file would have. What the file gets through a call is its own to hold, and it ends.
+        RefPtr<WTF::UniquedStringImpl> nameOfTestFile;
+        // (the module whose code called import() or require(), the module it got), while loadsShareModules. The loader keeps no record of such
+        // a call, and the caller may hold what it got.
+        // The caller has the name that the URL of its source gives it (see forEachOtherNameOfModule() in BunPlugin.cpp), the module its key.
+        // Both are atoms, so a call that was made before costs one lookup of two pointers. A call stays when one of the two modules leaves the
+        // registry: what holds a module keeps it, and a module that is held may call.
+        using ModuleCall = std::pair<RefPtr<WTF::UniquedStringImpl>, RefPtr<WTF::UniquedStringImpl>>;
+        struct TimesOfModuleCall {
+            // The clock at the first call and at the last.
+            unsigned first;
+            unsigned last;
+            // The clock at the last call that came after the first mock of the test file that ran then: it may have got a mock. 0 if none did.
+            unsigned underMock;
+        };
+        WTF::UncheckedKeyHashMap<ModuleCall, TimesOfModuleCall> moduleCalls = {};
+        // The callers of those calls, by the module.
+        WTF::UncheckedKeyHashMap<RefPtr<WTF::UniquedStringImpl>, Vector<RefPtr<WTF::UniquedStringImpl>, 1>> callersOfModule = {};
+        // One of those modules has the key that vi.mock() sets a loaded module aside under. See forEachCallerOfModule() in BunPlugin.cpp.
+        bool hasCallsForOriginals = false;
+        // The object behind `import.meta.require` of each ES module, with that name, while loadsShareModules. require.cache lists none of them,
+        // and each lists in its children what its module has required, the latest last: one for each call. The module holds it, so it is
+        // there while the module is.
+        struct RequirerOfModule {
+            RefPtr<WTF::UniquedStringImpl> name;
+            JSC::Weak<JSC::JSObject> requirer;
+            // How many of those children are among the calls above.
+            unsigned childrenNoted { 0 };
+        };
+        Vector<RequirerOfModule> requirersOfModules = {};
+        // What called for a module that the end of a mock took out of the registry, or restored, while the test file ran, with the clock at
+        // the call. It may hold the mock, and goes when the file ends.
+        WTF::UncheckedKeyHashMap<String, unsigned> callersOfEndedModuleMocks = {};
+        // The clock when the module last left the registry, by its key. What is registered under the key now was loaded after that, so it made
+        // none of the calls from before.
+        WTF::UncheckedKeyHashMap<String, unsigned> whenModuleLeft = {};
+        void didCallForModule(WTF::UniquedStringImpl* caller, WTF::UniquedStringImpl* module)
+        {
+            if (!caller || !module || caller == nameOfTestFile.get())
+                return;
+            auto added = moduleCalls.add(ModuleCall { caller, module }, TimesOfModuleCall { moduleClock, moduleClock, hasMadeModuleMock ? moduleClock : 0 });
+            if (added.isNewEntry) {
+                callersOfModule.ensure(module, [] { return Vector<RefPtr<WTF::UniquedStringImpl>, 1>(); }).iterator->value.append(caller);
+                hasCallsForOriginals |= module->endsWith("actual"_s);
+                return;
+            }
+            added.iterator->value.last = moduleClock;
+            if (hasMadeModuleMock)
+                added.iterator->value.underMock = moduleClock;
+        }
+        // The modules of the calls are gone, with the module graph of a test file or with the global object.
+        void forgetModuleCalls()
+        {
+            moduleCalls.clear();
+            callersOfModule.clear();
+            hasCallsForOriginals = false;
+            requirersOfModules.clear();
+            callersOfEndedModuleMocks.clear();
+            whenModuleLeft.clear();
+        }
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
@@ -355,6 +426,12 @@ JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModu
 // The same for the namespace object of a compiled module. Null for any other object.
 JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);
 #endif
+// `bun test`: `require` is what `import.meta.require` answers in the ES module whose `import.meta.url` is this. See OnLoad::requirersOfModules.
+void didCreateRequireOfModule(Zig::GlobalObject*, const WTF::URL& urlOfModule, JSC::JSObject* require);
+// `bun test` where OnLoad::loadsShareModules: the module whose source has this URL has called import() for `key`. `pathOfCaller` is the path of that URL.
+void didCallImport(Zig::GlobalObject*, const WTF::URL& urlOfCaller, const JSC::Identifier& pathOfCaller, const JSC::Identifier& key);
+// `bun test`: require() hands the mock of a builtin to the code that called it. Nothing else says so: a builtin is no child of its requirers.
+void didRequireMockedBuiltinModule(Zig::GlobalObject*, const WTF::String& specifier);
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);

@@ -3991,6 +3991,19 @@ impl TestCommand {
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
+        // Whether another load in this process finds in the module registry what a load of this file leaves: the next
+        // file's without `--isolate`, or the next run's of this file under `--rerun-each`. Then the module mocks take
+        // note of each `import()`. `next_load_shares_global` below says another thing, whether the end of a load has
+        // mocks to undo, and differs in three cases:
+        // - The only file of a run. Nothing shares its modules, and its end still undoes its mocks.
+        // - `--isolate=modules`. The next file has its own module graph in the same global.
+        // - The last run under `--isolate --rerun-each`. It shares its modules with the runs before it, and the
+        //   global goes when it ends.
+        // A worker never knows which file is its last, so `first_last` says nothing there.
+        let is_only_file =
+            first_last.first && first_last.last && reporter.worker_ipc_file_idx.is_none();
+        vm.test_isolation_state.loads_share_modules =
+            repeat_count > 1 || (!vm.test_isolation_enabled && !is_only_file);
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
         vm.is_running_vitest_entry = false;

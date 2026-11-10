@@ -657,6 +657,7 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
             original = Bun::toStringView(*builtin);
             specifier = &original;
         } else if (JSValue moduleMock = Bun::findModuleMock(globalObject, specifier); moduleMock && !Bun::hasModuleMockUnsettledAsyncFactory(moduleMock.getObject())) {
+            Bun::didRequireMockedBuiltinModule(globalObject, specifier->toWTFString(BunString::ZeroCopy));
             JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock.getObject(), specifier->toWTFString(BunString::ZeroCopy), true);
             RETURN_IF_EXCEPTION(scope, {});
             JSC::JSObject* result = pending ? nullptr : Bun::resultOfModuleMock(moduleMock.getObject());

@@ -341,6 +341,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
     return encodedJSUndefined();
 }
 
+// `bun test`: how many calls of import() the module mocks keep a note of. See OnLoad::moduleCalls in BunPlugin.h.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_moduleCallsKeptForModuleMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(jsNumber(defaultGlobalObject(globalObject)->onLoadPlugins.moduleCalls.size()));
+}
+
 // Whether the per-VM memory-pressure watcher is currently installed, so tests
 // can observe that process.on/off actually arm/disarm the OS backend.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

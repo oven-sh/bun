@@ -507,7 +507,9 @@ As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a
 
 ### Module Mocks Are Removed After Each Test File
 
-Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. So is a module that made a mock, so a helper that calls `vi.mock()` mocks for every test file that imports it. Other modules stay cached between files.
+Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. So is a module that made a mock, so a helper that calls `vi.mock()` mocks for every test file that imports it.
+
+A module that got the mock through `import()` or `require()` is re-evaluated too if the call came after the test file made its first mock. So is a module that got, through such a call, a module that imports the mock. `bun test` cannot tell whether the module kept what it got. The modules that hold a module that is re-evaluated for this reason are re-evaluated with it: those that import it, and those that got it through `import()` or `require()` at any time. Other modules stay cached between files.
 
 Mocks made in a `--preload` script apply to every test file.
 

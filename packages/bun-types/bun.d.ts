@@ -1338,12 +1338,12 @@ declare module "bun" {
      * attribute values, `& < >` are escaped and carriage returns are
      * written as character references. In attribute values, `"` is
      * escaped too, and tabs and newlines are written as character
-     * references. Otherwise a parser would read a carriage return in text
-     * as a newline, and a carriage return, tab or newline in an attribute
-     * value as a space. A comment and processing-instruction data are
-     * written as they are, because XML has no escape there. A parser then
-     * reads a carriage return as a newline, and drops whitespace at the
-     * start of the data. It throws for element, attribute or processing
+     * references. Without a reference, a parser reads `\r\n` and `\r` as
+     * `\n`, and reads a tab or a newline in an attribute value as a
+     * space. A comment and processing-instruction data are written as
+     * they are, because XML has no escape there. A parser then reads
+     * `\r\n` and `\r` in them as `\n`, and drops whitespace at the start
+     * of the data. It throws for element, attribute or processing
      * instruction names that are not XML names; for characters XML cannot
      * contain (U+0000, other C0 controls except tab/newline/carriage return,
      * U+FFFE, U+FFFF, unpaired surrogates); for `--` inside a comment or `?>`
@@ -1361,7 +1361,7 @@ declare module "bun" {
      * anything `XML.parse` returned with the same `compact` option. The
      * exception is a comment or a processing instruction that holds a
      * carriage return, which only a character reference inside an entity can
-     * put there: that carriage return is read back as a newline.
+     * put there: it is read back with `\r\n` and `\r` as `\n`.
      *
      * @category Utilities
      *

@@ -86,8 +86,6 @@ pub(crate) struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
-    /// The matchers that a failed `toMatchObject` prints in place of what they matched in the value.
-    pub(crate) matched_rows: MatchedRows,
 }
 
 struct CountedWriter<'a, W: bun_io::Write> {
@@ -110,6 +108,7 @@ impl JestPrettyFormat {
         len: usize,
         writer: &mut W,
         options: FormatOptions,
+        matched_rows: MatchedRows,
     ) -> JsResult<()> {
         // Nested values re-enter the formatter through `ConsoleFormatter::print_as`
         // with a `FmtAdapter<AsFmt>` sink; adapt the caller's writer to that same
@@ -120,7 +119,7 @@ impl JestPrettyFormat {
             let mut counted = CountedWriter { writer: &mut *writer, length: &length };
             let mut bridge = AsFmt::new(&mut counted);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, vals, len, &mut adapted, options, &length)
+            Self::format_adapted(level, global, vals, len, &mut adapted, options, &length, matched_rows)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
@@ -137,6 +136,7 @@ impl JestPrettyFormat {
         writer: &mut bun_io::write::FmtAdapter<'_, AsFmt<'_>>,
         options: FormatOptions,
         output_length: &core::cell::Cell<usize>,
+        matched_rows: MatchedRows,
     ) -> JsResult<()> {
         use bun_io::Write as _;
         type W<'a, 'b> = bun_io::write::FmtAdapter<'a, AsFmt<'b>>;
@@ -149,7 +149,7 @@ impl JestPrettyFormat {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
             fmt.output_length = Some(output_length);
-            fmt.place = MatchedPlaceScope::at_root(options.matched_rows);
+            fmt.place = MatchedPlaceScope::at_root(matched_rows);
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -2586,6 +2586,7 @@ impl<'a> Formatter<'a> {
         array.get_index(self.global_this, index)
     }
 
+    #[inline(always)]
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         result: TagResult,
@@ -2593,15 +2594,30 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
-        // `value` is at the place that its parent handed over, and the values it prints start with none.
+        if self.place.has_rows() {
+            return self.format_at_place::<W, ENABLE_ANSI_COLORS>(result, writer, value, global_this);
+        }
+        self.format_entered::<W, ENABLE_ANSI_COLORS>(result, writer, value, global_this)
+    }
+
+    /// [`Self::format`] for a printer with matched rows: `value` is at the place that its parent handed over.
+    #[cold]
+    #[inline(never)]
+    fn format_at_place<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        result: TagResult,
+        writer: &mut W,
+        value: JSValue,
+        global_this: &'a JSGlobalObject,
+    ) -> JsResult<()> {
         let outer_place = self.place.enter();
         let printed = self.format_entered::<W, ENABLE_ANSI_COLORS>(result, writer, value, global_this);
         self.place.leave(outer_place);
         printed
     }
 
-    /// The body of [`Self::format`]. Inlined, so that a nesting level costs no extra frame.
-    #[inline(always)]
+    /// The body of [`Self::format`], which is the frame of a nesting level as before.
+    #[inline(never)]
     fn format_entered<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         result: TagResult,

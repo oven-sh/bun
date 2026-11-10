@@ -167,6 +167,12 @@ impl MatchedPlaceScope {
         }
     }
 
+    /// False for a printer that was given no rows: every place of it is none.
+    #[inline]
+    pub fn has_rows(&self) -> bool {
+        !self.rows.is_empty()
+    }
+
     /// The place of the value that is being printed.
     #[inline]
     pub fn current(&self) -> MatchedPlace {

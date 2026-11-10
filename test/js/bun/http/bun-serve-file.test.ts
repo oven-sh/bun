@@ -2107,6 +2107,7 @@ describe("a body derived from a Bun.file() stream that fails to open", () => {
     });
 
     it.each(["GET", "HEAD"])("%s: a try/catch in the handler answers", async method => {
+      const caught: string[] = [];
       using server = Bun.serve({
         port: 0,
         development: false,
@@ -2114,14 +2115,16 @@ describe("a body derived from a Bun.file() stream that fails to open", () => {
           try {
             return new Response(body());
           } catch (error) {
-            return new Response(String((error as NodeJS.ErrnoException).code), { status: 404 });
+            caught.push(String((error as NodeJS.ErrnoException).code));
+            return new Response("not found", { status: 404 });
           }
         },
       });
       const response = await fetch(server.url, { method });
-      expect({ status: response.status, body: await response.text() }).toEqual({
+      expect({ status: response.status, body: await response.text(), caught }).toEqual({
         status: 404,
-        body: method === "HEAD" ? "" : "ENOENT",
+        body: method === "HEAD" ? "" : "not found",
+        caught: ["ENOENT"],
       });
     });
   });

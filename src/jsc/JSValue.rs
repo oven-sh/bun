@@ -2469,6 +2469,42 @@ impl JSValue {
         JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback);
         scope.return_if_exception()
     }
+    /// The own enumerable keys of `self`: index keys (none where they print as content, as in a typed array), then strings in creation order, then symbols.
+    pub(crate) fn for_each_own_property(
+        self,
+        global: &JSGlobalObject,
+        call_getters: bool,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachOwnProperty(
+                this: JSValue,
+                global: &JSGlobalObject,
+                call_getters: bool,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        crate::top_scope!(scope, global);
+        JSC__JSValue__forEachOwnProperty(self, global, call_getters, ctx, callback);
+        scope.return_if_exception()
+    }
+    /// False only if [`for_each_own_property`](Self::for_each_own_property) passes no key.
+    pub(crate) fn has_own_keys_to_list(self) -> bool {
+        unsafe extern "C" {
+            safe fn Bun__JSValue__hasOwnKeysToList(this: JSValue) -> bool;
+        }
+        Bun__JSValue__hasOwnKeysToList(self)
+    }
+    /// True only if the console formatter lists a named key of `self`. False does not say that it lists no key.
+    pub(crate) fn has_named_key_to_list(self) -> bool {
+        unsafe extern "C" {
+            safe fn Bun__JSValue__hasNamedKeyToList(this: JSValue) -> bool;
+        }
+        Bun__JSValue__hasNamedKeyToList(self)
+    }
     /// `JSValue.forEachPropertyOrdered` — like
     /// [`for_each_property`](Self::for_each_property) but visits keys in
     /// stable enumeration order (used by `console.log` with
@@ -2573,6 +2609,16 @@ impl JSValue {
         match Bun__JSArray__nextPresentIndex(self, start) {
             u64::MAX => None,
             index => Some(index as u32),
+        }
+    }
+    /// For an `Array`: its length, and whether it is empty and has an enumerable named property.
+    pub(crate) fn array_length_and_named_keys(self) -> Option<(u32, bool)> {
+        unsafe extern "C" {
+            safe fn Bun__JSArray__lengthAndNamedKeys(this: JSValue) -> u64;
+        }
+        match Bun__JSArray__lengthAndNamedKeys(self) {
+            u64::MAX => None,
+            bits => Some((bits as u32, bits >> 32 != 0)),
         }
     }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class

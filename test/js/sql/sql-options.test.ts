@@ -2,9 +2,22 @@
 import { SQL } from "bun";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import assert from "node:assert";
 import path from "node:path";
 import util from "node:util";
-import { closedPort, listeningServer } from "./wire-frames";
+import {
+  closedPort,
+  listeningServer,
+  pgCommandComplete,
+  pgCopyData,
+  pgCopyDone,
+  pgCopyOutResponse,
+  pgDataRow,
+  pgErrorResponse,
+  pgMockServer,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
 const SQL_VARIABLE = /^(PG|POSTGRES_|MYSQL|MARIADB|SQLITE|TLS_|DATABASE_?URL$)/;
 const originalEnv = { ...process.env };
@@ -860,3 +873,269 @@ test.skipIf(isWindows).concurrent.each(["postgres", "mysql"] as const)(
     }
   },
 );
+
+// util.inspect() with `customInspect: false` lists the own properties of a value and of what they hold. The message
+// of a failed node:assert is made that way. The state of a query holds the pool, and the pool holds the password.
+describe("a query keeps its state in private fields", () => {
+  const password = "Hunter2Marker";
+  const assertionMessage = (query: object) => {
+    try {
+      assert.strictEqual(query, 1);
+    } catch (error) {
+      return (error as Error).message;
+    }
+  };
+  // `getters` also calls what Query.prototype serves to the adapters.
+  const everything = { customInspect: false, showHidden: true, getters: true, depth: Infinity };
+  function expectNoOwnProperty(query: object) {
+    expect(Reflect.ownKeys(query)).toEqual([]);
+    expect({ ...query }).toEqual({});
+    expect(assertionMessage(query)).toStartWith(
+      "Expected values to be strictly equal:\n+ actual - expected\n\n+ Query [Promise] {\n",
+    );
+    expect(assertionMessage(query)).not.toContain(password);
+    expect(util.inspect(query, everything)).not.toContain(password);
+  }
+
+  test.each(["postgres", "mysql"])("%s: a query that waits for a connection, and one that failed", async adapter => {
+    await using sql = new SQL(`${adapter}://user:${password}@127.0.0.1:${await closedPort()}/db`, { max: 1 });
+    const query = sql`select 1`;
+    expect(util.inspect(query, { customInspect: false })).toBe("Query [Promise] { <pending> }");
+    expectNoOwnProperty(query);
+    query.execute();
+    expectNoOwnProperty(query);
+    expect(await query.catch(error => error.code)).toBe(`ERR_${adapter.toUpperCase()}_CONNECTION_REFUSED`);
+    expectNoOwnProperty(query);
+  });
+
+  test("sqlite: a query that ran", async () => {
+    await using sql = new SQL(":memory:");
+    const query = sql`select 1 as x`;
+    expectNoOwnProperty(query);
+    expect(await query).toEqual([{ x: 1 }]);
+    expectNoOwnProperty(query);
+  });
+
+  test("postgres: a query that ran on a connection of the pool, and one with a COPY stream", async () => {
+    const { port, server } = await pgMockServer((type, body) => {
+      if (type !== "Q") return;
+      if (body.toString().startsWith("copy")) {
+        return [
+          pgCopyOutResponse([0]),
+          pgCopyData(Buffer.from("1\n")),
+          pgCopyDone(),
+          pgCommandComplete("COPY 1"),
+          pgReadyForQuery(),
+        ];
+      }
+      return [
+        pgRowDescription([{ name: "x", typeOid: 23 }]),
+        pgDataRow([Buffer.from("1")]),
+        pgCommandComplete("SELECT 1"),
+        pgReadyForQuery(),
+      ];
+    });
+    try {
+      await using sql = new SQL(`postgres://user:${password}@127.0.0.1:${port}/db`, { max: 1 });
+      const query = sql`select 1 as x`.simple();
+      expect(await query).toEqual([{ x: 1 }]);
+      expectNoOwnProperty(query);
+
+      const copy = sql`copy t to stdout`;
+      const reader = copy.readable().getReader();
+      expectNoOwnProperty(copy);
+      expect(Buffer.from((await reader.read()).value!).toString()).toBe("1\n");
+      expect((await reader.read()).done).toBe(true);
+      await copy;
+      expectNoOwnProperty(copy);
+
+      const unstarted = sql`copy t from stdin`;
+      unstarted.writable();
+      expectNoOwnProperty(unstarted);
+      unstarted.cancel();
+    } finally {
+      server.close();
+    }
+  });
+
+  // As two promises are: toEqual() compares own properties.
+  test("two queries are equal to toEqual()", async () => {
+    await using sql = new SQL(":memory:");
+    expect(Bun.deepEquals(sql`select 1`, sql`select 2`)).toBe(true);
+    expect(sql`select 1`).toEqual(sql`select 2`);
+    expect(util.isDeepStrictEqual(sql`select 1`, sql`select 2`)).toBe(false);
+  });
+
+  test("the members of Query.prototype answer for an object that is no query", async () => {
+    await using sql = new SQL(":memory:");
+    const prototype = Object.getPrototypeOf(sql`select 1`);
+    for (const object of [prototype, Object.create(prototype)]) {
+      const keys = Reflect.ownKeys(object);
+      expect(Bun.inspect(object)).toBe("Query {  }");
+      expect({ active: object.active, cancelled: object.cancelled }).toEqual({ active: false, cancelled: false });
+      object.active = true;
+      expect(object.simple()).toBe(object);
+      expect(object.cancel()).toBe(object);
+      expect({ active: object.active, cancelled: object.cancelled }).toEqual({ active: false, cancelled: false });
+      expect(Reflect.ownKeys(object)).toEqual(keys);
+    }
+  });
+
+  // What stands for a query and is none: a Proxy with no `get` trap, a Proxy whose trap passes itself on as the
+  // receiver, and an object that inherits from the query.
+  const wrappers: [string, <T extends object>(query: T) => T][] = [
+    ["a Proxy of a Proxy of a query", query => new Proxy(new Proxy(query, {}), {})],
+    ["a Proxy of a query with a get trap", query => new Proxy(query, { get: Reflect.get })],
+    ["an object that inherits from a query", query => Object.create(query)],
+    ["an object that inherits from a Proxy of a query", query => Object.create(new Proxy(query, {}))],
+  ];
+
+  test.each(wrappers)("%s is that fragment", async (_, wrap) => {
+    await using sql = new SQL(":memory:");
+    await sql`create table t (id int)`;
+    await sql`insert into t ${sql([{ id: 1 }, { id: 2 }, { id: 3 }])}`;
+    expect(await sql`select id from ${wrap(sql("t"))} where ${wrap(sql`id = 2`)}`).toEqual([{ id: 2 }]);
+    expect(await sql`select id from t where ${wrap(sql`id = ${1}`)} or id = ${3} order by id`).toEqual([
+      { id: 1 },
+      { id: 3 },
+    ]);
+    const conditions = [wrap(sql`id = ${1}`), wrap(sql`or id = ${3}`)];
+    expect(await sql`select id from t where ${conditions} order by id`).toEqual([{ id: 1 }, { id: 3 }]);
+  });
+
+  test("an object that inherits from Query.prototype and from no query is no fragment", async () => {
+    await using sql = new SQL(":memory:");
+    const prototype = Object.getPrototypeOf(sql`select 1`);
+    for (const value of [Object.create(prototype), new Proxy(Object.create(prototype), {})]) {
+      const error = await sql`select ${value}`.catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(SyntaxError);
+      expect((error as Error).message).toBe("Invalid query: SQL Fragment cannot be executed or was misused");
+    }
+  });
+
+  test("a prototype chain that a Proxy leads back into has no query", async () => {
+    await using sql = new SQL(":memory:");
+    const prototype = Object.getPrototypeOf(sql`select 1`);
+    const cancelled = Object.getOwnPropertyDescriptor(prototype, "cancelled")!.get!;
+    const object = {};
+    Object.setPrototypeOf(object, new Proxy(new Proxy(object, {}), {}));
+    expect(cancelled.call(object)).toBe(false);
+    expect(prototype.cancel.call(object)).toBe(object);
+    expect(prototype.simple.call(object)).toBe(object);
+  });
+
+  test("a revoked Proxy of a query gives no access to the query", async () => {
+    await using sql = new SQL(":memory:");
+    const query = sql`select 1 as x`;
+    const prototype = Object.getPrototypeOf(query);
+    const { proxy, revoke } = Proxy.revocable(query, {});
+    revoke();
+    expect(() => prototype.cancel.call(proxy)).toThrow(TypeError);
+    expect(() => prototype.simple.call(proxy)).toThrow(TypeError);
+    expect(() => Object.getOwnPropertyDescriptor(prototype, "cancelled")!.get!.call(proxy)).toThrow(TypeError);
+    expect(query.cancelled).toBe(false);
+    expect(await query).toEqual([{ x: 1 }]);
+  });
+
+  test.each(wrappers)("%s has the status of the query, and cancels it", async (_, wrap) => {
+    await using sql = new SQL(":memory:");
+    const query = sql`select 1 as x`;
+    const wrapped = wrap(query);
+    expect({ active: wrapped.active, cancelled: wrapped.cancelled }).toEqual({ active: false, cancelled: false });
+    expect(util.inspect({ wrapped })).toBe("{ wrapped: Query {  } }");
+    expect(wrapped.cancel()).toBe(wrapped);
+    expect({ wrapped: wrapped.cancelled, query: query.cancelled }).toEqual({ wrapped: true, query: true });
+    expect(Bun.inspect(wrapped)).toBe("Query { cancelled }");
+    expect(await query.catch(error => error.code)).toBe("ERR_SQLITE_QUERY_CANCELLED");
+  });
+
+  test.each(wrappers)("simple() of %s selects the simple protocol", async (_, wrap) => {
+    const seen: string[] = [];
+    const { port, server } = await pgMockServer(type => {
+      seen.push(type);
+      if (type === "Q") {
+        return [
+          pgRowDescription([{ name: "x", typeOid: 23 }]),
+          pgDataRow([Buffer.from("1")]),
+          pgCommandComplete("SELECT 1"),
+          pgReadyForQuery(),
+        ];
+      }
+      // The extended protocol: the query fails, and does not wait.
+      if (type === "P") return pgErrorResponse({ S: "ERROR", C: "0A000", M: "not the simple protocol" });
+      if (type === "S") return pgReadyForQuery();
+    });
+    try {
+      await using sql = new SQL(`postgres://user@127.0.0.1:${port}/db`, { max: 1 });
+      const query = sql`select 1 as x`;
+      const wrapped = wrap(query);
+      expect(wrapped.simple()).toBe(wrapped);
+      const rows = await query.catch(error => error.message);
+      expect({ seen, rows }).toEqual({ seen: ["Q"], rows: [{ x: 1 }] });
+    } finally {
+      server.close();
+    }
+  });
+});
+
+// What prints an error that nothing caught calls no inspect function, and lists the own keys of each value in it.
+describe("the error printer lists no state of a query", () => {
+  const password = "Hunter2Marker";
+
+  test.each([
+    ["postgres", `postgres://user:${password}@127.0.0.1:1/db`],
+    ["mysql", `mysql://user:${password}@127.0.0.1:1/db`],
+    ["sqlite", ":memory:"],
+  ])("%s: a query in a property of an error", async (_, url) => {
+    await using sql = new SQL(url, { max: 1 });
+    const query = sql`select 1`;
+    const printed = Bun.inspect(Object.assign(new Error("failed"), { query }));
+    expect(printed).toContain(" query: Promise { <pending> },\n");
+    expect(printed).not.toContain(password);
+  });
+
+  async function printedBy(code: string, url: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const sql = new Bun.SQL(process.env.URL, { max: 1 }); ${code}`],
+      env: { ...bunEnv, URL: url },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    "reportError({ query: sql`select 1` });",
+    "throw { query: sql`select 1` };",
+    "Promise.reject({ query: sql`select 1` });",
+  ])("%s prints a pending Promise", async code => {
+    const { stdout, stderr, exitCode } = await printedBy(code, `postgres://user:${password}@127.0.0.1:1/db`);
+    expect(stdout).toBe("");
+    expect(stderr).toStartWith("error\n{\n  query: Promise { <pending> },\n}\n");
+    expect(stderr).not.toContain(password);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a query that ran on a connection of the pool prints as a resolved Promise", async () => {
+    const { port, server } = await pgMockServer(type => {
+      if (type !== "Q") return;
+      return [
+        pgRowDescription([{ name: "x", typeOid: 23 }]),
+        pgDataRow([Buffer.from("1")]),
+        pgCommandComplete("SELECT 1"),
+        pgReadyForQuery(),
+      ];
+    });
+    try {
+      const code = "const query = sql`select 1 as x`.simple(); await query; reportError({ query }); await sql.close();";
+      const { stdout, stderr, exitCode } = await printedBy(code, `postgres://user:${password}@127.0.0.1:${port}/db`);
+      expect(stdout).toBe("");
+      expect(stderr).toStartWith("error\n{\n  query: Promise { <resolved> },\n}\n");
+      expect(stderr).not.toContain(password);
+      expect(exitCode).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+});

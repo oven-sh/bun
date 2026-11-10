@@ -1,5 +1,6 @@
 #include "root.h"
 #include "headers.h"
+#include "UtilInspect.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSString.h"
@@ -71,6 +72,79 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
+}
+
+// True if the Structure has an enumerable key that is no private name. `listed`: and whose text is not `constructor`, which the property walk prints for no key, a symbol too.
+static bool hasEnumerableKey(VM& vm, Structure* structure, bool listed)
+{
+    bool found = false;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName())
+            return true;
+        if (listed && WTF::equal(entry.key(), "constructor"_s))
+            return true;
+        found = true;
+        return false;
+    });
+    return found;
+}
+
+#if ASSERT_ENABLED
+// What Bun__JSValue__hasOwnKeysToList promises for "no". A key that the engine keeps outside the Structure fails here.
+static bool hasNoOwnEnumerableKey(JSObject* object)
+{
+    VM& vm = object->vm();
+    JSGlobalObject* globalObject = object->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    if (printsIndexKeysAsContent(object->type()))
+        object->getOwnNonIndexPropertyNames(globalObject, names, DontEnumPropertiesMode::Exclude);
+    else
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+    CLEAR_IF_EXCEPTION(scope);
+    return !names.size();
+}
+#endif
+
+// False only if JSC__JSValue__forEachOwnProperty passes no key of the value. It runs no JS.
+extern "C" bool Bun__JSValue__hasOwnKeysToList(JSC::EncodedJSValue encodedValue)
+{
+    JSObject* object = JSValue::decode(encodedValue).getObject();
+    if (!object)
+        return false;
+    Structure* structure = object->structure();
+    bool has = (hasIndexedProperties(structure->indexingType()) && !printsIndexKeysAsContent(structure->typeInfo().type()))
+        || (structure->maxOffset() != invalidOffset && hasEnumerableKey(object->vm(), structure, false));
+    ASSERT(has || hasNoOwnEnumerableKey(object));
+    return has;
+}
+
+// True only if the console formatter lists a named key of the value. False does not say that it lists no key: the walk says that.
+extern "C" bool Bun__JSValue__hasNamedKeyToList(JSC::EncodedJSValue encodedValue)
+{
+    JSObject* object = JSValue::decode(encodedValue).getObject();
+    if (!object)
+        return false;
+    Structure* structure = object->structure();
+    return structure->maxOffset() != invalidOffset && hasEnumerableKey(object->vm(), structure, true);
+}
+
+// The length, plus bit 32 when the array is empty and has an enumerable named key. UINT64_MAX: not an ArrayType cell.
+extern "C" uint64_t Bun__JSArray__lengthAndNamedKeys(JSC::EncodedJSValue encodedValue)
+{
+    static constexpr uint64_t namedKeys = 1ULL << 32;
+
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isCell() || value.asCell()->type() != ArrayType)
+        return std::numeric_limits<uint64_t>::max();
+
+    JSArray* array = uncheckedDowncast<JSArray>(value.asCell());
+    uint64_t length = array->length();
+    Structure* structure = array->structure();
+    if (length || (!structure->outOfLineSize() && !structure->inlineSize()))
+        return length;
+
+    return hasEnumerableKey(array->vm(), structure, true) ? namedKeys : 0;
 }
 
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by

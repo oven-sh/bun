@@ -231,3 +231,29 @@ Hello NaN 1
 Hello \5 6,
 Hello %i 5 6
 %d 1
+[ field_1: "field_1" ]
+[ 1, 2, 3, field_1: "field_1" ]
+[]
+[ field1: "field_1", field2: 2 ]
+[ 1, 2, 3, field1: "field_1", field2: 2 ]
+[String: "s"] { extra: 1 }
+Map(1) {
+  1: 2,
+  extra: 1,
+}
+1970-01-01T00:00:00.000Z { extra: 1 }
+/x/ [String: "s"] 1
+/x/ { extra: 1 } [Number: 1] { extra: 1 }
+1970-01-01T00:00:00.000Z { extra: "text" }
+Promise { <resolved>, extra: "text" }
+Uint8Array(0) [ extra: "text" ]
+Uint8Array(1) [ 0, extra: "text" ]
+Map(0) {
+  extra: "text",
+}
+Set(1) {
+  1,
+  extra: "text",
+}
+/x/ { extra: "text" }
+/x/ s /x/ { extra: 1 }

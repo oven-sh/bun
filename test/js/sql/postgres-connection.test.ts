@@ -1,6 +1,7 @@
 // What a real server does on demand runs against the container.
 // A mock is used for exact packet boundaries, for frames the container cannot be made to send, and to read the wire.
 import { randomUUIDv7, SQL } from "bun";
+import { sqlQueryAdapter } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import {
@@ -179,20 +180,22 @@ test("CopyBothResponse fails the connection", async () => {
   }
 });
 
-// The handle hangs off the query under a symbol, so script can call run() with fewer arguments than the pool does.
+// Query.prototype serves the handle of a query under a symbol, so script can call run() with fewer arguments than
+// the pool does.
 test("the native query handle throws when run() misses an argument", async () => {
   const script = `
+    import { sqlQueryAdapter } from "bun:internal-for-testing";
     const accepted = Promise.withResolvers();
     const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: () => accepted.resolve(), data() {} } });
     const sql = new Bun.SQL("postgres://u@127.0.0.1:" + listener.port + "/db", { max: 1 });
     const query = sql\`select 1\`;
     query.execute();
     await accepted.promise;
-    const internal = name => query[Object.getOwnPropertySymbols(query).find(symbol => symbol.description === name)];
-    const connection = internal("adapter").connections.find(Boolean).connection;
+    const handle = query[Object.getOwnPropertySymbols(Object.getPrototypeOf(query)).find(symbol => symbol.description === "handle")];
+    const connection = sqlQueryAdapter(query).connections.find(Boolean).connection;
     const thrown = (...args) => {
       try {
-        internal("handle").run(...args);
+        handle.run(...args);
       } catch (error) {
         return error.message;
       }
@@ -491,7 +494,7 @@ test("a connection that is kept back for a cancelled text is given out again whe
   // The other connection of the pool. It asks nothing, so the mock does not count it.
   await using _ = await sql.reserve();
   const cancelled: any = sql.unsafe("select pg_sleep(60)").simple().execute();
-  const adapter = cancelled[Object.getOwnPropertySymbols(cancelled).find(symbol => symbol.description === "adapter")!];
+  const adapter = sqlQueryAdapter(cancelled);
   const inTransaction = () => adapter.connections.map((pooled: any) => pooled.connection.inTransaction);
   await server.asleep;
   const behind = settled(sql.unsafe("select 2").simple().execute());
@@ -1095,7 +1098,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       await using reserved = await sql.reserve();
       const query: any = reserved`select 1`;
       await query;
-      const adapter = query[Object.getOwnPropertySymbols(query).find(symbol => symbol.description === "adapter")!];
+      const adapter = sqlQueryAdapter(query);
       const connection: { inTransaction: boolean } = adapter.connections.find(Boolean).connection;
 
       const seen: [string, boolean][] = [["connected", connection.inTransaction]];

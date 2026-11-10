@@ -45,4 +45,18 @@ bench("inspect big json object", () => {
   console.error(inspect(json));
 });
 
+// The kinds of value that are printed by a printer of their own.
+const kinds = {
+  Map: new Map([[1, 2]]),
+  Set: new Set([1]),
+  Date: new Date(0),
+  RegExp: /x/,
+  Uint8Array: new Uint8Array(1),
+  Promise: Promise.resolve(),
+  Array: [1],
+};
+for (const [name, value] of Object.entries(kinds)) {
+  bench(`inspect ${name}`, () => inspect(value));
+}
+
 await run();

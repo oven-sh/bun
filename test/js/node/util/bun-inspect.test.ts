@@ -140,6 +140,36 @@ describe("Bun.inspect", () => {
     );
   });
 
+  // The walk of the named keys of an array checks the stack of the engine. On one line the levels above print no indentation.
+  it("stack overflow is thrown when it should be for arrays", () => {
+    let array: unknown = [1];
+    for (let i = 0; i < 16 * 1024; i++) {
+      array = [array];
+    }
+
+    expect(() => Bun.inspect(array, { depth: Infinity, compact: true })).toThrow("Maximum call stack size exceeded.");
+  });
+
+  // The value of an own key is one level deeper, in each printer that lists own keys.
+  it.each([
+    ["Map", (inner: unknown) => Object.assign(new Map(), { inner })],
+    ["Set", (inner: unknown) => Object.assign(new Set([1]), { inner })],
+    ["Uint8Array", (inner: unknown) => Object.assign(new Uint8Array(1), { inner })],
+    ["Promise", (inner: unknown) => Object.assign(Promise.resolve(), { inner })],
+    ["Date", (inner: unknown) => Object.assign(new Date(0), { inner })],
+    ["RegExp", (inner: unknown) => Object.assign(/x/, { inner })],
+    ["Number", (inner: unknown) => Object.assign(new Number(1), { inner })],
+    ["Boolean", (inner: unknown) => Object.assign(new Boolean(true), { inner })],
+  ])("stack overflow is thrown when it should be for the own keys of a %s", (_, wrap) => {
+    let value: unknown = 1;
+    for (let i = 0; i < 16 * 1024; i++) {
+      value = wrap(value);
+    }
+
+    expect(() => Bun.inspect(value, { depth: Infinity })).toThrow("Maximum call stack size exceeded.");
+    expect(Bun.inspect(wrap(1))).toContain("inner: 1");
+  });
+
   it("depth = 0", () => {
     expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
   });

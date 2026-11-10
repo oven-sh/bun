@@ -346,6 +346,8 @@ pub(crate) struct Formatter<'a> {
     output_at_depth: [usize; 12],
     /// Where the value being printed is among the matched rows of `toMatchObject()` or of a snapshot's property matchers.
     place: MatchedPlaceScope,
+    /// An Error prints the matcher that its `message` matched, as a snapshot stores it. The diff of a failed `toMatchObject()` keeps the message.
+    prints_matched_message: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -379,6 +381,7 @@ impl<'a> Formatter<'a> {
             items: 0,
             output_at_depth: [0; 12],
             place: MatchedPlaceScope::default(),
+            prints_matched_message: false,
         }
     }
 
@@ -1429,7 +1432,16 @@ impl<'a> Formatter<'a> {
                     let classname = value.get_class_name(self.global_this)?;
                     let mut message_string = bun_core::String::EMPTY;
 
-                    if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
+                    let matched = if self.prints_matched_message && !self.place.current().is_none() {
+                        self.matched_message()
+                    } else {
+                        None
+                    };
+                    let message_prop = match matched {
+                        Some(matcher) => Some(matcher),
+                        None => value.fast_get(self.global_this, jsc::BuiltinName::Message)?,
+                    };
+                    if let Some(message_prop) = message_prop {
                         message_string = message_prop.to_bun_string(self.global_this)?;
                     }
 
@@ -2618,6 +2630,13 @@ impl<'a> Formatter<'a> {
         Some(element)
     }
 
+    /// The matcher that the `message` of the Error that is being printed matched, if it matched one.
+    #[cold]
+    #[inline(never)]
+    fn matched_message(&self) -> Option<JSValue> {
+        self.place.current().row("message").map(|(matcher, _)| matcher)
+    }
+
     #[inline(always)]
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
@@ -3655,6 +3674,7 @@ impl JestPrettyFormat {
         formatter.quote_strings = true;
         formatter.like_older_bun = Some(&differs);
         formatter.place = MatchedPlaceScope::at_root(rows);
+        formatter.prints_matched_message = true;
         let tag = Tag::get(value, global)?;
         let mut bridge = AsFmt::new(&mut expected);
         formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;
@@ -3678,6 +3698,7 @@ impl JestPrettyFormat {
         if !format.is_pretty_format() {
             formatter.quote_strings = true;
             formatter.place = MatchedPlaceScope::at_root(rows);
+            formatter.prints_matched_message = true;
             let tag = Tag::get(value, global)?;
             let mut bridge = AsFmt::new(out);
             formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;

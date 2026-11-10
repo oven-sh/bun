@@ -203,16 +203,6 @@ impl<'a> Graph<'a> {
         self.pool.get()
     }
 
-    /// Exclusive borrow of the bundler `ThreadPool`. Only needed for
-    /// `ThreadPool::deinit` during teardown; prefer [`Self::pool`] for
-    /// scheduling.
-    #[inline]
-    pub(crate) fn pool_mut(&mut self) -> &mut ThreadPool {
-        // SAFETY: see `pool()`. The one caller is `deinit_without_freeing_arena`, which first
-        // waits for the source map tasks and the IO tasks.
-        unsafe { self.pool.get_mut() }
-    }
-
     #[inline]
     pub(crate) fn path_to_source_index_map(
         &mut self,

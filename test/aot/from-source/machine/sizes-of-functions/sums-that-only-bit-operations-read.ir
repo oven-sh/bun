@@ -1,0 +1,17 @@
+# f1 = countBits
+# -- source: sums-that-only-bit-operations-read.ts
+# function countBits(a: number): number {
+#   a = a - ((a >>> 1) & 0x55555555);
+#   a = (a & 0x33333333) + ((a >>> 2) & 0x33333333);
+#   a = (a + (a >>> 4)) & 0x0f0f0f0f;
+#   return Math.imul(a, 0x01010101) >>> 24;
+# }
+# declare const input: any;
+# (globalThis as any).answer = countBits(input | 0);
+# -- end of source
+# The compiler before this one: 16 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 16, patches 0, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:19 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 19

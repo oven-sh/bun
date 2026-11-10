@@ -5,8 +5,9 @@ use super::resolver::Resolver;
 use super::written_members::holder_of;
 use crate::builtins::table::{self, BuiltinId};
 use bun_sema::atom::Atom;
-use bun_sema::bind::Parent;
+use bun_sema::bind::{Binding, Parent, SymbolId};
 use bun_sema::hir::{ExprId, ExprKind, MemberKey};
+use bun_sema::util::FxHashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum KeyOfModuleCache {
@@ -76,6 +77,11 @@ impl Resolver<'_, '_> {
         {
             self.output.tables_of_loaders_written.push(holder);
         }
+        if self.input.dialect == SourceDialect::Program
+            && (table::members(holder_of(id)).iter()).any(|&it| is_module_cache(it))
+        {
+            self.output.places_that_hand_module_cache_on.push(holder);
+        }
     }
 
     fn find_key_that_call_deletes(&self, table: ExprId) -> Option<ExprId> {
@@ -111,10 +117,70 @@ impl Resolver<'_, '_> {
         bound.get_assignment_target(hir, target).is_some()
     }
 
+    fn is_let_out_of_sight(&self, object: ExprId) -> bool {
+        match self.classify_use(object) {
+            MentionUse::Inspected
+            | MentionUse::Holder
+            | MentionUse::ReadByComputedKey
+            | MentionUse::Destructured(_) => false,
+            MentionUse::Called(_) | MentionUse::Aliased | MentionUse::Exposed => true,
+        }
+    }
+
+    fn find_variables_let_out_of_sight(&self) -> FxHashSet<SymbolId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let names = (0..hir.exprs.len() as u32).map(ExprId);
+        let names = names.filter(|&name| matches!(hir[name].kind, ExprKind::Ident(_)));
+        let variables = names.filter_map(|name| match bound.binding(name) {
+            Binding::Symbol(variable) if self.is_let_out_of_sight(name) => Some(variable),
+            _ => None,
+        });
+        variables.collect()
+    }
+
+    fn find_variable_initialized_by(&self, entry: ExprId) -> Option<SymbolId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut initializer = entry;
+        while let Parent::Expr(parent) = bound.parent_of_expr(initializer)
+            && hir.type_assertion_operand(parent) == Some(initializer)
+        {
+            initializer = parent;
+        }
+        let Parent::VarInit(declarator) = bound.parent_of_expr(initializer) else {
+            return None;
+        };
+        match bound.initialized_binding(hir[declarator].pat) {
+            Binding::Symbol(variable) => Some(variable),
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
+        }
+    }
+
+    fn is_entry_handed_on(&self, entry: ExprId) -> bool {
+        if !matches!(self.classify_use(entry), MentionUse::Aliased) {
+            return self.is_let_out_of_sight(entry);
+        }
+        let Some(variable) = self.find_variable_initialized_by(entry) else {
+            return true;
+        };
+        let let_out = &self.variables_let_out_of_sight;
+        (let_out.get_or_init(|| self.find_variables_let_out_of_sight())).contains(&variable)
+    }
+
     pub(super) fn note_use_of_module_cache(&mut self, table: ExprId) {
         let hir = self.input.hir;
         if let Some(entry) = self.find_member_of(table) {
-            if self.is_deleted(entry) || self.is_stored_to(entry) {
+            let is_deleted = self.is_deleted(entry);
+            if is_deleted {
+                self.output.entries_deleted_from_module_cache.push(entry);
+            }
+            let is_stored_to = self.is_stored_to(entry);
+            if is_stored_to {
+                self.output.entries_stored_in_module_cache.push(entry);
+            }
+            let is_taken_out = is_deleted || is_stored_to;
+            let is_handed_on =
+                !is_taken_out && self.input.runs_tests && self.is_entry_handed_on(entry);
+            if is_taken_out || is_handed_on {
                 let key = match hir.member_key(entry) {
                     Some((_, MemberKey::Name(text) | MemberKey::PrivateName(text))) => {
                         KeyOfModuleCache::Text(text)
@@ -122,7 +188,10 @@ impl Resolver<'_, '_> {
                     Some((_, MemberKey::Computed(key))) => KeyOfModuleCache::Computed(key),
                     None => unreachable!("find_member_of answers with an access"),
                 };
-                self.output.keys_taken_out_of_module_cache.push(key);
+                match is_taken_out {
+                    true => self.output.keys_taken_out_of_module_cache.push(key),
+                    false => self.output.keys_of_entries_handed_on.push(key),
+                }
             }
             self.output.gets_at_entries_of_module_cache = true;
             return;
@@ -149,5 +218,8 @@ impl Resolver<'_, '_> {
         };
         self.output.loses_sight_of_module_cache |= is_handed_on;
         self.output.hands_module_cache_on |= is_handed_on;
+        if is_handed_on && self.input.dialect == SourceDialect::Program {
+            self.output.places_that_hand_module_cache_on.push(table);
+        }
     }
 }

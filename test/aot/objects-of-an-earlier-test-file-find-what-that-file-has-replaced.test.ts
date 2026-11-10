@@ -54,7 +54,26 @@ test("the second file asks the objects of the first", () => {
 `,
 };
 
-async function seenWith(...flags: string[]) {
+// The first file leaves a function that replaces a member of ITS realm. The second asks, calls it and asks again: both realms live when the member is written.
+const writtenWhileBothLive = {
+  "package.json": `{ "name": "p", "type": "module" }`,
+  "a.test.ts": `import { test } from "bun:test";
+test("the first file leaves a list and a function that replaces", () => {
+  (Bun.s3 as any).kept = { list: [3, 1, 2], replace() { (Array.prototype as any).includes = function () { return "their includes"; }; } };
+});
+`,
+  "b.test.ts": `import { test } from "bun:test";
+function has(list: number[]): unknown { return list.includes(1); }
+test("the second file asks, has the member replaced and asks again", () => {
+  const kept = (Bun.s3 as any).kept;
+  const before = has(kept.list);
+  kept.replace();
+  console.log("SEEN " + String(before) + " | " + String(has(kept.list)) + " | " + String(has([3, 1, 2])));
+});
+`,
+};
+
+async function seenWith(files: Record<string, string>, ...flags: string[]) {
   using dir = tempDir("aot-objects-of-an-earlier-test-file", files);
   const { stdout, exitCode } = await run(
     [bunExe(), "test", "--isolate", ...flags, "./a.test.ts", "./b.test.ts"],
@@ -65,7 +84,7 @@ async function seenWith(...flags: string[]) {
 }
 
 test("objects of an earlier test file find what that file has replaced, whoever asks", async () => {
-  const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+  const [plain, compiled] = await Promise.all([seenWith(files), seenWith(files, "--aot")]);
   const theirs =
     "their includes | their indexOf | their join | their get | their has | their map size | their set has | their set size | their length";
   const asMade = "true | 1 | 3+1+2 | one | true | 1 | true | 1 | 5";
@@ -79,5 +98,14 @@ test("objects of an earlier test file find what that file has replaced, whoever 
     ],
     exitCode: 0,
   });
+  expect(compiled).toEqual(plain);
+});
+
+test("and what is replaced while the later file runs", async () => {
+  const [plain, compiled] = await Promise.all([
+    seenWith(writtenWhileBothLive),
+    seenWith(writtenWhileBothLive, "--aot"),
+  ]);
+  expect(plain).toEqual({ seen: ["SEEN true | their includes | true"], exitCode: 0 });
   expect(compiled).toEqual(plain);
 });

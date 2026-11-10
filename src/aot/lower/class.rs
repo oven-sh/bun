@@ -6,10 +6,12 @@ mod members;
 mod plan;
 mod slots;
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
+use bun_sema::bind::CodeUnit;
 use bun_sema::check::aot::ClassRef;
-use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, MemberId, ParamId};
+use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, FnKind, MemberId, ParamId, StmtId, StmtKind};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -26,8 +28,7 @@ pub(in crate::lower) use self::plan::{
     find_fields_under_signed_members, find_keys_that_hold_decorators,
     find_what_is_printed_for_each_object, has_decorators, has_instance_brand,
     has_private_static_storage, is_auto_accessor, is_declaration_only, is_decorated_private_name,
-    is_derived_class, is_evaluated_in_constructor, is_printed_as_getter_and_setter,
-    runtime_members,
+    is_derived_class, is_printed_as_getter_and_setter, runtime_members,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -111,6 +112,22 @@ pub(in crate::lower) struct ClassPlan {
     pub(in crate::lower) initializer_list_count: u32,
 }
 
+#[derive(Copy, Clone)]
+pub(in crate::lower) struct StoreAtBirth {
+    pub(in crate::lower) statement: StmtId,
+    pub(in crate::lower) member: MemberId,
+    pub(in crate::lower) target: ExprId,
+    pub(in crate::lower) value: ExprId,
+}
+
+pub(in crate::lower) struct Birth {
+    pub(in crate::lower) class: ClassId,
+    pub(in crate::lower) this: ValueId,
+    pub(in crate::lower) parameter_properties: SmallVec<[(PropertyName, ValueId); 4]>,
+    pub(in crate::lower) stores: SmallVec<[StoreAtBirth; 8]>,
+    pub(in crate::lower) values: SmallVec<[ValueId; 8]>,
+}
+
 pub(in crate::lower) struct ClassEvaluation {
     pub(in crate::lower) class: ClassId,
     pub(in crate::lower) layout: LayoutId,
@@ -125,9 +142,10 @@ pub(in crate::lower) struct ClassEvaluation {
 
 #[derive(Default)]
 pub(crate) struct ClassState {
-    plans: FxHashMap<ClassId, Rc<ClassPlan>>,
+    plans: RefCell<FxHashMap<ClassId, Rc<ClassPlan>>>,
     constant_keys: FxHashMap<MemberId, PropertyKeyId>,
     entries_of_members: FxHashMap<ClassId, FxHashMap<MemberId, u32>>,
+    places_of_this_super_and_return: Option<Vec<u32>>,
     pub(in crate::lower) fields_under_signed_members: Vec<MemberId>,
 }
 
@@ -141,14 +159,43 @@ impl ClassState {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(in crate::lower) fn class_plan(&mut self, class: ClassId) -> Rc<ClassPlan> {
-        if let Some(plan) = self.classes.plans.get(&class) {
+    pub(in crate::lower) fn count_this_super_and_return(&mut self, start: u32, end: u32) -> usize {
+        let (hir, bound) = (self.hir, self.bound);
+        let places = &mut self.classes.places_of_this_super_and_return;
+        let places = places.get_or_insert_with(|| {
+            let names_object =
+                |kind| matches!(kind, ExprKind::This | ExprKind::Super | ExprKind::Jsx(_));
+            let expressions = hir.exprs.iter().filter(|it| names_object(it.kind));
+            let ends_constructor = |&id: &StmtId| {
+                let unit = bound.code_unit(bound.scope_of_stmt(id));
+                let is_of_other_function = match unit {
+                    CodeUnit::Function(it) => hir.runtime_function_kind(it) != FnKind::Constructor,
+                    CodeUnit::File | CodeUnit::FieldInitializer(_) => false,
+                };
+                matches!(hir[id].kind, StmtKind::Return(_)) && !is_of_other_function
+            };
+            let returns = (0..hir.stmts.len() as u32).map(StmtId::from);
+            let returns = returns.filter(ends_constructor);
+            let mut places: Vec<u32> = expressions.map(|it| it.pos).collect();
+            places.extend(returns.map(|id| hir[id].loc.pos));
+            let evals = bound.runtime.eval_scopes().iter();
+            places.extend(evals.map(|entry| hir[entry.0].pos));
+            places.sort_unstable();
+            places
+        });
+        let count_in_front_of = |end| places.partition_point(|&place| place < end);
+        count_in_front_of(end) - count_in_front_of(start)
+    }
+
+    pub(in crate::lower) fn class_plan(&self, class: ClassId) -> Rc<ClassPlan> {
+        if let Some(plan) = self.classes.plans.borrow().get(&class) {
             return Rc::clone(plan);
         }
         let signed = &self.classes.fields_under_signed_members;
         let plan = plan::plan_class(self.hir, self.bound, self.compiled, signed, class);
         let plan = Rc::new(plan);
-        self.classes.plans.insert(class, Rc::clone(&plan));
+        let mut plans = self.classes.plans.borrow_mut();
+        plans.insert(class, Rc::clone(&plan));
         plan
     }
 

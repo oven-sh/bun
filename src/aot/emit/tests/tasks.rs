@@ -113,7 +113,7 @@ fn strings_are_chunked_and_lie_in_the_program_as_in_the_table() {
 fn measure_equals_write() {
     let mut program = create_full_program();
     let tasks = create_tasks(&mut program);
-    assert_eq!(tasks.len(), 20);
+    assert_eq!(tasks.len(), 21);
     for task in &tasks {
         let mut sections = SectionWriter::new([0; ProgramList::COUNT]);
         write_task(task, &mut sections);

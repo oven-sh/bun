@@ -17,8 +17,8 @@ use super::layouts::ObjectTypeKey;
 use super::tables::{SharedTables, TableLengths, TaskState, UnitTables};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
-    Data, EvalScope, ExpectedResult, Function, FunctionVisibility, Layout, LayoutFlags,
-    RuntimeFunctionEntry, SourcePositions, SourceRange, Variable,
+    Data, DeclaredRecord, EvalScope, ExpectedResult, Function, FunctionVisibility, Layout,
+    LayoutFlags, RuntimeFunctionEntry, SourcePositions, SourceRange, Variable,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, FunctionKey, Id, LayoutId, LayoutKey,
@@ -32,7 +32,7 @@ pub struct ModuleFragment {
     pub body: Option<FunctionId>,
     pub data: Option<DataId>,
     pub positions: SourcePositions,
-    pub types_in_function_text: Option<PackedTypeRanges>,
+    pub erased_type_ranges: Option<PackedTypeRanges>,
     pub throws_at_load: bool,
 }
 
@@ -48,10 +48,13 @@ pub struct Fragment {
     pub layouts_named_by_code: Vec<LayoutId>,
     pub allocated_layouts: Vec<LayoutId>,
     pub written_keys: Vec<PropertyKeyId>,
+    pub read_keys: Vec<PropertyKeyId>,
+    pub keys_laid_by_descriptors: Vec<PropertyKeyId>,
     pub variables: Vec<(VariableId, Variable)>,
     pub eval_scopes: Vec<(EvalScopeId, EvalScope)>,
     pub data: Vec<(DataId, Data)>,
     pub expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
+    pub declared_records: Vec<DeclaredRecord>,
     pub supertype_edges: Vec<(LayoutId, LayoutId)>,
     pub function_type_edges: Vec<(FunctionId, FunctionId)>,
     pub builtin_members: Vec<(FunctionId, BuiltinId)>,
@@ -174,6 +177,7 @@ pub(crate) struct FileMarks {
     layout_allocated_in: Vec<u32>,
     layout_written_under_dictionary_type_in: Vec<u32>,
     key_written_in: Vec<u32>,
+    keys_read: Vec<u64>,
 }
 
 #[inline]
@@ -232,6 +236,8 @@ pub(crate) struct FragmentBuilder {
     marks: FileMarks,
     allocated_layouts: Vec<LayoutId>,
     written_keys: Vec<PropertyKeyId>,
+    read_keys: Vec<PropertyKeyId>,
+    keys_laid_by_descriptors: Vec<PropertyKeyId>,
     variables: Vec<(VariableId, Variable)>,
     eval_scope_count: u32,
     eval_scopes: Vec<(EvalScopeId, EvalScope)>,
@@ -239,6 +245,7 @@ pub(crate) struct FragmentBuilder {
     data: Vec<(DataId, Data)>,
     expected_result_count: u32,
     expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
+    declared_records: Vec<DeclaredRecord>,
     supertype_edges: Vec<(LayoutId, LayoutId)>,
     function_type_edges: Vec<(FunctionId, FunctionId)>,
     runtime_functions: Vec<RuntimeFunctionEntry>,
@@ -283,6 +290,8 @@ impl FragmentBuilder {
             marks: take(&mut state.marks),
             allocated_layouts: Vec::new(),
             written_keys: Vec::new(),
+            read_keys: Vec::new(),
+            keys_laid_by_descriptors: Vec::new(),
             variables: Vec::new(),
             eval_scope_count: tables.eval_scope_count,
             eval_scopes: Vec::new(),
@@ -290,6 +299,7 @@ impl FragmentBuilder {
             data: Vec::new(),
             expected_result_count: tables.expected_result_count,
             expected_results: Vec::new(),
+            declared_records: Vec::new(),
             supertype_edges: Vec::new(),
             function_type_edges: Vec::new(),
             runtime_functions: Vec::new(),
@@ -413,11 +423,14 @@ impl FragmentBuilder {
         self.functions.push((id, function));
     }
 
-    pub(crate) fn map_function_texts(&mut self, map: impl Fn(SourceRange) -> SourceRange) {
-        for (_, function) in &mut self.functions {
-            let mapped = map(function.text);
-            if mapped != function.text {
-                Arc::make_mut(function).text = mapped;
+    pub(crate) fn map_function_source_ranges(
+        &mut self,
+        mut map: impl FnMut(FunctionKey, SourceRange) -> SourceRange,
+    ) {
+        for (id, function) in &mut self.functions {
+            let mapped = map(self.function_keys.key_of(*id), function.source_range);
+            if mapped != function.source_range {
+                Arc::make_mut(function).source_range = mapped;
             }
         }
     }
@@ -481,6 +494,22 @@ impl FragmentBuilder {
         }
     }
 
+    pub(crate) fn note_key_laid_by_descriptor(&mut self, key: PropertyKeyId) {
+        self.keys_laid_by_descriptors.push(key);
+    }
+
+    pub(crate) fn note_read(&mut self, key: PropertyKeyId) {
+        let (word, bit) = (key.index() / 64, 1u64 << (key.index() % 64));
+        let words = &mut self.marks.keys_read;
+        if words.len() <= word {
+            words.resize(word + 1, 0);
+        }
+        if words[word] & bit == 0 {
+            words[word] |= bit;
+            self.read_keys.push(key);
+        }
+    }
+
     fn note_what_is_built(&mut self, reference: Reference) {
         match reference {
             Reference::Layout(layout) => self.note_allocation(layout),
@@ -506,6 +535,10 @@ impl FragmentBuilder {
     pub(crate) fn add_data(&mut self, data: Data) -> DataId {
         data.for_each_reference(&mut |reference| self.note_what_is_built(reference));
         add_record(&mut self.data, &mut self.data_count, data)
+    }
+
+    pub(crate) fn add_declared_record(&mut self, declared: DeclaredRecord) {
+        self.declared_records.push(declared);
     }
 
     pub(crate) fn add_expected_result(&mut self, expected: ExpectedResult) -> ExpectedResultId {
@@ -573,6 +606,12 @@ impl FragmentBuilder {
         self.layouts_named_in_file.sort_unstable();
         self.allocated_layouts.sort_unstable();
         self.written_keys.sort_unstable();
+        for key in &self.read_keys {
+            self.marks.keys_read[key.index() / 64] = 0;
+        }
+        self.read_keys.shrink_to_fit();
+        self.keys_laid_by_descriptors.sort_unstable();
+        self.keys_laid_by_descriptors.dedup();
 
         let tables = Box::new(UnitTables {
             strings: self.strings,
@@ -610,10 +649,13 @@ impl FragmentBuilder {
             layouts_named_by_code: self.layouts_named_in_file,
             allocated_layouts: self.allocated_layouts,
             written_keys: self.written_keys,
+            read_keys: self.read_keys,
+            keys_laid_by_descriptors: self.keys_laid_by_descriptors,
             variables: self.variables,
             eval_scopes: self.eval_scopes,
             data: self.data,
             expected_results: self.expected_results,
+            declared_records: self.declared_records,
             supertype_edges: sort_and_dedup(self.supertype_edges),
             function_type_edges: sort_and_dedup(self.function_type_edges),
             builtin_members: Vec::new(),

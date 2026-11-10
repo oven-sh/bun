@@ -8,7 +8,6 @@
 # console.log(rows([[1, 2], [3, 4.5]]));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = HasArrayStorage
 # CHECK: ([[s]]: number @Double, {{*}}) isInLoop=true isLoopHead=true

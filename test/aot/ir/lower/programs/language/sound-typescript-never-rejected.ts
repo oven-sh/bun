@@ -180,7 +180,7 @@ for (const [name, f] of all) { try { console.log(name + ": " + show(await f()));
 
 // GENERATED: bump Point3 Derived1 [Symbol.iterator]
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: [[L_1]]):
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_1]] field=1
@@ -192,7 +192,7 @@ for (const [name, f] of all) { try { console.log(name + ": " + show(await f()));
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Point3"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_3]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_3]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: number, v3: number, v4: number):
 // CHECK-NEXT: v5 = Absent
 // CHECK-NEXT: v6 = GetSuperBase v0
@@ -229,7 +229,7 @@ for (const [name, f] of all) { try { console.log(name + ": " + show(await f()));
 // CHECK-NEXT: Throw v27
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Derived1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_7]]
@@ -238,7 +238,7 @@ for (const [name, f] of all) { try { console.log(name + ": " + show(await f()));
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: function):
 // CHECK-NEXT: InitialYield
 // CHECK-NEXT: v3 = Integer integer=1

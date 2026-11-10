@@ -107,6 +107,32 @@ fn statistic_stands_in_the_line_of_its_stage_alone() {
 }
 
 #[test]
+fn developer_options_have_a_line_each() {
+    let words: Vec<Box<[u8]>> = vec![(*b"check=Validate").into(), (*b"cpu=apple-m1").into()];
+    let mut entries = Vec::new();
+    collect_developer_options(&words, &mut entries);
+    let lines: Vec<BString> = entries
+        .iter()
+        .map(|entry| BString::from(&entry.text[..]))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "developer option --aot-check=Validate",
+            "developer option --aot-cpu=apple-m1"
+        ]
+    );
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.kind == ExplainSet::STATISTICS)
+    );
+    entries.clear();
+    collect_developer_options(&[], &mut entries);
+    assert!(entries.is_empty());
+}
+
+#[test]
 fn report_reads_statistics_of_build() {
     let mut fixture = ReportFixture::new(ResultRecords::default());
     fixture.statistics.count(StatisticId::SourceLines, 7);

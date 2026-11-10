@@ -33,5 +33,5 @@ export const doConnect = b.fn({
   returns: b.any.returning(promiseOfSocket.spec),
   capability: "js",
   throws: true,
-  uses: { socket: [...table.handedOver, table.storedIn(socket)], options: socketOptions },
+  uses: { socket: [...table.retainedByNativeCode, table.storedIn(socket)], options: socketOptions },
 });

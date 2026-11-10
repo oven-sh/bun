@@ -129,7 +129,15 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn compute_eval_context(&self, scope: ScopeId) -> EvalContext {
         let (hir, bound) = (self.hir, self.bound);
-        let arrow_flags_in = |scope: ScopeId| match bound.code_unit(scope) {
+        let unit = match bound.code_unit(scope) {
+            CodeUnit::FieldInitializer(member) if bound.is_field_assigned_behind_class(member) => {
+                let class = bound.member_class(member);
+                let class = class.expect("a field initializer belongs to a member of a class");
+                bound.code_unit(bound.class_scope[class.idx()])
+            }
+            unit => unit,
+        };
+        let arrow_flags = match unit {
             CodeUnit::Function(function) if hir[function].kind == FnKind::Arrow => {
                 EvalScopeFlags::IS_IN_ARROW_FUNCTION
             }
@@ -137,7 +145,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 EvalScopeFlags::default()
             }
         };
-        let arrow_flags = arrow_flags_in(scope);
         let this_scope = self.scopes.lexical_owner(scope);
         let owner = bound.code_unit(this_scope);
         let (flags, this_scope, class) = match owner {
@@ -155,11 +162,6 @@ impl FileLowering<'_, '_, '_, '_> {
                     flags |= EvalScopeFlags::ALLOWS_SUPER_CALL;
                 }
                 (flags, Some(this_scope), bound.function_class(function))
-            }
-            CodeUnit::FieldInitializer(member) if bound.is_field_assigned_behind_class(member) => {
-                let class = bound.member_class(member);
-                let around = class.map(|class| arrow_flags_in(bound.class_scope[class.idx()]));
-                (around.unwrap_or_default(), Some(this_scope), class)
             }
             CodeUnit::FieldInitializer(member) => {
                 let flags = match self.is_code_of_constructor(this_scope) {

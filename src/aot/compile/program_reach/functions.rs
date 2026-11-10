@@ -242,6 +242,9 @@ impl FileScan<'_, '_> {
             | Interest::LinkedName(..)
             | Interest::ModuleObject(..)
             | Interest::EntryOfModuleCache
+            | Interest::DeletionFromModuleCache(_)
+            | Interest::StoreIntoModuleCache(_)
+            | Interest::ModuleCacheHandedOn(_)
             | Interest::LoadByUnknownName
             | Interest::NameReadFromLoadByUnknownName(_)
             | Interest::LoadOfIsolatedCode
@@ -259,7 +262,7 @@ impl FileScan<'_, '_> {
 
     fn holds_code_of(&self, module: ModuleRef) -> bool {
         match module {
-            ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Inner { file, .. } => {
+            ModuleRef::File(file) | ModuleRef::Facade(file) | ModuleRef::Inner { file, .. } => {
                 file == self.file
             }
             ModuleRef::Check(_) | ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
@@ -303,6 +306,9 @@ impl FileScan<'_, '_> {
             | Interest::RequiredName(..)
             | Interest::ModuleObject(..)
             | Interest::EntryOfModuleCache
+            | Interest::DeletionFromModuleCache(_)
+            | Interest::StoreIntoModuleCache(_)
+            | Interest::ModuleCacheHandedOn(_)
             | Interest::LoadByUnknownName
             | Interest::NameReadFromLoadByUnknownName(_)
             | Interest::LoadOfIsolatedCode

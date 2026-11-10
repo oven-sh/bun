@@ -1,7 +1,7 @@
 //! For tests of the front end that stop behind a stage of their own: what `build` hands `bun_aot::compile`.
 
 use super::options::{OptionsInput, options_from_bundler};
-use super::services::BundlerServices;
+use super::services::{BundlerServices, NamesWanted};
 use crate::Transpiler;
 use crate::bundle_v2::BundleV2;
 use bun_alloc::Arena;
@@ -102,6 +102,11 @@ pub fn with_front_end_inputs<R>(
         NonNull::from(&mut *bundle).cast(),
         MODULE_PREFIX,
         &inputs.options.user_defined_names,
+        NamesWanted {
+            runs_in_place: inputs.options.runs_in_place,
+            loads_code_from_disk: inputs.options.loads_code_from_disk,
+            root_directory: Box::from(&options.paths.root_directory[..]),
+        },
     );
     let result = then(&options, &services, log);
     drop(services.shut_down());

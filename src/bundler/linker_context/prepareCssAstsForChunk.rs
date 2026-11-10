@@ -363,7 +363,14 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 }
                             }
                         }
-                        let dropped = prefix_end - layer_count;
+                        // An "@import" behind an unknown at-rule is in the order too.
+                        let is_import =
+                            |rule: &&BundlerCssRule| matches!(rule, BundlerCssRule::Import(_));
+                        let dropped = prefix_end - layer_count
+                            + original_rules[prefix_end..]
+                                .iter()
+                                .filter(is_import)
+                                .count();
 
                         if dropped == 0 {
                             // Prefix is all "@layer" (or empty). Nothing to
@@ -374,10 +381,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             // Preserve the "@layer" statements from the
                             // prefix and append the remaining tail.
                             let mut new_rules: ArenaVec<BundlerCssRule> =
-                                ArenaVec::with_capacity_in(
-                                    layer_count + (original_rules.len() - prefix_end),
-                                    bump,
-                                );
+                                ArenaVec::with_capacity_in(original_rules.len() - dropped, bump);
                             keep_layers = keep_leading_layers;
                             for rule in &original_rules[0..prefix_end] {
                                 keep_layers |= matches!(rule, BundlerCssRule::Import(_));
@@ -392,6 +396,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 }
                             }
                             for rule in &original_rules[prefix_end..] {
+                                if is_import(&rule) {
+                                    continue;
+                                }
                                 // SAFETY: bitwise duplicate of a rule. The copy goes into
                                 // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
                                 // whose elements never run `Drop` (see `arena_rule_list` /

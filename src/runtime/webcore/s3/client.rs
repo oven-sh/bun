@@ -61,6 +61,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
+#[inline(never)]
 pub(crate) fn stat(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -69,6 +70,7 @@ pub(crate) fn stat(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, stat);
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -84,6 +86,7 @@ pub(crate) fn stat(
     )
 }
 
+#[inline(never)]
 pub(crate) fn download(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -92,6 +95,7 @@ pub(crate) fn download(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, download);
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -107,6 +111,7 @@ pub(crate) fn download(
     )
 }
 
+#[inline(never)]
 pub(crate) fn download_slice(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -117,6 +122,7 @@ pub(crate) fn download_slice(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, download_slice);
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -151,6 +157,7 @@ pub(crate) fn download_slice(
     )
 }
 
+#[inline(never)]
 pub(crate) fn delete(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -159,6 +166,7 @@ pub(crate) fn delete(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, delete);
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -368,6 +376,7 @@ pub(crate) fn list_objects(
     Ok(())
 }
 
+#[inline(never)]
 pub(crate) fn upload(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -382,6 +391,7 @@ pub(crate) fn upload(
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, upload);
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -405,6 +415,7 @@ pub(crate) fn upload(
 /// returns a writable stream that writes to the s3 path
 ///
 /// `credentials` is moved into the `MultiPartUpload`.
+#[inline(never)]
 pub(crate) fn writable_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
     path: &[u8],
@@ -416,6 +427,7 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
+    bun_removable_features::removable_definition!(S3Client, writable_stream);
     // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
         result: S3UploadResult,
@@ -764,6 +776,7 @@ impl Drop for S3UploadStreamWrapper {
 /// consumes the readable stream and upload to s3
 ///
 /// `credentials` is moved into the `MultiPartUpload`.
+#[inline(never)]
 pub(crate) fn upload_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
     path: &[u8],
@@ -780,6 +793,7 @@ pub(crate) fn upload_stream(
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
+    bun_removable_features::removable_definition!(S3Client, upload_stream);
     if readable_stream.is_disturbed(cx.global()) {
         return Ok(bun_jsc::JSPromise::rejected_promise(
             cx.global(),
@@ -1418,6 +1432,7 @@ impl S3DownloadStreamWrapper {
 }
 
 /// returns a readable stream that reads from the s3 path
+#[inline(never)]
 pub(crate) fn readable_stream(
     this: &S3Credentials,
     path: &[u8],
@@ -1426,6 +1441,7 @@ pub(crate) fn readable_stream(
     request_payer: bool,
     cx: &bun_jsc::JsThread<'_>,
 ) -> JsResult<JSValue> {
+    bun_removable_features::removable_definition!(S3Client, readable_stream);
     // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
     // owns the readable stream which keeps the wrapper reachable via the producer handle);
     // store as `'static` for the heap-allocated wrapper.

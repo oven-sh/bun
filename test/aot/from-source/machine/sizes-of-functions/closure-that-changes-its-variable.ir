@@ -1,0 +1,17 @@
+# f1 = counter
+# -- source: closure-that-changes-its-variable.ts
+# function counter(start: number): () => number {
+#   let count = start;
+#   return () => count++;
+# }
+# declare const input: any;
+# const first = counter(+input);
+# const second = counter(+input);
+# (globalThis as any).answer = [first, second, first() + second()];
+# -- end of source
+# The compiler before this one: 7 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 18, patches 3, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:21 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 21

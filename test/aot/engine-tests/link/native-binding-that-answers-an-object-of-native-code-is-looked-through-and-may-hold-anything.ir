@@ -1,0 +1,38 @@
+# The same with the binding of node_fs_binding.bind.ts. Its rows: read, it answers an instance of a class of the host; it is never called. No row of it gives a symbol or says "anything": the look through it
+# raises alone, for the binding answers no one object of the table that lists its members.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:process/tick_ring" displayPath="internal:process/tick_ring" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessTick_ring body=f1
+module m2 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m1 fields=[{key="ring" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+runtimefunction id=UtilInspectStylizeWithNoColor function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="internal/process/tick_ring"
+    v1 = Builtin builtin=GlobalThis
+    v2 = NewObject layout=L0
+    v3 = FinishObject v2
+    v4 = PropGet v1 key="print" [isFreeName]
+    v5 = Call v4, -, v3 calleeName="print"
+    Return v5
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenNode_fs_bindingBindTsBinding
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="hidden" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = PropGet v3 key="width"
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    Return v6
+}
+function f2 module=m2 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

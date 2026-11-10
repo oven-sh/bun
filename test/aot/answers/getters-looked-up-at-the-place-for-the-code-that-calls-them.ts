@@ -4,7 +4,7 @@
 // # f1 = getterOf, f8 = build, f2 = readA, f3 = readB, f4 = readC, f5 = readD, f6 = readE, f7 = often, f9 = tell
 // # RUN(FORM): bytes f2:Body mechanisms=all-Inlining
 // # FORM-LABEL: unit f2:Body
-// # FORM: GetterAtSite.UnderNameWithColumn
+// # FORM: GetterAtSite
 // # RUN(WALK): walk f2 mechanisms=all-Inlining
 // # WALK-LABEL: code f2:Body
 // # WALK: = GetCachedGetter {{*}}key="n3"

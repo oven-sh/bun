@@ -40,9 +40,17 @@ fn collect_stages(out: &mut Vec<ReportEntry>) {
     out.extend(stages.map(|stage| ReportEntry::line(ExplainSet::STATISTICS, stage_line(stage))));
 }
 
+fn collect_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<ReportEntry>) {
+    out.extend(option_words.iter().map(|word| {
+        let line = [b"developer option --aot-".as_slice(), word].concat();
+        ReportEntry::line(ExplainSet::STATISTICS, line)
+    }));
+}
+
 pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
     collect_lines(|id| input.statistics.get(id), out);
     collect_stages(out);
+    collect_developer_options(&input.options.option_words, out);
 }
 
 #[cfg(test)]

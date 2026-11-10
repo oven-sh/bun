@@ -13,7 +13,7 @@
 // # RUN(WALK): walk f8 mechanisms=all
 // # WALK-LABEL: code f8:Body
 // # WALK: [[read]]: {{*}} = GetSlotOrUndefined {{*}} key="part" {{*}} level=Expected
-// # WALK: = TypeTest [[read]] testedType=object
+// # WALK: = ToBoolean [[read]] form=Generic [expectsObjectOrNothing]
 // # Where the proofs of fields are checked at run time the read goes the whole way, and what it finds in the slot is asked for the type that the slot is held to.
 // # RUN(ASKED): emit f8:Body mechanisms=all testing=CheckProofsAtRunTime
 // # ASKED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])

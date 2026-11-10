@@ -1,0 +1,19 @@
+# f1 = countMultiples
+# -- source: counter-of-a-loop-up-to-an-integer.ts
+# function countMultiples(limit: number, mask: number): number {
+#   let found = 0;
+#   for (let k = 0; k < limit; k++) {
+#     if ((k & mask) === 0) found++;
+#   }
+#   return found;
+# }
+# declare const input: any;
+# (globalThis as any).answer = countMultiples(input | 0, input | 0);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches, a turn of the written loop steps by 1.
+# When the bound was taken: loop: operations 49, patches 0, moves 0, unlikely 6 ; loop: operations 8, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:49,8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 49
+# X64-NEXT: loop: at most 8

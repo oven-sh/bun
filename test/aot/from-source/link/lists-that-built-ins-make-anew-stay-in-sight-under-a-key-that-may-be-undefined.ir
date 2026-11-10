@@ -1,0 +1,28 @@
+# What the language makes anew with ArrayCreate, and what `new Array` and `Array` make, is a list itself: under a key that is a number, undefined or null nobody gets it as `this`. Species may make a class below: map and slice do not say it.
+# L0 .. L8 = the nine classes
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# CHECK: layout L2 changes=[] stays-with-compiled-code
+# CHECK: layout L3 changes=[] stays-with-compiled-code
+# CHECK: layout L4 changes=[] stays-with-compiled-code
+# CHECK: layout L5 changes=[] stays-with-compiled-code
+# CHECK: layout L6 changes=[] stays-with-compiled-code
+# CHECK: layout L7 changes=[] stays-with-compiled-code
+# CHECK: layout L8 changes=[] stays-with-compiled-code
+# -- source: lists-that-built-ins-make-anew-stay-in-sight-under-a-key-that-may-be-undefined.ts
+# class ByLength { n = 1; }
+# class ByItems { n = 2; }
+# class ByCall { n = 3; }
+# class Filled { n = 4; }
+# class Mapped { n = 5; }
+# class Reversed { n = 6; }
+# class Spliced { n = 7; }
+# class Replaced { n = 8; }
+# class Valued { n = 9; }
+# const queue: number[] = [0];
+# const a = new Array<ByLength>(2), b = new Array<ByItems>(new ByItems(), new ByItems()), c = Array<ByCall>(2), d = new Array<Filled>(2).fill(new Filled());
+# const e = Array.from({ length: 2 }, () => new Mapped()), g = [new Reversed()].toReversed(), h = [new Spliced()].toSpliced(0, 0), i = [new Replaced()].with(0, new Replaced()), j = Object.values({ x: new Valued() });
+# a[0] = new ByLength(); c[0] = new ByCall();
+# console.log(a[queue.shift()!]?.n, b[queue.pop()!]?.n, c[queue[3]!]?.n, d[queue[0]!]?.n, e[queue[0]!]?.n, g[queue[0]!]?.n, h[queue[0]!]?.n, i[queue[0]!]?.n, j[queue[0]!]?.n);
+# -- end of source

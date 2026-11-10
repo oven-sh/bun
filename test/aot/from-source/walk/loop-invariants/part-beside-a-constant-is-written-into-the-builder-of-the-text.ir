@@ -6,7 +6,6 @@
 # sink(joins, joins([1, 2]));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: form=StringAndPrimitive
 # CHECK: = StackStringBuilderAppendNumber

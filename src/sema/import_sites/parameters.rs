@@ -5,8 +5,9 @@ use crate::bind::{
 use crate::fold::Decisions;
 use crate::hir::{
     ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, IdList, ImportEqualsId, NodeData,
-    PatKind, PropKey, StmtKind,
+    PatId, PatKind, PropKey, StmtKind,
 };
+use crate::util::FxHashMap;
 use smallvec::SmallVec;
 
 pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool {
@@ -21,9 +22,68 @@ pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool 
 
 type FindWritten<'a> = &'a dyn Fn(Atom) -> Vec<ExprId>;
 
+type Places = SmallVec<[u32; 1]>;
+
+#[derive(Default)]
+pub struct ExportedNames {
+    of_functions: FxHashMap<FnId, Places>,
+    of_patterns: FxHashMap<PatId, Places>,
+    of_local_names: FxHashMap<SymbolId, Places>,
+}
+
+impl ExportedNames {
+    pub fn new(hir: &File<'_>, bound: &Bound<'_>) -> ExportedNames {
+        let mut names = ExportedNames::default();
+        let exports = bound.table(bound.symbol(bound.file_symbol).exports);
+        for (place, &(_, symbol)) in (0..).zip(exports) {
+            for &declaration in bound.symbol(symbol).decls {
+                names.note(hir, bound, declaration, place);
+            }
+        }
+        names
+    }
+
+    fn note(&mut self, hir: &File<'_>, bound: &Bound<'_>, declaration: Decl, place: u32) {
+        let value = match declaration {
+            Decl::Fn(declared) => {
+                return self.of_functions.entry(declared).or_default().push(place);
+            }
+            Decl::Var(pattern) => return self.of_patterns.entry(pattern).or_default().push(place),
+            Decl::ExportSpec(specifier) => {
+                if !hir[hir[specifier].export].has_module_specifier
+                    && let Binding::Symbol(local) = bound.exported_binding(specifier)
+                {
+                    self.of_local_names.entry(local).or_default().push(place);
+                }
+                return;
+            }
+            Decl::ExportExpr(statement) => match hir[statement].kind {
+                StmtKind::ExportDefault(value) => value,
+                _ => return,
+            },
+            Decl::ExportsProperty(assignment) => match hir[assignment].kind {
+                ExprKind::Assign {
+                    op: None, value, ..
+                } => value,
+                _ => return,
+            },
+            _ => return,
+        };
+        let value = hir.skip_type_assertions(value);
+        match (hir[value].kind, bound.binding(value)) {
+            (ExprKind::Fn(written), _) => self.of_functions.entry(written).or_default().push(place),
+            (ExprKind::Ident(_), Binding::Symbol(local)) => {
+                self.of_local_names.entry(local).or_default().push(place);
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn find_names_exported_for(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    exported: &ExportedNames,
     function: FnId,
     find_written: FindWritten<'_>,
 ) -> SmallVec<[Atom; 2]> {
@@ -37,38 +97,17 @@ pub fn find_names_exported_for(
         },
         _ => None,
     };
-    let is_function = |value: ExprId| {
-        let value = hir.skip_type_assertions(value);
-        match hir[value].kind {
-            ExprKind::Fn(written) => written == function,
-            ExprKind::Ident(_) => {
-                local.is_some_and(|it| bound.binding(value) == Binding::Symbol(it))
-            }
-            _ => false,
-        }
-    };
-    let exports_function = |declaration: Decl| match declaration {
-        Decl::Fn(declared) => declared == function,
-        Decl::Var(pattern) => Some(pattern) == initialized,
-        Decl::ExportSpec(specifier) => {
-            let statement = hir[hir[specifier].export];
-            !statement.has_module_specifier
-                && local.is_some_and(|it| bound.exported_binding(specifier) == Binding::Symbol(it))
-        }
-        Decl::ExportExpr(statement) => {
-            matches!(hir[statement].kind, StmtKind::ExportDefault(value) if is_function(value))
-        }
-        Decl::ExportsProperty(assignment) => {
-            matches!(hir[assignment].kind, ExprKind::Assign { op: None, value, .. } if is_function(value))
-        }
-        _ => false,
-    };
+    let found = [
+        exported.of_functions.get(&function),
+        initialized.and_then(|it| exported.of_patterns.get(&it)),
+        local.and_then(|it| exported.of_local_names.get(&it)),
+    ];
+    let mut places: SmallVec<[u32; 2]> = found.into_iter().flatten().flatten().copied().collect();
+    places.sort_unstable();
+    places.dedup();
     let exports = bound.table(bound.symbol(bound.file_symbol).exports);
-    let exported = exports.iter().filter(|&&(_, symbol)| {
-        let mut declarations = bound.symbol(symbol).decls.iter();
-        declarations.any(|&declaration| exports_function(declaration))
-    });
-    exported.map(|&(export, _)| export).collect()
+    let names = places.into_iter().map(|place| exports[place as usize].0);
+    names.collect()
 }
 
 pub fn find_parameter_named(
@@ -76,15 +115,39 @@ pub fn find_parameter_named(
     bound: &Bound<'_>,
     mention: ExprId,
 ) -> Option<(FnId, usize)> {
+    let (function, place, path) = find_parameter_key_path(hir, bound, mention)?;
+    path.is_empty().then_some((function, place))
+}
+
+pub(super) fn find_parameter_key_path(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mention: ExprId,
+) -> Option<(FnId, usize, SmallVec<[Atom; 2]>)> {
     let Binding::Symbol(parameter) = bound.binding(mention) else {
         return None;
     };
-    let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
+    let &[Decl::Param(mut pattern)] = bound.symbol(parameter).decls else {
         return None;
     };
-    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
-        return None;
+    let mut path: SmallVec<[Atom; 2]> = SmallVec::new();
+    let id = loop {
+        match bound.pat_parent[pattern.idx()] {
+            PatParent::Param(id) => break id,
+            PatParent::Prop(parent, property) => {
+                let PropKey::Name(key) = hir.runtime_binding_key(property) else {
+                    return None;
+                };
+                if hir[property].is_rest || hir[property].default.is_some() {
+                    return None;
+                }
+                path.push(key);
+                pattern = parent;
+            }
+            PatParent::Elem(..) | PatParent::Var(_) | PatParent::None => return None,
+        }
     };
+    path.reverse();
     let function = bound.param_fn[id.idx()];
     let place = hir[function].params.iter().position(|it| it == id)?;
     let is_settled = matches!(
@@ -96,7 +159,7 @@ pub fn find_parameter_named(
             .dynamic_lookup_scope(NodeData::Expr(mention))
             .is_none()
         && !hir[id].flags.contains(Flags::REST);
-    is_settled.then_some((function, place))
+    is_settled.then_some((function, place, path))
 }
 
 fn finds_itself(
@@ -148,11 +211,12 @@ fn find_name_of(
     }
 }
 
-fn find_only_name_of(
+pub(super) fn find_only_name_of(
     hir: &File<'_>,
     bound: &Bound<'_>,
     function: FnId,
     find_written: FindWritten<'_>,
+    may_be_exported: bool,
 ) -> Option<SymbolId> {
     let name = find_name_of(hir, bound, function, find_written)?;
     let mut hoisted = bound.runtime.annex_b_functions().iter();
@@ -162,7 +226,7 @@ fn find_only_name_of(
         && bound.is_stable_binding(name)
         && !bound.is_visible_to_eval(name)
         && !hoisted.any(|it| it.function == function)
-        && !is_exported(hir, bound, name);
+        && (may_be_exported || !is_exported(hir, bound, name));
     is_only_name.then_some(name)
 }
 
@@ -209,8 +273,29 @@ pub fn find_values_passed_for(
     find_written: FindWritten<'_>,
 ) -> Option<SmallVec<[ExprId; 4]>> {
     let (values, path, _) =
-        find_values_passed_for_pattern(hir, bound, decisions, mention, find_written)?;
+        find_values_passed_for_pattern(hir, bound, decisions, mention, find_written, false)?;
     path.is_empty().then_some(values)
+}
+
+type ValuesPassed = (SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool);
+
+pub(super) fn find_values_passed_by_call(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mention: ExprId,
+    arguments: IdList<ExprId>,
+) -> Option<ValuesPassed> {
+    let (function, index, path) = find_parameter_key_path(hir, bound, mention)?;
+    let default = hir[hir[function].params.iter().nth(index)?].default;
+    let mut passed = hir.ids(arguments).take(index + 1);
+    let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+    if passed.clone().any(is_spread) {
+        return None;
+    }
+    let value = passed.nth(index);
+    let is_left_out = value.is_none() && default.is_none();
+    let values = default.some().into_iter().chain(value).collect();
+    Some((values, path, is_left_out))
 }
 
 pub(super) fn find_values_passed_for_pattern(
@@ -219,45 +304,10 @@ pub(super) fn find_values_passed_for_pattern(
     decisions: &Decisions<'_>,
     mention: ExprId,
     find_written: FindWritten<'_>,
-) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool)> {
-    let Binding::Symbol(parameter) = bound.binding(mention) else {
-        return None;
-    };
-    let &[Decl::Param(mut pattern)] = bound.symbol(parameter).decls else {
-        return None;
-    };
-    let mut path: SmallVec<[Atom; 2]> = SmallVec::new();
-    let id = loop {
-        match bound.pat_parent[pattern.idx()] {
-            PatParent::Param(id) => break id,
-            PatParent::Prop(parent, property) => {
-                let PropKey::Name(key) = hir.runtime_binding_key(property) else {
-                    return None;
-                };
-                if hir[property].is_rest || hir[property].default.is_some() {
-                    return None;
-                }
-                path.push(key);
-                pattern = parent;
-            }
-            PatParent::Elem(..) | PatParent::Var(_) | PatParent::None => return None,
-        }
-    };
-    path.reverse();
-    let function = bound.param_fn[id.idx()];
-    let index = hir[function].params.iter().position(|it| it == id)?;
-    let is_settled = matches!(
-        bound.binding_stability(parameter),
-        BindingStability::Stable | BindingStability::NotInitializedOnce
-    ) && bound.stores_to(parameter).is_empty()
-        && !bound.is_visible_to_eval(parameter)
-        && bound
-            .dynamic_lookup_scope(NodeData::Expr(mention))
-            .is_none()
-        && !hir[id].flags.contains(Flags::REST);
-    if !is_settled {
-        return None;
-    }
+    may_be_exported: bool,
+) -> Option<ValuesPassed> {
+    let (function, index, path) = find_parameter_key_path(hir, bound, mention)?;
+    let id = hir[function].params.iter().nth(index)?;
     let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
     let has_default = hir[id].default.is_some();
     let mut is_left_out = false;
@@ -265,16 +315,9 @@ pub(super) fn find_values_passed_for_pattern(
     if hir[id].default.is_some() {
         values.push(hir[id].default);
     }
-    let Some(name) = find_only_name_of(hir, bound, function, find_written) else {
+    let Some(name) = find_only_name_of(hir, bound, function, find_written, may_be_exported) else {
         let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
-        let mut passed = hir.ids(arguments).take(index + 1);
-        if passed.clone().any(is_spread) {
-            return None;
-        }
-        let value = passed.nth(index);
-        is_left_out |= value.is_none() && !has_default;
-        values.extend(value);
-        return Some((values, path, is_left_out));
+        return find_values_passed_by_call(hir, bound, mention, arguments);
     };
     let text = bound.symbol(name).name;
     for callee in find_written(text) {

@@ -124,6 +124,7 @@ define_tables! {
             may_name_own_require: bool,
             may_name_own_path: bool,
             may_require_get_members: std::sync::OnceLock<bool>,
+            lets_made_requires_out_of_sight: std::sync::OnceLock<bool>,
             hoists_top_level_variables: bool,
             jsx_paths: [Option<crate::atom::Atom>; 2],
             first_appended_symbol: u32,

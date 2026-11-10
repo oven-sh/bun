@@ -1159,6 +1159,8 @@ pub mod fs {
                 DirnameStore::instance().append_slice(dir)?
             };
 
+            // Another thread can hold an entry of this listing, and sees it change before the epoch moves.
+            let _change = in_place.map(|_| crate::resolution_epoch::Change::begin());
             // Cache miss: read the directory entries
             let prev = in_place.map(|p| {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
@@ -1482,6 +1484,7 @@ pub mod fs {
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {
+                    let _change = crate::resolution_epoch::Change::begin();
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };

@@ -4,6 +4,9 @@ use bun_core::String;
 use bun_resolver::resolution_memo::ResolutionMemo as Memo;
 pub(crate) use bun_resolver::resolution_memo::{Kind, Lookup, Slot};
 
+/// The most code units of a specifier, a source or a path that the memo keeps: each of its 2048 entries has all three.
+pub(crate) const MAX_LENGTH: usize = 1024;
+
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Use {
     /// Until the first resolution.

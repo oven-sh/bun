@@ -87,7 +87,8 @@ if (workers || !isMainThread) {
   group("import", () => {
     bench(`import("/absolute/child.mjs")`, () => import(join(dir, "child.mjs")));
     if (globalThis.Bun) {
-      bench(`import.meta.resolve("./child.mjs", parent)`, () => import.meta.resolve("./child.mjs", fromFile));
+      // A relative specifier with a parent is joined as a URL and asks no resolver.
+      bench(`import.meta.resolve("pkg", parent)`, () => import.meta.resolve("pkg", fromFile));
       bench(`Bun.resolveSync("./child.cjs", dir)`, () => Bun.resolveSync("./child.cjs", dir));
       process.chdir(dir);
       bench(`Bun.resolveSync("./child.cjs", ".")`, () => Bun.resolveSync("./child.cjs", "."));

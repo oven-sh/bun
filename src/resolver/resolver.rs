@@ -659,10 +659,36 @@ pub struct Resolver<'a> {
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
 
-    /// How often a lookup of a directory went past the cache. A run that leaves it as it was read the caches alone.
-    pub dir_cache_misses: u32,
-    /// In builds with assertions: how many of those lookups ended with a read of the disk that no cache holds.
-    pub unrecorded_reads: u32,
+    /// How often this resolver went to the disk: past the directory cache, or for the first stat of an entry.
+    pub disk_reads: core::cell::Cell<u32>,
+    /// In builds with assertions: how many of those reads left nothing that the same call finds the next time.
+    pub unrecorded_reads: core::cell::Cell<u32>,
+}
+
+/// `RealFS` for `Entry::kind` and `Entry::symlink`, which stat at their first call. It counts those stats.
+struct EntryStats<'a> {
+    fs: &'a Fs::file_system::RealFS,
+    disk_reads: &'a core::cell::Cell<u32>,
+    unrecorded_reads: &'a core::cell::Cell<u32>,
+}
+
+impl Fs::EntryKindResolver for EntryStats<'_> {
+    fn resolve_kind(
+        &self,
+        dir: &[u8],
+        base: &[u8],
+        existing_fd: FD,
+        store_fd: bool,
+    ) -> crate::CrateResult<Fs::EntryCache> {
+        self.disk_reads.set(self.disk_reads.get().wrapping_add(1));
+        let cache = self.fs.resolve_kind(dir, base, existing_fd, store_fd);
+        // `Entry::symlink` answers "no link" for a stat that fails, once: its next call answers from the entry.
+        if bun_core::Environment::CI_ASSERT && cache.is_err() {
+            let unrecorded = self.unrecorded_reads.get().wrapping_add(1);
+            self.unrecorded_reads.set(unrecorded);
+        }
+        cache
+    }
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -731,8 +757,8 @@ impl<'a> Resolver<'a> {
             // never carried across worker init.
             custom_dir_paths: None,
             esm_failure: None,
-            dir_cache_misses: 0,
-            unrecorded_reads: 0,
+            disk_reads: core::cell::Cell::new(0),
+            unrecorded_reads: core::cell::Cell::new(0),
         }
     }
 
@@ -767,6 +793,15 @@ impl<'a> Resolver<'a> {
     #[inline(always)]
     fn rfs_ref(&self) -> &Fs::file_system::RealFS {
         &self.fs_ref().fs
+    }
+
+    #[inline(always)]
+    fn entry_stats(&self) -> EntryStats<'_> {
+        EntryStats {
+            fs: self.rfs_ref(),
+            disk_reads: &self.disk_reads,
+            unrecorded_reads: &self.unrecorded_reads,
+        }
     }
 
     /// Unique-borrow of the `FileSystem` singleton. Centralizes the
@@ -1089,8 +1124,8 @@ impl<'a> Resolver<'a> {
             prefer_module_field: true,
             custom_dir_paths: None,
             esm_failure: None,
-            dir_cache_misses: 0,
-            unrecorded_reads: 0,
+            disk_reads: core::cell::Cell::new(0),
+            unrecorded_reads: core::cell::Cell::new(0),
         }
     }
 
@@ -2063,7 +2098,7 @@ impl<'a> Resolver<'a> {
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
-                let symlink_path = query.entry().symlink(self.rfs_ref(), self.store_fd);
+                let symlink_path = query.entry().symlink(&self.entry_stats(), self.store_fd);
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -3905,6 +3940,8 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
+        // Another thread can hold an entry of this listing, and sees it change before the epoch moves.
+        let _change = in_place.map(|_| resolution_epoch::Change::begin());
 
         if needs_iter {
             // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to slots
@@ -4198,7 +4235,7 @@ impl<'a> Resolver<'a> {
                 };
                 let entry_kind = entry_lookup
                     .as_ref()
-                    .map(|q| q.entry().kind(self.rfs_ref(), self.store_fd));
+                    .map(|q| q.entry().kind(&self.entry_stats(), self.store_fd));
                 let entry_query = match entry_lookup {
                     Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
                     _ => {
@@ -4253,7 +4290,7 @@ impl<'a> Resolver<'a> {
                                 let index_query =
                                     dir_info_ref.get_entry(self.generation, &file_name[..]);
                                 if let Some(iq) = index_query {
-                                    if iq.entry().kind(self.rfs_ref(), self.store_fd)
+                                    if iq.entry().kind(&self.entry_stats(), self.store_fd)
                                         == Fs::file_system::EntryKind::File
                                     {
                                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4362,7 +4399,7 @@ impl<'a> Resolver<'a> {
                 if let Some(ext_query) =
                     resolved_dir_info.get_entry(self.generation, &file_name[..])
                 {
-                    if ext_query.entry().kind(self.rfs_ref(), self.store_fd)
+                    if ext_query.entry().kind(&self.entry_stats(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4402,7 +4439,7 @@ impl<'a> Resolver<'a> {
                     if let Some(ts_query) =
                         resolved_dir_info.get_entry(self.generation, &file_name[..])
                     {
-                        if ts_query.entry().kind(self.rfs_ref(), self.store_fd)
+                        if ts_query.entry().kind(&self.entry_stats(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -4731,11 +4768,12 @@ impl<'a> Resolver<'a> {
         input_path: &[u8],
         top_result: allocators::Result,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.dir_cache_misses = self.dir_cache_misses.wrapping_add(1);
+        self.disk_reads.set(self.disk_reads.get().wrapping_add(1));
         let is_recorded = core::cell::Cell::new(true);
         let found = self.dir_info_from_disk(enable_logging, input_path, top_result, &is_recorded);
         if bun_core::Environment::CI_ASSERT && !is_recorded.get() {
-            self.unrecorded_reads = self.unrecorded_reads.wrapping_add(1);
+            let unrecorded = self.unrecorded_reads.get().wrapping_add(1);
+            self.unrecorded_reads.set(unrecorded);
         }
         found
     }
@@ -4814,6 +4852,7 @@ impl<'a> Resolver<'a> {
             // This only happens for user-controlled absolute import paths with
             // hundreds of short components — no real directory is this deep.
             if i >= queue.len() {
+                is_recorded.set(false);
                 return Ok(None);
             }
             let slot = queue[i].write(DirEntryResolveQueueItem {
@@ -4850,6 +4889,7 @@ impl<'a> Resolver<'a> {
                 top_parent = result;
             } else {
                 if i >= queue.len() {
+                    is_recorded.set(false);
                     return Ok(None);
                 }
                 let slot = queue[i].write(DirEntryResolveQueueItem {
@@ -5111,6 +5151,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
+            let _change = in_place.map(|_| resolution_epoch::Change::begin());
 
             if needs_iter {
                 // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to
@@ -5814,7 +5855,7 @@ impl<'a> Resolver<'a> {
                 })
         };
         if let Some((Some(lookup), dirname_fd)) = looked_up {
-            if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+            if lookup.entry().kind(&self.entry_stats(), self.store_fd)
                 == Fs::file_system::EntryKind::File
             {
                 let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
@@ -6307,7 +6348,8 @@ impl<'a> Resolver<'a> {
         // in-place rewrite this guards against).
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
         if let Some(query) = plain_query {
-            if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
+            if query.entry().kind(&self.entry_stats(), self.store_fd)
+                == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
@@ -6397,7 +6439,7 @@ impl<'a> Resolver<'a> {
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
                     if let Some(query) = ts_query {
-                        if query.entry().kind(self.rfs_ref(), self.store_fd)
+                        if query.entry().kind(&self.entry_stats(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -6492,7 +6534,8 @@ impl<'a> Resolver<'a> {
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         if let Some(query) = ext_query {
-            if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
+            if query.entry().kind(&self.entry_stats(), self.store_fd)
+                == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -6585,7 +6628,7 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    entry.entry().kind(self.rfs_ref(), self.store_fd)
+                    entry.entry().kind(&self.entry_stats(), self.store_fd)
                         == Fs::file_system::EntryKind::Dir,
                 );
             }
@@ -6627,7 +6670,7 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        if q.entry().kind(self.rfs_ref(), self.store_fd)
+                        if q.entry().kind(&self.entry_stats(), self.store_fd)
                             == Fs::file_system::EntryKind::Dir
                         {
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
@@ -6706,7 +6749,8 @@ impl<'a> Resolver<'a> {
                             lookup.entry().set_cache_fd(entries_fd);
                         }
 
-                        let mut symlink = lookup.entry().symlink(self.rfs_ref(), self.store_fd);
+                        let mut symlink =
+                            lookup.entry().symlink(&self.entry_stats(), self.store_fd);
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6764,7 +6808,7 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                if lookup.entry().kind(&self.entry_stats(), self.store_fd)
                     == Fs::file_system::EntryKind::File
                 {
                     // A package in the global cache has a `package_id`, and keeps it even if its
@@ -6834,7 +6878,7 @@ impl<'a> Resolver<'a> {
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                if lookup.entry().kind(&self.entry_stats(), self.store_fd)
                     == Fs::file_system::EntryKind::File
                 {
                     let parts = [path, b"tsconfig.json".as_slice()];
@@ -6845,7 +6889,7 @@ impl<'a> Resolver<'a> {
             }
             if tsconfig_path.is_none() {
                 if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                    if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                    if lookup.entry().kind(&self.entry_stats(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"jsconfig.json".as_slice()];

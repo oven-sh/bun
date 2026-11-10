@@ -6163,7 +6163,7 @@ impl VirtualMachine {
             }
             return Ok(resolved);
         };
-        let is_from_the_caches = jsc_vm.resolver_reads().cache_misses == reads.cache_misses;
+        let is_from_the_caches = jsc_vm.resolver_reads().disk == reads.disk;
         if !matches!(ticket, Ticket::None) && is_from_the_caches {
             jsc_vm.remember_resolution(ticket, keys, kind, facts, specifier, path);
         }
@@ -6203,9 +6203,8 @@ impl VirtualMachine {
         let resolver = &self.transpiler.resolver;
         if self.macro_mode
             || resolver.custom_dir_paths.is_some()
-            // Longer than a path: a `data:` URL, which the memo would hash and never keep.
-            || specifier.length() > bun_paths::MAX_PATH_BYTES
-            || source.length() > bun_paths::MAX_PATH_BYTES
+            || specifier.length() > crate::resolution_memo::MAX_LENGTH
+            || source.length() > crate::resolution_memo::MAX_LENGTH
             || (resolver.package_manager.is_some() && may_name_a_package(specifier))
         {
             return None;
@@ -6229,8 +6228,8 @@ impl VirtualMachine {
     #[inline]
     fn resolver_reads(&self) -> ResolverReads {
         ResolverReads {
-            cache_misses: self.transpiler.resolver.dir_cache_misses,
-            unrecorded: self.transpiler.resolver.unrecorded_reads,
+            disk: self.transpiler.resolver.disk_reads.get(),
+            unrecorded: self.transpiler.resolver.unrecorded_reads.get(),
         }
     }
 
@@ -6270,8 +6269,11 @@ impl VirtualMachine {
             Ticket::Put(slot) => (slot, false),
             Ticket::Refresh(slot) => (slot, true),
         };
+        let is_short = path.length() <= crate::resolution_memo::MAX_LENGTH;
         let path = match path.as_wtf_impl() {
-            Some(path) if self.is_resolution_to_remember(facts, specifier, has_entry) => {
+            Some(path)
+                if is_short && self.is_resolution_to_remember(facts, specifier, has_entry) =>
+            {
                 crate::resolution_memo::Borrowed::new(path)
             }
             _ => return self.resolution_memo.answers.refuse(slot),
@@ -8667,10 +8669,10 @@ fn may_name_a_package(specifier: &bun_core::String) -> bool {
     !specifier.is_8bit() || bun_resolver::is_package_path(specifier.latin1())
 }
 
-/// `Resolver::dir_cache_misses` and `Resolver::unrecorded_reads` of a VM's resolver.
+/// `Resolver::disk_reads` and `Resolver::unrecorded_reads` of a VM's resolver.
 #[derive(Clone, Copy)]
 struct ResolverReads {
-    cache_misses: u32,
+    disk: u32,
     unrecorded: u32,
 }
 

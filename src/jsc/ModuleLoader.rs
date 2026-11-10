@@ -364,6 +364,54 @@ extern "C" fn Bun__hashPluginContents(contents: &bun_core::EncodedSlice, loader:
     bun_wyhash::hash_with_seed((u64::from(loader) << 2) | encoding, contents.byte_slice()) | 1
 }
 
+/// How long before the process started a file must have last changed for its stamp to be trusted (git's "racily clean" rule).
+const RACY_MARGIN_NS: i128 = 2 * bun_core::time::NS_PER_S as i128;
+
+/// What `IsolatedModuleCache` checks a cached source against before it serves the source again after a `resetModules()`.
+#[derive(Clone, Copy, Default)]
+pub struct SourceValidator {
+    pub kind: ValidatorKind,
+    pub value: u64,
+}
+
+impl SourceValidator {
+    /// For a source that no file was read for (a builtin, a plugin's contents, a node fallback): there is nothing to check.
+    pub const NOT_A_FILE: Self = Self {
+        kind: ValidatorKind::NotAFile,
+        value: 0,
+    };
+
+    /// For `contents` as the reader returned them for `fd` (for `path`, if `fd` is not valid); `input_hash` is their `runtime_transpiler_cache::hash`, if known. Any thread may call it.
+    pub fn of_file(fd: bun_sys::Fd, path: &[u8], contents: &[u8], input_hash: Option<u64>) -> Self {
+        let stat = if fd.is_valid() {
+            bun_sys::fstat(fd)
+                .ok()
+                .map(|stat| bun_sys::PosixStat::init(&stat))
+        } else {
+            stat_of_path(path)
+        };
+        let Some(stat) = stat else {
+            return Self::default();
+        };
+        if is_racy(&stat) {
+            return Self {
+                kind: ValidatorKind::Content,
+                value: input_hash
+                    .unwrap_or_else(|| crate::runtime_transpiler_cache::hash(contents)),
+            };
+        }
+        Self {
+            kind: ValidatorKind::Stamp,
+            value: stamp_of(&stat),
+        }
+    }
+
+    pub fn apply(self, source: &mut ResolvedSource) {
+        source.validator_kind = self.kind;
+        source.validator = self.value;
+    }
+}
+
 /// One `stat` of `path`, which need not end in a NUL. `None` if it fails or the path is too long.
 fn stat_of_path(path: &[u8]) -> Option<bun_sys::PosixStat> {
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -372,6 +420,16 @@ fn stat_of_path(path: &[u8]) -> Option<bun_sys::PosixStat> {
     }
     let stat = bun_sys::stat(bun_paths::resolve_path::z(path, &mut buf)).ok()?;
     Some(bun_sys::PosixStat::init(&stat))
+}
+
+fn nanoseconds(time: bun_sys::Timespec) -> i128 {
+    i128::from(time.sec) * bun_core::time::NS_PER_S as i128 + i128::from(time.nsec)
+}
+
+/// Whether the file changed too recently for an equal stamp to prove equal bytes.
+fn is_racy(stat: &bun_sys::PosixStat) -> bool {
+    let trusted_before = bun_core::start_time() - RACY_MARGIN_NS;
+    nanoseconds(stat.mtim) >= trusted_before || nanoseconds(stat.ctim) >= trusted_before
 }
 
 /// `dev`, `ino`, `size`, `mtime` and `ctime` as one number. Never 0.

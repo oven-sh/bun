@@ -3516,8 +3516,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         bool stays = staysInRegistry.contains(key) || staysInRequireCache.contains(key);
         if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
             return false;
-        // Nothing evaluates a test file a second time. While it runs it stays, whatever of its imports goes.
-        // Once it has ended, JSMock__replaceModuleOfTestFile() leaves its exports in its place.
+        // Nothing evaluates a test file a second time: it stays while it runs, and once it has ended JSMock__replaceModuleOfTestFile() leaves its exports in its place.
         if (importer == plugins.testFileKey && (testFile == plugins.testFile || replaceableModuleOfTestFile(globalObject, importer)))
             return false;
         bool stayed = staysInRegistry.remove(importer);
@@ -3537,9 +3536,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             take(key, importer, isQueued);
     }
 
-    // A module that called import() holds what it was given, as an importer by statement does. The loader keeps no edge for the call: OnLoad::importCalls does.
-    // Such a caller goes with a module that a mock changed or stood in for, and with a module that goes because of one of those.
-    // It stays when the module failed by itself, as the ones that the sweep above lists: whoever caught that failure holds nothing of the module.
+    // What called import() for a module that a mock changed or stood in for goes with it, and so on from each module that goes so. Not with a module that failed by itself: whoever caught that holds nothing of it.
     UncheckedKeyHashSet<String> callersGo;
     if (hasImportCalls || (!evict.all && !loading.isEmpty())) {
         Vector<String> held;

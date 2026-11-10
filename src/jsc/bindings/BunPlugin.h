@@ -159,9 +159,7 @@ public:
         String testFileKey;
         // The keys of the test files that have begun. Nothing evaluates one of them a second time.
         WTF::UncheckedKeyHashSet<String> testFiles = {};
-        // The modules that have called import() for each key. The loader keeps no edge for an import() as it does for an import statement,
-        // so evictModulesAndTheirImporters() reads them here.
-        // An ES module is its record, whatever key it is registered under. A record that was collected may have left its address to another: the Weak tells.
+        // The modules that have called import() for each key, for evictModulesAndTheirImporters(): the loader keeps no edge for an import(). A collected record may have left its address to another: the Weak tells.
         using ImportCallers = WTF::UncheckedKeyHashMap<JSC::AbstractModuleRecord*, JSC::Weak<JSC::AbstractModuleRecord>>;
         WTF::UncheckedKeyHashMap<String, ImportCallers> importCalls = {};
         // A CommonJS module has no record: import() names it by its file.

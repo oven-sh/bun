@@ -70,6 +70,7 @@ struct WorkerBuiltins {
     encoders: [(Option<BuiltinId>, Encoder); 2],
     blob_constructor: Option<BuiltinId>,
     object_url_maker: Option<BuiltinId>,
+    name_of_object_url_maker: Option<BuiltinName>,
     raw_text_maker: Option<BuiltinId>,
     paths: Option<RuntimeModule>,
     urls: Option<RuntimeModule>,
@@ -85,8 +86,9 @@ fn worker_builtins() -> &'static WorkerBuiltins {
             name_of_own_url.and_then(|name| table::own_member(BuiltinId::ImportMeta, name));
         let find_global = |name: &[u8]| global(table::find_name(name)).map(table::canonical_id);
         let url_constructor = find_global(b"URL");
+        let name_of_object_url_maker = table::find_name(b"createObjectURL");
         let object_url_maker = url_constructor
-            .zip(table::find_name(b"createObjectURL"))
+            .zip(name_of_object_url_maker)
             .and_then(|(holder, name)| table::own_member(holder, name));
         let raw_text_maker = find_global(b"String")
             .zip(table::find_name(b"raw"))
@@ -101,6 +103,7 @@ fn worker_builtins() -> &'static WorkerBuiltins {
             encoders: ENCODERS.map(|(name, encode)| (find_global(name), encode)),
             blob_constructor: find_global(b"Blob"),
             object_url_maker: object_url_maker.map(table::canonical_id),
+            name_of_object_url_maker,
             raw_text_maker: raw_text_maker.map(table::canonical_id),
             paths: table::module_by_specifier(b"node:path"),
             urls: table::module_by_specifier(b"node:url"),
@@ -728,7 +731,7 @@ impl ContentsScan<'_, '_> {
         match builtin.map(table::canonical_id) {
             Some(id) if Some(id) == known.constructor => Some(Constructor::Worker),
             Some(id) if Some(id) == known.url_constructor => Some(Constructor::Url),
-            Some(_) | None => self.is_node_worker(callee).then_some(Constructor::Worker),
+            Some(_) | None => self.find_class_of_module(callee),
         }
     }
 
@@ -1118,13 +1121,7 @@ impl ContentsScan<'_, '_> {
             && may_load(resolution, module)
     }
 
-    fn requires_module(&self, call: ExprId, module: RuntimeModule) -> bool {
-        let &FinishedFile { hir, analysis, .. } = self.request;
-        matches!(hir[call].kind, ExprKind::Call(_))
-            && self.loads_module(analysis.import_site_of_call(call), module)
-    }
-
-    fn holds_module(&self, symbol: SymbolId, module: RuntimeModule) -> bool {
+    fn find_module_held(&self, symbol: SymbolId) -> Option<usize> {
         let &FinishedFile {
             hir,
             bound,
@@ -1139,41 +1136,36 @@ impl ContentsScan<'_, '_> {
             _ => None,
         };
         if let Some(import) = import {
-            let site = analysis.import_site_index(ImportSiteKind::Import(import));
-            return self.loads_module(site, module);
+            return analysis.import_site_index(ImportSiteKind::Import(import));
         }
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(source) => {
-                self.requires_module(hir.skip_type_assertions(source), module)
-            }
-            _ => false,
-        }
-    }
-
-    fn names_module(&self, expression: ExprId, module: RuntimeModule) -> bool {
-        match self.request.hir[expression].kind {
-            ExprKind::Call(_) => self.requires_module(expression, module),
-            ExprKind::Ident(_) => {
-                let symbol = self.find_symbol_read(expression);
-                symbol.is_some_and(|symbol| self.holds_module(symbol, module))
-            }
-            _ => false,
-        }
-    }
-
-    fn find_export_read_off_module(&self, member: ExprId, module: RuntimeModule) -> Option<Atom> {
-        let hir = self.request.hir;
-        match hir.member_key(member) {
-            Some((object, MemberKey::Name(name)))
-                if self.names_module(hir.skip_type_assertions(object), module) =>
-            {
-                Some(name)
+                self.find_load_at(hir.skip_type_assertions(source))
             }
             _ => None,
         }
     }
 
-    fn find_export_held(&self, symbol: SymbolId, module: RuntimeModule) -> Option<Atom> {
+    fn find_module_named(&self, expression: ExprId) -> Option<usize> {
+        match self.request.hir[expression].kind {
+            ExprKind::Call(_) => self.find_load_at(expression),
+            ExprKind::Ident(_) => self.find_module_held(self.find_symbol_read(expression)?),
+            _ => None,
+        }
+    }
+
+    fn find_export_read_off_module(&self, member: ExprId) -> Option<(usize, Atom)> {
+        let hir = self.request.hir;
+        match hir.member_key(member) {
+            Some((object, MemberKey::Name(name))) => {
+                let site = self.find_module_named(hir.skip_type_assertions(object))?;
+                Some((site, name))
+            }
+            _ => None,
+        }
+    }
+
+    fn find_export_held(&self, symbol: SymbolId) -> Option<(usize, Atom)> {
         let &FinishedFile {
             hir,
             bound,
@@ -1182,53 +1174,72 @@ impl ContentsScan<'_, '_> {
         } = self.request;
         if let &[Decl::ImportSpec(specifier)] = bound.symbol(symbol).decls {
             let specifier = &hir[specifier];
-            let site = analysis.import_site_index(ImportSiteKind::Import(specifier.import));
-            return self
-                .loads_module(site, module)
-                .then_some(specifier.imported);
+            let site = analysis.import_site_index(ImportSiteKind::Import(specifier.import))?;
+            return Some((site, specifier.imported));
         }
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::PatternProperty { source, path } => match path[..] {
-                [name] if self.names_module(hir.skip_type_assertions(source), module) => Some(name),
+                [name] => {
+                    let site = self.find_module_named(hir.skip_type_assertions(source))?;
+                    Some((site, name))
+                }
                 _ => None,
             },
             BindingInitializer::Expression(source) => {
-                self.find_export_read_off_module(hir.skip_type_assertions(source), module)
+                self.find_export_read_off_module(hir.skip_type_assertions(source))
             }
+            _ => None,
+        }
+    }
+
+    fn find_export_read(&self, expression: ExprId) -> Option<(usize, Atom)> {
+        match self.request.hir[expression].kind {
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                self.find_export_read_off_module(expression)
+            }
+            ExprKind::Ident(_) => self.find_export_held(self.find_symbol_read(expression)?),
             _ => None,
         }
     }
 
     fn find_export_named(&self, expression: ExprId, module: RuntimeModule) -> Option<Atom> {
-        match self.request.hir[expression].kind {
-            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                self.find_export_read_off_module(expression, module)
-            }
-            ExprKind::Ident(_) => self.find_export_held(self.find_symbol_read(expression)?, module),
-            _ => None,
-        }
+        let (site, export) = self.find_export_read(expression)?;
+        self.loads_module(Some(site), module).then_some(export)
+    }
+
+    fn find_class_exported(&self, (site, export): (usize, Atom)) -> Option<Constructor> {
+        let builtins = worker_builtins();
+        let (module, class) = match export {
+            known::Worker => (builtins.threads, Constructor::Worker),
+            known::URL => (builtins.urls, Constructor::Url),
+            _ => return None,
+        };
+        let loads = module.is_some_and(|module| self.loads_module(Some(site), module));
+        loads.then_some(class)
+    }
+
+    fn find_class_of_module(&self, expression: ExprId) -> Option<Constructor> {
+        self.find_class_exported(self.find_export_read(expression)?)
     }
 
     fn holds_worker_threads(&self, symbol: SymbolId) -> bool {
         let threads = worker_builtins().threads;
-        threads.is_some_and(|threads| self.holds_module(symbol, threads))
+        threads.is_some_and(|threads| self.loads_module(self.find_module_held(symbol), threads))
     }
 
     fn holds_node_worker(&self, symbol: SymbolId) -> bool {
-        let threads = worker_builtins().threads;
-        let export = threads.and_then(|threads| self.find_export_held(symbol, threads));
-        export.is_some_and(|export| self.is_name_of_worker(export))
+        let export = self.find_export_held(symbol);
+        export.and_then(|export| self.find_class_exported(export)) == Some(Constructor::Worker)
     }
 
     fn names_worker_threads(&self, expression: ExprId) -> bool {
         let threads = worker_builtins().threads;
-        threads.is_some_and(|threads| self.names_module(expression, threads))
+        let site = self.find_module_named(expression);
+        threads.is_some_and(|threads| self.loads_module(site, threads))
     }
 
     fn is_node_worker(&self, expression: ExprId) -> bool {
-        let threads = worker_builtins().threads;
-        let export = threads.and_then(|threads| self.find_export_named(expression, threads));
-        export.is_some_and(|export| self.is_name_of_worker(export))
+        self.find_class_of_module(expression) == Some(Constructor::Worker)
     }
 
     fn reads_only_named_members(&self, mention: ExprId) -> bool {

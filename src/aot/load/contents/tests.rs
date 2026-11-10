@@ -800,6 +800,178 @@ fn worker_constructor_is_recognized_by_binding() {
 }
 
 #[test]
+fn url_class_is_recognized_by_binding() {
+    let texts = [
+        (
+            r#"export const url = new URL("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"import { URL } from "node:url"; export const url = new URL("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"import { URL as Address } from "url"; export const url = new Address("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"import * as urls from "node:url"; export const url = new urls.URL("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"import urls from "node:url"; export const url = new urls.URL("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"const { URL } = require("node:url"); export const url = new URL("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"const urls = require("url"); export const url = new urls.URL("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"const { URL } = process.getBuiltinModule("node:url"); export const url = new URL("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"export const url = new globalThis.URL("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"const Address = URL; export const url = new Address("./w.ts", import.meta.url);"#,
+            true,
+        ),
+        (
+            r#"import * as urls from "node:url"; const same = urls; export const url = new same.URL("./w.ts", import.meta.url);"#,
+            false,
+        ),
+        (
+            r#"import { URL } from "node:url"; const Address = URL; export const url = new Address("./w.ts", import.meta.url);"#,
+            false,
+        ),
+        (
+            r#"import urls = require("url"); export const url = new urls.URL("./w.ts", import.meta.url);"#,
+            false,
+        ),
+        (
+            r#"const { URL } = await import("node:url"); export const url = new URL("./w.ts", import.meta.url);"#,
+            false,
+        ),
+        (
+            r#"import * as URL from "node:url"; export const url = new (URL as any)("./w.ts", import.meta.url);"#,
+            false,
+        ),
+        (
+            r#"import { Url as URL } from "node:url"; export const url = new (URL as any)("./w.ts", import.meta.url);"#,
+            false,
+        ),
+        (
+            r#"import { URL } from "./mine.ts"; export const url = new URL("./w.ts", import.meta.url);"#,
+            false,
+        ),
+        (
+            r#"class URL { constructor(path: string, base: string) {} } export const url = new URL("./w.ts", import.meta.url);"#,
+            false,
+        ),
+    ];
+    for (text, is_url) in texts {
+        let project = executable(&[
+            ("main.ts", r#"import "./lib/url.ts"; import "./pool.ts";"#),
+            ("lib/url.ts", text),
+            (
+                "pool.ts",
+                "export const start = (url: unknown) => new Worker(url as string);",
+            ),
+            (
+                "lib/mine.ts",
+                "export class URL { constructor(path: string, base: string) {} }",
+            ),
+            ("lib/w.ts", WORKER),
+        ]);
+        load(&project, |loaded| {
+            let files = files_of(loaded);
+            let starts = describe_starts(files, "lib/url.ts", false);
+            let names_file = starts.iter().any(|it| it == "FromOwnFolder ./w.ts");
+            assert_eq!(names_file, is_url, "{text}: {starts:?}");
+            assert_eq!(find_file(files, "lib/w.ts").is_some(), is_url, "{text}");
+        });
+    }
+}
+
+#[test]
+fn start_from_the_url_of_the_own_file_is_named_under_either_name_of_the_class() {
+    let rows = [
+        (
+            "new Worker(new URL(import.meta.url));",
+            "Resolved(UrlObject) ./main.ts",
+        ),
+        (
+            r#"import { URL } from "node:url"; new Worker(new URL(import.meta.url));"#,
+            "Resolved(UrlObject) ./main.ts",
+        ),
+        (
+            r#"import * as urls from "node:url"; new Worker(new urls.URL(import.meta.url).href);"#,
+            "Resolved(Url) ./main.ts",
+        ),
+        (
+            r#"import { Url } from "node:url"; new Worker(new (Url as any)(import.meta.url));"#,
+            "AsWritten ?",
+        ),
+    ];
+    for (text, start) in rows {
+        load(&executable(&[("main.ts", text)]), |loaded| {
+            let starts = describe_starts(files_of(loaded), "main.ts", true);
+            assert_eq!(starts, [start], "{text}");
+        });
+    }
+}
+
+#[test]
+fn own_file_counts_where_a_url_of_the_class_that_node_url_exports_is_handed_on() {
+    let rows = [
+        (
+            r#"import { URL } from "node:url"; start(new URL(import.meta.url));"#,
+            true,
+        ),
+        (
+            r#"import * as urls from "node:url"; start(new urls.URL(import.meta.url).href);"#,
+            true,
+        ),
+        (
+            r#"const { URL } = require("url"); start(new URL(import.meta.url));"#,
+            true,
+        ),
+        (
+            r#"import { Url } from "node:url"; start(new (Url as any)(import.meta.url));"#,
+            false,
+        ),
+        (
+            r#"import { URL } from "node:url"; start(new URL(import.meta.url, "file:///elsewhere/"));"#,
+            false,
+        ),
+    ];
+    for (code, is_taken) in rows {
+        let job = format!("import {{ start }} from \"./pool.ts\";\n{code}\n");
+        let pool =
+            "export const start = (...given: unknown[]) => new Worker(given[0] as string);\n";
+        let project = executable(&[
+            ("main.ts", "import \"./job.ts\";\n"),
+            ("job.ts", &job),
+            ("pool.ts", pool),
+        ]);
+        load(&project, |loaded| {
+            let found = describe_found(&loaded.contents.found_entry_points);
+            let expected: &[&str] = match is_taken {
+                true => &["job.ts MayStartWorker"],
+                false => &[],
+            };
+            assert_eq!(found, expected, "{code}");
+        });
+    }
+}
+
+#[test]
 fn worker_constructor_used_as_a_value_is_handed_on() {
     for (text, is_handed_on) in [
         (r#"new Worker("./w.ts");"#, false),
@@ -1165,7 +1337,7 @@ fn path_that_the_library_makes_of_the_own_path_stands_in_text() {
     const START: &str =
         r#"new Worker("data:text/javascript," + encodeURIComponent("postMessage('" + "#;
     const END: &str = r#" + "')"));"#;
-    let rows: [(&str, &str, &str, Option<&str>); 13] = [
+    let rows: [(&str, &str, &str, Option<&str>); 16] = [
         (
             "lib/starts.ts",
             r#"import { fileURLToPath } from "node:url";"#,
@@ -1207,6 +1379,24 @@ fn path_that_the_library_makes_of_the_own_path_stands_in_text() {
             r#"const beside = new URL("./beside.ts", import.meta.url);"#,
             "beside.toString()",
             Some("file:///$bunfs/root/lib/beside.ts"),
+        ),
+        (
+            "lib/starts.ts",
+            r#"import { URL } from "node:url";"#,
+            "new URL(import.meta.url).pathname",
+            Some("/$bunfs/root/lib/starts.ts"),
+        ),
+        (
+            "lib/starts.ts",
+            r#"import * as url from "node:url"; const beside = new url.URL("./beside.ts", import.meta.url);"#,
+            "beside.toString()",
+            Some("file:///$bunfs/root/lib/beside.ts"),
+        ),
+        (
+            "lib/starts.ts",
+            r#"import { Url } from "node:url"; const beside = new (Url as any)("./beside.ts", import.meta.url);"#,
+            "beside.toString()",
+            None,
         ),
         (
             "lib/starts.ts",
@@ -1265,7 +1455,7 @@ fn path_that_the_library_makes_of_the_own_path_stands_in_text() {
 #[test]
 fn each_text_that_a_worker_may_be_given_is_an_entry_point() {
     const NODE: &str = r#"import { Worker as NodeWorker } from "node:worker_threads";"#;
-    let rows: [(String, &[&str]); 7] = [
+    let rows: [(String, &[&str]); 9] = [
         (
             format!(
                 r#"{NODE} new NodeWorker(process.argv.length > 9 ? "postMessage(1)" : "postMessage(2)", {{ eval: true }});"#
@@ -1304,6 +1494,16 @@ fn each_text_that_a_worker_may_be_given_is_an_entry_point() {
             r#"const start = (code: string) => new Worker(URL.createObjectURL(new Blob([code]))); start("postMessage(9)"); start("postMessage(10)");"#
                 .to_owned(),
             &["postMessage(9)", "postMessage(10)"],
+        ),
+        (
+            r#"import { URL as Address } from "node:url"; new Worker(Address.createObjectURL(new Blob(["postMessage(11)"])));"#
+                .to_owned(),
+            &["postMessage(11)"],
+        ),
+        (
+            r#"import * as Address from "node:url"; new Worker((Address as any).createObjectURL(new Blob(["postMessage(12)"])));"#
+                .to_owned(),
+            &[],
         ),
     ];
     for (main, texts) in rows {

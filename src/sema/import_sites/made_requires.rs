@@ -1,6 +1,6 @@
 use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
-    is_free_name,
+    is_free_name, names_url_class,
 };
 use super::parameters::find_values_passed_for_pattern;
 use super::touched_exports::is_only_tested;
@@ -251,6 +251,12 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         (is_export && modules.contains(&specifier)).then_some(export)
     }
 
+    fn is_url_class(self, callee: ExprId, left: StepsLeft) -> bool {
+        let callee = self.hir.skip_type_assertions(callee);
+        let find_export = || self.find_export_read_off_module(callee, left, URL_MODULES);
+        names_url_class(self.hir, self.bound, callee, find_export)
+    }
+
     fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
         let Some((specifier, face, names)) = self.find_names_read_off_module(e, left) else {
             return false;
@@ -427,10 +433,7 @@ fn is_written_as_own_file(
             }
             (call, export == Some(known::fileURLToPath))
         }
-        Some(ExprKind::New(call)) => {
-            let callee = hir.skip_type_assertions(hir[call].callee);
-            (hir[call], is_free_name(hir, bound, callee, &[known::URL]))
-        }
+        Some(ExprKind::New(call)) => (hir[call], text.is_url_class(hir[call].callee, left)),
         _ => return false,
     };
     is_conversion
@@ -515,7 +518,7 @@ fn starts_at_own_folder(
         };
         let is_url_from_own_file = matches!(expr_kind(hir, e), Some(ExprKind::New(call))
             if hir[call].args.len() == 2
-                && is_free_name(hir, bound, hir.skip_type_assertions(hir[call].callee), &[known::URL])
+                && text.is_url_class(hir[call].callee, left)
                 && names_own_file_behind(text, hir.id_at(hir[call].args, 1), parts_left, left));
         names_own_folder(text, e, left)
             || is_url_from_own_file

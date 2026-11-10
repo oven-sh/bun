@@ -214,6 +214,28 @@ fn path_that_is_spelled_in_part_marks_the_files_that_fit() {
 }
 
 #[test]
+fn url_of_a_file_beside_the_test_marks_it_under_either_name_of_the_class() {
+    let changes: [(&str, &[&str]); 3] = [
+        (
+            r#"writeFileSync(new URL("./lib/one.js", import.meta.url), "")"#,
+            &["lib/one.js"],
+        ),
+        (
+            r#"writeFileSync(new (process.getBuiltinModule("node:url").URL)("./lib/two.js", import.meta.url), "")"#,
+            &["lib/two.js"],
+        ),
+        (
+            r#"writeFileSync(new (process.getBuiltinModule("node:url").Url)("./lib/two.js", import.meta.url), "")"#,
+            &[],
+        ),
+    ];
+    let calls: Vec<String> = changes.iter().map(|it| String::from(it.0)).collect();
+    for ((call, expected), changed) in changes.iter().zip(find_files_changed_by(&calls)) {
+        assert_eq!(changed, *expected, "{call}");
+    }
+}
+
+#[test]
 fn file_leaves_by_its_key() {
     let uses: [(&str, &[&str], bool); 14] = [
         (

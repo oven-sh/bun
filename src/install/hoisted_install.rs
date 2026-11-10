@@ -459,6 +459,7 @@ pub(crate) fn install_hoisted_packages(
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
                 unfinished_scripts: Default::default(),
+                direct_packages: bun_ptr::BackRef::new(&direct_packages),
                 copy_trees: {
                     let self_contained = this.lockfile.self_contained_workspace_ids();
                     let mut set = Bitset::init_empty(trees_count)?;

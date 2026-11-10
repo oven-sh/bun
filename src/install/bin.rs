@@ -17,18 +17,18 @@ use bun_semver::{ExternalString, String};
 use bun_sys::Mode;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
+use crate::PackageID;
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Behavior, Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
 use crate::lockfile::Lockfile;
 use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::tree;
 use crate::resolution;
 #[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
 use crate::windows_shim::Shebang as WinShimShebang;
-use crate::{PackageID, PackageManager};
-use bun_resolver::package_json::Package as PackageSpecifier;
 
 bun_output::declare_scope!(BinLinker, hidden);
 
@@ -646,7 +646,7 @@ impl<'a> NamesIterator<'a> {
 /// The order in which the packages in one `node_modules` link their bins. The first package to link
 /// a name keeps it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct LinkOrder<'a> {
+pub struct LinkOrder<'a> {
     /// True if neither the root package nor a workspace declares the dependency.
     transitive: bool,
     /// A workspace, `file:` or `link:` directory, not a registry, tarball or git package.
@@ -680,7 +680,7 @@ impl<'a> LinkOrder<'a> {
 
     /// Compares by package, because a hoisted package keeps the id of the first dependency that
     /// reached it.
-    pub(crate) fn direct_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
+    pub fn direct_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
         let pkgs = lockfile.packages.slice();
         let mut direct = DynamicBitSet::init_empty(pkgs.len())?;
         for ((resolution, dependencies), resolutions) in pkgs
@@ -1967,112 +1967,239 @@ pub(crate) fn link_free_bins(
     }
 }
 
-/// Links the bins of a package's dependencies into its own `node_modules/.bin`, which its scripts
-/// search first. Bins that the scripts already find in a dependency or in `PATH` are skipped.
-pub fn link_dependency_bins(
-    manager: &PackageManager,
+/// Bins of a package's dependency that the hoisted tree gives to another package.
+#[derive(Clone)]
+pub struct BinConflict {
     package_id: PackageID,
-    scripts: &crate::lockfile::package::scripts::List,
-) -> Result<(), Error> {
-    let lockfile = &*manager.lockfile;
-    let pkgs = lockfile.packages.slice();
-    let cwd = scripts.cwd.as_bytes();
-    // The isolated linker gives each package its own `.bin`.
-    let store_path = path::path_literal!("/node_modules/.bun/").as_bytes();
-    if !scripts.is_dependency
-        || pkgs.items_resolution()[package_id as usize].tag == resolution::Tag::Symlink
-        || strings::contains(cwd, store_path)
-    {
-        return Ok(());
+    alias: String,
+    node_modules: Box<[u8]>,
+    names: Vec<Box<[u8]>>,
+}
+
+/// Finds the bins of `dependency_id`'s dependencies that its scripts would find in a package that
+/// it does not depend on. `tree_id` is the hoisted tree it is placed in.
+pub fn find_bin_conflicts(
+    lockfile: &Lockfile,
+    direct_packages: &DynamicBitSet,
+    tree_id: tree::Id,
+    dependency_id: DependencyID,
+) -> Vec<BinConflict> {
+    let buffers = &lockfile.buffers;
+    let trees = buffers.trees.as_slice();
+    let hoisted = buffers.hoisted_dependencies.as_slice();
+    let dependencies = buffers.dependencies.as_slice();
+    let resolutions = buffers.resolutions.as_slice();
+    let string_buf = buffers.string_bytes.as_slice();
+    let bins = lockfile.packages.items_bin();
+
+    let package_id = resolutions[dependency_id as usize];
+    let rows = lockfile.packages.items_dependencies()[package_id as usize];
+    let is_own =
+        |owner: PackageID| (rows.begin()..rows.end()).any(|row| resolutions[row as usize] == owner);
+    if !(rows.begin()..rows.end()).any(|row| {
+        (bins.get(resolutions[row as usize] as usize)).is_some_and(|bin| bin.tag != Tag::None)
+    }) {
+        return Vec::new();
     }
-    let dirs = node_modules_dirs(cwd);
-    let Some(own_dir) = dirs.first() else {
-        return Ok(());
+
+    // The trees that the package resolves its dependencies in, nearest first.
+    let alias = dependencies[dependency_id as usize].name.slice(string_buf);
+    let nested = (trees.iter()).find(|tree| {
+        tree.parent == tree_id
+            && tree.folder_name(dependencies, string_buf) == alias
+            && !tree.is_unlinked_member(trees, hoisted, dependencies)
+    });
+    let mut ancestors: Vec<tree::Id> = nested.map(|tree| tree.id).into_iter().collect();
+    let mut current = tree_id;
+    while current != tree::INVALID_ID {
+        ancestors.push(current);
+        current = trees[current as usize].parent;
+    }
+    let owners: Vec<StringHashMap<PackageID>> = (ancestors.iter())
+        .map(|&tree_id| bin_owners(lockfile, direct_packages, tree_id))
+        .collect();
+
+    let mut conflicts = Vec::new();
+    for row in rows.begin()..rows.end() {
+        let dependency_package_id = resolutions[row as usize];
+        let Some(&bin) = bins.get(dependency_package_id as usize) else {
+            continue;
+        };
+        if bin.tag == Tag::None {
+            continue;
+        }
+        let name_hash = dependencies[row as usize].name_hash;
+        let Some((placed_in, placed)) = ancestors.iter().find_map(|&tree_id| {
+            let tree = &trees[tree_id as usize];
+            (tree.dependencies.get(hoisted).iter())
+                .find(|&&id| dependencies[id as usize].name_hash == name_hash)
+                .map(|&id| (tree_id, id))
+        }) else {
+            continue;
+        };
+        if resolutions[placed as usize] != dependency_package_id {
+            continue;
+        }
+        let Some(node_modules) =
+            crate::package_installer::abs_node_modules_path(lockfile, string_buf, placed_in)
+        else {
+            continue;
+        };
+        let alias = dependencies[placed as usize].name;
+        let mut names = Vec::new();
+        for_each_bin_name(
+            lockfile,
+            dependency_package_id,
+            alias,
+            node_modules.slice(),
+            |name| {
+                let owner = owners.iter().find_map(|owners| owners.get(name).copied());
+                if owner.is_some_and(|owner| owner != dependency_package_id && !is_own(owner)) {
+                    names.push(Box::from(name));
+                }
+            },
+        );
+        if !names.is_empty() {
+            conflicts.push(BinConflict {
+                package_id: dependency_package_id,
+                alias,
+                node_modules: Box::from(node_modules.slice()),
+                names,
+            });
+        }
+    }
+    conflicts
+}
+
+/// The package that each name in a tree's `.bin` links to.
+fn bin_owners(
+    lockfile: &Lockfile,
+    direct_packages: &DynamicBitSet,
+    tree_id: tree::Id,
+) -> StringHashMap<PackageID> {
+    let buffers = &lockfile.buffers;
+    let string_buf = buffers.string_bytes.as_slice();
+    let mut owners: StringHashMap<PackageID> = StringHashMap::default();
+    let Some(node_modules) =
+        crate::package_installer::abs_node_modules_path(lockfile, string_buf, tree_id)
+    else {
+        return owners;
     };
-    let own_bin_dir = [own_dir, &[SEP][..], b".bin"].concat();
-    if is_symlink(own_dir) || is_symlink(&own_bin_dir) {
-        return Ok(());
+    let bins = lockfile.packages.items_bin();
+    let package_resolutions = lockfile.packages.items_resolution();
+    let tree = &buffers.trees.as_slice()[tree_id as usize];
+    let mut packages: Vec<(LinkOrder, PackageID, &String)> = (tree
+        .dependencies
+        .get(buffers.hoisted_dependencies.as_slice())
+        .iter())
+    .filter_map(|&dependency_id| {
+        let package_id = buffers.resolutions.as_slice()[dependency_id as usize];
+        let bin = bins.get(package_id as usize)?;
+        let alias = &buffers.dependencies.as_slice()[dependency_id as usize].name;
+        let order = LinkOrder::new(
+            direct_packages.is_set_allow_out_of_bound(package_id as usize, false),
+            package_resolutions[package_id as usize].tag,
+            alias.slice(string_buf),
+        );
+        (bin.tag != Tag::None).then_some((order, package_id, alias))
+    })
+    .collect();
+    packages.sort_by_key(|&(order, ..)| order);
+    for (_, package_id, alias) in packages {
+        for_each_bin_name(lockfile, package_id, *alias, node_modules.slice(), |name| {
+            let entry = bun_core::handle_oom(owners.get_or_put(name));
+            if !entry.found_existing {
+                *entry.value_ptr = package_id;
+            }
+        });
     }
-    let env_path =
-        crate::lifecycle_script_runner::strip_bin_dirs(manager.env().get(b"PATH").unwrap_or(b""));
+    owners
+}
+
+/// Only the names in `directories.bin` are read from disk.
+fn for_each_bin_name(
+    lockfile: &Lockfile,
+    package_id: PackageID,
+    alias: String,
+    node_modules: &[u8],
+    mut callback: impl FnMut(&[u8]),
+) {
+    let bin = lockfile.packages.items_bin()[package_id as usize];
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let find_package = |dirs: &[Vec<u8>], alias: &[u8]| {
-        (dirs.iter()).position(|dir| sys::exists(&[&dir[..], &[SEP][..], alias].concat()))
+    let dir = match bin.tag {
+        Tag::Dir if bin_target_escapes_package_dir(bin.dir().slice(string_buf)) => return,
+        Tag::Dir => match sys::Dir::open(node_modules) {
+            Ok(dir) => Some(dir),
+            Err(_) => return,
+        },
+        _ => None,
     };
+    let mut names = NamesIterator {
+        bin,
+        i: 0,
+        done: false,
+        dir_iterator: None,
+        package_name: alias,
+        destination_node_modules: dir.as_ref().map_or(Fd::INVALID, |dir| dir.fd()),
+        buf: path::path_buffer_pool::get(),
+        string_buffer: string_buf,
+        extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
+    };
+    while let Ok(Some(name)) = names.next() {
+        let name = normalized_bin_name(name);
+        if !name.is_empty() {
+            callback(name);
+        }
+    }
+}
+
+/// Links `conflicts` into the `node_modules/.bin` of `cwd`, except for names in `env_path`.
+pub(crate) fn link_conflicting_bins(
+    lockfile: &Lockfile,
+    conflicts: &[BinConflict],
+    cwd: &[u8],
+    env_path: &[u8],
+) -> Result<(), Error> {
+    if conflicts.is_empty() {
+        return Ok(());
+    }
+    let mut node_modules_path = AbsPath::from(cwd)?;
+    node_modules_path.append(b"node_modules")?;
     let mut seen: StringHashMap<()> = StringHashMap::default();
     let mut which_buf = path::path_buffer_pool::get();
-
-    for (dependency, dependency_id) in resolved_dependencies(lockfile, package_id) {
-        let alias = dependency.name.slice(string_buf);
-        let bin = pkgs.items_bin()[dependency_id as usize];
-        let meta = &pkgs.items_meta()[dependency_id as usize];
-        let options = &manager.options;
-        if bin.tag == Tag::None || meta.is_disabled(options.cpu, options.os, options.libc) {
-            continue;
-        }
-        let Some(depth) = find_package(&dirs, alias) else {
-            continue;
-        };
-        // A platform-specific bin belongs to a dependency of `dependency`.
-        let is_dependency = |owner: &[u8], owner_depth: usize| {
-            resolved_dependencies(lockfile, package_id).any(|(other, _)| {
-                other.name.slice(string_buf) == owner
-                    && find_package(&dirs, owner) == Some(owner_depth)
-            }) || resolved_dependencies(lockfile, dependency_id).any(|(other, _)| {
-                other.name.slice(string_buf) == owner
-                    && find_package(&dirs[depth..], owner).map(|i| i + depth) == Some(owner_depth)
-            })
-        };
-        let target_node_modules_path = AbsPath::from(&dirs[depth])?;
-        let mut node_modules_path = AbsPath::from(own_dir)?;
-        let target_dir = sys::Dir::open(&dirs[depth])?;
-
-        let mut names = NamesIterator {
-            bin,
-            i: 0,
-            done: false,
-            dir_iterator: None,
-            package_name: dependency.name,
-            destination_node_modules: target_dir.fd(),
-            buf: path::path_buffer_pool::get(),
-            string_buffer: string_buf,
-            extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
-        };
-        let mut has_conflict = false;
-        while let Ok(Some(name)) = names.next() {
-            let name = normalized_bin_name(name);
-            let dest = [&own_bin_dir[..], &[SEP][..], name].concat();
-            if name.is_empty() || seen.contains_key(&dest[..]) {
-                continue;
-            }
-            let is_conflict = bun_which::which(&mut which_buf, &env_path, cwd, name).is_none()
-                && (dirs.iter().enumerate())
-                    .find_map(|(i, dir)| Some((bin_owner(dir, name)?, i)))
-                    .is_some_and(|(owner, owner_depth)| !is_dependency(&owner, owner_depth));
-            if is_conflict {
-                has_conflict = true;
-            } else {
-                let _ = seen.put(&dest, ());
-            }
-        }
-        target_dir.close();
-        if !has_conflict {
-            continue;
-        }
-
-        let mut abs_target_buf = path::path_buffer_pool::get();
-        let mut abs_dest_buf = path::path_buffer_pool::get();
-        let mut rel_buf = path::path_buffer_pool::get();
-        let package_name = strings::StringOrTinyString::init(alias);
+    let mut abs_target_buf = path::path_buffer_pool::get();
+    let mut abs_dest_buf = path::path_buffer_pool::get();
+    let mut rel_buf = path::path_buffer_pool::get();
+    for conflict in conflicts {
+        let target_node_modules_path = AbsPath::from(&conflict.node_modules)?;
+        let bin_dir = [node_modules_path.slice(), &[SEP][..], b".bin", &[SEP][..]].concat();
+        for_each_bin_name(
+            lockfile,
+            conflict.package_id,
+            conflict.alias,
+            &conflict.node_modules,
+            |name| {
+                let is_conflict = (conflict.names.iter()).any(|conflict| **conflict == *name)
+                    && bun_which::which(&mut which_buf, env_path, cwd, name).is_none();
+                if !is_conflict {
+                    let _ = seen.put(&[&bin_dir[..], name].concat(), ());
+                }
+            },
+        );
+        let package_name = strings::StringOrTinyString::init(
+            conflict
+                .alias
+                .slice(lockfile.buffers.string_bytes.as_slice()),
+        );
         let mut linker = Linker {
-            bin,
+            bin: lockfile.packages.items_bin()[conflict.package_id as usize],
             target_node_modules_path: &raw const target_node_modules_path,
             target_package_name: package_name,
             seen: Some(&mut seen),
             node_modules_path: &mut node_modules_path,
             package_name,
             global_bin_path: ZStr::EMPTY,
-            string_buf,
+            string_buf: lockfile.buffers.string_bytes.as_slice(),
             extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
             abs_target_buf: abs_target_buf.as_mut_slice(),
             abs_dest_buf: abs_dest_buf.as_mut_slice(),
@@ -2087,92 +2214,4 @@ pub fn link_dependency_bins(
         }
     }
     Ok(())
-}
-
-fn resolved_dependencies(
-    lockfile: &Lockfile,
-    package_id: PackageID,
-) -> impl Iterator<Item = (&Dependency, PackageID)> {
-    let pkgs = lockfile.packages.slice();
-    let dependencies = pkgs.items_dependencies()[package_id as usize]
-        .get(lockfile.buffers.dependencies.as_slice());
-    let resolutions =
-        pkgs.items_resolutions()[package_id as usize].get(lockfile.buffers.resolutions.as_slice());
-    (dependencies.iter().zip(resolutions))
-        .map(|(dependency, &id)| (dependency, id))
-        .filter(|&(_, id)| (id as usize) < lockfile.packages.len())
-}
-
-/// The `node_modules` of `cwd` and of each parent directory up to the project's.
-fn node_modules_dirs(cwd: &[u8]) -> Vec<Vec<u8>> {
-    let top_level_dir =
-        strings::without_trailing_slash(crate::bun_fs::FileSystem::get().top_level_dir());
-    let mut real_buf = path::path_buffer_pool::get();
-    // On Windows, the cwd of a script is a real path.
-    let real_top_level_dir =
-        sys::realpath(&bun_core::ZBox::from_bytes(top_level_dir), &mut real_buf);
-    let mut dirs = Vec::new();
-    let mut dir = Some(strings::without_trailing_slash(cwd));
-    while let Some(current) = dir {
-        dirs.push([current, &[SEP][..], b"node_modules"].concat());
-        if current == top_level_dir
-            || real_top_level_dir
-                .as_ref()
-                .is_ok_and(|real| current == *real)
-        {
-            return dirs;
-        }
-        dir = bun_paths::dirname(current);
-    }
-    Vec::new()
-}
-
-fn is_symlink(path: &[u8]) -> bool {
-    crate::isolated_install::installer::is_link(&bun_core::ZBox::from_bytes(path)) == Some(true)
-}
-
-/// The name of the package that `name` in `<node_modules>/.bin` links to, `None` if it doesn't
-/// exist. The name is empty if the target is not a package in `node_modules`.
-#[cfg(not(windows))]
-fn bin_owner(node_modules: &[u8], name: &[u8]) -> Option<Vec<u8>> {
-    let bin_dir = [node_modules, &[SEP][..], b".bin"].concat();
-    let dest = bun_core::ZBox::from_bytes([&bin_dir[..], &[SEP][..], name].concat());
-    let mut link_buf = path::path_buffer_pool::get();
-    let link = match sys::readlink(&dest, link_buf.as_mut_slice()) {
-        Ok(len) => &link_buf[..len],
-        Err(err) if err.get_errno() == sys::Errno::ENOENT => return None,
-        Err(_) => return Some(Vec::new()),
-    };
-    let mut target_buf = path::path_buffer_pool::get();
-    let target = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
-        &bin_dir,
-        target_buf.as_mut_slice(),
-        &[link],
-    );
-    let package_name = target
-        .and_then(|target| target.strip_prefix(node_modules)?.strip_prefix(b"/"))
-        .and_then(PackageSpecifier::parse_name);
-    Some(package_name.unwrap_or(b"").to_vec())
-}
-
-/// The name of the package that `name` in `<node_modules>/.bin` links to, `None` if it doesn't
-/// exist. The name is empty if the target is not a package in `node_modules`.
-#[cfg(windows)]
-fn bin_owner(node_modules: &[u8], name: &[u8]) -> Option<Vec<u8>> {
-    let dest = [node_modules, b"\\.bin\\", name].concat();
-    // A `.bunx` file starts with the path of its target, relative to `node_modules`.
-    let Ok(shim) = sys::File::read_from(Fd::cwd(), &[&dest[..], b".bunx"].concat()) else {
-        let exists = [&b""[..], b".exe", b".cmd", b".bat"]
-            .iter()
-            .any(|suffix| sys::exists(&[&dest[..], *suffix].concat()));
-        return exists.then(Vec::new);
-    };
-    let len = strings::index_of(&shim, b"\"\0").unwrap_or(0);
-    let mut target = strings::to_utf8_alloc_from_le_bytes(&shim[..len]);
-    resolve_path::slashes_to_posix_in_place(&mut target[..]);
-    Some(
-        PackageSpecifier::parse_name(&target)
-            .unwrap_or(b"")
-            .to_vec(),
-    )
 }

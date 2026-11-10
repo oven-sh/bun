@@ -171,6 +171,7 @@ impl Blocked {
         let mut path = AutoAbsPath::init_top_level_dir();
         let top_level_len = path.len();
 
+        let direct_packages = bun_install::bin::LinkOrder::direct_packages(lockfile)?;
         let mut tree_iterator =
             tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
         while let Some(node_modules) = tree_iterator.next(None) {
@@ -194,9 +195,15 @@ impl Blocked {
                         .name
                         .slice(buf),
                 );
-                if let Some(scripts_list) =
+                if let Some(mut scripts_list) =
                     Self::scripts_at(log, lockfile, dep_id, package_id, &mut path)?
                 {
+                    scripts_list.bin_conflicts = bun_install::bin::find_bin_conflicts(
+                        lockfile,
+                        &direct_packages,
+                        node_modules.tree_id,
+                        dep_id,
+                    );
                     blocked.push(Blocked {
                         dep_id,
                         package_id,
@@ -532,16 +539,6 @@ impl TrustCommand {
 
                 let output_in_foreground = false;
                 let optional = false;
-                if let Err(err) =
-                    bun_install::bin::link_dependency_bins(pm, info.package_id, &info.scripts_list)
-                {
-                    Output::err(
-                        err,
-                        "failed to link dependency bins before running scripts for {}",
-                        (bstr::BStr::new(info.names(&pm.lockfile).0),),
-                    );
-                    Global::crash();
-                }
                 pm.spawn_package_lifecycle_scripts(
                     &mut *ctx,
                     info.scripts_list.clone(),

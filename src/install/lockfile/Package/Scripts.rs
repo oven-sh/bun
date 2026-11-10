@@ -263,6 +263,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
+                bin_conflicts: Vec::new(),
             });
         }
 
@@ -443,6 +444,8 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
+    /// Set for a package in a hoisted tree.
+    pub bin_conflicts: Vec<crate::bin::BinConflict>,
 }
 
 impl List {

@@ -2311,7 +2311,7 @@ describe("the trusted set", () => {
       });
       for (let i = 0; i < 2; i++) {
         const { err, exitCode } = await bun(ctx, ["install"]);
-        expect(err).toContain("error: failed to link dependency bins before running scripts for native");
+        expect(err).toContain("error: failed to spawn life-cycle scripts for native");
         expect(await exists(join(ctx.packageDir, "node_modules", "native"))).toBeFalse();
         expect(await exists(join(ctx.packageDir, "ran.txt"))).toBeFalse();
         expect(exitCode).toBe(1);

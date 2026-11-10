@@ -46,4 +46,5 @@ bun_aot_interface::define_linked_functions! {
     fn bun_aot_imports_vitest(_path: &[u8], _text: &[u8]) -> bool { absent() }
     fn bun_aot_find_importers_outside_run(_root: &[u8], _files: &[Vec<u8>], _is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Vec<Option<Vec<u8>>> { absent() }
     fn bun_aot_name_values_of_unlinked_files<'a>(_files: &'a Files<'_>) -> Box<dyn NamedValues + 'a> { absent() }
+    fn bun_aot_carried_bun_types() -> Option<(&'static [u8], Vec<(Vec<u8>, Vec<u8>)>)> { None }
 }

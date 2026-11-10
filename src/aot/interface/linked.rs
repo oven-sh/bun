@@ -65,4 +65,5 @@ linked_functions! {
     pub fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool;
     pub fn bun_aot_find_importers_outside_run(root: &[u8], files: &[Vec<u8>], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Vec<Option<Vec<u8>>>;
     pub fn bun_aot_name_values_of_unlinked_files<'a>(files: &'a Files<'_>) -> Box<dyn NamedValues + 'a>;
+    pub fn bun_aot_carried_bun_types() -> Option<(&'static [u8], Vec<(Vec<u8>, Vec<u8>)>)>;
 }

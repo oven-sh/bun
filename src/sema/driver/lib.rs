@@ -8,6 +8,7 @@ pub mod declaration_imports;
 pub mod format;
 pub mod host;
 pub mod outline;
+pub mod typed_file_errors;
 pub mod typed_files;
 
 pub use bun_sema::check::explain::MessageChain;
